@@ -640,13 +640,49 @@ impl<'a> Printer<'a> {
                     .get_class(decl_node)
                     .and_then(|class| self.get_identifier_text_opt(class.name))
                     .is_some_and(|name| name == local_name),
-                k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
-                    .get_declaration_export_names(decl_node)
-                    .iter()
-                    .any(|name| name == local_name),
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    self.variable_statement_declares_name(decl_node, local_name)
+                }
                 _ => false,
             }
         })
+    }
+
+    fn variable_statement_declares_name(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+        local_name: &str,
+    ) -> bool {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            if let Some(var_decl_list) = self.arena.get_variable(decl_list_node) {
+                for &decl_idx in &var_decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    let mut names = Vec::new();
+                    self.collect_binding_names(decl.name, &mut names);
+                    if names.iter().any(|name| name == local_name) {
+                        return true;
+                    }
+                }
+            } else if let Some(decl) = self.arena.get_variable_declaration(decl_list_node) {
+                let mut names = Vec::new();
+                self.collect_binding_names(decl.name, &mut names);
+                if names.iter().any(|name| name == local_name) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Get names declared by a statement for inline CJS export.

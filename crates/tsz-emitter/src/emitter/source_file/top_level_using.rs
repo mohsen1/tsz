@@ -254,11 +254,22 @@ impl<'a> Printer<'a> {
         } else {
             Some(self.collect_cjs_deferred_export_bindings(statements))
         };
+        let cjs_deferred_export_bindings_all = if is_es_module_output {
+            None
+        } else {
+            Some(self.collect_cjs_deferred_export_bindings_all(statements))
+        };
         let prev_deferred_local_export_bindings = if is_es_module_output {
             None
         } else {
             self.deferred_local_export_bindings
                 .replace(cjs_deferred_export_bindings.unwrap_or_default())
+        };
+        let prev_deferred_local_export_bindings_all = if is_es_module_output {
+            None
+        } else {
+            self.deferred_local_export_bindings_all
+                .replace(cjs_deferred_export_bindings_all.unwrap_or_default())
         };
         let prev_block_using_env = self
             .block_using_env
@@ -289,6 +300,7 @@ impl<'a> Printer<'a> {
         self.block_using_env = prev_block_using_env;
         if !is_es_module_output {
             self.deferred_local_export_bindings = prev_deferred_local_export_bindings;
+            self.deferred_local_export_bindings_all = prev_deferred_local_export_bindings_all;
         }
 
         self.decrease_indent();
@@ -855,11 +867,13 @@ impl<'a> Printer<'a> {
         seen_local: &mut FxHashSet<String>,
         export_named_bindings: &mut Vec<String>,
     ) {
-        let (name, is_legacy_decorated_class) = match node.kind {
+        let (name, uses_lowered_default_tracker) = match node.kind {
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
                 let Some(class) = self.arena.get_class(node) else {
                     return;
                 };
+                let has_class_decorators =
+                    !self.collect_class_decorators(&class.modifiers).is_empty();
                 let name = self.get_identifier_text_opt(class.name).or_else(|| {
                     if is_default_export {
                         Some(
@@ -873,8 +887,9 @@ impl<'a> Printer<'a> {
                 });
                 (
                     name,
-                    self.ctx.options.legacy_decorators
-                        && !self.collect_class_decorators(&class.modifiers).is_empty(),
+                    is_default_export
+                        && has_class_decorators
+                        && !self.ctx.options.target.supports_es2025(),
                 )
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
@@ -888,13 +903,13 @@ impl<'a> Printer<'a> {
         let Some(name) = name else {
             return;
         };
-        if seen_local.insert(name.clone()) {
+        let skip_legacy_default_temp = uses_lowered_default_tracker
+            && !self.ctx.options.legacy_decorators
+            && name == "default_1";
+        if !skip_legacy_default_temp && seen_local.insert(name.clone()) {
             local_names.push(name.clone());
         }
-        if is_default_export
-            && is_legacy_decorated_class
-            && !self.ctx.options.target.supports_es2025()
-        {
+        if uses_lowered_default_tracker {
             if seen_local.insert("_default".to_string()) {
                 local_names.push("_default".to_string());
             }
@@ -1176,7 +1191,7 @@ impl<'a> Printer<'a> {
                     self.write(&env_name);
                     self.write(", ");
                     if decl.initializer.is_some() {
-                        self.emit(decl.initializer);
+                        self.emit_top_level_using_initializer(decl.initializer, &name);
                     } else {
                         self.write("void 0");
                     }
@@ -1293,6 +1308,21 @@ impl<'a> Printer<'a> {
             ");"
         } else {
             ";"
+        }
+    }
+
+    fn mark_top_level_using_inline_cjs_export(
+        &mut self,
+        export_name: Option<&String>,
+        is_es_module_output: bool,
+    ) {
+        if let Some(export_name) = export_name
+            && !is_es_module_output
+        {
+            self.ctx
+                .module_state
+                .inline_exported_names
+                .insert(export_name.clone());
         }
     }
 
@@ -1644,6 +1674,48 @@ impl<'a> Printer<'a> {
             }
             return true;
         }
+        if !self.ctx.target_es5
+            && has_decorators
+            && !self.ctx.options.legacy_decorators
+            && !self.ctx.options.target.supports_es2025()
+        {
+            if let Some(expr) = self.capture_tc39_decorated_class_expression(idx, &display_name) {
+                if let Some(export_name) = export_name.as_ref() {
+                    if !is_es_module_output {
+                        self.write_export_binding_start(export_name);
+                    }
+                    if export_name == "default" {
+                        self.write("_default = ");
+                        if class.name.is_some() {
+                            self.write(&binding_name);
+                            self.write(" = ");
+                        }
+                    } else {
+                        self.write(&binding_name);
+                        self.write(" = ");
+                    }
+                    self.write(&expr);
+                    if !is_es_module_output {
+                        self.write_export_binding_end();
+                    } else {
+                        self.write(";");
+                    }
+                } else {
+                    self.write(&binding_name);
+                    self.write(" = ");
+                    self.write(&expr);
+                    self.write(";");
+                }
+                self.mark_top_level_using_inline_cjs_export(
+                    export_name.as_ref(),
+                    is_es_module_output,
+                );
+                if let Some(prev) = prev_anon_default_name {
+                    self.anonymous_default_export_name = prev;
+                }
+                return true;
+            }
+        }
         if self.ctx.options.target.supports_es2025()
             && has_decorators
             && !self.ctx.options.legacy_decorators
@@ -1656,6 +1728,7 @@ impl<'a> Printer<'a> {
                 false,
                 Some(("", binding_name.clone())),
                 None,
+                false,
             );
             let after_len = self.writer.len();
             let full_output = self.writer.get_output().to_string();
@@ -1688,6 +1761,21 @@ impl<'a> Printer<'a> {
                 self.write(&binding_name);
                 self.write_export_binding_end();
             }
+            self.mark_top_level_using_inline_cjs_export(export_name.as_ref(), is_es_module_output);
+            if let Some(prev) = prev_anon_default_name {
+                self.anonymous_default_export_name = prev;
+            }
+            return true;
+        }
+        if export_name.is_none() && !self.ctx.target_es5 && !has_decorators {
+            self.emit_class_es6_with_options(
+                node,
+                idx,
+                false,
+                Some(("", binding_name.clone())),
+                None,
+                false,
+            );
             if let Some(prev) = prev_anon_default_name {
                 self.anonymous_default_export_name = prev;
             }
@@ -1859,14 +1947,7 @@ impl<'a> Printer<'a> {
                 self.write(";");
             }
         }
-        if let Some(export_name) = export_name.as_ref()
-            && !is_es_module_output
-        {
-            self.ctx
-                .module_state
-                .inline_exported_names
-                .insert(export_name.clone());
-        }
+        self.mark_top_level_using_inline_cjs_export(export_name.as_ref(), is_es_module_output);
         true
     }
 

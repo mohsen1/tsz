@@ -651,10 +651,9 @@ jobs:
     #
     # `_TSZ_CI_UNIT_PACKAGES_OVERRIDE` (set by the gate as `unit_packages`) is
     # a space-separated list of crate names. When non-empty, the unit script
-    # runs `cargo nextest run -p <crate>` for just those crates instead of the
-    # full workspace — used as the P4 draft-phase fast-fail (gate only sets
-    # this for draft PRs whose changes are localized to known unit-tested
-    # crate source).
+    # runs unit tests for just those crates instead of the full workspace.
+    # tsz-checker is special-cased to run declared integration targets without
+    # compiling its oversized lib-test artifact.
     name: unit
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
@@ -664,10 +663,6 @@ jobs:
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
       CARGO_INCREMENTAL: "0"
       TSZ_CI_DISABLE_SCCACHE: "1"
-      # Temporary safety cap while conformance aggregate is being unblocked:
-      # run 25961843637 still SIGKILLed tsz-checker lib-test compilation at
-      # one cargo build job before ci-unit codegen was serialized.
-      TSZ_CI_UNIT_CARGO_MB_PER_JOB: "16384"
       TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "1"
       _TSZ_CI_UNIT_PACKAGES_OVERRIDE: ${{ needs.gate.outputs.unit_packages }}
     steps:

@@ -86,7 +86,7 @@ impl<'a> Printer<'a> {
             self.write(" = ");
         }
         self.anonymous_default_export_name = None;
-        self.emit_class_es6_with_options(class_node, class_idx, true, None, alias_name);
+        self.emit_class_es6_with_options(class_node, class_idx, true, None, alias_name, false);
         let after_len = self.writer.len();
         let full_output = self.writer.get_output().to_string();
         let mut emitted = full_output[before_len..after_len].to_string();

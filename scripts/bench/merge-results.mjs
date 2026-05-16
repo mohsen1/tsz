@@ -37,10 +37,14 @@ const hyperfineExitCodesRequired = payloads.every(
 );
 
 const REQUIRED_PROJECT_ROWS = [
-  "type-fest-project",
+  "utility-types-project",
   "ts-essentials-project",
-  "large-ts-repo",
+  "rxjs-project",
+  "type-fest-project",
+  "vite-vanilla-ts-app",
+  "nextjs-fresh-app",
   "nextjs",
+  "large-ts-repo",
 ];
 
 const REQUIRED_COMPATIBILITY_FIELDS = [

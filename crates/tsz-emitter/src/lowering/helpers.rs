@@ -186,10 +186,10 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Mark helpers needed for async generator functions (async function*).
-    pub(super) const fn mark_async_generator_helpers(&mut self) {
+    pub(super) fn mark_async_generator_helpers(&mut self) {
         let helpers = self.transforms.helpers_mut();
-        helpers.await_helper = true;
-        helpers.async_generator = true;
+        helpers.mark_await_helper();
+        helpers.mark_async_generator();
         if self.ctx.target_es5 {
             helpers.generator = true;
         }
@@ -234,20 +234,26 @@ impl<'a> LoweringPass<'a> {
             let helpers = self.transforms.helpers_mut();
             // Check ordering before setting flags: if Set was never registered
             // and this class has Set-first ordering, mark it
-            if set_first
-                && !helpers.class_private_field_set
-                && !helpers.class_private_field_set_before_get
-            {
+            if set_first && !helpers.class_private_field_get && !helpers.class_private_field_set {
                 helpers.class_private_field_set_before_get = true;
             }
-            if needs_get {
-                helpers.class_private_field_get = true;
-            }
-            if needs_set {
-                helpers.class_private_field_set = true;
+            if set_first {
+                if needs_set {
+                    helpers.mark_class_private_field_set();
+                }
+                if needs_get {
+                    helpers.mark_class_private_field_get();
+                }
+            } else {
+                if needs_get {
+                    helpers.mark_class_private_field_get();
+                }
+                if needs_set {
+                    helpers.mark_class_private_field_set();
+                }
             }
             if needs_in {
-                helpers.class_private_field_in = true;
+                helpers.mark_class_private_field_in();
             }
         }
     }

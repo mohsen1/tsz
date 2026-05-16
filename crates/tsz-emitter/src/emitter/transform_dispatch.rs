@@ -576,6 +576,9 @@ impl<'a> Printer<'a> {
                         for (i, (decoded_name, emit_name, init_idx)) in
                             inline_decls.iter().enumerate()
                         {
+                            if i == 0 {
+                                self.emit_comments_before_pos(node.pos);
+                            }
                             // Track that this variable was inlined (no local declaration).
                             // Use decoded name for set tracking (matching uses decoded text).
                             self.ctx
@@ -1127,6 +1130,8 @@ impl<'a> Printer<'a> {
                 emitter.set_function_name(name.clone());
             } else if let Some((_, ref name)) = self.pending_commonjs_class_export_name {
                 emitter.set_function_name(name.clone());
+            } else if let Some(name) = self.resolve_class_expr_binding_name(_idx) {
+                emitter.set_function_name(name);
             }
         }
         if let Some(text) = self.source_text_for_map() {

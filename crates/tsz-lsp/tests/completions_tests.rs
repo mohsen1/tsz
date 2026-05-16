@@ -3747,71 +3747,59 @@ fn member_names_at_end(source: &str) -> Vec<String> {
 
 #[test]
 fn test_completions_function_prototype_members_on_named_function() {
-    let names = member_names_at_end("function add(a,b){return a+b;}\nadd.");
-    for expected in ["name", "length", "apply", "call", "bind", "prototype"] {
-        assert!(
-            names.contains(&expected.to_string()),
-            "Expected function member '{expected}' in completions, got: {names:?}"
-        );
-    }
+    assert_has_members(
+        "function add(a,b){return a+b;}\nadd.",
+        &["name", "length", "apply", "call", "bind", "prototype"],
+    );
 }
 
 #[test]
 fn test_completions_function_prototype_members_on_arrow_function() {
-    let names = member_names_at_end("const mul = (x: number, y: number) => x * y;\nmul.");
-    for expected in ["name", "length", "apply", "call", "bind"] {
-        assert!(
-            names.contains(&expected.to_string()),
-            "Expected function member '{expected}' in arrow-function completions, got: {names:?}"
-        );
-    }
+    assert_has_members(
+        "const mul = (x: number, y: number) => x * y;\nmul.",
+        &["name", "length", "apply", "call", "bind"],
+    );
 }
 
 #[test]
 fn test_completions_function_prototype_members_on_function_expression() {
-    let names = member_names_at_end("const fn = function compute(x: number) { return x; };\nfn.");
-    for expected in ["name", "length", "apply", "call", "bind"] {
-        assert!(
-            names.contains(&expected.to_string()),
-            "Expected function member '{expected}' in function-expression completions, got: {names:?}"
-        );
-    }
+    assert_has_members(
+        "const fn = function compute(x: number) { return x; };\nfn.",
+        &["name", "length", "apply", "call", "bind"],
+    );
 }
 
 // ── Array member completions ─────────────────────────────────────────────────
 
 #[test]
 fn test_completions_array_prototype_methods_on_array_literal() {
-    let names = member_names_at_end("const arr = [1, 2, 3];\narr.");
-    for expected in [
-        "length",
-        "push",
-        "pop",
-        "shift",
-        "unshift",
-        "slice",
-        "splice",
-        "map",
-        "filter",
-        "forEach",
-        "find",
-        "findIndex",
-        "some",
-        "every",
-        "indexOf",
-        "lastIndexOf",
-        "join",
-        "reverse",
-        "sort",
-        "concat",
-        "reduce",
-        "reduceRight",
-    ] {
-        assert!(
-            names.contains(&expected.to_string()),
-            "Expected array member '{expected}' in completions, got: {names:?}"
-        );
-    }
+    assert_has_members(
+        "const arr = [1, 2, 3];\narr.",
+        &[
+            "length",
+            "push",
+            "pop",
+            "shift",
+            "unshift",
+            "slice",
+            "splice",
+            "map",
+            "filter",
+            "forEach",
+            "find",
+            "findIndex",
+            "some",
+            "every",
+            "indexOf",
+            "lastIndexOf",
+            "join",
+            "reverse",
+            "sort",
+            "concat",
+            "reduce",
+            "reduceRight",
+        ],
+    );
 }
 
 // ── Primitive type completion filtering ─────────────────────────────────────
@@ -3925,6 +3913,8 @@ fn test_completions_boolean_exposes_only_valueof() {
     for source in [
         "const b: boolean = true;\nb.",
         "const flag: boolean = false;\nflag.",
+        "const b = true;\nb.",
+        "const flag = false;\nflag.",
     ] {
         let names = member_names_at_end(source);
         for excluded in [
@@ -3937,12 +3927,59 @@ fn test_completions_boolean_exposes_only_valueof() {
         ] {
             assert!(
                 !names.contains(&excluded.to_string()),
-                "Boolean completions must not include '{excluded}'; got: {names:?}"
+                "Boolean completions must not include '{excluded}' (source: {source:?}); got: {names:?}"
             );
         }
         assert!(
             names.contains(&"valueOf".to_string()),
-            "Boolean completions must include 'valueOf'; got: {names:?}"
+            "Boolean completions must include 'valueOf' (source: {source:?}); got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_bigint_excludes_object_prototype_members() {
+    for source in [
+        "const n: bigint = 1n;\nn.",
+        "const x = 42n;\nx.",
+        "const y = 0n;\ny.",
+    ] {
+        let names = member_names_at_end(source);
+        for excluded in [
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "Bigint completions must not include Object.prototype member '{excluded}' (source: {source:?}); got: {names:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_completions_symbol_excludes_object_prototype_members() {
+    for source in [
+        "const s: symbol = Symbol();\ns.",
+        "declare const sym: symbol;\nsym.",
+    ] {
+        let names = member_names_at_end(source);
+        for excluded in [
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "Symbol completions must not include Object.prototype member '{excluded}' (source: {source:?}); got: {names:?}"
+            );
+        }
+        assert!(
+            names.contains(&"valueOf".to_string()),
+            "Symbol completions must include 'valueOf' (source: {source:?}); got: {names:?}"
         );
     }
 }
@@ -3951,13 +3988,61 @@ fn test_completions_boolean_exposes_only_valueof() {
 
 #[test]
 fn test_completions_array_prototype_methods_on_tuple() {
-    let names = member_names_at_end("const t: [string, number] = [\"a\", 1];\nt.");
-    for expected in [
-        "length", "push", "pop", "map", "filter", "forEach", "slice", "concat",
-    ] {
+    assert_has_members(
+        "const t: [string, number] = [\"a\", 1];\nt.",
+        &[
+            "length", "push", "pop", "map", "filter", "forEach", "slice", "concat",
+        ],
+    );
+}
+
+// ── Readonly array/tuple member completions ──────────────────────────────────
+
+fn assert_has_members(snippet: &str, expected: &[&str]) {
+    let names = member_names_at_end(snippet);
+    for &m in expected {
         assert!(
-            names.contains(&expected.to_string()),
-            "Expected array member '{expected}' in tuple completions, got: {names:?}"
+            names.contains(&m.to_string()),
+            "Expected member '{m}' in completions for snippet, got: {names:?}"
         );
     }
+}
+
+#[test]
+fn test_completions_array_prototype_methods_on_readonly_array_annotation() {
+    // `readonly number[]` → ReadonlyType(Array(number)); structural wrapper, same members.
+    assert_has_members(
+        "const xs: readonly number[] = [1, 2, 3];\nxs.",
+        &[
+            "length", "map", "filter", "forEach", "slice", "indexOf", "every", "some",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_array_prototype_methods_on_readonly_string_array() {
+    // Vary the element type and variable name to prove the fix is structural,
+    // not keyed to a specific spelling.
+    assert_has_members(
+        "const words: readonly string[] = [\"a\", \"b\"];\nwords.",
+        &["length", "map", "filter", "join", "reduce", "find"],
+    );
+}
+
+#[test]
+fn test_completions_array_prototype_methods_on_readonly_tuple() {
+    // `readonly [T, U]` → ReadonlyType(Tuple([T, U])); same unwrap path as arrays.
+    assert_has_members(
+        "const pair: readonly [number, string] = [1, \"x\"];\npair.",
+        &["length", "map", "filter", "forEach", "slice", "indexOf"],
+    );
+}
+
+#[test]
+fn test_completions_array_prototype_methods_on_readonly_tuple_different_names() {
+    // Renamed variable to ensure we don't rely on identifier spelling.
+    assert_has_members(
+        "const row: readonly [string, boolean] = [\"y\", true];\nrow.",
+        &["length", "map", "every", "some"],
+    );
 }

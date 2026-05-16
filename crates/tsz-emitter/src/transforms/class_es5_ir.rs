@@ -2307,28 +2307,53 @@ impl<'a> ES5ClassTransformer<'a> {
                 .map(|param| has_parameter_property_modifier(self.arena, &param.modifiers))
                 .unwrap_or(false)
         });
+        let has_destructuring_params = params.nodes.iter().any(|&p| {
+            self.arena
+                .get(p)
+                .and_then(|n| self.arena.get_parameter(n))
+                .and_then(|param| self.arena.get(param.name))
+                .is_some_and(|name| {
+                    name.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || name.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                })
+        });
         let has_private_fields = self.private_fields.iter().any(|f| !f.is_static);
         let has_auto_accessors = self.auto_accessors.iter().any(|a| !a.is_static);
         let has_private_accessors = self.private_accessors.iter().any(|a| !a.is_static);
-        let stmts_before_super = super_stmt_idx.map(|_| super_stmt_position).unwrap_or(0);
         let stmts_after_super = super_stmt_idx
             .map(|_| block.statements.nodes.len() - super_stmt_position - 1)
             .unwrap_or(0);
         let needs_this_capture = self.constructor_needs_this_capture(body_idx);
 
-        let can_use_simple_return = super_stmt_idx.is_some()
-            && stmts_before_super == 0
+        let can_use_tail_super_return = super_stmt_idx.is_some()
             && stmts_after_super == 0
             && instance_props.is_empty()
             && !has_param_props
+            && !has_destructuring_params
             && !has_private_fields
             && !has_auto_accessors
             && !has_private_accessors
             && !needs_this_capture;
 
-        if can_use_simple_return {
-            // Simple form: return _super.call(this, args) || this;
+        if can_use_tail_super_return {
+            let mut prev_stmt_end = body_node.pos;
+            for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
+                if i >= super_stmt_position {
+                    break;
+                }
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.emit_leading_statement_comments(body, prev_stmt_end, stmt_node.pos);
+                    prev_stmt_end = stmt_node.end;
+                }
+                body.push(self.convert_statement(stmt_idx));
+            }
+
             if let Some(super_idx) = super_stmt_idx {
+                if let Some(super_node) = self.arena.get(super_idx) {
+                    self.emit_leading_statement_comments(body, prev_stmt_end, super_node.pos);
+                }
+                // Tail form: earlier statements remain intact, then the final
+                // `super()` can return directly without materializing `_this`.
                 let super_return = self.emit_super_call_return_ir(super_idx);
                 body.push(super_return);
             }
@@ -3157,7 +3182,6 @@ impl<'a> ES5ClassTransformer<'a> {
         ast_params: &tsz_parser::parser::NodeList,
         ir_params: &[IRParam],
     ) -> Vec<IRNode> {
-        use std::borrow::Cow;
         let mut prologue = Vec::new();
         let mut ir_idx = 0;
 
@@ -3204,7 +3228,8 @@ impl<'a> ES5ClassTransformer<'a> {
                 && name_n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 && let Some(pattern) = self.arena.get_binding_pattern(name_n)
             {
-                let mut parts = Vec::new();
+                let mut declarations = Vec::new();
+                let mut rest_excluded = Vec::new();
                 for &elem_idx in &pattern.elements.nodes {
                     if let Some(elem_node) = self.arena.get(elem_idx)
                         && let Some(elem) = self.arena.get_binding_element(elem_node)
@@ -3212,20 +3237,38 @@ impl<'a> ES5ClassTransformer<'a> {
                         let elem_name =
                             get_identifier_text(self.arena, elem.name).unwrap_or_default();
                         if !elem_name.is_empty() {
+                            if elem.dot_dot_dot_token {
+                                let excluded =
+                                    rest_excluded.iter().cloned().map(IRNode::string).collect();
+                                declarations.push(IRNode::var_decl(
+                                    elem_name,
+                                    Some(IRNode::call(
+                                        IRNode::RuntimeHelper("__rest".into()),
+                                        vec![
+                                            IRNode::id(temp_name.clone()),
+                                            IRNode::ArrayLiteral(excluded),
+                                        ],
+                                    )),
+                                ));
+                                continue;
+                            }
+
                             let prop_name = if elem.property_name.is_some() {
                                 get_identifier_text(self.arena, elem.property_name)
                                     .unwrap_or_else(|| elem_name.clone())
                             } else {
                                 elem_name.clone()
                             };
-                            parts.push(format!("{elem_name} = {temp_name}.{prop_name}"));
+                            rest_excluded.push(prop_name.clone());
+                            declarations.push(IRNode::var_decl(
+                                elem_name,
+                                Some(IRNode::prop(IRNode::id(temp_name.clone()), prop_name)),
+                            ));
                         }
                     }
                 }
-                if !parts.is_empty() {
-                    prologue.push(IRNode::ExpressionStatement(Box::new(IRNode::Raw(
-                        Cow::Owned(format!("var {}", parts.join(", "))),
-                    ))));
+                if !declarations.is_empty() {
+                    prologue.push(IRNode::VarDeclList(declarations));
                 }
             }
             ir_idx += 1;

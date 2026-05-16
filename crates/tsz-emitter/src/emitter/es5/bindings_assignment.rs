@@ -30,6 +30,76 @@ impl<'a> Printer<'a> {
         elements.len()
     }
 
+    fn emit_assignment_target(&mut self, target_idx: NodeIndex) {
+        if self.emit_commonjs_live_export_assignment_target(target_idx) {
+            return;
+        }
+        self.emit(target_idx);
+    }
+
+    pub(in crate::emitter) fn assignment_pattern_has_commonjs_live_export_target(
+        &self,
+        pattern_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.arena.get(pattern_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    pattern_idx,
+                );
+                self.commonjs_live_export_assignment_target_name_needs_chain(&name)
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                self.arena.get_binary_expr(node).is_some_and(|binary| {
+                    binary.operator_token == SyntaxKind::EqualsToken as u16
+                        && self.assignment_pattern_has_commonjs_live_export_target(binary.left)
+                })
+            }
+            k if k == syntax_kind_ext::SPREAD_ELEMENT
+                || k == syntax_kind_ext::SPREAD_ASSIGNMENT =>
+            {
+                self.arena.get_spread(node).is_some_and(|spread| {
+                    self.assignment_pattern_has_commonjs_live_export_target(spread.expression)
+                })
+            }
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                .arena
+                .get_property_assignment(node)
+                .is_some_and(|prop| {
+                    self.assignment_pattern_has_commonjs_live_export_target(prop.initializer)
+                }),
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                .arena
+                .get_shorthand_property(node)
+                .map(|shorthand| {
+                    crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena,
+                        shorthand.name,
+                    )
+                })
+                .is_some_and(|name| {
+                    self.commonjs_live_export_assignment_target_name_needs_chain(&name)
+                }),
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || k == syntax_kind_ext::OBJECT_BINDING_PATTERN =>
+            {
+                self.get_binding_or_literal_elements(node)
+                    .is_some_and(|elements| {
+                        elements.into_iter().any(|element| {
+                            !element.is_none()
+                                && self.assignment_pattern_has_commonjs_live_export_target(element)
+                        })
+                    })
+            }
+            _ => false,
+        }
+    }
+
     /// Unwrap a chain of empty destructuring assignments to find the effective RHS.
     /// For example, `{} = [] = {} = a` reduces to just `a` since all patterns are empty.
     fn unwrap_empty_destructuring_chain(&self, idx: NodeIndex) -> NodeIndex {
@@ -222,6 +292,7 @@ impl<'a> Printer<'a> {
                                 &elements,
                                 &source_name,
                                 &mut first,
+                                use_inline_source.then_some(right_idx),
                             );
                         }
                         _ => {}
@@ -241,7 +312,11 @@ impl<'a> Printer<'a> {
     /// assignment target is the identifier `name`. Used to detect cases like
     /// `({ foo, bar } = foo)` where reading `foo.bar` after assigning to
     /// `foo` would observe the clobbered value.
-    fn assignment_lhs_reassigns_identifier(&self, lhs: &Node, name: &str) -> bool {
+    pub(in crate::emitter) fn assignment_lhs_reassigns_identifier(
+        &self,
+        lhs: &Node,
+        name: &str,
+    ) -> bool {
         // Object literal: `{ foo, bar }` or `{ x: foo }`
         if lhs.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             let Some(lit) = self.arena.get_literal_expr(lhs) else {
@@ -358,69 +433,6 @@ impl<'a> Printer<'a> {
         false
     }
 
-    fn assignment_pattern_has_dynamic_computed_property_name(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
-            && let Some(binary) = self.arena.get_binary_expr(node)
-            && binary.operator_token == SyntaxKind::EqualsToken as u16
-        {
-            return self.assignment_pattern_has_dynamic_computed_property_name(binary.left);
-        }
-
-        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-            let Some(lit) = self.arena.get_literal_expr(node) else {
-                return false;
-            };
-            return lit.elements.nodes.iter().any(|&elem_idx| {
-                let Some(elem_node) = self.arena.get(elem_idx) else {
-                    return false;
-                };
-                match elem_node.kind {
-                    k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
-                        .arena
-                        .get_property_assignment(elem_node)
-                        .is_some_and(|prop| {
-                            self.assignment_property_name_is_dynamic_computed(prop.name)
-                                || self.assignment_pattern_has_dynamic_computed_property_name(
-                                    prop.initializer,
-                                )
-                        }),
-                    k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
-                        self.arena.get_spread(elem_node).is_some_and(|spread| {
-                            self.assignment_pattern_has_dynamic_computed_property_name(
-                                spread.expression,
-                            )
-                        })
-                    }
-                    _ => false,
-                }
-            });
-        }
-
-        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            let Some(lit) = self.arena.get_literal_expr(node) else {
-                return false;
-            };
-            return lit.elements.nodes.iter().any(|&elem_idx| {
-                let Some(elem_node) = self.arena.get(elem_idx) else {
-                    return false;
-                };
-                if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                    && let Some(spread) = self.arena.get_spread(elem_node)
-                {
-                    return self
-                        .assignment_pattern_has_dynamic_computed_property_name(spread.expression);
-                }
-                self.assignment_pattern_has_dynamic_computed_property_name(elem_idx)
-            });
-        }
-
-        false
-    }
-
     fn assignment_object_literal_is_rest_only(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return false;
@@ -493,18 +505,38 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if self.assignment_pattern_has_dynamic_computed_property_name(left_idx) {
-            self.emit_assignment_destructuring_es5(left_node, right_idx);
-            return;
-        }
-
         let effective_right_idx = self.unwrap_empty_destructuring_chain(right_idx);
-        let is_simple = self
+        let mut is_simple = self
             .arena
             .get(effective_right_idx)
             .is_some_and(|n| n.is_identifier());
+        if is_simple {
+            let rhs_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                self.arena,
+                effective_right_idx,
+            );
+            if !rhs_name.is_empty()
+                && self.assignment_lhs_reassigns_identifier(left_node, &rhs_name)
+            {
+                is_simple = false;
+            }
+        }
         if !is_simple && self.assignment_object_literal_is_rest_only(left_idx) {
             self.emit_assignment_rest_only_object(left_idx, right_idx);
+            return;
+        }
+
+        if !is_simple
+            && left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            && self.assignment_array_object_rest_can_inline_source(left_idx)
+        {
+            let mut first = true;
+            self.emit_assignment_array_pattern_with_object_rest(
+                left_idx,
+                "",
+                &mut first,
+                Some(right_idx),
+            );
             return;
         }
 
@@ -587,12 +619,89 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        self.emit(spread.expression);
+        if !self.ctx.flags.in_statement_expression {
+            let temp = self.make_unique_name_hoisted_assignment();
+            self.write("(");
+            self.write(&temp);
+            self.write(" = ");
+            self.emit(right_idx);
+            self.write(", ");
+            self.emit_assignment_object_rest_target(spread.expression);
+            self.write(" = ");
+            self.write_helper("__rest");
+            self.write("(");
+            self.write(&temp);
+            self.write(", []), ");
+            self.write(&temp);
+            self.write(")");
+            return;
+        }
+
+        self.emit_assignment_object_rest_target(spread.expression);
         self.write(" = ");
         self.write_helper("__rest");
         self.write("(");
         self.emit(right_idx);
         self.write(", [])");
+    }
+
+    fn emit_assignment_object_rest_target(&mut self, target: NodeIndex) {
+        if self.assignment_object_rest_target_needs_temp(target) {
+            let temp = self.make_unique_name_hoisted_assignment();
+            self.write(&temp);
+        } else {
+            self.emit(target);
+        }
+    }
+
+    fn assignment_object_rest_target_needs_temp(&self, target: NodeIndex) -> bool {
+        if self.assignment_object_rest_target_is_empty_pattern(target) {
+            return true;
+        }
+
+        self.assignment_object_rest_target_source_is_bare_empty_pattern(target)
+    }
+
+    fn assignment_object_rest_target_is_empty_pattern(&self, target: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(target) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        {
+            return self
+                .arena
+                .get_literal_expr(node)
+                .is_some_and(|literal| literal.elements.nodes.is_empty());
+        }
+
+        if node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+            || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            return self
+                .arena
+                .get_binding_pattern(node)
+                .is_some_and(|pattern| pattern.elements.nodes.is_empty());
+        }
+
+        false
+    }
+
+    fn assignment_object_rest_target_source_is_bare_empty_pattern(
+        &self,
+        target: NodeIndex,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(node) = self.arena.get(target) else {
+            return false;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let end = (node.end as usize).min(text.len());
+        text.get(start.min(end)..end)
+            .is_some_and(|source| matches!(source.trim(), "{}" | "[]"))
     }
 
     fn emit_assignment_pattern_with_object_rest(
@@ -611,7 +720,12 @@ impl<'a> Printer<'a> {
                 self.emit_assignment_object_rest_pattern(pattern_idx, source, source_simple, first);
             }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
-                self.emit_assignment_array_pattern_with_object_rest(pattern_idx, source, first);
+                self.emit_assignment_array_pattern_with_object_rest(
+                    pattern_idx,
+                    source,
+                    first,
+                    None,
+                );
             }
             _ => {}
         }
@@ -653,22 +767,50 @@ impl<'a> Printer<'a> {
         let mut excluded_props = Vec::new();
         let mut rest_element = None;
 
-        for &elem_idx in &elements {
+        for (index, &elem_idx) in elements.iter().enumerate() {
             let Some(elem_node) = self.arena.get(elem_idx) else {
                 continue;
             };
 
             match elem_node.kind {
                 k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                    let has_later_element =
+                        elements.iter().skip(index + 1).any(|idx| !idx.is_none());
+                    if has_later_element {
+                        continue;
+                    }
                     rest_element = Some(elem_idx);
                 }
                 k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                     let Some(prop) = self.arena.get_property_assignment(elem_node) else {
                         continue;
                     };
+                    let is_dynamic = self.assignment_property_name_is_dynamic_computed(prop.name);
+
+                    if is_dynamic {
+                        self.emit_assignment_object_pattern_without_rest(
+                            &simple_elements,
+                            source,
+                            first,
+                        );
+                        simple_elements.clear();
+                        let computed_key_temp = self
+                            .emit_assignment_computed_key_temp_if_needed(prop.name, first)
+                            .expect("dynamic computed property should create a key temp");
+                        excluded_props.push(AssignmentRestProp::Dynamic(computed_key_temp.clone()));
+                        self.emit_assignment_object_rest_property_from_key(
+                            prop.initializer,
+                            source,
+                            prop.name,
+                            Some(computed_key_temp.as_str()),
+                            first,
+                        );
+                        continue;
+                    }
+
                     let key = self.get_property_key_text(prop.name).unwrap_or_default();
                     if !key.is_empty() {
-                        excluded_props.push(key.clone());
+                        excluded_props.push(AssignmentRestProp::Static(key.clone()));
                     }
 
                     if self.assignment_pattern_has_object_rest(prop.initializer) {
@@ -725,7 +867,7 @@ impl<'a> Printer<'a> {
                             shorthand.name,
                         );
                         if !key.is_empty() {
-                            excluded_props.push(key);
+                            excluded_props.push(AssignmentRestProp::Static(key));
                         }
                     }
                     simple_elements.push(elem_idx);
@@ -741,22 +883,94 @@ impl<'a> Printer<'a> {
             && let Some(spread) = self.arena.get_spread(rest_node)
         {
             self.emit_assignment_separator(first);
-            self.emit(spread.expression);
+            self.emit_assignment_object_rest_target(spread.expression);
             self.write(" = ");
             self.write_helper("__rest");
             self.write("(");
             self.write(source);
-            self.write(", [");
-            for (i, key) in excluded_props.iter().enumerate() {
-                if i > 0 {
-                    self.write(", ");
-                }
-                self.write("\"");
-                self.write(key);
-                self.write("\"");
-            }
-            self.write("])");
+            self.write(", ");
+            self.emit_assignment_rest_exclude_list(&excluded_props);
+            self.write(")");
         }
+    }
+
+    fn emit_assignment_object_rest_property_from_key(
+        &mut self,
+        initializer: NodeIndex,
+        source: &str,
+        name_idx: NodeIndex,
+        computed_key_temp: Option<&str>,
+        first: &mut bool,
+    ) {
+        let value_node = self.arena.get(initializer);
+        if let Some((nested_pattern, default_expr)) =
+            self.assignment_default_nested_pattern(initializer)
+        {
+            let extract_temp = self.make_unique_name_hoisted_assignment();
+            let default_temp = self.make_unique_name_hoisted_assignment();
+            self.emit_assignment_separator(first);
+            self.write(&extract_temp);
+            self.write(" = ");
+            self.emit_assignment_object_key_access(source, None, name_idx, computed_key_temp);
+            self.write(", ");
+            self.write(&default_temp);
+            self.write(" = ");
+            self.write(&extract_temp);
+            self.write(" === void 0 ? ");
+            self.emit(default_expr);
+            self.write(" : ");
+            self.write(&extract_temp);
+            self.emit_assignment_nested_destructuring(nested_pattern, &default_temp, first);
+            return;
+        }
+
+        let is_nested = value_node.is_some_and(|n| {
+            n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+        });
+
+        if is_nested {
+            let temp = self.make_unique_name_hoisted_assignment();
+            self.emit_assignment_separator(first);
+            self.write(&temp);
+            self.write(" = ");
+            self.emit_assignment_object_key_access(source, None, name_idx, computed_key_temp);
+            self.emit_assignment_nested_destructuring(initializer, &temp, first);
+            return;
+        }
+
+        let value_bin = value_node.and_then(|n| {
+            if n.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                self.arena.get_binary_expr(n)
+            } else {
+                None
+            }
+        });
+        if let Some(bin) = value_bin
+            && bin.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            let temp = self.make_unique_name_hoisted_assignment();
+            self.emit_assignment_separator(first);
+            self.write(&temp);
+            self.write(" = ");
+            self.emit_assignment_object_key_access(source, None, name_idx, computed_key_temp);
+            self.write(", ");
+            self.emit_assignment_target(bin.left);
+            self.write(" = ");
+            self.write(&temp);
+            self.write(" === void 0 ? ");
+            self.emit(bin.right);
+            self.write(" : ");
+            self.write(&temp);
+            return;
+        }
+
+        self.emit_assignment_separator(first);
+        self.emit_assignment_target(initializer);
+        self.write(" = ");
+        self.emit_assignment_object_key_access(source, None, name_idx, computed_key_temp);
     }
 
     fn emit_assignment_object_pattern_without_rest(
@@ -786,6 +1000,7 @@ impl<'a> Printer<'a> {
         pattern_idx: NodeIndex,
         source: &str,
         first: &mut bool,
+        inline_source: Option<NodeIndex>,
     ) {
         let Some(node) = self.arena.get(pattern_idx) else {
             return;
@@ -815,7 +1030,11 @@ impl<'a> Printer<'a> {
             }
         }
         self.write("] = ");
-        self.write(source);
+        if let Some(inline_source) = inline_source {
+            self.emit(inline_source);
+        } else {
+            self.write(source);
+        }
 
         for (nested_idx, temp) in nested_patterns {
             let nested_pattern = self
@@ -831,6 +1050,16 @@ impl<'a> Printer<'a> {
                 .unwrap_or(nested_idx);
             self.emit_assignment_pattern_with_object_rest(nested_pattern, &temp, true, first);
         }
+    }
+
+    fn assignment_array_object_rest_can_inline_source(&self, pattern_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(pattern_idx) else {
+            return false;
+        };
+        let Some(lit) = self.arena.get_literal_expr(node) else {
+            return false;
+        };
+        lit.elements.nodes.len() == 1
     }
 
     fn object_key_access_text(&self, source: &str, key: &str) -> String {
@@ -895,7 +1124,7 @@ impl<'a> Printer<'a> {
                                 first,
                             );
                         } else {
-                            self.emit(spread.expression);
+                            self.emit_assignment_target(spread.expression);
                             self.write(" = ");
                             if let Some(inline_src) = inline_source {
                                 self.emit(inline_src);
@@ -960,7 +1189,7 @@ impl<'a> Printer<'a> {
                     self.write("[");
                     self.write_usize(i);
                     self.write("], ");
-                    self.emit(bin.left);
+                    self.emit_assignment_target(bin.left);
                     self.write(" = ");
                     self.write(&temp);
                     self.write(" === void 0 ? ");
@@ -995,7 +1224,7 @@ impl<'a> Printer<'a> {
 
             // Simple identifier target
             self.emit_assignment_separator(first);
-            self.emit(elem_idx);
+            self.emit_assignment_target(elem_idx);
             self.write(" = ");
             if let Some(inline_src) = inline_source {
                 self.emit(inline_src);
@@ -1016,6 +1245,7 @@ impl<'a> Printer<'a> {
         elements: &[NodeIndex],
         source: &str,
         first: &mut bool,
+        inline_source: Option<NodeIndex>,
     ) {
         let mut rest_props = Vec::new();
 
@@ -1050,6 +1280,7 @@ impl<'a> Printer<'a> {
                             self.write(" = ");
                             self.emit_assignment_object_key_access(
                                 source,
+                                inline_source,
                                 prop.name,
                                 computed_key_temp.as_deref(),
                             );
@@ -1083,6 +1314,7 @@ impl<'a> Printer<'a> {
                             self.write(" = ");
                             self.emit_assignment_object_key_access(
                                 source,
+                                inline_source,
                                 prop.name,
                                 computed_key_temp.as_deref(),
                             );
@@ -1109,11 +1341,12 @@ impl<'a> Printer<'a> {
                                 self.write(" = ");
                                 self.emit_assignment_object_key_access(
                                     source,
+                                    inline_source,
                                     prop.name,
                                     computed_key_temp.as_deref(),
                                 );
                                 self.write(", ");
-                                self.emit(bin.left);
+                                self.emit_assignment_target(bin.left);
                                 self.write(" = ");
                                 self.write(&temp);
                                 self.write(" === void 0 ? ");
@@ -1123,10 +1356,11 @@ impl<'a> Printer<'a> {
                                 continue;
                             }
                             self.emit_assignment_separator(first);
-                            self.emit(prop.initializer);
+                            self.emit_assignment_target(prop.initializer);
                             self.write(" = ");
                             self.emit_assignment_object_key_access(
                                 source,
+                                inline_source,
                                 prop.name,
                                 computed_key_temp.as_deref(),
                             );
@@ -1141,9 +1375,16 @@ impl<'a> Printer<'a> {
                             shorthand.name,
                         );
                         self.emit_assignment_separator(first);
-                        self.write(&name);
+                        if !self.emit_commonjs_live_export_assignment_target_name(&name) {
+                            self.write(&name);
+                        }
                         self.write(" = ");
-                        self.emit_object_key_access(source, &name);
+                        self.emit_assignment_object_key_access(
+                            source,
+                            inline_source,
+                            shorthand.name,
+                            None,
+                        );
                         if !name.is_empty() {
                             rest_props.push(AssignmentRestProp::Static(name));
                         }
@@ -1153,11 +1394,11 @@ impl<'a> Printer<'a> {
                     // { ...rest } → rest = __rest(source, ["prop1", "prop2"])
                     if let Some(spread) = self.arena.get_spread(elem_node) {
                         self.emit_assignment_separator(first);
-                        self.emit(spread.expression);
+                        self.emit_assignment_object_rest_target(spread.expression);
                         self.write(" = ");
                         self.write_helper("__rest");
                         self.write("(");
-                        self.write(source);
+                        self.emit_assignment_source(source, inline_source);
                         self.write(", ");
                         self.emit_assignment_rest_exclude_list(&rest_props);
                         self.write(")");
@@ -1202,11 +1443,12 @@ impl<'a> Printer<'a> {
     fn emit_assignment_object_key_access(
         &mut self,
         source: &str,
+        inline_source: Option<NodeIndex>,
         name_idx: NodeIndex,
         computed_key_temp: Option<&str>,
     ) {
         if let Some(temp) = computed_key_temp {
-            self.write(source);
+            self.emit_assignment_source(source, inline_source);
             self.write("[");
             self.write(temp);
             self.write("]");
@@ -1214,7 +1456,27 @@ impl<'a> Printer<'a> {
         }
 
         let key = self.get_property_key_text(name_idx).unwrap_or_default();
-        self.emit_object_key_access(source, &key);
+        if let Some(inline_src) = inline_source {
+            self.emit(inline_src);
+            if is_valid_identifier_name(&key) {
+                self.write(".");
+                self.write(&key);
+            } else {
+                self.write("[\"");
+                self.write(&key.replace('\\', "\\\\").replace('\"', "\\\""));
+                self.write("\"]");
+            }
+        } else {
+            self.emit_object_key_access(source, &key);
+        }
+    }
+
+    fn emit_assignment_source(&mut self, source: &str, inline_source: Option<NodeIndex>) {
+        if let Some(inline_src) = inline_source {
+            self.emit(inline_src);
+        } else {
+            self.write(source);
+        }
     }
 
     fn emit_assignment_rest_exclude_list(&mut self, props: &[AssignmentRestProp]) {
@@ -1288,7 +1550,12 @@ impl<'a> Printer<'a> {
             }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 if let Some(lit) = self.arena.get_literal_expr(node) {
-                    self.emit_assignment_object_destructuring(&lit.elements.nodes, source, first);
+                    self.emit_assignment_object_destructuring(
+                        &lit.elements.nodes,
+                        source,
+                        first,
+                        None,
+                    );
                 }
             }
             k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
@@ -1307,6 +1574,7 @@ impl<'a> Printer<'a> {
                         &pattern.elements.nodes,
                         source,
                         first,
+                        None,
                     );
                 }
             }

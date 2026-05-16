@@ -68,6 +68,59 @@ fn block_body_arrow_return_type_mismatch_anchors_return_statement() {
     );
 }
 
+#[test]
+fn generic_indexed_conditional_return_mismatch_anchors_return_statement() {
+    let source = r#"
+interface Array<T> { length: number; }
+type PrependNextNum<A extends Array<unknown>> = A["length"] extends infer L
+    ? [L, ...A] extends [...infer X]
+        ? X
+        : never
+    : never;
+type EnumerateInternal<A extends Array<unknown>, N extends number> = N extends A["length"]
+    ? A
+    : EnumerateInternal<PrependNextNum<A>, N> & number;
+type Enumerate<N extends number> = number extends N
+    ? number
+    : EnumerateInternal<[], N> extends (infer E)[]
+    ? E
+    : never;
+function f<T extends unknown[]>(value: T): Enumerate<T["length"]> {
+    return value.length;
+}
+"#;
+    let diagnostics = diagnostics_with_spans(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .expect("expected TS2322");
+    let return_start = source.find("return").expect("expected return keyword") as u32;
+    assert_eq!(
+        diag.start, return_start,
+        "TS2322 for a primitive returned to a generic indexed conditional alias should anchor at `return`: {diag:?}"
+    );
+}
+
+#[test]
+fn renamed_generic_indexed_conditional_return_mismatch_anchors_return_statement() {
+    let source = r#"
+type AliasForLength<L extends number> = L extends 2 ? 2 : 3;
+function g<Row extends readonly unknown[]>(items: Row): AliasForLength<Row["length"]> {
+    return items.length;
+}
+"#;
+    let diagnostics = diagnostics_with_spans(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .expect("expected TS2322");
+    let return_start = source.find("return").expect("expected return keyword") as u32;
+    assert_eq!(
+        diag.start, return_start,
+        "TS2322 should keep the return-statement anchor across renamed aliases and binders: {diag:?}"
+    );
+}
+
 /// Minimal Promise definition so async tests can resolve Promise<T>.
 const PROMISE_DEF: &str = "interface Promise<T> { then<U>(cb: (val: T) => U): Promise<U>; }";
 

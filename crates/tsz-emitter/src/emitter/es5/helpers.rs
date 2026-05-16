@@ -551,6 +551,7 @@ impl<'a> Printer<'a> {
         self.write(") ");
         let prev_emitting_function_body_block = self.emitting_function_body_block;
         self.emitting_function_body_block = true;
+        self.prepare_logical_assignment_value_temps(method.body);
         if param_transforms.has_transforms() {
             self.emit_block_with_param_prologue(method.body, &param_transforms);
         } else {
@@ -608,6 +609,68 @@ impl<'a> Printer<'a> {
         source_range: Option<(u32, u32)>,
         has_trailing_comma: bool,
     ) {
+        self.emit_object_literal_without_spread_es5_with_layout(
+            elements,
+            source_range,
+            has_trailing_comma,
+            true,
+            true,
+        );
+    }
+
+    pub(in crate::emitter) fn try_emit_object_literal_es5_return_expression(
+        &mut self,
+        expression: NodeIndex,
+    ) -> bool {
+        if !self.ctx.target_es5 {
+            return false;
+        }
+
+        let Some(node) = self.arena.get(expression) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+
+        let Some(literal) = self.arena.get_literal_expr(node) else {
+            return false;
+        };
+        if literal
+            .elements
+            .nodes
+            .iter()
+            .any(|&idx| emit_utils::is_spread_element(self.arena, idx))
+        {
+            return false;
+        }
+        if !literal
+            .elements
+            .nodes
+            .iter()
+            .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx))
+        {
+            return false;
+        }
+
+        self.emit_object_literal_without_spread_es5_with_layout(
+            &literal.elements.nodes,
+            Some((node.pos, node.end)),
+            self.has_trailing_comma_in_source(node, &literal.elements.nodes),
+            false,
+            false,
+        );
+        true
+    }
+
+    fn emit_object_literal_without_spread_es5_with_layout(
+        &mut self,
+        elements: &[NodeIndex],
+        source_range: Option<(u32, u32)>,
+        has_trailing_comma: bool,
+        wrap_in_parens: bool,
+        use_multiline: bool,
+    ) {
         let first_computed_idx = elements
             .iter()
             .position(|&idx| emit_utils::is_computed_property_member(self.arena, idx))
@@ -626,12 +689,14 @@ impl<'a> Printer<'a> {
         // Get hoisted temp variable name
         let temp_var = self.make_unique_name_hoisted();
 
-        // tsc formats the lowered computed-property comma expression as multi-line
-        // regardless of whether the original object literal was single-line.
+        // Assignment-like expression contexts use the parenthesized multi-line
+        // lowering. A return statement can own the comma expression directly,
+        // and `tsc` keeps that form on one line.
         let _ = source_range;
-        let use_multiline = true;
 
-        self.write("(");
+        if wrap_in_parens {
+            self.write("(");
+        }
         if use_multiline {
             self.increase_indent();
         }
@@ -667,7 +732,9 @@ impl<'a> Printer<'a> {
         if use_multiline {
             self.decrease_indent();
         }
-        self.write(")");
+        if wrap_in_parens {
+            self.write(")");
+        }
     }
 
     /// Emit object literal with spread using __assign pattern
@@ -1244,6 +1311,9 @@ impl<'a> Printer<'a> {
             let body_node = self.arena.get(func.body);
             let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
             let needs_param_prologue = param_transforms.has_transforms();
+            let prev_emitting_function_body_block = self.emitting_function_body_block;
+            self.emitting_function_body_block = true;
+            self.prepare_logical_assignment_value_temps(func.body);
 
             if is_block {
                 // Check if it's a simple single-return block
@@ -1259,6 +1329,7 @@ impl<'a> Printer<'a> {
                                 self.write_line();
                                 self.write("}");
                             }
+                            self.emitting_function_body_block = prev_emitting_function_body_block;
                             self.pop_temp_scope();
                             return;
                         }
@@ -1314,6 +1385,7 @@ impl<'a> Printer<'a> {
                     self.write(" }");
                 }
             }
+            self.emitting_function_body_block = prev_emitting_function_body_block;
             self.pop_temp_scope();
         }
     }
@@ -1422,6 +1494,9 @@ impl<'a> Printer<'a> {
             false
         };
 
+        let prev_emitting_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = true;
+        self.prepare_logical_assignment_value_temps(func.body);
         if param_transforms.has_transforms() {
             self.emit_block_with_param_prologue(func.body, &param_transforms);
         } else if is_simple_body {
@@ -1429,6 +1504,7 @@ impl<'a> Printer<'a> {
         } else {
             self.emit(func.body);
         }
+        self.emitting_function_body_block = prev_emitting_function_body_block;
         self.pop_temp_scope();
         if self_paren {
             self.write(")");
@@ -1470,11 +1546,15 @@ impl<'a> Printer<'a> {
         // No return type for JavaScript
 
         self.write_space();
+        let prev_emitting_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = true;
+        self.prepare_logical_assignment_value_temps(func.body);
         if param_transforms.has_transforms() {
             self.emit_block_with_param_prologue(func.body, &param_transforms);
         } else {
             self.emit(func.body);
         }
+        self.emitting_function_body_block = prev_emitting_function_body_block;
         self.pop_temp_scope();
     }
 

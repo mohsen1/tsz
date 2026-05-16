@@ -71,6 +71,27 @@ fn computed_property_format_structure() {
     );
 }
 
+#[test]
+fn computed_property_return_uses_function_scoped_temp_without_parens() {
+    let source = r#"var a = "a";
+var b = "b";
+var result = (function () {
+    return { [a]: 1, [b]: 1 };
+})();"#;
+    let output = emit_es5(source);
+
+    assert!(
+        output.contains(
+            "function () {\n    var _a;\n    return _a = {}, _a[a] = 1, _a[b] = 1, _a;\n}"
+        ),
+        "Computed object return should declare the temp in the function and own the comma expression.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return (_a ="),
+        "Return statements should not wrap ES5 computed-object lowering in a parenthesized multiline expression.\nOutput:\n{output}"
+    );
+}
+
 /// Plain object-literal methods need only method-shorthand lowering, not the
 /// computed-property temp/comma-expression transform.
 #[test]

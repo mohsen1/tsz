@@ -18,28 +18,6 @@ impl<'a> Printer<'a> {
         self.pending_source_pos.take()
     }
 
-    pub(in crate::emitter) fn has_recovered_accessor_modifier(&self, node: &Node) -> bool {
-        let Some(source_text) = self.source_text else {
-            return false;
-        };
-        let mut end = std::cmp::min(node.pos as usize, source_text.len());
-        let bytes = source_text.as_bytes();
-
-        while end > 0 && matches!(bytes[end - 1], b' ' | b'\t') {
-            end -= 1;
-        }
-        if end == 0 || matches!(bytes[end - 1], b'\n' | b'\r') {
-            return false;
-        }
-
-        let mut start = end;
-        while start > 0 && bytes[start - 1].is_ascii_alphabetic() {
-            start -= 1;
-        }
-
-        &source_text[start..end] == "accessor"
-    }
-
     // =========================================================================
     // Output Helpers (delegate to SourceWriter)
     // pub(super) for access from submodules (expressions, statements, declarations)
@@ -533,6 +511,31 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(super) fn write_binding_identifier_text(&mut self, idx: NodeIndex) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        let Some(ident) = self.arena.get_identifier(node) else {
+            return;
+        };
+
+        let original_text = &ident.escaped_text;
+        let emit_text = ident.original_text.as_deref().unwrap_or(original_text);
+        if let Some(renamed) = self.ctx.block_scope_state.get_emitted_name(original_text)
+            && renamed != *original_text
+        {
+            if let Some(source_pos) = self.take_pending_source_pos() {
+                self.writer
+                    .write_node_with_name(&renamed, source_pos, original_text);
+            } else {
+                self.writer.write(&renamed);
+            }
+            return;
+        }
+
+        self.write_identifier(emit_text);
+    }
+
     pub(in crate::emitter) fn is_static_block_await_identifier(&self, idx: NodeIndex) -> bool {
         self.ctx.flags.in_class_static_block && self.get_identifier_text_idx(idx) == "await"
     }
@@ -802,10 +805,22 @@ impl<'a> Printer<'a> {
                 && binary.operator_token == SyntaxKind::EqualsToken as u16
                 && self.assignment_pattern_has_object_rest(binary.left)
             {
-                let source_simple = self
+                let mut source_simple = self
                     .arena
                     .get(binary.right)
                     .is_some_and(|n| n.is_identifier());
+                if source_simple {
+                    let rhs_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena,
+                        binary.right,
+                    );
+                    if let Some(left_node) = self.arena.get(binary.left)
+                        && !rhs_name.is_empty()
+                        && self.assignment_lhs_reassigns_identifier(left_node, &rhs_name)
+                    {
+                        source_simple = false;
+                    }
+                }
                 count +=
                     self.estimate_object_rest_assignment_pattern_temps(binary.left, source_simple);
             }
@@ -857,16 +872,34 @@ impl<'a> Printer<'a> {
                 };
                 if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
                     && let Some(prop) = self.arena.get_property_assignment(elem_node)
-                    && self.assignment_pattern_has_object_rest(prop.initializer)
                 {
-                    let nested_source_simple = self
-                        .arena
-                        .get(prop.initializer)
-                        .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
-                    count += self.estimate_object_rest_assignment_pattern_temps(
-                        prop.initializer,
-                        nested_source_simple,
-                    );
+                    let is_dynamic_computed =
+                        self.arena.get(prop.name).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        }) && self.get_property_key_text(prop.name).is_none();
+                    if is_dynamic_computed {
+                        count += 1;
+                        if self.arena.get(prop.initializer).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::BINARY_EXPRESSION
+                                || n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                || n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        }) {
+                            count += 1;
+                        }
+                    }
+
+                    if self.assignment_pattern_has_object_rest(prop.initializer) {
+                        let nested_source_simple = self
+                            .arena
+                            .get(prop.initializer)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
+                        count += self.estimate_object_rest_assignment_pattern_temps(
+                            prop.initializer,
+                            nested_source_simple,
+                        );
+                    }
                 }
             }
 
