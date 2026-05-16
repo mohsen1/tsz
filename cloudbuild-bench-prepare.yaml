@@ -37,10 +37,19 @@ steps:
         git \
         hyperfine \
         jq \
-        nodejs \
-        npm \
-        pkg-config
+        pkg-config \
+        xz-utils
       rm -rf /var/lib/apt/lists/*
+
+      node_version="22.13.1"
+      node_arch="x64"
+      curl -fsSL "https://nodejs.org/dist/v${node_version}/node-v${node_version}-linux-${node_arch}.tar.xz" \
+        | tar -xJ -C /usr/local --strip-components=1
+
+      # Cloud Build source archives do not include `.git`, but the benchmark
+      # prep fingerprint uses `git ls-files` for tracked source inputs.
+      git init --quiet
+      git add -A
 
       rustup component add llvm-tools-preview
 
