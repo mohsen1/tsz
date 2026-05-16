@@ -40,39 +40,78 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let db = self.ctx.types.as_type_database();
-        if query::is_callable_type(db, inst_constraint)
+        let constraint_is_callable = query::is_callable_type(db, inst_constraint)
             || self.is_function_constraint(constraint_resolved)
-            || self.is_function_constraint(inst_constraint)
+            || self.is_function_constraint(inst_constraint);
+
+        let resolved_type_arg = self.resolve_lazy_type(type_arg);
+        if matches!(resolved_type_arg, TypeId::ANY | TypeId::ERROR) {
+            return false;
+        }
+
+        let Some(instantiated_type_arg) =
+            self.instantiate_type_ref_argument_from_syntax(type_arg, type_arg_idx)
+        else {
+            return false;
+        };
+        if instantiated_type_arg == type_arg
+            || matches!(instantiated_type_arg, TypeId::ANY | TypeId::ERROR)
+            || query::contains_type_parameters(self.ctx.types, instantiated_type_arg)
         {
             return false;
         }
 
-        let evaluated_type_arg = self.evaluate_type_for_assignability(type_arg);
-        let Some(syntax_instantiated_type_arg) = self
-            .instantiate_type_ref_argument_from_syntax(type_arg, type_arg_idx)
-            .map(|instantiated| self.evaluate_type_for_assignability(instantiated))
-        else {
-            return false;
-        };
+        let syntax_instantiated_type_arg =
+            self.evaluate_type_for_assignability(instantiated_type_arg);
 
-        syntax_instantiated_type_arg != type_arg
-            && !matches!(evaluated_type_arg, TypeId::ANY | TypeId::ERROR)
-            && !query::contains_type_parameters(self.ctx.types, syntax_instantiated_type_arg)
-            && (self.is_assignable_to(syntax_instantiated_type_arg, inst_constraint)
-                || self.base_union_members_satisfy_constraint(
-                    syntax_instantiated_type_arg,
-                    inst_constraint,
-                )
-                || self
-                    .satisfies_array_like_constraint(syntax_instantiated_type_arg, inst_constraint))
+        if matches!(syntax_instantiated_type_arg, TypeId::ANY | TypeId::ERROR)
+            || query::contains_type_parameters(self.ctx.types, syntax_instantiated_type_arg)
+        {
+            return false;
+        }
+
+        if constraint_is_callable {
+            let db = self.ctx.types.as_type_database();
+            return query::is_callable_type(db, syntax_instantiated_type_arg)
+                || query::callable_shape_for_type(db, syntax_instantiated_type_arg).is_some()
+                || self.is_assignable_to(syntax_instantiated_type_arg, inst_constraint);
+        }
+
+        self.is_assignable_to(syntax_instantiated_type_arg, inst_constraint)
+            || self.base_union_members_satisfy_constraint(
+                syntax_instantiated_type_arg,
+                inst_constraint,
+            )
+            || self.satisfies_array_like_constraint(syntax_instantiated_type_arg, inst_constraint)
     }
 
-    fn instantiate_type_ref_argument_from_syntax(
+    pub(crate) fn instantiate_type_ref_argument_from_syntax(
         &mut self,
         type_arg: TypeId,
         type_arg_idx: NodeIndex,
     ) -> Option<TypeId> {
-        self.instantiate_type_ref_argument_from_syntax_inner(type_arg, type_arg_idx, 0)
+        let cache_key = (
+            self.ctx.current_file_idx,
+            type_arg_idx.0,
+            type_arg,
+            self.type_reference_arg_validation_scope_key(),
+        );
+        if let Some(cached) = self
+            .ctx
+            .type_reference_validation_caches
+            .syntax_instantiation
+            .get(&cache_key)
+            .copied()
+        {
+            return cached;
+        }
+        let result =
+            self.instantiate_type_ref_argument_from_syntax_inner(type_arg, type_arg_idx, 0);
+        self.ctx
+            .type_reference_validation_caches
+            .syntax_instantiation
+            .insert(cache_key, result);
+        result
     }
 
     fn instantiate_type_ref_argument_from_syntax_inner(
@@ -147,11 +186,23 @@ impl<'a> CheckerState<'a> {
         }
         let args = args?;
 
-        let (_body_type, mut params) = self.type_reference_symbol_type_with_params(sym_id);
+        let (body_type, mut params) = if self
+            .get_cross_file_symbol(sym_id)
+            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS))
+            && self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .is_some_and(|file_idx| file_idx != self.ctx.current_file_idx)
+        {
+            self.delegate_cross_arena_symbol_resolution(sym_id)
+                .unwrap_or_else(|| self.type_reference_symbol_type_with_params(sym_id))
+        } else {
+            self.type_reference_symbol_type_with_params(sym_id)
+        };
         if params.is_empty() {
             params = self.get_display_type_params_for_symbol(sym_id);
         }
-        if params.is_empty() {
+        if params.is_empty() || matches!(body_type, TypeId::ANY | TypeId::ERROR) {
             return None;
         }
 
@@ -169,7 +220,7 @@ impl<'a> CheckerState<'a> {
 
         let instantiated = crate::query_boundaries::common::instantiate_type(
             self.ctx.types,
-            type_arg,
+            body_type,
             &substitution,
         );
         (instantiated != type_arg).then_some(instantiated)

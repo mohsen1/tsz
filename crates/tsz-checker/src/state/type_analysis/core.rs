@@ -2026,13 +2026,52 @@ impl<'a> CheckerState<'a> {
             if self.type_parameter_default_syntactically_satisfies_constraint(param_idx) {
                 continue;
             }
-            if !self.is_assignable_to(default_type, constraint_type) {
+            let mut default_satisfies = self.is_assignable_to(default_type, constraint_type);
+            if !default_satisfies {
+                self.ensure_refs_resolved(default_type);
+                self.ensure_refs_resolved(constraint_type);
+                let evaluated_default = self.evaluate_type_for_assignability(default_type);
+                let evaluated_constraint = self.evaluate_type_for_assignability(constraint_type);
+                if evaluated_default != default_type
+                    && !matches!(
+                        evaluated_default,
+                        TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
+                    )
+                {
+                    default_satisfies = self
+                        .is_assignable_to(evaluated_default, evaluated_constraint)
+                        || self.satisfies_array_like_constraint(
+                            evaluated_default,
+                            evaluated_constraint,
+                        )
+                        || self.conditional_result_branches_satisfy_constraint(
+                            evaluated_default,
+                            evaluated_constraint,
+                        );
+                }
+            }
+            if !default_satisfies {
                 let Some(node) = self.ctx.arena.get(param_idx) else {
                     continue;
                 };
                 let Some(data) = self.ctx.arena.get_type_parameter(node) else {
                     continue;
                 };
+                if let Some(instantiated_default) =
+                    self.instantiate_type_ref_argument_from_syntax(default_type, data.default)
+                {
+                    let evaluated_default =
+                        self.evaluate_type_for_assignability(instantiated_default);
+                    default_satisfies = self.is_assignable_to(evaluated_default, constraint_type)
+                        || self.satisfies_array_like_constraint(evaluated_default, constraint_type)
+                        || self.conditional_result_branches_satisfy_constraint(
+                            evaluated_default,
+                            constraint_type,
+                        );
+                }
+                if default_satisfies {
+                    continue;
+                }
                 let type_str = self.format_type(default_type);
                 let constraint_str = self.format_type(constraint_type);
                 self.error_at_node_msg(
@@ -2724,7 +2763,9 @@ impl<'a> CheckerState<'a> {
                 // producing a new TypeId.  Register this evaluated TypeId too so
                 // diagnostic formatting can display the alias name regardless of
                 // whether the raw or evaluated form is referenced.
-                if self.can_register_evaluated_alias_form(def_id, result) {
+                if !generic_query::contains_free_type_parameters(self.ctx.types, result)
+                    && self.can_register_evaluated_alias_form(def_id, result)
+                {
                     let evaluated = self.evaluate_type_with_env(result);
                     if evaluated != result {
                         self.ctx
