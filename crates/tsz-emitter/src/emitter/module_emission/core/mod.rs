@@ -951,7 +951,8 @@ impl<'a> Printer<'a> {
             };
 
         let clause_emits_export_prefix = clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-            && self.is_es5_empty_binding_pattern_export_statement(clause_node);
+            && (self.is_es5_empty_binding_pattern_export_statement(clause_node)
+                || self.is_esm_object_rest_export_statement(clause_node));
 
         if class_has_es_decorators {
             // Emit decorators before `export`

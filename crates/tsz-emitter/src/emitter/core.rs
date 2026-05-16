@@ -577,6 +577,10 @@ pub struct Printer<'a> {
     /// collection and consumed when emitting execute-body initializers.
     pub(crate) system_empty_binding_temps: FxHashMap<u32, (String, Option<String>)>,
 
+    /// `SystemJS` object-rest export temps reserved during outer-scope hoist
+    /// collection and consumed when emitting execute-body export initializers.
+    pub(crate) system_object_rest_export_temps: FxHashMap<u32, String>,
+
     /// Byte offset where CJS destructuring export temps should be inserted.
     pub(crate) cjs_destr_hoist_byte_offset: usize,
     /// Line number where CJS destructuring export temps should be inserted.
@@ -1033,6 +1037,7 @@ impl<'a> Printer<'a> {
             block_scoped_private_temps: Vec::new(),
             cjs_destructuring_export_temps: Vec::new(),
             system_empty_binding_temps: FxHashMap::default(),
+            system_object_rest_export_temps: FxHashMap::default(),
             cjs_destr_hoist_byte_offset: 0,
             cjs_destr_hoist_line: 0_u32,
             preallocated_temp_names: VecDeque::new(),

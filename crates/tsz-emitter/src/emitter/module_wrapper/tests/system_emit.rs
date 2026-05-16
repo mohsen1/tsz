@@ -707,6 +707,39 @@ fn system_object_binding_initializer_assigns_hoisted_name() {
 }
 
 #[test]
+fn system_exported_object_rest_uses_planned_temp() {
+    let source = "export const { x, ...rest } = { x: 'x', y: 'y' };\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ESNext,
+            no_emit_helpers: true,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _a, x, rest;"),
+        "System wrapper should hoist the object-rest temp before exported bindings.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = { x: 'x', y: 'y' }, exports_1(\"x\", x = _a.x), exports_1(\"rest\", rest = __rest(_a, [\"x\"]));"),
+        "System execute body should export the planned object-rest assignments.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("{ x, ...rest } ="),
+        "System output should not emit a raw object-rest assignment pattern.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_preserve_jsx_comments_survive_class_expression_wrapper() {
     use crate::emitter::JsxEmit;
 
