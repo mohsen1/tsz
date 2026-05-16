@@ -388,6 +388,12 @@ impl<'a> Printer<'a> {
         // Pass transform directives to the ClassES5Emitter
         es5_emitter.set_transforms(self.transforms.clone());
         es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+        es5_emitter.set_printer_options(self.ctx.options.clone());
+        es5_emitter.set_module_kind(
+            self.ctx
+                .original_module_kind
+                .unwrap_or(self.ctx.options.module),
+        );
         if let Some(text) = self.source_text_for_map() {
             if self.writer.has_source_map() {
                 es5_emitter.set_source_map_context(text, self.writer.current_source_index());
@@ -564,6 +570,12 @@ impl<'a> Printer<'a> {
                     es5_emitter.set_indent_level(self.writer.indent_level());
                     es5_emitter.set_transforms(self.transforms.clone());
                     es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+                    es5_emitter.set_printer_options(self.ctx.options.clone());
+                    es5_emitter.set_module_kind(
+                        self.ctx
+                            .original_module_kind
+                            .unwrap_or(self.ctx.options.module),
+                    );
                     if let Some(text) = self.source_text_for_map() {
                         if self.writer.has_source_map() {
                             es5_emitter
@@ -1711,6 +1723,17 @@ impl<'a> Printer<'a> {
         if self.contains_import_meta(statements) {
             return true;
         }
+        // AMD/UMD/System lower dynamic import through the module wrapper runtime.
+        // A file that only contains `import(expr)` still needs that wrapper so
+        // the factory `require`/System context is in scope. CommonJS scripts do
+        // not become external modules solely because of dynamic import.
+        if matches!(
+            self.ctx.options.module,
+            ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System
+        ) && self.source_has_dynamic_import_call(statements)
+        {
+            return true;
+        }
         false
     }
 
@@ -2142,6 +2165,29 @@ impl<'a> Printer<'a> {
                     .get_identifier_text_opt(access.name_or_argument)
                     .as_deref()
                     == Some("meta")
+            {
+                return true;
+            }
+            for child in self.arena.get_children(idx) {
+                stack.push(child);
+            }
+        }
+        false
+    }
+
+    pub(in crate::emitter) fn source_has_dynamic_import_call(&self, statements: &NodeList) -> bool {
+        let mut stack: Vec<NodeIndex> = statements.nodes.clone();
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() {
+                continue;
+            }
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(call) = self.arena.get_call_expr(node)
+                && let Some(expr_node) = self.arena.get(call.expression)
+                && expr_node.kind == SyntaxKind::ImportKeyword as u16
             {
                 return true;
             }
