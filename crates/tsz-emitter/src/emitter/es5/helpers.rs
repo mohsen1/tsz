@@ -1265,6 +1265,7 @@ impl<'a> Printer<'a> {
                         if !needs_param_prologue
                             && block.statements.nodes.len() == 1
                             && self.is_simple_return_statement(block.statements.nodes[0])
+                            && self.is_single_line(block_node)
                         {
                             self.emit_single_line_block(func.body);
                         } else if needs_param_prologue {
@@ -1288,15 +1289,9 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.increase_indent();
                 self.emit_param_prologue(&param_transforms);
-                if needs_parens {
-                    self.write("return (");
-                    self.emit(func.body);
-                    self.write(");");
-                } else {
-                    self.write("return ");
-                    self.emit(func.body);
-                    self.write(";");
-                }
+                let comments_before_return =
+                    self.es5_arrow_concise_body_needs_multiline_return(func.body);
+                self.emit_es5_arrow_concise_return(func.body, needs_parens, comments_before_return);
                 self.write_line();
                 self.decrease_indent();
                 self.write("}");
@@ -1305,17 +1300,52 @@ impl<'a> Printer<'a> {
                 // If the body is (or resolves to) an object literal, wrap in parens
                 // to disambiguate from a block: () => ({})  →  function () { return ({}); }
                 let needs_parens = self.concise_body_needs_parens(func.body);
-                if needs_parens {
-                    self.write("{ return (");
-                    self.emit(func.body);
-                    self.write("); }");
+                if self.es5_arrow_concise_body_needs_multiline_return(func.body) {
+                    self.write("{");
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit_es5_arrow_concise_return(func.body, needs_parens, true);
+                    self.write_line();
+                    self.decrease_indent();
+                    self.write("}");
                 } else {
-                    self.write("{ return ");
-                    self.emit(func.body);
-                    self.write("; }");
+                    self.write("{ ");
+                    self.emit_es5_arrow_concise_return(func.body, needs_parens, false);
+                    self.write(" }");
                 }
             }
             self.pop_temp_scope();
+        }
+    }
+
+    fn es5_arrow_concise_body_needs_multiline_return(&self, body: NodeIndex) -> bool {
+        self.arena.get(body).is_some_and(|body_node| {
+            self.pending_comment_before_pos_starts_after_newline(body_node.pos)
+        })
+    }
+
+    fn emit_es5_arrow_concise_return(
+        &mut self,
+        body: NodeIndex,
+        needs_parens: bool,
+        comments_before_return: bool,
+    ) {
+        if comments_before_return && let Some(body_node) = self.arena.get(body) {
+            self.emit_comments_before_pos(body_node.pos);
+        }
+        if needs_parens {
+            self.write("return (");
+        } else {
+            self.write("return ");
+        }
+        if !comments_before_return && let Some(body_node) = self.arena.get(body) {
+            self.emit_comments_before_pos(body_node.pos);
+        }
+        self.emit(body);
+        if needs_parens {
+            self.write(");");
+        } else {
+            self.write(";");
         }
     }
 
@@ -1512,6 +1542,7 @@ impl<'a> Printer<'a> {
 
         // Build the __generator body
         let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
+        async_emitter.set_system_import_meta(self.in_system_execute_body);
         async_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         // The generator body is nested inside `function () { ... }` in the __awaiter
         // callback, so render it at one extra indent level (matching tsc multi-line format).
@@ -1531,12 +1562,12 @@ impl<'a> Printer<'a> {
             .get(func.body)
             .is_some_and(|n| self.is_single_line(n));
         let promise_ctor = self.extract_awaiter_promise_constructor(func.type_annotation);
-        let (generator_body, hoisted_vars) = if body_has_await {
-            let (generator_body, hoisted_vars, _) =
-                async_emitter.emit_generator_body_with_await_and_hoisted_vars(func.body);
-            (generator_body, hoisted_vars)
+        let (generator_body, hoisted_var_groups) = if body_has_await {
+            let (generator_body, hoisted_var_groups, _) =
+                async_emitter.emit_generator_body_with_await_and_hoisted_var_groups(func.body);
+            (generator_body, hoisted_var_groups)
         } else {
-            async_emitter.emit_simple_generator_body_with_hoisted_vars(func.body)
+            async_emitter.emit_simple_generator_body_with_hoisted_var_groups(func.body)
         };
         self.ctx.destructuring_state.temp_var_counter = async_emitter.temp_var_counter();
         let generator_mappings = async_emitter.take_mappings();
@@ -1551,7 +1582,11 @@ impl<'a> Printer<'a> {
             self.write(", function () {");
             self.write_line();
             self.increase_indent();
-            self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
+            self.emit_async_arrow_hoisted_var_groups(
+                &hoisted_var_groups,
+                &generator_body,
+                this_expr,
+            );
             self.emit_param_binding_prologue(&param_transforms);
             self.write(&generator_body);
             self.decrease_indent();
@@ -1581,7 +1616,11 @@ impl<'a> Printer<'a> {
             self.write(", function () {");
             self.write_line();
             self.increase_indent();
-            self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
+            self.emit_async_arrow_hoisted_var_groups(
+                &hoisted_var_groups,
+                &generator_body,
+                this_expr,
+            );
             if !generator_mappings.is_empty() && self.writer.has_source_map() {
                 self.writer.write("");
                 let base_line = self.writer.current_line();
@@ -1606,7 +1645,7 @@ impl<'a> Printer<'a> {
             self.write_helper("__awaiter");
             self.write("(");
             self.write(this_expr);
-            if hoisted_vars.is_empty() {
+            if hoisted_var_groups.is_empty() {
                 let can_inline_wrapper = func.equals_greater_than_token
                     && body_is_single_line
                     && !body_has_await
@@ -1630,7 +1669,11 @@ impl<'a> Printer<'a> {
                 self.write(", function () {");
                 self.write_line();
                 self.increase_indent();
-                self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
+                self.emit_async_arrow_hoisted_var_groups(
+                    &hoisted_var_groups,
+                    &generator_body,
+                    this_expr,
+                );
                 if !generator_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
                     let base_line = self.writer.current_line();
@@ -1651,7 +1694,11 @@ impl<'a> Printer<'a> {
                 self.write(", function () {");
                 self.write_line();
                 self.increase_indent();
-                self.emit_async_arrow_hoisted_vars(&hoisted_vars, &generator_body, this_expr);
+                self.emit_async_arrow_hoisted_var_groups(
+                    &hoisted_var_groups,
+                    &generator_body,
+                    this_expr,
+                );
                 if !generator_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
                     let base_line = self.writer.current_line();
@@ -1688,19 +1735,25 @@ impl<'a> Printer<'a> {
         output
     }
 
-    fn emit_async_arrow_hoisted_vars(
+    fn emit_async_arrow_hoisted_var_groups(
         &mut self,
-        hoisted_vars: &[String],
+        hoisted_var_groups: &[Vec<String>],
         generator_body: &str,
         this_expr: &str,
     ) {
-        if !hoisted_vars.is_empty() {
-            for var_name in hoisted_vars {
-                self.write("var ");
-                self.write(var_name);
-                self.write(";");
-                self.write_line();
+        for group in hoisted_var_groups {
+            if group.is_empty() {
+                continue;
             }
+            self.write("var ");
+            for (i, var_name) in group.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write(var_name);
+            }
+            self.write(";");
+            self.write_line();
         }
 
         if this_expr != "this" && generator_body.contains("return _this") {

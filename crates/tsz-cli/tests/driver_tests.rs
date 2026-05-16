@@ -3156,7 +3156,6 @@ declare module "server" {
 }
 
 #[test]
-#[ignore] // TODO: UMD global class surface should stay unaugmented
 fn compile_project_umd_global_class_surface_stays_unaugmented() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -3217,8 +3216,7 @@ v.reverse();
     "target": "es2015",
     "module": "commonjs",
     "strict": true,
-    "noEmit": true,
-    "noImplicitReferences": true
+    "noEmit": true
   },
   "files": ["a.ts"]
 }"#,
@@ -3230,8 +3228,7 @@ v.reverse();
     "target": "es2015",
     "module": "commonjs",
     "strict": true,
-    "noEmit": true,
-    "noImplicitReferences": true
+    "noEmit": true
   },
   "files": ["b.ts"]
 }"#,

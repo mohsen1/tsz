@@ -10,15 +10,12 @@ FIXTURE_ROOT="${TSZ_PROJECT_COMPILE_FIXTURE_ROOT:-$ROOT_DIR/.target/project-comp
 PROJECT_TIMEOUT="${TSZ_PROJECT_COMPILE_TIMEOUT:-90}"
 INCLUDE_GENERATED_APPS="${TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS:-1}"
 PROJECT_FILTER="${TSZ_PROJECT_COMPILE_FILTER:-}"
+PROJECT_SET="${TSZ_PROJECT_COMPILE_SET:-required}"
+ALLOW_FAILURES="${TSZ_PROJECT_COMPILE_ALLOW_FAILURES:-0}"
+FAILURES=0
 
-UTILITY_TYPES_REPO="${UTILITY_TYPES_REPO:-https://github.com/piotrwitek/utility-types.git}"
-UTILITY_TYPES_REF="${UTILITY_TYPES_REF:-2ee1f6ecb241651ab22390fee7ee5349942efda2}"
-TS_ESSENTIALS_REPO="${TS_ESSENTIALS_REPO:-https://github.com/ts-essentials/ts-essentials.git}"
-TS_ESSENTIALS_REF="${TS_ESSENTIALS_REF:-5abe8700b42068048bd3c368e0531b6defe56558}"
-RXJS_REPO="${RXJS_REPO:-https://github.com/ReactiveX/rxjs.git}"
-RXJS_REF="${RXJS_REF:-e5351d02e225e275ac0e497c7b66eaa5f0c88791}"
-TYPE_FEST_REPO="${TYPE_FEST_REPO:-https://github.com/sindresorhus/type-fest.git}"
-TYPE_FEST_REF="${TYPE_FEST_REF:-4005f60b65a7bd224154d6da46f45a63b42ce70f}"
+# shellcheck source=scripts/bench/project-fixtures.sh
+source "$ROOT_DIR/scripts/bench/project-fixtures.sh"
 
 if [[ ! -x "$TSZ_BIN" ]]; then
   echo "error: TSZ_BIN is not executable: $TSZ_BIN" >&2
@@ -49,111 +46,78 @@ run_with_timeout() {
 }
 
 ensure_git_fixture() {
-  local name="$1"
-  local repo="$2"
-  local ref="$3"
-  local dir="$4"
-
-  mkdir -p "$(dirname "$dir")"
-  if [[ ! -d "$dir/.git" ]]; then
-    echo "Cloning ${name} fixture..."
-    rm -rf "$dir"
-    git clone --quiet --no-tags --depth 1 "$repo" "$dir"
-  fi
-
-  local current_ref
-  current_ref="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
-  if [[ "$current_ref" != "$ref" ]]; then
-    echo "Pinning ${name} to ${ref:0:12}..."
-    git -C "$dir" fetch --quiet --depth 1 origin "$ref"
-    git -C "$dir" checkout --quiet --detach FETCH_HEAD
-  fi
+  tsz_ensure_git_fixture "$@" 0
 }
 
 write_utility_types_config() {
-  cat > "$FIXTURE_ROOT/utility-types/tsconfig.tsz-guard.json" <<'JSON'
-{
-  "compilerOptions": {
-    "strict": true,
-    "lib": ["dom", "es2017"],
-    "types": [],
-    "target": "ES2015",
-    "module": "commonjs",
-    "skipLibCheck": true,
-    "noEmit": true
-  },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.snap.ts", "src/**/*.spec.ts"]
+  tsz_write_utility_types_config "$FIXTURE_ROOT/utility-types/tsconfig.tsz-guard.json"
 }
-JSON
+
+write_ts_toolbelt_config() {
+  tsz_write_ts_toolbelt_config "$FIXTURE_ROOT/ts-toolbelt/tsconfig.tsz-guard.json"
 }
 
 write_ts_essentials_config() {
-  cat > "$FIXTURE_ROOT/ts-essentials/tsconfig.tsz-guard.json" <<'JSON'
-{
-  "compilerOptions": {
-    "target": "es2017",
-    "module": "commonjs",
-    "strict": true,
-    "lib": ["es2018"],
-    "types": [],
-    "skipLibCheck": true,
-    "noEmit": true,
-    "forceConsistentCasingInFileNames": true
-  },
-  "include": ["lib/**/*.ts"],
-  "exclude": ["test/**/*", "node_modules/**/*"]
-}
-JSON
+  tsz_write_ts_essentials_config "$FIXTURE_ROOT/ts-essentials/tsconfig.tsz-guard.json"
 }
 
 write_rxjs_config() {
-  local rxjs_src_root="src"
-  if [[ -d "$FIXTURE_ROOT/rxjs/packages/rxjs/src/internal" ]]; then
-    rxjs_src_root="packages/rxjs/src"
-  fi
-  cat > "$FIXTURE_ROOT/rxjs/tsconfig.tsz-guard.json" <<JSON
-{
-  "compilerOptions": {
-    "target": "es2017",
-    "module": "esnext",
-    "strict": true,
-    "lib": ["es2018", "dom"],
-    "types": [],
-    "skipLibCheck": true,
-    "noEmit": true,
-    "noCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "bundler"
-  },
-  "include": ["${rxjs_src_root}/internal/**/*.ts"],
-  "exclude": [
-    "**/*.spec.ts",
-    "**/*.test.ts",
-    "node_modules/**/*",
-    "**/internal/observable/dom/**",
-    "**/internal/umd.ts"
-  ]
-}
-JSON
+  tsz_write_rxjs_config \
+    "$FIXTURE_ROOT/rxjs/tsconfig.tsz-guard.json" \
+    "$(tsz_rxjs_src_root "$FIXTURE_ROOT/rxjs")"
 }
 
 write_type_fest_config() {
-  cat > "$FIXTURE_ROOT/type-fest/tsconfig.tsz-guard.json" <<'JSON'
+  tsz_write_type_fest_config "$FIXTURE_ROOT/type-fest/tsconfig.tsz-guard.json"
+}
+
+write_zod_config() {
+  tsz_write_zod_config "$FIXTURE_ROOT/zod/tsconfig.tsz-guard.json"
+}
+
+write_kysely_config() {
+  tsz_write_kysely_globals "$FIXTURE_ROOT/kysely/tsz-bench-globals.d.ts"
+  tsz_write_kysely_config "$FIXTURE_ROOT/kysely/tsconfig.tsz-guard.json"
+}
+
+write_type_challenges_config() {
+  local source_dir="$FIXTURE_ROOT/type-challenges"
+  local compile_dir="$source_dir/.tsz-compile"
+
+  rm -rf "$compile_dir"
+  mkdir -p "$compile_dir/questions" "$compile_dir/utils"
+
+  local template
+  while IFS= read -r template; do
+    local rel="${template#"$source_dir"/}"
+    mkdir -p "$compile_dir/$(dirname "$rel")"
+    cp "$template" "$compile_dir/$rel"
+    printf '\nexport {};\n' >> "$compile_dir/$rel"
+  done < <(find "$source_dir/questions" -maxdepth 2 -name template.ts | sort)
+
+  cp "$source_dir/utils/index.d.ts" "$compile_dir/utils/index.d.ts"
+  cat > "$compile_dir/tsconfig.tsz-guard.json" <<'JSON'
 {
   "compilerOptions": {
     "target": "es2017",
-    "module": "esnext",
+    "lib": ["ESNext"],
+    "module": "commonjs",
+    "moduleResolution": "node",
     "strict": true,
-    "lib": ["es2022"],
-    "types": [],
-    "skipLibCheck": true,
     "noEmit": true,
-    "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "bundler"
+    "types": [],
+    "noImplicitReturns": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
+    "paths": {
+      "@type-challenges/utils": ["utils/index.d.ts"]
+    }
   },
-  "include": ["source/**/*.d.ts", "index.d.ts"],
-  "exclude": ["test-d/**/*", "node_modules/**/*"]
+  "include": ["questions/**/template.ts", "utils/index.d.ts"]
 }
 JSON
 }
@@ -173,6 +137,7 @@ check_project() {
       "$TSZ_BIN" --noEmit -p "$tsconfig" >"$log" 2>&1 || rc=$?
 
   if [[ "$rc" -ne 0 ]]; then
+    FAILURES=$((FAILURES + 1))
     if [[ "$rc" -eq 124 ]]; then
       echo "error: ${name} timed out after ${PROJECT_TIMEOUT}s" >&2
     else
@@ -180,6 +145,10 @@ check_project() {
     fi
     sed -n '1,160p' "$log" >&2 || true
     echo "::endgroup::"
+    if [[ "$ALLOW_FAILURES" == "1" ]]; then
+      echo "::warning::${name} did not compile; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
+      return 0
+    fi
     return "$rc"
   fi
 
@@ -192,6 +161,7 @@ should_check_project() {
   [[ -z "$PROJECT_FILTER" || "$name" =~ $PROJECT_FILTER ]]
 }
 
+run_required_projects() {
 if should_check_project "utility-types-project"; then
   ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$FIXTURE_ROOT/utility-types"
   write_utility_types_config
@@ -232,4 +202,52 @@ if [[ "$INCLUDE_GENERATED_APPS" == "1" ]] \
     node scripts/bench/generate-next-app-fixture.mjs "$FIXTURE_ROOT/next-app-live"
     check_project "nextjs-fresh-app" "$FIXTURE_ROOT/next-app-live/tsconfig.json"
   fi
+fi
+}
+
+run_canary_projects() {
+if should_check_project "ts-toolbelt-project"; then
+  ensure_git_fixture "ts-toolbelt" "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF" "$FIXTURE_ROOT/ts-toolbelt"
+  write_ts_toolbelt_config
+  check_project "ts-toolbelt-project" "$FIXTURE_ROOT/ts-toolbelt/tsconfig.tsz-guard.json"
+fi
+
+if should_check_project "zod-project"; then
+  ensure_git_fixture "zod" "$ZOD_REPO" "$ZOD_REF" "$FIXTURE_ROOT/zod"
+  write_zod_config
+  check_project "zod-project" "$FIXTURE_ROOT/zod/tsconfig.tsz-guard.json"
+fi
+
+if should_check_project "kysely-project"; then
+  ensure_git_fixture "kysely" "$KYSELY_REPO" "$KYSELY_REF" "$FIXTURE_ROOT/kysely"
+  write_kysely_config
+  check_project "kysely-project" "$FIXTURE_ROOT/kysely/tsconfig.tsz-guard.json"
+fi
+
+if should_check_project "type-challenges-project"; then
+  ensure_git_fixture "type-challenges" "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF" "$FIXTURE_ROOT/type-challenges"
+  write_type_challenges_config
+  check_project "type-challenges-project" "$FIXTURE_ROOT/type-challenges/.tsz-compile/tsconfig.tsz-guard.json"
+fi
+}
+
+case "$PROJECT_SET" in
+  required)
+    run_required_projects
+    ;;
+  canary)
+    run_canary_projects
+    ;;
+  all)
+    run_required_projects
+    run_canary_projects
+    ;;
+  *)
+    echo "error: unknown TSZ_PROJECT_COMPILE_SET: $PROJECT_SET" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$FAILURES" -gt 0 ]]; then
+  echo "Project compile failures: $FAILURES"
 fi

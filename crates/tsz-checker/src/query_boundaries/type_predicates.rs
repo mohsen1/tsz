@@ -1,5 +1,12 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
+pub(crate) fn contains_conditional_with_application_extends(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::contains_conditional_with_application_extends(db, type_id)
+}
+
 pub(crate) fn type_predicate_type_assignable_to_parameter_with<F>(
     db: &dyn TypeDatabase,
     predicate_type: TypeId,

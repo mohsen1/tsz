@@ -1199,27 +1199,99 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        let target_display = self.format_type_for_assignability_message(target);
-        let Some(inner) = target_display
-            .strip_prefix("Partial<")
-            .and_then(|display| display.strip_suffix('>'))
-        else {
+        let Some(inner) = self.partial_self_argument_inner_type(target) else {
             return false;
         };
 
-        let source_display = self.format_type_for_assignability_message(source);
-        if source_display == inner {
-            return true;
+        self.type_matches_partial_self_inner(source, inner)
+    }
+
+    fn partial_self_argument_inner_type(&mut self, target: TypeId) -> Option<TypeId> {
+        let (base, args) = self.application_info_or_display_alias(target).or_else(|| {
+            let evaluated = self.evaluate_type_for_assignability(target);
+            self.application_info_or_display_alias(evaluated)
+        })?;
+        self.partial_like_application_inner_arg(base, &args)
+    }
+
+    fn partial_like_application_inner_arg(&self, base: TypeId, args: &[TypeId]) -> Option<TypeId> {
+        if args.len() == 1 && self.application_base_is_lib_partial(base) {
+            return args.first().copied();
         }
 
-        let source_alias = self.ctx.types.get_display_alias(source);
-        if source_alias
-            .is_some_and(|alias| self.format_type_for_assignability_message(alias) == inner)
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))?;
+        let def = self.ctx.definition_store.get(def_id)?;
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || def.type_params.len() != args.len() {
+            return None;
+        }
+        let inner = self.optional_homomorphic_mapped_inner_type(def.body?)?;
+        let param = type_param_info(self.ctx.types, inner)?;
+        let arg_idx = def
+            .type_params
+            .iter()
+            .position(|type_param| type_param.name == param.name)?;
+        args.get(arg_idx).copied()
+    }
+
+    fn optional_homomorphic_mapped_inner_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let mapped = crate::query_boundaries::common::mapped_type_info(self.ctx.types, type_id)?;
+        if mapped.optional_modifier == Some(tsz_solver::MappedModifier::Remove)
+            || mapped.optional_modifier.is_none()
         {
-            return true;
+            return None;
         }
 
-        self.partial_inner_alias_instantiates_to_source(inner, source)
+        let inner =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, mapped.constraint)?;
+        let (template_object, _) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, mapped.template)?;
+        (template_object == inner).then_some(inner)
+    }
+
+    fn application_base_is_lib_partial(&self, base: TypeId) -> bool {
+        let Some(partial_def) = self.ctx.actual_lib_def_id_for_bare_name("Partial") else {
+            return false;
+        };
+        crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))
+            == Some(partial_def)
+    }
+
+    fn type_matches_partial_self_inner(&mut self, source: TypeId, inner: TypeId) -> bool {
+        if source == inner {
+            return true;
+        }
+        self.ctx.types.get_display_alias(source) == Some(inner)
+            || self.partial_inner_alias_instantiates_to_source(inner, source)
+    }
+
+    fn partial_inner_alias_instantiates_to_source(
+        &mut self,
+        inner: TypeId,
+        source: TypeId,
+    ) -> bool {
+        let Some((base, args)) = self.application_info_or_display_alias(inner) else {
+            return false;
+        };
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))
+        else {
+            return false;
+        };
+        let Some(def) = self.ctx.definition_store.get(def_id) else {
+            return false;
+        };
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || def.type_params.len() != args.len() {
+            return false;
+        }
+        let Some(body) = def.body else {
+            return false;
+        };
+
+        let substitution = TypeSubstitution::from_args(self.ctx.types, &def.type_params, &args);
+        let instantiated = instantiate_type(self.ctx.types, body, &substitution);
+        source == instantiated || self.ctx.types.get_display_alias(source) == Some(instantiated)
     }
 
     fn should_suppress_self_referential_generic_function_arg_mismatch(
@@ -1472,43 +1544,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn partial_inner_alias_instantiates_to_source(&mut self, inner: &str, source: TypeId) -> bool {
-        let Some((alias_name, arg_names)) = parse_simple_type_application_display(inner) else {
-            return false;
-        };
-        let alias_atom = self.ctx.types.intern_string(alias_name);
-        let Some(def_ids) = self.ctx.definition_store.find_defs_by_name(alias_atom) else {
-            return false;
-        };
-        let type_args: Vec<_> = arg_names
-            .iter()
-            .filter_map(|arg_name| self.ctx.type_parameter_scope.get(*arg_name).copied())
-            .collect();
-        if type_args.len() != arg_names.len() {
-            return false;
-        }
-
-        def_ids.into_iter().any(|def_id| {
-            let Some(def) = self.ctx.definition_store.get(def_id) else {
-                return false;
-            };
-            if def.kind != tsz_solver::def::DefKind::TypeAlias
-                || def.type_params.len() != type_args.len()
-            {
-                return false;
-            }
-            let Some(body) = def.body else {
-                return false;
-            };
-            let substitution =
-                TypeSubstitution::from_args(self.ctx.types, &def.type_params, &type_args);
-            let instantiated = instantiate_type(self.ctx.types, body, &substitution);
-            instantiated == source
-                || self.evaluate_type_for_assignability(instantiated)
-                    == self.evaluate_type_for_assignability(source)
-        })
-    }
-
     /// Returns true when a bivariant-assignability mismatch should produce a diagnostic.
     ///
     /// Uses the bivariant relation
@@ -1532,8 +1567,26 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        !self.is_assignable_to_bivariant(source, target)
-            && !self.should_skip_weak_union_error(source, target, source_idx)
+        if self.is_assignable_to_bivariant(source, target) {
+            return false;
+        }
+
+        // Route the weak-union check through RelationRequest with the
+        // BivariantCallbacks kind so the pre-computed outcome avoids a
+        // redundant solver round-trip in the fallback path.
+        let request = {
+            use crate::query_boundaries::assignability::RelationRequest;
+            let (ps, pt) = self.prepare_assignability_inputs(source, target);
+            RelationRequest::bivariant_callbacks(ps, pt)
+        };
+        let outcome = self.execute_relation_request(&request);
+        !outcome.weak_union_violation
+            && !self.should_skip_weak_union_error_with_outcome(
+                source,
+                target,
+                source_idx,
+                Some(&outcome),
+            )
     }
 
     /// Check bidirectional assignability.
@@ -2301,13 +2354,14 @@ impl<'a> CheckerState<'a> {
     }
 
     fn iterator_result_required_value_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {
-        let source_display = self.format_type(source);
-        let Some((source_name, source_args)) =
-            parse_simple_type_application_display(&source_display)
-        else {
+        let Some(source_args) = self.iterator_result_application_args(source) else {
             return false;
         };
-        if source_name != "IteratorResult" || source_args.get(1).copied() != Some("undefined") {
+        if source_args
+            .get(1)
+            .copied()
+            .is_none_or(|return_type| !self.type_evaluates_to(return_type, TypeId::UNDEFINED))
+        {
             return false;
         }
 
@@ -2329,6 +2383,19 @@ impl<'a> CheckerState<'a> {
         let value_type = value_prop.type_id;
 
         !self.is_assignable_to(TypeId::UNDEFINED, value_type)
+    }
+
+    fn iterator_result_application_args(&self, type_id: TypeId) -> Option<Vec<TypeId>> {
+        let (base, args) = self.application_info_or_display_alias(type_id)?;
+        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))?;
+        let iterator_result_def =
+            self.resolve_entity_name_text_to_def_id_for_lowering("IteratorResult")?;
+        (def_id == iterator_result_def).then_some(args)
+    }
+
+    fn type_evaluates_to(&mut self, type_id: TypeId, expected: TypeId) -> bool {
+        type_id == expected || self.evaluate_type_for_assignability(type_id) == expected
     }
 
     fn iterator_next_type_display_mismatch(&mut self, source: TypeId, target: TypeId) -> bool {
