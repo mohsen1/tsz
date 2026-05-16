@@ -1108,15 +1108,29 @@ impl<'a> CheckerState<'a> {
 
     fn strip_jsx_readonly_application_alias(&mut self, type_id: TypeId) -> TypeId {
         let type_id = self.resolve_type_for_property_access(type_id);
+        if let Some(inner) = self.readonly_mapped_application_arg(type_id) {
+            return self.resolve_type_for_property_access(inner);
+        }
+
         let type_id = self.evaluate_type_with_env(type_id);
+        if let Some(inner) = self.readonly_mapped_application_arg(type_id) {
+            return self.resolve_type_for_property_access(inner);
+        }
+        type_id
+    }
+
+    fn readonly_mapped_application_arg(&self, type_id: TypeId) -> Option<TypeId> {
         if let Some((base, args)) =
             crate::query_boundaries::common::application_info(self.ctx.types, type_id)
             && args.len() == 1
-            && self.format_type(base) == "Readonly"
+            && crate::query_boundaries::common::is_mapped_type_with_readonly_modifier(
+                self.ctx.types,
+                base,
+            )
         {
-            return self.resolve_type_for_property_access(args[0]);
+            return Some(args[0]);
         }
-        type_id
+        None
     }
 
     fn children_type_accepts_text(&mut self, children_type: TypeId) -> bool {

@@ -862,7 +862,7 @@ impl<'a> Printer<'a> {
         if suppress_jsx_import_legacy
             && self.ctx.is_effectively_commonjs()
             && matches!(
-                self.ctx.options.jsx,
+                self.effective_jsx_emit(),
                 JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
             )
         {
@@ -871,12 +871,13 @@ impl<'a> Printer<'a> {
                 self.jsx_legacy_cjs_runtime_var = Some(self.make_unique_name());
             }
         }
-        let jsx_legacy_dev_file_name_text =
-            if suppress_jsx_import_legacy && matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
-                self.jsx_dev_file_name_text()
-            } else {
-                None
-            };
+        let jsx_legacy_dev_file_name_text = if suppress_jsx_import_legacy
+            && matches!(self.effective_jsx_emit(), JsxEmit::ReactJsxDev)
+        {
+            self.jsx_dev_file_name_text()
+        } else {
+            None
+        };
         let jsx_import_text = if suppress_jsx_import_legacy {
             None
         } else {
