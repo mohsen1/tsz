@@ -15,7 +15,9 @@ mod aliases;
 mod caches;
 mod compiler_options;
 mod cross_file_delegation_cache;
-pub use caches::{NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache};
+pub use caches::{
+    NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache, TypeReferenceValidationCaches,
+};
 pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;
 pub(crate) use compiler_options::should_resolve_jsdoc_for_file;
@@ -867,9 +869,8 @@ pub struct CheckerContext<'a> {
     /// Current type parameter scope.
     pub type_parameter_scope: FxHashMap<String, TypeId>,
 
-    /// Type-reference argument validations that completed without diagnostics
-    /// in the current lexical type-parameter scope.
-    pub type_reference_arg_validation_cache: FxHashSet<(u32, u32, u64)>,
+    /// Checker-local memos for type-reference argument validation.
+    pub type_reference_validation_caches: TypeReferenceValidationCaches,
 
     /// Depth counter for conditional type `extends` clauses.
     /// Incremented when recursing into the `extends_type` of a conditional type,

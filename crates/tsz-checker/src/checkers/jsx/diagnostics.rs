@@ -1084,7 +1084,7 @@ impl<'a> CheckerState<'a> {
 
         // Get component name for the diagnostic message.
         let component_name = self.get_jsx_tag_name_text(tag_name_idx);
-        let children_type_str = self.jsx_children_type_str_for_display(children_type);
+        let children_type_str = self.jsx_children_type_display(props_type, children_type);
 
         use crate::diagnostics::diagnostic_codes;
         for &text_idx in text_child_indices {

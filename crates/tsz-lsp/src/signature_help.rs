@@ -19,7 +19,11 @@ use tsz_solver::{
     visitor,
 };
 
-use crate::intrinsic_params::{IntrinsicParamSpec, intrinsic_method_params};
+use crate::intrinsic_params::{
+    IntrinsicParamSpec, IntrinsicParamTypeHint, bigint_intrinsic_method_params,
+    boolean_intrinsic_method_params, number_intrinsic_method_params,
+    string_intrinsic_method_params,
+};
 #[cfg(test)]
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
@@ -2533,12 +2537,18 @@ impl<'a> SignatureHelpProvider<'a> {
         let raw_obj_type = checker.get_type_of_node(access.expression);
         let obj_type = checker.resolve_lazy_type(raw_obj_type);
         let kind = apparent_intrinsic_kind(self.interner, obj_type)?;
-        let param_specs: &[IntrinsicParamSpec] = intrinsic_method_params(kind, method_name)?;
+        let param_specs: &[IntrinsicParamSpec] = match kind {
+            tsz_solver::IntrinsicKind::String => string_intrinsic_method_params(method_name),
+            tsz_solver::IntrinsicKind::Number => number_intrinsic_method_params(method_name),
+            tsz_solver::IntrinsicKind::Boolean => boolean_intrinsic_method_params(method_name),
+            tsz_solver::IntrinsicKind::Bigint => bigint_intrinsic_method_params(method_name),
+            _ => None,
+        }?;
 
         let params: Vec<ParamInfo> = param_specs
             .iter()
             .map(|spec| {
-                let base_ty = spec.ty.to_type_id();
+                let base_ty = Self::intrinsic_param_type_hint_to_type_id(spec.ty);
                 let type_id = if spec.rest {
                     self.interner.array(base_ty)
                 } else {
@@ -2571,6 +2581,13 @@ impl<'a> SignatureHelpProvider<'a> {
             has_explicit_type_args,
             explicit_type_arg_texts,
         ))
+    }
+
+    const fn intrinsic_param_type_hint_to_type_id(hint: IntrinsicParamTypeHint) -> TypeId {
+        match hint {
+            IntrinsicParamTypeHint::String => TypeId::STRING,
+            IntrinsicParamTypeHint::Number => TypeId::NUMBER,
+        }
     }
 
     fn signature_candidates_for_shape(
