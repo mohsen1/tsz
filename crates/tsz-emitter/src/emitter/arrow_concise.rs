@@ -7,7 +7,7 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_arrow_concise_body_with_temp_prologue(&mut self, body: NodeIndex) {
-        self.write("{");
+        self.open_brace();
         self.write_line();
         self.increase_indent();
         let hoist_offset = self.writer.len();
@@ -38,6 +38,6 @@ impl<'a> Printer<'a> {
 
         self.write_line();
         self.decrease_indent();
-        self.write("}");
+        self.close_brace();
     }
 }

@@ -169,14 +169,14 @@ impl<'a> Printer<'a> {
             }
             self.write("children: ");
             if is_jsxs {
-                self.write("[");
-                for (i, child) in children.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
+                self.bracketed(|emitter| {
+                    for (i, child) in children.iter().enumerate() {
+                        if i > 0 {
+                            emitter.write(", ");
+                        }
+                        emitter.emit_jsx_child_as_expression(*child);
                     }
-                    self.emit_jsx_child_as_expression(*child);
-                }
-                self.write("]");
+                });
             } else {
                 self.emit_jsx_child_as_expression(children[0]);
             }
@@ -229,14 +229,14 @@ impl<'a> Printer<'a> {
                 }
                 self.write("children: ");
                 if is_jsxs {
-                    self.write("[");
-                    for (i, child) in children.iter().enumerate() {
-                        if i > 0 {
-                            self.write(", ");
+                    self.bracketed(|emitter| {
+                        for (i, child) in children.iter().enumerate() {
+                            if i > 0 {
+                                emitter.write(", ");
+                            }
+                            emitter.emit_jsx_child_as_expression(*child);
                         }
-                        self.emit_jsx_child_as_expression(*child);
-                    }
-                    self.write("]");
+                    });
                 } else {
                     self.emit_jsx_child_as_expression(children[0]);
                 }
@@ -314,14 +314,14 @@ impl<'a> Printer<'a> {
             }
             self.write("{ children: ");
             if is_jsxs {
-                self.write("[");
-                for (i, child) in children.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
+                self.bracketed(|emitter| {
+                    for (i, child) in children.iter().enumerate() {
+                        if i > 0 {
+                            emitter.write(", ");
+                        }
+                        emitter.emit_jsx_child_as_expression(*child);
                     }
-                    self.emit_jsx_child_as_expression(*child);
-                }
-                self.write("]");
+                });
             } else {
                 self.emit_jsx_child_as_expression(children[0]);
             }
@@ -396,9 +396,10 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        self.write("{...");
-        self.emit(spread.expression);
-        self.write("}");
+        self.braced(|emitter| {
+            emitter.write("...");
+            emitter.emit(spread.expression);
+        });
     }
 
     pub(in super::super) fn emit_jsx_expression(&mut self, node: &Node) {
@@ -408,7 +409,7 @@ impl<'a> Printer<'a> {
 
         let closing_brace_pos = self.find_jsx_expression_closing_brace(node);
 
-        self.write("{");
+        self.open_brace();
         if expr.dot_dot_dot_token {
             self.write("...");
         }
@@ -428,7 +429,7 @@ impl<'a> Printer<'a> {
                 // When the last comment had a trailing newline, the writer is at
                 // line-start and will use ensure_indent() for the closing `}`.
                 // Write `}` before decreasing indent so it aligns with the `{`.
-                self.write("}");
+                self.close_brace();
                 self.decrease_indent();
                 return;
             }
@@ -467,7 +468,7 @@ impl<'a> Printer<'a> {
             }
             self.decrease_indent();
         }
-        self.write("}");
+        self.close_brace();
     }
 
     fn find_jsx_expression_closing_brace(&self, node: &Node) -> u32 {
