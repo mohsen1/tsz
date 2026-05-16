@@ -156,8 +156,11 @@ lto = "thin"
 # Keep codegen parallelism serialized: the checker lib-test target is large
 # enough that multi-unit LLVM codegen can be killed on the self-hosted
 # runners even when Cargo itself is already capped to one build job.
+# Keep unit tests unoptimized while the conformance runway is open: optimized
+# checker lib-test codegen can exceed runner memory even with one build job.
 # CARGO_BUILD_JOBS is also memory-capped via scripts/ci/gcp-full-ci.sh.
 inherits = "dev"
+opt-level = 0
 debug = false
 codegen-units = 1
 
