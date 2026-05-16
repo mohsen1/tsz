@@ -1946,6 +1946,40 @@ fn test_comment_preserved_after_erased_function_return_type() {
 }
 
 #[test]
+fn variable_initializer_line_comment_indents_initializer() {
+    let output = parse_lower_print("var x = // c\n1;\n", PrintOptions::es6());
+
+    assert!(
+        output.contains("var x = // c\n 1;"),
+        "Initializer after a line comment should keep tsc's single-space continuation indentation.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn regex_comment_recovery_preserves_exponent_operand_comments() {
+    let source = "var regex1 = / asdf /;\n\
+var regex2 = /**// asdf /;\n\
+var regex3 = /**///**/ asdf /       // should be a comment line\n\
+1;\n\
+var regex4 = /**// /**/asdf /;\n\
+var regex5 = /**// asdf/**/ /;\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("var regex3 = /**/ //**/ asdf /       // should be a comment line\n 1;"),
+        "Recovered statement after line-comment regex recovery should keep tsc spacing.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var regex4 = /**/ Math.pow(/**/ / /, /asdf /);"),
+        "Recovered exponentiation should preserve the left regex operand's leading block comment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var regex5 = /**/ Math.pow(/**/ / asdf/, / /);"),
+        "Recovered exponentiation should preserve the left regex operand's embedded block comment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_async_arrow_destructuring_default_param_temp_var_no_collision() {
     // Regression: async arrow with a destructuring default param AND an
     // awaited call must not produce two `var _a;` hoists or two `_a = ...`

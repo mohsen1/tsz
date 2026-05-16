@@ -24,12 +24,74 @@ impl<'a> Printer<'a> {
         if binary.operator_token == SyntaxKind::AsteriskAsteriskEqualsToken as u16 {
             self.emit_exponentiation_assignment(binary.left, left, right);
         } else {
-            self.write("Math.pow(");
+            self.write("Math.pow");
+            self.open_paren();
             self.emit_replayed_leading_exponentiation_comment(left);
+            self.emit_pending_exponentiation_operand_comments(left);
+            self.emit_recovered_regex_exponentiation_operand_comments(left, right);
             self.emit(left);
             self.write(", ");
+            self.emit_pending_exponentiation_operand_comments(right);
             self.emit(right);
-            self.write(")");
+            self.close_paren();
+        }
+    }
+
+    fn emit_pending_exponentiation_operand_comments(&mut self, operand: NodeIndex) {
+        let Some(node) = self.arena.get(operand) else {
+            return;
+        };
+        let actual_start = self.skip_trivia_forward(node.pos, node.end);
+        if actual_start <= node.pos {
+            return;
+        }
+        self.emit_comments_before_pos(actual_start);
+    }
+
+    fn emit_recovered_regex_exponentiation_operand_comments(
+        &mut self,
+        left: NodeIndex,
+        right: NodeIndex,
+    ) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+        let Some(left_node) = self.arena.get(left) else {
+            return;
+        };
+        if left_node.kind != SyntaxKind::RegularExpressionLiteral as u16 {
+            return;
+        }
+        let Some(right_node) = self.arena.get(right) else {
+            return;
+        };
+        let Some(text) = self.source_text else {
+            return;
+        };
+
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = self.all_comments[self.comment_emit_idx].clone();
+            if comment.pos >= right_node.pos {
+                break;
+            }
+            if comment.end <= left_node.pos {
+                self.comment_emit_idx += 1;
+                continue;
+            }
+            if comment.pos < left_node.pos || !comment.is_multi_line {
+                break;
+            }
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment.pos as usize, comment.end as usize)
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment.pos));
+                if comment.has_trailing_new_line {
+                    self.write_line();
+                } else {
+                    self.pending_block_comment_space = true;
+                }
+            }
+            self.comment_emit_idx += 1;
         }
     }
 
