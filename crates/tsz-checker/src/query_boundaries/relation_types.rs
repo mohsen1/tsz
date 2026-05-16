@@ -109,6 +109,32 @@ pub(crate) enum RelationFailure {
         source_count: usize,
         target_count: usize,
     },
+    /// Source has too many parameters for the target signature.
+    TooManyParameters {
+        source_count: usize,
+        target_count: usize,
+    },
+    /// Optional property cannot satisfy required property.
+    OptionalPropertyRequired { property_name: Atom },
+    /// Tuple element type mismatch.
+    TupleElementTypeMismatch {
+        index: usize,
+        source_element: TypeId,
+        target_element: TypeId,
+    },
+    /// Array element type mismatch.
+    ArrayElementMismatch {
+        source_element: TypeId,
+        target_element: TypeId,
+    },
+    /// Index signature value type mismatch.
+    IndexSignatureMismatch {
+        index_kind: &'static str,
+        source_value_type: TypeId,
+        target_value_type: TypeId,
+    },
+    /// Missing index signature.
+    MissingIndexSignature { index_kind: &'static str },
     /// Property modifier mismatch (optional/readonly/visibility/nominal).
     PropertyModifierMismatch { property_name: Atom },
     /// Weak union violation (no common properties).
@@ -212,6 +238,46 @@ impl RelationFailure {
                 source_count: *source_count,
                 target_count: *target_count,
             },
+            Self::TooManyParameters {
+                source_count,
+                target_count,
+            } => SubtypeFailureReason::TooManyParameters {
+                source_count: *source_count,
+                target_count: *target_count,
+            },
+            Self::OptionalPropertyRequired { property_name } => {
+                SubtypeFailureReason::OptionalPropertyRequired {
+                    property_name: *property_name,
+                }
+            }
+            Self::TupleElementTypeMismatch {
+                index,
+                source_element,
+                target_element,
+            } => SubtypeFailureReason::TupleElementTypeMismatch {
+                index: *index,
+                source_element: *source_element,
+                target_element: *target_element,
+            },
+            Self::ArrayElementMismatch {
+                source_element,
+                target_element,
+            } => SubtypeFailureReason::ArrayElementMismatch {
+                source_element: *source_element,
+                target_element: *target_element,
+            },
+            Self::IndexSignatureMismatch {
+                index_kind,
+                source_value_type,
+                target_value_type,
+            } => SubtypeFailureReason::IndexSignatureMismatch {
+                index_kind,
+                source_value_type: *source_value_type,
+                target_value_type: *target_value_type,
+            },
+            Self::MissingIndexSignature { index_kind } => {
+                SubtypeFailureReason::MissingIndexSignature { index_kind }
+            }
             Self::PropertyModifierMismatch { property_name } => {
                 SubtypeFailureReason::PropertyNominalMismatch {
                     property_name: *property_name,
@@ -341,31 +407,37 @@ impl RelationFailure {
             SubtypeFailureReason::ArrayElementMismatch {
                 source_element,
                 target_element,
-            } => Self::TypeMismatch {
-                source_type: source_element,
-                target_type: target_element,
+            } => Self::ArrayElementMismatch {
+                source_element,
+                target_element,
             },
             SubtypeFailureReason::IndexSignatureMismatch {
+                index_kind,
                 source_value_type,
                 target_value_type,
-                ..
-            } => Self::TypeMismatch {
-                source_type: source_value_type,
-                target_type: target_value_type,
+            } => Self::IndexSignatureMismatch {
+                index_kind,
+                source_value_type,
+                target_value_type,
             },
             SubtypeFailureReason::TooManyParameters {
                 source_count,
                 target_count,
-            }
-            | SubtypeFailureReason::ParameterCountMismatch {
+            } => Self::TooManyParameters {
+                source_count,
+                target_count,
+            },
+            SubtypeFailureReason::ParameterCountMismatch {
                 source_count,
                 target_count,
             } => Self::ParameterCountMismatch {
                 source_count,
                 target_count,
             },
-            SubtypeFailureReason::OptionalPropertyRequired { property_name }
-            | SubtypeFailureReason::ReadonlyPropertyMismatch { property_name }
+            SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
+                Self::OptionalPropertyRequired { property_name }
+            }
+            SubtypeFailureReason::ReadonlyPropertyMismatch { property_name }
             | SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
                 Self::PropertyModifierMismatch { property_name }
             }
@@ -373,15 +445,18 @@ impl RelationFailure {
                 Self::PropertyModifierMismatch { property_name }
             }
             SubtypeFailureReason::TupleElementTypeMismatch {
+                index,
                 source_element,
                 target_element,
-                ..
-            } => Self::TypeMismatch {
-                source_type: source_element,
-                target_type: target_element,
+            } => Self::TupleElementTypeMismatch {
+                index,
+                source_element,
+                target_element,
             },
-            SubtypeFailureReason::MissingIndexSignature { .. }
-            | SubtypeFailureReason::RecursionLimitExceeded => Self::TypeMismatch {
+            SubtypeFailureReason::MissingIndexSignature { index_kind } => {
+                Self::MissingIndexSignature { index_kind }
+            }
+            SubtypeFailureReason::RecursionLimitExceeded => Self::TypeMismatch {
                 source_type: TypeId::ERROR,
                 target_type: TypeId::ERROR,
             },

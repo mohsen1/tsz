@@ -3402,6 +3402,12 @@ fn test_relation_failure_covers_semantic_families() {
         "ReturnTypeMismatch",
         "ParameterTypeMismatch",
         "ParameterCountMismatch",
+        "TooManyParameters",
+        "OptionalPropertyRequired",
+        "TupleElementTypeMismatch",
+        "ArrayElementMismatch",
+        "IndexSignatureMismatch",
+        "MissingIndexSignature",
         "PropertyModifierMismatch",
         "WeakUnionViolation",
         "TypeMismatch",
@@ -3427,8 +3433,8 @@ fn test_relation_failure_preserves_canonical_solver_mapping() {
     );
     assert!(
         source.contains("SubtypeFailureReason::OptionalPropertyRequired { property_name }")
-            && source.contains("Self::PropertyModifierMismatch { property_name }"),
-        "OptionalPropertyRequired must normalize to PropertyModifierMismatch"
+            && source.contains("Self::OptionalPropertyRequired { property_name }"),
+        "OptionalPropertyRequired must preserve its solver failure shape"
     );
     assert!(
         source.contains("SubtypeFailureReason::PropertyTypeMismatch")
@@ -3457,24 +3463,31 @@ fn test_relation_failure_preserves_canonical_solver_mapping() {
         "direct type-mismatch solver reasons must normalize through the shared TypeMismatch passthrough"
     );
     assert!(
-        source.contains("SubtypeFailureReason::MissingIndexSignature { .. }")
-            && source.contains("| SubtypeFailureReason::RecursionLimitExceeded")
+        source.contains("SubtypeFailureReason::MissingIndexSignature { index_kind }")
+            && source.contains("Self::MissingIndexSignature { index_kind }"),
+        "MissingIndexSignature must preserve its index kind for related information"
+    );
+    assert!(
+        source.contains("SubtypeFailureReason::RecursionLimitExceeded")
             && source.contains("=> Self::TypeMismatch {")
             && source.contains("source_type: TypeId::ERROR,")
             && source.contains("target_type: TypeId::ERROR,"),
-        "MissingIndexSignature and RecursionLimitExceeded must normalize to a TypeMismatch sentinel with ERROR/ERROR"
+        "RecursionLimitExceeded must normalize to a TypeMismatch sentinel with ERROR/ERROR"
     );
     assert!(
         source.contains("SubtypeFailureReason::ArrayElementMismatch {")
-            && source.contains("source_type: source_element,")
-            && source.contains("target_type: target_element,")
+            && source.contains("Self::ArrayElementMismatch {")
+            && source.contains("source_element,")
+            && source.contains("target_element,")
             && source.contains("SubtypeFailureReason::IndexSignatureMismatch {")
-            && source.contains("source_type: source_value_type,")
-            && source.contains("target_type: target_value_type,")
+            && source.contains("Self::IndexSignatureMismatch {")
+            && source.contains("index_kind,")
+            && source.contains("source_value_type,")
+            && source.contains("target_value_type,")
             && source.contains("SubtypeFailureReason::TupleElementTypeMismatch {")
-            && source.contains("source_type: source_element,")
-            && source.contains("target_type: target_element,"),
-        "element/index-specific solver mismatches must normalize through TypeMismatch using the concrete element/value types"
+            && source.contains("Self::TupleElementTypeMismatch {")
+            && source.contains("index,"),
+        "element/index-specific solver mismatches must preserve their structured failure shape"
     );
 }
 

@@ -717,7 +717,7 @@ impl<'a> CheckerState<'a> {
                 self.prepare_assignability_inputs(source, target);
             RelationRequest::assign(prepared_source, prepared_target).with_property_classification()
         };
-        let outcome = self.execute_relation_request(&request);
+        let mut outcome = self.execute_relation_request(&request);
         // TS2859: if the solver hit its recursion/complexity limit during the check
         // (including the constituent-count overflow guard in check_subtype_inner),
         // emit "Excessive complexity comparing types" regardless of whether the
@@ -738,6 +738,10 @@ impl<'a> CheckerState<'a> {
         if exact_optional_mismatch {
             self.diagnose_assignment_failure(source, target, diag_idx);
             return false;
+        }
+
+        if outcome.related && !self.is_assignable_to(source, target) {
+            outcome.related = false;
         }
 
         if outcome.related {
