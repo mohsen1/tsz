@@ -22,12 +22,36 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        if (existing.contains("[K in ") || existing.contains("[P in "))
-            && !(candidate.contains("[K in ") || candidate.contains("[P in "))
+        if Self::display_contains_mapped_clause(existing)
+            && !Self::display_contains_mapped_clause(candidate)
         {
             return false;
         }
         true
+    }
+
+    pub(in crate::error_reporter) fn display_contains_mapped_clause(display: &str) -> bool {
+        display
+            .match_indices('[')
+            .any(|(start, _)| Self::display_slice_starts_mapped_clause(&display[start..]))
+    }
+
+    fn display_slice_starts_mapped_clause(display: &str) -> bool {
+        let Some(rest) = display.strip_prefix('[') else {
+            return false;
+        };
+        let Some((name, after_name)) = rest.split_once(' ') else {
+            return false;
+        };
+        let mut chars = name.chars();
+        if !chars
+            .next()
+            .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphabetic())
+            || !chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+        {
+            return false;
+        }
+        after_name.starts_with("in ")
     }
 
     pub(in crate::error_reporter) fn direct_type_query_primitive_source_display(

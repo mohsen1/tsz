@@ -492,6 +492,51 @@ b = a;
 }
 
 #[test]
+fn mapped_application_assignment_reports_missing_property_with_renamed_keys() {
+    let source = r#"
+enum Kind { Left, Right }
+
+type Source<T extends Kind> = { tag: T; } & (
+  { tag: Kind.Left, leftOnly: string } |
+  { tag: Kind.Right, rightOnly: string }
+);
+
+type Projected<T extends Kind> = {
+  [Member in keyof Source<T>]: string;
+};
+
+declare let left: Projected<Kind.Left>;
+declare let right: Projected<Kind.Right>;
+left = right;
+right = left;
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2741: Vec<_> = diags.iter().filter(|(code, _)| *code == 2741).collect();
+    assert_eq!(
+        ts2741.len(),
+        2,
+        "Expected two TS2741 diagnostics for renamed remapped mapped assignments, got: {diags:?}"
+    );
+    assert!(
+        ts2741
+            .iter()
+            .any(|(_, message)| message.contains("Property 'leftOnly' is missing")),
+        "Expected missing-property diagnostic for 'leftOnly', got: {diags:?}"
+    );
+    assert!(
+        ts2741
+            .iter()
+            .any(|(_, message)| message.contains("Property 'rightOnly' is missing")),
+        "Expected missing-property diagnostic for 'rightOnly', got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322 || *code == 2353),
+        "Renamed remapped mapped assignment should classify as missing properties, got: {diags:?}"
+    );
+}
+
+#[test]
 fn mapped_array_as_clause_missing_named_property_beats_symbol_members() {
     let source = r#"
 declare const Symbol: {
