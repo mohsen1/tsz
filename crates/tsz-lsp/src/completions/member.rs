@@ -1297,7 +1297,7 @@ impl<'a> Completions<'a> {
         }
     }
 
-    /// Collect Array.prototype members directly from the registered array_base_type,
+    /// Collect Array.prototype members directly from the registered `array_base_type`,
     /// without adding Function.prototype members.
     ///
     /// When the Array interface has construct signatures it is lowered to
@@ -1306,9 +1306,9 @@ impl<'a> Completions<'a> {
     /// members (apply, call, bind) to every Callable — correct for function
     /// types, wrong for array types. This helper skips that step.
     ///
-    /// Handles all structural shapes the array_base_type can take:
+    /// Handles all structural shapes the `array_base_type` can take:
     ///   - Callable (Array interface with construct signatures)
-    ///   - Object / ObjectWithIndex (plain interface without call signatures)
+    ///   - Object / `ObjectWithIndex` (plain interface without call signatures)
     ///   - Intersection (multiple lib-file declarations merged per file)
     fn collect_array_prototype_props(
         &self,
