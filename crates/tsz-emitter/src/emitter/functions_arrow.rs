@@ -40,6 +40,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.is_static_block_await_arrow_recovery(func) {
+            self.emit_static_block_await_arrow_recovery(func);
+            return;
+        }
+
         if self.ctx.target_es5 {
             let captures_this = contains_this_reference(self.arena, _idx);
             let captures_arguments = contains_arguments_reference(self.arena, _idx);
@@ -48,6 +53,31 @@ impl<'a> Printer<'a> {
         }
 
         self.emit_arrow_function_native(func);
+    }
+
+    fn emit_static_block_await_arrow_recovery(
+        &mut self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) {
+        let source_had_parens = self.source_has_arrow_function_parens(&func.parameters.nodes);
+        let Some(&param_idx) = func.parameters.nodes.first() else {
+            return;
+        };
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return;
+        };
+
+        if source_had_parens {
+            self.write("(");
+        }
+        self.emit(param.name);
+        self.write(" ");
+        if source_had_parens {
+            self.write(")");
+        }
     }
 
     fn is_recovery_arrow_missing_return_type(

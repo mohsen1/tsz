@@ -1762,9 +1762,12 @@ impl<'a> Printer<'a> {
             k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
                 self.write("static ");
                 let prev = self.emitting_function_body_block;
+                let prev_in_static_block = self.ctx.flags.in_class_static_block;
                 self.emitting_function_body_block = true;
+                self.ctx.flags.in_class_static_block = true;
                 self.emit_block(node, idx);
                 self.emitting_function_body_block = prev;
+                self.ctx.flags.in_class_static_block = prev_in_static_block;
             }
 
             // If statement
@@ -2138,6 +2141,9 @@ impl<'a> Printer<'a> {
                         self.write(&temp_name.clone());
                     } else {
                         self.emit(computed.expression);
+                        if self.is_static_block_await_identifier(computed.expression) {
+                            self.write(" ");
+                        }
                     }
                     // Map closing `]` to its source position.
                     // The expression's end points past the expression, so `]`
