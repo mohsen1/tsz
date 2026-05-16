@@ -531,6 +531,32 @@ impl<'a> Printer<'a> {
             && (needs_use_strict_cjs
                 || needs_use_strict_inside_wrapper
                 || source_use_strict_must_precede_helpers);
+        let source_use_strict_text = if skip_source_use_strict {
+            source.statements.nodes.iter().find_map(|&idx| {
+                let stmt_node = self.arena.get(idx)?;
+                if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                    return None;
+                }
+                let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+                let expr_node = self.arena.get(expr_stmt.expression)?;
+                if !expr_node.is_string_literal() {
+                    return None;
+                }
+                let is_use_strict = self
+                    .arena
+                    .get_literal(expr_node)
+                    .is_some_and(|lit| lit.text == "use strict");
+                if !is_use_strict {
+                    return None;
+                }
+                let text = self.source_text?;
+                crate::safe_slice::slice(text, expr_node.pos as usize, expr_node.end as usize)
+                    .ok()
+                    .map(str::to_string)
+            })
+        } else {
+            None
+        };
 
         // Emit "use strict" when either:
         // - we need to add it (source doesn't have it), or
@@ -539,7 +565,12 @@ impl<'a> Printer<'a> {
         if should_emit_use_strict
             || (skip_source_use_strict && !self.ctx.options.suppress_use_strict)
         {
-            self.write("\"use strict\";");
+            if let Some(text) = source_use_strict_text.as_deref() {
+                self.write(text);
+                self.write(";");
+            } else {
+                self.write("\"use strict\";");
+            }
             self.write_line();
         }
         // Emit header comments AFTER "use strict" but BEFORE helpers.
@@ -1592,7 +1623,12 @@ impl<'a> Printer<'a> {
                     false
                 };
                 if is_strict {
-                    self.skip_comments_for_erased_node(stmt_node);
+                    let strict_end = expr_node.end;
+                    while self.comment_emit_idx < self.all_comments.len()
+                        && self.all_comments[self.comment_emit_idx].end <= strict_end
+                    {
+                        self.comment_emit_idx += 1;
+                    }
                     continue;
                 }
             }
