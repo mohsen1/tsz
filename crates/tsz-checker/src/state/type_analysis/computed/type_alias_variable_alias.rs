@@ -520,11 +520,13 @@ impl<'a> CheckerState<'a> {
                     if var_decl.type_annotation.is_some() {
                         let annotation_type =
                             self.get_type_from_type_node(var_decl.type_annotation);
-                        // `const k: unique symbol = Symbol()` — create a proper UniqueSymbol
-                        // type using the variable's binder symbol as identity.
-                        if annotation_type == TypeId::SYMBOL
-                            && self.is_const_variable_declaration(resolved_value_decl)
-                            && self.is_unique_symbol_type_annotation(var_decl.type_annotation)
+                        // `const k: unique symbol = Symbol()` — re-anchor the node-derived
+                        // unique symbol to the variable's own binder symbol so that `typeof k`
+                        // acts as a discriminant / element-access key that matches exactly.
+                        if crate::types_domain::unique_symbol_arena::is_unique_symbol_type_annotation(
+                            &self.ctx.arena,
+                            var_decl.type_annotation,
+                        ) && self.is_const_variable_declaration(resolved_value_decl)
                         {
                             return (
                                 self.ctx

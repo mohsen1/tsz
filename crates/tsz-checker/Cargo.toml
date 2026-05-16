@@ -1253,5 +1253,9 @@ path = "tests/homomorphic_indexed_access_tests.rs"
 name = "homomorphic_indexed_access_edge_cases"
 path = "tests/homomorphic_indexed_access_edge_cases.rs"
 
+[[test]]
+name = "unique_symbol_branded_type_tests"
+path = "tests/unique_symbol_branded_type_tests.rs"
+
 [lints]
 workspace = true

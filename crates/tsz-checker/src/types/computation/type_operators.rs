@@ -4,7 +4,7 @@
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_solver::TypeId;
+use tsz_solver::{SymbolRef, TypeId};
 
 impl<'a> CheckerState<'a> {
     /// Get type from a union type node (A | B).
@@ -123,8 +123,14 @@ impl<'a> CheckerState<'a> {
 
             // Handle unique operator
             if operator == SyntaxKind::UniqueKeyword as u16 {
-                // unique is handled differently - it's a type modifier for symbols
-                // For now, just return the inner type
+                // Each `unique symbol` annotation at a distinct declaration site creates
+                // a fresh nominal UniqueSymbol. The node index is tagged with the high bit
+                // to avoid colliding with binder SymbolIds used by const-variable unique
+                // symbols. Two distinct property annotations are therefore never assignable
+                // to each other, matching tsc's nominal identity rule.
+                if inner_type == TypeId::SYMBOL {
+                    return self.ctx.types.unique_symbol(SymbolRef(idx.0 | 0x8000_0000));
+                }
                 return inner_type;
             }
 

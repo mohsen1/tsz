@@ -2209,7 +2209,20 @@ impl<'a> TypeFormatter<'a> {
                     format!("NoInfer<{}>", self.format(*inner)).into()
                 }
             }
-            TypeData::UniqueSymbol(_) => Cow::Borrowed("unique symbol"),
+            TypeData::UniqueSymbol(sym_ref) => {
+                // Binder-anchored unique symbols (sym_ref.0 < 0x8000_0000) are
+                // `const x: unique symbol` declarations. tsc displays them as
+                // `typeof x` so cross-variable diagnostics read
+                // "Type 'typeof sym2' is not assignable to type 'typeof sym1'".
+                // Node-anchored symbols (high bit set) are inline property-type
+                // annotations that have no variable name; they stay "unique symbol".
+                if sym_ref.0 < 0x8000_0000 {
+                    if let Some(name) = self.resolve_unique_symbol_name(*sym_ref) {
+                        return format!("typeof {name}").into();
+                    }
+                }
+                Cow::Borrowed("unique symbol")
+            }
             TypeData::Infer(info) => format!("infer {}", self.atom(info.name)).into(),
             TypeData::ThisType => Cow::Borrowed("this"),
             TypeData::StringIntrinsic { kind, type_arg } => {
