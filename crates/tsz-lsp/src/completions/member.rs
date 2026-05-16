@@ -1416,8 +1416,17 @@ impl<'a> Completions<'a> {
             self.collect_properties_for_type_inner(
                 boxed_type, interner, checker, visited, props, false,
             );
+            Self::remove_hidden_primitive_boxed_completions(props);
         } else {
             self.collect_intrinsic_members(kind, interner, props);
+        }
+    }
+
+    fn remove_hidden_primitive_boxed_completions(
+        props: &mut FxHashMap<String, PropertyCompletion>,
+    ) {
+        for name in OBJECT_PROTOTYPE_ONLY_MEMBERS {
+            props.remove(*name);
         }
     }
 
