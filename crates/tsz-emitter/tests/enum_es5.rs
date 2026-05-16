@@ -242,6 +242,19 @@ fn test_system_exported_enum_iife_tail_folding() {
 }
 
 #[test]
+fn test_system_exported_enum_iife_tail_folds_aliases() {
+    let folded = emit_enum_legacy_configured("enum E { A }", |emitter| {
+        emitter.set_emit_var_declaration(false);
+        emitter.set_system_export_folds(["E", "Alias"]);
+    });
+
+    assert!(
+        folded.contains("})(E || (exports_1(\"Alias\", exports_1(\"E\", E = {}))));"),
+        "System fold should retain every export alias in the IIFE tail, got: {folded}"
+    );
+}
+
+#[test]
 fn test_template_literal_enum_no_reverse_mapping() {
     // NoSubstitutionTemplateLiteral is syntactically string — no reverse mapping.
     // If A is a string literal and H = A, tsc folds H to the literal value "hello".

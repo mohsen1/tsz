@@ -179,6 +179,28 @@ fn test_system_exported_namespace_iife_tail_folding() {
 }
 
 #[test]
+fn test_system_exported_namespace_iife_tail_folds_aliases() {
+    let source = "namespace Models { export function test(): void {} }";
+    let (parser, root) = parse_test_source(source);
+
+    if let Some(root_node) = parser.arena.get(root)
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+        && let Some(&ns_idx) = source_file.statements.nodes.first()
+    {
+        let mut emitter = NamespaceES5Emitter::new(&parser.arena);
+        emitter.set_source_text(source);
+        emitter.set_should_declare_var(false);
+        emitter.set_system_export_folds(["Models", "Alias"]);
+        let output = emitter.emit_namespace(ns_idx);
+        assert!(
+            output
+                .contains(r#"(Models || (exports_1("Alias", exports_1("Models", Models = {}))))"#),
+            "System namespace export should retain every alias in the IIFE tail. Got:\n{output}"
+        );
+    }
+}
+
+#[test]
 fn test_cjs_exported_namespace_uninitialized_var_qualifies_references() {
     let source = r#"export namespace m1 {
     /** b's comment*/

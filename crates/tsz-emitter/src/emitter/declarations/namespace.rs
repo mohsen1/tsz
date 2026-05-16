@@ -56,8 +56,8 @@ impl<'a> Printer<'a> {
             let mut es5_emitter = NamespaceES5Emitter::with_commonjs(self.arena, use_cjs);
             es5_emitter.set_target_es5(self.ctx.target_es5);
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
-            if let Some(export_name) = system_export_fold.as_deref() {
-                es5_emitter.set_system_export_fold(export_name);
+            if let Some(export_names) = system_export_fold.as_deref() {
+                es5_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
             }
             if !self.ctx.module_state.default_exported_func_names.is_empty() {
                 es5_emitter.set_default_exported_func_names(
@@ -491,13 +491,13 @@ impl<'a> Printer<'a> {
             self.write(".");
             self.write(&name);
             self.write(" = {}));");
-        } else if let Some(export_name) = system_export_fold.as_deref() {
+        } else if let Some(export_names) = system_export_fold.as_deref()
+            && !export_names.is_empty()
+        {
             self.write(&name);
-            self.write(" || (exports_1(\"");
-            self.emit_escaped_string(export_name, '"');
-            self.write("\", ");
-            self.write(&name);
-            self.write(" = {})));");
+            self.write(" || (");
+            self.emit_system_export_folded_namespace_assignment(export_names, &name);
+            self.write("));");
         } else if cjs_export_fold {
             // CJS export fold: (N || (exports.N = N = {}))
             self.write(&name);
@@ -531,6 +531,24 @@ impl<'a> Printer<'a> {
         // loop handles them with proper next-sibling bounds, preventing
         // us from stealing comments that belong to subsequent statements.
         self.write_line();
+    }
+
+    fn emit_system_export_folded_namespace_assignment(
+        &mut self,
+        export_names: &[String],
+        name: &str,
+    ) {
+        let Some((export_name, inner_names)) = export_names.split_last() else {
+            self.write(name);
+            self.write(" = {}");
+            return;
+        };
+
+        self.write("exports_1(\"");
+        self.emit_escaped_string(export_name, '"');
+        self.write("\", ");
+        self.emit_system_export_folded_namespace_assignment(inner_names, name);
+        self.write(")");
     }
 
     /// Check if any declaration at any depth in the namespace body has the same

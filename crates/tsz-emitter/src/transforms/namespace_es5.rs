@@ -85,7 +85,7 @@ pub struct NamespaceES5Emitter<'a> {
     target_es5: bool,
     remove_comments: bool,
     transforms: Option<TransformContext>,
-    system_export_fold: Option<String>,
+    system_export_folds: Vec<String>,
     transformer: NamespaceES5Transformer<'a>,
 }
 
@@ -99,7 +99,7 @@ impl<'a> NamespaceES5Emitter<'a> {
             target_es5: false,
             remove_comments: false,
             transforms: None,
-            system_export_fold: None,
+            system_export_folds: Vec::new(),
             transformer: NamespaceES5Transformer::new(arena),
         }
     }
@@ -114,7 +114,7 @@ impl<'a> NamespaceES5Emitter<'a> {
             target_es5: false,
             remove_comments: false,
             transforms: None,
-            system_export_fold: None,
+            system_export_folds: Vec::new(),
             transformer: NamespaceES5Transformer::with_commonjs(arena, is_commonjs),
         }
     }
@@ -142,7 +142,15 @@ impl<'a> NamespaceES5Emitter<'a> {
     }
 
     pub fn set_system_export_fold(&mut self, export_name: &str) {
-        self.system_export_fold = Some(export_name.to_string());
+        self.set_system_export_folds([export_name]);
+    }
+
+    pub fn set_system_export_folds<'b>(&mut self, export_names: impl IntoIterator<Item = &'b str>) {
+        self.system_export_folds = export_names
+            .into_iter()
+            .filter(|name| !name.is_empty())
+            .map(ToOwned::to_owned)
+            .collect();
     }
 
     /// Set transform directives so that nested transforms (e.g. ES5 template
@@ -243,14 +251,20 @@ impl<'a> NamespaceES5Emitter<'a> {
     }
 
     fn apply_system_export_fold(&self, ir: &mut crate::transforms::ir::IRNode) {
-        let Some(export_name) = self.system_export_fold.as_deref() else {
+        if self.system_export_folds.is_empty() {
             return;
-        };
+        }
         if let crate::transforms::ir::IRNode::NamespaceIIFE {
-            system_export_name, ..
+            system_export_names,
+            ..
         } = ir
         {
-            *system_export_name = Some(export_name.to_string().into());
+            *system_export_names = self
+                .system_export_folds
+                .iter()
+                .cloned()
+                .map(Into::into)
+                .collect();
         }
     }
 }

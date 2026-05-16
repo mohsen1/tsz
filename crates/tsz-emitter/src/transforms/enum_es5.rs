@@ -93,7 +93,7 @@ pub struct EnumES5Transformer<'a> {
 #[derive(Clone, Debug)]
 enum EnumExportFold {
     CommonJs { export_name: String },
-    System { export_name: String },
+    System { export_names: Vec<String> },
 }
 
 fn commonjs_export_access(export_name: &str) -> IRNode {
@@ -150,8 +150,16 @@ impl<'a> EnumES5Transformer<'a> {
     }
 
     pub fn set_system_export_fold(&mut self, export_name: &str) {
+        self.set_system_export_folds([export_name]);
+    }
+
+    pub fn set_system_export_folds<'b>(&mut self, export_names: impl IntoIterator<Item = &'b str>) {
         self.export_fold = Some(EnumExportFold::System {
-            export_name: export_name.to_string(),
+            export_names: export_names
+                .into_iter()
+                .filter(|name| !name.is_empty())
+                .map(ToOwned::to_owned)
+                .collect(),
         });
     }
 
@@ -295,14 +303,15 @@ impl<'a> EnumES5Transformer<'a> {
                 operator: "=".into(),
                 right: Box::new(plain_assignment()),
             },
-            Some(EnumExportFold::System { export_name }) => {
-                IRNode::Parenthesized(Box::new(IRNode::CallExpr {
-                    callee: Box::new(IRNode::Identifier("exports_1".into())),
-                    arguments: vec![
-                        IRNode::StringLiteral(export_name.clone().into()),
-                        plain_assignment(),
-                    ],
-                }))
+            Some(EnumExportFold::System { export_names }) => {
+                let mut folded = plain_assignment();
+                for export_name in export_names {
+                    folded = IRNode::CallExpr {
+                        callee: Box::new(IRNode::Identifier("exports_1".into())),
+                        arguments: vec![IRNode::StringLiteral(export_name.clone().into()), folded],
+                    };
+                }
+                IRNode::Parenthesized(Box::new(folded))
             }
         };
 
@@ -1728,6 +1737,11 @@ impl<'a> EnumES5Emitter<'a> {
     /// Fold a System export call into the enum IIFE tail.
     pub fn set_system_export_fold(&mut self, export_name: &str) {
         self.transformer.set_system_export_fold(export_name);
+    }
+
+    /// Fold multiple System export calls into the enum IIFE tail.
+    pub fn set_system_export_folds<'b>(&mut self, export_names: impl IntoIterator<Item = &'b str>) {
+        self.transformer.set_system_export_folds(export_names);
     }
 
     /// Emit an enum declaration

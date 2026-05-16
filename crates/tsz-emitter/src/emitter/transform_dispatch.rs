@@ -335,8 +335,8 @@ impl<'a> Printer<'a> {
                 }
                 let system_export_fold = self.pending_system_namespace_export_fold.take();
                 let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
-                if let Some(export_name) = system_export_fold.as_deref() {
-                    ns_emitter.set_system_export_fold(export_name);
+                if let Some(export_names) = system_export_fold.as_deref() {
+                    ns_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
                 }
                 // Collect this block's exported vars and accumulate for cross-block sharing
                 if !ns_name_for_exports.is_empty() {

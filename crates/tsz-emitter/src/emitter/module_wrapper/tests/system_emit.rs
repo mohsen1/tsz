@@ -194,6 +194,44 @@ namespace M {
     );
 }
 
+#[test]
+fn system_wrapper_folds_namespace_and_enum_export_aliases() {
+    let source = r#"namespace ns {
+    const value = 1;
+}
+
+enum AnEnum {
+    ONE,
+    TWO
+}
+
+export { ns, AnEnum, ns as FooBar, AnEnum as BarEnum };
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains(r#"})(ns || (exports_1("FooBar", exports_1("ns", ns = {}))));"#),
+        "System namespace IIFE tail should retain local and aliased exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output
+            .contains(r#"})(AnEnum || (exports_1("BarEnum", exports_1("AnEnum", AnEnum = {}))));"#),
+        "System enum IIFE tail should retain local and aliased exports.\nOutput:\n{output}"
+    );
+}
+
 /// `/// <reference .../>` directives should be stripped from JS output.
 /// tsc never emits these in JS — they are only preserved in .d.ts files.
 #[test]

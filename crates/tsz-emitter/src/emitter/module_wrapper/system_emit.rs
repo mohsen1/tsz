@@ -8,6 +8,17 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+fn push_system_reexport_name(
+    reexported_name_lists: &mut FxHashMap<String, Vec<String>>,
+    local_name: String,
+    export_name: String,
+) {
+    let names = reexported_name_lists.entry(local_name).or_default();
+    if !names.contains(&export_name) {
+        names.push(export_name);
+    }
+}
+
 impl<'a> Printer<'a> {
     pub(super) fn emit_system_setters(
         &mut self,
@@ -218,6 +229,7 @@ impl<'a> Printer<'a> {
         self.register_system_import_substitutions(source, dep_vars, system_plan);
 
         let mut reexported_names: FxHashMap<String, String> = FxHashMap::default();
+        let mut reexported_name_lists: FxHashMap<String, Vec<String>> = FxHashMap::default();
         for &stmt_idx in &source.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -230,7 +242,10 @@ impl<'a> Printer<'a> {
             {
                 for name in self.collect_variable_names(&var_stmt.declarations) {
                     if !name.is_empty() {
-                        reexported_names.entry(name.clone()).or_insert(name);
+                        reexported_names
+                            .entry(name.clone())
+                            .or_insert_with(|| name.clone());
+                        push_system_reexport_name(&mut reexported_name_lists, name.clone(), name);
                     }
                 }
                 continue;
@@ -252,7 +267,10 @@ impl<'a> Printer<'a> {
             {
                 for name in self.collect_variable_names(&var_stmt.declarations) {
                     if !name.is_empty() {
-                        reexported_names.entry(name.clone()).or_insert(name);
+                        reexported_names
+                            .entry(name.clone())
+                            .or_insert_with(|| name.clone());
+                        push_system_reexport_name(&mut reexported_name_lists, name.clone(), name);
                     }
                 }
                 continue;
@@ -273,12 +291,18 @@ impl<'a> Printer<'a> {
                     .unwrap_or_default();
                     let export_name = self.get_specifier_name_text(spec.name).unwrap_or_default();
                     if !local_name.is_empty() && !export_name.is_empty() {
-                        reexported_names.insert(local_name, export_name);
+                        reexported_names.insert(local_name.clone(), export_name.clone());
+                        push_system_reexport_name(
+                            &mut reexported_name_lists,
+                            local_name,
+                            export_name,
+                        );
                     }
                 }
             }
         }
         self.system_reexported_names = reexported_names;
+        self.system_reexported_name_lists = reexported_name_lists;
         self.system_folded_export_names.clear();
 
         if let Some(first_using_idx) = source.statements.nodes.iter().position(|&stmt_idx| {
@@ -398,13 +422,12 @@ impl<'a> Printer<'a> {
                     let module_name = self.get_identifier_text_idx(module_decl.name);
                     if !module_name.is_empty() {
                         self.declared_namespace_names.insert(module_name.clone());
-                        if let Some(export_name) =
-                            self.system_reexported_names.get(&module_name).cloned()
-                        {
+                        let export_names = self.system_export_names_for_local(&module_name);
+                        if !export_names.is_empty() {
                             self.emit_system_namespace_with_export_fold(
                                 stmt_idx,
                                 &module_name,
-                                &export_name,
+                                export_names,
                             );
                             self.system_folded_export_names.insert(module_name);
                             continue;
@@ -417,13 +440,12 @@ impl<'a> Printer<'a> {
                     let enum_name = self.get_identifier_text_idx(enum_decl.name);
                     if !enum_name.is_empty() {
                         self.declared_namespace_names.insert(enum_name.clone());
-                        if let Some(export_name) =
-                            self.system_reexported_names.get(&enum_name).cloned()
-                        {
+                        let export_names = self.system_export_names_for_local(&enum_name);
+                        if !export_names.is_empty() {
                             self.emit_system_enum_with_export_fold(
                                 stmt_idx,
                                 &enum_name,
-                                &export_name,
+                                export_names,
                             );
                             self.write_line();
                             self.system_folded_export_names.insert(enum_name);
@@ -1327,7 +1349,7 @@ impl<'a> Printer<'a> {
                 self.emit_system_enum_with_export_fold(
                     export_decl.export_clause,
                     &enum_name,
-                    &enum_name,
+                    vec![enum_name.clone()],
                 );
                 return true;
             }
@@ -1408,7 +1430,7 @@ impl<'a> Printer<'a> {
         &mut self,
         enum_idx: NodeIndex,
         _enum_name: &str,
-        export_name: &str,
+        export_names: Vec<String>,
     ) {
         let mut enum_emitter = crate::transforms::EnumES5Emitter::new(self.arena);
         enum_emitter.set_indent_level(self.writer.indent_level());
@@ -1417,7 +1439,7 @@ impl<'a> Printer<'a> {
             enum_emitter.set_source_text(text);
         }
         enum_emitter.set_emit_var_declaration(false);
-        enum_emitter.set_system_export_fold(export_name);
+        enum_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
         let output = enum_emitter.emit_enum(enum_idx);
         self.write(output.trim_end_matches('\n').trim_start());
     }
@@ -1426,17 +1448,30 @@ impl<'a> Printer<'a> {
         &mut self,
         stmt_idx: NodeIndex,
         _ns_name: &str,
-        export_name: &str,
+        export_names: Vec<String>,
     ) {
         let before_len = self.writer.len();
         let prev_system_fold = self
             .pending_system_namespace_export_fold
-            .replace(export_name.to_string());
+            .replace(export_names);
         self.emit(stmt_idx);
         self.pending_system_namespace_export_fold = prev_system_fold;
         if self.writer.len() > before_len && !self.writer.is_at_line_start() {
             self.write_line();
         }
+    }
+
+    fn system_export_names_for_local(&self, local_name: &str) -> Vec<String> {
+        if let Some(export_names) = self.system_reexported_name_lists.get(local_name)
+            && !export_names.is_empty()
+        {
+            return export_names.clone();
+        }
+        self.system_reexported_names
+            .get(local_name)
+            .cloned()
+            .map(|export_name| vec![export_name])
+            .unwrap_or_default()
     }
 
     pub(super) fn system_module_specifier_text(&self, specifier: NodeIndex) -> Option<String> {
