@@ -275,6 +275,15 @@ impl<'a> NarrowingContext<'a> {
     /// `x.kind === "..."` where we only need a direct property read from object-like
     /// union members. Falls back to the general path for complex structures.
     fn get_top_level_property_type_fast(&self, type_id: TypeId, property: Atom) -> Option<TypeId> {
+        let type_id = self.resolve_type(type_id);
+
+        if matches!(
+            self.db.lookup(type_id),
+            Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
+        ) {
+            return None;
+        }
+
         let key = (type_id, property);
         if let Some(&cached) = self.cache.property_cache.borrow().get(&key) {
             // Don't trust a cached Lazy type — re-resolve in case the TypeEnvironment

@@ -237,6 +237,107 @@ fn test_narrow_type_cache_keys_predicate_payload_flags_and_resolver_generation()
     assert_eq!(cache.narrow_type_cache.borrow().len(), 5);
 }
 
+#[test]
+fn test_in_property_narrowing_reuses_property_cache() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let kind_name = interner.intern_string("kind");
+
+    let obj = interner.object(vec![PropertyInfo::new(kind_name, TypeId::STRING)]);
+    let union = interner.union(vec![obj, TypeId::NUMBER]);
+    let guard = TypeGuard::InProperty(kind_name);
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+    assert_eq!(narrowed, obj);
+    assert_eq!(cache.property_cache.borrow().len(), 2);
+
+    let narrow_again = ctx.narrow_type(union, &guard, GuardSense::Positive);
+    assert_eq!(narrow_again, obj);
+    assert_eq!(cache.property_cache.borrow().len(), 2);
+
+    let ctx_false = NarrowingContext::with_cache(&interner, &cache);
+    let narrowed_false = ctx_false.narrow_type(union, &guard, GuardSense::Negative);
+    let expected = TypeId::NUMBER;
+    assert_eq!(narrowed_false, expected);
+    assert_eq!(cache.property_cache.borrow().len(), 2);
+
+    // Ensure the property cache includes the resolved object-shape lookup path
+    // and can be reused across guard sense changes.
+    let kind_key = (obj, kind_name);
+    assert!(cache.property_cache.borrow().contains_key(&kind_key));
+}
+
+#[test]
+fn test_negative_in_property_narrowing_reuses_required_property_cache() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let kind_name = interner.intern_string("kind");
+
+    let required_prop = PropertyInfo {
+        name: kind_name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+    let optional_prop = PropertyInfo {
+        name: kind_name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: true,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+
+    let required_obj = interner.object(vec![required_prop]);
+    let optional_obj = interner.object(vec![optional_prop]);
+    let union = interner.union(vec![required_obj, optional_obj, TypeId::NUMBER]);
+    let guard = TypeGuard::InProperty(kind_name);
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
+    let expected = interner.union(vec![optional_obj, TypeId::NUMBER]);
+    assert_eq!(narrowed, expected);
+
+    assert_eq!(cache.required_property_cache.borrow().len(), 3);
+    assert!(
+        cache
+            .required_property_cache
+            .borrow()
+            .get(&(required_obj, kind_name))
+            .copied()
+            .unwrap_or_default()
+    );
+    assert!(
+        !cache
+            .required_property_cache
+            .borrow()
+            .get(&(optional_obj, kind_name))
+            .copied()
+            .unwrap_or(false)
+    );
+
+    let narrowed_again = ctx.narrow_type(union, &guard, GuardSense::Negative);
+    assert_eq!(narrowed_again, expected);
+    assert_eq!(cache.required_property_cache.borrow().len(), 3);
+}
+
 // =============================================================================
 // Narrowing by Discriminant Tests
 // =============================================================================

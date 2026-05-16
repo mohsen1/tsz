@@ -6,7 +6,7 @@
 //! - Object-like type detection for instanceof support
 
 use super::NarrowingContext;
-use crate::types::{ObjectFlags, ObjectShapeId, PropertyInfo, TypeId, Visibility};
+use crate::types::{ObjectFlags, ObjectShapeId, PropertyInfo, TypeData, TypeId, Visibility};
 use crate::visitor::{
     intersection_list_id, object_shape_id, object_with_index_shape_id, type_param_info,
     union_list_id,
@@ -352,7 +352,27 @@ impl<'a> NarrowingContext<'a> {
     /// exclude types where `prop` is required.
     pub(crate) fn is_property_required(&self, type_id: TypeId, property_name: Atom) -> bool {
         let resolved_type = self.resolve_type(type_id);
+        if matches!(
+            self.db.lookup(resolved_type),
+            Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
+        ) {
+            return false;
+        }
 
+        let key = (resolved_type, property_name);
+        if let Some(&cached) = self.cache.required_property_cache.borrow().get(&key) {
+            return cached;
+        }
+
+        let required = self.is_property_required_uncached(resolved_type, property_name);
+        self.cache
+            .required_property_cache
+            .borrow_mut()
+            .insert(key, required);
+        required
+    }
+
+    fn is_property_required_uncached(&self, resolved_type: TypeId, property_name: Atom) -> bool {
         // Helper to check a specific shape
         let check_shape = |shape_id: ObjectShapeId| -> bool {
             let shape = self.db.object_shape(shape_id);
@@ -392,15 +412,70 @@ impl<'a> NarrowingContext<'a> {
     ///
     /// Returns Some(type) if the property exists, None otherwise.
     pub(crate) fn get_property_type(&self, type_id: TypeId, property_name: Atom) -> Option<TypeId> {
-        if let Some(prop) = self.get_property_info(type_id, property_name) {
+        let resolved_type = self.resolve_type(type_id);
+        let key = (resolved_type, property_name);
+
+        if let Some(&cached) = self.cache.property_cache.borrow().get(&key) {
+            if let Some(cached_prop_type) = cached {
+                if cached_prop_type != TypeId::ERROR
+                    && !matches!(
+                        self.db.lookup(cached_prop_type),
+                        Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
+                    )
+                {
+                    return Some(cached_prop_type);
+                }
+                let resolved_cached = self.resolve_type(cached_prop_type);
+                if resolved_cached != cached_prop_type {
+                    self.cache
+                        .property_cache
+                        .borrow_mut()
+                        .insert(key, Some(resolved_cached));
+                    return Some(resolved_cached);
+                }
+                return Some(cached_prop_type);
+            }
+            return None;
+        }
+
+        if matches!(
+            self.db.lookup(resolved_type),
+            Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
+        ) {
+            return None;
+        }
+
+        let result = self.get_property_type_uncached(resolved_type, property_name);
+
+        // Cache the resolved property type so hot paths avoid an extra resolve pass.
+        // Don't cache unresolved symbolic/error property types for the same reason as
+        // discriminant lookups.
+        let should_cache = match result {
+            Some(prop_type) => {
+                prop_type != TypeId::ERROR
+                    && !matches!(
+                        self.db.lookup(prop_type),
+                        Some(TypeData::Lazy(_) | TypeData::TypeQuery(_))
+                    )
+            }
+            None => true,
+        };
+        if should_cache {
+            self.cache.property_cache.borrow_mut().insert(key, result);
+        }
+        result
+    }
+
+    fn get_property_type_uncached(
+        &self,
+        resolved_type: TypeId,
+        property_name: Atom,
+    ) -> Option<TypeId> {
+        // Check intersection types - property exists if ANY member has it
+        if let Some(prop) = self.get_property_info(resolved_type, property_name) {
             return Some(prop.type_id);
         }
 
-        // CRITICAL: Resolve Lazy types before checking for properties
-        // This ensures type aliases are resolved to their actual types
-        let resolved_type = self.resolve_type(type_id);
-
-        // Check intersection types - property exists if ANY member has it
         if let Some(members_id) = intersection_list_id(self.db, resolved_type) {
             let members = self.db.type_list(members_id);
             // Return the type from the first member that has the property

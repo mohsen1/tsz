@@ -314,6 +314,9 @@ pub struct NarrowingCache {
     pub resolve_visiting: RefCell<FxHashSet<TypeId>>,
     /// Cache for top-level property type lookups (TypeId, `PropName`) -> `PropType`
     pub property_cache: RefCell<FxHashMap<(TypeId, Atom), Option<TypeId>>>,
+    /// Cache for required-property checks in `in`-operator negative narrowing
+    /// (`obj` in `!("prop" in obj)`).
+    pub required_property_cache: RefCell<FxHashMap<(TypeId, Atom), bool>>,
     /// Cache for split-nullish decomposition (TypeId -> (`non_nullish`, nullish)).
     /// Reused by checker optional-chain/property-access hot paths.
     pub split_nullish_cache: RefCell<FxHashMap<TypeId, SplitNullishParts>>,
@@ -363,6 +366,10 @@ impl NarrowingCache {
             resolve_visiting: RefCell::new(FxHashSet::default()),
             property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
+                Default::default(),
+            )),
+            required_property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
+                256,
                 Default::default(),
             )),
             split_nullish_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
