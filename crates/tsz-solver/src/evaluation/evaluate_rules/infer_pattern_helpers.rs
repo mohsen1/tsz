@@ -2286,6 +2286,139 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .collect()
     }
 
+    /// Match an intrinsic-typed span at position `pos` in the infer-pattern path.
+    ///
+    /// Returns `Some(true/false)` when the span is a recognized intrinsic kind
+    /// (number, bigint, boolean, null, undefined) and dispatches length-aware
+    /// matching for it.  Returns `None` for wildcard intrinsics (string/any/
+    /// unknown) so the caller falls through to generic handling.
+    fn match_intrinsic_span_from(
+        &self,
+        source: &str,
+        pattern: &[TemplateSpan],
+        pos: usize,
+        index: usize,
+        type_id: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> Option<bool> {
+        use crate::relations::subtype::rules::literals::{
+            find_integer_length, find_number_length, is_valid_number,
+        };
+
+        let remaining = &source[pos..];
+
+        match self.interner().lookup(type_id)? {
+            TypeData::Intrinsic(kind) => match kind {
+                IntrinsicKind::Number => {
+                    let num_len = find_number_length(remaining);
+                    if num_len == 0 {
+                        return Some(false);
+                    }
+                    // Try shortest valid number first — matches tsc's non-greedy
+                    // behaviour for ambiguous infer+number patterns.
+                    for len in 1..=num_len {
+                        if is_valid_number(&remaining[..len])
+                            && self.match_template_literal_string_from(
+                                source,
+                                pattern,
+                                pos + len,
+                                index + 1,
+                                bindings,
+                                checker,
+                            )
+                        {
+                            return Some(true);
+                        }
+                    }
+                    Some(false)
+                }
+                IntrinsicKind::Bigint => {
+                    let int_len = find_integer_length(remaining);
+                    if int_len == 0 {
+                        return Some(false);
+                    }
+                    // Try shortest valid integer first — consistent with tsc.
+                    for len in 1..=int_len {
+                        if self.match_template_literal_string_from(
+                            source,
+                            pattern,
+                            pos + len,
+                            index + 1,
+                            bindings,
+                            checker,
+                        ) {
+                            return Some(true);
+                        }
+                    }
+                    Some(false)
+                }
+                IntrinsicKind::Boolean => {
+                    if remaining.starts_with("true")
+                        && self.match_template_literal_string_from(
+                            source,
+                            pattern,
+                            pos + 4,
+                            index + 1,
+                            bindings,
+                            checker,
+                        )
+                    {
+                        return Some(true);
+                    }
+                    if remaining.starts_with("false")
+                        && self.match_template_literal_string_from(
+                            source,
+                            pattern,
+                            pos + 5,
+                            index + 1,
+                            bindings,
+                            checker,
+                        )
+                    {
+                        return Some(true);
+                    }
+                    Some(false)
+                }
+                IntrinsicKind::Null => {
+                    if remaining.starts_with("null")
+                        && self.match_template_literal_string_from(
+                            source,
+                            pattern,
+                            pos + 4,
+                            index + 1,
+                            bindings,
+                            checker,
+                        )
+                    {
+                        Some(true)
+                    } else {
+                        Some(false)
+                    }
+                }
+                IntrinsicKind::Undefined => {
+                    if remaining.starts_with("undefined")
+                        && self.match_template_literal_string_from(
+                            source,
+                            pattern,
+                            pos + 9,
+                            index + 1,
+                            bindings,
+                            checker,
+                        )
+                    {
+                        Some(true)
+                    } else {
+                        Some(false)
+                    }
+                }
+                // Wildcards and other intrinsics fall through to generic handling.
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn match_template_literal_string_from(
         &self,
         source: &str,
@@ -2354,9 +2487,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     );
                 }
 
+                if let Some(result) = self.match_intrinsic_span_from(
+                    source, pattern, pos, index, type_id, bindings, checker,
+                ) {
+                    return result;
+                }
+
                 for end in self.candidate_template_capture_ends(source, pos, pattern, index) {
-                    let captured_type = self.interner().literal_string(&source[pos..end]);
-                    if checker.is_subtype_of(captured_type, type_id)
+                    let captured = &source[pos..end];
+                    let captured_type = self.interner().literal_string(captured);
+                    if self
+                        .template_capture_for_constraint(captured, captured_type, type_id, checker)
+                        .is_some()
                         && self.match_template_literal_string_from(
                             source,
                             pattern,
