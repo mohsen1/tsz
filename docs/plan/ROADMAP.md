@@ -29,7 +29,7 @@ Sources: `README.md` and local snapshots on 2026-05-15.
 
 | Surface | Current |
 | --- | ---: |
-| Diagnostic conformance | `100.0%` rounded (`12,581 / 12,582`) |
+| Diagnostic conformance | `100.0%` exact (`12,582 / 12,582`) |
 | JavaScript emit | `94.8%` (`12,820 / 13,530` in `README.md`; `12,828 / 13,530` in local snapshot) |
 | Declaration emit | `91.7%` (`1,531 / 1,669` in `README.md`; `1,527 / 1,669` in local snapshot) |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |

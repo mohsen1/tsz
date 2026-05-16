@@ -19,13 +19,13 @@ export PATH="$CARGO_HOME/bin:$HOME/.cargo/bin:/usr/local/cargo/bin:$PATH"
 
 mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE" "$TSZ_CI_WASM_PACK_CACHE"
 
-# Main's heavy-suite snapshots currently overstate the merge-gate floor. Shards
-# report their expected pass count from the partition they actually ran; gate on
-# that deficit when available so corpus-total drift does not force blind
+# Shards report their expected pass count from the partition they actually ran;
+# gate on that deficit when available so corpus-total drift does not force blind
 # absolute-floor edits. The fallback floor still protects paths without shard
 # expected counts.
-TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-12556}"
-TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT="${TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT:-38}"
+TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-12582}"
+# deficit=0: per-shard regressions are hard errors (unlike the floor, which has a 5-test tolerance).
+TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT="${TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT:-0}"
 TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1486}"
 
 cap_positive_baseline() {
