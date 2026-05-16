@@ -155,9 +155,10 @@ class C {
         !output.contains("let _classDescriptor;"),
         "Generated temp must not keep the colliding name. Output:\n{output}"
     );
-    // The user reference inside the class body must be preserved verbatim.
+    // ES2015 class-decorator lowering moves static fields after the decorator
+    // IIFE; the user reference must still point at the original binding.
     assert!(
-        output.contains("static value = _classDescriptor;"),
+        output.contains("_classThis.value = _classDescriptor;"),
         "User binding reference must be preserved unchanged. Output:\n{output}"
     );
 }
@@ -197,7 +198,7 @@ class C {
         "Generated temp must not keep the colliding name. Output:\n{output}"
     );
     assert!(
-        output.contains("static value = _classExtraInitializers;"),
+        output.contains("_classThis.value = _classExtraInitializers;"),
         "User binding reference must be preserved unchanged. Output:\n{output}"
     );
 }
@@ -216,7 +217,7 @@ class C {
         "Expected _classThis temp to be renamed. Output:\n{output}"
     );
     assert!(
-        output.contains("static value = _classThis;"),
+        output.contains("_classThis_1.value = _classThis;"),
         "User binding reference must be preserved unchanged. Output:\n{output}"
     );
 }
