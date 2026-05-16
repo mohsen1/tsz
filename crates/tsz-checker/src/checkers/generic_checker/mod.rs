@@ -1040,6 +1040,9 @@ impl<'a> CheckerState<'a> {
             ) {
                 continue;
             }
+            if self.array_element_infer_alias_satisfies_constraint(type_arg, constraint_for_check) {
+                continue;
+            }
             let error_anchor = type_args_list
                 .nodes
                 .get(i)
