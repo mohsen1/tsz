@@ -6,7 +6,7 @@ use crate::symbol_resolver::TypeSymbolResolution;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{Symbol, SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_scanner::SyntaxKind;
 use tsz_solver as solver_narrowing;
 use tsz_solver::TypeId;
@@ -94,12 +94,96 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(super) fn awaited_application_arg_from_type(&self, type_id: TypeId) -> Option<TypeId> {
-        let (base, args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, type_id)?;
-        self.is_awaited_application_base(base)
-            .then(|| args.first().copied())
-            .flatten()
+    pub(crate) fn awaited_application_arg_from_type(&self, type_id: TypeId) -> Option<TypeId> {
+        // Cheap pre-check: read the base without materializing the args Vec.
+        // `evaluate_application_type` now consults this helper for every
+        // generic application; allocating an args Vec for `Array<T>`,
+        // `Map<K,V>`, etc. just to reject them is wasted work.
+        let base = crate::query_boundaries::common::get_application_base(self.ctx.types, type_id)?;
+        if !self.is_awaited_application_base(base) {
+            return None;
+        }
+        let (_, args) = crate::query_boundaries::common::application_info(self.ctx.types, type_id)?;
+        args.first().copied()
+    }
+
+    pub(crate) fn builtin_promise_like_application_arg(&self, type_id: TypeId) -> Option<TypeId> {
+        let query::PromiseTypeKind::Application { base, args, .. } =
+            query::classify_promise_type(self.ctx.types, type_id)
+        else {
+            return None;
+        };
+        let sym_id = match query::classify_promise_type(self.ctx.types, base) {
+            query::PromiseTypeKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id)?,
+            query::PromiseTypeKind::TypeQuery(sym_ref) => SymbolId(sym_ref.0),
+            _ => return None,
+        };
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        Self::is_builtin_promise_like_name(symbol.escaped_name.as_str())
+            .then(|| args.first().copied().unwrap_or(TypeId::UNKNOWN))
+    }
+
+    pub(crate) fn promise_branch_alias_body_from_application(
+        &self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let query::PromiseTypeKind::Application { base, args, .. } =
+            query::classify_promise_type(self.ctx.types, type_id)
+        else {
+            return None;
+        };
+        let sym_id = match query::classify_promise_type(self.ctx.types, base) {
+            query::PromiseTypeKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id)?,
+            query::PromiseTypeKind::TypeQuery(sym_ref) => SymbolId(sym_ref.0),
+            _ => return None,
+        };
+        let (symbol, decl_file_idx) = self.promise_symbol_and_decl_file(sym_id)?;
+        if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+            return None;
+        }
+        let decl_idx = symbol.primary_declaration().unwrap_or(NodeIndex::NONE);
+        if decl_idx.is_none() {
+            return None;
+        }
+        let arena = self.ctx.get_arena_for_file(decl_file_idx);
+        let type_alias = arena.get_type_alias_at(decl_idx)?;
+        if !Self::type_node_contains_builtin_promise_like_name(arena, type_alias.type_node) {
+            return None;
+        }
+
+        let mut bindings = Vec::new();
+        if let Some(params) = &type_alias.type_parameters {
+            if params.nodes.len() != args.len() {
+                return None;
+            }
+            for (&param_idx, &arg) in params.nodes.iter().zip(args.iter()) {
+                let param = arena.get_type_parameter_at(param_idx)?;
+                let ident = arena.get_identifier_at(param.name)?;
+                bindings.push((self.ctx.types.intern_string(&ident.escaped_text), arg));
+            }
+        } else if !args.is_empty() {
+            return None;
+        }
+        Some(self.lower_type_with_bindings_from_arena(arena, type_alias.type_node, bindings))
+    }
+
+    fn type_node_contains_builtin_promise_like_name(arena: &NodeArena, root: NodeIndex) -> bool {
+        let mut stack = vec![root];
+        let mut remaining = 128usize;
+        while let Some(idx) = stack.pop() {
+            if remaining == 0 {
+                return false;
+            }
+            remaining -= 1;
+            if let Some(node) = arena.get(idx)
+                && let Some(ident) = arena.get_identifier(node)
+                && Self::is_builtin_promise_like_name(ident.escaped_text.as_str())
+            {
+                return true;
+            }
+            stack.extend(arena.get_children(idx));
+        }
+        false
     }
 
     fn is_awaited_application_base(&self, base: TypeId) -> bool {
