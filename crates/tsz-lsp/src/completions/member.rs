@@ -136,6 +136,9 @@ impl<'a> Completions<'a> {
             }
 
             for (name, info) in props {
+                if !dot_access_member_label_is_completion_eligible(&name) {
+                    continue;
+                }
                 let kind = if info.is_method {
                     CompletionItemKind::Method
                 } else {
@@ -217,6 +220,9 @@ impl<'a> Completions<'a> {
                 }
             }
             for (name, info) in props {
+                if !dot_access_member_label_is_completion_eligible(&name) {
+                    continue;
+                }
                 let kind = if info.is_method {
                     CompletionItemKind::Method
                 } else {
@@ -2181,4 +2187,11 @@ fn primitive_member_is_completion_eligible(kind: IntrinsicKind, name: &str) -> b
         return false;
     }
     true
+}
+
+/// Dot-access completions can only commit names that are directly usable after
+/// `receiver.`. Computed members are stored with bracketed display labels such
+/// as `[Symbol.iterator]`, which belong to element-access completions instead.
+fn dot_access_member_label_is_completion_eligible(name: &str) -> bool {
+    !(name.starts_with('[') && name.ends_with(']'))
 }

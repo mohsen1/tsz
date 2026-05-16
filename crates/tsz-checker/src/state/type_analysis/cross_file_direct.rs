@@ -22,36 +22,40 @@ struct DirectActualLibAliasBodyProof {
     outcome: DirectActualLibAliasBodyOutcome,
 }
 
+/// Track 7 transitional allowlist for actual-lib type-alias bodies that can be
+/// lowered directly across checker arenas. Additions should move toward stable
+/// lib identity queries instead of expanding name-only admissions.
+const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS: &[&str] = &[
+    "Capitalize",
+    "DecoratorMetadata",
+    "DecoratorMetadataObject",
+    "Exclude",
+    "Extract",
+    "FlatArray",
+    "IteratorResult",
+    "LocalesArgument",
+    "Lowercase",
+    "NonNullable",
+    "NumberFormatOptionsCurrencyDisplay",
+    "NumberFormatOptionsSignDisplay",
+    "NumberFormatOptionsStyle",
+    "NumberFormatOptionsUseGrouping",
+    "Omit",
+    "Partial",
+    "Pick",
+    "PropertyKey",
+    "Readonly",
+    "Record",
+    "Required",
+    "ReturnType",
+    "Uncapitalize",
+    "UnicodeBCP47LocaleIdentifier",
+    "Uppercase",
+    "WeakKey",
+];
+
 fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
-    matches!(
-        name,
-        "Capitalize"
-            | "DecoratorMetadata"
-            | "DecoratorMetadataObject"
-            | "Exclude"
-            | "Extract"
-            | "FlatArray"
-            | "IteratorResult"
-            | "LocalesArgument"
-            | "NumberFormatOptionsCurrencyDisplay"
-            | "NumberFormatOptionsSignDisplay"
-            | "NumberFormatOptionsStyle"
-            | "NumberFormatOptionsUseGrouping"
-            | "Lowercase"
-            | "NonNullable"
-            | "Omit"
-            | "Partial"
-            | "Pick"
-            | "PropertyKey"
-            | "Readonly"
-            | "Record"
-            | "ReturnType"
-            | "Required"
-            | "UnicodeBCP47LocaleIdentifier"
-            | "Uncapitalize"
-            | "Uppercase"
-            | "WeakKey"
-    )
+    DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS.contains(&name)
 }
 
 pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
