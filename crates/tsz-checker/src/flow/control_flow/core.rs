@@ -2285,11 +2285,11 @@ impl<'a> FlowAnalyzer<'a> {
             self.narrow_by_switch_case_clause(
                 base_type,
                 switch_data.expression,
-                switch_data.case_block,
                 clause_idx,
                 clause.expression,
                 reference,
                 &narrowing,
+                flow.antecedent.len() > 1,
             )
         }
     }
