@@ -1,8 +1,9 @@
 //! Lazy type resolution and type environment population.
 
 use crate::query_boundaries::common::{
-    collect_type_queries, contains_lazy_or_recursive, enum_def_id, fill_application_defaults,
-    get_type_query_symbol_ref, lazy_def_id,
+    collect_type_queries, contains_conditional_with_application_extends,
+    contains_lazy_or_recursive, enum_def_id, fill_application_defaults, get_type_query_symbol_ref,
+    lazy_def_id,
 };
 use crate::query_boundaries::state::type_environment as query;
 use crate::state::CheckerState;
@@ -273,7 +274,15 @@ impl<'a> CheckerState<'a> {
                 || crate::query_boundaries::spread::contains_unresolved_application(
                     self.ctx.types,
                     result,
-                ));
+                )
+                // `result != type_id` guards against re-running the second pass
+                // when the first pass deferred a generic conditional unchanged
+                // (type params present); we only retry when the first pass
+                // actually produced a different type containing deferred
+                // conditionals whose extends-type is still an Application
+                // (e.g. Pick/Readonly not yet expandable by TypeEnvironment).
+                || (result != type_id
+                    && contains_conditional_with_application_extends(self.ctx.types, result)));
         let final_result = if needs_resolver_pass {
             let seed_iter = if use_cache {
                 self.ctx.env_eval_cache_seed_entries()

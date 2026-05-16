@@ -325,6 +325,46 @@ pub(crate) fn contains_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) 
     false
 }
 
+/// Return true when `type_id` (or any union/intersection member reachable from it)
+/// is a `ConditionalType` whose `extends_type` is still an unevaluated
+/// `Application` type.
+///
+/// This identifies conditionals that were deferred because the current resolver
+/// could not expand a lib-type application (e.g. `Pick`, `Readonly`) — the
+/// kind of deferral introduced by the Application-in-extends guard in
+/// `evaluate_conditional`. A second resolver pass with `CheckerContext` can
+/// then expand those applications and re-evaluate the conditionals correctly.
+pub(crate) fn contains_conditional_with_application_extends(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    fn walk(db: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> bool {
+        if depth > 32 {
+            return false;
+        }
+        if let Some(cond) = tsz_solver::type_queries::get_conditional_type(db, type_id) {
+            if matches!(
+                db.lookup(cond.extends_type),
+                Some(tsz_solver::TypeData::Application(_))
+            ) {
+                return true;
+            }
+        }
+        if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id)
+            && members.iter().any(|&m| walk(db, m, depth + 1))
+        {
+            return true;
+        }
+        if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id)
+            && members.iter().any(|&m| walk(db, m, depth + 1))
+        {
+            return true;
+        }
+        false
+    }
+    walk(db, type_id, 0)
+}
+
 pub(crate) fn is_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_mapped_type(db, type_id)
 }

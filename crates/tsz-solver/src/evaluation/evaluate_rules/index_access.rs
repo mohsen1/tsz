@@ -3,6 +3,7 @@
 //! Handles TypeScript's index access types: `T[K]`
 //! Including property access, array indexing, and tuple indexing.
 
+use super::mapped::MappedKeys;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
@@ -141,6 +142,43 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
         }
 
         value_type
+    }
+
+    /// Evaluate `mapped[constraint]` by substituting each concrete key literal into the
+    /// mapped template and unioning the results. Returns `None` when the constraint
+    /// cannot be expanded to an all-literal key set (e.g. has index signatures or
+    /// generic type params), falling back to the constrained-TypeParam approach.
+    fn try_evaluate_mapped_template_per_concrete_key(
+        &mut self,
+        mapped: &crate::types::MappedType,
+    ) -> Option<TypeId> {
+        let keys: MappedKeys = self.evaluator.extract_mapped_keys(mapped.constraint)?;
+
+        if keys.has_string
+            || keys.has_number
+            || !keys.template_literals.is_empty()
+            || !keys.symbol_keys.is_empty()
+        {
+            return None;
+        }
+
+        let results: Vec<TypeId> = keys
+            .keys
+            .iter()
+            .filter_map(|mapped_key| {
+                let subst =
+                    TypeSubstitution::single(mapped.type_param.name, mapped_key.key_literal);
+                let instantiated =
+                    instantiate_type(self.evaluator.interner(), mapped.template, &subst);
+                let evaluated = self.evaluator.evaluate(instantiated);
+                (evaluated != TypeId::NEVER).then_some(evaluated)
+            })
+            .collect();
+
+        Some(crate::utils::union_or_single(
+            self.evaluator.interner(),
+            results,
+        ))
     }
 
     fn evaluate_apparent_primitive(&mut self, kind: IntrinsicKind) -> Option<TypeId> {
@@ -890,6 +928,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             // Preserve the per-key relationship by evaluating the template against a
             // constrained iteration variable instead of the whole key-space type.
             if self.index_is_symbolic_key_space(mapped.constraint) {
+                // First try: evaluate the template for each concrete key individually and
+                // union the results. This correctly handles complex templates like
+                // `{} extends Pick<T, K> ? K : never` where substituting a constrained
+                // TypeParam causes Pick to defer and conditional evaluation to return `never`.
+                // Falls back to the constrained-TypeParam approach when the constraint
+                // cannot be expanded to a concrete literal key set (e.g. generic TypeParams).
+                if let Some(per_key_result) =
+                    self.try_evaluate_mapped_template_per_concrete_key(&mapped)
+                {
+                    return Some(per_key_result);
+                }
                 return Some(self.instantiate_mapped_template_with_constraint_param(&mapped));
             }
 
