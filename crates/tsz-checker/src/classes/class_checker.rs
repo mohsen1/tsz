@@ -2581,7 +2581,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn class_symbol_is_actual_lib_iterator(&self, sym_id: tsz_binder::SymbolId) -> bool {
+    pub(crate) fn class_symbol_is_actual_lib_iterator(&self, sym_id: tsz_binder::SymbolId) -> bool {
         self.get_symbol_globally(sym_id).is_some_and(|symbol| {
             symbol.escaped_name == "Iterator"
                 && self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
