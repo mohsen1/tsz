@@ -1,16 +1,10 @@
-//! Generic type argument constraint validation (TS2344).
-
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Returns `true` when an arity diagnostic (TS2314 generic type requires
-    /// N args, TS2315 type is not generic, or TS2707 generic type requires
-    /// between M and N args) was emitted at any byte offset inside the AST
-    /// range of `type_arg_idx`. Used to suppress cascading TS2344 on an
-    /// outer type reference whose argument carries an inner arity error.
+    /// Returns true when an arity diagnostic was emitted inside `type_arg_idx`.
     fn type_arg_subtree_has_arity_error(&self, type_arg_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(type_arg_idx) else {
             return false;
@@ -1164,40 +1158,16 @@ impl<'a> CheckerState<'a> {
                     }
                     if is_bare_type_param && base_constraint_type.is_none() {
                         if let Some(&arg_idx) = type_args_list.nodes.get(i)
-                            && let Some(constraint_node) =
-                                self.type_arg_explicit_constraint_node_in_ast(arg_idx)
-                        {
-                            let explicit_base = self.get_type_from_type_node(constraint_node);
-                            if explicit_base != TypeId::UNKNOWN && explicit_base != type_arg {
-                                let constraint_resolved = self.resolve_lazy_type(constraint);
-                                let inst_constraint = self.instantiate_constraint_with_type_args(
-                                    constraint_resolved,
+                            && self
+                                .explicit_alias_type_parameter_constraint_satisfies_arg_constraint(
+                                    arg_idx,
+                                    type_arg,
+                                    constraint,
                                     type_params,
                                     &type_args,
-                                );
-                                if inst_constraint == TypeId::UNKNOWN
-                                    || inst_constraint == TypeId::ANY
-                                {
-                                    continue;
-                                }
-                                let explicit_base_for_check = self.evaluate_type_for_assignability(
-                                    self.resolve_lazy_members_in_union(explicit_base),
-                                );
-                                let inst_constraint_for_check =
-                                    self.evaluate_type_for_assignability(inst_constraint);
-                                if self.is_assignable_to(
-                                    explicit_base_for_check,
-                                    inst_constraint_for_check,
-                                ) || self.base_union_members_satisfy_constraint(
-                                    explicit_base_for_check,
-                                    inst_constraint_for_check,
-                                ) || self.satisfies_array_like_constraint(
-                                    explicit_base_for_check,
-                                    inst_constraint_for_check,
-                                ) {
-                                    continue;
-                                }
-                            }
+                                )
+                        {
+                            continue;
                         }
                         // Bare `Infer` — base_constraint_of_type returns the type
                         // unchanged, so base_constraint_type is None. Skip when the

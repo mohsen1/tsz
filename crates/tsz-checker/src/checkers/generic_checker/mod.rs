@@ -1296,6 +1296,7 @@ mod conditional_constraint_helpers;
 mod constraint_syntax_instantiation;
 mod constraint_validation;
 mod constructor_accessibility_helpers;
+mod explicit_alias_constraint_helpers;
 mod infer_conditional_constraints;
 mod infer_conditional_helpers;
 mod instantiation_expression_constraints;
