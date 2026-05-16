@@ -611,6 +611,19 @@ impl<'a> Printer<'a> {
         };
 
         match node.kind {
+            k if k == syntax_kind_ext::BLOCK => {
+                self.emit_block_in_loop_iife(stmt_idx, _body_info, _captured_vars, _init_vars);
+            }
+
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                self.emit_if_statement_in_loop_iife(
+                    stmt_idx,
+                    _body_info,
+                    _captured_vars,
+                    _init_vars,
+                );
+            }
+
             // Variable statement: check if it's var (needs hoisting transform)
             // Note: LET/CONST flags are on the VARIABLE_DECLARATION_LIST child, not the statement.
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
@@ -732,6 +745,105 @@ impl<'a> Printer<'a> {
         true
     }
 
+    fn emit_block_in_loop_iife(
+        &mut self,
+        block_idx: NodeIndex,
+        body_info: &LoopBodyVarInfo,
+        captured_vars: &[String],
+        init_vars: &[String],
+    ) {
+        let Some(block_node) = self.arena.get(block_idx) else {
+            return;
+        };
+        let Some(block) = self.arena.get_block(block_node) else {
+            self.emit(block_idx);
+            return;
+        };
+
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+        for &stmt_idx in &block.statements.nodes {
+            self.emit_statement_in_loop_iife(stmt_idx, body_info, captured_vars, init_vars);
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write("}");
+    }
+
+    fn emit_if_statement_in_loop_iife(
+        &mut self,
+        if_idx: NodeIndex,
+        body_info: &LoopBodyVarInfo,
+        captured_vars: &[String],
+        init_vars: &[String],
+    ) {
+        let Some(if_node) = self.arena.get(if_idx) else {
+            return;
+        };
+        let Some(if_stmt) = self.arena.get_if_statement(if_node) else {
+            self.emit(if_idx);
+            return;
+        };
+
+        self.write("if (");
+        self.emit(if_stmt.expression);
+        self.write(")");
+        self.emit_embedded_statement_in_loop_iife(
+            if_stmt.then_statement,
+            body_info,
+            captured_vars,
+            init_vars,
+        );
+
+        if if_stmt.else_statement.is_some() {
+            self.write(" else");
+            if self
+                .arena
+                .get(if_stmt.else_statement)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IF_STATEMENT)
+            {
+                self.write(" ");
+                self.emit_if_statement_in_loop_iife(
+                    if_stmt.else_statement,
+                    body_info,
+                    captured_vars,
+                    init_vars,
+                );
+            } else {
+                self.emit_embedded_statement_in_loop_iife(
+                    if_stmt.else_statement,
+                    body_info,
+                    captured_vars,
+                    init_vars,
+                );
+            }
+        }
+    }
+
+    fn emit_embedded_statement_in_loop_iife(
+        &mut self,
+        stmt_idx: NodeIndex,
+        body_info: &LoopBodyVarInfo,
+        captured_vars: &[String],
+        init_vars: &[String],
+    ) {
+        if self
+            .arena
+            .get(stmt_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::BLOCK)
+        {
+            self.write(" ");
+            self.emit_block_in_loop_iife(stmt_idx, body_info, captured_vars, init_vars);
+            return;
+        }
+
+        self.write_line();
+        self.increase_indent();
+        self.emit_statement_in_loop_iife(stmt_idx, body_info, captured_vars, init_vars);
+        self.decrease_indent();
+    }
+
     /// Emit the loop call: _`loop_1(args)`;
     pub(in crate::emitter) fn emit_loop_call(
         &mut self,
@@ -739,7 +851,7 @@ impl<'a> Printer<'a> {
         captured_vars: &[String],
         body_info: &LoopBodyVarInfo,
     ) {
-        if body_info.has_continue || body_info.has_break || body_info.has_return {
+        if body_info.has_break || body_info.has_return {
             // Need to capture the return value
             if body_info.has_return {
                 self.write("var _state = ");
@@ -749,14 +861,6 @@ impl<'a> Printer<'a> {
                 self.write(");");
                 self.write_line();
 
-                if body_info.has_continue {
-                    self.write("if (_state === \"continue\")");
-                    self.write_line();
-                    self.increase_indent();
-                    self.write("continue;");
-                    self.decrease_indent();
-                    self.write_line();
-                }
                 if body_info.has_break {
                     self.write("if (_state === \"break\")");
                     self.write_line();
@@ -778,16 +882,6 @@ impl<'a> Printer<'a> {
                 self.write(");");
                 self.write_line();
 
-                if body_info.has_continue {
-                    self.write("if (_state === \"continue\")");
-                    self.write_line();
-                    self.increase_indent();
-                    self.write("continue;");
-                    self.decrease_indent();
-                    if body_info.has_break {
-                        self.write_line();
-                    }
-                }
                 if body_info.has_break {
                     self.write("if (_state === \"break\")");
                     self.write_line();

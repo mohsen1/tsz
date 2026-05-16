@@ -131,6 +131,10 @@ name = "loop_capture_labeled_var_recovery_tests"
 path = "tests/loop_capture_labeled_var_recovery_tests.rs"
 
 [[test]]
+name = "loop_capture_continue_control_tests"
+path = "tests/loop_capture_continue_control_tests.rs"
+
+[[test]]
 name = "tagged_template_escape_emit_tests"
 path = "tests/tagged_template_escape_emit_tests.rs"
 
