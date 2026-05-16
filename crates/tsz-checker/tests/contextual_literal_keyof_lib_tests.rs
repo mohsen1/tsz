@@ -180,6 +180,46 @@ instant.toString({ timeZone: "UTC" });
 }
 
 #[test]
+fn temporal_style_rounding_options_fallback_uses_shape_not_alias_display() {
+    let source = r#"
+type DateUnit = "year" | "month" | "week" | "day";
+type TimeUnit = "hour" | "minute" | "second" | "millisecond" | "microsecond" | "nanosecond";
+type PluralizeUnit<T extends DateUnit | TimeUnit> =
+    | T
+    | {
+        year: "years";
+        month: "months";
+        week: "weeks";
+        day: "days";
+        hour: "hours";
+        minute: "minutes";
+        second: "seconds";
+        millisecond: "milliseconds";
+        microsecond: "microseconds";
+        nanosecond: "nanoseconds";
+    }[T];
+
+interface UnitPairOptions<Units extends DateUnit | TimeUnit> {
+    smallestUnit?: PluralizeUnit<Units> | undefined;
+    largestUnit?: PluralizeUnit<Units> | undefined;
+}
+
+interface RenamedRangeOptions<Units extends DateUnit | TimeUnit> extends UnitPairOptions<Units> {}
+
+declare function compare(options?: RenamedRangeOptions<DateUnit | TimeUnit>): void;
+
+compare({ smallestUnit: "second", largestUnit: "hour" });
+"#;
+
+    let diagnostics = check(source);
+    let ts2345: Vec<_> = diagnostics.iter().filter(|d| d.code == 2345).collect();
+    assert!(
+        ts2345.is_empty(),
+        "Temporal-style unit pair literals should be accepted by structural shape rather than alias display; got {ts2345:?}",
+    );
+}
+
+#[test]
 fn temporal_lib_to_string_options_contextually_type_literal_arguments() {
     let source = r#"
 const instant = Temporal.Instant.fromEpochMilliseconds(1574074321816);
