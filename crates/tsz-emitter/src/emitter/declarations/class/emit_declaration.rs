@@ -655,6 +655,18 @@ impl<'a> Printer<'a> {
         true
     }
 
+    pub(in crate::emitter) fn capture_tc39_decorated_class_expression(
+        &mut self,
+        class_node: NodeIndex,
+        display_name: &str,
+    ) -> Option<String> {
+        let start = self.writer.len();
+        let emitted = self.emit_tc39_decorated_class_expression(class_node, display_name);
+        let expr = emitted.then(|| self.writer.get_output()[start..].trim().to_string());
+        self.writer.truncate(start);
+        expr
+    }
+
     fn next_tc39_anonymous_class_name(&mut self) -> String {
         for suffix in 1.. {
             let candidate = format!("class_{suffix}");

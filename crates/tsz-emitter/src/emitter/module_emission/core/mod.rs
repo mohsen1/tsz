@@ -664,16 +664,10 @@ impl<'a> Printer<'a> {
                                     return;
                                 }
                             } else {
-                                let before_len = self.writer.len();
-                                if self.emit_tc39_decorated_class_expression(
+                                if let Some(expr) = self.capture_tc39_decorated_class_expression(
                                     export.export_clause,
                                     &class_name,
                                 ) {
-                                    let after_len = self.writer.len();
-                                    let full_output = self.writer.get_output().to_string();
-                                    let expr =
-                                        full_output[before_len..after_len].trim().to_string();
-                                    self.writer.truncate(before_len);
                                     self.write("let ");
                                     self.write(&class_name);
                                     self.write(" = ");
@@ -685,7 +679,6 @@ impl<'a> Printer<'a> {
                                     self.write(";");
                                     return;
                                 }
-                                self.writer.truncate(before_len);
                             }
                         }
                         if class.name.is_none() {
@@ -702,22 +695,15 @@ impl<'a> Printer<'a> {
                                     return;
                                 }
                             } else {
-                                let before_len = self.writer.len();
-                                if self.emit_tc39_decorated_class_expression(
+                                if let Some(expr) = self.capture_tc39_decorated_class_expression(
                                     export.export_clause,
                                     "default",
                                 ) {
-                                    let after_len = self.writer.len();
-                                    let full_output = self.writer.get_output().to_string();
-                                    let expr =
-                                        full_output[before_len..after_len].trim().to_string();
-                                    self.writer.truncate(before_len);
                                     self.write("export default ");
                                     self.write(&expr);
                                     self.write(";");
                                     return;
                                 }
-                                self.writer.truncate(before_len);
                             }
                         }
 

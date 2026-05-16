@@ -1191,30 +1191,7 @@ impl<'a> Printer<'a> {
                     self.write(&env_name);
                     self.write(", ");
                     if decl.initializer.is_some() {
-                        if !self.ctx.target_es5
-                            && !self.ctx.options.legacy_decorators
-                            && !self.ctx.options.target.supports_es2025()
-                            && self.arena.get(decl.initializer).is_some_and(|init_node| {
-                                init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                                    && self.arena.get_class(init_node).is_some_and(|class| {
-                                        !self.collect_class_decorators(&class.modifiers).is_empty()
-                                    })
-                            })
-                        {
-                            let before_len = self.writer.len();
-                            if self.emit_tc39_decorated_class_expression(decl.initializer, &name) {
-                                let after_len = self.writer.len();
-                                let full_output = self.writer.get_output().to_string();
-                                let expr = full_output[before_len..after_len].trim().to_string();
-                                self.writer.truncate(before_len);
-                                self.write(&expr);
-                            } else {
-                                self.writer.truncate(before_len);
-                                self.emit(decl.initializer);
-                            }
-                        } else {
-                            self.emit(decl.initializer);
-                        }
+                        self.emit_top_level_using_initializer(decl.initializer, &name);
                     } else {
                         self.write("void 0");
                     }
@@ -1702,13 +1679,7 @@ impl<'a> Printer<'a> {
             && !self.ctx.options.legacy_decorators
             && !self.ctx.options.target.supports_es2025()
         {
-            let before_len = self.writer.len();
-            if self.emit_tc39_decorated_class_expression(idx, &display_name) {
-                let after_len = self.writer.len();
-                let full_output = self.writer.get_output().to_string();
-                let expr = full_output[before_len..after_len].trim().to_string();
-                self.writer.truncate(before_len);
-
+            if let Some(expr) = self.capture_tc39_decorated_class_expression(idx, &display_name) {
                 if let Some(export_name) = export_name.as_ref() {
                     if !is_es_module_output {
                         self.write_export_binding_start(export_name);
@@ -1744,7 +1715,6 @@ impl<'a> Printer<'a> {
                 }
                 return true;
             }
-            self.writer.truncate(before_len);
         }
         if self.ctx.options.target.supports_es2025()
             && has_decorators
