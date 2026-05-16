@@ -31,6 +31,7 @@ jobs:
       full_run: ${{ steps.gate.outputs.full_run }}
       rust_cache_refresh: ${{ steps.gate.outputs.rust_cache_refresh }}
       required_summary: ${{ steps.gate.outputs.required_summary }}
+      compiler_checks_required: ${{ steps.gate.outputs.compiler_checks_required }}
       unit_packages: ${{ steps.gate.outputs.unit_packages }}
     steps:
       - id: gate
@@ -44,6 +45,7 @@ jobs:
           required_summary=true
           rust_cache_refresh=false
           cache_key_changed=false
+          compiler_checks_required=true
           unit_packages=""
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             # The `labeled` event triggers on every label add. We only care
@@ -108,6 +110,13 @@ jobs:
                   echo "PR diff is docs-only — skipping CI jobs:"
                   printf '  %s\n' $(printf '%s\n' "$all_paths" | sort -u)
                   should_run=false
+                fi
+                compiler_paths=$(printf '%s\n' "$all_paths" \
+                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                  || true)
+                if [[ -z "$compiler_paths" ]]; then
+                  compiler_checks_required=false
+                  echo "PR diff has no compiler/runtime paths; unit and conformance remain visible but are not required by CI Summary."
                 fi
               fi
             fi
@@ -288,6 +297,7 @@ jobs:
           echo "full_run=${full_run}" >> "$GITHUB_OUTPUT"
           echo "rust_cache_refresh=${rust_cache_refresh}" >> "$GITHUB_OUTPUT"
           echo "required_summary=${required_summary}" >> "$GITHUB_OUTPUT"
+          echo "compiler_checks_required=${compiler_checks_required}" >> "$GITHUB_OUTPUT"
           echo "unit_packages=${unit_packages}" >> "$GITHUB_OUTPUT"
 
   project-corpus-pr-body:
@@ -849,6 +859,7 @@ jobs:
           gate = needs["gate"]
           should_run = gate.get("outputs", {}).get("should_run") == "true"
           full_run = gate.get("outputs", {}).get("full_run") == "true"
+          compiler_checks_required = gate.get("outputs", {}).get("compiler_checks_required") != "false"
 
           if gate.get("result") != "success":
               print(f"gate did not pass: {gate.get('result')}")
@@ -858,7 +869,11 @@ jobs:
               print("CI gated off; summary passes because jobs were intentionally skipped.")
               sys.exit(0)
 
-          required = {"lint", "cargo-shear", "cargo-deny", "dist-binaries", "unit"}
+          required = {"lint", "cargo-shear", "cargo-deny", "dist-binaries"}
+          if compiler_checks_required:
+              required.add("unit")
+          else:
+              print("Compiler checks are non-required for this non-compiler diff.")
           pr_body = needs.get("project-corpus-pr-body")
           if pr_body and pr_body.get("result") not in ("success", "skipped"):
               print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
@@ -866,15 +881,18 @@ jobs:
 
           if full_run:
               required.update({
-                  "wasm",
-                  "wasm-web",
                   "project-compile-guard",
-                  "node-harness-prep",
-                  "conformance-aggregate",
                   "conformance-snapshot-gate",
-                  "emit",
-                  "fourslash-aggregate",
               })
+              if compiler_checks_required:
+                  required.update({
+                      "wasm",
+                      "wasm-web",
+                      "node-harness-prep",
+                      "conformance-aggregate",
+                      "emit",
+                      "fourslash-aggregate",
+                  })
 
           failures = []
           for name, data in needs.items():

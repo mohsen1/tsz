@@ -67,3 +67,30 @@ function foo<K extends { a: string; b: string }>() {
         "TS2322 target should display as 'keyof K', got: {msg}"
     );
 }
+
+#[test]
+fn array_literal_boolean_element_widens_against_keyof_type_parameter() {
+    let source = r#"
+function foo<T extends { enabled: boolean }>() {
+    let arr: (keyof T)[] = [true];
+}
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts2322: Vec<&(u32, String)> = diagnostics.iter().filter(|(c, _)| *c == 2322).collect();
+
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected exactly one TS2322; got: {diagnostics:#?}"
+    );
+    let (_, msg) = ts2322[0];
+    assert!(
+        msg.contains("'boolean'"),
+        "TS2322 source should widen boolean literals, got: {msg}"
+    );
+    assert!(
+        msg.contains("'keyof T'"),
+        "TS2322 target should display as 'keyof T', got: {msg}"
+    );
+}

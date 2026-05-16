@@ -105,7 +105,7 @@ jobs:
           path: |
             .target-bench/tools
             .ci-cache/pnpm-store
-          key: bench-tools-${{ runner.os }}-${{ hashFiles('scripts/bench/bench-vs-tsgo.sh', 'scripts/package-lock.json', 'scripts/package.json') }}
+          key: bench-tools-${{ runner.os }}-${{ hashFiles('scripts/bench/bench-vs-tsgo.sh', 'scripts/bench/project-fixtures.sh', 'scripts/package-lock.json', 'scripts/package.json') }}
           restore-keys: |
             bench-tools-${{ runner.os }}-
 
@@ -114,7 +114,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .target-bench/dist
-          key: bench-pgo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'crates/**/Cargo.toml', 'crates/**/*.rs', 'scripts/bench/bench-vs-tsgo.sh') }}
+          key: bench-pgo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'crates/**/Cargo.toml', 'crates/**/*.rs', 'scripts/bench/bench-vs-tsgo.sh', 'scripts/bench/project-fixtures.sh') }}
           restore-keys: |
             bench-pgo-${{ runner.os }}-
 
@@ -131,6 +131,7 @@ jobs:
               .cargo/config.toml \
               'crates/**/Cargo.toml' \
               'crates/**/*.rs' \
+              scripts/bench/project-fixtures.sh \
               scripts/bench/bench-vs-tsgo.sh |
               sort |
               xargs sha256sum |
@@ -212,6 +213,7 @@ jobs:
               .cargo/config.toml \
               'crates/**/Cargo.toml' \
               'crates/**/*.rs' \
+              scripts/bench/project-fixtures.sh \
               scripts/bench/bench-vs-tsgo.sh |
               sort |
               xargs sha256sum |
@@ -306,7 +308,7 @@ jobs:
           path: |
             .target-bench/external
             .ci-cache/pnpm-store
-          key: bench-fixtures-${{ matrix.label }}-${{ runner.os }}-${{ hashFiles('scripts/bench/bench-vs-tsgo.sh') }}
+          key: bench-fixtures-${{ matrix.label }}-${{ runner.os }}-${{ hashFiles('scripts/bench/bench-vs-tsgo.sh', 'scripts/bench/project-fixtures.sh') }}
           restore-keys: |
             bench-fixtures-${{ matrix.label }}-${{ runner.os }}-
             bench-fixtures-${{ runner.os }}-
