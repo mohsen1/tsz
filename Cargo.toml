@@ -153,12 +153,18 @@ lto = "thin"
 # Used by cargo nextest in CI unit suite to cap peak LLVM memory.
 # debug=2 (inherited from dev) × codegen-units × concurrent jobs = OOM on 8-CPU runners.
 # Disabling debug info is the single largest memory win (~3-4× reduction in LLVM backend RSS).
-# Keep codegen parallelism serialized: the checker lib-test target is large
-# enough that multi-unit LLVM codegen can be killed on the self-hosted
-# runners even when Cargo itself is already capped to one build job.
-# Keep unit tests unoptimized while the conformance runway is open: optimized
-# checker lib-test codegen can exceed runner memory even with one build job.
-# CARGO_BUILD_JOBS is also memory-capped via scripts/ci/gcp-full-ci.sh.
+#
+# 2026-05-16: even at CARGO_BUILD_JOBS=1, a single rustc compiling
+# tsz-checker lib-test exceeded 32 GiB RSS during LLVM backend and was
+# SIGKILL'd on the 32 GiB Cloud Run worker. The chain of mitigations:
+#   * codegen-units = 1 (no in-flight LLVM IR sharding; minimum peak)
+#   * opt-level = 0 (no codegen passes that re-materialize IR)
+#   * debug = false (no DWARF emission)
+#   * scripts/ci/gcp-full-ci.sh caps cargo to -j1 via
+#     TSZ_CI_UNIT_CARGO_MB_PER_JOB so two lib-tests cannot share the box.
+# The real fix is the Cloud Build private pool path (PR #7591) which runs
+# the same compile in ~4 min on a 32 vCPU box where memory is not the
+# constraint.
 inherits = "dev"
 opt-level = 0
 debug = false
