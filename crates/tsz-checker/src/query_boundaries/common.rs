@@ -4,46 +4,23 @@ use tsz_solver::{
 };
 
 // Re-export solver value types used by checker call computation.
-pub(crate) use tsz_solver::ContextualTypeContext;
-pub(crate) use tsz_solver::FunctionShape;
-pub(crate) use tsz_solver::IntrinsicKind;
-pub(crate) use tsz_solver::MappedType;
-pub(crate) use tsz_solver::ObjectFlags;
-pub(crate) use tsz_solver::PendingDiagnostic;
-pub(crate) use tsz_solver::PendingDiagnosticBuilder;
-pub(crate) use tsz_solver::SourceLocation;
-pub(crate) use tsz_solver::TypeFormatter;
-#[allow(unused_imports)]
-pub(crate) use tsz_solver::TypeInstantiator;
-#[allow(unused_imports)]
-pub(crate) use tsz_solver::TypeInterner;
+pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
+pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 pub(crate) use tsz_solver::type_queries::{
-    RemappedMappedIndexAccessResult, constraint_allows_mutable_array_like,
+    RemappedMappedIndexAccessResult, TypeTraversalKind, constraint_allows_mutable_array_like,
     is_remapped_mapped_index_access, remapped_mapped_index_access_result,
 };
-pub(crate) use tsz_solver::{OptionalPropertyChainKey, ParamInfo};
-
-pub(crate) use tsz_solver::AssignabilityChecker;
+pub(crate) use tsz_solver::{
+    AssignabilityChecker, CallResult, ContextualTypeContext, FunctionShape, IndexKind,
+    IndexSignatureResolver, IntrinsicKind, MappedType, ObjectFlags, OptionalPropertyChainKey,
+    ParamInfo, PendingDiagnostic, PendingDiagnosticBuilder, QueryDatabase, SourceLocation,
+    SubtypeFailureReason, TypeEnvironment, TypeFormatter, TypeResolver, TypeSubstitution,
+    fill_application_defaults, instantiate_generic,
+};
 #[allow(unused_imports)]
-pub(crate) use tsz_solver::BinaryOpEvaluator;
-pub(crate) use tsz_solver::IndexKind;
-pub(crate) use tsz_solver::IndexSignatureResolver;
-pub(crate) use tsz_solver::QueryDatabase;
-pub(crate) use tsz_solver::SubtypeFailureReason;
-pub(crate) use tsz_solver::TypeEnvironment;
-pub(crate) use tsz_solver::TypeResolver;
-pub(crate) use tsz_solver::fill_application_defaults;
-pub(crate) use tsz_solver::instantiate_generic;
-pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
-pub(crate) use tsz_solver::type_queries::TypeTraversalKind;
+pub(crate) use tsz_solver::{BinaryOpEvaluator, TypeInstantiator, TypeInterner};
 
 pub(crate) use super::construct_signatures::construct_signatures_for_type;
-
-pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
-
-pub(crate) use tsz_solver::CallResult;
-pub(crate) use tsz_solver::TypeSubstitution;
-
 pub(crate) use super::type_rewrite::replace_type_queries_and_lazies_with;
 
 pub(crate) fn instantiate_type(
@@ -343,6 +320,28 @@ pub(crate) fn is_generic_application_with_type_params(
             .any(|&arg| contains_type_parameters(db, arg));
     }
     false
+}
+
+/// Check whether an application's aliased body is a generic mapped type after
+/// substituting the application's type arguments.
+pub(crate) fn is_generic_mapped_application<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> bool {
+    (|| {
+        let (base, args) = tsz_solver::type_queries::get_application_info(db, type_id)?;
+        let def_id = tsz_solver::type_queries::get_lazy_def_id(db, base)?;
+        let type_params = resolver.get_lazy_type_params(def_id)?;
+        if type_params.is_empty() {
+            return None;
+        }
+        let body = resolver.resolve_lazy(def_id, db.as_type_database())?;
+        let substitution = TypeSubstitution::from_args(db.as_type_database(), &type_params, &args);
+        let instantiated = instantiate_type(db, body, &substitution);
+        Some(is_generic_mapped_type(db.as_type_database(), instantiated))
+    })()
+    .unwrap_or(false)
 }
 
 /// Check if a type contains type parameters that require instantiation,

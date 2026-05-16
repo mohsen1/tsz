@@ -1552,11 +1552,14 @@ impl<'a> DeclarationEmitter<'a> {
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
 
+        let delay_private_identifier_marker = self
+            .should_delay_private_identifier_marker_for_js_constructor_overloads(&class.members);
+
         // Emit `#private;` if any member has a private identifier name (e.g., #foo)
-        if self.class_has_private_identifier_member(&class.members) {
-            self.write_indent();
-            self.write("#private;");
-            self.write_line();
+        if self.class_has_private_identifier_member(&class.members)
+            && !delay_private_identifier_marker
+        {
+            self.emit_private_identifier_marker();
         }
 
         self.emit_js_array_subclass_constructor_overloads_if_needed(
@@ -1564,6 +1567,11 @@ impl<'a> DeclarationEmitter<'a> {
             class.heritage_clauses.as_ref(),
         );
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
+        if self.class_has_private_identifier_member(&class.members)
+            && delay_private_identifier_marker
+        {
+            self.emit_private_identifier_marker();
+        }
         if self.source_is_js_file {
             self.emit_js_class_define_property_accessors_for_name(class.name);
             self.emit_js_class_like_prototype_members_for_declared_class(

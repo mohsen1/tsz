@@ -102,9 +102,7 @@ impl<'a> CheckerState<'a> {
         let Some(mut children_type) = self.get_jsx_children_prop_type(props_type) else {
             return;
         };
-        let children_type_str = self
-            .get_jsx_component_prop_annotation_text(tag_name_idx, &children_prop_name)
-            .unwrap_or_else(|| self.jsx_children_type_display(props_type, children_type));
+        let children_type_str = self.jsx_children_type_str_for_display(children_type);
         let multiple_children_type = self.select_jsx_multiple_children_target_type(children_type);
         let children_type_is_originally_compound =
             crate::query_boundaries::common::union_members(self.ctx.types, children_type).is_some()
@@ -285,6 +283,13 @@ impl<'a> CheckerState<'a> {
     ) -> String {
         self.jsx_children_declared_type_text(props_type)
             .unwrap_or_else(|| self.jsx_children_fallback_type_display(children_type))
+    }
+
+    /// Side-effect-free display formatter — does not perturb the evaluation
+    /// cache used by subsequent assignability checks.
+    pub(super) fn jsx_children_type_str_for_display(&self, children_type: TypeId) -> String {
+        let display = self.format_jsx_children_type_without_structural_aliases(children_type);
+        self.normalize_jsx_children_alias_union_display(display)
     }
 
     fn jsx_children_fallback_type_display(&mut self, children_type: TypeId) -> String {
@@ -1144,14 +1149,17 @@ impl<'a> CheckerState<'a> {
         original_children_type: TypeId,
         tag_name_idx: NodeIndex,
     ) {
-        if let Some(expected_child_type) = self.jsx_multiple_children_element_type(children_type)
-            && self.report_jsx_multiple_children_individual_assignability(
+        if let Some(expected_child_type) = self.jsx_multiple_children_element_type(children_type) {
+            // Each child is checked individually. When all pass, the aggregate
+            // synthesized array type is not checked — it can carry a different
+            // TypeId than the declared children type even when structurally
+            // identical, which would produce a spurious "T[] not assignable to T[]".
+            self.report_jsx_multiple_children_individual_assignability(
                 attributes_idx,
                 expected_child_type,
                 original_children_type,
                 None,
-            )
-        {
+            );
             return;
         }
 
