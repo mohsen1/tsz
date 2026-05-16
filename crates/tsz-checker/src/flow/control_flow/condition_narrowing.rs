@@ -218,29 +218,28 @@ impl<'a> FlowAnalyzer<'a> {
         &self,
         type_id: TypeId,
         switch_expr: NodeIndex,
-        case_block: NodeIndex,
         clause_idx: NodeIndex,
         case_expr: NodeIndex,
         target: NodeIndex,
         narrowing: &NarrowingContext,
+        has_fallthrough: bool,
     ) -> TypeId {
-        let Some(case_block_node) = self.arena.get(case_block) else {
-            return self.narrow_by_switch_clause(
-                type_id,
-                switch_expr,
-                case_expr,
-                target,
-                narrowing,
-            );
+        let fallback =
+            || self.narrow_by_switch_clause(type_id, switch_expr, case_expr, target, narrowing);
+        let Some(case_block) = self
+            .arena
+            .get_extended(clause_idx)
+            .map(|ext| ext.parent)
+            .filter(|parent| parent.is_some())
+        else {
+            return fallback();
         };
-        let Some(case_block_data) = self.arena.get_block(case_block_node) else {
-            return self.narrow_by_switch_clause(
-                type_id,
-                switch_expr,
-                case_expr,
-                target,
-                narrowing,
-            );
+        let Some(case_block_data) = self
+            .arena
+            .get(case_block)
+            .and_then(|node| self.arena.get_block(node))
+        else {
+            return fallback();
         };
 
         if let Some(typeof_operand) = self.get_typeof_operand(self.skip_parenthesized(switch_expr))
@@ -298,10 +297,6 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
-        // OPTIMIZATION: For discriminant switches (switch(x.kind) or switch(x)),
-        // collect all preceding case literal types and exclude them in a single O(N)
-        // pass instead of O(N^2) sequential narrowing. This is critical for large
-        // discriminated unions (e.g., 200-member unions in switch statements).
         let target_is_switch_expr = self.is_matching_reference(switch_expr, target);
         let discriminant_info = if !target_is_switch_expr {
             self.discriminant_property_info(switch_expr, target)
@@ -310,13 +305,51 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         if target_is_switch_expr || discriminant_info.is_some() {
-            // Collect all preceding case literal types
+            if !has_fallthrough
+                && let Some(current_lit_type) = self.literal_type_from_node(case_expr)
+            {
+                let mut previous_cases_are_distinct_literals = true;
+                for &idx in &case_block_data.statements.nodes {
+                    if idx == clause_idx {
+                        break;
+                    }
+                    let Some(clause_node) = self.arena.get(idx) else {
+                        continue;
+                    };
+                    let Some(clause) = self.arena.get_case_clause(clause_node) else {
+                        continue;
+                    };
+                    if clause.expression.is_none() {
+                        previous_cases_are_distinct_literals = false;
+                        break;
+                    }
+                    let Some(prev_lit_type) = self.literal_type_from_node(clause.expression) else {
+                        previous_cases_are_distinct_literals = false;
+                        break;
+                    };
+                    if prev_lit_type == current_lit_type {
+                        previous_cases_are_distinct_literals = false;
+                        break;
+                    }
+                }
+
+                if previous_cases_are_distinct_literals {
+                    return self.narrow_by_switch_clause(
+                        type_id,
+                        switch_expr,
+                        case_expr,
+                        target,
+                        narrowing,
+                    );
+                }
+            }
+
             let mut excluded_types: Vec<TypeId> = Vec::new();
             let mut all_literals = true;
 
             for &idx in &case_block_data.statements.nodes {
                 if idx == clause_idx {
-                    break; // Stop at current clause
+                    break;
                 }
                 let Some(clause_node) = self.arena.get(idx) else {
                     continue;
@@ -330,13 +363,10 @@ impl<'a> FlowAnalyzer<'a> {
 
                 if let Some(lit_type) = self.literal_type_from_node(clause.expression) {
                     excluded_types.push(lit_type);
-                } else if let Some(node_types) = self.node_types {
-                    if let Some(&expr_type) = node_types.get(&clause.expression.0) {
-                        excluded_types.push(expr_type);
-                    } else {
-                        all_literals = false;
-                        break;
-                    }
+                } else if let Some(node_types) = self.node_types
+                    && let Some(&expr_type) = node_types.get(&clause.expression.0)
+                {
+                    excluded_types.push(expr_type);
                 } else {
                     all_literals = false;
                     break;
@@ -344,7 +374,6 @@ impl<'a> FlowAnalyzer<'a> {
             }
 
             if all_literals {
-                // Batch-exclude all preceding case types, then apply positive match
                 let narrowed = if excluded_types.is_empty() {
                     type_id
                 } else if target_is_switch_expr {
@@ -358,8 +387,6 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     type_id
                 };
-
-                // Apply positive narrowing for current case
                 return self.narrow_by_switch_clause(
                     narrowed,
                     switch_expr,

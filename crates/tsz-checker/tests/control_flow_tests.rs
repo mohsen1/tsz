@@ -283,6 +283,162 @@ switch (x.kind) {
 }
 
 #[test]
+fn test_switch_discriminant_distinct_case_narrows_without_prefix_exclusion() {
+    let source = r#"
+let x: { tag: "left" } | { tag: "right" } | { tag: "center" } | { tag: "none" };
+switch (x.tag) {
+  case "left":
+    x;
+    break;
+  case "right":
+    x;
+    break;
+  default:
+    x;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let tag_name = types.intern_string("tag");
+    let lit_left = types.literal_string("left");
+    let lit_right = types.literal_string("right");
+    let lit_center = types.literal_string("center");
+    let lit_none = types.literal_string("none");
+
+    let member_left = types.object(vec![PropertyInfo::new(tag_name, lit_left)]);
+    let member_right = types.object(vec![PropertyInfo::new(tag_name, lit_right)]);
+    let member_center = types.object(vec![PropertyInfo::new(tag_name, lit_center)]);
+    let member_none = types.object(vec![PropertyInfo::new(tag_name, lit_none)]);
+    let union = types.union(vec![member_left, member_right, member_center, member_none]);
+
+    let switch_idx = get_switch_statement(arena, root, 1);
+    let ident_case_right = get_switch_clause_expression(arena, switch_idx, 1);
+    let ident_default = get_switch_clause_expression(arena, switch_idx, 2);
+
+    let flow_case_right = binder
+        .get_node_flow(ident_case_right)
+        .expect("flow for case right");
+    let narrowed_case_right = analyzer.get_flow_type(ident_case_right, union, flow_case_right);
+    assert_eq!(narrowed_case_right, member_right);
+
+    let flow_default = binder
+        .get_node_flow(ident_default)
+        .expect("flow for default");
+    let narrowed_default = analyzer.get_flow_type(ident_default, union, flow_default);
+    let expected_default = types.union(vec![member_center, member_none]);
+    assert_eq!(narrowed_default, expected_default);
+}
+
+#[test]
+fn test_switch_discriminant_fallthrough_preserves_previous_case_member() {
+    let source = r#"
+let x: { kind: "a" } | { kind: "b" } | { kind: "c" };
+switch (x.kind) {
+  case "a":
+    x;
+  case "b":
+    x;
+    break;
+  default:
+    x;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let kind_name = types.intern_string("kind");
+    let lit_a = types.literal_string("a");
+    let lit_b = types.literal_string("b");
+    let lit_c = types.literal_string("c");
+
+    let member_a = types.object(vec![PropertyInfo::new(kind_name, lit_a)]);
+    let member_b = types.object(vec![PropertyInfo::new(kind_name, lit_b)]);
+    let member_c = types.object(vec![PropertyInfo::new(kind_name, lit_c)]);
+    let union = types.union(vec![member_a, member_b, member_c]);
+
+    let switch_idx = get_switch_statement(arena, root, 1);
+    let ident_case_b = get_switch_clause_expression(arena, switch_idx, 1);
+    let ident_default = get_switch_clause_expression(arena, switch_idx, 2);
+
+    let flow_case_b = binder.get_node_flow(ident_case_b).expect("flow for case b");
+    let narrowed_case_b = analyzer.get_flow_type(ident_case_b, union, flow_case_b);
+    let expected_case_b = types.union(vec![member_a, member_b]);
+    assert_eq!(narrowed_case_b, expected_case_b);
+
+    let flow_default = binder
+        .get_node_flow(ident_default)
+        .expect("flow for default");
+    let narrowed_default = analyzer.get_flow_type(ident_default, union, flow_default);
+    assert_eq!(narrowed_default, member_c);
+}
+
+#[test]
+fn test_switch_discriminant_duplicate_case_falls_back_to_prefix_exclusion() {
+    let source = r#"
+let x: { kind: "a" } | { kind: "b" };
+switch (x.kind) {
+  case "a":
+    x;
+    break;
+  case "a":
+    x;
+    break;
+  default:
+    x;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let arena = parser.get_arena();
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let kind_name = types.intern_string("kind");
+    let lit_a = types.literal_string("a");
+    let lit_b = types.literal_string("b");
+
+    let member_a = types.object(vec![PropertyInfo::new(kind_name, lit_a)]);
+    let member_b = types.object(vec![PropertyInfo::new(kind_name, lit_b)]);
+    let union = types.union(vec![member_a, member_b]);
+
+    let switch_idx = get_switch_statement(arena, root, 1);
+    let ident_second_case_a = get_switch_clause_expression(arena, switch_idx, 1);
+    let ident_default = get_switch_clause_expression(arena, switch_idx, 2);
+
+    let flow_second_case_a = binder
+        .get_node_flow(ident_second_case_a)
+        .expect("flow for second case a");
+    let narrowed_second_case_a =
+        analyzer.get_flow_type(ident_second_case_a, union, flow_second_case_a);
+    assert_eq!(narrowed_second_case_a, TypeId::NEVER);
+
+    let flow_default = binder
+        .get_node_flow(ident_default)
+        .expect("flow for default");
+    let narrowed_default = analyzer.get_flow_type(ident_default, union, flow_default);
+    assert_eq!(narrowed_default, member_b);
+}
+
+#[test]
 fn test_switch_default_does_not_narrow_unrelated_reference() {
     let source = r#"
 let x: "a" | "b";
