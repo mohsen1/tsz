@@ -536,7 +536,7 @@ SOLVER_IMPORT_COUNT_CHECKS = [
             "crates/tsz-solver/",
             "crates/tsz-checker/",
         ),
-        38,
+        39,
     ),
 ]
 
@@ -567,6 +567,37 @@ SPECULATION_GUARD_NAME_CHECKS = [
         "Checker speculation boundary: number of `…Guard` structs in speculation.rs (architecture health metric 6)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "speculation.rs",
         0,
+    ),
+]
+
+# Pin Track 10's diagnostic-debt ratchets in the shared architecture guard.
+# These are count metrics, not new semantic bans: the current baselines still
+# contain legacy fingerprint rewrites, source-text snippets, and rendered-type
+# decisions. Any new line must bump the cap intentionally; cleanup PRs should
+# lower the cap in the same diff.
+#
+# Each entry: (description, search_roots, pattern, max_lines).
+REGEX_LINE_COUNT_CHECKS = [
+    (
+        "Checker diagnostic boundary: post-check rewrite_*_fingerprints functions (Track 10)",
+        [ROOT / "crates" / "tsz-checker" / "src"],
+        re.compile(r"^\s*fn\s+rewrite_\w+_fingerprints\s*\("),
+        9,
+    ),
+    (
+        "Checker diagnostic boundary: source_text.contains decisions (Track 10)",
+        [ROOT / "crates" / "tsz-checker" / "src"],
+        re.compile(r"\bsource_text\.contains\s*\("),
+        37,
+    ),
+    (
+        "Checker diagnostic boundary: rendered type strings as semantic input (Track 10)",
+        [ROOT / "crates" / "tsz-checker" / "src"],
+        re.compile(
+            r"\bformat_type(?:_diagnostic)?\s*\([^\n]*"
+            r"(?:\.contains\s*\(|\.starts_with\s*\(|\.ends_with\s*\(|\.as_str\s*\(\))"
+        ),
+        5,
     ),
 ]
 
@@ -1014,6 +1045,58 @@ def scan_speculation_guard_struct_count(
             f"the speculation surface's actual implicit-commit-on-drop "
             f"semantics — workstream-4 Speculation Policy 3 / "
             f"`docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item 5)"
+        )
+        return hits
+    return []
+
+
+def scan_regex_line_count(
+    search_roots: list[pathlib.Path],
+    pattern: re.Pattern[str],
+    max_lines: int,
+) -> list[str]:
+    """Count non-test, non-comment source lines matching `pattern`.
+
+    This is for Track 10 count ratchets where current architecture debt is
+    tolerated but must not grow.  It returns one hit per matching line plus a
+    final summary only when the live count exceeds `max_lines`.
+    """
+    matching_lines: list[tuple[str, int]] = []
+    for base in search_roots:
+        if not base.exists():
+            continue
+        for path in base.rglob("*.rs"):
+            try:
+                rel_to_root = path.relative_to(ROOT).as_posix()
+            except ValueError:
+                rel_to_root = path.relative_to(base).as_posix()
+            parts = set(rel_to_root.split("/"))
+            if EXCLUDE_DIRS.intersection(parts):
+                continue
+            if "tests" in parts or "benches" in parts:
+                continue
+            if is_test_file(rel_to_root):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                if line.lstrip().startswith("//"):
+                    continue
+                if pattern.search(line):
+                    matching_lines.append((rel_to_root, line_no))
+
+    matching_lines.sort()
+    if len(matching_lines) > max_lines:
+        hits = [
+            f"matching line #{i + 1}: {rel}:{line_no}"
+            for i, (rel, line_no) in enumerate(matching_lines)
+        ]
+        hits.append(
+            f"total matching lines: {len(matching_lines)} "
+            f"(cap {max_lines}; bump cap intentionally and update ROADMAP.md, "
+            f"or replace the new site with structural facts — Track 10)"
         )
         return hits
     return []
@@ -1568,6 +1651,12 @@ def main() -> int:
 
     for name, file_path, max_guard_count in SPECULATION_GUARD_NAME_CHECKS:
         hits = scan_speculation_guard_struct_count(file_path, max_guard_count)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, search_roots, pattern, max_lines in REGEX_LINE_COUNT_CHECKS:
+        hits = scan_regex_line_count(search_roots, pattern, max_lines)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))

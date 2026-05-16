@@ -31,6 +31,7 @@ jobs:
       full_run: ${{ steps.gate.outputs.full_run }}
       rust_cache_refresh: ${{ steps.gate.outputs.rust_cache_refresh }}
       required_summary: ${{ steps.gate.outputs.required_summary }}
+      bench_shell_only: ${{ steps.gate.outputs.bench_shell_only }}
       compiler_checks_required: ${{ steps.gate.outputs.compiler_checks_required }}
       unit_packages: ${{ steps.gate.outputs.unit_packages }}
     steps:
@@ -45,6 +46,7 @@ jobs:
           required_summary=true
           rust_cache_refresh=false
           cache_key_changed=false
+          bench_shell_only=false
           compiler_checks_required=true
           unit_packages=""
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
@@ -118,6 +120,26 @@ jobs:
                   compiler_checks_required=false
                   echo "PR diff has no compiler/runtime paths; unit and conformance remain visible but are not required by CI Summary."
                 fi
+              fi
+            fi
+            # Bench script-only changes do not need Rust compiler CI. Keep the
+            # required CI Summary alive, but replace lint/unit/dist/wasm/heavy
+            # jobs with a cheap bash syntax smoke job below. CI workflow edits,
+            # Cargo files, Rust crates, JS helpers, and non-bench shell scripts
+            # still take the normal path.
+            if [[ "$should_run" == "true" && -n "${all_paths:-}" ]]; then
+              bench_shell_paths=$(printf '%s\n' "$all_paths" \
+                | grep -E '^scripts/bench/[^/]+\.sh$' \
+                || true)
+              non_bench_shell_paths=$(printf '%s\n' "$all_paths" \
+                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^scripts/bench/[^/]+\.sh$' \
+                || true)
+              if [[ -n "$bench_shell_paths" && -z "$non_bench_shell_paths" ]]; then
+                echo "PR diff only changes bench shell scripts/docs — running bench shell smoke only:"
+                printf '%s\n' "$bench_shell_paths" | sort -u | sed 's/^/  /'
+                should_run=false
+                full_run=false
+                bench_shell_only=true
               fi
             fi
             # P4 — draft-phase fast-fail: narrow the unit job to the touched
@@ -297,6 +319,7 @@ jobs:
           echo "full_run=${full_run}" >> "$GITHUB_OUTPUT"
           echo "rust_cache_refresh=${rust_cache_refresh}" >> "$GITHUB_OUTPUT"
           echo "required_summary=${required_summary}" >> "$GITHUB_OUTPUT"
+          echo "bench_shell_only=${bench_shell_only}" >> "$GITHUB_OUTPUT"
           echo "compiler_checks_required=${compiler_checks_required}" >> "$GITHUB_OUTPUT"
           echo "unit_packages=${unit_packages}" >> "$GITHUB_OUTPUT"
 
@@ -361,6 +384,20 @@ jobs:
           fi
 
           echo "Project corpus impact metadata is present."
+
+  bench-script-smoke:
+    name: bench-script-smoke
+    needs: gate
+    if: needs.gate.outputs.bench_shell_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Check bench shell syntax
+        shell: bash
+        run: bash -n scripts/bench/*.sh
 
   lint:
     name: lint
@@ -828,6 +865,7 @@ jobs:
     name: ${{ needs.gate.outputs.required_summary == 'true' && 'CI Summary' || 'CI Light Summary' }}
     needs:
       - gate
+      - bench-script-smoke
       - lint
       - cargo-shear
       - cargo-deny
@@ -859,6 +897,7 @@ jobs:
           gate = needs["gate"]
           should_run = gate.get("outputs", {}).get("should_run") == "true"
           full_run = gate.get("outputs", {}).get("full_run") == "true"
+          bench_shell_only = gate.get("outputs", {}).get("bench_shell_only") == "true"
           compiler_checks_required = gate.get("outputs", {}).get("compiler_checks_required") != "false"
 
           if gate.get("result") != "success":
@@ -866,6 +905,13 @@ jobs:
               sys.exit(1)
 
           if not should_run:
+              if bench_shell_only:
+                  bench_smoke = needs.get("bench-script-smoke", {})
+                  if bench_smoke.get("result") != "success":
+                      print(f"bench-script-smoke did not pass: {bench_smoke.get('result')}")
+                      sys.exit(1)
+                  print("Bench shell-only CI passed: bench-script-smoke.")
+                  sys.exit(0)
               print("CI gated off; summary passes because jobs were intentionally skipped.")
               sys.exit(0)
 
