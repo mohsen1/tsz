@@ -1247,6 +1247,15 @@ impl<'a> Printer<'a> {
             self.emit(labeled.label);
             self.write(" ;");
             self.write_line();
+            if let (Some(label_node), Some(stmt_node)) = (
+                self.arena.get(labeled.label),
+                self.arena.get(labeled.statement),
+            ) {
+                self.skip_trailing_same_line_comments(label_node.end, stmt_node.pos);
+            }
+            if self.emit_static_block_await_labeled_jump_recovery(labeled.statement) {
+                return;
+            }
             self.emit(labeled.statement);
             return;
         }
@@ -1889,5 +1898,64 @@ impl<'a> Printer<'a> {
             }
             self.write(";");
         }
+    }
+
+    fn emit_static_block_await_labeled_jump_recovery(&mut self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        let jump_keyword = if stmt_node.kind == syntax_kind_ext::BREAK_STATEMENT {
+            "break"
+        } else if stmt_node.kind == syntax_kind_ext::CONTINUE_STATEMENT {
+            "continue"
+        } else {
+            return false;
+        };
+        if !self.static_block_jump_source_has_await_label(stmt_node, jump_keyword) {
+            return false;
+        }
+
+        self.write(jump_keyword);
+        self.write(" ;");
+        true
+    }
+
+    fn static_block_jump_source_has_await_label(
+        &self,
+        stmt_node: &Node,
+        jump_keyword: &str,
+    ) -> bool {
+        if !self.ctx.flags.in_class_static_block {
+            return false;
+        }
+        if self
+            .arena
+            .get_jump_data(stmt_node)
+            .is_some_and(|jump| jump.label.is_some())
+        {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = stmt_node.pos as usize;
+        if start >= text.len() {
+            return false;
+        }
+        let line_end = text[start..]
+            .find('\n')
+            .map_or(text.len(), |offset| start + offset);
+        let Ok(line) = crate::safe_slice::slice(text, start, line_end) else {
+            return false;
+        };
+        let Some(rest) = line.trim_start().strip_prefix(jump_keyword) else {
+            return false;
+        };
+        let rest = rest.trim_start();
+        rest.starts_with("await")
+            && rest["await".len()..]
+                .chars()
+                .next()
+                .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$')
     }
 }

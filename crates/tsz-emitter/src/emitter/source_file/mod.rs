@@ -361,7 +361,7 @@ mod tests {
             "Bare await shorthand in static blocks should recover as an empty property assignment.\nOutput:\n{output}"
         );
         assert!(
-            output.contains("await ;\n        break;\n        await ;"),
+            output.contains("await ;\n        break ;\n        await ;"),
             "Bare await labels and break labels in static blocks should recover as separate statements.\nOutput:\n{output}"
         );
         assert!(
