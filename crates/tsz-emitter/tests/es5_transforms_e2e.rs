@@ -3,6 +3,7 @@
 //! These tests verify that the complete chain (parse -> lower -> print) produces
 //! correct ES5 output for destructuring, class, and async transforms.
 
+use crate::emitter::ModuleKind;
 use crate::output::printer::{PrintOptions, lower_and_print};
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
@@ -20,6 +21,18 @@ fn emit_with_target(source: &str, target: ScriptTarget) -> String {
 
 fn emit_es5(source: &str) -> String {
     emit_with_target(source, ScriptTarget::ES5)
+}
+
+fn emit_es5_with_module(source: &str, module: ModuleKind) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut opts = PrintOptions {
+        target: ScriptTarget::ES5,
+        module,
+        ..PrintOptions::default()
+    };
+    opts.remove_comments = true;
+    lower_and_print(&parser.arena, root, opts).code
 }
 
 fn emit_es5_with_comments(source: &str) -> String {
@@ -619,6 +632,87 @@ fn test_async_function_awaiter() {
     assert!(
         !output.contains("async "),
         "async keyword should not appear in ES5.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_arrow_hoisted_locals_share_var_statement() {
+    let output = emit_es5(
+        "(async () => {\n\
+             const response = await fetch('/api');\n\
+             const blob = await response.blob();\n\
+             const size = 300;\n\
+             const image = new Image();\n\
+         })();\n",
+    );
+
+    assert!(
+        output.contains("var response, blob, size, image;"),
+        "Async arrow hoisted locals should share one var statement.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var response;\n        var blob;"),
+        "Async arrow hoisted locals should not split ordinary declarations.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_arrow_import_meta_hoisted_locals_share_var_statement() {
+    let output = emit_es5_with_module(
+        "(async () => {\n\
+             const response = await fetch(new URL(\"../hamsters.jpg\", import.meta.url).toString());\n\
+             const blob = await response.blob();\n\
+             \n\
+             const size = import.meta.scriptElement.dataset.size || 300;\n\
+             \n\
+             const image = new Image();\n\
+             image.src = URL.createObjectURL(blob);\n\
+             image.width = image.height = size;\n\
+             \n\
+             document.body.appendChild(image);\n\
+         })();\n",
+        ModuleKind::CommonJS,
+    );
+
+    assert!(
+        output.contains("var response, blob, size, image;"),
+        "Async arrow import.meta hoisted locals should share one var statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_import_meta_file_is_wrapped_as_module() {
+    let output = emit_es5_with_module(
+        "(async () => {\n\
+             const response = await fetch(new URL(\"../hamsters.jpg\", import.meta.url).toString());\n\
+             const blob = await response.blob();\n\
+             \n\
+             const size = import.meta.scriptElement.dataset.size || 300;\n\
+             \n\
+             const image = new Image();\n\
+             image.src = URL.createObjectURL(blob);\n\
+             image.width = image.height = size;\n\
+             \n\
+             document.body.appendChild(image);\n\
+         })();\n",
+        ModuleKind::System,
+    );
+
+    assert!(
+        output.starts_with("System.register([], function (exports_1, context_1) {"),
+        "System import.meta files should be module-wrapped.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("context_1.meta.url"),
+        "System import.meta should lower to context_1.meta.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("\"use strict\";\n    var __awaiter"),
+        "System async helpers should be emitted inside the wrapper after the strict prologue.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var response, blob, size, image;"),
+        "System async arrow hoisted locals should share one var statement.\nOutput:\n{output}"
     );
 }
 

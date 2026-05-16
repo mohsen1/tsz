@@ -156,6 +156,17 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 if let Some(access) = self.arena.get_access_expr(node) {
+                    if let Some(obj_node) = self.arena.get(access.expression)
+                        && obj_node.kind == SyntaxKind::ImportKeyword as u16
+                    {
+                        let prop = crate::transforms::emit_utils::identifier_text_or_empty(
+                            self.arena,
+                            access.name_or_argument,
+                        );
+                        if prop == "meta" {
+                            return IRNode::ImportMeta;
+                        }
+                    }
                     if self.class_has_super
                         && let Some(obj_node) = self.arena.get(access.expression)
                         && obj_node.kind == SyntaxKind::SuperKeyword as u16
