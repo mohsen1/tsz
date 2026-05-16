@@ -2216,9 +2216,8 @@ const c: Child = new Child();
 }
 
 #[test]
-#[ignore = "heritage resolution no longer populates DefinitionInfo.implements; resolved through type pipeline instead"]
-fn test_resolve_heritage_interface_implements() {
-    // Verify heritage resolution wires implements for interfaces.
+fn test_resolve_heritage_interface_extends() {
+    // Verify heritage resolution wires interface extends edges.
     let source = r#"
 interface Animal {
     name: string;
@@ -2244,6 +2243,11 @@ const d: Dog = { name: "Rex", breed: "Lab" };
     );
 
     checker.check_source_file(root);
+    assert!(
+        checker.ctx.diagnostics.is_empty(),
+        "valid interface extends assignment should not emit diagnostics: {:?}",
+        checker.ctx.diagnostics
+    );
 
     // Look up Dog's DefId
     let dog_sym = binder.file_locals.get("Dog");
@@ -2256,10 +2260,9 @@ const d: Dog = { name: "Rex", breed: "Lab" };
             "Dog's DefinitionInfo should exist in the store"
         );
         if let Some(info) = info {
-            // For interfaces, heritage goes into implements
             assert!(
-                !info.implements.is_empty(),
-                "Dog should have implements set to Animal's DefId after heritage resolution."
+                info.extends.is_some(),
+                "Dog should have extends set to Animal's DefId after heritage resolution."
             );
         }
     }
