@@ -301,6 +301,31 @@ pub enum IRNode {
         deferred_block_class_alias: Option<String>,
     },
 
+    /// Assignment form for an ES5 class expression:
+    /// `ClassName = /** @class */ (function (_super) { ... }(BaseClass));`
+    ///
+    /// This is used when a class declaration appears in a scope that already
+    /// owns hoist scheduling, such as an async/generator body. The caller
+    /// schedules the declaration vars separately, then emits this structured
+    /// assignment where the class executes.
+    ES5ClassAssignment {
+        name: Cow<'static, str>,
+        base_class: Option<Box<Self>>,
+        super_param: Option<Cow<'static, str>>,
+        body: Vec<Self>,
+        /// Computed property-name temp assignments for class fields (after the assignment).
+        computed_prop_temp_inits: Vec<Self>,
+        /// `WeakMap` instantiations (after the assignment)
+        weakmap_inits: Vec<String>,
+        /// Optional comment emitted before the class assignment.
+        leading_comment: Option<String>,
+        /// Static block IIFEs deferred to after the class assignment.
+        deferred_static_blocks: Vec<Self>,
+        /// Class alias name assigned after the class value exists and before
+        /// deferred static blocks that reference the alias.
+        deferred_block_class_alias: Option<String>,
+    },
+
     /// Static block IIFE: `(function () { ...statements... })();`
     StaticBlockIIFE { statements: Vec<Self> },
 
@@ -359,6 +384,10 @@ pub enum IRNode {
         hoisted_var_groups: Vec<Vec<String>>,
         /// Custom promise constructor for the third `__awaiter` arg.
         promise_constructor: Option<String>,
+        /// Force the awaiter callback body onto multiple lines even when no
+        /// generator-local vars were hoisted. `tsc` does this when the async
+        /// function captures `arguments` in the wrapper scope.
+        multiline_callback: bool,
     },
 
     /// __generator helper body
@@ -668,11 +697,404 @@ pub struct IRGeneratorCase {
     pub statements: Vec<IRNode>,
 }
 
+impl IRProperty {
+    fn contains_identifier(&self, name: &str) -> bool {
+        self.key.contains_identifier(name) || self.value.contains_identifier(name)
+    }
+}
+
+impl IRPropertyKey {
+    fn contains_identifier(&self, name: &str) -> bool {
+        match self {
+            Self::Identifier(ident) => ident.as_ref() == name,
+            Self::Computed(expr) => expr.contains_identifier(name),
+            Self::StringLiteral(_) | Self::NumericLiteral(_) => false,
+        }
+    }
+}
+
+impl IRMethodName {
+    fn contains_identifier(&self, name: &str) -> bool {
+        match self {
+            Self::Identifier(ident) => ident.as_ref() == name,
+            Self::Computed(expr) => expr.contains_identifier(name),
+            Self::StringLiteral(_) | Self::NumericLiteral(_) => false,
+        }
+    }
+}
+
+impl IRParam {
+    fn contains_identifier(&self, name: &str) -> bool {
+        self.name.as_ref() == name
+            || self
+                .default_value
+                .as_ref()
+                .is_some_and(|value| value.contains_identifier(name))
+    }
+}
+
+impl IRSwitchCase {
+    fn contains_identifier(&self, name: &str) -> bool {
+        self.test
+            .as_ref()
+            .is_some_and(|test| test.contains_identifier(name))
+            || self
+                .statements
+                .iter()
+                .any(|statement| statement.contains_identifier(name))
+    }
+}
+
+impl IRCatchClause {
+    fn contains_identifier(&self, name: &str) -> bool {
+        self.param
+            .as_ref()
+            .is_some_and(|param| param.as_ref() == name)
+            || self
+                .body
+                .iter()
+                .any(|statement| statement.contains_identifier(name))
+    }
+}
+
+impl IRPropertyDescriptor {
+    fn contains_identifier(&self, name: &str) -> bool {
+        self.get
+            .as_ref()
+            .is_some_and(|get| get.contains_identifier(name))
+            || self
+                .set
+                .as_ref()
+                .is_some_and(|set| set.contains_identifier(name))
+            || self
+                .value
+                .as_ref()
+                .is_some_and(|value| value.contains_identifier(name))
+    }
+}
+
+impl IRGeneratorCase {
+    fn contains_identifier(&self, name: &str) -> bool {
+        self.statements
+            .iter()
+            .any(|statement| statement.contains_identifier(name))
+    }
+}
+
+impl EnumMember {
+    fn contains_identifier(&self, name: &str) -> bool {
+        match &self.value {
+            EnumMemberValue::Computed(expr) => expr.contains_identifier(name),
+            EnumMemberValue::Auto(_) | EnumMemberValue::Numeric(_) | EnumMemberValue::String(_) => {
+                false
+            }
+        }
+    }
+}
+
 // =========================================================================
 // Builder helpers for IR construction
 // =========================================================================
 
 impl IRNode {
+    /// Return whether this `IR` subtree references `name` as an identifier.
+    pub fn contains_identifier(&self, name: &str) -> bool {
+        match self {
+            Self::Identifier(ident) => ident.as_ref() == name,
+            Self::BinaryExpr { left, right, .. }
+            | Self::LogicalOr { left, right }
+            | Self::LogicalAnd { left, right } => {
+                left.contains_identifier(name) || right.contains_identifier(name)
+            }
+            Self::PrefixUnaryExpr { operand, .. }
+            | Self::PostfixUnaryExpr { operand, .. }
+            | Self::Parenthesized(operand)
+            | Self::SpreadElement(operand)
+            | Self::ExpressionStatement(operand)
+            | Self::ThrowStatement(operand)
+            | Self::PrivateFieldGet {
+                receiver: operand, ..
+            }
+            | Self::PrivateStaticFieldGet {
+                receiver: operand, ..
+            }
+            | Self::PrivateFieldIn { obj: operand, .. } => operand.contains_identifier(name),
+            Self::CallExpr { callee, arguments }
+            | Self::NewExpr {
+                callee, arguments, ..
+            } => {
+                callee.contains_identifier(name)
+                    || arguments.iter().any(|arg| arg.contains_identifier(name))
+            }
+            Self::PropertyAccess { object, .. } => object.contains_identifier(name),
+            Self::ElementAccess { object, index } => {
+                object.contains_identifier(name) || index.contains_identifier(name)
+            }
+            Self::ConditionalExpr {
+                condition,
+                when_true,
+                when_false,
+            } => {
+                condition.contains_identifier(name)
+                    || when_true.contains_identifier(name)
+                    || when_false.contains_identifier(name)
+            }
+            Self::CommaExpr(nodes)
+            | Self::CommaExprMultiline(nodes)
+            | Self::ArrayLiteral(nodes)
+            | Self::VarDeclList(nodes)
+            | Self::Block(nodes)
+            | Self::Sequence(nodes)
+            | Self::StaticBlockIIFE { statements: nodes } => {
+                nodes.iter().any(|node| node.contains_identifier(name))
+            }
+            Self::ObjectLiteral { properties, .. } => properties
+                .iter()
+                .any(|property| property.contains_identifier(name)),
+            Self::FunctionExpr {
+                parameters, body, ..
+            }
+            | Self::FunctionDecl {
+                parameters, body, ..
+            } => {
+                parameters
+                    .iter()
+                    .any(|param| param.contains_identifier(name))
+                    || body.iter().any(|node| node.contains_identifier(name))
+            }
+            Self::VarDecl { initializer, .. } => initializer
+                .as_ref()
+                .is_some_and(|init| init.contains_identifier(name)),
+            Self::ReturnStatement(expr) => expr
+                .as_ref()
+                .is_some_and(|expr| expr.contains_identifier(name)),
+            Self::IfStatement {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                condition.contains_identifier(name)
+                    || then_branch.contains_identifier(name)
+                    || else_branch
+                        .as_ref()
+                        .is_some_and(|branch| branch.contains_identifier(name))
+            }
+            Self::SwitchStatement { expression, cases } => {
+                expression.contains_identifier(name)
+                    || cases.iter().any(|case| case.contains_identifier(name))
+            }
+            Self::ForStatement {
+                initializer,
+                condition,
+                incrementor,
+                body,
+            } => {
+                initializer
+                    .as_ref()
+                    .is_some_and(|init| init.contains_identifier(name))
+                    || condition
+                        .as_ref()
+                        .is_some_and(|condition| condition.contains_identifier(name))
+                    || incrementor
+                        .as_ref()
+                        .is_some_and(|incrementor| incrementor.contains_identifier(name))
+                    || body.contains_identifier(name)
+            }
+            Self::ForInOfStatement {
+                initializer,
+                expression,
+                body,
+                ..
+            } => {
+                initializer.contains_identifier(name)
+                    || expression.contains_identifier(name)
+                    || body.contains_identifier(name)
+            }
+            Self::WhileStatement { condition, body }
+            | Self::DoWhileStatement { body, condition } => {
+                condition.contains_identifier(name) || body.contains_identifier(name)
+            }
+            Self::TryStatement {
+                try_block,
+                catch_clause,
+                finally_block,
+            } => {
+                try_block.contains_identifier(name)
+                    || catch_clause
+                        .as_ref()
+                        .is_some_and(|catch| catch.contains_identifier(name))
+                    || finally_block
+                        .as_ref()
+                        .is_some_and(|finally_block| finally_block.contains_identifier(name))
+            }
+            Self::LabeledStatement { statement, .. } => statement.contains_identifier(name),
+            Self::ES5ClassIIFE {
+                base_class,
+                body,
+                computed_prop_temp_inits,
+                deferred_static_blocks,
+                ..
+            }
+            | Self::ES5ClassAssignment {
+                base_class,
+                body,
+                computed_prop_temp_inits,
+                deferred_static_blocks,
+                ..
+            } => {
+                base_class
+                    .as_ref()
+                    .is_some_and(|base| base.contains_identifier(name))
+                    || body.iter().any(|node| node.contains_identifier(name))
+                    || computed_prop_temp_inits
+                        .iter()
+                        .any(|node| node.contains_identifier(name))
+                    || deferred_static_blocks
+                        .iter()
+                        .any(|node| node.contains_identifier(name))
+            }
+            Self::ExtendsHelper {
+                class_name,
+                super_name,
+            } => class_name.as_ref() == name || super_name.as_ref() == name,
+            Self::ES5ClassApply {
+                factory,
+                base_class,
+            } => factory.contains_identifier(name) || base_class.contains_identifier(name),
+            Self::PrototypeMethod {
+                class_name,
+                method_name,
+                function,
+                ..
+            }
+            | Self::StaticMethod {
+                class_name,
+                method_name,
+                function,
+                ..
+            } => {
+                class_name.as_ref() == name
+                    || method_name.contains_identifier(name)
+                    || function.contains_identifier(name)
+            }
+            Self::DefineProperty {
+                target,
+                property_name,
+                descriptor,
+                ..
+            } => {
+                target.contains_identifier(name)
+                    || property_name.contains_identifier(name)
+                    || descriptor.contains_identifier(name)
+            }
+            Self::AwaiterCall {
+                this_arg,
+                generator_body,
+                ..
+            } => this_arg.contains_identifier(name) || generator_body.contains_identifier(name),
+            Self::GeneratorBody { cases, .. } => {
+                cases.iter().any(|case| case.contains_identifier(name))
+            }
+            Self::GeneratorOp { value, .. } => value
+                .as_ref()
+                .is_some_and(|value| value.contains_identifier(name)),
+            Self::IfBreak { condition, .. } => condition.contains_identifier(name),
+            Self::PrivateFieldSet {
+                receiver, value, ..
+            } => receiver.contains_identifier(name) || value.contains_identifier(name),
+            Self::PrivateStaticFieldSet {
+                receiver,
+                state,
+                value,
+                ..
+            } => {
+                receiver.contains_identifier(name)
+                    || state.contains_identifier(name)
+                    || value.contains_identifier(name)
+            }
+            Self::WeakMapSet { key, value, .. } => {
+                key.contains_identifier(name) || value.contains_identifier(name)
+            }
+            Self::NamedImport { var_name, .. }
+            | Self::NamespaceImport { var_name, .. }
+            | Self::DefaultImport { var_name, .. }
+            | Self::RequireStatement { var_name, .. }
+            | Self::ExportInit { name: var_name }
+            | Self::ExportAssignment { name: var_name } => var_name.as_ref() == name,
+            Self::ReExportProperty {
+                export_name,
+                module_var,
+                import_name,
+            } => {
+                export_name.as_ref() == name
+                    || module_var.as_ref() == name
+                    || import_name.as_ref() == name
+            }
+            Self::EnumIIFE {
+                name: enum_name,
+                members,
+                namespace_export,
+            } => {
+                enum_name.as_ref() == name
+                    || namespace_export
+                        .as_ref()
+                        .is_some_and(|ns| ns.as_ref() == name)
+                    || members
+                        .iter()
+                        .any(|member| member.contains_identifier(name))
+            }
+            Self::NamespaceIIFE {
+                name: namespace_name,
+                body,
+                parent_name,
+                param_name,
+                ..
+            } => {
+                namespace_name.as_ref() == name
+                    || parent_name
+                        .as_ref()
+                        .is_some_and(|parent| parent.as_ref() == name)
+                    || param_name
+                        .as_ref()
+                        .is_some_and(|param| param.as_ref() == name)
+                    || body.iter().any(|node| node.contains_identifier(name))
+            }
+            Self::NamespaceExport {
+                namespace,
+                name: export_name,
+                value,
+            } => {
+                namespace.as_ref() == name
+                    || export_name.as_ref() == name
+                    || value.contains_identifier(name)
+            }
+            Self::NumericLiteral(_)
+            | Self::StringLiteral(_)
+            | Self::RawStringLiteral(_)
+            | Self::BooleanLiteral(_)
+            | Self::NullLiteral
+            | Self::Undefined
+            | Self::RuntimeHelper(_)
+            | Self::This { .. }
+            | Self::Super
+            | Self::ImportMeta
+            | Self::EmptyStatement
+            | Self::HoistedVarGroupBreak
+            | Self::BreakStatement(_)
+            | Self::ContinueStatement(_)
+            | Self::GeneratorSent
+            | Self::GeneratorLabel
+            | Self::Raw(_)
+            | Self::Comment { .. }
+            | Self::TrailingComment(_)
+            | Self::ASTRef(_)
+            | Self::ASTRefWithGeneratorThis { .. }
+            | Self::ASTRefRange(..)
+            | Self::UseStrict
+            | Self::EsesModuleMarker => false,
+        }
+    }
+
     /// Create an identifier node
     pub fn id(name: impl Into<Cow<'static, str>>) -> Self {
         Self::Identifier(name.into())
