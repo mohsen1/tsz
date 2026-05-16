@@ -142,6 +142,9 @@ while [[ $# -gt 0 ]]; do
             echo "  BENCH_PGO_FETCH_UTILITY_TYPES=0  Don't fetch utility-types for PGO training (default: 1)"
             echo "  BENCH_PGO_TSZ_TIMEOUT=<seconds>  Timeout for each PGO training compiler invocation (default: 900)"
             echo "  BENCH_CARGO_BUILD_TIMEOUT=<seconds>  Timeout for each cargo build in check_prerequisites (default: 1200)"
+            echo "  BENCH_PGO_FETCH_CORE_PROJECTS=1  Fetch/train ts-toolbelt/ts-essentials during PGO (default: 0; slower)"
+            echo "  BENCH_PGO_SYNTHETIC=0  Don't train PGO on generated benchmark stress cases (default: 1)"
+            echo "  BENCH_PGO_PANIC_UNWIND=1  Build the trainer with panic=unwind for crashy inputs (default: 0)"
             echo "  BENCH_PGO_EXTRA_INPUTS=<path[:path]>  Extra .ts or tsconfig files to feed the PGO trainer"
             echo "  BENCH_PGO_VERBOSE=1    Print per-input wall time during PGO Step 2"
             exit 0
@@ -180,6 +183,54 @@ print_header() {
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${BOLD}  $1${NC}"
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+hash_stdin_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum | awk '{print $1}'
+    else
+        shasum -a 256 | awk '{print $1}'
+    fi
+}
+
+hash_file_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
+pgo_profile_fingerprint() {
+    {
+        printf 'rustc=%s\n' "$(rustc -vV 2>/dev/null | tr '\n' ';')"
+        printf 'BENCH_PGO_SYNTHETIC=%s\n' "${BENCH_PGO_SYNTHETIC:-1}"
+        printf 'BENCH_PGO_FETCH_UTILITY_TYPES=%s\n' "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}"
+        printf 'BENCH_PGO_FETCH_CORE_PROJECTS=%s\n' "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}"
+        printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
+        printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
+        printf 'UTILITY_TYPES_REF=%s\n' "$UTILITY_TYPES_REF"
+        printf 'TS_TOOLBELT_REF=%s\n' "$TS_TOOLBELT_REF"
+        printf 'TS_ESSENTIALS_REF=%s\n' "$TS_ESSENTIALS_REF"
+        printf 'RXJS_REF=%s\n' "$RXJS_REF"
+        printf 'TYPE_FEST_REF=%s\n' "$TYPE_FEST_REF"
+        if git -C "$PROJECT_ROOT/TypeScript" rev-parse HEAD >/dev/null 2>&1; then
+            printf 'TypeScript=%s\n' "$(git -C "$PROJECT_ROOT/TypeScript" rev-parse HEAD)"
+        fi
+        git -C "$PROJECT_ROOT" ls-files \
+            Cargo.lock \
+            Cargo.toml \
+            .cargo/config.toml \
+            'crates/**/Cargo.toml' \
+            'crates/**/*.rs' \
+            scripts/bench/project-fixtures.sh \
+            scripts/bench/bench-vs-tsgo.sh |
+            sort |
+            while IFS= read -r file; do
+                [ -f "$PROJECT_ROOT/$file" ] || continue
+                printf '%s  %s\n' "$(hash_file_sha256 "$PROJECT_ROOT/$file")" "$file"
+            done
+    } | hash_stdin_sha256
 }
 
 print_subheader() {
@@ -300,11 +351,12 @@ run_cargo_build() {
     local description="$1"
     shift
 
-    if (cd "$PROJECT_ROOT" && run_with_timeout "$BENCH_CARGO_BUILD_TIMEOUT" env "$@"); then
+    (cd "$PROJECT_ROOT" && run_with_timeout "$BENCH_CARGO_BUILD_TIMEOUT" env "$@")
+    local exit_code=$?
+    if [ "$exit_code" -eq 0 ]; then
         return 0
     fi
 
-    local exit_code=$?
     if [ "$exit_code" -eq 124 ]; then
         echo -e "${RED}✗ $description timed out after ${BENCH_CARGO_BUILD_TIMEOUT}s${NC}"
     else
@@ -609,13 +661,14 @@ ensure_tsc() {
     TSC="$TSC_LOCAL_BIN"
 }
 
-# Run the PGO instrumented binary over a workload mix that exercises
-# the same code paths the website plots: lib loading, mapped/conditional
-# types, deep generics, project-mode resolution. Always trains on a small
-# synthetic input first (warms CLI startup paths even when no fixture is
-# available), then layers on whichever external bench fixtures are already
-# prepared. utility-types is opportunistically fetched by the caller; the
-# rest are picked up only when prior bench runs left them in place.
+# Run the PGO instrumented binary over a workload mix that exercises the same
+# code paths the website plots: lib loading, mapped/conditional types, deep
+# generics, project-mode resolution, best-common-type, inference, and CFA
+# stress. Always trains on generated synthetic inputs first (available even in
+# a clean checkout), then layers on whichever external bench fixtures are
+# present. utility-types/ts-toolbelt/ts-essentials can be opportunistically
+# fetched by the caller; the rest are picked up only when prior bench runs left
+# them in place.
 #
 # Set BENCH_PGO_EXTRA_INPUTS to a colon-separated list of additional
 # tsconfig or .ts paths to include in training. Set BENCH_PGO_VERBOSE=1
@@ -659,25 +712,86 @@ _pgo_run() {
     echo "const x: number = 1; type T<U> = U extends string ? U[] : U; const y: T<string> = ['a'];" \
         | _pgo_run "stdin:scalar" "$pgo_tsz" --noEmit /dev/stdin
 
-    # 2. utility-types: small (~150 src files) but very heavy on mapped/
+    # 2. Generated stress cases mirror the benchmark shards directly, so the
+    #    profile is not dominated by one project fixture or one tiny input.
+    if [[ "${BENCH_PGO_SYNTHETIC:-1}" == "1" ]]; then
+        local pgo_tmp
+        pgo_tmp="$(mktemp -d "$BENCH_TARGET_DIR/pgo-train.XXXXXX")"
+        local -a generated_inputs=()
+
+        generate_complex_file 50 "$pgo_tmp/complex_generics.ts"
+        generated_inputs+=("$pgo_tmp/complex_generics.ts")
+        generate_deeppartial_optional_chain_file 50 "$pgo_tmp/deeppartial_optional_chain.ts"
+        generated_inputs+=("$pgo_tmp/deeppartial_optional_chain.ts")
+        generate_shallow_optional_chain_file 50 "$pgo_tmp/shallow_optional_chain.ts"
+        generated_inputs+=("$pgo_tmp/shallow_optional_chain.ts")
+        generate_union_file 100 "$pgo_tmp/union_members.ts"
+        generated_inputs+=("$pgo_tmp/union_members.ts")
+        generate_recursive_generic_file 25 "$pgo_tmp/recursive_generic.ts"
+        generated_inputs+=("$pgo_tmp/recursive_generic.ts")
+        generate_conditional_distribution_file 50 "$pgo_tmp/conditional_dist.ts"
+        generated_inputs+=("$pgo_tmp/conditional_dist.ts")
+        generate_mapped_type_file 100 "$pgo_tmp/mapped_type.ts"
+        generated_inputs+=("$pgo_tmp/mapped_type.ts")
+        generate_template_literal_file 50 "$pgo_tmp/template_literal.ts"
+        generated_inputs+=("$pgo_tmp/template_literal.ts")
+        generate_deep_subtype_file 30 "$pgo_tmp/deep_subtype.ts"
+        generated_inputs+=("$pgo_tmp/deep_subtype.ts")
+        generate_intersection_file 50 "$pgo_tmp/intersection.ts"
+        generated_inputs+=("$pgo_tmp/intersection.ts")
+        generate_infer_stress_file 15 "$pgo_tmp/infer_stress.ts"
+        generated_inputs+=("$pgo_tmp/infer_stress.ts")
+        generate_cfa_stress_file 50 "$pgo_tmp/cfa_stress.ts"
+        generated_inputs+=("$pgo_tmp/cfa_stress.ts")
+        generate_bct_stress_file 50 "$pgo_tmp/bct_stress.ts"
+        generated_inputs+=("$pgo_tmp/bct_stress.ts")
+        generate_constraint_conflict_file 30 "$pgo_tmp/constraint_conflict.ts"
+        generated_inputs+=("$pgo_tmp/constraint_conflict.ts")
+        generate_mapped_complex_template_file 50 "$pgo_tmp/mapped_complex_template.ts"
+        generated_inputs+=("$pgo_tmp/mapped_complex_template.ts")
+
+        local generated
+        for generated in "${generated_inputs[@]}"; do
+            _pgo_run "synthetic:$(basename "$generated")" \
+                "$pgo_tsz" --noEmit "$generated"
+        done
+        rm -rf "$pgo_tmp"
+    fi
+
+    # 3. utility-types: small (~150 src files) but very heavy on mapped/
     #    conditional types — the shape that dominates the website plot.
     if [ -d "$UTILITY_TYPES_DIR" ] && [ -f "$UTILITY_TYPES_DIR/tsconfig.flat.json" ]; then
         _pgo_run "utility-types" \
             "$pgo_tsz" --noEmit -p "$UTILITY_TYPES_DIR/tsconfig.flat.json"
     fi
 
-    # 3. ts-toolbelt + ts-essentials — opportunistically train if they were
-    #    fetched by a previous bench run. Both are deep-generic-heavy.
-    if [ -d "$TS_TOOLBELT_DIR" ] && [ -f "$TS_TOOLBELT_DIR/tsconfig.json" ]; then
-        _pgo_run "ts-toolbelt" \
-            "$pgo_tsz" --noEmit -p "$TS_TOOLBELT_DIR/tsconfig.json"
+    # 4. ts-toolbelt + ts-essentials are useful deep-generic training inputs,
+    #    but too slow for the default cold bench-prepare path. Keep them opt-in
+    #    for deliberate local/CI experiments.
+    if [[ "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}" == "1" ]]; then
+        if [ -d "$TS_TOOLBELT_DIR" ] && [ -f "$TS_TOOLBELT_DIR/tsconfig.flat.json" ]; then
+            _pgo_run "ts-toolbelt" \
+                "$pgo_tsz" --noEmit -p "$TS_TOOLBELT_DIR/tsconfig.flat.json"
+        fi
+        if [ -d "$TS_ESSENTIALS_DIR" ] && [ -f "$TS_ESSENTIALS_DIR/tsconfig.flat.json" ]; then
+            _pgo_run "ts-essentials" \
+                "$pgo_tsz" --noEmit -p "$TS_ESSENTIALS_DIR/tsconfig.flat.json"
+        fi
     fi
-    if [ -d "$TS_ESSENTIALS_DIR" ] && [ -f "$TS_ESSENTIALS_DIR/tsconfig.json" ]; then
-        _pgo_run "ts-essentials" \
-            "$pgo_tsz" --noEmit -p "$TS_ESSENTIALS_DIR/tsconfig.json"
+    if [ -d "$RXJS_DIR" ] && [ -f "$RXJS_DIR/tsconfig.flat.json" ]; then
+        _pgo_run "rxjs" "$pgo_tsz" --noEmit -p "$RXJS_DIR/tsconfig.flat.json"
+    fi
+    if [ -d "$TYPE_FEST_DIR" ] && [ -f "$TYPE_FEST_DIR/tsconfig.flat.json" ]; then
+        _pgo_run "type-fest" "$pgo_tsz" --noEmit -p "$TYPE_FEST_DIR/tsconfig.flat.json"
+    fi
+    if [ -d "$VITE_APP_BENCH_DIR" ] && [ -f "$VITE_APP_BENCH_DIR/tsconfig.json" ]; then
+        _pgo_run "vite-vanilla-ts-app" "$pgo_tsz" --noEmit -p "$VITE_APP_BENCH_DIR/tsconfig.json"
+    fi
+    if [ -d "$NEXT_APP_BENCH_DIR" ] && [ -f "$NEXT_APP_BENCH_DIR/tsconfig.json" ]; then
+        _pgo_run "nextjs-fresh-app" "$pgo_tsz" --noEmit -p "$NEXT_APP_BENCH_DIR/tsconfig.json"
     fi
 
-    # 4. TypeScript compiler test fixture — kept for back-compat with the
+    # 5. TypeScript compiler test fixture — kept for back-compat with the
     #    pre-existing training input. Only triggers when the upstream
     #    TypeScript submodule is checked out locally (rare; tracked in
     #    `.claude/CLAUDE.md` §19.5).
@@ -689,7 +803,7 @@ _pgo_run() {
         done
     fi
 
-    # 5. Caller-provided extras (colon-separated). Useful when adding a new
+    # 6. Caller-provided extras (colon-separated). Useful when adding a new
     #    benchmark fixture: warm PGO against it before measuring.
     if [ -n "${BENCH_PGO_EXTRA_INPUTS:-}" ]; then
         local IFS=":"
@@ -779,11 +893,11 @@ check_prerequisites() {
         local pgo_dir="$BENCH_TARGET_DIR/pgo-data"
         local pgo_merged="$pgo_dir/merged.profdata"
         # Cross-run profdata cache so iterative bench dev doesn't redo the
-        # ~5min instrumented-build + training cycle when source hasn't
-        # changed since the last bench run. Invalidated when any *.rs file
-        # in the workspace is newer than the cached profdata.
+        # instrumented-build + training cycle when the source/toolchain/training
+        # workload fingerprint has not changed since the last bench run.
         local pgo_cache_dir="$BENCH_TARGET_DIR/pgo-cache"
         local pgo_cache_profdata="$pgo_cache_dir/merged.profdata"
+        local pgo_cache_marker="$pgo_cache_dir/profile.fingerprint"
         local pgo_target_dir
         local optimized_target_dir
         mkdir -p "$BENCH_TARGET_DIR"
@@ -799,19 +913,19 @@ check_prerequisites() {
         if [ "$use_pgo" = true ] && [ -n "$llvm_profdata" ] && [ -x "$llvm_profdata" ]; then
             local skip_pgo_collect=false
             local profdata_ready=false
-            if [[ "${BENCH_PGO_CACHE:-1}" == "1" && -f "$pgo_cache_profdata" ]]; then
-                local newer_src
-                newer_src="$(find "$PROJECT_ROOT" \
-                    \( -path "$BENCH_TARGET_DIR" -o -path "$PROJECT_ROOT/.git" \) -prune -o \
-                    -type f -name "*.rs" -newer "$pgo_cache_profdata" -print -quit 2>/dev/null)"
-                if [ -z "$newer_src" ]; then
+            local pgo_fingerprint
+            pgo_fingerprint="$(pgo_profile_fingerprint)"
+            if [[ "${BENCH_PGO_CACHE:-1}" == "1" && -f "$pgo_cache_profdata" && -f "$pgo_cache_marker" ]]; then
+                local cached_fingerprint
+                cached_fingerprint="$(tr -d '[:space:]' < "$pgo_cache_marker" 2>/dev/null || true)"
+                if [[ "$cached_fingerprint" == "$pgo_fingerprint" ]]; then
                     echo -e "${CYAN}PGO cache hit: reusing $pgo_cache_profdata${NC}"
                     mkdir -p "$pgo_dir"
                     cp "$pgo_cache_profdata" "$pgo_merged"
                     skip_pgo_collect=true
                     profdata_ready=true
                 else
-                    echo -e "${YELLOW}PGO cache stale (source changed: $newer_src); regenerating profile data${NC}"
+                    echo -e "${YELLOW}PGO cache stale (training fingerprint changed); regenerating profile data${NC}"
                 fi
             fi
 
@@ -819,31 +933,38 @@ check_prerequisites() {
                 echo -e "${CYAN}PGO Step 1/3: Building instrumented binary...${NC}"
                 rm -rf "$pgo_dir"
                 mkdir -p "$pgo_dir"
-                # Use panic=unwind for the instrumented build so LLVM's profiling
-                # runtime atexit handlers fire even when tsz panics on a training
-                # input.  The dist profile's panic=abort strategy prevents atexit
-                # from being called on panic, which silently drops all profraw
-                # files and causes "llvm-profdata merge *.profraw" to fail with no
-                # inputs.  This binary is only used for training, not shipping.
+                # Keep trainer codegen aligned with the final dist build by
+                # default; otherwise LLVM discards a lot of profile counts as
+                # CFG hash mismatches during profile-use. BENCH_PGO_PANIC_UNWIND=1
+                # is still useful when deliberately training on crashy inputs,
+                # because panic=abort can skip LLVM's profiling atexit flush.
+                local pgo_generate_rustflags="-Cprofile-generate=$pgo_dir -Ctarget-cpu=native"
+                if [[ "${BENCH_PGO_PANIC_UNWIND:-0}" == "1" ]]; then
+                    pgo_generate_rustflags="$pgo_generate_rustflags -Cpanic=unwind"
+                fi
                 run_cargo_build \
                     "PGO Step 1/3: instrumented binary build" \
                     CARGO_TARGET_DIR="$pgo_target_dir" \
                     CARGO_INCREMENTAL=0 \
-                    RUSTFLAGS="-Cprofile-generate=$pgo_dir -Cpanic=unwind" \
+                    RUSTFLAGS="$pgo_generate_rustflags" \
                     cargo build --profile dist -p tsz-cli --bin tsz || true
 
-                # Ensure the smallest external bench fixture is present so PGO
-                # trains on workload shapes the website actually measures (mapped/
-                # conditional/utility types), not a single-token const expression.
-                # Larger fixtures (ts-toolbelt, ts-essentials, next.js) are
-                # opportunistically used when they were already prepared by an
-                # earlier bench run, but never fetched here — that would more
-                # than double cold-start wall time on first run.
-                # The clone is best-effort: a transient network failure should not
-                # abort bench-prepare entirely; PGO still trains on synthetic inputs.
+                # Ensure representative external bench fixtures are present so
+                # PGO trains on workload shapes the website actually measures,
+                # not a single-token const expression. The clones are best-effort:
+                # transient network failures should not abort bench-prepare; PGO
+                # still trains on generated synthetic inputs.
                 if [[ "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}" == "1" ]]; then
                     if ! ensure_utility_types_fixture; then
-                        echo -e "${YELLOW}Warning: utility-types fetch failed; PGO trains on synthetic inputs only${NC}"
+                        echo -e "${YELLOW}Warning: utility-types fetch failed; continuing without it for PGO training${NC}"
+                    fi
+                fi
+                if [[ "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}" == "1" ]]; then
+                    if ! ensure_ts_toolbelt_fixture; then
+                        echo -e "${YELLOW}Warning: ts-toolbelt fetch failed; continuing without it for PGO training${NC}"
+                    fi
+                    if ! ensure_ts_essentials_fixture; then
+                        echo -e "${YELLOW}Warning: ts-essentials fetch failed; continuing without it for PGO training${NC}"
                     fi
                 fi
 
@@ -861,6 +982,7 @@ check_prerequisites() {
                     if [[ "${BENCH_PGO_CACHE:-1}" == "1" ]]; then
                         mkdir -p "$pgo_cache_dir"
                         cp "$pgo_merged" "$pgo_cache_profdata"
+                        printf '%s\n' "$pgo_fingerprint" > "$pgo_cache_marker"
                     fi
                 else
                     echo -e "${YELLOW}PGO training produced no profraw files; skipping PGO optimization${NC}"
