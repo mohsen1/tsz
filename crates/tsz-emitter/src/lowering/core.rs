@@ -2,6 +2,7 @@ use crate::context::emit::EmitContext;
 use crate::context::plan::{EmitPlan, EmitPlanBuilder};
 use crate::context::transform::{TransformContext, TransformDirective};
 use crate::emitter::JsxEmit;
+use crate::jsx_pragmas::{JsxPragmaFacts, JsxRuntimePragma};
 use std::sync::Arc;
 use tsz_common::ScriptTarget;
 use tsz_parser::parser::NodeIndex;
@@ -72,8 +73,8 @@ pub struct LoweringPass<'a> {
     pub(super) enclosing_capture_names: Vec<Arc<str>>,
     /// Source text for the source file currently being traversed.
     pub(super) current_source_text: Option<&'a str>,
-    /// Classic JSX factory value roots for the source file currently being traversed.
-    pub(super) current_classic_jsx_factory_roots: Vec<String>,
+    /// File-level JSX pragma facts for the source file currently being traversed.
+    pub(super) current_jsx_pragmas: JsxPragmaFacts,
 }
 
 impl<'a> LoweringPass<'a> {
@@ -100,7 +101,7 @@ impl<'a> LoweringPass<'a> {
             enclosing_function_bodies: Vec::new(),
             enclosing_capture_names: Vec::new(),
             current_source_text: None,
-            current_classic_jsx_factory_roots: Vec::new(),
+            current_jsx_pragmas: JsxPragmaFacts::default(),
         }
     }
 
@@ -473,14 +474,9 @@ impl<'a> LoweringPass<'a> {
     }
 
     fn classic_jsx_factory_roots(&self) -> Vec<String> {
-        self.current_classic_jsx_factory_roots.clone()
-    }
-
-    pub(super) fn classic_jsx_factory_roots_for_file(&self, file_text: &str) -> Vec<String> {
-        let runtime = crate::jsx_pragmas::extract_jsx_runtime_pragma(file_text);
-        let uses_classic_factory = match runtime {
-            Some("classic") => true,
-            Some("automatic") => false,
+        let uses_classic_factory = match self.current_jsx_pragmas.runtime {
+            Some(JsxRuntimePragma::Classic) => true,
+            Some(JsxRuntimePragma::Automatic) => false,
             _ => matches!(
                 self.ctx.options.jsx,
                 JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
@@ -490,8 +486,7 @@ impl<'a> LoweringPass<'a> {
             return Vec::new();
         }
 
-        crate::jsx_pragmas::classic_jsx_factory_roots(
-            Some(file_text),
+        self.current_jsx_pragmas.classic_factory_roots(
             self.ctx.options.jsx_factory.as_deref(),
             self.ctx.options.jsx_fragment_factory.as_deref(),
         )

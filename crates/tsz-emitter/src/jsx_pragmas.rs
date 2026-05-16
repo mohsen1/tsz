@@ -101,24 +101,61 @@ fn is_dotted_identifier_chain(s: &str) -> bool {
     })
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct JsxPragmaFacts {
+    pub(crate) runtime: Option<JsxRuntimePragma>,
+    pub(crate) factory: Option<String>,
+    pub(crate) fragment_factory: Option<String>,
+}
+
+impl JsxPragmaFacts {
+    pub(crate) fn from_source(source: &str) -> Self {
+        Self {
+            runtime: extract_jsx_runtime_pragma(source),
+            factory: extract_jsx_factory(source),
+            fragment_factory: extract_jsx_fragment_factory(source),
+        }
+    }
+
+    pub(crate) fn classic_factory_roots(
+        &self,
+        jsx_factory: Option<&str>,
+        jsx_fragment_factory: Option<&str>,
+    ) -> Vec<String> {
+        classic_jsx_factory_roots_from_facts(
+            self.factory.as_deref(),
+            self.fragment_factory.as_deref(),
+            jsx_factory,
+            jsx_fragment_factory,
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum JsxRuntimePragma {
+    Classic,
+    Automatic,
+}
+
 /// Compute value roots referenced by classic JSX factory settings.
 ///
 /// The caller is responsible for checking that classic JSX emit is active.
 /// This keeps import elision and helper scheduling aligned with the printer's
 /// factory lookup, including per-file `@jsx` / `@jsxFrag` pragmas.
-pub(crate) fn classic_jsx_factory_roots(
-    file_text: Option<&str>,
+fn classic_jsx_factory_roots_from_facts(
+    pragma_factory: Option<&str>,
+    pragma_fragment_factory: Option<&str>,
     jsx_factory: Option<&str>,
     jsx_fragment_factory: Option<&str>,
 ) -> Vec<String> {
-    let jsx_factory = file_text
-        .and_then(extract_jsx_factory)
-        .or_else(|| jsx_factory.map(ToOwned::to_owned))
-        .unwrap_or_else(|| "React.createElement".to_string());
-    let jsx_fragment_factory = file_text
-        .and_then(extract_jsx_fragment_factory)
-        .or_else(|| jsx_fragment_factory.map(ToOwned::to_owned))
-        .unwrap_or_else(|| "React.Fragment".to_string());
+    let jsx_factory = pragma_factory
+        .or(jsx_factory)
+        .unwrap_or("React.createElement")
+        .to_string();
+    let jsx_fragment_factory = pragma_fragment_factory
+        .or(jsx_fragment_factory)
+        .unwrap_or("React.Fragment")
+        .to_string();
 
     let mut roots = Vec::new();
     for factory in [jsx_factory, jsx_fragment_factory] {
@@ -137,7 +174,7 @@ pub(crate) fn classic_jsx_factory_roots(
 
 /// Extract the last valid `@jsxRuntime classic` or `@jsxRuntime automatic`
 /// pragma from block comments. Invalid prefix/value matches are ignored.
-pub(crate) fn extract_jsx_runtime_pragma(source: &str) -> Option<&'static str> {
+pub(crate) fn extract_jsx_runtime_pragma(source: &str) -> Option<JsxRuntimePragma> {
     if !source.contains("@jsxRuntime") {
         return None;
     }
@@ -162,8 +199,8 @@ pub(crate) fn extract_jsx_runtime_pragma(source: &str) -> Option<&'static str> {
                         value_end == rest.len() || rest.as_bytes()[value_end].is_ascii_whitespace();
                     if value_terminated {
                         match value {
-                            "classic" => result = Some("classic"),
-                            "automatic" => result = Some("automatic"),
+                            "classic" => result = Some(JsxRuntimePragma::Classic),
+                            "automatic" => result = Some(JsxRuntimePragma::Automatic),
                             _ => {}
                         }
                     }

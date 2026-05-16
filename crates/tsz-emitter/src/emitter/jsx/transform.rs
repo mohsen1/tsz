@@ -638,12 +638,9 @@ impl<'a> Printer<'a> {
         ) {
             return self.ctx.options.jsx;
         }
-        match self
-            .jsx_pragma_text()
-            .and_then(crate::jsx_pragmas::extract_jsx_runtime_pragma)
-        {
-            Some("classic") => JsxEmit::React,
-            Some("automatic") => {
+        match self.jsx_pragmas.runtime {
+            Some(crate::jsx_pragmas::JsxRuntimePragma::Classic) => JsxEmit::React,
+            Some(crate::jsx_pragmas::JsxRuntimePragma::Automatic) => {
                 if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
                     JsxEmit::ReactJsxDev
                 } else {
@@ -717,15 +714,13 @@ impl<'a> Printer<'a> {
     /// Extract `@jsx <factory>` pragma (classic JSX) from the file's leading
     /// comments. Issue #4010.
     pub(in super::super) fn extract_jsx_factory_pragma(&self) -> Option<String> {
-        let text = self.source_text?;
-        crate::jsx_pragmas::extract_jsx_factory(text)
+        self.jsx_pragmas.factory.clone()
     }
 
     /// Extract `@jsxFrag <factory>` pragma (classic JSX) from the file's
     /// leading comments. Issue #4010.
     pub(in super::super) fn extract_jsx_fragment_factory_pragma(&self) -> Option<String> {
-        let text = self.source_text?;
-        crate::jsx_pragmas::extract_jsx_fragment_factory(text)
+        self.jsx_pragmas.fragment_factory.clone()
     }
 
     /// Check if the file needs JSX runtime auto-imports and return the import text.
