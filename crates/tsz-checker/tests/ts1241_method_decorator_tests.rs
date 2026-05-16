@@ -354,6 +354,31 @@ class TooFew {
 }
 
 #[test]
+fn legacy_bind_only_object_decorator_still_emits_ts1241() {
+    // Negative guard for the `Function`-typed fallback: tsc's
+    // `isUntypedFunctionCall` requires assignability to the full global
+    // `Function` interface (apply/call/bind/toString/prototype/length/…),
+    // not merely "has a `bind` member". An object like `{ bind: any }` is
+    // not assignable to `Function` and must still emit TS1241.
+    let codes = check_source_codes_experimental_decorators(
+        r#"
+const dec: { bind: any } = { bind: null as any };
+
+class C {
+    @dec
+    method(): void {}
+}
+"#,
+    )
+    .to_vec();
+
+    assert!(
+        codes.contains(&1241),
+        "A `bind`-only object is not Function-assignable; TS1241 must still fire; got: {codes:?}"
+    );
+}
+
+#[test]
 fn legacy_function_typed_decorator_factory_is_accepted() {
     // tsc's `isUntypedFunctionCall` treats a `Function`-typed callee as
     // callable with any signature. Without the fallback, a decorator factory

@@ -69,30 +69,93 @@ impl<'a> CheckerState<'a> {
 
     /// Mirror of tsc's `isUntypedFunctionCall` for decorator-callee resolution.
     ///
-    /// When a decorator's resolved type is the global `Function` interface (or
-    /// a `Function`-shaped object — no call signatures but a `bind` member),
-    /// tsc treats the call as untyped and skips signature validation. Without
-    /// this fallback, any decorator factory whose declared return type is
-    /// `Function` would produce a spurious TS1238/TS1239/TS1240/TS1241.
+    /// tsc treats a non-callable callee as "untyped" — and skips signature
+    /// validation — only when the callee has *no* call signatures, *no*
+    /// construct signatures, is not a union, and is **assignable to the
+    /// global `Function` type**. The full Function-shaped check is stricter
+    /// than "has a `bind` member": objects like `{ bind: any }` are not
+    /// assignable to `Function` (which also requires `apply`, `call`,
+    /// `prototype`, `length`, …) and must still emit TS1238/1239/1240/1241.
     ///
-    /// Returns `Some(t)` when the caller should continue with the (possibly
-    /// unchanged) callee, or `None` when the rewrite collapsed the callee to
-    /// an unchecked type (`ANY`/`UNKNOWN`/`ERROR`) and the caller should skip
+    /// Without this fallback, decorator factories whose declared return type
+    /// is `Function` would produce a spurious decorator-signature diagnostic
+    /// because the `Function` interface has no explicit call signatures of
+    /// its own.
+    ///
+    /// Returns `Some(t)` when the caller should continue with the callee, or
+    /// `None` when the callee is Function-typed and the caller should skip
     /// the call check entirely.
     ///
     /// Hot path: most decorators are explicit function types with a known
-    /// call signature, so `has_function_shape` short-circuits before the more
-    /// expensive Function-membership probe.
+    /// call signature, so `has_function_shape` short-circuits before the
+    /// more expensive Function-membership probe.
     pub(crate) fn prepare_decorator_callee(&mut self, decorator_type: TypeId) -> Option<TypeId> {
         if crate::query_boundaries::common::has_function_shape(self.ctx.types, decorator_type) {
             return Some(decorator_type);
         }
-        let rewritten = self.replace_function_type_for_call(decorator_type, decorator_type);
-        if decorator_type_is_unchecked(rewritten) {
-            None
-        } else {
-            Some(rewritten)
+        if self.decorator_callee_is_untyped_function(decorator_type) {
+            return None;
         }
+        Some(decorator_type)
+    }
+
+    /// True when `decorator_type` would qualify as an "untyped function call"
+    /// callee under tsc's `isUntypedFunctionCall`: no call signatures, no
+    /// construct signatures, not a union, and assignable to the global
+    /// `Function` type. Callers use this to skip signature validation when
+    /// tsc would.
+    fn decorator_callee_is_untyped_function(&mut self, decorator_type: TypeId) -> bool {
+        // Reject unions outright — tsc's `isUntypedFunctionCall` explicitly
+        // excludes them ("a union of function types that happen to have no
+        // common signatures" is still a typed call).
+        if crate::query_boundaries::common::union_members(self.ctx.types, decorator_type).is_some()
+        {
+            return false;
+        }
+
+        // Reject callees with call signatures (handled by the caller's
+        // fast path, but be defensive) or construct signatures.
+        let has_calls = crate::query_boundaries::common::call_signatures_for_type(
+            self.ctx.types,
+            decorator_type,
+        )
+        .is_some_and(|sigs| !sigs.is_empty());
+        if has_calls {
+            return false;
+        }
+        let has_constructs = crate::query_boundaries::class_type::construct_signatures_for_type(
+            self.ctx.types,
+            decorator_type,
+        )
+        .is_some_and(|sigs| !sigs.is_empty());
+        if has_constructs {
+            return false;
+        }
+
+        // The direct global `Function` type (and `typeof v` where v: Function)
+        // is the only common decorator-typed-as-Function case. Match it
+        // narrowly via the existing `is_global_function_type` query, which
+        // compares via the canonical Function `DefId`.
+        if self.is_global_function_type(decorator_type) {
+            return true;
+        }
+
+        // For rare cases like `interface SubFunc extends Function {}` used
+        // as a decorator return type, fall back to a structural
+        // assignability check against the global `Function` interface.
+        let Some(function_type) = self.global_function_type_id() else {
+            return false;
+        };
+        self.is_assignable_to(decorator_type, function_type)
+    }
+
+    fn global_function_type_id(&mut self) -> Option<TypeId> {
+        let lib_binders = self.get_lib_binders();
+        let sym_id = self
+            .ctx
+            .binder
+            .get_global_type_with_libs("Function", &lib_binders)?;
+        Some(self.ctx.create_lazy_type_ref(sym_id))
     }
 
     /// Resolve `ClassAccessorDecoratorTarget<any, any>` from the lib globals.
