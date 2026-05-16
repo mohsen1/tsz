@@ -2055,7 +2055,7 @@ fn test_solver_imports_go_through_query_boundaries() {
 //
 // SECTION 6: DefId-First Semantic Type Resolution
 // - [x] No ad-hoc TypeData::Lazy interning                -> test_array_helpers_avoid_direct_typekey_interning (existing)
-// - [x] instanceof class narrowing uses real DefIds       -> test_instanceof_class_constructor_avoids_raw_symbol_reference_fallback
+// - [x] instanceof constructor narrowing uses real DefIds -> test_instanceof_constructor_branches_avoid_raw_symbol_reference_fallback
 // - [x] No new raw SymbolRef reference construction       -> test_checker_raw_symbol_reference_construction_budget
 // - [x] ensure_relation_input_ready used before relations  -> test_subtype_path_establishes_preconditions_before_subtype_cache_lookup (existing)
 //
@@ -5057,10 +5057,11 @@ fn test_core_type_resolution_has_ensure_def_ready_call() {
     );
 }
 
-/// Guard: `instanceof` narrowing for class symbols must use real DefId-backed
-/// lazy types rather than raw SymbolId-shaped `reference(SymbolRef)` fallback.
+/// Guard: `instanceof` narrowing for class and global-constructor symbols must
+/// use real `DefId`-backed lazy types rather than raw SymbolId-shaped
+/// `reference(SymbolRef)` fallback.
 #[test]
-fn test_instanceof_class_constructor_avoids_raw_symbol_reference_fallback() {
+fn test_instanceof_constructor_branches_avoid_raw_symbol_reference_fallback() {
     let source = fs::read_to_string("src/flow/control_flow/narrowing.rs")
         .expect("failed to read src/flow/control_flow/narrowing.rs");
     let class_branch = source
@@ -5077,6 +5078,21 @@ fn test_instanceof_class_constructor_avoids_raw_symbol_reference_fallback() {
         !class_branch.contains(".reference("),
         "instanceof class-symbol branch must not create Lazy(DefId(symbol_id)) via raw SymbolRef fallback"
     );
+
+    let global_constructor_branch = source
+        .split("// Global constructor variables")
+        .nth(1)
+        .and_then(|rest| rest.split("// For FUNCTION symbols").next())
+        .expect("failed to isolate instanceof global-constructor branch");
+
+    assert!(
+        global_constructor_branch.contains("self.resolve_symbol_to_lazy(symbol_ref)"),
+        "instanceof global-constructor branch should resolve through the DefId-backed lazy helper"
+    );
+    assert!(
+        !global_constructor_branch.contains(".reference("),
+        "instanceof global-constructor branch must not create Lazy(DefId(symbol_id)) via raw SymbolRef fallback"
+    );
 }
 
 /// Guard: checker code must not add new raw `reference(SymbolRef)` fallback
@@ -5085,7 +5101,7 @@ fn test_instanceof_class_constructor_avoids_raw_symbol_reference_fallback() {
 fn test_checker_raw_symbol_reference_construction_budget() {
     fn allowed_raw_reference_constructions(rel_path: &str) -> usize {
         match rel_path {
-            "src/flow/control_flow/type_guards.rs" | "src/flow/control_flow/narrowing.rs" => 2,
+            "src/flow/control_flow/type_guards.rs" => 2,
             _ => 0,
         }
     }

@@ -983,10 +983,7 @@ impl<'a> FlowAnalyzer<'a> {
         if symbol.has_any_flags(symbol_flags::INTERFACE)
             && symbol.has_any_flags(symbol_flags::VARIABLE)
         {
-            return Some(
-                self.resolve_symbol_to_lazy(symbol_ref)
-                    .unwrap_or_else(|| self.interner.reference(symbol_ref)),
-            );
+            return self.resolve_symbol_to_lazy(symbol_ref);
         }
 
         // For FUNCTION symbols (e.g., JS constructor functions with @constructor),
