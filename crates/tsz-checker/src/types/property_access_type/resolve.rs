@@ -1847,45 +1847,28 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
 
-                    if !used_class_chain_method_type
-                        && direct_class_this_receiver
-                        && let Some(class_idx) = self.nearest_enclosing_class(access.expression)
+                    if let Some((recovered_type, recovered_method)) = self
+                        .recover_direct_this_class_chain_member(
+                            direct_class_this_receiver,
+                            used_class_chain_method_type,
+                            access.expression,
+                            property_name,
+                            prop_type,
+                            object_type_for_access,
+                            original_object_type,
+                        )
                     {
-                        let summary = self.summarize_class_chain(class_idx);
-                        if let Some(member_info) = summary.member_info(property_name, false, true)
-                            && !matches!(
-                                member_info.type_id,
-                                TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
-                            )
-                            && member_info.type_id != prop_type
-                        {
-                            prop_type = member_info.type_id;
-                            used_class_chain_method_type =
-                                summary.member_kind(property_name, false, true)
-                                    == Some(ClassMemberKind::MethodLike);
-                        }
+                        prop_type = recovered_type;
+                        used_class_chain_method_type = recovered_method;
                     }
 
-                    if !used_class_chain_method_type
-                        && direct_class_this_receiver
-                        && let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
-                            self.ctx.types,
-                            object_type_for_access,
-                        )
-                        && let Some(raw_prop) = shape.properties.iter().find(|prop| {
-                            self.ctx.types.resolve_atom_ref(prop.name).as_ref()
-                                == property_name.as_str()
-                        })
-                        && crate::query_boundaries::common::contains_this_type(
-                            self.ctx.types,
-                            raw_prop.type_id,
-                        )
-                    {
-                        prop_type = crate::query_boundaries::common::substitute_this_type(
-                            self.ctx.types,
-                            raw_prop.type_id,
-                            self.ctx.types.this_type(),
-                        );
+                    if let Some(recovered_type) = self.substitute_direct_this_property_shape_type(
+                        direct_class_this_receiver,
+                        used_class_chain_method_type,
+                        object_type_for_access,
+                        property_name,
+                    ) {
+                        prop_type = recovered_type;
                     }
 
                     // Substitute polymorphic `this` type with the receiver type.
