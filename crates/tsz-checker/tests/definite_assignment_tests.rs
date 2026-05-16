@@ -2162,3 +2162,66 @@ fn test_ts2564_es_decorated_field_no_initializer_no_ts2564() {
         "ES-decorated field must not produce TS2564 — decorator may supply initialization"
     );
 }
+
+#[test]
+fn test_ts2564_computed_unique_symbol_property_no_initializer() {
+    let source = r#"
+declare const s: unique symbol;
+declare namespace N {
+    export const s: unique symbol;
+}
+class C {
+    [s]: number;
+    [N.s]: string;
+}
+"#;
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            strict_property_initialization: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<_> = diags.iter().map(|(code, _)| *code).collect();
+    assert_eq!(
+        codes,
+        vec![
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
+        ],
+        "Expected exactly TS2564 for [s] and [N.s] computed unique symbol properties, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2564_computed_unique_symbol_property_suppressed_by_constructor_assign() {
+    let source = r#"
+declare const s: unique symbol;
+declare namespace N {
+    export const s: unique symbol;
+}
+class C {
+    [s]: number;
+    [N.s]: string;
+    constructor() {
+        this[s] = 42;
+        this[N.s] = "hello";
+    }
+}
+"#;
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            strict_property_initialization: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes: Vec<_> = diags.iter().map(|(code, _)| *code).collect();
+    assert_eq!(
+        codes,
+        Vec::<u32>::new(),
+        "Expected no diagnostics when constructor assigns [s] and [N.s], got: {diags:?}"
+    );
+}
