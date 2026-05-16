@@ -690,6 +690,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let name = self.interner.resolve_atom(atom);
                 self.resolver.resolve_unresolved_type_name(&name)
             }
+            TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => self
+                .interner
+                .object_shape(shape_id)
+                .symbol
+                .and_then(|sym_id| {
+                    self.resolver
+                        .symbol_to_def_id(crate::types::SymbolRef(sym_id.0))
+                }),
             _ => None,
         };
 

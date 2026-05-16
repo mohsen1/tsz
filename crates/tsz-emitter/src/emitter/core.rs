@@ -238,6 +238,7 @@ pub(crate) struct ParamTransformPlan {
 pub(crate) struct TempScopeState {
     pub(crate) temp_var_counter: u32,
     pub(crate) generated_temp_names: FxHashSet<String>,
+    pub(crate) reserved_nested_temp_names: FxHashSet<String>,
     pub(crate) first_for_of_emitted: bool,
     pub(crate) preallocated_temp_names: VecDeque<String>,
     pub(crate) preallocated_assignment_temps: VecDeque<String>,
@@ -310,6 +311,9 @@ pub struct Printer<'a> {
 
     /// Source text for detecting single-line constructs
     pub(crate) source_text: Option<&'a str>,
+
+    /// Cached JSX pragmas extracted from the current source file.
+    pub(crate) jsx_pragmas: crate::jsx_pragmas::JsxPragmaFacts,
 
     /// Source text for source map generation (kept separate from comment emission).
     pub(crate) source_map_text: Option<&'a str>,
@@ -419,6 +423,10 @@ pub struct Printer<'a> {
 
     /// Counter used for disposable resource environment names (`env_1`, `env_2`, ...).
     pub(crate) next_disposable_env_id: u32,
+
+    /// Counter used for AMD/UMD dynamic import promise callback names
+    /// (`resolve_1`, `reject_1`, ...).
+    pub(crate) next_dynamic_import_promise_id: u32,
 
     /// Per-file counters for lowered async-generator inner function names.
     pub(crate) async_generator_inner_name_counts: FxHashMap<String, u32>,
@@ -572,6 +580,10 @@ pub struct Printer<'a> {
     /// collection and consumed when emitting execute-body initializers.
     pub(crate) system_empty_binding_temps: FxHashMap<u32, (String, Option<String>)>,
 
+    /// `SystemJS` object-rest export temps reserved during outer-scope hoist
+    /// collection and consumed when emitting execute-body export initializers.
+    pub(crate) system_object_rest_export_temps: FxHashMap<u32, String>,
+
     /// Byte offset where CJS destructuring export temps should be inserted.
     pub(crate) cjs_destr_hoist_byte_offset: usize,
     /// Line number where CJS destructuring export temps should be inserted.
@@ -579,6 +591,18 @@ pub struct Printer<'a> {
 
     /// Temp names reserved ahead-of-time and consumed before generating new names.
     pub(crate) preallocated_temp_names: VecDeque<String>,
+
+    /// Temp names that must not be reused by nested temp scopes.
+    pub(crate) reserved_nested_temp_names: FxHashSet<String>,
+
+    /// Source-file class static temp reservations, in top-level statement order.
+    pub(crate) file_level_class_temp_reservation_plan: Vec<(NodeIndex, usize)>,
+
+    /// Pre-generated class static temp names consumed when their class is emitted.
+    pub(crate) file_level_class_temp_reservations: FxHashMap<NodeIndex, VecDeque<String>>,
+
+    /// Top-level classes whose class static temp allocation has already been planned.
+    pub(crate) completed_file_level_class_temp_reservations: FxHashSet<NodeIndex>,
 
     /// Temp names for ES5 iterator-based for-of lowering that must be emitted
     /// as top-level `var` declarations (e.g., `e_1, _a, e_2, _b`).
@@ -950,6 +974,7 @@ impl<'a> Printer<'a> {
             emit_plan,
             emit_missing_initializer_as_void_0: false,
             source_text: None,
+            jsx_pragmas: crate::jsx_pragmas::JsxPragmaFacts::default(),
             source_map_text: None,
             line_map: None,
             pending_source_pos: None,
@@ -982,6 +1007,7 @@ impl<'a> Printer<'a> {
             anonymous_default_export_name: None,
             next_anonymous_default_index: 0,
             next_disposable_env_id: 1,
+            next_dynamic_import_promise_id: 1,
             async_generator_inner_name_counts: FxHashMap::default(),
             reserved_disposable_env_names: FxHashMap::default(),
             block_using_env: None,
@@ -1015,9 +1041,14 @@ impl<'a> Printer<'a> {
             block_scoped_private_temps: Vec::new(),
             cjs_destructuring_export_temps: Vec::new(),
             system_empty_binding_temps: FxHashMap::default(),
+            system_object_rest_export_temps: FxHashMap::default(),
             cjs_destr_hoist_byte_offset: 0,
             cjs_destr_hoist_line: 0_u32,
             preallocated_temp_names: VecDeque::new(),
+            reserved_nested_temp_names: FxHashSet::default(),
+            file_level_class_temp_reservation_plan: Vec::new(),
+            file_level_class_temp_reservations: FxHashMap::default(),
+            completed_file_level_class_temp_reservations: FxHashSet::default(),
             hoisted_for_of_temps: Vec::new(),
             commonjs_named_import_substitutions: FxHashMap::default(),
             wrapped_export_module_substitutions: FxHashMap::default(),
@@ -1207,6 +1238,7 @@ impl<'a> Printer<'a> {
     /// Set the source text (for detecting single-line constructs).
     pub fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
+        self.jsx_pragmas = crate::jsx_pragmas::JsxPragmaFacts::from_source(text);
         self.source_comment_ranges = if self.ctx.options.remove_comments {
             Vec::new()
         } else {
@@ -1730,9 +1762,12 @@ impl<'a> Printer<'a> {
             k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
                 self.write("static ");
                 let prev = self.emitting_function_body_block;
+                let prev_in_static_block = self.ctx.flags.in_class_static_block;
                 self.emitting_function_body_block = true;
+                self.ctx.flags.in_class_static_block = true;
                 self.emit_block(node, idx);
                 self.emitting_function_body_block = prev;
+                self.ctx.flags.in_class_static_block = prev_in_static_block;
             }
 
             // If statement
@@ -2106,6 +2141,9 @@ impl<'a> Printer<'a> {
                         self.write(&temp_name.clone());
                     } else {
                         self.emit(computed.expression);
+                        if self.is_static_block_await_identifier(computed.expression) {
+                            self.write(" ");
+                        }
                     }
                     // Map closing `]` to its source position.
                     // The expression's end points past the expression, so `]`

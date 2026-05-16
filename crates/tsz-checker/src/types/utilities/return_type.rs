@@ -39,7 +39,11 @@ impl<'a> CheckerState<'a> {
         return_context: Option<TypeId>,
         effective_return_context: Option<TypeId>,
     ) -> bool {
-        if return_context.is_none() || effective_return_context.is_some() {
+        let preserve_for_bare_generic_return =
+            return_context.is_some() && effective_return_context.is_none();
+        let preserve_for_async_array_return =
+            return_context.is_some_and(|ctx| self.return_context_is_async_array_union_context(ctx));
+        if !preserve_for_bare_generic_return && !preserve_for_async_array_return {
             return false;
         }
 
@@ -65,6 +69,36 @@ impl<'a> CheckerState<'a> {
             }
             _ => false,
         }
+    }
+
+    fn return_context_is_async_array_union_context(&self, return_context: TypeId) -> bool {
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, return_context)
+        else {
+            return false;
+        };
+
+        let mut saw_array = false;
+        let mut saw_promise_wrapped_array = false;
+        for member in members {
+            if crate::query_boundaries::common::array_element_type(self.ctx.types, member).is_some()
+            {
+                saw_array = true;
+                continue;
+            }
+
+            if let Some((base, args)) =
+                crate::query_boundaries::common::application_info(self.ctx.types, member)
+                && args.len() == 1
+                && self.return_context_application_base_has_name(base, &["Promise", "PromiseLike"])
+                && crate::query_boundaries::common::array_element_type(self.ctx.types, args[0])
+                    .is_some()
+            {
+                saw_promise_wrapped_array = true;
+            }
+        }
+
+        saw_array && saw_promise_wrapped_array
     }
 
     /// Check if a function body falls through (doesn't always return).

@@ -860,146 +860,6 @@ impl<'a> Printer<'a> {
         self.emit_trailing_comment_after_semicolon(node);
     }
 
-    pub(in crate::emitter) fn emit_try_statement(&mut self, node: &Node) {
-        let Some(try_stmt) = self.arena.get_try(node) else {
-            return;
-        };
-
-        self.write("try ");
-        self.emit(try_stmt.try_block);
-
-        if try_stmt.catch_clause.is_some() {
-            self.write_line();
-            if let Some(catch_node) = self.arena.get(try_stmt.catch_clause) {
-                let catch_start = self.skip_trivia_forward(catch_node.pos, catch_node.end);
-                self.emit_comments_before_pos(catch_start);
-            }
-            self.emit(try_stmt.catch_clause);
-        }
-
-        if try_stmt.finally_block.is_some() {
-            self.write_line();
-            // Map the `finally` keyword to its source position
-            // The keyword is between the catch block end and finally block start
-            if let Some(finally_node) = self.arena.get(try_stmt.finally_block) {
-                let search_start = if try_stmt.catch_clause.is_some() {
-                    self.arena
-                        .get(try_stmt.catch_clause)
-                        .map_or(node.pos, |n| n.end)
-                } else {
-                    self.arena
-                        .get(try_stmt.try_block)
-                        .map_or(node.pos, |n| n.end)
-                };
-                self.map_token_after_skipping_whitespace(search_start, finally_node.pos);
-            }
-            self.write("finally ");
-            self.emit(try_stmt.finally_block);
-        } else if try_stmt.catch_clause.is_none() {
-            self.write_line();
-            self.write("finally { }");
-        }
-    }
-
-    pub(in crate::emitter) fn emit_catch_clause(&mut self, node: &Node) {
-        let Some(catch) = self.arena.get_catch_clause(node) else {
-            return;
-        };
-
-        self.write("catch");
-
-        if catch.variable_declaration.is_some() {
-            // Check if catch variable has object rest that needs ES2018 lowering.
-            let needs_rest_lowering = self.ctx.needs_es2018_lowering
-                && !self.ctx.target_es5
-                && self.catch_var_has_object_rest(catch.variable_declaration);
-
-            if needs_rest_lowering
-                && let Some(pattern_idx) = self.catch_var_pattern_idx(catch.variable_declaration)
-            {
-                let temp = self.get_temp_var_name();
-                self.write(" ");
-                self.map_token_after(node.pos, node.end, b'(');
-                self.write("(");
-                self.write(&temp);
-                self.write(")");
-
-                // Emit the block with preamble injected
-                self.write(" {");
-                self.write_line();
-                self.increase_indent();
-
-                // Emit rest preamble
-                self.write("var ");
-                self.emit_object_rest_var_decl(pattern_idx, NodeIndex::NONE, Some(&temp));
-                self.write(";");
-                self.write_line();
-
-                // Emit the original block body
-                if let Some(block_node) = self.arena.get(catch.block)
-                    && let Some(block) = self.arena.get_block(block_node)
-                {
-                    for &stmt in &block.statements.nodes {
-                        self.emit(stmt);
-                        self.write_line();
-                    }
-                }
-
-                self.decrease_indent();
-                self.write("}");
-                return;
-            }
-
-            self.write(" ");
-            // Map the `(` to its source position
-            self.map_token_after(node.pos, node.end, b'(');
-            self.write("(");
-            // Emit any inline comments between `(` and the variable declaration
-            // (e.g., `catch (/*comment*/[a])`). tsc places the space before the
-            // comment: `( /*comment*/[a]` rather than after: `(/*comment*/ [a]`.
-            if let Some(var_node) = self.arena.get(catch.variable_declaration) {
-                if self.has_pending_comment_before(var_node.pos) {
-                    self.write_space();
-                }
-                self.emit_comments_before_pos(var_node.pos);
-                // Suppress the trailing space that emit_comments_before_pos sets
-                // for block comments — tsc does not insert a space between the
-                // comment and the binding pattern in catch clauses.
-                self.pending_block_comment_space = false;
-            }
-            self.emit(catch.variable_declaration);
-            self.write(")");
-        } else if self.ctx.needs_es2019_lowering {
-            // ES2019 optional catch binding: generate a unique temp name like tsc does
-            // (e.g., _a, _b, _c) instead of a hardcoded name.
-            let name = self.make_unique_name();
-            self.write(" (");
-            self.write(&name);
-            self.write(")");
-        }
-
-        self.write(" ");
-        self.emit(catch.block);
-    }
-
-    /// Check if a catch clause variable declaration has an object rest pattern.
-    fn catch_var_has_object_rest(&self, var_decl_idx: NodeIndex) -> bool {
-        let Some(var_node) = self.arena.get(var_decl_idx) else {
-            return false;
-        };
-        let Some(var_decl) = self.arena.get_variable_declaration(var_node) else {
-            return false;
-        };
-        self.pattern_has_object_rest(var_decl.name)
-    }
-
-    /// Get the binding pattern index from a catch clause variable declaration.
-    fn catch_var_pattern_idx(&self, var_decl_idx: NodeIndex) -> Option<NodeIndex> {
-        let var_node = self.arena.get(var_decl_idx)?;
-        let var_decl = self.arena.get_variable_declaration(var_node)?;
-        Some(var_decl.name)
-    }
-
     pub(in crate::emitter) fn emit_switch_statement(&mut self, node: &Node) {
         let Some(switch) = self.arena.get_switch(node) else {
             return;
@@ -1248,6 +1108,14 @@ impl<'a> Printer<'a> {
         if let Some(jump) = self.arena.get_jump_data(node)
             && jump.label.is_some()
         {
+            if self.is_static_block_await_identifier(jump.label) {
+                self.write(" ;");
+                self.write_line();
+                self.emit(jump.label);
+                self.write(" ;");
+                self.emit_trailing_comment_after_semicolon(node);
+                return;
+            }
             self.write(" ");
             // Emit inline comments between keyword and label (e.g., `break /*c*/ label`)
             if let Some(label_node) = self.arena.get(jump.label) {
@@ -1275,6 +1143,14 @@ impl<'a> Printer<'a> {
         if let Some(jump) = self.arena.get_jump_data(node)
             && jump.label.is_some()
         {
+            if self.is_static_block_await_identifier(jump.label) {
+                self.write(" ;");
+                self.write_line();
+                self.emit(jump.label);
+                self.write(" ;");
+                self.emit_trailing_comment_after_semicolon(node);
+                return;
+            }
             self.write(" ");
             // Emit inline comments between keyword and label (e.g., `continue /*c*/ label`)
             if let Some(label_node) = self.arena.get(jump.label) {
@@ -1299,7 +1175,11 @@ impl<'a> Printer<'a> {
 
     /// Find the position of the first `;` in the source text between `start` and `end`.
     /// Returns the position right after the `;` (exclusive end) or `None` if no `;` found.
-    fn find_semicolon_pos_in_range(&self, start: u32, end: u32) -> Option<u32> {
+    pub(in crate::emitter) fn find_semicolon_pos_in_range(
+        &self,
+        start: u32,
+        end: u32,
+    ) -> Option<u32> {
         let text = self.source_text?;
         let bytes = text.as_bytes();
         let s = start as usize;
@@ -1317,12 +1197,39 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if self.ctx.emit_await_as_yield && self.get_identifier_text_idx(labeled.label) == "await" {
+            self.write("yield ;");
+            self.write_line();
+            self.emit(labeled.statement);
+            return;
+        }
+
+        if self.is_static_block_await_identifier(labeled.label) {
+            self.emit(labeled.label);
+            self.write(" ;");
+            self.write_line();
+            self.emit(labeled.statement);
+            return;
+        }
+
         self.emit(labeled.label);
         self.write(": ");
         if (self.ctx.is_commonjs() || self.in_system_execute_body)
             && self.labeled_body_is_initializerless_export_variable(labeled.statement)
         {
             self.write(";");
+            return;
+        }
+        if self.labeled_body_needs_block(labeled.statement) {
+            self.write("{");
+            self.write_line();
+            self.increase_indent();
+            self.emit(labeled.statement);
+            if !self.writer.is_at_line_start() {
+                self.write_line();
+            }
+            self.decrease_indent();
+            self.write("}");
             return;
         }
         let before = self.writer.len();
@@ -1332,6 +1239,25 @@ impl<'a> Printer<'a> {
         if self.writer.len() == before {
             self.write(";");
         }
+    }
+
+    fn labeled_body_needs_block(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+            return false;
+        }
+        let Some(enum_decl) = self.arena.get_enum(stmt_node) else {
+            return false;
+        };
+        if self.arena.is_declare(&enum_decl.modifiers) {
+            return false;
+        }
+        !self
+            .arena
+            .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+            || self.ctx.options.preserve_const_enums
     }
 
     fn labeled_body_is_initializerless_export_variable(&self, stmt_idx: NodeIndex) -> bool {

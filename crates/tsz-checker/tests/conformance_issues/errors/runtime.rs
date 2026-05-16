@@ -1558,7 +1558,6 @@ function test(a: A2) {
 /// `compiler/inferenceDoesNotAddUndefinedOrNull.ts` is the primary
 /// integration-level reproducer.
 #[test]
-#[ignore]
 fn test_no_false_ts2344_for_indexed_access_value_subtype_of_constraint() {
     let diagnostics = compile_and_get_diagnostics_with_merged_lib_contexts_and_options(
         r#"

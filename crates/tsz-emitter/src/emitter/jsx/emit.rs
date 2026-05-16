@@ -14,7 +14,7 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     pub(in super::super) fn emit_jsx_element(&mut self, node: &Node) {
-        match self.ctx.options.jsx {
+        match self.effective_jsx_emit() {
             JsxEmit::React => self.emit_jsx_element_classic(node),
             JsxEmit::ReactJsx | JsxEmit::ReactJsxDev => self.emit_jsx_element_automatic(node),
             _ => self.emit_jsx_element_preserve(node),
@@ -22,7 +22,7 @@ impl<'a> Printer<'a> {
     }
 
     pub(in super::super) fn emit_jsx_self_closing_element(&mut self, node: &Node) {
-        match self.ctx.options.jsx {
+        match self.effective_jsx_emit() {
             JsxEmit::React => self.emit_jsx_self_closing_classic(node),
             JsxEmit::ReactJsx | JsxEmit::ReactJsxDev => {
                 self.emit_jsx_self_closing_automatic(node);
@@ -32,7 +32,7 @@ impl<'a> Printer<'a> {
     }
 
     pub(in super::super) fn emit_jsx_fragment(&mut self, node: &Node) {
-        match self.ctx.options.jsx {
+        match self.effective_jsx_emit() {
             JsxEmit::React => self.emit_jsx_fragment_classic(node),
             JsxEmit::ReactJsx | JsxEmit::ReactJsxDev => self.emit_jsx_fragment_automatic(node),
             _ => self.emit_jsx_fragment_preserve(node),
@@ -323,7 +323,7 @@ impl<'a> Printer<'a> {
         let is_jsxs = filtered_children.len() > 1;
         let is_cjs = self.ctx.is_effectively_commonjs()
             && !matches!(self.ctx.original_module_kind, Some(ModuleKind::System));
-        let is_dev = matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev);
+        let is_dev = matches!(self.effective_jsx_emit(), JsxEmit::ReactJsxDev);
         let func_name = if is_dev {
             "jsxDEV"
         } else if is_jsxs {
@@ -418,7 +418,7 @@ impl<'a> Printer<'a> {
 
         let is_cjs = self.ctx.is_effectively_commonjs()
             && !matches!(self.ctx.original_module_kind, Some(ModuleKind::System));
-        let is_dev = matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev);
+        let is_dev = matches!(self.effective_jsx_emit(), JsxEmit::ReactJsxDev);
         let func_name = if is_dev {
             "jsxDEV"
         } else if is_jsxs {
@@ -644,7 +644,7 @@ impl<'a> Printer<'a> {
                     self.write(text);
                     self.write("\"");
                 } else {
-                    self.write(text);
+                    self.emit(tag_name);
                 }
                 return;
             }

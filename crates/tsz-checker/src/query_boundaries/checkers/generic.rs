@@ -289,6 +289,15 @@ pub(crate) fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> Arr
     tsz_solver::type_queries::classify_array_like(db, type_id)
 }
 
+pub(crate) fn array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_array_element_type(db, type_id)
+}
+
+pub(crate) fn number_index_value_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_object_shape(db, type_id)
+        .and_then(|shape| shape.number_index.as_ref().map(|index| index.value_type))
+}
+
 /// Get the object shape of a type (for structural surface checks).
 pub(crate) fn get_object_shape(
     db: &dyn TypeDatabase,

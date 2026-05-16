@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::ParserState;
 use tsz_parser::parser::node::NodeArena;
-use tsz_solver::def::DefinitionStore;
+use tsz_solver::def::{DefId, DefinitionStore};
 use tsz_solver::{
     CompatChecker, FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, TypeId, TypeInterner,
     Visibility,
@@ -618,6 +618,40 @@ fn test_env_eval_cache_access_routes_through_context_helpers() {
         violations.is_empty(),
         "env_eval_cache callers should use CheckerContext helper methods; violations: {}",
         violations.join(", ")
+    );
+}
+
+#[test]
+fn test_env_eval_cache_def_invalidation_is_targeted() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let stale_def = DefId(10_001);
+    let unrelated_def = DefId(10_002);
+    let stale_key = types.lazy(stale_def);
+    let stale_result = types.lazy(stale_def);
+    let unrelated_result = types.lazy(unrelated_def);
+
+    ctx.cache_env_eval_result(stale_key, TypeId::STRING, false);
+    ctx.cache_env_eval_result(TypeId::NUMBER, stale_result, false);
+    ctx.cache_env_eval_result(TypeId::BOOLEAN, unrelated_result, false);
+
+    ctx.clear_type_evaluation_caches_for_def(stale_def);
+
+    assert!(ctx.lookup_env_eval_cache(stale_key).is_none());
+    assert!(ctx.lookup_env_eval_cache(TypeId::NUMBER).is_none());
+    assert_eq!(
+        ctx.lookup_env_eval_cache(TypeId::BOOLEAN)
+            .map(|entry| entry.result),
+        Some(unrelated_result)
     );
 }
 

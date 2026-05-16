@@ -1,7 +1,6 @@
 use tsz_checker::test_utils::check_source_code_messages as compile_and_get_diagnostics;
 
 #[test]
-#[ignore = "merged backlog: needs contravariant inference through callable alias unions"]
 fn contravariant_callable_alias_union_does_not_produce_ts2345() {
     let source = r#"
 type Func1<T> = (x: T) => void;

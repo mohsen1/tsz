@@ -1,4 +1,5 @@
 use crate::state::CheckerState;
+use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -13,6 +14,19 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn application_info_preferring_display_alias(
+        &self,
+        type_id: TypeId,
+    ) -> Option<(TypeId, Vec<TypeId>)> {
+        self.ctx
+            .types
+            .get_display_alias(type_id)
+            .and_then(|alias| {
+                crate::query_boundaries::common::application_info(self.ctx.types, alias)
+            })
+            .or_else(|| crate::query_boundaries::common::application_info(self.ctx.types, type_id))
+    }
+
     fn is_promise_like_application_pair(&mut self, source: TypeId, target: TypeId) -> bool {
         let Some((source_base, _)) = self.application_info_or_display_alias(source) else {
             return false;
@@ -20,7 +34,7 @@ impl<'a> CheckerState<'a> {
         let Some((target_base, _)) = self.application_info_or_display_alias(target) else {
             return false;
         };
-        source_base == target_base
+        self.application_bases_are_same_nominal_type(source_base, target_base)
             && (source_base == TypeId::PROMISE_BASE
                 || crate::query_boundaries::flow_analysis::is_promise_like_type(
                     self.ctx.types,
@@ -49,7 +63,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn application_base_declares_then_method(&self, base: TypeId) -> bool {
-        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
+        let Some(sym_id) = self
+            .application_base_symbol_id(base)
+            .or_else(|| self.ctx.resolve_type_to_symbol_id(base))
+        else {
             return false;
         };
         let Some(symbol) = self.get_symbol_globally(sym_id) else {
@@ -58,18 +75,44 @@ impl<'a> CheckerState<'a> {
         let arena = self.ctx.get_arena_for_file(symbol.decl_file_idx);
 
         symbol.declarations.iter().any(|&decl_idx| {
-            let Some(class) = arena.get_class_at(decl_idx) else {
-                return false;
-            };
-            class.members.nodes.iter().any(|&member_idx| {
-                let Some(method) = arena.get_method_decl_at(member_idx) else {
-                    return false;
-                };
-                crate::types_domain::queries::core::get_literal_property_name(arena, method.name)
-                    .as_deref()
-                    == Some("then")
+            if let Some(class) = arena.get_class_at(decl_idx)
+                && class
+                    .members
+                    .nodes
+                    .iter()
+                    .any(|&member_idx| method_member_named(arena, member_idx, "then"))
+            {
+                return true;
+            }
+
+            arena.get_interface_at(decl_idx).is_some_and(|interface| {
+                interface
+                    .members
+                    .nodes
+                    .iter()
+                    .any(|&member_idx| method_member_named(arena, member_idx, "then"))
             })
         })
+    }
+
+    fn type_has_same_nominal_origin_as_application_base(
+        &self,
+        type_id: TypeId,
+        base: TypeId,
+    ) -> bool {
+        if let Some((nested_base, _)) = self.application_info_preferring_display_alias(type_id)
+            && self.application_bases_are_same_nominal_type(nested_base, base)
+        {
+            return true;
+        }
+
+        let Some(base_sym) = self.application_base_symbol_id(base) else {
+            return false;
+        };
+        self.ctx
+            .resolve_type_to_symbol_id(type_id)
+            .or_else(|| crate::query_boundaries::common::object_symbol(self.ctx.types, type_id))
+            == Some(base_sym)
     }
 
     pub(crate) fn is_unknown_source_application_fallback(
@@ -103,51 +146,27 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        if !self.is_promise_like_application_pair(source, target) {
+        let (Some((source_base, source_args)), Some((target_base, target_args))) = (
+            self.application_info_preferring_display_alias(source),
+            self.application_info_preferring_display_alias(target),
+        ) else {
             return false;
-        }
-
-        if let (Some((source_base, source_args)), Some((target_base, target_args))) = (
-            self.application_info_or_display_alias(source),
-            self.application_info_or_display_alias(target),
-        ) && source_base == target_base
+        };
+        if self.application_bases_are_same_nominal_type(source_base, target_base)
             && source_args.len() == 1
             && target_args.len() == 1
-            && self
-                .application_info_or_display_alias(source_args[0])
-                .is_some_and(|(nested_base, _)| nested_base == source_base)
-            && !self
-                .application_info_or_display_alias(target_args[0])
-                .is_some_and(|(nested_base, _)| nested_base == target_base)
+            && (self.is_promise_like_application_pair(source, target)
+                || source_base == TypeId::PROMISE_BASE
+                || self.application_has_callable_then_member(source)
+                || self.application_has_callable_then_member(target)
+                || self.application_base_declares_then_method(source_base))
+            && self.type_has_same_nominal_origin_as_application_base(source_args[0], source_base)
+            && !self.type_has_same_nominal_origin_as_application_base(target_args[0], target_base)
         {
             return true;
         }
 
-        let source_display = self.format_type(source);
-        let target_display = self.format_type(target);
-
-        fn generic_head(display: &str) -> Option<&str> {
-            display.split_once('<').map(|(head, _)| head.trim())
-        }
-
-        let Some(source_head) = generic_head(&source_display) else {
-            return false;
-        };
-        if source_head != "Promise" && source_head != "PromiseLike" {
-            return false;
-        }
-        if generic_head(&target_display) != Some(source_head) {
-            return false;
-        }
-        let Some((_, source_arg_str)) = source_display.split_once('<') else {
-            return false;
-        };
-        let Some((_, target_arg_str)) = target_display.split_once('<') else {
-            return false;
-        };
-        let prefix = format!("{source_head}<");
-        source_arg_str.trim_start().starts_with(&prefix)
-            && !target_arg_str.trim_start().starts_with(&prefix)
+        false
     }
 
     pub(crate) fn same_base_application_to_constrained_type_param_target(
@@ -361,4 +380,14 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|atom| augmented_keys.contains(&atom))
         })
     }
+}
+
+fn method_member_named(arena: &NodeArena, member_idx: NodeIndex, name: &str) -> bool {
+    arena
+        .get_method_decl_at(member_idx)
+        .and_then(|method| {
+            crate::types_domain::queries::core::get_literal_property_name(arena, method.name)
+        })
+        .as_deref()
+        == Some(name)
 }
