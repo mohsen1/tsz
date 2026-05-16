@@ -59,6 +59,11 @@ Set an external timer or CI/status reminder for active performance PRs and
 refresh it when `main` advances. The reminder is part of the work: stale PRs are
 considered unfinished even when the code change is otherwise complete.
 
+Benchmark workflow runs must also prove they still target current `main` before
+reserving the self-hosted benchmark runner. Queued runs for obsolete main SHAs
+should skip in the cheap gate job; stale project rows are noise, not useful
+performance evidence.
+
 Distinguish timing evidence from attribution evidence:
 
 | Mode | Purpose | Counter state | Comparable to `tsgo` timing? |

@@ -983,7 +983,6 @@ fn test_check_files_parallel_preserves_same_file_namespace_exports() {
 }
 
 #[test]
-#[ignore] // TODO: Import shadowing type meaning needs parallel checking refinement
 fn test_check_files_parallel_preserves_import_shadowing_type_meaning() {
     let files = vec![
         ("b.ts".to_string(), "export const zzz = 123;\n".to_string()),
@@ -2601,9 +2600,7 @@ fn test_umd_export_vs_declare_global_const_emits_ts2451() {
     );
 }
 
-// TODO: Implement TS2300 duplicate identifier detection for global augmentation conflicts.
 #[test]
-#[ignore]
 fn test_check_files_parallel_global_augmentation_member_conflicts_emit_ts2300() {
     let files = vec![
         (

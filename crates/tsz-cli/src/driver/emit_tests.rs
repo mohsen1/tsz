@@ -133,6 +133,19 @@ fn test_js_output_path_ignores_out_dir_when_input_is_outside_root_dir() {
 }
 
 #[test]
+fn test_js_output_path_skips_arbitrary_extension_declaration_file() {
+    let path = js_output_path(
+        Path::new("/tmp/project/app"),
+        None,
+        Some(Path::new("/tmp/project/app/dist")),
+        None,
+        Path::new("/tmp/project/app/native.d.node.ts"),
+    );
+
+    assert_eq!(path, None);
+}
+
+#[test]
 fn test_declaration_output_path_ignores_out_dir_when_input_is_outside_root_dir() {
     let path = declaration_output_path(
         Path::new("/tmp/project/app"),
@@ -145,6 +158,18 @@ fn test_declaration_output_path_ignores_out_dir_when_input_is_outside_root_dir()
         path,
         Some(Path::new("/tmp/project/app/src/index.d.ts").into())
     );
+}
+
+#[test]
+fn test_declaration_output_path_skips_arbitrary_extension_declaration_file() {
+    let path = declaration_output_path(
+        Path::new("/tmp/project/app"),
+        None,
+        Some(Path::new("/tmp/project/app/types")),
+        Path::new("/tmp/project/app/native.d.node.ts"),
+    );
+
+    assert_eq!(path, None);
 }
 
 #[test]

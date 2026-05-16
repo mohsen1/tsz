@@ -1633,8 +1633,26 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        !self.is_assignable_to_bivariant(source, target)
-            && !self.should_skip_weak_union_error(source, target, source_idx)
+        if self.is_assignable_to_bivariant(source, target) {
+            return false;
+        }
+
+        // Route the weak-union check through RelationRequest with the
+        // BivariantCallbacks kind so the pre-computed outcome avoids a
+        // redundant solver round-trip in the fallback path.
+        let request = {
+            use crate::query_boundaries::assignability::RelationRequest;
+            let (ps, pt) = self.prepare_assignability_inputs(source, target);
+            RelationRequest::bivariant_callbacks(ps, pt)
+        };
+        let outcome = self.execute_relation_request(&request);
+        !outcome.weak_union_violation
+            && !self.should_skip_weak_union_error_with_outcome(
+                source,
+                target,
+                source_idx,
+                Some(&outcome),
+            )
     }
 
     /// Check bidirectional assignability.
