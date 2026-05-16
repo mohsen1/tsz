@@ -135,10 +135,10 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let snap = self.ctx.snapshot_diagnostics();
+        let snap = crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
         let request = TypingRequest::with_contextual_type(expected);
         let contextual_actual = self.get_type_of_node_with_request(arg_idx, &request);
-        self.ctx.rollback_diagnostics(&snap);
+        snap.rollback(&mut self.ctx);
 
         contextual_actual != TypeId::ANY
             && contextual_actual != TypeId::ERROR
