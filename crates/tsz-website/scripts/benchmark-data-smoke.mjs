@@ -42,13 +42,21 @@ await fs.writeFile(artifact, `${JSON.stringify({
       tsgo_ms: 4,
       winner: "tsz",
     },
+    {
+      name: "utility-types-project",
+      lines: 1000,
+      kb: 40,
+      tsz_ms: 20,
+      tsgo_ms: 30,
+      winner: "tsz",
+    },
   ],
 }, null, 2)}\n`, "utf8");
 
 process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = artifact;
 
 try {
-  const { getBenchmarkPages } = await import("../src/_data/benchmark_data.js");
+  const { getBenchmarkCharts, getBenchmarkPages } = await import("../src/_data/benchmark_data.js");
   const pages = getBenchmarkPages();
   const fixturePage = pages.find((page) => page.name === "conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts");
   assert.ok(fixturePage, "expected TypeScript fixture benchmark page");
@@ -66,6 +74,16 @@ try {
   assert.ok(inferPage, "expected generated infer benchmark page");
   assert.match(inferPage.source_files[0].source, /type ComplexInfer<T>/);
   assert.match(inferPage.detail_focus, /infer/i);
+
+  const typeChallengesPage = pages.find((page) => page.name === "type-challenges-project");
+  assert.ok(typeChallengesPage, "expected compile-canary type-challenges page");
+  assert.equal(typeChallengesPage.failed, true);
+  assert.match(typeChallengesPage.status_label, /compile canary/i);
+
+  const charts = getBenchmarkCharts();
+  assert.match(charts, /External libraries/);
+  assert.match(charts, /Compile canaries and incomplete project timings/);
+  assert.match(charts, /type-challenges project/);
 
   const slugs = new Map();
   for (const page of pages) {

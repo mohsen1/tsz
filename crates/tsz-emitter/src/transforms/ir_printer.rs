@@ -78,6 +78,7 @@ pub struct IRPrinter<'a> {
     tslib_prefix: bool,
     tslib_import_binding: String,
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
+    system_import_meta: bool,
     pub(crate) base_printer_options: Option<PrinterOptions>,
     generator_state_name: &'static str,
     namespace_ast_name: Option<String>,
@@ -261,6 +262,7 @@ impl<'a> IRPrinter<'a> {
             tslib_prefix: false,
             tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
+            system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
             namespace_ast_name: None,
@@ -287,6 +289,7 @@ impl<'a> IRPrinter<'a> {
             tslib_prefix: false,
             tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
+            system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
             namespace_ast_name: None,
@@ -313,6 +316,7 @@ impl<'a> IRPrinter<'a> {
             tslib_prefix: false,
             tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
+            system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
             namespace_ast_name: None,
@@ -339,6 +343,10 @@ impl<'a> IRPrinter<'a> {
         subs: rustc_hash::FxHashMap<String, String>,
     ) {
         self.commonjs_import_substitutions = subs;
+    }
+
+    pub const fn set_system_import_meta(&mut self, enabled: bool) {
+        self.system_import_meta = enabled;
     }
 
     pub fn set_namespace_ast_qualification(
@@ -536,6 +544,13 @@ impl<'a> IRPrinter<'a> {
                 self.write(if *captured { "_this" } else { "this" });
             }
             IRNode::Super => self.write("super"),
+            IRNode::ImportMeta => {
+                self.write(if self.system_import_meta {
+                    "context_1.meta"
+                } else {
+                    "import.meta"
+                });
+            }
 
             // Expressions
             IRNode::BinaryExpr {
@@ -1897,6 +1912,24 @@ impl<'a> IRPrinter<'a> {
                             }
                             printer.emit(*idx);
                             self.write(printer.get_output());
+                            return;
+                        }
+
+                        if matches!(
+                            directive,
+                            crate::context::transform::TransformDirective::ES5ForOf { .. }
+                        ) && node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                            && let Some(ref transforms) = self.transforms
+                        {
+                            let mut printer = AstPrinter::with_transforms_and_options(
+                                arena,
+                                transforms.clone(),
+                                self.make_ast_printer_options(),
+                            );
+                            self.configure_ast_printer_namespace(&mut printer);
+                            printer.emit(*idx);
+                            let output = printer.get_output().trim_end();
+                            self.write_embedded_output(output);
                             return;
                         }
 

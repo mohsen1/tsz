@@ -478,6 +478,7 @@ impl ParserState {
                 });
                 prev_block_needs_post_equals_semi = needs_semi_after_equals;
                 statements.push(stmt);
+                self.drain_pending_recovered_expression_statements(&mut statements);
                 if self.recover_invalid_statement_list_comma() {
                     previous_statement_was_block = false;
                     prev_block_needs_post_equals_semi = false;
@@ -650,6 +651,7 @@ impl ParserState {
                         || kind == syntax_kind_ext::WITH_STATEMENT
                 });
                 statements.push(stmt);
+                self.drain_pending_recovered_expression_statements(&mut statements);
                 if self.recover_invalid_statement_list_comma() {
                     previous_statement_was_block = false;
                     continue;

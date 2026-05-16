@@ -5,6 +5,7 @@
 
 use super::*;
 use tsz_common::common::ModuleKind;
+use tsz_parser::syntax::transform_utils::contains_super_reference;
 
 #[derive(Clone)]
 enum ThisSubstitution {
@@ -120,6 +121,28 @@ impl<'a> AstToIr<'a> {
     /// Get the current temp variable counter value (after conversion)
     pub const fn temp_var_counter(&self) -> u32 {
         self.temp_var_counter.get()
+    }
+
+    fn has_current_this_substitution(&self) -> bool {
+        let substitution = self.current_this_substitution.take();
+        let has_substitution = substitution.is_some();
+        self.current_this_substitution.set(substitution);
+        has_substitution
+    }
+
+    fn can_delegate_es5_for_of_to_ast_printer(&self, idx: NodeIndex) -> bool {
+        let has_es5_for_of_directive = self.transforms.as_ref().is_some_and(|transforms| {
+            matches!(
+                transforms.get(idx),
+                Some(crate::context::transform::TransformDirective::ES5ForOf { .. })
+            )
+        });
+
+        has_es5_for_of_directive
+            && !contains_super_reference(self.arena, idx)
+            && !self.this_captured.get()
+            && !self.has_current_this_substitution()
+            && self.identifier_substitution.is_none()
     }
 
     /// Take the list of hoisted temp variable names that need `var` declarations
@@ -678,14 +701,20 @@ impl<'a> AstToIr<'a> {
     }
 
     fn convert_for_in_of_statement(&self, idx: NodeIndex) -> IRNode {
+        let Some(node) = self.arena.get(idx) else {
+            return IRNode::ASTRef(idx);
+        };
+        if node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+            && self.can_delegate_es5_for_of_to_ast_printer(idx)
+        {
+            return IRNode::ASTRef(idx);
+        }
+
         // Issue #3539: previously we returned `ASTRef(idx)` which delegates
         // to the AST printer that has no `_this` substitution context. The
         // body of `for-in`/`for-of` inside a derived ES5 constructor must
         // recurse through `convert_statement` so any `this` reference
         // becomes `_this`.
-        let Some(node) = self.arena.get(idx) else {
-            return IRNode::ASTRef(idx);
-        };
         let Some(loop_data) = self.arena.get_for_in_of(node) else {
             return IRNode::ASTRef(idx);
         };

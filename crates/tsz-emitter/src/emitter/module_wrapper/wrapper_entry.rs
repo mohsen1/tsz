@@ -434,7 +434,7 @@ impl<'a> Printer<'a> {
         self.increase_indent();
         self.write("\"use strict\";");
         self.write_line();
-        self.emit_system_decorate_helper_if_needed(source);
+        self.emit_system_helpers_if_needed(source);
         let system_plan = self.collect_system_dependency_plan(dependencies, source);
         let mut system_plan = system_plan;
         self.add_system_jsx_runtime_dependency(dependencies, &mut system_plan);
