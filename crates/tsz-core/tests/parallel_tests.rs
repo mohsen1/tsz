@@ -505,6 +505,56 @@ fn test_load_lib_files_for_binding_strict_recurses_reference_libs() {
 }
 
 #[test]
+fn test_compile_files_with_default_libs_preserves_promise_type_parameters() {
+    let lib_paths =
+        crate::config::resolve_default_lib_files(tsz_common::common::ScriptTarget::ES2015)
+            .expect("default libs");
+    let program = compile_files_with_libs(
+        vec![(
+            "main.ts".to_string(),
+            "declare const p: Promise<number>;\n".to_string(),
+        )],
+        &lib_paths,
+    );
+
+    let promise_id = program
+        .globals
+        .get("Promise")
+        .expect("Promise should be a global lib symbol");
+    let promise = program
+        .symbols
+        .get(promise_id)
+        .expect("Promise symbol should resolve");
+
+    assert!(
+        promise.has_any_flags(tsz_binder::symbol_flags::INTERFACE),
+        "Promise should retain its interface meaning after lib merge; flags={}",
+        promise.flags
+    );
+
+    let has_generic_interface_decl = promise.declarations.iter().any(|decl_idx| {
+        program
+            .declaration_arenas
+            .get(&(promise_id, *decl_idx))
+            .into_iter()
+            .flatten()
+            .any(|arena| {
+                arena.get(*decl_idx).is_some_and(|node| {
+                    arena
+                        .get_interface(node)
+                        .is_some_and(|iface| iface.type_parameters.is_some())
+                })
+            })
+    });
+
+    assert!(
+        has_generic_interface_decl,
+        "Promise should retain the generic interface declaration; declarations={:?}",
+        promise.declarations
+    );
+}
+
+#[test]
 fn test_merge_preserves_file_locals() {
     let files = vec![
         ("a.ts".to_string(), "let a1 = 1; let a2 = 2;".to_string()),
@@ -933,7 +983,6 @@ fn test_check_files_parallel_preserves_same_file_namespace_exports() {
 }
 
 #[test]
-#[ignore] // TODO: Import shadowing type meaning needs parallel checking refinement
 fn test_check_files_parallel_preserves_import_shadowing_type_meaning() {
     let files = vec![
         ("b.ts".to_string(), "export const zzz = 123;\n".to_string()),
@@ -2551,9 +2600,7 @@ fn test_umd_export_vs_declare_global_const_emits_ts2451() {
     );
 }
 
-// TODO: Implement TS2300 duplicate identifier detection for global augmentation conflicts.
 #[test]
-#[ignore]
 fn test_check_files_parallel_global_augmentation_member_conflicts_emit_ts2300() {
     let files = vec![
         (

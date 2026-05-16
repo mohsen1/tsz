@@ -1154,7 +1154,7 @@ impl<'a> CheckerState<'a> {
                 && is_direct_function_arg
                 && let Some((s, e)) = function_arg_span
             {
-                let count_before = self.ctx.diagnostics.len();
+                let diag_count_before = self.ctx.diagnostics.len();
                 let callback_indices = self.callback_function_indices(arg_idx);
                 let contextual_param_spans = contextual_callback_param_spans;
                 let had_contextual_callbacks = !contextual_callback_indices.is_empty();
@@ -1166,7 +1166,8 @@ impl<'a> CheckerState<'a> {
                             .iter()
                             .any(|(start, end)| d.start >= *start && d.start < *end))
                 });
-                if had_contextual_callbacks || self.ctx.diagnostics.len() < count_before {
+                let diagnostics_were_removed = self.ctx.diagnostics.len() < diag_count_before;
+                if had_contextual_callbacks || diagnostics_were_removed {
                     for callback_idx in callback_indices {
                         self.ctx.implicit_any_checked_closures.remove(&callback_idx);
                     }
@@ -1447,6 +1448,9 @@ impl<'a> CheckerState<'a> {
         let arg_count = args.len();
         for (i, &arg_idx) in args.iter().enumerate() {
             let expected = expected_for_index(i, arg_count);
+            if let Some(expected) = expected {
+                self.try_emit_polymorphic_this_object_literal_arg_errors(arg_idx, expected);
+            }
             if let Some(expected) = expected
                 && expected != TypeId::ANY
                 && expected != TypeId::UNKNOWN

@@ -12,6 +12,9 @@ Checks for:
 - Forbidden imports of solver internals (`TypeKey`, raw interner) from checker code
 - Direct `CompatChecker` access from TS2322-family paths (should route through `query_boundaries`)
 - Cross-layer imports that violate the pipeline architecture
+- Track 10 ratchet metrics for post-check fingerprint rewrites, checker
+  `source_text.contains` decisions, file-name/path substring decisions, and
+  rendered-type string decisions
 
 ```bash
 # Run manually
@@ -37,6 +40,143 @@ Generates an HTML/text report of crate dependencies and boundary compliance.
 ```bash
 python3 scripts/arch/render_architecture_report.py
 ```
+
+## Quality And Performance Tooling
+
+These tools are additive guardrails. Normal PR CI keeps the fast path focused on
+formatting, lint, dependency policy, build, and unit tests; heavier exploratory
+tools run from the scheduled/manual `Quality Tools` workflow or local focused
+commands.
+
+### `cargo-deny`
+
+`cargo-deny` runs in PR CI through `deny.toml`. It enforces dependency-source
+policy, rejects wildcard dependency versions, checks RustSec advisories, and
+keeps license review explicit.
+
+```bash
+cargo install cargo-deny --version 0.19.6 --locked
+cargo deny check
+```
+
+### `cargo-shear`
+
+`cargo-shear` runs in PR CI to catch dependencies that remain declared in
+`Cargo.toml` after the code stops using them. Treat findings as dependency
+graph hygiene work; do not use `--fix` in an unrelated semantic PR.
+
+```bash
+cargo install cargo-shear --version 1.12.0 --locked
+cargo shear
+```
+
+### Miri
+
+Miri is useful for undefined-behavior checks in pure Rust library tests. Keep it
+focused; do not run conformance, emit, fourslash, CLI process harnesses, or the
+whole workspace under Miri.
+
+```bash
+rustup toolchain install nightly --component miri
+cargo +nightly miri setup
+scripts/quality/run-miri.sh
+```
+
+Override the default target list with `package:test-filter` entries when
+investigating a crate:
+
+```bash
+TSZ_MIRI_TARGETS="tsz-common:interner::tests::test_interner_intern_and_resolve" \
+  scripts/quality/run-miri.sh
+```
+
+### Coverage
+
+`cargo-llvm-cov` produces source coverage for focused library unit tests. The
+default script covers the common scanner/parser/common substrate and writes an
+LCOV artifact.
+
+```bash
+cargo install cargo-llvm-cov --version 0.8.7 --locked
+scripts/quality/run-coverage.sh
+```
+
+### Fuzzing
+
+The `fuzz/` crate contains a parser fuzz target. The CI workflow runs only a
+short smoke test; longer corpus growth should be local or scheduled work.
+
+```bash
+cargo install cargo-fuzz --version 0.13.1 --locked
+scripts/quality/run-fuzz-smoke.sh
+cargo +nightly fuzz run parser
+```
+
+### Mutation Testing
+
+`cargo-mutants` is intentionally scoped by default. Use it to audit whether
+focused unit tests actually protect a rule before or after high-risk checker,
+solver, scanner, or parser changes.
+
+```bash
+cargo install cargo-mutants --version 27.0.0 --locked
+scripts/quality/run-mutants-smoke.sh
+TSZ_MUTANTS_PACKAGE=tsz-scanner TSZ_MUTANTS_FILE='crates/tsz-scanner/src/**/*.rs' \
+  scripts/quality/run-mutants-smoke.sh
+```
+
+The smoke script lists mutants only. Run a real mutation campaign deliberately
+with a tight file glob and `--test-tool nextest` once the baseline command is
+known to be fast enough.
+
+### SemVer Checks
+
+`cargo-semver-checks` audits public Rust API compatibility for the publishable
+workspace crates. It is manual-only in the `Quality Tools` workflow because
+TSZ is pre-1.0 and internal public APIs still move often; use it before
+releases or when a PR changes a public crate boundary. It is not a substitute
+for TypeScript conformance.
+
+```bash
+cargo install cargo-semver-checks --version 0.47.0 --locked
+scripts/quality/run-semver-checks.sh
+TSZ_SEMVER_BASELINE_REV=origin/main scripts/quality/run-semver-checks.sh
+TSZ_SEMVER_BASELINE_REV=v0.1.9 scripts/quality/run-semver-checks.sh
+TSZ_SEMVER_PACKAGES="tsz-core tsz-checker" scripts/quality/run-semver-checks.sh
+```
+
+### Sanitizers
+
+Sanitizer smoke tests are Linux/nightly-only and target narrow native library
+tests. They are for unsafe/FFI/native-dependency investigations, not routine
+local pre-commit.
+
+```bash
+rustup toolchain install nightly --component rust-src
+scripts/quality/run-sanitizer.sh
+```
+
+### Performance Probes
+
+The repo already has Criterion benches and a benchmark workflow. The quality
+workflow adds lightweight profile-build and binary-size attribution probes:
+
+```bash
+cargo install cargo-bloat --version 0.12.1 --locked
+scripts/quality/run-perf-probes.sh
+```
+
+For CPU investigations, prefer the existing flame profile:
+
+```bash
+cargo build --profile flame --bin tsz
+samply record --save-only -o /tmp/tsz-profile.json -- .target/flame/tsz check benches/
+```
+
+Lower-priority overlaps are deliberately kept out of the default quality
+workflow: `cargo-audit` is covered by `cargo-deny` advisories, broad formal
+verification is too expensive without a specific proof target, and extra
+binary-size/profiling tools should stay tied to a measured performance question.
 
 ## Conformance Testing
 

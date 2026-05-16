@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 repository.workspace = true
 homepage.workspace = true
+license.workspace = true
 publish = false
 description = "tsz project website — Eleventy static site deployed to tsz.dev"
 

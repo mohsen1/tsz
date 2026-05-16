@@ -1,19 +1,19 @@
 {
-  "timestamp": "2026-05-12T21:03:01Z",
-  "git_sha": "facc61669952bdb71ce4bc760f038348c6b73d8f",
+  "timestamp": "2026-05-15T09:57:00Z",
+  "git_sha": "d718764",
   "summary": {
     "total_tests": 12582,
-    "passed": 12581,
-    "failed": 1,
+    "passed": 12582,
+    "failed": 0,
     "pass_rate": 100.0
   },
   "areas_by_pass_rate": [
     {
       "area": "compiler",
       "total": 6520,
-      "passed": 6519,
-      "failed": 1,
-      "pass_rate": 99.98
+      "passed": 6520,
+      "failed": 0,
+      "pass_rate": 100.0
     },
     {
       "area": "ambient",
@@ -720,27 +720,12 @@
   "not_implemented_codes": [],
   "partial_codes": [],
   "one_missing_zero_extra": [],
-  "one_extra_zero_missing": [
-    {
-      "code": "TS2786",
-      "count": 1
-    }
-  ],
-  "false_positive_codes": [
-    {
-      "code": "TS2786",
-      "count": 1
-    }
-  ],
+  "one_extra_zero_missing": [],
+  "false_positive_codes": [],
   "top_missing_codes": [],
-  "top_extra_codes": [
-    {
-      "code": "TS2786",
-      "count": 1
-    }
-  ],
+  "top_extra_codes": [],
   "categories": {
-    "false_positive": 1,
+    "false_positive": 0,
     "all_missing": 0,
     "wrong_code": 0,
     "fingerprint_only": 0,

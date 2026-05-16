@@ -43,6 +43,15 @@ fn has_error(diags: &[tsz_checker::diagnostics::Diagnostic], code: u32) -> bool 
     diags.iter().any(|d| d.code == code)
 }
 
+fn relation_errors(
+    diags: &[tsz_checker::diagnostics::Diagnostic],
+) -> Vec<&tsz_checker::diagnostics::Diagnostic> {
+    diags
+        .iter()
+        .filter(|diag| diag.code == 2322 || diag.code == 2345)
+        .collect()
+}
+
 #[test]
 fn anyof_empty_object_matches_never_index_falsy_pattern() {
     let source = r#"
@@ -78,6 +87,117 @@ const ds1: DS1 = 'helo';
     assert!(
         diags.is_empty(),
         "expected DropString<'hello', 'l'> to evaluate to 'helo', got diagnostics: {diags:?}"
+    );
+}
+
+#[test]
+fn map_type_arguments_stay_instantiated_after_mixed_semantic_operations() {
+    let source = r#"
+const obj = { a: 1, b: 2, c: 3 };
+const keys = Object.keys(obj);
+const _keys: string[] = keys;
+
+const values = Object.values(obj);
+const _values: number[] = values;
+
+const entries = Object.entries(obj);
+const _entries: [string, number][] = entries;
+
+const set = new Set([1, 2, 3]);
+const arr = Array.from(set);
+const _arr: number[] = arr;
+
+const arrayLike = { length: 3, 0: "a", 1: "b", 2: "c" };
+const arr2 = Array.from(arrayLike);
+const _arr2: string[] = arr2;
+
+const map = new Map<string, number>();
+map.set("a", 1);
+const _mapGet: number | undefined = map.get("a");
+
+const numSet = new Set<number>();
+numSet.add(1);
+const _hasOne: boolean = numSet.has(1);
+
+const wm = new WeakMap<object, number>();
+const ws = new WeakSet<object>();
+
+const target = { x: 1 };
+const proxy = new Proxy(target, {
+  get(t, p) { return t[p as keyof typeof t]; }
+});
+const _px: number = proxy.x;
+
+const promises = [Promise.resolve(1), Promise.resolve("a")];
+const all = Promise.all(promises);
+const race = Promise.race(promises);
+
+const mixed: (string | number)[] = [1, "a", 2, "b"];
+const numOnly = mixed.filter((x): x is number => typeof x === "number");
+const _numOnly: number[] = numOnly;
+
+const readonlyArr: readonly number[] = [1, 2, 3];
+const mapped = readonlyArr.map(x => x * 2);
+const _mapped: number[] = mapped;
+
+const name = "World";
+const greeting: `Hello, ${string}` = `Hello, ${name}`;
+
+type Add<A extends number, B extends number> =
+  [A, B] extends [1, 1] ? 2 :
+  [A, B] extends [1, 2] ? 3 :
+  number;
+type Sum = Add<1, 1>;
+const sum: Sum = 2;
+
+const items: unknown[] = ["a", 1, "b", 2];
+const strings = items.filter((x): x is string => typeof x === "string");
+const _strings: string[] = strings;
+
+void wm;
+void ws;
+void all;
+void race;
+void greeting;
+void sum;
+export {};
+"#;
+
+    let diags = check_strict_with_libs(source);
+    let relation_diags = relation_errors(&diags);
+    assert!(
+        relation_diags.is_empty(),
+        "expected Map<string, number> methods to keep instantiated parameters after mixed semantic operations, got: {relation_diags:#?}; all diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn renamed_collection_type_arguments_survive_prior_conditional_and_predicate_work() {
+    let source = r#"
+const values = [1, "two", 3];
+const onlyNumbers = values.filter((value): value is number => typeof value === "number");
+const _onlyNumbers: number[] = onlyNumbers;
+
+type PickResult<T> = T extends { item: infer Item } ? Item : never;
+type Picked = PickResult<{ item: "done" }>;
+const picked: Picked = "done";
+
+const label = "Ready";
+const templated: `${string}!` = `${label}!`;
+
+const lookup = new Map<boolean, Date>();
+lookup.set(true, new Date());
+const _lookupValue: Date | undefined = lookup.get(true);
+
+void templated;
+export {};
+"#;
+
+    let diags = check_strict_with_libs(source);
+    let relation_diags = relation_errors(&diags);
+    assert!(
+        relation_diags.is_empty(),
+        "expected renamed Map<boolean, Date> methods to keep instantiated parameters after prior conditional and predicate work, got: {relation_diags:#?}; all diagnostics: {diags:#?}"
     );
 }
 
@@ -598,5 +718,214 @@ const a: A = true;
     assert!(
         !has_error(&diags, 2322),
         "Expected named method parameter infer to extract boolean. Got: {diags:#?}"
+    );
+}
+
+// ── Intrinsic non-infer spans in the infer-pattern-matching path ─────────────
+//
+// When `extends_has_infer` is true (template pattern contains at least one
+// `infer` variable), tsz uses `match_infer_pattern` / `match_template_literal_string`.
+// Non-infer spans such as `${number}`, `${boolean}`, `${bigint}`, `${null}`,
+// and `${undefined}` must still match via type-aware length calculation, not
+// raw string-subtype testing.
+
+/// Reported repro: constrained `infer Sign` followed by `${number}`.
+#[test]
+fn template_intrinsic_number_after_constrained_infer_sign() {
+    let source = r#"
+type PercentageParser<S extends string> =
+  S extends `${infer Sign extends "+" | "-"}${infer Num}%`
+    ? [Sign, Num, "%"]
+    : ["", S, ""];
+
+type PP = PercentageParser<"+85%">;
+const pp: PP = ["+", "85", "%"];
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected PercentageParser<'+85%'> to evaluate to [\"+\", \"85\", \"%\"]. Got: {diags:?}"
+    );
+}
+
+/// Same pattern with a different infer variable name to prove no hardcoding.
+#[test]
+fn template_intrinsic_number_after_constrained_infer_renamed_var() {
+    let source = r#"
+type ParseSigned<S extends string> =
+  S extends `${infer Dir extends "+" | "-"}${number}`
+    ? Dir
+    : "unsigned";
+
+type R1 = ParseSigned<"+42">;
+type R2 = ParseSigned<"-7">;
+type R3 = ParseSigned<"100">;
+const r1: R1 = "+";
+const r2: R2 = "-";
+const r3: R3 = "unsigned";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected ParseSigned to match +/- prefix before number. Got: {diags:?}"
+    );
+}
+
+/// `${number}` after an unconstrained infer (wildcard prefix).
+#[test]
+fn template_intrinsic_number_after_unconstrained_infer_prefix() {
+    let source = r#"
+type HasNumSuffix<S extends string> =
+  S extends `${infer _Prefix}${number}` ? true : false;
+
+type T1 = HasNumSuffix<"abc42">;
+type T2 = HasNumSuffix<"nonum">;
+const t1: T1 = true;
+const t2: T2 = false;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected HasNumSuffix to detect numeric suffix. Got: {diags:?}"
+    );
+}
+
+/// `${boolean}` after infer matches "true" and "false" strings.
+#[test]
+fn template_intrinsic_boolean_after_infer() {
+    let source = r#"
+type ParseBool<S extends string> =
+  S extends `val=${infer B extends boolean}` ? B : never;
+
+type PB1 = ParseBool<"val=true">;
+type PB2 = ParseBool<"val=false">;
+type PB3 = ParseBool<"val=other">;
+const pb1: PB1 = true;
+const pb2: PB2 = false;
+declare let pb3: PB3;
+const pb3check: never = pb3;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected boolean template span to match 'true'/'false' and reject other strings. Got: {diags:?}"
+    );
+}
+
+/// `${boolean}` with a renamed infer variable.
+#[test]
+fn template_intrinsic_boolean_renamed_infer_var() {
+    let source = r#"
+type ExtractFlag<S extends string> =
+  S extends `flag:${boolean}:${infer Rest}` ? Rest : never;
+
+type E1 = ExtractFlag<"flag:true:ok">;
+type E2 = ExtractFlag<"flag:false:no">;
+const e1: E1 = "ok";
+const e2: E2 = "no";
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected boolean span to match 'true'/'false' and capture the rest. Got: {diags:?}"
+    );
+}
+
+/// `${bigint}` after infer matches integer strings.
+#[test]
+fn template_intrinsic_bigint_after_infer() {
+    let source = r#"
+type ParseBigint<S extends string> =
+  S extends `n:${infer N extends bigint}` ? N : never;
+
+type BI1 = ParseBigint<"n:42">;
+type BI2 = ParseBigint<"n:-7">;
+type BI3 = ParseBigint<"n:abc">;
+const bi1: BI1 = 42n;
+const bi2: BI2 = -7n;
+declare let bi3: BI3;
+const bi3check: never = bi3;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected bigint template span to match integer strings. Got: {diags:?}"
+    );
+}
+
+/// `${null}` span matches exactly the string "null".
+#[test]
+fn template_intrinsic_null_after_infer() {
+    let source = r#"
+type HasNull<S extends string> =
+  S extends `${infer _Prefix}null${infer _Suffix}` ? true : false;
+
+type N1 = HasNull<"prenullsuf">;
+type N2 = HasNull<"nothing">;
+const n1: N1 = true;
+const n2: N2 = false;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected null span to match the literal string 'null'. Got: {diags:?}"
+    );
+}
+
+/// `${undefined}` span matches exactly the string "undefined".
+#[test]
+fn template_intrinsic_undefined_after_infer() {
+    let source = r#"
+type HasUndefined<S extends string> =
+  S extends `${infer _P}undefined${infer _Q}` ? true : false;
+
+type U1 = HasUndefined<"xundefinedy">;
+type U2 = HasUndefined<"nothing">;
+const u1: U1 = true;
+const u2: U2 = false;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected undefined span to match the literal string 'undefined'. Got: {diags:?}"
+    );
+}
+
+/// `${number}` should not match non-numeric strings.
+#[test]
+fn template_intrinsic_number_rejects_non_numeric_string() {
+    let source = r#"
+type IsNumStr<S extends string> =
+  S extends `${number}` ? true : false;
+
+type G = IsNumStr<"abc">;
+const g: G = false;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected '${{number}}' to reject non-numeric string 'abc'. Got: {diags:?}"
+    );
+}
+
+/// Shortest-valid-number-first matching for tsc parity in ambiguous infer patterns.
+///
+/// For `${infer A}${number}${infer B}` matching "x123y", tsc takes the
+/// shortest valid number prefix ("1"), leaving "23y" for B.  tsz must match
+/// the same non-greedy behaviour.
+#[test]
+fn template_intrinsic_number_shortest_first_tsc_parity() {
+    let source = r#"
+type SplitNum<S extends string> =
+  S extends `${infer A}${number}${infer B}` ? [A, B] : never;
+
+type S1 = SplitNum<"x123y">;
+declare let s1: S1;
+const s1check: ["x", "23y"] = s1;
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected SplitNum<'x123y'> to give ['x', '23y'] (shortest number first, matching tsc). Got: {diags:?}"
     );
 }

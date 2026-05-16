@@ -1112,11 +1112,14 @@ impl<'a> DeclarationEmitter<'a> {
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
 
+        let delay_private_identifier_marker = self
+            .should_delay_private_identifier_marker_for_js_constructor_overloads(&class.members);
+
         // Emit `#private;` if any member has a private identifier name
-        if self.class_has_private_identifier_member(&class.members) {
-            self.write_indent();
-            self.write("#private;");
-            self.write_line();
+        if self.class_has_private_identifier_member(&class.members)
+            && !delay_private_identifier_marker
+        {
+            self.emit_private_identifier_marker();
         }
 
         self.emit_js_array_subclass_constructor_overloads_if_needed(
@@ -1124,6 +1127,11 @@ impl<'a> DeclarationEmitter<'a> {
             class.heritage_clauses.as_ref(),
         );
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
+        if self.class_has_private_identifier_member(&class.members)
+            && delay_private_identifier_marker
+        {
+            self.emit_private_identifier_marker();
+        }
         if self.source_is_js_file {
             self.emit_js_class_define_property_accessors_for_name(class.name);
         }
@@ -1568,14 +1576,22 @@ impl<'a> DeclarationEmitter<'a> {
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
 
+        let delay_private_identifier_marker = self
+            .should_delay_private_identifier_marker_for_js_constructor_overloads(&class.members);
+
         // Emit `#private;` if any member has a private identifier name (e.g., #foo)
-        if self.class_has_private_identifier_member(&class.members) {
-            self.write_indent();
-            self.write("#private;");
-            self.write_line();
+        if self.class_has_private_identifier_member(&class.members)
+            && !delay_private_identifier_marker
+        {
+            self.emit_private_identifier_marker();
         }
 
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
+        if self.class_has_private_identifier_member(&class.members)
+            && delay_private_identifier_marker
+        {
+            self.emit_private_identifier_marker();
+        }
         if self.source_is_js_file {
             self.emit_js_class_define_property_accessors_for_name(class.name);
         }
@@ -1622,6 +1638,33 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
+
+        if self.source_is_js_file {
+            let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(func_idx);
+            if self.emit_jsdoc_overload_function_signatures(
+                func_idx,
+                true,
+                self.should_emit_export_keyword(),
+                &jsdoc_overload_signatures,
+            ) {
+                if should_emit_late_bound_namespace {
+                    self.emit_ts_late_bound_function_namespace_from_members(
+                        func.name,
+                        true,
+                        &late_bound_members,
+                    );
+                }
+                self.emit_js_function_like_class_if_needed(
+                    func.name,
+                    &func.parameters,
+                    func.body,
+                    true,
+                    func_idx,
+                );
+                self.emit_js_namespace_export_aliases_for_name(func.name, true);
+                return;
+            }
+        }
 
         self.write_indent();
         if self.should_emit_export_keyword() {

@@ -1,6 +1,8 @@
 use super::*;
+use crate::output::source_writer::DelimiterKind;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
+use tsz_parser::parser::node::NodeArena;
 
 /// Parse, lower, and print a source string with the given options.
 ///
@@ -49,6 +51,20 @@ fn test_streaming_writer() {
     );
 }
 
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "structured delimiter helpers left 1 unclosed delimiter")]
+fn finish_asserts_structured_delimiters_are_balanced() {
+    let arena = NodeArena::new();
+    let mut printer = Printer::new(&arena, PrintOptions::default());
+    printer
+        .inner
+        .writer
+        .write_open_delimiter(DelimiterKind::Paren);
+
+    let _ = printer.finish();
+}
+
 #[test]
 fn arrow_default_nullish_temp_is_scoped_to_es2015_body() {
     let source = "const a = (): string | undefined => undefined;\n((b = a() ?? \"d\") => {})();";
@@ -67,6 +83,25 @@ fn arrow_default_nullish_temp_is_scoped_to_es2015_body() {
     assert!(
         !output.starts_with("var _a;"),
         "Default initializer temp must not leak to file scope.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn recovered_arrow_conditional_tail_emits_branch_statements() {
+    let source = "(a?) => { return a; } ? (b)=>(c)=>81 : (c)=>(d)=>82;\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("(a) => { return a; };"),
+        "The block-bodied arrow should emit as the first recovered expression statement.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(b) => (c) => 81;"),
+        "The invalid conditional true branch should remain emit-visible.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(c) => (d) => 82;"),
+        "The invalid conditional false branch should remain emit-visible.\nOutput:\n{output}"
     );
 }
 
@@ -1040,6 +1075,31 @@ fn static_field_class_expression_in_parameter_default_uses_es5_comma_alias() {
 }
 
 #[test]
+fn static_field_class_expression_in_binding_key_uses_es5_comma_alias() {
+    let source = "(({ [class { static x = 1 }.x]: b = \"\" }) => {})();";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(
+            "function (_a) {\n    var _b;\n    var _c = (_b = /** @class */ (function () {"
+        ) && output.contains("function class_1()")
+            && output.contains("_b.x = 1,")
+            && output.contains("_b).x, _d = _a[_c], b = _d === void 0 ? \"\" : _d;"),
+        "ES5 computed binding keys should reserve the class-expression alias before the key temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return _c;"),
+        "Static-field class expressions in computed binding keys should not use a nested wrapper IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn legacy_decorated_anonymous_default_class_static_field_sets_default_name() {
     use crate::context::emit::EmitContext;
     use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
@@ -1946,6 +2006,16 @@ fn test_comment_preserved_after_erased_function_return_type() {
 }
 
 #[test]
+fn variable_initializer_line_comment_indents_initializer() {
+    let output = parse_lower_print("var x = // c\n1;\n", PrintOptions::es6());
+
+    assert!(
+        output.contains("var x = // c\n 1;"),
+        "Initializer after a line comment should keep tsc's single-space continuation indentation.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_async_arrow_destructuring_default_param_temp_var_no_collision() {
     // Regression: async arrow with a destructuring default param AND an
     // awaited call must not produce two `var _a;` hoists or two `_a = ...`
@@ -2262,6 +2332,62 @@ fn property_access_on_paren_cast_paren_object_literal_emits_single_paren() {
     assert!(
         !output.contains("(({}).foo)"),
         "Outer parens around the property access are redundant when the receiver is already parenthesized.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn erased_object_literal_access_does_not_wrap_return_expression() {
+    let source = r#"
+function prop() {
+    return ({ a: 1 } as { a: number }).a;
+}
+function elem(key: string) {
+    return ({ a: 1 } as Record<string, number>)[key];
+}
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("return { a: 1 }.a;"),
+        "Return property access should not keep type-erasure parens.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return { a: 1 }[key];"),
+        "Return element access should not keep type-erasure parens.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return ({ a: 1 }.a);") && !output.contains("return ({ a: 1 }[key]);"),
+        "Return expressions should not be wrapped like statement expressions.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn erased_object_literal_access_wraps_statement_expression() {
+    let source = r#"
+({ a: 1 } as { a: number }).a;
+({ a: 1 } as Record<string, number>)["a"];
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("({ a: 1 }.a);"),
+        "Statement property access must stay parenthesized to avoid parsing as a block.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("({ a: 1 }[\"a\"]);"),
+        "Statement element access must stay parenthesized to avoid parsing as a block.\nOutput:\n{output}"
     );
 }
 

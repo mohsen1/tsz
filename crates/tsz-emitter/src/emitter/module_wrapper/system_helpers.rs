@@ -10,39 +10,30 @@ struct LegacySystemDecoratorHelpersNeeded {
 }
 
 impl<'a> Printer<'a> {
-    pub(super) fn emit_system_decorate_helper_if_needed(
+    pub(super) fn emit_system_helpers_if_needed(
         &mut self,
         source: &tsz_parser::parser::node::SourceFileData,
     ) {
-        if self.ctx.options.no_emit_helpers
-            || self.ctx.options.import_helpers
-            || !self.ctx.options.legacy_decorators
-        {
+        if self.ctx.options.no_emit_helpers || self.ctx.options.import_helpers {
             return;
         }
 
-        let needed = self.system_source_legacy_decorator_helpers(source);
-        if !needed.decorate {
-            return;
+        let mut helpers = if self.transforms.helpers_populated() {
+            self.transforms.helpers().clone()
+        } else {
+            crate::transforms::helpers::HelpersNeeded::default()
+        };
+
+        if self.ctx.options.legacy_decorators {
+            let needed = self.system_source_legacy_decorator_helpers(source);
+            helpers.decorate |= needed.decorate;
+            helpers.metadata |= needed.metadata;
+            helpers.param |= needed.param;
         }
 
-        for line in crate::transforms::helpers::DECORATE_HELPER.lines() {
-            self.write(line);
-            self.write_line();
-        }
-
-        if needed.metadata {
-            for line in crate::transforms::helpers::METADATA_HELPER.lines() {
-                self.write(line);
-                self.write_line();
-            }
-        }
-
-        if needed.param {
-            for line in crate::transforms::helpers::PARAM_HELPER.lines() {
-                self.write(line);
-                self.write_line();
-            }
+        let helpers_code = crate::transforms::helpers::emit_helpers(&helpers);
+        if !helpers_code.is_empty() {
+            self.write(&helpers_code);
         }
     }
 

@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Optional
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -461,7 +462,7 @@ STRUCT_FIELD_COUNT_CHECKS = [
         "Checker boundary: CheckerContext field count (architecture health metric 1)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
         "CheckerContext",
-        234,
+        235,
     ),
 ]
 
@@ -536,7 +537,7 @@ SOLVER_IMPORT_COUNT_CHECKS = [
             "crates/tsz-solver/",
             "crates/tsz-checker/",
         ),
-        38,
+        39,
     ),
 ]
 
@@ -570,6 +571,43 @@ SPECULATION_GUARD_NAME_CHECKS = [
     ),
 ]
 
+# Pin Track 10's diagnostic-debt ratchets in the shared architecture guard.
+# These are count metrics, not new semantic bans: the current baselines still
+# contain legacy fingerprint rewrites, source-text snippets, and rendered-type
+# decisions. Any new line must bump the cap intentionally; cleanup PRs should
+# lower the cap in the same diff.
+#
+# Each entry: (description, search_roots, pattern, max_lines).
+REGEX_LINE_COUNT_CHECKS = [
+    (
+        "Checker diagnostic boundary: post-check rewrite_*_fingerprints functions (Track 10)",
+        [ROOT / "crates" / "tsz-checker" / "src"],
+        re.compile(r"^\s*fn\s+rewrite_\w+_fingerprints\s*\("),
+        9,
+    ),
+    (
+        "Checker diagnostic boundary: source_text.contains decisions (Track 10)",
+        [ROOT / "crates" / "tsz-checker" / "src"],
+        re.compile(r"\bsource_text\.contains\s*\("),
+        37,
+    ),
+    (
+        "Checker diagnostic boundary: file-name/path substring decisions (Track 10)",
+        [ROOT / "crates" / "tsz-checker" / "src"],
+        re.compile(r"\b(?:\w+\.)?file_name\.contains\s*\(|\bsource_path\.contains\s*\("),
+        9,
+    ),
+    (
+        "Checker diagnostic boundary: rendered type strings as semantic input (Track 10)",
+        [ROOT / "crates" / "tsz-checker" / "src"],
+        re.compile(
+            r"\bformat_type(?:_diagnostic)?\s*\([^\n]*"
+            r"(?:\.contains\s*\(|\.starts_with\s*\(|\.ends_with\s*\(|\.as_str\s*\(\))"
+        ),
+        5,
+    ),
+]
+
 # Pin the count of LSP feature-dispatch methods in
 # `crates/tsz-lsp/src/project/features.rs` (architecture health metric 7
 # in `docs/plan/ROADMAP.md` — "LSP/WASM semantic features implemented
@@ -592,6 +630,13 @@ LSP_FEATURE_METHOD_COUNT_CHECKS = [
         "LSP boundary: feature-dispatch method count in project/features.rs (architecture health metric 7)",
         ROOT / "crates" / "tsz-lsp" / "src" / "project" / "features.rs",
         32,
+    ),
+]
+
+PROJECT_DASHBOARD_ROW_CHECKS = [
+    (
+        "Project corpus dashboard: expected project rows must be visible (Track 1)",
+        ROOT / "crates" / "tsz-website" / "src" / "_data" / "benchmark_data.js",
     ),
 ]
 
@@ -1014,6 +1059,134 @@ def scan_speculation_guard_struct_count(
             f"the speculation surface's actual implicit-commit-on-drop "
             f"semantics — workstream-4 Speculation Policy 3 / "
             f"`docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item 5)"
+        )
+        return hits
+    return []
+
+
+def extract_js_array_strings(text: str, const_name: str) -> Optional[list[str]]:
+    """Extract string literals from a simple `const NAME = [...]` JS array."""
+    match = re.search(
+        rf"\bconst\s+{re.escape(const_name)}\s*=\s*\[(?P<body>.*?)\]\s*;",
+        text,
+        re.DOTALL,
+    )
+    if match is None:
+        return None
+    return re.findall(r'"([^"]+)"', match.group("body"))
+
+
+def extract_project_dashboard_row_names(text: str) -> Optional[list[str]]:
+    """Extract `name` fields from `COMPATIBILITY_CORPUS_ROWS` objects."""
+    match = re.search(
+        r"\bconst\s+COMPATIBILITY_CORPUS_ROWS\s*=\s*\[(?P<body>.*?)\]\s*;",
+        text,
+        re.DOTALL,
+    )
+    if match is None:
+        return None
+    return re.findall(r'\bname:\s*"([^"]+)"', match.group("body"))
+
+
+def scan_project_dashboard_rows(path: pathlib.Path) -> list[str]:
+    """Ensure every expected project benchmark row is present in the dashboard.
+
+    `benchmark_data.js` has two separate row inventories:
+
+    - `EXPECTED_PROJECT_BENCHMARKS` / `COMPILE_CANARY_PROJECTS` define the
+      project rows that must exist as benchmark/CI compatibility records.
+    - `COMPATIBILITY_CORPUS_ROWS` defines the rows rendered by the public
+      project compatibility dashboard.
+
+    Track 1 requires public rows for every required project. This guard keeps
+    the render inventory in lockstep with the expected benchmark/canary row
+    inventories without hard-coding the project names here.
+    """
+    if not path.exists():
+        return [f"{relative_path(path)}:0 benchmark data file is missing"]
+
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    expected = extract_js_array_strings(text, "EXPECTED_PROJECT_BENCHMARKS")
+    canary = extract_js_array_strings(text, "COMPILE_CANARY_PROJECTS")
+    dashboard = extract_project_dashboard_row_names(text)
+    rel = relative_path(path)
+    hits: list[str] = []
+
+    if expected is None:
+        hits.append(f"{rel}:0 missing EXPECTED_PROJECT_BENCHMARKS array")
+        expected = []
+    if canary is None:
+        hits.append(f"{rel}:0 missing COMPILE_CANARY_PROJECTS array")
+        canary = []
+    if dashboard is None:
+        hits.append(f"{rel}:0 missing COMPATIBILITY_CORPUS_ROWS array")
+        dashboard = []
+
+    required = sorted(set(expected) | set(canary))
+    dashboard_set = set(dashboard)
+    required_set = set(required)
+
+    for name in required:
+        if name not in dashboard_set:
+            hits.append(f"{rel}:0 missing compatibility dashboard row for {name}")
+
+    for name in sorted(dashboard_set - required_set):
+        hits.append(f"{rel}:0 stale compatibility dashboard row for {name}")
+
+    duplicates = sorted({name for name in dashboard if dashboard.count(name) > 1})
+    for name in duplicates:
+        hits.append(f"{rel}:0 duplicate compatibility dashboard row for {name}")
+
+    return hits
+
+
+def scan_regex_line_count(
+    search_roots: list[pathlib.Path],
+    pattern: re.Pattern[str],
+    max_lines: int,
+) -> list[str]:
+    """Count non-test, non-comment source lines matching `pattern`.
+
+    This is for Track 10 count ratchets where current architecture debt is
+    tolerated but must not grow.  It returns one hit per matching line plus a
+    final summary only when the live count exceeds `max_lines`.
+    """
+    matching_lines: list[tuple[str, int]] = []
+    for base in search_roots:
+        if not base.exists():
+            continue
+        for path in base.rglob("*.rs"):
+            try:
+                rel_to_root = path.relative_to(ROOT).as_posix()
+            except ValueError:
+                rel_to_root = path.relative_to(base).as_posix()
+            parts = set(rel_to_root.split("/"))
+            if EXCLUDE_DIRS.intersection(parts):
+                continue
+            if "tests" in parts or "benches" in parts:
+                continue
+            if is_test_file(rel_to_root):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                if line.lstrip().startswith("//"):
+                    continue
+                if pattern.search(line):
+                    matching_lines.append((rel_to_root, line_no))
+
+    matching_lines.sort()
+    if len(matching_lines) > max_lines:
+        hits = [
+            f"matching line #{i + 1}: {rel}:{line_no}"
+            for i, (rel, line_no) in enumerate(matching_lines)
+        ]
+        hits.append(
+            f"total matching lines: {len(matching_lines)} "
+            f"(cap {max_lines}; bump cap intentionally and update ROADMAP.md, "
+            f"or replace the new site with structural facts — Track 10)"
         )
         return hits
     return []
@@ -1568,6 +1741,18 @@ def main() -> int:
 
     for name, file_path, max_guard_count in SPECULATION_GUARD_NAME_CHECKS:
         hits = scan_speculation_guard_struct_count(file_path, max_guard_count)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, file_path in PROJECT_DASHBOARD_ROW_CHECKS:
+        hits = scan_project_dashboard_rows(file_path)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, search_roots, pattern, max_lines in REGEX_LINE_COUNT_CHECKS:
+        hits = scan_regex_line_count(search_roots, pattern, max_lines)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))

@@ -728,7 +728,6 @@ export interface Box {
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn test_returned_object_literal_member_comments_are_preserved() {
     let output = emit_dts(
         r#"
@@ -953,7 +952,6 @@ class C {
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn test_computed_methods_emit_as_property_signatures() {
     let output = emit_dts(
         r#"
@@ -1553,6 +1551,300 @@ function format(x) {
 }
 
 #[test]
+fn test_js_function_declaration_emits_separate_jsdoc_overload_comments() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @overload
+ * @param {number} value
+ * @returns {'number'}
+ */
+/**
+ * @overload
+ * @param {string} value
+ * @returns {'string'}
+ */
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function kind(value) {
+  return typeof value;
+}
+
+/**
+ * @template T
+ * @param {T} value
+ * @returns {T}
+ */
+const identity = value => value;
+
+/**
+ * @template T
+ * @overload
+ * @param {T[]} values
+ * @returns {T[]}
+ */
+/**
+ * @param {unknown[]} values
+ * @returns {unknown[]}
+ */
+function copy(values) {
+  return values.map(identity);
+}
+"#,
+    );
+
+    let kind_number = output
+        .find("declare function kind(value: number): \"number\";")
+        .expect("expected number overload");
+    let kind_string = output
+        .find("declare function kind(value: string): \"string\";")
+        .expect("expected string overload");
+    let copy = output
+        .find("declare function copy<T>(values: T[]): T[];")
+        .expect("expected generic overload");
+    let identity = output
+        .find("declare function identity<T>(value: T): T;")
+        .expect("expected variable function declaration");
+
+    assert!(
+        kind_number < kind_string && kind_string < copy && copy < identity,
+        "Expected JS function overloads to stay in function source order before function variables: {output}"
+    );
+    assert!(
+        !output.contains("declare function kind(value: unknown): string;"),
+        "Implementation signature should not be emitted for @overload JSDoc: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_declaration_emits_combined_jsdoc_overload_comment() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template T
+ * @template U
+ * @overload
+ * @param {T[]} array
+ * @param {(x: T) => U[]} mapper
+ * @returns {U[]}
+ *
+ * @overload
+ * @param {T[][]} array
+ * @returns {T[]}
+ *
+ * @param {unknown[]} array
+ * @param {(x: unknown) => unknown} mapper
+ * @returns {unknown[]}
+ */
+function flatMap(array, mapper) {
+  return [];
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function flatMap<T, U>(array: T[], mapper: (x: T) => U[]): U[];"),
+        "Expected first overload from combined JSDoc comment: {output}"
+    );
+    assert!(
+        output.contains("declare function flatMap<T, U>(array: T[][]): T[];"),
+        "Expected second overload from combined JSDoc comment: {output}"
+    );
+    assert!(
+        !output.contains("array: unknown[]"),
+        "Implementation JSDoc tags after overloads should not become a declaration signature: {output}"
+    );
+}
+
+#[test]
+fn test_js_method_declaration_emits_jsdoc_overload_comments() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template T
+ */
+class Box {
+  /** @param {T} value */
+  constructor(value) {
+    this.value = value;
+  }
+
+  /**
+   * @overload
+   * @param {Box<number>} this
+   * @returns {'number'}
+   */
+  /**
+   * @overload
+   * @param {Box<string>} this
+   * @returns {'string'}
+   */
+  /**
+   * @returns {string}
+   */
+  kind() {
+    return typeof this.value;
+  }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("kind(this: Box<number>): \"number\";"),
+        "Expected number receiver overload: {output}"
+    );
+    assert!(
+        output.contains("kind(this: Box<string>): \"string\";"),
+        "Expected string receiver overload: {output}"
+    );
+    assert!(
+        !output.contains("kind(): string;"),
+        "Implementation method signature should not be emitted for JSDoc overloads: {output}"
+    );
+}
+
+#[test]
+fn test_js_constructor_declaration_emits_jsdoc_overloads_before_private_marker() {
+    let output = emit_js_dts(
+        r#"
+export class Foo {
+  #value;
+
+  /**
+   * @constructor
+   * @overload
+   * @param {string} value
+   */
+  /**
+   * @constructor
+   * @overload
+   * @param {number} value
+   */
+  /** @constructor @param {string | number} value */
+  constructor(value) {
+    this.#value = value;
+  }
+}
+"#,
+    );
+
+    let string_ctor = output
+        .find("constructor(value: string);")
+        .expect("expected string constructor overload");
+    let number_ctor = output
+        .find("constructor(value: number);")
+        .expect("expected number constructor overload");
+    let private_marker = output.find("#private;").expect("expected private marker");
+
+    assert!(
+        string_ctor < number_ctor && number_ctor < private_marker,
+        "Expected constructor overloads before private marker: {output}"
+    );
+    assert!(
+        !output.contains("string | number"),
+        "Implementation constructor JSDoc should not become a signature: {output}"
+    );
+}
+
+#[test]
+fn test_js_object_namespace_emits_legacy_jsdoc_overload_member_comments() {
+    let output = emit_js_dts(
+        r#"
+const example = {
+  /**
+   * @overload Example(value)
+   *   Creates Example
+   *   @param value [String]
+   */
+  constructor: function Example(value, options) {},
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace example"),
+        "Expected object literal namespace declaration: {output}"
+    );
+    assert!(
+        output.contains("@overload Example(value)"),
+        "Expected legacy overload comment to be preserved: {output}"
+    );
+    assert!(
+        output.contains("function constructor(value: any): any;"),
+        "Expected legacy overload params to replace the implementation signature: {output}"
+    );
+    assert!(
+        !output.contains("options:"),
+        "Implementation-only parameters should not leak into the legacy overload: {output}"
+    );
+}
+
+#[test]
+fn test_js_object_namespace_aliases_multiple_legacy_constructor_overloads() {
+    let output = emit_js_dts(
+        r#"
+const example = {
+  /**
+   * @overload Example(value)
+   * @param value [String]
+   * @param secret [String]
+   * @overload Example(options)
+   * @option options value [String]
+   */
+  constructor: function Example() {},
+};
+"#,
+    );
+
+    assert!(
+        output.contains("export function constructor_1(value: any, secret: any): any;"),
+        "Expected first legacy constructor overload to use an aliasable local name: {output}"
+    );
+    assert!(
+        output.contains("export function constructor_1(): any;"),
+        "Expected option-only legacy overload to fall back to no parameters: {output}"
+    );
+    assert!(
+        output.contains("export { constructor_1 as constructor };"),
+        "Expected constructor alias export after synthetic overloads: {output}"
+    );
+}
+
+#[test]
+fn test_js_object_namespace_malformed_legacy_overload_falls_back_to_no_params() {
+    let output = emit_js_dts(
+        r#"
+const example = {
+  /**
+   * @overload evaluate(options = {}, [callback])
+   * @param options [map]
+   * @callback callback function (error, result)
+   *   If callback is provided it will be called with evaluation result
+   *   @param error [Error]
+   *   @param result [String]
+   */
+  evaluate: function evaluate(options, callback) {},
+};
+"#,
+    );
+
+    assert!(
+        output.contains("function evaluate(): any;"),
+        "Expected malformed legacy overload call to fall back to a no-arg any signature: {output}"
+    );
+    assert!(
+        !output.contains("options:"),
+        "Malformed legacy overload params should not be trusted as a signature: {output}"
+    );
+    assert!(
+        output.contains("type callback = (error: any, result: any) => any;"),
+        "Expected nested legacy @callback alias to be emitted after the namespace: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_variable_strips_jsdoc_satisfies_comment() {
     let output = emit_js_dts(
         r#"
@@ -1793,7 +2085,6 @@ export { g };
 }
 
 #[test]
-#[ignore = "broken on main: emit produces redundant `export` keyword or duplicate declarations — track in follow-up"]
 fn test_js_named_exports_preserve_explicit_export_order() {
     let source = r#"
 function require() {}

@@ -3,6 +3,7 @@
 //! These tests verify that the complete chain (parse -> lower -> print) produces
 //! correct ES5 output for destructuring, class, and async transforms.
 
+use crate::emitter::ModuleKind;
 use crate::output::printer::{PrintOptions, lower_and_print};
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
@@ -20,6 +21,18 @@ fn emit_with_target(source: &str, target: ScriptTarget) -> String {
 
 fn emit_es5(source: &str) -> String {
     emit_with_target(source, ScriptTarget::ES5)
+}
+
+fn emit_es5_with_module(source: &str, module: ModuleKind) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut opts = PrintOptions {
+        target: ScriptTarget::ES5,
+        module,
+        ..PrintOptions::default()
+    };
+    opts.remove_comments = true;
+    lower_and_print(&parser.arena, root, opts).code
 }
 
 fn emit_es5_with_comments(source: &str) -> String {
@@ -71,6 +84,44 @@ fn async_es5_uses_ambient_value_for_custom_promise_constructor() {
     assert!(
         output.matches("MyPromise, function").count() >= 3,
         "Async functions, arrows, and methods should pass the ambient value constructor.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn class_method_for_of_delegates_es5_statement_lowering() {
+    let output = emit_es5_with_comments(
+        r#"
+class Operation {
+    validate(parameterValues: any) {
+        let result: any = null;
+        for (const parameterLocation of Object.keys(parameterValues)) {
+            const parameter = (this as any).getParameter();
+            // keep loop comment
+            result = parameterLocation;
+        }
+        return result;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output
+            .contains("for (var _i = 0, _a = Object.keys(parameterValues); _i < _a.length; _i++)"),
+        "Class method for-of should use the normal ES5 array-index lowering.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var parameterLocation = _a[_i];"),
+        "Loop variable should be bound from the generated array temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var parameter = this.getParameter();"),
+        "Type-erased `(this as any)` should print through the normal AST expression path.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(" of Object.keys(parameterValues)")
+            && !output.contains("(this).getParameter()"),
+        "Class method for-of must not leak raw for-of syntax or redundant type-erasure parens.\nOutput:\n{output}"
     );
 }
 
@@ -145,6 +196,20 @@ fn test_destructuring_rest_array() {
     assert!(
         output.contains("slice"),
         "Expected Array.prototype.slice for rest elements.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn for_in_missing_destructuring_initializer_uses_void_temp() {
+    let output = emit_es5("for (var [a, b] in []) { }\n");
+
+    assert!(
+        output.contains("for (var _a = void 0, a = _a[0], b = _a[1] in [])"),
+        "ES5 for-in destructuring without an initializer should read from one void temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(void 0)[0]") && !output.contains("(void 0)[1]"),
+        "ES5 for-in destructuring must not repeat void reads for each binding.\nOutput:\n{output}"
     );
 }
 
@@ -306,6 +371,44 @@ console.log(value);
 }
 
 #[test]
+fn object_rest_es2017_computed_key_with_nested_pattern_lowers_nested_binding() {
+    let output = emit_with_target(
+        r#"
+declare function order(n: number): any;
+let { [order(0)]: { [order(2)]: z } = order(1), ...w } = {} as any;
+"#,
+        ScriptTarget::ES2017,
+    );
+
+    assert!(
+        !output.contains(",  ="),
+        "Nested binding pattern under computed object-rest key must not emit an empty binding name.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        output.matches("order(0)").count(),
+        1,
+        "Outer computed key should be evaluated once.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        output.matches("order(2)").count(),
+        1,
+        "Nested computed key should be evaluated once.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("z = _"),
+        "Nested computed binding should decompose from the defaulted value temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("z = _d[_e], w = __rest("),
+        "Nested binding output must remain comma-separated before the outer rest lowering.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__rest("),
+        "Outer object rest should still lower to __rest.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn object_rest_assignment_es2017_computed_exclusion_reuses_key_temp() {
     let output = emit_with_target(
         r#"
@@ -339,6 +442,125 @@ console.log(value);
     assert!(
         !output.contains("__rest(source, [])") && !output.contains("__rest(source, [getKey()])"),
         "ES2017 assignment lowering must not drop or re-evaluate the computed key.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es2015_object_rest_parameter_keeps_later_default_in_body() {
+    let output = emit_with_target(
+        "function f({ a, ...x }: any, b = a) { return b; }\n",
+        ScriptTarget::ES2015,
+    );
+
+    assert!(
+        output.contains("function f(_a, b) {"),
+        "Object-rest parameter lowering should replace only the binding pattern with a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var { a } = _a, x = __rest(_a, [\"a\"]);"),
+        "Object-rest parameter should lower to a body prologue before later defaults.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (b === void 0) { b = a; }"),
+        "A later default that references the lowered binding must run after the prologue.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_defaulted_object_rest_parameter_uses_parameter_guard() {
+    let output = emit_es5(
+        "function f({ x: { z = 12, ...nested }, ...rest } = { x: { z: 1, ka: 1 }, y: 'noo' }) {\n\
+             return rest.y + nested.ka;\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("if (_a === void 0) { _a = { x: { z: 1, ka: 1 }, y: 'noo' }; }"),
+        "Defaulted object-rest params should default the parameter temp before destructuring.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "var _b = _a.x, _c = _b.z, z = _c === void 0 ? 12 : _c, nested = __rest(_b, [\"z\"]), rest = __rest(_a, [\"x\"]);"
+        ),
+        "Nested and outer object-rest bindings should read from the defaulted parameter temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_class_method_object_rest_parameter_uses_rest_helper() {
+    let output = emit_es5(
+        "class C {\n\
+             m({ a, ...clone }: any) { }\n\
+             set p({ a, ...clone }: any) { }\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains(
+            "C.prototype.m = function (_a) {\n        var a = _a.a, clone = __rest(_a, [\"a\"]);"
+        ),
+        "ES5 class methods should lower object-rest parameters through the class IR prologue.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "set: function (_a) {\n            var a = _a.a, clone = __rest(_a, [\"a\"]);"
+        ),
+        "ES5 class accessors should lower object-rest parameters through the class IR prologue.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn invalid_nonlast_object_rest_is_recovery_only() {
+    let output = emit_with_target(
+        "var {...a, x } = { x: 1 };\n\
+         ({...a, x } = { x: 1 });\n\
+         var {...a, x, ...b } = { x: 1 };\n\
+         ({...a, x, ...b } = { x: 1 });\n",
+        ScriptTarget::ES2015,
+    );
+
+    assert!(
+        output.contains("var _c = { x: 1 }, { x } = _c;"),
+        "A nonlast binding rest should be skipped while preserving tsc's temp-based recovery.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(_a = { x: 1 }, { x } = _a);"),
+        "A nonlast assignment rest should be skipped while preserving later property assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _d = { x: 1 }, { x } = _d, b = __rest(_d, [\"a\", \"x\"]);"),
+        "A later valid binding rest should keep the invalid rest identifier in its exclude list.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(_b = { x: 1 }, { x } = _b, b = __rest(_b, [\"x\"]));"),
+        "Assignment recovery should not add the invalid rest expression to the later exclude list.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn array_object_rest_es2017_defers_later_default_until_after_rest_binding() {
+    let output = emit_with_target(
+        "let [{ ...a }, b = a]: any[] = [{ x: 1 }];",
+        ScriptTarget::ES2017,
+    );
+
+    assert!(
+        output.contains("__rest("),
+        "Nested object rest inside an array binding should lower to __rest.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("{ ...a }") && !output.contains("b = a] ="),
+        "Lowering must remove object rest and defer the later default out of the array head.\nOutput:\n{output}"
+    );
+    let rest_pos = output
+        .find("a = __rest")
+        .expect("expected a deferred object-rest binding");
+    let default_pos = output
+        .find("b = _")
+        .expect("expected a deferred default binding");
+    assert!(
+        rest_pos < default_pos,
+        "Default initializer that references the rest binding must run after the rest binding.\nOutput:\n{output}"
     );
 }
 
@@ -558,6 +780,87 @@ fn test_async_function_awaiter() {
     assert!(
         !output.contains("async "),
         "async keyword should not appear in ES5.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_arrow_hoisted_locals_share_var_statement() {
+    let output = emit_es5(
+        "(async () => {\n\
+             const response = await fetch('/api');\n\
+             const blob = await response.blob();\n\
+             const size = 300;\n\
+             const image = new Image();\n\
+         })();\n",
+    );
+
+    assert!(
+        output.contains("var response, blob, size, image;"),
+        "Async arrow hoisted locals should share one var statement.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var response;\n        var blob;"),
+        "Async arrow hoisted locals should not split ordinary declarations.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_arrow_import_meta_hoisted_locals_share_var_statement() {
+    let output = emit_es5_with_module(
+        "(async () => {\n\
+             const response = await fetch(new URL(\"../hamsters.jpg\", import.meta.url).toString());\n\
+             const blob = await response.blob();\n\
+             \n\
+             const size = import.meta.scriptElement.dataset.size || 300;\n\
+             \n\
+             const image = new Image();\n\
+             image.src = URL.createObjectURL(blob);\n\
+             image.width = image.height = size;\n\
+             \n\
+             document.body.appendChild(image);\n\
+         })();\n",
+        ModuleKind::CommonJS,
+    );
+
+    assert!(
+        output.contains("var response, blob, size, image;"),
+        "Async arrow import.meta hoisted locals should share one var statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_import_meta_file_is_wrapped_as_module() {
+    let output = emit_es5_with_module(
+        "(async () => {\n\
+             const response = await fetch(new URL(\"../hamsters.jpg\", import.meta.url).toString());\n\
+             const blob = await response.blob();\n\
+             \n\
+             const size = import.meta.scriptElement.dataset.size || 300;\n\
+             \n\
+             const image = new Image();\n\
+             image.src = URL.createObjectURL(blob);\n\
+             image.width = image.height = size;\n\
+             \n\
+             document.body.appendChild(image);\n\
+         })();\n",
+        ModuleKind::System,
+    );
+
+    assert!(
+        output.starts_with("System.register([], function (exports_1, context_1) {"),
+        "System import.meta files should be module-wrapped.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("context_1.meta.url"),
+        "System import.meta should lower to context_1.meta.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("\"use strict\";\n    var __awaiter"),
+        "System async helpers should be emitted inside the wrapper after the strict prologue.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var response, blob, size, image;"),
+        "System async arrow hoisted locals should share one var statement.\nOutput:\n{output}"
     );
 }
 

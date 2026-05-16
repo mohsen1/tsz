@@ -31,6 +31,14 @@ fn diags(source: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
+fn diags_without_libs(source: &str) -> Vec<(u32, String)> {
+    check_source_with_libs(source, "test.ts", CheckerOptions::default(), &[])
+        .iter()
+        .filter(|d| d.code != 2318)
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 #[test]
 fn omit_with_concrete_type_accepts_remaining_properties() {
     let source = r#"
@@ -101,6 +109,63 @@ const p: Pick<Person, "name" | "age"> = {
     assert!(
         ts2353.is_empty(),
         "Expected no TS2353 for valid Pick assignment, got: {ts2353:?}",
+    );
+}
+
+#[test]
+fn lib_pick_all_keys_excess_property_display_uses_keyof() {
+    let source = r#"
+interface Person {
+  name: string;
+  age: number;
+}
+
+const p: Pick<Person, "name" | "age"> = {
+  name: "Alice",
+  age: 30,
+  email: "x@y",
+};
+"#;
+    let ds = diags(source);
+    let ts2353 = ds
+        .iter()
+        .find(|d| d.0 == 2353)
+        .expect("expected TS2353 for excess property");
+    assert!(
+        ts2353.1.contains("Pick<Person, keyof Person>"),
+        "Expected actual lib Pick display to collapse all keys to keyof, got: {}",
+        ts2353.1
+    );
+}
+
+#[test]
+fn local_pick_alias_named_like_lib_does_not_use_lib_keyof_rewrite() {
+    let source = r#"
+export {};
+
+type Pick<T, K extends keyof T> = { [P in K]: T[P] };
+
+interface Person {
+  name: string;
+  age: number;
+  phone: string;
+}
+
+const p: Pick<Person, "name" | "age"> = {
+  name: "Alice",
+  age: 30,
+  email: "x@y",
+};
+"#;
+    let ds = diags_without_libs(source);
+    let ts2353 = ds
+        .iter()
+        .find(|d| d.0 == 2353)
+        .expect("expected TS2353 for excess property");
+    assert!(
+        !ts2353.1.contains("Pick<Person, keyof Person>"),
+        "User-defined Pick must not be recognized through rendered text: {}",
+        ts2353.1
     );
 }
 

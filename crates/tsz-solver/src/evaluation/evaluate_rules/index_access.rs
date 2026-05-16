@@ -24,7 +24,7 @@ use super::super::evaluate::{
 };
 use super::apparent::make_apparent_method_type;
 use super::string_index_helpers::string_index_signature_applies;
-use crate::objects::apparent::is_member;
+use crate::objects::apparent::{is_member, literal_value_intrinsic_kind};
 
 const MAX_UNION_INDEX_SIZE: usize = 500;
 /// Lazily compute and cache array member types (length + apparent methods).
@@ -436,9 +436,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
     }
 
     fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
-        self.evaluator
-            .apparent_literal_kind(value)
-            .and_then(|kind| self.evaluate_apparent_primitive(kind))
+        self.evaluate_apparent_primitive(literal_value_intrinsic_kind(value))
     }
 
     fn visit_object(&mut self, shape_id: u32) -> Self::Output {
@@ -882,14 +880,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 .constraints_semantically_match(self.index_type, mapped.constraint);
 
         if can_substitute {
-            // `{ [K in Keys]: F<K> }[Keys]` is a union over each key, not `F<Keys>`.
-            // When the index is the whole symbolic key space (typically `keyof T`),
-            // substituting `K := Keys` collapses per-key conditionals like
-            // `{ [K in keyof T]: T[K] extends U ? K : never }[keyof T]` into
-            // `T[keyof T] extends U ? keyof T : never`, which is unsound.
-            // Preserve the per-key relationship by evaluating the template against a
-            // constrained iteration variable instead of the whole key-space type.
+            // `{ [K in Keys]: F<K> }[Keys]` is a per-key union, not `F<Keys>`.
+            // Preserve that relationship for symbolic key-space indexes.
             if self.index_is_symbolic_key_space(mapped.constraint) {
+                if let Some(per_key_result) =
+                    super::mapped_template_index::try_evaluate_mapped_template_per_concrete_key(
+                        self.evaluator,
+                        &mapped,
+                    )
+                {
+                    return Some(per_key_result);
+                }
                 return Some(self.instantiate_mapped_template_with_constraint_param(&mapped));
             }
 

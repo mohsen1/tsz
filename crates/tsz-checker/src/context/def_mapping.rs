@@ -485,7 +485,9 @@ impl<'a> CheckerContext<'a> {
     /// Callers should use this instead of the inline `main_sym_id.unwrap_or(sym_id)`
     /// recovery pattern.
     pub fn canonical_lib_sym_id(&self, name: &str, per_lib_sym_id: SymbolId) -> SymbolId {
-        if let Some(sym_id) = self.binder.file_locals.get(name) {
+        if let Some(sym_id) = self.binder.file_locals.get(name)
+            && !self.symbol_has_current_file_type_declaration(sym_id, name)
+        {
             return sym_id;
         }
 
@@ -493,7 +495,15 @@ impl<'a> CheckerContext<'a> {
             .global_file_locals_index
             .as_ref()
             .and_then(|idx| idx.get(name))
-            .and_then(|entries| entries.iter().max_by_key(|(_, sym)| sym.0))
+            .and_then(|entries| {
+                entries
+                    .iter()
+                    .filter(|&&(_, sym_id)| {
+                        self.symbol_is_from_actual_or_cloned_lib(sym_id)
+                            && !self.symbol_has_current_file_type_declaration(sym_id, name)
+                    })
+                    .max_by_key(|(_, sym)| sym.0)
+            })
             .map(|&(_, sym)| sym)
         {
             return sym_id;
@@ -562,7 +572,9 @@ impl<'a> CheckerContext<'a> {
                     defs.into_iter()
                         .filter(|def_id| {
                             self.definition_store.get(*def_id).is_some_and(|info| {
-                                matches!(
+                                info.symbol_id.is_some_and(|sym_id| {
+                                    self.symbol_is_from_actual_or_cloned_lib(SymbolId(sym_id))
+                                }) && matches!(
                                     info.kind,
                                     tsz_solver::def::DefKind::TypeAlias
                                         | tsz_solver::def::DefKind::Interface
@@ -1384,85 +1396,9 @@ impl<'a> CheckerContext<'a> {
                 continue;
             }
 
-            // Convert binder's SemanticDefKind to solver's DefKind
-            let kind = match entry.kind {
-                tsz_binder::SemanticDefKind::TypeAlias => DefKind::TypeAlias,
-                tsz_binder::SemanticDefKind::Interface => DefKind::Interface,
-                tsz_binder::SemanticDefKind::Class => DefKind::Class,
-                tsz_binder::SemanticDefKind::Enum => DefKind::Enum,
-                tsz_binder::SemanticDefKind::Namespace => DefKind::Namespace,
-                tsz_binder::SemanticDefKind::Function => DefKind::Function,
-                tsz_binder::SemanticDefKind::Variable => DefKind::Variable,
-            };
-
-            // Use the SemanticDefEntry's self-contained data (name, file_id,
-            // span_start) instead of looking up the symbol table. This makes
-            // pre-population independent of full symbol residency, which is a
-            // prerequisite for file-skeleton decomposition (Phase 2).
-            let name = self.types.intern_string(&entry.name);
-
-            // Create type parameter entries preserving arity and names.
-            // Binder captures type param names at bind time; we use them here
-            // so DefinitionInfo has real names from the start. Constraints and
-            // defaults are still filled in later by the checker walk via
-            // DefinitionStore::set_type_params().
-            let type_params = if entry.type_param_count > 0 {
-                (0..entry.type_param_count)
-                    .map(|i| {
-                        let name = entry
-                            .type_param_names
-                            .get(i as usize)
-                            .map(|n| self.types.intern_string(n))
-                            .unwrap_or(tsz_common::interner::Atom(0));
-                        tsz_solver::TypeParamInfo {
-                            name,
-                            constraint: None,
-                            default: None,
-                            is_const: false,
-                        }
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
-            // Propagate enum member names from binder's SemanticDefEntry.
-            // Values are set to Computed; real values are resolved later by
-            // the checker walk. This enables enum identity to be established
-            // at pre-population time without waiting for full type resolution.
-            let enum_members: Vec<(tsz_common::interner::Atom, tsz_solver::def::EnumMemberValue)> =
-                entry
-                    .enum_member_names
-                    .iter()
-                    .map(|name| {
-                        (
-                            self.types.intern_string(name),
-                            tsz_solver::def::EnumMemberValue::Computed,
-                        )
-                    })
-                    .collect();
-
-            let info = DefinitionInfo {
-                kind,
-                name,
-                type_params,
-                body: None,
-                instance_shape: None,
-                static_shape: None,
-                extends: None,
-                implements: Vec::new(),
-                enum_members,
-                exports: Vec::new(),
-                file_id: Some(entry.file_id),
-                span: Some((entry.span_start, entry.span_start)),
-                symbol_id: Some(sym_id.0),
-                heritage_names: entry.heritage_names(),
-                is_abstract: entry.is_abstract,
-                is_const: entry.is_const,
-                is_exported: entry.is_exported,
-                is_global_augmentation: entry.is_global_augmentation,
-                is_declare: entry.is_declare,
-            };
+            let intern = |s: &str| self.types.intern_string(s);
+            let info = DefinitionInfo::from_semantic_def(entry, sym_id.0, &intern);
+            let kind = info.kind;
 
             let def_id = self.definition_store.register(info);
             trace!(
@@ -1490,27 +1426,8 @@ impl<'a> CheckerContext<'a> {
             // checker can reuse stable identity instead of creating one on demand.
             // The body is left empty (filled lazily during type checking).
             if kind == DefKind::Class {
-                let ctor_info = DefinitionInfo {
-                    kind: DefKind::ClassConstructor,
-                    name: self.types.intern_string(&entry.name),
-                    type_params: Vec::new(),
-                    body: None,
-                    instance_shape: None,
-                    static_shape: None,
-                    extends: None,
-                    implements: Vec::new(),
-                    enum_members: Vec::new(),
-                    exports: Vec::new(),
-                    file_id: Some(entry.file_id),
-                    span: Some((entry.span_start, entry.span_start)),
-                    symbol_id: Some(sym_id.0),
-                    heritage_names: Vec::new(),
-                    is_abstract: entry.is_abstract,
-                    is_const: false,
-                    is_exported: entry.is_exported,
-                    is_global_augmentation: false,
-                    is_declare: entry.is_declare,
-                };
+                let ctor_info =
+                    DefinitionInfo::class_constructor_from_semantic_def(entry, sym_id.0, &intern);
                 let ctor_def_id = self.definition_store.register(ctor_info);
                 self.definition_store
                     .register_constructor_companion(def_id, ctor_def_id);

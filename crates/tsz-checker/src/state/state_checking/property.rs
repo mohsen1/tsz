@@ -488,7 +488,10 @@ impl<'a> CheckerState<'a> {
                     // let the diagnostic display use the concrete arm if it is the
                     // only EPC-relevant member.
                     if resolved_member == TypeId::ANY
-                        && !self.format_type_diagnostic(target).contains("any")
+                        && !crate::query_boundaries::assignability::contains_any_type(
+                            self.ctx.types,
+                            target,
+                        )
                     {
                         has_unresolved_member = true;
                         continue;
@@ -912,15 +915,15 @@ impl<'a> CheckerState<'a> {
                         type_id,
                         ..
                     } => {
-                        if self.check_object_literal_named_property_value(
+                        // Check this property but continue iterating — tsc reports all
+                        // mismatching properties, not just the first one found.
+                        self.check_object_literal_named_property_value(
                             idx,
                             source_prop.name,
                             source_prop.type_id,
                             effective_target,
                             type_id,
-                        ) {
-                            return;
-                        }
+                        );
                         let nested_target = self.nested_property_target_type(
                             effective_target,
                             source_prop.name,
@@ -1018,15 +1021,15 @@ impl<'a> CheckerState<'a> {
                         nested_types.push(idx_value_type);
                     }
                     if let Some(target_prop) = target_prop {
-                        if self.check_object_literal_named_property_value(
+                        // Continue iterating after a mismatch — tsc reports all mismatching
+                        // properties, not just the first one.
+                        self.check_object_literal_named_property_value(
                             idx,
                             source_prop.name,
                             source_prop.type_id,
                             effective_target,
                             target_prop.type_id,
-                        ) {
-                            return;
-                        }
+                        );
                         nested_types.push(target_prop.type_id);
                     }
                     if nested_types.is_empty() {
@@ -1145,16 +1148,17 @@ impl<'a> CheckerState<'a> {
                         .map(|prop| prop.type_id)
                         .or(dynamic_target_prop_type);
                     if let Some(target_prop_type) = target_prop_type {
-                        if should_check_named_values
-                            && self.check_object_literal_named_property_value(
+                        // Check each property value independently: do not return early when
+                        // a mismatch is found. tsc reports all mismatching properties, so we
+                        // must continue iterating after the first error.
+                        if should_check_named_values {
+                            self.check_object_literal_named_property_value(
                                 idx,
                                 source_prop.name,
                                 source_prop.type_id,
                                 effective_target,
                                 target_prop_type,
-                            )
-                        {
-                            return;
+                            );
                         }
                         let nested_target = self.nested_property_target_type(
                             effective_target,

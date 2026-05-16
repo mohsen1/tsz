@@ -1848,7 +1848,6 @@ mod tests {
     use crate::test_utils::check_source_codes;
 
     #[test]
-    #[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
     fn template_expr_contextual_type_no_false_positive() {
         // Template expression `\`${scope}:${event}\`` passed to a parameter expecting
         // a template literal type should NOT produce TS2345

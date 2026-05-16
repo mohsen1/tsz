@@ -85,7 +85,7 @@ impl<'a> Printer<'a> {
         None
     }
 
-    fn es5_static_field_comma_inits(
+    pub(in crate::emitter) fn es5_static_field_comma_inits(
         &self,
         class_data: &tsz_parser::parser::node::ClassData,
     ) -> Vec<(PropertyNameEmit, NodeIndex)> {
@@ -428,6 +428,7 @@ impl<'a> Printer<'a> {
 
             // ES5 path: __awaiter + __generator state machine
             let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
+            async_emitter.set_system_import_meta(self.in_system_execute_body);
             // The generator body is nested inside `function () { ... }` in the __awaiter
             // callback, so render it at one extra indent level (matching tsc multi-line format).
             async_emitter.set_indent_level(self.writer.indent_level() + 1);
@@ -1137,6 +1138,12 @@ impl<'a> Printer<'a> {
         // Pass transform directives to the ClassES5Emitter
         es5_emitter.set_transforms(self.transforms.clone());
         es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+        es5_emitter.set_printer_options(self.ctx.options.clone());
+        es5_emitter.set_module_kind(
+            self.ctx
+                .original_module_kind
+                .unwrap_or(self.ctx.options.module),
+        );
         if let Some(text) = self.source_text_for_map() {
             if self.writer.has_source_map() {
                 es5_emitter.set_source_map_context(text, self.writer.current_source_index());
@@ -1154,9 +1161,8 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
-        let use_static_comma = !static_field_inits.is_empty()
-            && !self.ctx.options.use_define_for_class_fields
-            && (class_data.name.is_some() || class_expr_set_function_name.is_some());
+        let use_static_comma =
+            !static_field_inits.is_empty() && !self.ctx.options.use_define_for_class_fields;
         if use_static_comma {
             es5_emitter.set_skip_static_members(true);
         }
@@ -1173,7 +1179,7 @@ impl<'a> Printer<'a> {
                 let output = es5_emitter.emit_class(class_node);
                 (candidate, output)
             }
-        } else if use_static_comma && class_expr_set_function_name.is_some() {
+        } else if use_static_comma {
             let temp_name = self.make_unique_name_from_base("class");
             let output = es5_emitter.emit_class_with_name(class_node, &temp_name);
             (temp_name, output)

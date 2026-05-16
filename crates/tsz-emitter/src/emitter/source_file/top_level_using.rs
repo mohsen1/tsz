@@ -254,11 +254,22 @@ impl<'a> Printer<'a> {
         } else {
             Some(self.collect_cjs_deferred_export_bindings(statements))
         };
+        let cjs_deferred_export_bindings_all = if is_es_module_output {
+            None
+        } else {
+            Some(self.collect_cjs_deferred_export_bindings_all(statements))
+        };
         let prev_deferred_local_export_bindings = if is_es_module_output {
             None
         } else {
             self.deferred_local_export_bindings
                 .replace(cjs_deferred_export_bindings.unwrap_or_default())
+        };
+        let prev_deferred_local_export_bindings_all = if is_es_module_output {
+            None
+        } else {
+            self.deferred_local_export_bindings_all
+                .replace(cjs_deferred_export_bindings_all.unwrap_or_default())
         };
         let prev_block_using_env = self
             .block_using_env
@@ -289,6 +300,7 @@ impl<'a> Printer<'a> {
         self.block_using_env = prev_block_using_env;
         if !is_es_module_output {
             self.deferred_local_export_bindings = prev_deferred_local_export_bindings;
+            self.deferred_local_export_bindings_all = prev_deferred_local_export_bindings_all;
         }
 
         self.decrease_indent();
@@ -1632,6 +1644,12 @@ impl<'a> Printer<'a> {
             es5_emitter.set_indent_level(self.writer.indent_level());
             es5_emitter.set_transforms(self.transforms.clone());
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+            es5_emitter.set_printer_options(self.ctx.options.clone());
+            es5_emitter.set_module_kind(
+                self.ctx
+                    .original_module_kind
+                    .unwrap_or(self.ctx.options.module),
+            );
             if let Some(text) = self.source_text_for_map() {
                 es5_emitter.set_source_text(text);
             }

@@ -734,7 +734,7 @@ impl<'a> Printer<'a> {
             || static_initializer_needs_class_alias
             || private_member_def_needs_class_alias
         {
-            Some(self.make_unique_name())
+            Some(self.make_class_static_temp_name(_idx))
         } else {
             None
         };
@@ -1202,7 +1202,7 @@ impl<'a> Printer<'a> {
                     .get(member_idx)
                     .is_some_and(|m| m.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION)
             });
-        let has_static_computed_method_or_accessor = is_class_expression
+        let has_static_computed_method_or_accessor = emits_as_class_expression
             && class.name.is_none()
             && self.resolve_class_expr_binding_name(_idx).is_some()
             && class.members.nodes.iter().any(|&member_idx| {
@@ -1235,7 +1235,10 @@ impl<'a> Printer<'a> {
             && (has_static_field_comma_expr
                 || has_static_block_comma_expr
                 || has_static_computed_method_or_accessor);
-        let needs_any_comma_expr = needs_static_comma_expr || needs_private_comma_expr;
+        let needs_computed_prop_comma_expr =
+            emits_as_class_expression && !computed_prop_entries.is_empty();
+        let needs_any_comma_expr =
+            needs_static_comma_expr || needs_private_comma_expr || needs_computed_prop_comma_expr;
         let class_expr_comma_needs_parens = needs_any_comma_expr
             && self
                 .arena
@@ -1249,7 +1252,7 @@ impl<'a> Printer<'a> {
             let temp = if let Some(ref alias) = private_class_alias {
                 alias.clone()
             } else {
-                self.make_unique_name_hoisted()
+                self.make_class_static_temp_name_hoisted(_idx)
             };
             if class_expr_comma_needs_parens {
                 self.write("(");
@@ -1402,17 +1405,18 @@ impl<'a> Printer<'a> {
         {
             static_initializer_class_alias
                 .clone()
-                .or_else(|| Some(self.make_unique_name_hoisted()))
+                .or_else(|| Some(self.make_class_static_temp_name_hoisted(_idx)))
         } else {
             None
         };
         let static_super_base_alias = if static_initializer_needs_super_alias
             && !externalized_static_initializer_uses_undefined_receiver
         {
-            Some(self.make_unique_name_hoisted())
+            Some(self.make_class_static_temp_name_hoisted(_idx))
         } else {
             None
         };
+        self.finish_file_level_class_temp_reservation(_idx);
         let static_initializer_this_binding =
             if externalized_static_initializer_uses_undefined_receiver
                 && static_initializer_needs_this_alias
@@ -2678,6 +2682,20 @@ impl<'a> Printer<'a> {
                 if emitted_entry {
                     self.write(";");
                 }
+            }
+            if needs_computed_prop_comma_expr
+                && !needs_static_comma_expr
+                && !needs_private_comma_expr
+                && let Some(temp) = class_expr_temp.as_ref()
+            {
+                self.write(",");
+                self.write_line();
+                self.increase_indent();
+                self.write(temp);
+                if class_expr_comma_needs_parens {
+                    self.write(")");
+                }
+                self.decrease_indent();
             }
         } else if !computed_side_effects_emitted_in_static_block {
             // Emit computed property name side-effect statements for erased members

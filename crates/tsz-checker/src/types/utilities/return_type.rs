@@ -39,7 +39,11 @@ impl<'a> CheckerState<'a> {
         return_context: Option<TypeId>,
         effective_return_context: Option<TypeId>,
     ) -> bool {
-        if return_context.is_none() || effective_return_context.is_some() {
+        let preserve_for_bare_generic_return =
+            return_context.is_some() && effective_return_context.is_none();
+        let preserve_for_async_array_return =
+            return_context.is_some_and(|ctx| self.return_context_is_async_array_union_context(ctx));
+        if !preserve_for_bare_generic_return && !preserve_for_async_array_return {
             return false;
         }
 
@@ -65,6 +69,36 @@ impl<'a> CheckerState<'a> {
             }
             _ => false,
         }
+    }
+
+    fn return_context_is_async_array_union_context(&self, return_context: TypeId) -> bool {
+        let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, return_context)
+        else {
+            return false;
+        };
+
+        let mut saw_array = false;
+        let mut saw_promise_wrapped_array = false;
+        for member in members {
+            if crate::query_boundaries::common::array_element_type(self.ctx.types, member).is_some()
+            {
+                saw_array = true;
+                continue;
+            }
+
+            if let Some((base, args)) =
+                crate::query_boundaries::common::application_info(self.ctx.types, member)
+                && args.len() == 1
+                && self.return_context_application_base_has_name(base, &["Promise", "PromiseLike"])
+                && crate::query_boundaries::common::array_element_type(self.ctx.types, args[0])
+                    .is_some()
+            {
+                saw_promise_wrapped_array = true;
+            }
+        }
+
+        saw_array && saw_promise_wrapped_array
     }
 
     /// Check if a function body falls through (doesn't always return).
@@ -391,6 +425,68 @@ impl<'a> CheckerState<'a> {
         type_id
     }
 
+    pub(crate) fn maybe_evaluate_inferred_return_contribution(
+        &mut self,
+        type_id: TypeId,
+        return_context: Option<TypeId>,
+    ) -> TypeId {
+        if return_context.is_some() || self.ctx.emit_declarations() {
+            return type_id;
+        }
+
+        if crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id).is_some() {
+            return type_id;
+        }
+
+        self.record_index_access_value_type(type_id)
+            .map(|value| self.maybe_evaluate_inferred_return_contribution(value, None))
+            .unwrap_or(type_id)
+    }
+
+    fn record_index_access_value_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let (object_type, _index_type) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, type_id)?;
+        let app_type = self
+            .ctx
+            .types
+            .get_display_alias(object_type)
+            .unwrap_or(object_type);
+        let app = crate::query_boundaries::common::type_application(self.ctx.types, app_type)?;
+        if !self.application_alias_maps_keys_to_second_type_arg(app.base) || app.args.len() != 2 {
+            return None;
+        }
+        Some(app.args[1])
+    }
+
+    fn application_alias_maps_keys_to_second_type_arg(&self, base: TypeId) -> bool {
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+        else {
+            return false;
+        };
+        let Some(def) = self.ctx.definition_store.get(def_id) else {
+            return false;
+        };
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || def.type_params.len() != 2 {
+            return false;
+        }
+        let Some(body) = def.body else {
+            return false;
+        };
+        let Some(mapped) = crate::query_boundaries::common::mapped_type_info(self.ctx.types, body)
+        else {
+            return false;
+        };
+        let Some(template_param) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, mapped.template)
+        else {
+            return false;
+        };
+
+        mapped.name_type.is_none()
+            && mapped.type_param.name == def.type_params[0].name
+            && template_param.name == def.type_params[1].name
+    }
+
     /// Structurally detect whether a return expression is a const assertion
     /// (`expr as const` or `<const>expr`), skipping any wrapping parentheses.
     /// Mirrors the detection in `dispatch.rs` that toggles `in_const_assertion`
@@ -555,6 +651,7 @@ impl<'a> CheckerState<'a> {
 
         if node.kind != syntax_kind_ext::BLOCK {
             let raw = self.return_expression_type(body_idx, return_context);
+            let raw = self.maybe_evaluate_inferred_return_contribution(raw, return_context);
             return self.maybe_widen_return_contribution(body_idx, raw, return_context);
         }
 
@@ -802,7 +899,34 @@ impl<'a> CheckerState<'a> {
         {
             self.ctx.in_const_assertion = true;
         }
-        let return_type = self.get_type_of_node_with_request(expr_idx, &request);
+        let mut return_type = self.get_type_of_node_with_request(expr_idx, &request);
+        if let Some(contextual_type) = effective_return_context
+            && self
+                .ctx
+                .arena
+                .get(expr_idx)
+                .is_some_and(|expr_node| expr_node.kind == syntax_kind_ext::NEW_EXPRESSION)
+            && (self.contextual_application_recovers_unknown_result(return_type, contextual_type)
+                || self.contextual_application_recovers_type_param_result(
+                    return_type,
+                    contextual_type,
+                )
+                || (crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    return_type,
+                ) && self
+                    .ctx
+                    .arena
+                    .get_call_expr_at(expr_idx)
+                    .is_some_and(|new_expr| {
+                        self.contextual_application_matches_new_target(
+                            new_expr.expression,
+                            contextual_type,
+                        )
+                    })))
+        {
+            return_type = contextual_type;
+        }
         self.ctx.in_const_assertion = prev_const_assertion;
         self.ctx.preserve_literal_types = prev_preserve_literals;
         return_type
@@ -845,6 +969,10 @@ impl<'a> CheckerState<'a> {
                         );
                         let return_type =
                             self.return_expression_type(return_data.expression, infer_context);
+                        let return_type = self.maybe_evaluate_inferred_return_contribution(
+                            return_type,
+                            return_context,
+                        );
                         let widened = self.maybe_widen_return_contribution(
                             return_data.expression,
                             return_type,

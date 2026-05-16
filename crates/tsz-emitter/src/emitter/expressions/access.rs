@@ -201,7 +201,11 @@ impl<'a> Printer<'a> {
             let between_end = std::cmp::min(name_start, text.len());
             let between_start = std::cmp::min(expr_end, between_end);
             let between = &text[between_start..between_end];
-            if between.contains('\n') {
+            let has_comment_between = self
+                .all_comments
+                .iter()
+                .any(|comment| comment.pos >= expr_node.end && comment.end <= name_node.pos);
+            if between.contains('\n') && !has_comment_between {
                 self.write_dot_token(access.expression);
                 self.emit_property_name_without_import_substitution(access.name_or_argument);
                 return;
@@ -217,6 +221,14 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
+
+        if let Some(dot_pos) = dot_pos
+            && let Some(expr_node) = self.arena.get(access.expression)
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+            && self.emit_property_access_commented_dot(access, expr_node, name_node, dot_pos)
+        {
+            return;
+        }
 
         if let Some(expr_node) = self.arena.get(access.expression)
             && let Some(name_node) = self.arena.get(access.name_or_argument)
@@ -773,8 +785,10 @@ impl<'a> Printer<'a> {
         }
 
         // Type assertion that erases away to a bare object literal:
-        // `(<Type>{}).foo` → `({}.foo)` — wrap ourselves and place suffix
-        // outside (matches tsc's emit for the bare-cast variant).
+        // `(<Type>{}).foo` -> `{}.foo` in expression positions. If that
+        // access is the whole expression statement, `emit_expression_statement`
+        // owns the leading-token disambiguation and wraps the whole expression:
+        // `(<Type>{}).foo;` -> `({}.foo);`.
         let inner_is_erasable = if let Some(inner) = self.arena.get(paren.expression) {
             inner.kind == syntax_kind_ext::TYPE_ASSERTION
                 || inner.kind == syntax_kind_ext::AS_EXPRESSION
@@ -784,12 +798,12 @@ impl<'a> Printer<'a> {
             false
         };
 
-        self.write("(");
-        self.emit(paren.expression);
         if inner_is_erasable {
+            self.emit(paren.expression);
             emit_suffix(self);
-            self.write(")");
         } else {
+            self.write("(");
+            self.emit(paren.expression);
             self.write(")");
             emit_suffix(self);
         }
@@ -841,13 +855,34 @@ impl<'a> Printer<'a> {
         }
         let base_simple = self.is_simple_nullish_expression(access.expression);
         if base_simple {
+            let suffix_parts = self
+                .arena
+                .get(access.expression)
+                .zip(self.arena.get(access.name_or_argument))
+                .and_then(|(expr_node, name_node)| {
+                    self.find_char_after_skipping_comments(expr_node.end, name_node.pos, b'.')
+                        .map(|dot_pos| (*expr_node, *name_node, dot_pos))
+                });
+
             self.emit(access.expression);
+            if let Some((expr_node, _, dot_pos)) = suffix_parts.as_ref() {
+                self.emit_optional_chain_inline_gap_comments_untracked(expr_node.end, *dot_pos);
+            }
             self.write(" === null || ");
             self.emit(access.expression);
+            if let Some((expr_node, _, dot_pos)) = suffix_parts.as_ref() {
+                self.emit_optional_chain_inline_gap_comments_untracked(expr_node.end, *dot_pos);
+            }
             self.write(" === void 0 ? void 0 : ");
             self.emit(access.expression);
-            self.write(".");
-            self.emit_property_name_without_import_substitution(access.name_or_argument);
+            if let Some((expr_node, name_node, dot_pos)) = suffix_parts.as_ref() {
+                self.emit_optional_property_access_downlevel_suffix(
+                    access, expr_node, name_node, *dot_pos,
+                );
+            } else {
+                self.write(".");
+                self.emit_property_name_without_import_substitution(access.name_or_argument);
+            }
         } else {
             let before = self.writer.len();
             self.emit(access.expression);
@@ -1468,6 +1503,67 @@ mod tests {
         assert!(
             output.contains("(o === null || o === void 0 ? void 0 : o.a)++"),
             "Lowered optional chain in postfix ++ must be wrapped in parens.\nOutput:\n{output}"
+        );
+    }
+
+    /// When a downlevel optional chain with a non-optional tail is used with
+    /// postfix `++`/`--`, the whole access path remains in the ternary branch.
+    /// `o?.a.b++` -> `(o === null || o === void 0 ? void 0 : o.a.b)++`
+    #[test]
+    fn optional_chain_in_postfix_update_keeps_tail_inside_branch() {
+        let source = "declare const o: any;\no?.a.b++;\no?.a[0]--;\no?.[\"a\"]++;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.a.b)++"),
+            "Postfix update must keep property tail inside optional-chain branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.a[0])--"),
+            "Postfix update must keep element tail inside optional-chain branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o[\"a\"])++"),
+            "Postfix update must support optional element roots.\nOutput:\n{output}"
+        );
+    }
+
+    /// Prefix `++`/`--` also wraps the complete lowered optional-chain path.
+    /// `++o?.a.b` -> `++(o === null || o === void 0 ? void 0 : o.a.b)`
+    #[test]
+    fn optional_chain_in_prefix_update_keeps_tail_inside_branch() {
+        let source = "declare const o: any;\n++o?.a.b;\n--o?.a[0];\n++o?.[\"a\"];\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("++(o === null || o === void 0 ? void 0 : o.a.b)"),
+            "Prefix update must keep property tail inside optional-chain branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("--(o === null || o === void 0 ? void 0 : o.a[0])"),
+            "Prefix update must keep element tail inside optional-chain branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("++(o === null || o === void 0 ? void 0 : o[\"a\"])"),
+            "Prefix update must support optional element roots.\nOutput:\n{output}"
         );
     }
 

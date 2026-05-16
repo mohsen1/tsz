@@ -119,12 +119,40 @@ name = "destructuring_es5_array_nested_order_tests"
 path = "tests/destructuring_es5_array_nested_order_tests.rs"
 
 [[test]]
+name = "destructuring_control_flow_recovery_tests"
+path = "tests/destructuring_control_flow_recovery_tests.rs"
+
+[[test]]
 name = "tc39_named_class_expression_set_function_name_tests"
 path = "tests/tc39_named_class_expression_set_function_name_tests.rs"
 
 [[test]]
+name = "loop_capture_labeled_var_recovery_tests"
+path = "tests/loop_capture_labeled_var_recovery_tests.rs"
+
+[[test]]
+name = "loop_capture_continue_control_tests"
+path = "tests/loop_capture_continue_control_tests.rs"
+
+[[test]]
+name = "tagged_template_escape_emit_tests"
+path = "tests/tagged_template_escape_emit_tests.rs"
+
+[[test]]
 name = "script_mode_import_equals_interface_alias_tests"
 path = "tests/script_mode_import_equals_interface_alias_tests.rs"
+
+[[test]]
+name = "enum_constant_value_emit_tests"
+path = "tests/enum_constant_value_emit_tests.rs"
+
+[[test]]
+name = "for_statement_recovery_tests"
+path = "tests/for_statement_recovery_tests.rs"
+
+[[test]]
+name = "try_statement_recovery_tests"
+path = "tests/try_statement_recovery_tests.rs"
 
 [[test]]
 name = "system_top_level_using_env_position_tests"
@@ -141,6 +169,10 @@ path = "tests/jsx_cjs_runtime_collision_tests.rs"
 [[test]]
 name = "async_arrow_default_param_3758_tests"
 path = "tests/async_arrow_default_param_3758_tests.rs"
+
+[[test]]
+name = "arrow_parameter_prologue_tests"
+path = "tests/arrow_parameter_prologue_tests.rs"
 
 [lints]
 workspace = true

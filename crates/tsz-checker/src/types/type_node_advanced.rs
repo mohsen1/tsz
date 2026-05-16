@@ -14,11 +14,12 @@ use super::type_node_helpers::{
     get_string_literal_from_type_index, is_type_query_in_non_flow_sensitive_signature_parameter,
     is_typeof_global_this_type_node,
 };
+use super::unique_symbol_arena::has_declared_unique_symbol_owner;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ObjectShape, PropertyInfo, TypeId};
+use tsz_solver::{ObjectShape, PropertyInfo, SymbolRef, TypeId};
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     // =========================================================================
@@ -80,8 +81,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // Handle unique operator
             if operator == SyntaxKind::UniqueKeyword as u16 {
-                // unique is handled differently - it's a type modifier for symbols
-                // For now, just return the inner type
+                if inner_type == TypeId::SYMBOL
+                    && !has_declared_unique_symbol_owner(self.ctx.arena, idx)
+                {
+                    return self.ctx.types.unique_symbol(synthetic_unique_symbol_ref(
+                        &self.ctx.file_name,
+                        node.pos,
+                        node.end,
+                    ));
+                }
                 return inner_type;
             }
 
@@ -711,7 +719,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     // Type Query (typeof)
     // =========================================================================
 
-    fn apply_instantiation_expression_type_arguments(
+    pub(crate) fn apply_instantiation_expression_type_arguments(
         &mut self,
         expr_type: TypeId,
         type_arguments: &NodeList,
@@ -879,6 +887,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         };
 
+        // Route inline `typeof import("...")[.segments]` through the namespace-
+        // aware resolver before falling through to lowering. See
+        // `try_get_type_from_inline_import_typeof_query` for the full rule.
+        if let Some(resolved) = self.try_get_type_from_inline_import_typeof_query(idx) {
+            return resolved;
+        }
+
         // Capture type argument node indices early (before borrows prevent access).
         // When present, the base type will be wrapped in Application(base, args)
         // so that constraint checking (TS2344) sees the instantiated type rather
@@ -985,6 +1000,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .apply_instantiation_expression_type_arguments(param_type, type_arguments);
             }
             return param_type;
+        }
+
+        if let Some(tuple_type) = self.const_asserted_array_tuple_type_query(type_query.expr_name) {
+            if let Some(type_arguments) = &type_arguments {
+                return self
+                    .apply_instantiation_expression_type_arguments(tuple_type, type_arguments);
+            }
+            return tuple_type;
         }
 
         if let Some(object_type) = self.const_array_to_enum_object_type_query(type_query.expr_name)
@@ -1890,8 +1913,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if name == "default" {
                 return None;
             }
-            let sym_id = self.ctx.binder.file_locals.get(name)?;
-            return Some(sym_id);
+            return self.resolve_value_symbol_in_scope(expr_name);
         }
 
         if node.kind == syntax_kind_ext::QUALIFIED_NAME {
@@ -1962,4 +1984,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // Delegate to TypeLowering with extended resolvers (enum flags + lib search)
         self.lower_with_resolvers(idx, true, false)
     }
+}
+
+fn synthetic_unique_symbol_ref(file_name: &str, pos: u32, end: u32) -> SymbolRef {
+    let mut hash = 0x811c_9dc5u32;
+    for byte in file_name.as_bytes() {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    for value in [pos, end] {
+        hash ^= value;
+        hash = hash.wrapping_mul(0x0100_0193);
+    }
+    SymbolRef(hash | 0x8000_0000)
 }

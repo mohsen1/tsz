@@ -390,8 +390,12 @@ impl<'a> Printer<'a> {
         self.write(" = ");
         // Emit inline comments between = and the initializer value.
         if let Some(init_node) = self.arena.get(decl.initializer) {
+            let initializer_comment_line_break =
+                self.last_pending_comment_before_pos_has_trailing_newline(init_node.pos);
             self.emit_comments_before_pos(init_node.pos);
-            if self.pending_block_comment_space {
+            if initializer_comment_line_break && self.writer.is_at_line_start() {
+                self.write_space();
+            } else if self.pending_block_comment_space {
                 self.write_space();
                 self.pending_block_comment_space = false;
             }
@@ -530,6 +534,7 @@ impl<'a> Printer<'a> {
             // reference resolution (e.g., `enum Bar { B = Foo.A }`)
             transformer.set_prior_enum_values(&self.prior_enum_member_values);
             transformer.set_prior_string_members(&self.prior_enum_string_members);
+            transformer.set_prior_string_values(&self.prior_enum_string_values);
             if let Some(mut ir) = transformer.transform_enum(idx) {
                 // Accumulate member values and string member names
                 let enum_name_for_accum = transformer.current_enum_name_ref().to_string();
@@ -544,10 +549,19 @@ impl<'a> Printer<'a> {
                     if !transformer.get_string_members().is_empty() {
                         let str_entry = self
                             .prior_enum_string_members
-                            .entry(enum_name_for_accum)
+                            .entry(enum_name_for_accum.clone())
                             .or_default();
                         for name in transformer.get_string_members() {
                             str_entry.insert(name.clone());
+                        }
+                    }
+                    if !transformer.get_string_member_values().is_empty() {
+                        let value_entry = self
+                            .prior_enum_string_values
+                            .entry(enum_name_for_accum)
+                            .or_default();
+                        for (name, value) in transformer.get_string_member_values() {
+                            value_entry.insert(name.clone(), value.clone());
                         }
                     }
                 }

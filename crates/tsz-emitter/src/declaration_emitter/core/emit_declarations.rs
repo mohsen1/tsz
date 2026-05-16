@@ -1,6 +1,5 @@
 use rustc_hash::FxHashSet;
 use tracing::debug;
-use tsz_common::comments::is_jsdoc_comment;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -348,6 +347,7 @@ impl<'a> DeclarationEmitter<'a> {
                     continue;
                 }
                 let should_hoist = if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                    let jsdoc_chain = self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
                     let is_exported_or_named_export =
                         self.arena.get_function(stmt_node).is_some_and(|func| {
                             self.arena
@@ -359,10 +359,9 @@ impl<'a> DeclarationEmitter<'a> {
                     if is_exported_or_named_export {
                         true
                     } else {
-                        let jsdoc_chain = self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
                         jsdoc_chain
                             .iter()
-                            .any(|jsdoc| !Self::parse_jsdoc_template_params(jsdoc).is_empty())
+                            .any(|jsdoc| Self::jsdoc_has_function_signature_tags(jsdoc))
                     }
                 } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
                     self.arena
@@ -668,7 +667,14 @@ impl<'a> DeclarationEmitter<'a> {
         let has_jsdoc_type_function_signature = self
             .statement_jsdoc_type_function_signature_node(stmt_idx)
             .is_some();
-        if has_jsdoc_type_function_signature || has_jsdoc_type_alias {
+        let jsdoc_overload_function_node =
+            self.jsdoc_overload_function_node_for_statement(stmt_idx);
+        let has_jsdoc_overload_signatures = jsdoc_overload_function_node
+            .is_some_and(|func_idx| !self.jsdoc_overload_signatures_for_node(func_idx).is_empty());
+        if has_jsdoc_overload_signatures {
+            // JSDoc overload comments are emitted once per structured signature
+            // by `emit_function_declaration`.
+        } else if has_jsdoc_type_function_signature || has_jsdoc_type_alias {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
             self.writer.truncate(before_jsdoc_len);
             let mut filtered = if has_jsdoc_type_function_signature {
@@ -747,6 +753,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             self.pending_source_pos = None;
         } else {
+            if has_jsdoc_overload_signatures {
+                self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            }
             if self.suppress_current_statement_jsdoc_comments && before_len > before_jsdoc_len {
                 let emitted = self.writer.get_output()[before_len..].to_string();
                 self.writer.truncate(before_jsdoc_len);
@@ -834,7 +843,13 @@ impl<'a> DeclarationEmitter<'a> {
         let has_jsdoc_type_function_signature = self
             .statement_jsdoc_type_function_signature_node(stmt_idx)
             .is_some();
-        if has_jsdoc_type_function_signature {
+        let jsdoc_overload_function_node =
+            self.jsdoc_overload_function_node_for_statement(stmt_idx);
+        let has_jsdoc_overload_signatures = jsdoc_overload_function_node
+            .is_some_and(|func_idx| !self.jsdoc_overload_signatures_for_node(func_idx).is_empty());
+        if has_jsdoc_overload_signatures {
+            // JSDoc overload comments are emitted with each overload signature.
+        } else if has_jsdoc_type_function_signature {
             let filtered = Self::jsdoc_chain_without_type_tags(&jsdoc_chain);
             self.emit_jsdoc_comment_chain(&filtered);
         } else if jsdoc_chain.len() == 1
@@ -865,23 +880,6 @@ impl<'a> DeclarationEmitter<'a> {
         self.emitted_module_indicator = true;
         self.comment_emit_idx = saved_comment_idx;
         self.current_statement_jsdoc_chain.clear();
-    }
-
-    fn hoisted_jsdoc_source_comment_is_multiline(&self, pos: u32) -> bool {
-        let Some(text) = self.source_file_text.as_deref() else {
-            return true;
-        };
-        let Some(comment) = self.all_comments.iter().rev().find(|comment| {
-            comment.end <= pos
-                && is_jsdoc_comment(comment, text)
-                && text
-                    .get(comment.end as usize..pos as usize)
-                    .is_some_and(|between| between.trim().is_empty())
-        }) else {
-            return true;
-        };
-        text.get(comment.pos as usize..comment.end as usize)
-            .is_none_or(|raw| raw.contains('\n'))
     }
 
     pub(in crate::declaration_emitter) fn emit_function_declaration(
@@ -964,6 +962,39 @@ impl<'a> DeclarationEmitter<'a> {
                 && self.function_names_with_overloads.contains(name)
             {
                 self.skip_comments_in_node(func_node.pos, func_node.end);
+                return;
+            }
+        }
+
+        if self.source_is_js_file {
+            let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(func_idx);
+            if !jsdoc_overload_signatures.is_empty() {
+                self.emit_pending_js_export_equals_for_name(func.name);
+            }
+            if self.emit_jsdoc_overload_function_signatures(
+                func_idx,
+                is_exported,
+                is_exported,
+                &jsdoc_overload_signatures,
+            ) {
+                if should_emit_late_bound_namespace {
+                    self.emit_ts_late_bound_function_namespace_from_members(
+                        func.name,
+                        is_exported,
+                        &late_bound_members,
+                    );
+                }
+                if !self.emit_js_function_like_class_if_needed(
+                    func.name,
+                    &func.parameters,
+                    func.body,
+                    is_exported,
+                    func_idx,
+                ) {
+                    self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
+                }
+                self.emit_js_class_static_members_namespace(func.name, is_exported);
+                self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
                 return;
             }
         }
@@ -1521,11 +1552,14 @@ impl<'a> DeclarationEmitter<'a> {
         // Emit parameter properties from constructor first (before other members)
         self.emit_parameter_properties(&class.members);
 
+        let delay_private_identifier_marker = self
+            .should_delay_private_identifier_marker_for_js_constructor_overloads(&class.members);
+
         // Emit `#private;` if any member has a private identifier name (e.g., #foo)
-        if self.class_has_private_identifier_member(&class.members) {
-            self.write_indent();
-            self.write("#private;");
-            self.write_line();
+        if self.class_has_private_identifier_member(&class.members)
+            && !delay_private_identifier_marker
+        {
+            self.emit_private_identifier_marker();
         }
 
         self.emit_js_array_subclass_constructor_overloads_if_needed(
@@ -1533,6 +1567,11 @@ impl<'a> DeclarationEmitter<'a> {
             class.heritage_clauses.as_ref(),
         );
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
+        if self.class_has_private_identifier_member(&class.members)
+            && delay_private_identifier_marker
+        {
+            self.emit_private_identifier_marker();
+        }
         if self.source_is_js_file {
             self.emit_js_class_define_property_accessors_for_name(class.name);
             self.emit_js_class_like_prototype_members_for_declared_class(

@@ -214,6 +214,15 @@ fn collect_vars_recursive(arena: &NodeArena, idx: NodeIndex, info: &mut LoopBody
             }
         }
 
+        // Labeled statements do not create a scope boundary. A recovered
+        // `foo: var y;` inside a captured loop body still contributes `y` to
+        // the function-level `var` hoist.
+        k if k == syntax_kind_ext::LABELED_STATEMENT => {
+            if let Some(labeled) = arena.get_labeled_statement(node) {
+                collect_vars_recursive(arena, labeled.statement, info);
+            }
+        }
+
         // Class declaration (don't recurse into methods)
         k if k == syntax_kind_ext::CLASS_DECLARATION || k == syntax_kind_ext::CLASS_EXPRESSION => {}
 
@@ -602,67 +611,47 @@ impl<'a> Printer<'a> {
         };
 
         match node.kind {
+            k if k == syntax_kind_ext::BLOCK => {
+                self.emit_block_in_loop_iife(stmt_idx, _body_info, _captured_vars, _init_vars);
+            }
+
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                self.emit_if_statement_in_loop_iife(
+                    stmt_idx,
+                    _body_info,
+                    _captured_vars,
+                    _init_vars,
+                );
+            }
+
             // Variable statement: check if it's var (needs hoisting transform)
             // Note: LET/CONST flags are on the VARIABLE_DECLARATION_LIST child, not the statement.
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                if let Some(var_stmt) = self.arena.get_variable(node) {
-                    // Check the first declaration list child for LET/CONST flags
-                    let is_var = var_stmt
-                        .declarations
-                        .nodes
-                        .first()
-                        .and_then(|&idx| self.arena.get(idx))
-                        .map(|list_node| {
-                            let flags = list_node.flags as u32;
-                            (flags & node_flags::LET == 0) && (flags & node_flags::CONST == 0)
-                        })
-                        .unwrap_or(true);
+                self.emit_variable_statement_in_loop_iife(stmt_idx, node);
+            }
 
-                    if is_var {
-                        // Var declarations: emit just the assignments without `var`
-                        // var_stmt.declarations contains VARIABLE_DECLARATION_LIST nodes,
-                        // each of which contains individual VARIABLE_DECLARATION nodes.
-                        let mut all_decls = Vec::new();
-                        for &list_idx in &var_stmt.declarations.nodes {
-                            if let Some(list_node) = self.arena.get(list_idx)
-                                && let Some(list_data) = self.arena.get_variable(list_node)
-                            {
-                                for &decl_idx in &list_data.declarations.nodes {
-                                    all_decls.push(decl_idx);
-                                }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.arena.get_labeled_statement(node) {
+                    self.emit(labeled.label);
+                    self.write(": ");
+                    if let Some(statement_node) = self.arena.get(labeled.statement) {
+                        if statement_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                            if !self.emit_variable_statement_in_loop_iife(
+                                labeled.statement,
+                                statement_node,
+                            ) {
+                                self.write(";");
                             }
+                        } else {
+                            self.emit_statement_in_loop_iife(
+                                labeled.statement,
+                                _body_info,
+                                _captured_vars,
+                                _init_vars,
+                            );
                         }
-
-                        let has_initializer = all_decls.iter().any(|&idx| {
-                            self.arena
-                                .get(idx)
-                                .and_then(|n| self.arena.get_variable_declaration(n))
-                                .is_some_and(|d| d.initializer.is_some())
-                        });
-
-                        if has_initializer {
-                            let mut first = true;
-                            for &decl_idx in &all_decls {
-                                if let Some(decl_node) = self.arena.get(decl_idx)
-                                    && let Some(decl) =
-                                        self.arena.get_variable_declaration(decl_node)
-                                    && decl.initializer.is_some()
-                                {
-                                    if !first {
-                                        self.write(", ");
-                                    }
-                                    first = false;
-                                    self.emit(decl.name);
-                                    self.write(" = ");
-                                    self.emit(decl.initializer);
-                                }
-                            }
-                            self.write(";");
-                        }
-                        // If no initializers, skip entirely (vars are hoisted as bare declarations)
                     } else {
-                        // let/const: emit normally (they become var inside the IIFE)
-                        self.emit(stmt_idx);
+                        self.write(";");
                     }
                 }
             }
@@ -697,6 +686,164 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn emit_variable_statement_in_loop_iife(&mut self, stmt_idx: NodeIndex, node: &Node) -> bool {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        // Check the first declaration list child for LET/CONST flags.
+        let is_var = var_stmt
+            .declarations
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map(|list_node| {
+                let flags = list_node.flags as u32;
+                (flags & node_flags::LET == 0) && (flags & node_flags::CONST == 0)
+            })
+            .unwrap_or(true);
+
+        if !is_var {
+            // let/const: emit normally (they become var inside the IIFE)
+            self.emit(stmt_idx);
+            return true;
+        }
+
+        // Var declarations: emit just the assignments without `var`.
+        // `var_stmt.declarations` contains VARIABLE_DECLARATION_LIST nodes,
+        // each of which contains individual VARIABLE_DECLARATION nodes.
+        let mut all_decls = Vec::new();
+        for &list_idx in &var_stmt.declarations.nodes {
+            if let Some(list_node) = self.arena.get(list_idx)
+                && let Some(list_data) = self.arena.get_variable(list_node)
+            {
+                for &decl_idx in &list_data.declarations.nodes {
+                    all_decls.push(decl_idx);
+                }
+            }
+        }
+
+        let mut first = true;
+        for &decl_idx in &all_decls {
+            if let Some(decl_node) = self.arena.get(decl_idx)
+                && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                && decl.initializer.is_some()
+            {
+                if !first {
+                    self.write(", ");
+                }
+                first = false;
+                self.emit(decl.name);
+                self.write(" = ");
+                self.emit(decl.initializer);
+            }
+        }
+
+        if first {
+            return false;
+        }
+        self.write(";");
+        true
+    }
+
+    fn emit_block_in_loop_iife(
+        &mut self,
+        block_idx: NodeIndex,
+        body_info: &LoopBodyVarInfo,
+        captured_vars: &[String],
+        init_vars: &[String],
+    ) {
+        let Some(block_node) = self.arena.get(block_idx) else {
+            return;
+        };
+        let Some(block) = self.arena.get_block(block_node) else {
+            self.emit(block_idx);
+            return;
+        };
+
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+        for &stmt_idx in &block.statements.nodes {
+            self.emit_statement_in_loop_iife(stmt_idx, body_info, captured_vars, init_vars);
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write("}");
+    }
+
+    fn emit_if_statement_in_loop_iife(
+        &mut self,
+        if_idx: NodeIndex,
+        body_info: &LoopBodyVarInfo,
+        captured_vars: &[String],
+        init_vars: &[String],
+    ) {
+        let Some(if_node) = self.arena.get(if_idx) else {
+            return;
+        };
+        let Some(if_stmt) = self.arena.get_if_statement(if_node) else {
+            self.emit(if_idx);
+            return;
+        };
+
+        self.write("if (");
+        self.emit(if_stmt.expression);
+        self.write(")");
+        self.emit_embedded_statement_in_loop_iife(
+            if_stmt.then_statement,
+            body_info,
+            captured_vars,
+            init_vars,
+        );
+
+        if if_stmt.else_statement.is_some() {
+            self.write(" else");
+            if self
+                .arena
+                .get(if_stmt.else_statement)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IF_STATEMENT)
+            {
+                self.write(" ");
+                self.emit_if_statement_in_loop_iife(
+                    if_stmt.else_statement,
+                    body_info,
+                    captured_vars,
+                    init_vars,
+                );
+            } else {
+                self.emit_embedded_statement_in_loop_iife(
+                    if_stmt.else_statement,
+                    body_info,
+                    captured_vars,
+                    init_vars,
+                );
+            }
+        }
+    }
+
+    fn emit_embedded_statement_in_loop_iife(
+        &mut self,
+        stmt_idx: NodeIndex,
+        body_info: &LoopBodyVarInfo,
+        captured_vars: &[String],
+        init_vars: &[String],
+    ) {
+        if self
+            .arena
+            .get(stmt_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::BLOCK)
+        {
+            self.write(" ");
+            self.emit_block_in_loop_iife(stmt_idx, body_info, captured_vars, init_vars);
+            return;
+        }
+
+        self.write_line();
+        self.increase_indent();
+        self.emit_statement_in_loop_iife(stmt_idx, body_info, captured_vars, init_vars);
+        self.decrease_indent();
+    }
+
     /// Emit the loop call: _`loop_1(args)`;
     pub(in crate::emitter) fn emit_loop_call(
         &mut self,
@@ -704,7 +851,7 @@ impl<'a> Printer<'a> {
         captured_vars: &[String],
         body_info: &LoopBodyVarInfo,
     ) {
-        if body_info.has_continue || body_info.has_break || body_info.has_return {
+        if body_info.has_break || body_info.has_return {
             // Need to capture the return value
             if body_info.has_return {
                 self.write("var _state = ");
@@ -714,14 +861,6 @@ impl<'a> Printer<'a> {
                 self.write(");");
                 self.write_line();
 
-                if body_info.has_continue {
-                    self.write("if (_state === \"continue\")");
-                    self.write_line();
-                    self.increase_indent();
-                    self.write("continue;");
-                    self.decrease_indent();
-                    self.write_line();
-                }
                 if body_info.has_break {
                     self.write("if (_state === \"break\")");
                     self.write_line();
@@ -743,16 +882,6 @@ impl<'a> Printer<'a> {
                 self.write(");");
                 self.write_line();
 
-                if body_info.has_continue {
-                    self.write("if (_state === \"continue\")");
-                    self.write_line();
-                    self.increase_indent();
-                    self.write("continue;");
-                    self.decrease_indent();
-                    if body_info.has_break {
-                        self.write_line();
-                    }
-                }
                 if body_info.has_break {
                     self.write("if (_state === \"break\")");
                     self.write_line();
@@ -815,9 +944,23 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::emitter::{Printer, PrinterOptions};
+    use crate::output::printer::{PrintOptions, lower_and_print};
     use tsz_common::ScriptTarget;
     use tsz_parser::ParserState;
+
+    fn emit_es5(source: &str) -> String {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        lower_and_print(
+            &parser.arena,
+            root,
+            PrintOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        )
+        .code
+    }
 
     #[test]
     fn do_loop_capture_renames_body_let_that_shadows_parameter() {
@@ -834,18 +977,7 @@ function foo(x: number) {\n\
   use(v);\n\
 }\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-        let mut printer = Printer::with_options(
-            &parser.arena,
-            PrinterOptions {
-                target: ScriptTarget::ES5,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
+        let output = emit_es5(source);
 
         assert!(
             output.contains("var x_1 = v;"),
@@ -858,6 +990,52 @@ function foo(x: number) {\n\
         assert!(
             output.contains("var v, v;"),
             "Loop body var hoist should preserve duplicate var declarations.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn for_of_loop_capture_preserves_multiline_arrow_block_spacing() {
+        let source = "function foo() {\n\
+    for (const i of [0, 1]) {\n\
+        if (i === 0) {\n\
+            continue;\n\
+        }\n\
+\n\
+        (() => {\n\
+            return i;\n\
+        })();\n\
+    }\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains("(function () {\n            return i;\n        })();"),
+            "Captured loop arrow block should preserve its multiline block body.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_loop_1(i);\n    }\n}"),
+            "Captured for-of loop call should not leave an extra blank line before the loop closes.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("_loop_1(i);\n\n    }"),
+            "Captured for-of loop call should emit exactly one line break before the closing brace.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn single_line_arrow_block_stays_compact_in_loop_capture() {
+        let source = "function foo() {\n\
+    for (const i of [0, 1]) {\n\
+        (() => { return i; })();\n\
+    }\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains("(function () { return i; })();"),
+            "Single-line arrow block should keep the compact ES5 function body.\nOutput:\n{output}"
         );
     }
 }

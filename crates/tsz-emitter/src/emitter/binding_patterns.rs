@@ -19,6 +19,24 @@ enum ExcludedProp {
     Dynamic(String),
 }
 
+enum ArrayObjectRestDeferred {
+    ObjectRest {
+        pattern: NodeIndex,
+        temp: String,
+        initializer: NodeIndex,
+    },
+    BindingPattern {
+        pattern: NodeIndex,
+        temp: String,
+        initializer: NodeIndex,
+    },
+    SimpleDefault {
+        name: NodeIndex,
+        temp: String,
+        initializer: NodeIndex,
+    },
+}
+
 impl<'a> Printer<'a> {
     // =========================================================================
     // Binding Patterns
@@ -241,14 +259,26 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
-            self.emit_object_rest_var_decl(decl.name, decl.initializer, None);
-        } else {
-            // Non-object pattern (array or identifier) — emit normally
-            self.emit_decl_name(decl.name);
-            if decl.initializer.is_some() {
-                self.write(" = ");
-                self.emit_expression(decl.initializer);
+        match name_node.kind {
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                self.emit_object_rest_var_decl(decl.name, decl.initializer, None);
+            }
+            k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                if decl.initializer.is_some() {
+                    self.emit_array_object_rest_var_decl_from_initializer(
+                        decl.name,
+                        decl.initializer,
+                    );
+                } else {
+                    self.emit_decl_name(decl.name);
+                }
+            }
+            _ => {
+                self.emit_decl_name(decl.name);
+                if decl.initializer.is_some() {
+                    self.write(" = ");
+                    self.emit_expression(decl.initializer);
+                }
             }
         }
     }
@@ -280,8 +310,9 @@ impl<'a> Printer<'a> {
         let mut nested_rest_indices: Vec<usize> = Vec::new();
         // Whether any element has a dynamic computed property name
         let mut has_dynamic_computed = false;
+        let mut saw_invalid_nonlast_rest = false;
 
-        for &elem_idx in &pattern.elements.nodes {
+        for (index, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
             let Some(elem_node) = self.arena.get(elem_idx) else {
                 continue;
             };
@@ -290,6 +321,20 @@ impl<'a> Printer<'a> {
             };
 
             if elem.dot_dot_dot_token {
+                let has_later_element = pattern
+                    .elements
+                    .nodes
+                    .iter()
+                    .skip(index + 1)
+                    .any(|idx| !idx.is_none());
+                if has_later_element {
+                    saw_invalid_nonlast_rest = true;
+                    let invalid_rest_name = self.get_identifier_text(elem.name);
+                    if !invalid_rest_name.is_empty() {
+                        excluded_props.push(ExcludedProp::Identifier(invalid_rest_name));
+                    }
+                    continue;
+                }
                 rest_element = Some(elem_idx);
                 continue;
             }
@@ -334,6 +379,38 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if rest_element.is_none() && nested_rest_indices.is_empty() {
+            if !non_rest_elements.is_empty() {
+                if let Some(temp) = source_temp {
+                    self.emit_object_pattern_without_rest(&non_rest_elements);
+                    self.write(" = ");
+                    self.write(temp);
+                } else if initializer_idx.is_some() {
+                    let can_reuse_initializer = self
+                        .arena
+                        .get(initializer_idx)
+                        .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::Identifier as u16);
+                    if saw_invalid_nonlast_rest && !can_reuse_initializer {
+                        let source_name = self.get_temp_var_name();
+                        self.write(&source_name);
+                        self.write(" = ");
+                        self.emit_expression(initializer_idx);
+                        self.write(", ");
+                        self.emit_object_pattern_without_rest(&non_rest_elements);
+                        self.write(" = ");
+                        self.write(&source_name);
+                    } else {
+                        self.emit_object_pattern_without_rest(&non_rest_elements);
+                        self.write(" = ");
+                        self.emit_expression(initializer_idx);
+                    }
+                } else {
+                    self.emit_object_pattern_without_rest(&non_rest_elements);
+                }
+            }
+            return;
+        }
+
         // Determine if we need a temp variable for the source. We need one whenever
         // anything below the outer pattern requires the source: either a rest element
         // at this level, or a nested element whose own pattern carries an object rest
@@ -347,15 +424,11 @@ impl<'a> Printer<'a> {
 
         if needs_temp {
             // Check if initializer is a simple identifier we can reuse
-            let can_reuse = initializer_idx.is_some()
-                && self
-                    .arena
-                    .get(initializer_idx)
-                    .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::Identifier as u16);
+            let reusable_source_name = self.reusable_object_rest_initializer_name(initializer_idx);
 
-            if can_reuse {
+            if let Some(reusable_source_name) = reusable_source_name {
                 // Reuse the identifier name
-                source_name = self.get_identifier_text(initializer_idx);
+                source_name = reusable_source_name;
                 if !non_rest_elements.is_empty() && !nested_rest_indices.is_empty() {
                     self.emit_object_rest_with_nested(
                         &non_rest_elements,
@@ -461,6 +534,26 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn reusable_object_rest_initializer_name(&self, initializer_idx: NodeIndex) -> Option<String> {
+        if initializer_idx.is_none()
+            || self
+                .arena
+                .get(initializer_idx)
+                .is_none_or(|n| n.kind != tsz_scanner::SyntaxKind::Identifier as u16)
+        {
+            return None;
+        }
+
+        let source_name = self.get_identifier_text(initializer_idx);
+        if let Some((class_name, alias)) = &self.private_static_class_alias
+            && source_name == *class_name
+        {
+            return Some(alias.clone());
+        }
+
+        Some(source_name)
+    }
+
     /// Emit the exclude list items for a `__rest()` call.
     fn emit_excluded_props_list(&mut self, props: &[ExcludedProp]) {
         for (i, prop) in props.iter().enumerate() {
@@ -519,13 +612,10 @@ impl<'a> Printer<'a> {
         };
 
         let mut excluded_props: Vec<ExcludedProp> = Vec::new();
+        let mut simple_elements: Vec<NodeIndex> = Vec::new();
+        let mut emitted_any = false;
 
-        // Emit each non-rest element as manual property access
-        for (i, &elem_idx) in non_rest_elements.iter().enumerate() {
-            if i > 0 {
-                self.write(", ");
-            }
-
+        for &elem_idx in non_rest_elements {
             let Some(elem_node) = self.arena.get(elem_idx) else {
                 continue;
             };
@@ -536,6 +626,43 @@ impl<'a> Printer<'a> {
             let (static_name, is_static_computed) =
                 self.get_binding_element_property_name_info(elem_idx);
             let is_dynamic = static_name.is_empty() && self.has_computed_property_name(elem_idx);
+            let needs_manual_default = self.initializer_is_object_rest_assignment(elem.initializer);
+            let needs_manual =
+                is_dynamic || self.is_binding_pattern(elem.name) || needs_manual_default;
+
+            if !needs_manual {
+                let prop_name = if static_name.is_empty() {
+                    self.get_identifier_text(elem.name)
+                } else {
+                    static_name.clone()
+                };
+                if !prop_name.is_empty() {
+                    let is_str_lit =
+                        is_static_computed || self.is_string_literal_property_name(elem_idx);
+                    if is_str_lit {
+                        excluded_props.push(ExcludedProp::StringLiteral(prop_name));
+                    } else {
+                        excluded_props.push(ExcludedProp::Identifier(prop_name));
+                    }
+                }
+                simple_elements.push(elem_idx);
+                continue;
+            }
+
+            if !simple_elements.is_empty() {
+                if emitted_any {
+                    self.write(", ");
+                }
+                self.emit_object_pattern_without_rest(&simple_elements);
+                self.write(" = ");
+                self.write(&source_name);
+                simple_elements.clear();
+                emitted_any = true;
+            }
+
+            if emitted_any {
+                self.write(", ");
+            }
 
             if is_dynamic {
                 // Dynamic computed key: assign key expr to temp, then access
@@ -560,6 +687,27 @@ impl<'a> Printer<'a> {
                 self.write(&key_temp);
                 self.write("]");
 
+                if self.is_binding_pattern(elem.name) {
+                    let pattern_temp = if elem.initializer.is_some() {
+                        let defaulted_name = self.get_temp_var_name();
+                        self.write(", ");
+                        self.write(&defaulted_name);
+                        self.write(" = ");
+                        self.write(&value_name);
+                        self.write(" === void 0 ? ");
+                        self.emit_expression(elem.initializer);
+                        self.write(" : ");
+                        self.write(&value_name);
+                        defaulted_name
+                    } else {
+                        value_name
+                    };
+                    self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
+                    excluded_props.push(ExcludedProp::Dynamic(key_temp));
+                    emitted_any = true;
+                    continue;
+                }
+
                 if elem.initializer.is_some() {
                     self.write(", ");
                     self.write(&var_name);
@@ -572,6 +720,7 @@ impl<'a> Printer<'a> {
                 }
 
                 excluded_props.push(ExcludedProp::Dynamic(key_temp));
+                emitted_any = true;
             } else {
                 // Static property: emit as manual property access
                 let var_name = self.get_identifier_text(elem.name);
@@ -581,7 +730,8 @@ impl<'a> Printer<'a> {
                     static_name.clone()
                 };
 
-                let value_name = if elem.initializer.is_some() {
+                let value_name = if elem.initializer.is_some() || self.is_binding_pattern(elem.name)
+                {
                     self.get_temp_var_name()
                 } else {
                     var_name.clone()
@@ -591,6 +741,33 @@ impl<'a> Printer<'a> {
                 self.write(&source_name);
                 self.write(".");
                 self.write(&prop_name);
+
+                if self.is_binding_pattern(elem.name) {
+                    let pattern_temp = if elem.initializer.is_some() {
+                        let defaulted_name = self.get_temp_var_name();
+                        self.write(", ");
+                        self.write(&defaulted_name);
+                        self.write(" = ");
+                        self.write(&value_name);
+                        self.write(" === void 0 ? ");
+                        self.emit_expression(elem.initializer);
+                        self.write(" : ");
+                        self.write(&value_name);
+                        defaulted_name
+                    } else {
+                        value_name
+                    };
+                    self.emit_es5_destructuring_pattern_idx(elem.name, &pattern_temp);
+                    let is_str_lit =
+                        is_static_computed || self.is_string_literal_property_name(elem_idx);
+                    if is_str_lit {
+                        excluded_props.push(ExcludedProp::StringLiteral(prop_name));
+                    } else {
+                        excluded_props.push(ExcludedProp::Identifier(prop_name));
+                    }
+                    emitted_any = true;
+                    continue;
+                }
 
                 if elem.initializer.is_some() {
                     self.write(", ");
@@ -610,7 +787,18 @@ impl<'a> Printer<'a> {
                 } else {
                     excluded_props.push(ExcludedProp::Identifier(prop_name));
                 }
+                emitted_any = true;
             }
+        }
+
+        if !simple_elements.is_empty() {
+            if emitted_any {
+                self.write(", ");
+            }
+            self.emit_object_pattern_without_rest(&simple_elements);
+            self.write(" = ");
+            self.write(&source_name);
+            emitted_any = true;
         }
 
         // Emit rest
@@ -623,7 +811,7 @@ impl<'a> Printer<'a> {
             };
             let rest_name = self.get_identifier_text(rest_elem.name);
             if !rest_name.is_empty() {
-                if !non_rest_elements.is_empty() {
+                if emitted_any {
                     self.write(", ");
                 }
                 self.write(&rest_name);
@@ -638,9 +826,22 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn initializer_is_object_rest_assignment(&self, initializer_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(initializer_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        self.arena.get_binary_expr(node).is_some_and(|binary| {
+            binary.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
+                && self.assignment_pattern_has_object_rest(binary.left)
+        })
+    }
+
     /// Emit an object binding pattern but skip the rest element.
     /// Used when lowering: `{ a, b, ...rest } = x` → `{ a, b } = x`
-    fn emit_object_pattern_without_rest(&mut self, elements: &[NodeIndex]) {
+    pub(in crate::emitter) fn emit_object_pattern_without_rest(&mut self, elements: &[NodeIndex]) {
         if elements.is_empty() {
             self.write("{}");
             return;
@@ -710,6 +911,19 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
+                if let Some(rest_name) = self.object_rest_only_binding_name(elem.name) {
+                    self.write(&rest_name);
+                    self.write(" = ");
+                    self.write_helper("__rest");
+                    self.write("(");
+                    self.write(source_name);
+                    self.write(".");
+                    self.write(&prop_name);
+                    self.write(", [])");
+                    first_extra = false;
+                    continue;
+                }
+
                 // Create a temp for the nested source
                 let nested_temp = self.get_temp_var_name();
                 self.write(&nested_temp.clone());
@@ -736,6 +950,25 @@ impl<'a> Printer<'a> {
             self.write(" = ");
             self.write(source_name);
         }
+    }
+
+    fn object_rest_only_binding_name(&self, pattern_idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(pattern_idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return None;
+        }
+        let pattern = self.arena.get_binding_pattern(node)?;
+        if pattern.elements.nodes.len() != 1 {
+            return None;
+        }
+        let elem_idx = pattern.elements.nodes.first().copied()?;
+        let elem_node = self.arena.get(elem_idx)?;
+        let elem = self.arena.get_binding_element(elem_node)?;
+        if !elem.dot_dot_dot_token {
+            return None;
+        }
+        let name = self.get_identifier_text(elem.name);
+        (!name.is_empty()).then_some(name)
     }
 
     /// Emit an object rest lowering for a pattern that's already assigned to a temp.
@@ -765,6 +998,26 @@ impl<'a> Printer<'a> {
         pattern_idx: NodeIndex,
         source: &str,
     ) {
+        self.emit_array_object_rest_var_decl_from_source(pattern_idx, |printer| {
+            printer.write(source);
+        });
+    }
+
+    fn emit_array_object_rest_var_decl_from_initializer(
+        &mut self,
+        pattern_idx: NodeIndex,
+        initializer_idx: NodeIndex,
+    ) {
+        self.emit_array_object_rest_var_decl_from_source(pattern_idx, |printer| {
+            printer.emit_expression(initializer_idx);
+        });
+    }
+
+    fn emit_array_object_rest_var_decl_from_source(
+        &mut self,
+        pattern_idx: NodeIndex,
+        emit_source: impl FnOnce(&mut Self),
+    ) {
         let Some(node) = self.arena.get(pattern_idx) else {
             return;
         };
@@ -773,7 +1026,8 @@ impl<'a> Printer<'a> {
         };
 
         let elements = pattern.elements.nodes.clone();
-        let mut nested_patterns = Vec::new();
+        let mut deferred = Vec::new();
+        let mut has_deferred_prior = false;
 
         self.write("[");
         for (i, &elem_idx) in elements.iter().enumerate() {
@@ -789,21 +1043,124 @@ impl<'a> Printer<'a> {
                 continue;
             };
 
-            if self.pattern_has_object_rest(elem.name) {
+            let contains_object_rest = self.pattern_has_object_rest(elem.name);
+            let default_needs_deferred = elem.initializer.is_some()
+                && !self.array_object_rest_is_simple_inlineable_expression(elem.initializer);
+            let needs_deferred_after_prior = has_deferred_prior
+                && (default_needs_deferred || self.is_binding_pattern(elem.name));
+
+            if !elem.dot_dot_dot_token && (contains_object_rest || needs_deferred_after_prior) {
                 let temp = self.get_temp_var_name();
                 self.write(&temp);
-                nested_patterns.push((elem.name, temp));
+                if contains_object_rest {
+                    has_deferred_prior = true;
+                    deferred.push(ArrayObjectRestDeferred::ObjectRest {
+                        pattern: elem.name,
+                        temp,
+                        initializer: elem.initializer,
+                    });
+                } else if self.is_binding_pattern(elem.name) {
+                    deferred.push(ArrayObjectRestDeferred::BindingPattern {
+                        pattern: elem.name,
+                        temp,
+                        initializer: elem.initializer,
+                    });
+                } else {
+                    deferred.push(ArrayObjectRestDeferred::SimpleDefault {
+                        name: elem.name,
+                        temp,
+                        initializer: elem.initializer,
+                    });
+                }
             } else {
                 self.emit(elem_idx);
             }
         }
         self.write("] = ");
-        self.write(source);
+        emit_source(self);
 
-        for (nested_idx, temp) in nested_patterns {
-            self.write(", ");
-            self.emit_object_rest_var_decl_from_pattern(nested_idx, &temp);
+        for item in deferred {
+            self.emit_array_object_rest_deferred(item);
         }
+    }
+
+    fn emit_array_object_rest_deferred(&mut self, item: ArrayObjectRestDeferred) {
+        match item {
+            ArrayObjectRestDeferred::ObjectRest {
+                pattern,
+                temp,
+                initializer,
+            } => {
+                let source = self.emit_array_object_rest_default_temp(temp, initializer);
+                self.write(", ");
+                self.emit_object_rest_var_decl_from_pattern(pattern, &source);
+            }
+            ArrayObjectRestDeferred::BindingPattern {
+                pattern,
+                temp,
+                initializer,
+            } => {
+                let source = self.emit_array_object_rest_default_temp(temp, initializer);
+                self.write(", ");
+                self.emit_decl_name(pattern);
+                self.write(" = ");
+                self.write(&source);
+            }
+            ArrayObjectRestDeferred::SimpleDefault {
+                name,
+                temp,
+                initializer,
+            } => {
+                self.write(", ");
+                self.write_identifier_text(name);
+                self.write(" = ");
+                self.write(&temp);
+                self.write(" === void 0 ? ");
+                self.emit_expression(initializer);
+                self.write(" : ");
+                self.write(&temp);
+            }
+        }
+    }
+
+    fn emit_array_object_rest_default_temp(
+        &mut self,
+        temp: String,
+        initializer: NodeIndex,
+    ) -> String {
+        if initializer.is_none() {
+            return temp;
+        }
+
+        let defaulted = self.get_temp_var_name();
+        self.write(", ");
+        self.write(&defaulted);
+        self.write(" = ");
+        self.write(&temp);
+        self.write(" === void 0 ? ");
+        self.emit_expression(initializer);
+        self.write(" : ");
+        self.write(&temp);
+        defaulted
+    }
+
+    fn array_object_rest_is_simple_inlineable_expression(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        let Some(kind) = tsz_scanner::SyntaxKind::try_from_u16(expr_node.kind) else {
+            return false;
+        };
+
+        matches!(
+            kind,
+            tsz_scanner::SyntaxKind::StringLiteral
+                | tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral
+                | tsz_scanner::SyntaxKind::NumericLiteral
+                | tsz_scanner::SyntaxKind::BigIntLiteral
+        ) || (kind >= tsz_scanner::SyntaxKind::FIRST_KEYWORD
+            && kind <= tsz_scanner::SyntaxKind::LAST_KEYWORD)
     }
 
     /// Get the property name text from a binding element (for __rest exclude list).

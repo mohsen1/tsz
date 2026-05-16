@@ -284,6 +284,20 @@ them as TSZ repo skills.
 - Don't bundle a sprawling refactor into a narrow bug-fix PR — that defeats
   reviewability and breaks the stacked-PR model.
 
+## 20.21) Upstream TypeScript Bugs
+
+- If an investigation proves the observed behavior is definitely a `tsc` bug,
+  do not patch tsz away from `tsc` parity. File the bug in the tsz repository
+  as a GitHub issue documenting the minimized repro, actual `tsc` behavior,
+  expected behavior, and the evidence that this is upstream rather than a tsz
+  divergence.
+- Apply the `TypeScript bug` label to that issue and include your AgentName in
+  the body. If there is an existing upstream TypeScript issue, link it from the
+  tsz issue. Do not open issues or comments in TypeScript or any other upstream
+  repository unless the user explicitly asks you to do that.
+- If there is already a tsz issue for the same upstream bug, comment on that
+  tsz issue instead of opening a duplicate.
+
 ## 20.25) Conformance Maintenance
 
 Conformance is at 100%. The daily mode is **regression prevention**, not

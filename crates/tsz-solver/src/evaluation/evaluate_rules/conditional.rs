@@ -24,6 +24,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// to work with up to 1000 recursive calls instead of being limited to `MAX_EVALUATE_DEPTH`.
     const MAX_TAIL_RECURSION_DEPTH: usize = 1000;
 
+    fn conditional_subtype_checker(&self) -> SubtypeChecker<'a, R> {
+        let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+        checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access();
+        if let Some(query_db) = self.query_db() {
+            checker = checker.with_query_db(query_db);
+        }
+        checker
+    }
+
     /// Evaluate a conditional type: T extends U ? X : Y
     ///
     /// Algorithm:
@@ -90,6 +99,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // which may fail structural infer matching for complex interfaces like Promise.
             if let Some(result) = self.try_application_infer_match(cond) {
                 return result;
+            }
+
+            // If the check side is already a deferred conditional over generic
+            // inputs and the extends side has no infer pattern to bind, the
+            // outer conditional is also indeterminate. Defer before evaluating
+            // the check side; otherwise recursive helper aliases can expand
+            // nested generic conditionals before any concrete instantiation is
+            // available.
+            if !self.type_contains_infer(cond.extends_type)
+                && matches!(
+                    self.interner().lookup(cond.check_type),
+                    Some(TypeData::Conditional(_))
+                )
+                && crate::visitor::contains_type_parameters(self.interner(), cond.check_type)
+            {
+                return self.interner().conditional(*cond);
             }
 
             let mut check_type = self.evaluate(cond.check_type);
@@ -177,8 +202,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if extends_has_infer {
                     let mut bindings = FxHashMap::default();
                     let mut visited = FxHashSet::default();
-                    let mut checker =
-                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                    let mut checker = self.conditional_subtype_checker();
                     checker.allow_bivariant_rest = true;
                     self.match_infer_pattern(
                         check_type,
@@ -239,8 +263,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let mut subst = TypeSubstitution::single(info.name, check_type);
                 let mut inferred = check_type;
                 if let Some(constraint) = info.constraint {
-                    let mut checker =
-                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                    let mut checker = self.conditional_subtype_checker();
                     checker.allow_bivariant_rest = true;
                     let Some(filtered) =
                         self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
@@ -404,8 +427,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     && extends_has_infer
                     && let Some(constraint) = param.constraint
                 {
-                    let mut checker =
-                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                    let mut checker = self.conditional_subtype_checker();
                     checker.allow_bivariant_rest = true;
                     let mut bindings = FxHashMap::default();
                     let mut visited = FxHashSet::default();
@@ -590,7 +612,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             if extends_has_infer {
                 // PERF: Only allocate SubtypeChecker when infer matching is needed.
-                let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                let mut checker = self.conditional_subtype_checker();
                 checker.allow_bivariant_rest = true;
                 if self.match_infer_pattern(
                     check_type,
@@ -684,8 +706,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         checked_concrete_constraint = true;
                         let mut bindings2 = FxHashMap::default();
                         let mut visited2 = FxHashSet::default();
-                        let mut checker2 =
-                            SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                        let mut checker2 = self.conditional_subtype_checker();
                         checker2.allow_bivariant_rest = true;
                         if self.match_infer_pattern(
                             constraint,
@@ -833,8 +854,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
                     false
                 } else {
-                    let mut strict_checker =
-                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                    let mut strict_checker = self.conditional_subtype_checker();
                     let r = strict_checker.is_subtype_of(check_type, extends_type);
                     CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
                     r
@@ -861,6 +881,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // where the wrapper type provides enough info for a determinate result.
                 || matches!(self.interner().lookup(check_type), Some(TypeData::Lazy(_)))
                 || matches!(self.interner().lookup(extends_type), Some(TypeData::Lazy(_)))
+                // An Application in the extends position that survived evaluation means
+                // the current resolver lacks the generic body (e.g., a lib type like
+                // Pick, Readonly, or Required not yet known to the TypeEnvironment
+                // resolver). Taking the false branch would be incorrect when the
+                // Application could expand to a type that `check_type` does satisfy.
+                // Defer so a later resolver pass (CheckerContext) can expand it.
+                || matches!(self.interner().lookup(extends_type), Some(TypeData::Application(_)))
             {
                 // Subtype check failed, but either side contains unresolved type
                 // parameters or lazy references. The result is indeterminate: once
@@ -1411,7 +1438,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut subst = TypeSubstitution::single(info.name, inferred);
 
         if let Some(constraint) = info.constraint {
-            let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+            let mut checker = self.conditional_subtype_checker();
             checker.allow_bivariant_rest = true;
             let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
             if is_union && !cond.is_distributive {
@@ -1467,7 +1494,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let check_elem = self.extract_array_element(check_unwrapped, allow_readonly_array)?;
 
-        let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+        let mut checker = self.conditional_subtype_checker();
         checker.allow_bivariant_rest = true;
         let branch = if checker.is_subtype_of(check_elem, target_elem) {
             cond.true_type
@@ -1815,7 +1842,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut subst = TypeSubstitution::single(info.name, inferred);
 
         if let Some(constraint) = info.constraint {
-            let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+            let mut checker = self.conditional_subtype_checker();
             checker.allow_bivariant_rest = true;
             let Some(filtered) =
                 self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
@@ -1940,7 +1967,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             subst.insert(info.name, inferred);
 
             if let Some(constraint) = info.constraint {
-                let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                let mut checker = self.conditional_subtype_checker();
                 checker.allow_bivariant_rest = true;
                 let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
                 if optional {
@@ -1996,7 +2023,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut subst = TypeSubstitution::single(info.name, inferred);
 
         if let Some(constraint) = info.constraint {
-            let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+            let mut checker = self.conditional_subtype_checker();
             checker.allow_bivariant_rest = true;
             let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
             if prop_optional {
@@ -2248,7 +2275,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut subst = TypeSubstitution::single(info.name, inferred);
 
         if let Some(constraint) = info.constraint {
-            let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+            let mut checker = self.conditional_subtype_checker();
             checker.allow_bivariant_rest = true;
             let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
             if is_union && !cond.is_distributive {
@@ -2358,7 +2385,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Try infer pattern matching with unevaluated types.
         // match_infer_pattern handles Application vs Application matching
         // by comparing base types and recursing on type arguments.
-        let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+        let mut checker = self.conditional_subtype_checker();
         checker.allow_bivariant_rest = true;
         let mut bindings = FxHashMap::default();
         let mut visited = FxHashSet::default();
@@ -2396,7 +2423,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 && reduced != candidate
                 && reduced != check_type
             {
-                let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                let mut checker = self.conditional_subtype_checker();
                 checker.allow_bivariant_rest = true;
                 let mut bindings = FxHashMap::default();
                 let mut visited = FxHashSet::default();
@@ -2483,8 +2510,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let cond_extends = cond.extends_type;
                     let cond_true = cond.true_type;
                     let check_eval = self.evaluate(cond.check_type);
-                    let mut checker =
-                        SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                    let mut checker = self.conditional_subtype_checker();
                     checker.allow_bivariant_rest = true;
                     let mut bindings = FxHashMap::default();
                     let mut visited = FxHashSet::default();

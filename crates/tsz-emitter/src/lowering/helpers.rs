@@ -6,6 +6,7 @@
 use super::*;
 use crate::emitter::JsxEmit;
 use crate::transforms::emit_utils;
+use tsz_parser::parser::node::NodeAccess;
 
 impl<'a> LoweringPass<'a> {
     // =========================================================================
@@ -185,10 +186,10 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Mark helpers needed for async generator functions (async function*).
-    pub(super) const fn mark_async_generator_helpers(&mut self) {
+    pub(super) fn mark_async_generator_helpers(&mut self) {
         let helpers = self.transforms.helpers_mut();
-        helpers.await_helper = true;
-        helpers.async_generator = true;
+        helpers.mark_await_helper();
+        helpers.mark_async_generator();
         if self.ctx.target_es5 {
             helpers.generator = true;
         }
@@ -233,20 +234,26 @@ impl<'a> LoweringPass<'a> {
             let helpers = self.transforms.helpers_mut();
             // Check ordering before setting flags: if Set was never registered
             // and this class has Set-first ordering, mark it
-            if set_first
-                && !helpers.class_private_field_set
-                && !helpers.class_private_field_set_before_get
-            {
+            if set_first && !helpers.class_private_field_get && !helpers.class_private_field_set {
                 helpers.class_private_field_set_before_get = true;
             }
-            if needs_get {
-                helpers.class_private_field_get = true;
-            }
-            if needs_set {
-                helpers.class_private_field_set = true;
+            if set_first {
+                if needs_set {
+                    helpers.mark_class_private_field_set();
+                }
+                if needs_get {
+                    helpers.mark_class_private_field_get();
+                }
+            } else {
+                if needs_get {
+                    helpers.mark_class_private_field_get();
+                }
+                if needs_set {
+                    helpers.mark_class_private_field_set();
+                }
             }
             if needs_in {
-                helpers.class_private_field_in = true;
+                helpers.mark_class_private_field_in();
             }
         }
     }
@@ -1650,6 +1657,67 @@ impl<'a> LoweringPass<'a> {
                     }
                     _ => {}
                 }
+            }
+        }
+        if matches!(
+            self.ctx.options.module,
+            ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System
+        ) && self.source_has_dynamic_import_call(statements)
+        {
+            return true;
+        }
+        if self.contains_import_meta(statements) {
+            return true;
+        }
+        false
+    }
+
+    fn source_has_dynamic_import_call(&self, statements: &NodeList) -> bool {
+        let mut stack: Vec<NodeIndex> = statements.nodes.clone();
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() {
+                continue;
+            }
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(call) = self.arena.get_call_expr(node)
+                && let Some(expr_node) = self.arena.get(call.expression)
+                && expr_node.kind == SyntaxKind::ImportKeyword as u16
+            {
+                return true;
+            }
+            for child in self.arena.get_children(idx) {
+                stack.push(child);
+            }
+        }
+        false
+    }
+
+    fn contains_import_meta(&self, statements: &NodeList) -> bool {
+        let mut stack: Vec<NodeIndex> = statements.nodes.clone();
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() {
+                continue;
+            }
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(node)
+                && let Some(expr_node) = self.arena.get(access.expression)
+                && expr_node.kind == SyntaxKind::ImportKeyword as u16
+                && self
+                    .arena
+                    .get(access.name_or_argument)
+                    .and_then(|name_node| self.arena.get_identifier(name_node))
+                    .is_some_and(|ident| ident.escaped_text.as_str() == "meta")
+            {
+                return true;
+            }
+            for child in self.arena.get_children(idx) {
+                stack.push(child);
             }
         }
         false

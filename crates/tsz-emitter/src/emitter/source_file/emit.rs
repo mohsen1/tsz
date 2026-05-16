@@ -82,14 +82,17 @@ impl<'a> Printer<'a> {
             self.wrapped_export_module_substitutions.clear();
         }
         self.generated_temp_names.clear();
+        self.reserved_nested_temp_names.clear();
         self.async_generator_inner_name_counts.clear();
         self.reserved_disposable_env_names.clear();
         self.node_esm_create_require_names = None;
         self.commonjs_tslib_import_binding = "tslib_1".to_string();
         self.ctx.arguments_capture_counter = 0;
+        self.next_dynamic_import_promise_id = 1;
         self.first_for_of_emitted = false;
         self.namespace_all_exported_names.clear();
         self.collect_all_namespace_exports(&source.statements);
+        self.prepare_file_level_class_temp_reservations(&source.statements);
 
         // Pre-pass: collect const enum values for inlining at usage sites.
         // tsc replaces property/element access to const enum members with their
@@ -501,6 +504,9 @@ impl<'a> Printer<'a> {
             && !is_file_module
             && !self.ctx.options.target.supports_es2025()
             && self.block_has_using_declarations(&source.statements);
+        let will_emit_runtime_helpers = !self.ctx.options.no_emit_helpers
+            && self.transforms.helpers_populated()
+            && self.transforms.helpers().any_needed();
 
         let should_emit_use_strict = !source_has_use_strict
             && !self.ctx.options.suppress_use_strict
@@ -516,8 +522,60 @@ impl<'a> Printer<'a> {
         // module file, we must emit "use strict" at the correct position (before
         // __esModule marker / exports preamble) and skip the source's own
         // directive during statement iteration to avoid duplication.
-        let skip_source_use_strict =
-            source_has_use_strict && (needs_use_strict_cjs || needs_use_strict_inside_wrapper);
+        let source_use_strict_must_precede_helpers = source_has_use_strict
+            && !(is_es_module_output && is_file_module)
+            && !jsx_will_add_esm_imports
+            && will_emit_runtime_helpers
+            && !self.ctx.options.suppress_use_strict;
+        let skip_source_use_strict = source_has_use_strict
+            && (needs_use_strict_cjs
+                || needs_use_strict_inside_wrapper
+                || source_use_strict_must_precede_helpers);
+        let source_use_strict_text = if skip_source_use_strict {
+            source.statements.nodes.iter().find_map(|&idx| {
+                let stmt_node = self.arena.get(idx)?;
+                if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                    return None;
+                }
+                let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+                let expr_node = self.arena.get(expr_stmt.expression)?;
+                if !expr_node.is_string_literal() {
+                    return None;
+                }
+                let is_use_strict = self
+                    .arena
+                    .get_literal(expr_node)
+                    .is_some_and(|lit| lit.text == "use strict");
+                if !is_use_strict {
+                    return None;
+                }
+                let text = self.source_text?;
+                crate::safe_slice::slice(text, expr_node.pos as usize, expr_node.end as usize)
+                    .ok()
+                    .map(str::to_string)
+            })
+        } else {
+            None
+        };
+
+        // Header comments before a source-authored `"use strict"` belong to that
+        // prologue. If we have to reposition the directive before helpers, move
+        // those comments with it instead of letting the generic helper-deferral
+        // path attach them to the first runtime statement.
+        let first_stmt_pos = source
+            .statements
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.end, |n| self.skip_trivia_forward(n.pos, n.end));
+
+        if skip_source_use_strict && !self.ctx.options.remove_comments {
+            let (emitted, _, had_trailing_newline) =
+                self.emit_comments_in_range(0, first_stmt_pos, false, false);
+            if emitted && !had_trailing_newline {
+                self.pending_block_comment_space = true;
+            }
+        }
 
         // Emit "use strict" when either:
         // - we need to add it (source doesn't have it), or
@@ -526,19 +584,17 @@ impl<'a> Printer<'a> {
         if should_emit_use_strict
             || (skip_source_use_strict && !self.ctx.options.suppress_use_strict)
         {
-            self.write("\"use strict\";");
+            if let Some(text) = source_use_strict_text.as_deref() {
+                self.write(text);
+                self.write(";");
+            } else {
+                self.write("\"use strict\";");
+            }
             self.write_line();
         }
         // Emit header comments AFTER "use strict" but BEFORE helpers.
         // Use skip_trivia_forward to find the actual token start since
         // node.pos may include leading trivia (where comments live).
-        let first_stmt_pos = source
-            .statements
-            .nodes
-            .first()
-            .and_then(|&idx| self.arena.get(idx))
-            .map_or(node.end, |n| self.skip_trivia_forward(n.pos, n.end));
-
         // When removeComments is true, tsc still emits "pinned" comments
         // (/*! ... */) that are detached from the first statement (i.e.,
         // separated by a blank line). These are typically copyright notices.
@@ -601,9 +657,7 @@ impl<'a> Printer<'a> {
         let is_commonjs = self.ctx.is_commonjs();
         // Check upfront if runtime helpers will be injected — this affects
         // whether attached header comments should be deferred to after helpers.
-        let will_emit_helpers = !self.ctx.options.no_emit_helpers
-            && self.transforms.helpers_populated()
-            && self.transforms.helpers().any_needed();
+        let will_emit_helpers = will_emit_runtime_helpers;
         let needs_node_esm_create_require_preamble =
             self.source_needs_node_esm_create_require(&source.statements);
 
@@ -839,7 +893,7 @@ impl<'a> Printer<'a> {
         if suppress_jsx_import_legacy
             && self.ctx.is_effectively_commonjs()
             && matches!(
-                self.ctx.options.jsx,
+                self.effective_jsx_emit(),
                 JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
             )
         {
@@ -848,12 +902,13 @@ impl<'a> Printer<'a> {
                 self.jsx_legacy_cjs_runtime_var = Some(self.make_unique_name());
             }
         }
-        let jsx_legacy_dev_file_name_text =
-            if suppress_jsx_import_legacy && matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
-                self.jsx_dev_file_name_text()
-            } else {
-                None
-            };
+        let jsx_legacy_dev_file_name_text = if suppress_jsx_import_legacy
+            && matches!(self.effective_jsx_emit(), JsxEmit::ReactJsxDev)
+        {
+            self.jsx_dev_file_name_text()
+        } else {
+            None
+        };
         let jsx_import_text = if suppress_jsx_import_legacy {
             None
         } else {
@@ -1579,7 +1634,12 @@ impl<'a> Printer<'a> {
                     false
                 };
                 if is_strict {
-                    self.skip_comments_for_erased_node(stmt_node);
+                    let strict_end = expr_node.end;
+                    while self.comment_emit_idx < self.all_comments.len()
+                        && self.all_comments[self.comment_emit_idx].end <= strict_end
+                    {
+                        self.comment_emit_idx += 1;
+                    }
                     continue;
                 }
             }
@@ -1860,11 +1920,19 @@ impl<'a> Printer<'a> {
                 } else {
                     None
                 };
+                let prev_deferred_local_export_bindings_all = if use_deferred_nested_cjs_exports {
+                    self.deferred_local_export_bindings_all
+                        .replace(cjs_deferred_export_bindings_all.clone())
+                } else {
+                    None
+                };
 
                 self.emit(stmt_idx);
 
                 if use_deferred_nested_cjs_exports {
                     self.deferred_local_export_bindings = prev_deferred_local_export_bindings;
+                    self.deferred_local_export_bindings_all =
+                        prev_deferred_local_export_bindings_all;
                 }
             }
             let emitted_output = self.writer.len() > before_len;

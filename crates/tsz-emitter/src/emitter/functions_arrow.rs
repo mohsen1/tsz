@@ -8,6 +8,18 @@ use tsz_parser::syntax::transform_utils::{
 };
 use tsz_scanner::SyntaxKind;
 
+enum NativeArrowParamPrologueEntry {
+    Default {
+        name: String,
+        initializer: NodeIndex,
+    },
+    Binding {
+        pattern: NodeIndex,
+        temp_name: String,
+        initializer: NodeIndex,
+    },
+}
+
 impl<'a> Printer<'a> {
     // =========================================================================
     // Functions
@@ -21,9 +33,9 @@ impl<'a> Printer<'a> {
         // Parser recovery parity: malformed return type like `(a): => {}` should
         // preserve recovered shape instead of applying arrow lowering.
         if self.is_recovery_arrow_missing_return_type(node, func) {
-            self.write("(");
+            self.open_paren();
             self.emit_function_parameters_js(&func.parameters.nodes);
-            self.write(")");
+            self.close_paren();
             if let Some(body_node) = self.arena.get(func.body)
                 && body_node.kind == syntax_kind_ext::BLOCK
             {
@@ -40,6 +52,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.is_static_block_await_arrow_recovery(func) {
+            self.emit_static_block_await_arrow_recovery(func);
+            return;
+        }
+
         if self.ctx.target_es5 {
             let captures_this = contains_this_reference(self.arena, _idx);
             let captures_arguments = contains_arguments_reference(self.arena, _idx);
@@ -48,6 +65,31 @@ impl<'a> Printer<'a> {
         }
 
         self.emit_arrow_function_native(func);
+    }
+
+    fn emit_static_block_await_arrow_recovery(
+        &mut self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) {
+        let source_had_parens = self.source_has_arrow_function_parens(&func.parameters.nodes);
+        let Some(&param_idx) = func.parameters.nodes.first() else {
+            return;
+        };
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return;
+        };
+
+        if source_had_parens {
+            self.write("(");
+        }
+        self.emit(param.name);
+        self.write(" ");
+        if source_had_parens {
+            self.write(")");
+        }
     }
 
     fn is_recovery_arrow_missing_return_type(
@@ -139,7 +181,7 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
-            self.write("(");
+            self.open_paren();
         }
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         self.emit_function_parameters_js(&func.parameters.nodes);
@@ -155,7 +197,7 @@ impl<'a> Printer<'a> {
                     .map_or(0, |n| n.pos);
                 self.map_closing_paren_backward(search_start, body_node.pos);
             }
-            self.write(")");
+            self.close_paren();
         }
 
         // Map `=>` arrow to source position (split space from token to get correct mapping column)
@@ -193,13 +235,7 @@ impl<'a> Printer<'a> {
             self.write("{");
             self.write_line();
             self.increase_indent();
-            // Emit the rest preamble
-            for (temp_name, pattern_idx) in &rest_params {
-                self.write("var ");
-                self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
-                self.write(";");
-                self.write_line();
-            }
+            self.emit_object_rest_param_prologue_entries(&rest_params);
             // Emit the concise body as a return statement
             self.write("return ");
             self.function_scope_depth += 1;
@@ -216,7 +252,7 @@ impl<'a> Printer<'a> {
         } else if !body_is_block && self.concise_body_needs_parens(func.body) {
             // Emit comments between => and the body expression (e.g. triple-slash comments)
             if let Some(body_node) = self.arena.get(func.body) {
-                self.emit_comments_before_pos(body_node.pos);
+                self.emit_arrow_concise_body_leading_comments(body_node.pos);
             }
             self.write("(");
             self.emit(func.body);
@@ -225,7 +261,7 @@ impl<'a> Printer<'a> {
             // Emit comments between => and the body expression (e.g. triple-slash comments)
             // tsc preserves these and places the body on a new line when comments exist.
             if !body_is_block && let Some(body_node) = self.arena.get(func.body) {
-                self.emit_comments_before_pos(body_node.pos);
+                self.emit_arrow_concise_body_leading_comments(body_node.pos);
             }
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
@@ -251,6 +287,41 @@ impl<'a> Printer<'a> {
         self.pop_commonjs_exported_var_parameter_shadow_names();
         self.namespace_exported_names = prev_namespace_exported_names;
         self.pop_temp_scope();
+    }
+
+    pub(in crate::emitter) fn emit_arrow_concise_body_leading_comments(&mut self, body_pos: u32) {
+        if self.pending_comment_before_pos_starts_after_newline(body_pos) {
+            self.write_line();
+        }
+        self.emit_comments_before_pos(body_pos);
+    }
+
+    pub(in crate::emitter) fn pending_comment_before_pos_starts_after_newline(
+        &self,
+        pos: u32,
+    ) -> bool {
+        if self.ctx.options.remove_comments || self.comment_emit_idx >= self.all_comments.len() {
+            return false;
+        }
+        let actual_start = self.skip_trivia_forward(pos, pos + 1024);
+        let comment = &self.all_comments[self.comment_emit_idx];
+        if comment.end > actual_start {
+            return false;
+        }
+        let Some(source) = self.source_text else {
+            return false;
+        };
+        let bytes = source.as_bytes();
+        let mut idx = comment.pos as usize;
+        while idx > 0 {
+            idx -= 1;
+            match bytes[idx] {
+                b' ' | b'\t' => {}
+                b'\n' | b'\r' => return true,
+                _ => return false,
+            }
+        }
+        false
     }
 
     fn emit_arrow_concise_body_with_stripped_type_erasure_parens(
@@ -388,6 +459,249 @@ impl<'a> Printer<'a> {
         self.pop_temp_scope();
     }
 
+    pub(in crate::emitter) fn emit_arrow_function_native_with_parameter_prologue(
+        &mut self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) {
+        let source_had_parens = self.source_has_arrow_function_parens(&func.parameters.nodes);
+        let is_simple = self.is_simple_single_parameter(&func.parameters.nodes);
+        let needs_parens = source_had_parens || !is_simple;
+
+        self.push_temp_scope();
+        let prev_namespace_exported_names = self.namespace_exported_names.clone();
+
+        if needs_parens {
+            self.write("(");
+        }
+        let prologue_entries =
+            self.emit_native_arrow_parameter_names_with_prologue(&func.parameters.nodes);
+        if needs_parens {
+            self.write(")");
+        }
+
+        self.write_space();
+        self.write("=> ");
+
+        self.remove_namespace_exported_parameter_names(&func.parameters.nodes);
+        self.push_commonjs_exported_var_parameter_shadow_names(&func.parameters.nodes);
+
+        let body_node = self.arena.get(func.body);
+        let body_is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
+        let can_emit_inline = body_is_block
+            && body_node.is_some_and(|n| self.is_single_line(n))
+            && prologue_entries
+                .iter()
+                .all(|entry| matches!(entry, NativeArrowParamPrologueEntry::Binding { .. }));
+
+        self.function_scope_depth += 1;
+        self.arrow_function_scope_depth += 1;
+        if can_emit_inline {
+            self.write("{ ");
+            self.emit_native_arrow_parameter_prologue_entries(&prologue_entries, true);
+            self.emit_native_arrow_inline_block_body(func.body);
+            self.write("}");
+        } else {
+            self.write("{");
+            self.write_line();
+            self.increase_indent();
+            self.emit_native_arrow_parameter_prologue_entries(&prologue_entries, false);
+            if body_is_block {
+                self.emit_native_arrow_block_body_statements(func.body);
+            } else {
+                self.write("return ");
+                self.emit(func.body);
+                self.write(";");
+                self.write_line();
+            }
+            self.decrease_indent();
+            self.write("}");
+        }
+        self.arrow_function_scope_depth -= 1;
+        self.function_scope_depth -= 1;
+
+        self.pop_commonjs_exported_var_parameter_shadow_names();
+        self.namespace_exported_names = prev_namespace_exported_names;
+        self.pop_temp_scope();
+    }
+
+    fn emit_native_arrow_parameter_names_with_prologue(
+        &mut self,
+        params: &[NodeIndex],
+    ) -> Vec<NativeArrowParamPrologueEntry> {
+        let mut entries = Vec::new();
+        let mut first = true;
+        for &param_idx in params {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if param.name.is_none() || param.dot_dot_dot_token {
+                continue;
+            }
+            if !first {
+                self.write(", ");
+            }
+            first = false;
+            self.emit_comments_before_pos(param_node.pos);
+
+            if self.is_binding_pattern(param.name) {
+                let temp_name = self.get_temp_var_name();
+                self.write(&temp_name);
+                entries.push(NativeArrowParamPrologueEntry::Binding {
+                    pattern: param.name,
+                    temp_name,
+                    initializer: param.initializer,
+                });
+            } else {
+                self.emit_parameter_name_js(param.name);
+                if param.initializer.is_some() {
+                    let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena, param.name,
+                    );
+                    if !name.is_empty() {
+                        entries.push(NativeArrowParamPrologueEntry::Default {
+                            name,
+                            initializer: param.initializer,
+                        });
+                    }
+                }
+            }
+        }
+        entries
+    }
+
+    fn emit_native_arrow_parameter_prologue_entries(
+        &mut self,
+        entries: &[NativeArrowParamPrologueEntry],
+        inline: bool,
+    ) {
+        for entry in entries {
+            match entry {
+                NativeArrowParamPrologueEntry::Default { name, initializer } => {
+                    self.emit_param_default_assignment(name, *initializer);
+                }
+                NativeArrowParamPrologueEntry::Binding {
+                    pattern,
+                    temp_name,
+                    initializer,
+                } => {
+                    self.emit_native_arrow_binding_param_prologue(
+                        *pattern,
+                        temp_name,
+                        *initializer,
+                        inline,
+                    );
+                }
+            }
+        }
+    }
+
+    fn emit_native_arrow_binding_param_prologue(
+        &mut self,
+        pattern: NodeIndex,
+        temp_name: &str,
+        initializer: NodeIndex,
+        inline: bool,
+    ) {
+        let hoisted_start = self.hoisted_assignment_temps.len();
+        let value_start = self.hoisted_assignment_value_temps.len();
+        let pattern_text = self.capture_emit(pattern);
+        let initializer_text = initializer
+            .is_some()
+            .then(|| self.capture_emit(initializer));
+        self.emit_native_arrow_param_temp_declarations(hoisted_start, value_start, inline);
+
+        self.write("var ");
+        self.write(&pattern_text);
+        self.write(" = ");
+        if let Some(initializer_text) = initializer_text {
+            self.write(temp_name);
+            self.write(" === void 0 ? ");
+            self.write(&initializer_text);
+            self.write(" : ");
+            self.write(temp_name);
+        } else {
+            self.write(temp_name);
+        }
+        self.write(";");
+        if inline {
+            self.write_space();
+        } else {
+            self.write_line();
+        }
+    }
+
+    fn emit_native_arrow_param_temp_declarations(
+        &mut self,
+        hoisted_start: usize,
+        value_start: usize,
+        inline: bool,
+    ) {
+        let value_temps: Vec<_> = self
+            .hoisted_assignment_value_temps
+            .drain(value_start..)
+            .collect();
+        if !value_temps.is_empty() {
+            self.write("var ");
+            self.write(&value_temps.join(", "));
+            self.write(";");
+            if inline {
+                self.write_space();
+            } else {
+                self.write_line();
+            }
+        }
+
+        let hoisted_temps: Vec<_> = self
+            .hoisted_assignment_temps
+            .drain(hoisted_start..)
+            .collect();
+        if !hoisted_temps.is_empty() {
+            self.write("var ");
+            self.write(&hoisted_temps.join(", "));
+            self.write(";");
+            if inline {
+                self.write_space();
+            } else {
+                self.write_line();
+            }
+        }
+    }
+
+    fn emit_native_arrow_inline_block_body(&mut self, body: NodeIndex) {
+        let Some(body_node) = self.arena.get(body) else {
+            return;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return;
+        };
+        for &stmt_idx in &block.statements.nodes {
+            let before_len = self.writer.len();
+            self.emit(stmt_idx);
+            if self.writer.len() > before_len {
+                self.write_space();
+            }
+        }
+    }
+
+    fn emit_native_arrow_block_body_statements(&mut self, body: NodeIndex) {
+        let Some(body_node) = self.arena.get(body) else {
+            return;
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return;
+        };
+        for &stmt_idx in &block.statements.nodes {
+            let before_len = self.writer.len();
+            self.emit(stmt_idx);
+            if self.writer.len() > before_len {
+                self.write_line();
+            }
+        }
+    }
+
     fn emit_function_parameter_names_js(&mut self, params: &[NodeIndex]) {
         let mut first = true;
         for &param_idx in params {
@@ -497,6 +811,16 @@ impl<'a> Printer<'a> {
             return true;
         }
 
+        if self.ctx.target_es5
+            && node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            && let Some(literal) = self.arena.get_literal_expr(node)
+            && literal.elements.nodes.iter().copied().any(|element| {
+                crate::transforms::emit_utils::is_computed_property_member(self.arena, element)
+            })
+        {
+            return true;
+        }
+
         if let Some(binary) = self.arena.get_binary_expr(node) {
             if binary.operator_token == tsz_scanner::SyntaxKind::QuestionQuestionToken as u16
                 && !self.is_simple_nullish_expression(binary.left)
@@ -516,7 +840,10 @@ impl<'a> Printer<'a> {
         }
 
         if let Some(call) = self.arena.get_call_expr(node) {
-            if node.is_optional_chain() && !self.is_simple_nullish_expression(call.expression) {
+            if node.is_optional_chain()
+                && !self.optional_chain_call_uses_simple_receiver(call.expression)
+                && !self.is_simple_nullish_expression(call.expression)
+            {
                 return true;
             }
             if self.param_initializer_generates_hoisted_temp(call.expression) {
@@ -563,6 +890,16 @@ impl<'a> Printer<'a> {
         }
 
         false
+    }
+
+    fn optional_chain_call_uses_simple_receiver(&self, callee: NodeIndex) -> bool {
+        let Some(callee_node) = self.arena.get(callee) else {
+            return false;
+        };
+        let Some(access) = self.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        access.question_dot_token && self.is_simple_nullish_expression(access.expression)
     }
 
     fn class_expression_initializer_needs_temp_prologue(
@@ -1059,12 +1396,16 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_object_rest_param_prologue_entries(&mut self, entries: &[(String, NodeIndex)]) {
+        for (temp_name, _) in entries {
+            self.generated_temp_names.insert(temp_name.clone());
+        }
         for (temp_name, pattern_idx) in entries {
             self.write("var ");
             self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
             self.write(";");
             self.write_line();
         }
+        self.emit_pending_object_rest_param_defaults(false);
     }
 
     /// Issue #3758: lower `async (x = init()) => body` so the default

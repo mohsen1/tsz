@@ -145,16 +145,51 @@ impl<'a> CheckerState<'a> {
         // when resolving Awaited<T>. Detect this and emit TS1062.
         self.check_self_referencing_promise_cycle(expr_type, idx);
 
-        // Recursively unwrap Promise<T> to get T (simulating Awaited<T>)
-        // TypeScript's await recursively unwraps nested Promises.
-        // For example: await Promise<Promise<number>> should have type `number`
-        let mut current_type = expr_type;
-        let mut depth = 0;
+        // Mirror tsc's `Awaited<T>`: distribute over top-level unions and
+        // recursively unwrap thenables on each branch, then rejoin.
+        self.compute_awaited_type(expr_type, 0)
+    }
 
+    /// Compute the `Awaited<T>` of a type, mirroring tsc's `getAwaitedType`.
+    ///
+    /// Structural rule: when the input is a top-level union `A | B | ...`,
+    /// distribute to `Awaited<A> | Awaited<B> | ...` and rejoin via the
+    /// canonicalizing union factory (so `T | T` collapses to `T`). Otherwise
+    /// iteratively unwrap nested Promise-like applications until a non-Promise
+    /// type is reached.
+    ///
+    /// This is required so `await x` for `x: T | Promise<T>` produces `T`
+    /// (= `Awaited<T> | Awaited<Promise<T>>` = `T | T` = `T`) rather than the
+    /// original union, regardless of the type-parameter name the user picked.
+    fn compute_awaited_type(&mut self, type_id: TypeId, depth: u32) -> TypeId {
+        if depth > MAX_AWAIT_DEPTH {
+            return type_id;
+        }
+
+        // Distribute over top-level unions before unwrapping Promise<T>.
+        if let Some(members) = query::union_members(self.ctx.types, type_id) {
+            let unwrapped: Vec<TypeId> = members
+                .into_iter()
+                .map(|m| self.compute_awaited_type(m, depth + 1))
+                .collect();
+            // The factory dedups (`T | T` to `T`) and may collapse single-member
+            // unions back to the bare type: exactly the semantics we want for
+            // `Awaited<T | Promise<T>> = T`.
+            return self.ctx.types.factory().union(unwrapped);
+        }
+
+        // Non-union: recursively unwrap nested Promise<...> applications.
+        let mut current_type = type_id;
+        let mut local_depth: u32 = 0;
         while let Some(inner) = self.promise_like_return_type_argument(current_type) {
+            // Stop if unwrapping reveals a union; re-enter the distribution
+            // step so e.g. `Promise<T | Promise<T>>` becomes `T | T`, then `T`.
+            if query::union_members(self.ctx.types, inner).is_some() {
+                return self.compute_awaited_type(inner, depth + 1);
+            }
             current_type = inner;
-            depth += 1;
-            if depth > MAX_AWAIT_DEPTH {
+            local_depth += 1;
+            if local_depth > MAX_AWAIT_DEPTH {
                 break;
             }
         }
@@ -190,19 +225,16 @@ impl<'a> CheckerState<'a> {
     }
 
     fn await_expression_uses_call_like_syntax(&self, idx: NodeIndex) -> bool {
-        let Some((start, end)) = self.get_node_span(idx) else {
+        let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };
-        if end <= start {
-            return false;
-        }
-        let Some(source_file) = self.ctx.arena.source_files.first() else {
+        let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) else {
             return false;
         };
-        source_file
-            .text
-            .get(start as usize..end as usize)
-            .is_some_and(|text| text.starts_with("await("))
+        self.ctx
+            .arena
+            .get(unary.expression)
+            .is_some_and(|operand| operand.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION)
     }
 
     /// Get `PromiseLike`<T> for a given type T.
