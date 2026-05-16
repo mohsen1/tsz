@@ -944,9 +944,23 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::emitter::{Printer, PrinterOptions};
+    use crate::output::printer::{PrintOptions, lower_and_print};
     use tsz_common::ScriptTarget;
     use tsz_parser::ParserState;
+
+    fn emit_es5(source: &str) -> String {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        lower_and_print(
+            &parser.arena,
+            root,
+            PrintOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        )
+        .code
+    }
 
     #[test]
     fn do_loop_capture_renames_body_let_that_shadows_parameter() {
@@ -963,18 +977,7 @@ function foo(x: number) {\n\
   use(v);\n\
 }\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-        let mut printer = Printer::with_options(
-            &parser.arena,
-            PrinterOptions {
-                target: ScriptTarget::ES5,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
+        let output = emit_es5(source);
 
         assert!(
             output.contains("var x_1 = v;"),
@@ -987,6 +990,52 @@ function foo(x: number) {\n\
         assert!(
             output.contains("var v, v;"),
             "Loop body var hoist should preserve duplicate var declarations.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn for_of_loop_capture_preserves_multiline_arrow_block_spacing() {
+        let source = "function foo() {\n\
+    for (const i of [0, 1]) {\n\
+        if (i === 0) {\n\
+            continue;\n\
+        }\n\
+\n\
+        (() => {\n\
+            return i;\n\
+        })();\n\
+    }\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains("(function () {\n            return i;\n        })();"),
+            "Captured loop arrow block should preserve its multiline block body.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_loop_1(i);\n    }\n}"),
+            "Captured for-of loop call should not leave an extra blank line before the loop closes.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("_loop_1(i);\n\n    }"),
+            "Captured for-of loop call should emit exactly one line break before the closing brace.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn single_line_arrow_block_stays_compact_in_loop_capture() {
+        let source = "function foo() {\n\
+    for (const i of [0, 1]) {\n\
+        (() => { return i; })();\n\
+    }\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains("(function () { return i; })();"),
+            "Single-line arrow block should keep the compact ES5 function body.\nOutput:\n{output}"
         );
     }
 }
