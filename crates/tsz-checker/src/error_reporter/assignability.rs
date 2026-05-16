@@ -803,8 +803,15 @@ impl<'a> CheckerState<'a> {
                 {
                     return;
                 }
-                let diag =
+                let mut diag =
                     self.render_failure_reason(failure_reason, source, target, anchor_idx, 0);
+                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
+                    diag.message_text = self
+                        .rewrite_declared_generic_alias_source_in_ts2322_message(
+                            anchor_idx,
+                            diag.message_text,
+                        );
+                }
                 self.ctx.push_diagnostic(diag);
             }
             None => {

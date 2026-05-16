@@ -1,5 +1,6 @@
 //! Alias display helpers for assignability diagnostics.
 
+use crate::diagnostics::{diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -157,6 +158,36 @@ impl<'a> CheckerState<'a> {
         }
         let source_display = self.format_declared_annotation_for_diagnostic(&annotation_text);
         Some((source_display, target_display.to_string()))
+    }
+
+    pub(in crate::error_reporter) fn rewrite_declared_generic_alias_source_in_ts2322_message(
+        &mut self,
+        anchor_idx: NodeIndex,
+        message: String,
+    ) -> String {
+        let Some(rest) = message.strip_prefix("Type '") else {
+            return message;
+        };
+        let Some((source_display, target_part)) = rest.split_once("' is not assignable to type '")
+        else {
+            return message;
+        };
+        let Some(target_display) = target_part.strip_suffix("'.") else {
+            return message;
+        };
+        if let Some((source_display, target_display)) = self
+            .declared_generic_alias_assignment_pair_display(
+                anchor_idx,
+                source_display,
+                target_display,
+            )
+        {
+            return format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_display, &target_display],
+            );
+        }
+        message
     }
 
     pub(in crate::error_reporter) fn direct_type_param_alias_application_pair_display(
