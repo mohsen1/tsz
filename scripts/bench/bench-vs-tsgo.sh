@@ -973,6 +973,76 @@ record_fixture_failure() {
     RESULTS_CSV="${RESULTS_CSV}${label},0,0,ERR,ERR,N/A,N/A,error,0,fixture failed (rc=${rc})\n"
 }
 
+record_benchmark_source() {
+    local name="$1"
+    local file="$2"
+    [ -z "${BENCHMARK_SOURCES_JSONL:-}" ] && return
+    [ ! -f "$file" ] && return
+
+    SOURCE_NAME="$name" \
+    SOURCE_FILE="$file" \
+    PROJECT_ROOT_VALUE="$PROJECT_ROOT" \
+    UTILITY_TYPES_DIR_VALUE="$UTILITY_TYPES_DIR" \
+    UTILITY_TYPES_REF_VALUE="$UTILITY_TYPES_REF" \
+    TS_TOOLBELT_DIR_VALUE="$TS_TOOLBELT_DIR" \
+    TS_TOOLBELT_REF_VALUE="$TS_TOOLBELT_REF" \
+    TS_ESSENTIALS_DIR_VALUE="$TS_ESSENTIALS_DIR" \
+    TS_ESSENTIALS_REF_VALUE="$TS_ESSENTIALS_REF" \
+    BENCHMARK_SOURCES_JSONL_VALUE="$BENCHMARK_SOURCES_JSONL" \
+    node <<'NODE'
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const name = process.env.SOURCE_NAME || "";
+const file = process.env.SOURCE_FILE || "";
+const root = process.env.PROJECT_ROOT_VALUE || "";
+const out = process.env.BENCHMARK_SOURCES_JSONL_VALUE || "";
+
+function relativeIfInside(base, target) {
+  if (!base) return null;
+  const rel = path.relative(base, target);
+  return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel.split(path.sep).join("/") : null;
+}
+
+function originFor(absPath) {
+  const rootRel = relativeIfInside(root, absPath);
+  if (rootRel?.startsWith("TypeScript/")) {
+    return { origin: "typescript", path: rootRel };
+  }
+
+  const external = [
+    ["utility-types", process.env.UTILITY_TYPES_DIR_VALUE, process.env.UTILITY_TYPES_REF_VALUE],
+    ["ts-toolbelt", process.env.TS_TOOLBELT_DIR_VALUE, process.env.TS_TOOLBELT_REF_VALUE],
+    ["ts-essentials", process.env.TS_ESSENTIALS_DIR_VALUE, process.env.TS_ESSENTIALS_REF_VALUE],
+  ];
+  for (const [origin, dir, ref] of external) {
+    const rel = relativeIfInside(dir || "", absPath);
+    if (rel) return { origin, ref: ref || null, path: `${origin}/${rel}` };
+  }
+
+  if (rootRel) return { origin: "workspace", path: rootRel };
+  return { origin: "generated", path: path.basename(absPath) };
+}
+
+try {
+  const absPath = path.resolve(file);
+  const content = fs.readFileSync(absPath, "utf8").replace(/\s+$/u, "");
+  const source = originFor(absPath);
+  fs.appendFileSync(out, `${JSON.stringify({
+    name,
+    source: {
+      ...source,
+      sha256: crypto.createHash("sha256").update(content).digest("hex"),
+      content,
+    },
+  })}\n`, "utf8");
+} catch {
+  // Source metadata improves website robustness but must never break a bench run.
+}
+NODE
+}
+
 run_benchmark() {
     local name="$1"
     local file="$2"
@@ -1004,6 +1074,8 @@ run_benchmark() {
         fi
         return
     fi
+
+    record_benchmark_source "$name" "$file"
 
     # Pre-validate with timeout: record errors/timeouts in summary table
     local tsz_check=0
@@ -1499,6 +1571,7 @@ export_results_json() {
     TS_ESSENTIALS_DIR_VALUE="$TS_ESSENTIALS_DIR" \
     BENCHMARKS_RUN_VALUE="$BENCHMARKS_RUN" \
     COMPATIBILITY_JSONL_VALUE="$PROJECT_COMPATIBILITY_JSONL" \
+    BENCHMARK_SOURCES_JSONL_VALUE="${BENCHMARK_SOURCES_JSONL:-}" \
     node - "$out_file" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
@@ -1563,6 +1636,22 @@ function readCompatibilityRows() {
       .filter(Boolean)
       .map((line) => JSON.parse(line));
     return new Map(rows.map((row) => [row.name, row]));
+  } catch {
+    return new Map();
+  }
+}
+
+function readSourceRows() {
+  const file = process.env.BENCHMARK_SOURCES_JSONL_VALUE || "";
+  if (!file) return new Map();
+  try {
+    const rows = fs.readFileSync(file, "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((row) => row?.name && row?.source?.content);
+    return new Map(rows.map((row) => [row.name, row.source]));
   } catch {
     return new Map();
   }
@@ -1770,6 +1859,7 @@ function compatibilityFor(row, compatibilityRows) {
 const csv = process.env.RESULTS_CSV_EXPANDED || "";
 const projectReadmes = readProjectReadmes();
 const compatibilityRows = readCompatibilityRows();
+const sourceRows = readSourceRows();
 const rows = csv
   .split(/\r?\n/)
   .map((line) => line.trim())
@@ -1795,6 +1885,7 @@ const rows = csv
       winner: winner || null,
       factor: toNumber(factor),
       status: status || null,
+      ...(sourceRows.has(name) ? { source: sourceRows.get(name) } : {}),
       ...(projectReadmes.has(name) ? { readme: projectReadmes.get(name) } : {}),
       ...compatibilityFor({ name, lines: toNumber(lines), status: status || null }, compatibilityRows),
     };
@@ -3787,7 +3878,9 @@ main() {
     # Create temp directory for synthetic files
     TEMP_DIR=$(mktemp -d)
     PROJECT_COMPATIBILITY_JSONL="$TEMP_DIR/project-compatibility.jsonl"
+    BENCHMARK_SOURCES_JSONL="$TEMP_DIR/benchmark-sources.jsonl"
     : > "$PROJECT_COMPATIBILITY_JSONL"
+    : > "$BENCHMARK_SOURCES_JSONL"
     # Always export the partial JSON on exit (including SIGTERM/SIGINT/OOM
     # kills) so a long bench that gets cut off — e.g. by the GitHub Actions
     # job timeout or the runner OOM killer on `large-ts-repo` — still

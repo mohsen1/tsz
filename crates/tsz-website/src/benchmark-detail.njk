@@ -17,6 +17,10 @@ eleventyComputed:
 
 <h1>{{ benchmark.display_name }}</h1>
 
+{% if benchmark.detail_focus %}
+  <p class="bench-detail-subtitle">{{ benchmark.detail_focus }}</p>
+{% endif %}
+
 <p class="bench-detail-summary">
   {% if benchmark.comparison.available %}
     <strong>

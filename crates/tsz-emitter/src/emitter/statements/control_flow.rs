@@ -1196,6 +1196,18 @@ impl<'a> Printer<'a> {
             self.write(";");
             return;
         }
+        if self.labeled_body_needs_block(labeled.statement) {
+            self.write("{");
+            self.write_line();
+            self.increase_indent();
+            self.emit(labeled.statement);
+            if !self.writer.is_at_line_start() {
+                self.write_line();
+            }
+            self.decrease_indent();
+            self.write("}");
+            return;
+        }
         let before = self.writer.len();
         self.emit(labeled.statement);
         // If the labeled body was completely erased (e.g. const enum, interface),
@@ -1203,6 +1215,25 @@ impl<'a> Printer<'a> {
         if self.writer.len() == before {
             self.write(";");
         }
+    }
+
+    fn labeled_body_needs_block(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+            return false;
+        }
+        let Some(enum_decl) = self.arena.get_enum(stmt_node) else {
+            return false;
+        };
+        if self.arena.is_declare(&enum_decl.modifiers) {
+            return false;
+        }
+        !self
+            .arena
+            .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+            || self.ctx.options.preserve_const_enums
     }
 
     fn labeled_body_is_initializerless_export_variable(&self, stmt_idx: NodeIndex) -> bool {

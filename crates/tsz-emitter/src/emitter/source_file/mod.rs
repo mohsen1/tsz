@@ -121,6 +121,7 @@ mod tests {
         let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
             target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
             ..Default::default()
         };
         let ctx = EmitContext::with_options(options.clone());
@@ -270,6 +271,41 @@ mod tests {
         assert!(
             output.contains("return __asyncGenerator(this, arguments, function () {\n        return __generator(this, function (_a) {"),
             "Async generator function expressions should use an ES5 generator state machine.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn labeled_async_function_and_enum_plan_helpers_and_block_wrapping() {
+        let source = "\"use strict\"\nlabel: async function gen1() { }\nlabel: enum E {}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.starts_with("\"use strict\";\nvar __awaiter = "),
+            "User-authored strict prologues should stay before injected helpers.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var __awaiter = "),
+            "Async functions nested in labeled statements should request the __awaiter helper.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("label: function gen1() {\n    return __awaiter(this, void 0, void 0, function* () { });\n}"),
+            "Labeled async function declarations should still be lowered in place.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("label: {\n    var E;\n    (function (E) {\n    })(E || (E = {}));\n}"),
+            "Labeled enum declarations should be block-wrapped because enum lowering emits multiple statements.\nOutput:\n{output}"
         );
     }
 
@@ -1334,6 +1370,34 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         assert!(
             output.contains("(bar = __rest({}, []));"),
             "Object-rest assignment lowering should still call __rest.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn esm_exported_object_rest_keeps_temp_local() {
+        let source = "export const { x, ...rest } = { x: 'x', y: 'y' }, y = 3;\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::ESNext,
+            no_emit_helpers: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+        let mut printer = EmitterPrinter::with_emit_plan_and_options(&parser.arena, plan, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a;\nexport var x = (_a = { x: 'x', y: 'y' }, _a).x, rest = __rest(_a, [\"x\"]), y = 3;"),
+            "Exported object-rest temp should be hoisted outside the export list.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("export var _a"),
+            "The synthesized temp must not become an exported binding.\nOutput:\n{output}"
         );
     }
 
