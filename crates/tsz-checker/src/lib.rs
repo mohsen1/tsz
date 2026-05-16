@@ -579,6 +579,9 @@ mod object_shorthand_literal_preservation_tests;
 #[path = "tests/object_spread_optional_merge_tests.rs"]
 mod object_spread_optional_merge_tests;
 #[cfg(test)]
+#[path = "tests/optional_key_extraction_tests.rs"]
+mod optional_key_extraction_tests;
+#[cfg(test)]
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
 #[cfg(test)]

@@ -1596,6 +1596,9 @@ impl<'a> Printer<'a> {
         if name_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
             return false;
         }
+        if is_exported && self.emit_system_object_rest_export_initializer(decl) {
+            return true;
+        }
         let Some(pattern) = self.arena.get_binding_pattern(name_node) else {
             return false;
         };

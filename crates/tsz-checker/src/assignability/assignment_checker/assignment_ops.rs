@@ -57,18 +57,20 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return false;
         };
-        let Some(member_name) = self
+        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        if self
             .ctx
             .arena
             .get_identifier_at(access.name_or_argument)
-            .map(|ident| ident.escaped_text.as_str())
-        else {
+            .is_none()
+        {
             return false;
         };
-        let prefix = format!("Member '{member_name}' implicitly has an '");
         self.ctx.diagnostics.iter().any(|diag| {
             diag.code == diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE
-                && diag.message_text.starts_with(&prefix)
+                && diag.start == name_node.pos
         })
     }
 

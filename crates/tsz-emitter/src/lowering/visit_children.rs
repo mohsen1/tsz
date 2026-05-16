@@ -17,11 +17,15 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::SOURCE_FILE => {
                 if let Some(sf) = self.arena.get_source_file(node) {
                     let previous_source_text = self.current_source_text;
+                    let previous_jsx_pragmas = self.current_jsx_pragmas.clone();
                     self.current_source_text = Some(sf.text.as_ref());
+                    self.current_jsx_pragmas =
+                        crate::jsx_pragmas::JsxPragmaFacts::from_source(sf.text.as_ref());
                     for &stmt in &sf.statements.nodes {
                         self.visit(stmt);
                     }
                     self.current_source_text = previous_source_text;
+                    self.current_jsx_pragmas = previous_jsx_pragmas;
                 }
             }
             k if k == syntax_kind_ext::BLOCK
@@ -98,6 +102,11 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
                 if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
                     self.visit(expr_stmt.expression);
+                }
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.arena.get_labeled_statement(node) {
+                    self.visit(labeled.statement);
                 }
             }
             k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
