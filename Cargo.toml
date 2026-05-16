@@ -91,11 +91,20 @@ codegen-units = 16    # Parallel codegen = faster compilation
 strip = false         # Keep symbols for debugging
 
 [profile.dist]
-# Maximum optimization for production binary (use: cargo build --profile dist)
+# Maximum optimization for production binary (use: cargo build --profile dist).
+# This is the profile used to build the binary measured on the public
+# benchmarks page; keep it tuned for steady-state throughput, not build speed.
 inherits = "release"
 lto = "fat"           # Full link-time optimization for smaller, faster binary
 codegen-units = 1     # Single codegen unit for better optimization
 strip = "symbols"     # Strip debug symbols to reduce binary size
+panic = "abort"       # No unwinding: removes landing pads + unwind tables,
+                      # improves icache density on hot paths and shrinks the
+                      # binary. tsz aborts on panic at the CLI boundary anyway
+                      # (`crates/tsz-cli/src/bin/tsz.rs`), and no CLI-linked
+                      # code path catches unwinds — the only catch_unwind
+                      # call sites are `#[cfg(test)]` and the wasm crate,
+                      # neither of which is built with this profile.
 
 [profile.dist-fast]
 # Fast build for CI: correctness over runtime performance.

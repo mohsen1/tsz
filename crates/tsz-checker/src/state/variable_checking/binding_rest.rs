@@ -6,6 +6,7 @@
 use crate::query_boundaries::state::checking as query;
 use crate::query_boundaries::type_checking_utilities;
 use crate::state::CheckerState;
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::{SyntaxKind, keyword_to_text_static};
@@ -82,8 +83,40 @@ impl<'a> CheckerState<'a> {
                     string_keys.push(name);
                 }
             }
+            let local_omit_sym = self
+                .ctx
+                .global_file_locals_index
+                .as_ref()
+                .and_then(|idx| idx.get("Omit"))
+                .and_then(|entries| {
+                    entries.iter().find_map(|&(file_idx, sym_id)| {
+                        if file_idx != self.ctx.current_file_idx
+                            || self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                        {
+                            return None;
+                        }
+                        self.ctx
+                            .get_binder_for_file(file_idx)
+                            .or(Some(self.ctx.binder))
+                            .and_then(|binder| binder.get_symbol(sym_id))
+                            .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS))
+                            .then_some(sym_id)
+                    })
+                })
+                .or_else(|| {
+                    self.ctx.binder.file_locals.get("Omit").and_then(|sym_id| {
+                        (!self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                            && self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                                symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+                            }))
+                        .then_some(sym_id)
+                    })
+                });
+            let omit_type = self
+                .resolve_lib_type_by_name("Omit")
+                .or_else(|| local_omit_sym.map(|sym_id| self.type_reference_symbol_type(sym_id)));
             if (!string_keys.is_empty() || !computed_key_type_ids.is_empty())
-                && let Some(omit_type) = self.resolve_lib_type_by_name("Omit")
+                && let Some(omit_type) = omit_type
             {
                 let factory = self.ctx.types.factory();
                 let mut key_args: Vec<TypeId> = string_keys

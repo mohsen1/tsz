@@ -11,6 +11,7 @@ use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tracing::trace;
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
@@ -156,6 +157,85 @@ impl<'a> CheckerState<'a> {
             self.instance_type_from_constructor_type(constructor_type)
                 .unwrap_or(TypeId::ERROR)
         }
+    }
+
+    fn lib_constructor_return_type_for_type_shadow(
+        &mut self,
+        callee_expr: NodeIndex,
+    ) -> Option<TypeId> {
+        let callee_name = self.ctx.arena.get_identifier_text(callee_expr)?;
+        let value_sym_id = self.find_value_symbol_in_libs(callee_name)?;
+        let type_sym_id = self.type_only_non_lib_constructor_shadow(callee_expr, callee_name)?;
+        let resolved = self
+            .resolve_lib_type_by_name(callee_name)
+            .filter(|&ty| !matches!(ty, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN));
+        trace!(
+            callee_name,
+            type_sym_id = type_sym_id.0,
+            value_sym_id = value_sym_id.0,
+            resolved = ?resolved,
+            "lib_constructor_return_type_for_type_shadow"
+        );
+        resolved
+    }
+
+    fn lib_constructor_type_for_type_shadow(&mut self, callee_expr: NodeIndex) -> Option<TypeId> {
+        let callee_name = self.ctx.arena.get_identifier_text(callee_expr)?;
+        let value_sym_id = self.find_value_symbol_in_libs(callee_name)?;
+        let type_sym_id = self.type_only_non_lib_constructor_shadow(callee_expr, callee_name)?;
+        let constructor_name = format!("{callee_name}Constructor");
+        let constructor_type = self
+            .resolve_lib_type_by_name(&constructor_name)
+            .or_else(|| Some(self.get_type_of_symbol(value_sym_id)))?;
+        trace!(
+            callee_name,
+            type_sym_id = type_sym_id.0,
+            constructor_type = constructor_type.0,
+            constructable = crate::query_boundaries::common::has_construct_signatures(
+                self.ctx.types,
+                constructor_type
+            ),
+            "lib_constructor_type_for_type_shadow"
+        );
+        crate::query_boundaries::common::has_construct_signatures(self.ctx.types, constructor_type)
+            .then_some(constructor_type)
+    }
+
+    fn type_only_non_lib_constructor_shadow(
+        &mut self,
+        callee_expr: NodeIndex,
+        callee_name: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        let crate::symbol_resolver::TypeSymbolResolution::Type(type_sym_id) =
+            self.resolve_identifier_symbol_in_type_position(callee_expr)
+        else {
+            trace!(
+                callee_name,
+                "lib constructor shadow: no type-position shadow"
+            );
+            return None;
+        };
+        if self.ctx.symbol_is_from_actual_or_cloned_lib(type_sym_id) {
+            trace!(
+                callee_name,
+                type_sym_id = type_sym_id.0,
+                "lib constructor shadow: type symbol is lib"
+            );
+            return None;
+        }
+
+        let symbol = self.ctx.binder.get_symbol(type_sym_id)?;
+        let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+        if symbol.has_any_flags(value_flags_except_module) && !symbol.is_type_only {
+            trace!(
+                callee_name,
+                type_sym_id = type_sym_id.0,
+                "lib constructor shadow: local type also has a value constructor"
+            );
+            return None;
+        }
+
+        Some(type_sym_id)
     }
 
     ///
@@ -428,6 +508,11 @@ impl<'a> CheckerState<'a> {
         } else {
             self.get_type_of_node_with_request(new_expr.expression, &read_request)
         };
+        if let Some(lib_constructor_type) =
+            self.lib_constructor_type_for_type_shadow(new_expr.expression)
+        {
+            constructor_type = lib_constructor_type;
+        }
         if let Some(export_equals_ctor) =
             self.new_expression_export_equals_constructor_type(new_expr.expression)
         {
@@ -1485,6 +1570,11 @@ impl<'a> CheckerState<'a> {
                 ) {
                     return_type = fixed_return;
                 }
+                if let Some(lib_return_type) =
+                    self.lib_constructor_return_type_for_type_shadow(new_expr.expression)
+                {
+                    return_type = lib_return_type;
+                }
 
                 if let Some(contextual_type) = contextual_type {
                     let result_app = query::get_application_info(self.ctx.types, return_type)
@@ -1498,16 +1588,7 @@ impl<'a> CheckerState<'a> {
                         });
                     let contextual_app =
                         query::get_application_info(self.ctx.types, contextual_type);
-                    if constructor_shape.as_ref().is_some_and(|shape| {
-                        self.contextual_application_recovers_unresolved_constructor_result(
-                            new_expr.expression,
-                            return_type,
-                            contextual_type,
-                            &shape.type_params,
-                        )
-                    }) {
-                        return_type = contextual_type;
-                    } else if let (Some((result_base, result_args)), Some((ctx_base, ctx_args))) =
+                    if let (Some((result_base, result_args)), Some((ctx_base, ctx_args))) =
                         (result_app, contextual_app)
                         && result_base == ctx_base
                         && result_args.len() == ctx_args.len()
@@ -1781,15 +1862,6 @@ impl<'a> CheckerState<'a> {
                 }
                 if index < args.len() {
                     let arg_idx = args[index];
-                    if is_generic_new
-                        && self.generic_new_argument_accepts_contextual_parameter(arg_idx, expected)
-                    {
-                        return self
-                            .recover_new_expression_return_type_after_contextual_argument_match(
-                                constructor_type,
-                                fallback_return,
-                            );
-                    }
                     // Check if this is a weak union violation or excess property case
                     // In these cases, TypeScript shows TS2353 (excess property) instead of TS2322
                     // We should skip the TS2322 error regardless of check_excess_properties flag
@@ -1857,7 +1929,7 @@ impl<'a> CheckerState<'a> {
             CallResult::TypeParameterConstraintViolation {
                 inferred_type,
                 constraint_type,
-                mut return_type,
+                return_type,
             } => {
                 // Type parameter constraint violations are argument-level
                 // mismatches. tsc reports TS2345 at the argument.
@@ -1867,18 +1939,6 @@ impl<'a> CheckerState<'a> {
                     constraint_type,
                     anchor,
                 );
-                if let Some(contextual_type) = contextual_type
-                    && constructor_shape.as_ref().is_some_and(|shape| {
-                        self.contextual_application_recovers_unresolved_constructor_result(
-                            new_expr.expression,
-                            return_type,
-                            contextual_type,
-                            &shape.type_params,
-                        )
-                    })
-                {
-                    return_type = contextual_type;
-                }
                 return_type
             }
             CallResult::NoOverloadMatch {
