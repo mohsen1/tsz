@@ -503,6 +503,9 @@ impl<'a> Printer<'a> {
             && !is_file_module
             && !self.ctx.options.target.supports_es2025()
             && self.block_has_using_declarations(&source.statements);
+        let will_emit_runtime_helpers = !self.ctx.options.no_emit_helpers
+            && self.transforms.helpers_populated()
+            && self.transforms.helpers().any_needed();
 
         let should_emit_use_strict = !source_has_use_strict
             && !self.ctx.options.suppress_use_strict
@@ -518,8 +521,15 @@ impl<'a> Printer<'a> {
         // module file, we must emit "use strict" at the correct position (before
         // __esModule marker / exports preamble) and skip the source's own
         // directive during statement iteration to avoid duplication.
-        let skip_source_use_strict =
-            source_has_use_strict && (needs_use_strict_cjs || needs_use_strict_inside_wrapper);
+        let source_use_strict_must_precede_helpers = source_has_use_strict
+            && !(is_es_module_output && is_file_module)
+            && !jsx_will_add_esm_imports
+            && will_emit_runtime_helpers
+            && !self.ctx.options.suppress_use_strict;
+        let skip_source_use_strict = source_has_use_strict
+            && (needs_use_strict_cjs
+                || needs_use_strict_inside_wrapper
+                || source_use_strict_must_precede_helpers);
 
         // Emit "use strict" when either:
         // - we need to add it (source doesn't have it), or
@@ -603,9 +613,7 @@ impl<'a> Printer<'a> {
         let is_commonjs = self.ctx.is_commonjs();
         // Check upfront if runtime helpers will be injected — this affects
         // whether attached header comments should be deferred to after helpers.
-        let will_emit_helpers = !self.ctx.options.no_emit_helpers
-            && self.transforms.helpers_populated()
-            && self.transforms.helpers().any_needed();
+        let will_emit_helpers = will_emit_runtime_helpers;
         let needs_node_esm_create_require_preamble =
             self.source_needs_node_esm_create_require(&source.statements);
 
