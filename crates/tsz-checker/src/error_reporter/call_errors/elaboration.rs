@@ -57,10 +57,10 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    let same_key_space = (self.is_assignable_to(param_type, candidate_keyof)
-                        && self.is_assignable_to(candidate_keyof, param_type))
-                        || self.format_type_for_assignability_message(param_type)
-                            == self.format_type_for_assignability_message(candidate_keyof);
+                    let same_key_space = self.contextual_keyof_parameter_types_share_key_space(
+                        param_type,
+                        candidate_keyof,
+                    );
                     if same_key_space
                         && query_common::type_has_displayable_name(
                             self.ctx.types.as_type_database(),
@@ -82,6 +82,48 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn contextual_keyof_parameter_types_share_key_space(
+        &mut self,
+        param_type: TypeId,
+        candidate_keyof: TypeId,
+    ) -> bool {
+        if self.types_are_mutually_assignable(param_type, candidate_keyof) {
+            return true;
+        }
+
+        let evaluated_param = self.evaluate_type_for_assignability(param_type);
+        let evaluated_candidate = self.evaluate_type_for_assignability(candidate_keyof);
+        if evaluated_param == evaluated_candidate
+            || self.types_are_mutually_assignable(evaluated_param, evaluated_candidate)
+        {
+            return true;
+        }
+
+        let param_alias = self.ctx.types.get_display_alias(param_type);
+        let candidate_alias = self.ctx.types.get_display_alias(candidate_keyof);
+        match (param_alias, candidate_alias) {
+            (Some(param_alias), Some(candidate_alias)) => {
+                param_alias == candidate_alias
+                    || self.types_are_mutually_assignable(param_alias, candidate_alias)
+            }
+            (Some(param_alias), None) => {
+                param_alias == candidate_keyof
+                    || param_alias == evaluated_candidate
+                    || self.types_are_mutually_assignable(param_alias, candidate_keyof)
+            }
+            (None, Some(candidate_alias)) => {
+                candidate_alias == param_type
+                    || candidate_alias == evaluated_param
+                    || self.types_are_mutually_assignable(param_type, candidate_alias)
+            }
+            (None, None) => false,
+        }
+    }
+
+    fn types_are_mutually_assignable(&mut self, left: TypeId, right: TypeId) -> bool {
+        self.is_assignable_to(left, right) && self.is_assignable_to(right, left)
     }
 
     pub(in crate::error_reporter::call_errors) fn contextual_constraint_parameter_display(
