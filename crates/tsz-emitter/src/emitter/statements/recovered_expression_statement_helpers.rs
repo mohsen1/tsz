@@ -1,8 +1,9 @@
 use super::super::Printer;
 use crate::safe_slice;
-use tsz_parser::parser::NodeList;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
+use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn consume_recovered_expression_statement(
@@ -102,6 +103,78 @@ impl<'a> Printer<'a> {
         }
 
         None
+    }
+
+    pub(in crate::emitter) fn emit_recovered_regex_slash_tail_after_variable_statement(
+        &mut self,
+        declarations: &NodeList,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+
+        let mut last_initializer = NodeIndex::NONE;
+        for &decl_list_idx in &declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if decl.initializer.is_some() {
+                    last_initializer = decl.initializer;
+                }
+            }
+        }
+
+        let Some(init_node) = self.arena.get(last_initializer) else {
+            return false;
+        };
+        if init_node.kind != SyntaxKind::RegularExpressionLiteral as u16 {
+            return false;
+        }
+
+        let start = init_node.end.min(text.len() as u32) as usize;
+        let end = self
+            .variable_statement_effective_end(declarations)
+            .min(text.len() as u32) as usize;
+        if start >= end {
+            return false;
+        }
+
+        let bytes = text.as_bytes();
+        let mut i = start;
+        while i < end && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
+            i += 1;
+        }
+        if bytes.get(i) != Some(&b']') {
+            return false;
+        }
+        i += 1;
+        while i < end && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
+            i += 1;
+        }
+        if bytes.get(i) != Some(&b'/') {
+            return false;
+        }
+        i += 1;
+        while i < end && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
+            i += 1;
+        }
+        if i < end && bytes.get(i) != Some(&b';') {
+            return false;
+        }
+
+        self.write_line();
+        self.write("/;");
+        true
     }
 
     fn find_recovered_parenthesized_property_dot(
