@@ -764,6 +764,11 @@ impl<'a> CheckerState<'a> {
                         self.format_type_diagnostic(target),
                     )
                 };
+                if let Some(widened) =
+                    self.rewrite_standalone_literal_source_for_keyof_display(display_source, target)
+                {
+                    source_str = widened;
+                }
                 if source_str == "unknown" && source != TypeId::UNKNOWN {
                     let fallback =
                         self.format_assignability_type_for_message(display_source, target);

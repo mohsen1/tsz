@@ -137,6 +137,11 @@ impl<'a> CheckerState<'a> {
                 target_str =
                     self.rewrite_target_display_for_non_literal_assignability(target, target_str);
             }
+            if let Some(widened) =
+                self.rewrite_standalone_literal_source_for_keyof_display(source, target)
+            {
+                source_str = widened;
+            }
         }
         if let Some(display) = self.object_literal_property_literal_union_alias_target_display(
             target,
