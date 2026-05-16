@@ -300,6 +300,9 @@ pub struct DiscriminantInfo {
 
 type DiscriminantMembers = FxHashMap<TypeId, Vec<TypeId>>;
 type DiscriminantIndex = FxHashMap<(TypeId, Atom), Arc<DiscriminantMembers>>;
+type PropertyCacheKey = (TypeId, u64, Atom);
+type NarrowedPropertyCache = FxHashMap<PropertyCacheKey, Option<TypeId>>;
+type RequiredPropertyCache = FxHashMap<PropertyCacheKey, bool>;
 
 /// Narrowing context for type guards and control flow analysis.
 /// Shared across multiple narrowing contexts to persist resolution results.
@@ -313,10 +316,10 @@ pub struct NarrowingCache {
     /// type on a cycle preserves generic form and prevents stack overflow.
     pub resolve_visiting: RefCell<FxHashSet<TypeId>>,
     /// Cache for top-level property type lookups (`TypeId`, resolver generation, `PropName`) -> `PropType`
-    pub property_cache: RefCell<FxHashMap<(TypeId, u64, Atom), Option<TypeId>>>,
+    pub property_cache: RefCell<NarrowedPropertyCache>,
     /// Cache for required-property checks in `in`-operator negative narrowing
     /// (`obj` in `!("prop" in obj)`).
-    pub required_property_cache: RefCell<FxHashMap<(TypeId, u64, Atom), bool>>,
+    pub required_property_cache: RefCell<RequiredPropertyCache>,
     /// Cache for split-nullish decomposition (TypeId -> (`non_nullish`, nullish)).
     /// Reused by checker optional-chain/property-access hot paths.
     pub split_nullish_cache: RefCell<FxHashMap<TypeId, SplitNullishParts>>,

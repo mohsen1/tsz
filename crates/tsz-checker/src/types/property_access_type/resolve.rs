@@ -614,9 +614,7 @@ impl<'a> CheckerState<'a> {
             {
                 let resolved_base = self.resolve_type_for_property_access(non_nullish_base);
                 let resolver_generation = tsz_solver::TypeResolver::resolver_generation(&self.ctx);
-                let cache_key = |resolved_base: TypeId, property_name: tsz_common::Atom| {
-                    (resolved_base, resolver_generation, property_name)
-                };
+                let cache_key = |base, name| (base, resolver_generation, name);
 
                 // property_cache stores Option<TypeId>: Some(id) = resolved type,
                 // None = property not found (fall through for TS2339 diagnostics).
