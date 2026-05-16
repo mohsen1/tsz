@@ -582,6 +582,7 @@ impl<'a> Printer<'a> {
                                     true,
                                     Some(("let", name.clone())),
                                     None,
+                                    false,
                                 );
                                 self.write_line();
                                 // CommonJS export assignment
