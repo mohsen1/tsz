@@ -530,6 +530,25 @@ impl<'a> Printer<'a> {
             if let Some(source_text) = self.source_text {
                 transformer.set_source_text(source_text);
             }
+            let enum_name = if enum_decl.name.is_some() {
+                self.get_identifier_text_idx(enum_decl.name)
+            } else {
+                String::new()
+            };
+            let mut folded_export_name = None;
+            if !enum_name.is_empty() {
+                if self.declared_namespace_names.contains(&enum_name) {
+                    transformer.set_emit_var_declaration(false);
+                }
+                if let Some(export_name) = self
+                    .deferred_local_export_bindings
+                    .as_ref()
+                    .and_then(|bindings| bindings.get(&enum_name))
+                {
+                    transformer.set_commonjs_export_fold(export_name);
+                    folded_export_name = Some(export_name.clone());
+                }
+            }
             // Pass previously-evaluated enum member values for cross-enum
             // reference resolution (e.g., `enum Bar { B = Foo.A }`)
             transformer.set_prior_enum_values(&self.prior_enum_member_values);
@@ -571,11 +590,6 @@ impl<'a> Printer<'a> {
                 if let Some(source_text) = self.source_text_for_map() {
                     printer.set_source_text(source_text);
                 }
-                let enum_name = if enum_decl.name.is_some() {
-                    self.get_identifier_text_idx(enum_decl.name)
-                } else {
-                    String::new()
-                };
 
                 // Fold namespace export into IIFE closing when emitting exported enums
                 // in a namespace: `(Color = A.Color || (A.Color = {}))` instead of
@@ -596,17 +610,10 @@ impl<'a> Printer<'a> {
                         output = format!("{accessor_var_prefix}{}", &output[var_prefix.len()..]);
                     }
                 }
-                if !enum_name.is_empty() && self.declared_namespace_names.contains(&enum_name) {
-                    let var_prefix = format!("var {enum_name};\n");
-                    if output.starts_with(&var_prefix) {
-                        // Strip the var declaration and any leading indentation
-                        // from the remaining IIFE text, since the main writer's
-                        // ensure_indent() will re-add indentation.
-                        output = output[var_prefix.len()..]
-                            .trim_start_matches(' ')
-                            .to_string();
-                    }
-                } else if !enum_name.is_empty() && self.should_use_let_for_enum(idx) {
+                if !enum_name.is_empty()
+                    && !self.declared_namespace_names.contains(&enum_name)
+                    && self.should_use_let_for_enum(idx)
+                {
                     // Inside a block scope (namespace IIFE or function body) at ES2015+,
                     // use `let` instead of `var` to preserve block scoping semantics.
                     let var_prefix = format!("var {enum_name};");
@@ -633,6 +640,16 @@ impl<'a> Printer<'a> {
 
                 // Track enum name for subsequent namespace/enum merges.
                 if !enum_name.is_empty() {
+                    if let Some(export_name) = folded_export_name {
+                        self.ctx
+                            .module_state
+                            .iife_exported_names
+                            .insert(enum_name.clone());
+                        self.ctx
+                            .module_state
+                            .inline_exported_names
+                            .insert(export_name);
+                    }
                     self.declared_namespace_names.insert(enum_name);
                 }
             }

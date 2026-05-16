@@ -1407,7 +1407,7 @@ impl<'a> Printer<'a> {
     fn emit_system_enum_with_export_fold(
         &mut self,
         enum_idx: NodeIndex,
-        enum_name: &str,
+        _enum_name: &str,
         export_name: &str,
     ) {
         let mut enum_emitter = crate::transforms::EnumES5Emitter::new(self.arena);
@@ -1416,14 +1416,9 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text {
             enum_emitter.set_source_text(text);
         }
-        let mut output = enum_emitter.emit_enum(enum_idx);
-        let var_prefix = format!("var {enum_name};\n");
-        if output.starts_with(&var_prefix) {
-            output = output[var_prefix.len()..].to_string();
-        }
-        let from = format!("({enum_name} || ({enum_name} = {{}}))");
-        let to = format!("({enum_name} || (exports_1(\"{export_name}\", {enum_name} = {{}})))");
-        output = output.replacen(&from, &to, 1);
+        enum_emitter.set_emit_var_declaration(false);
+        enum_emitter.set_system_export_fold(export_name);
+        let output = enum_emitter.emit_enum(enum_idx);
         self.write(output.trim_end_matches('\n').trim_start());
     }
 
