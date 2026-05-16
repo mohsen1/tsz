@@ -1167,7 +1167,7 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         children_type: TypeId,
         actual_child_type: TypeId,
-        tag_name_idx: NodeIndex,
+        _tag_name_idx: NodeIndex,
         children_type_text: &str,
         children_type_is_originally_compound: bool,
     ) {
@@ -1214,13 +1214,8 @@ impl<'a> CheckerState<'a> {
         // Use the common assignability reporter for child mismatches so TS2740/TS2741
         // rendering stays consistent with the rest of the checker.
 
-        let source_text = self.format_type_for_assignability_message(actual_child_type);
-        let children_prop_name = self.get_jsx_children_prop_name();
-        if children_type_is_originally_compound
-            || self
-                .get_jsx_component_prop_annotation_text(tag_name_idx, &children_prop_name)
-                .is_some()
-        {
+        if children_type_is_originally_compound {
+            let source_text = self.format_type_for_assignability_message(actual_child_type);
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 diag_node,
