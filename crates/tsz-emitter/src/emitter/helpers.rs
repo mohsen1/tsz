@@ -145,10 +145,40 @@ impl<'a> Printer<'a> {
         self.write_close_delimiter(DelimiterKind::Paren);
     }
 
+    pub(super) fn open_bracket(&mut self) {
+        self.write_open_delimiter(DelimiterKind::Bracket);
+    }
+
+    pub(super) fn close_bracket(&mut self) {
+        self.write_close_delimiter(DelimiterKind::Bracket);
+    }
+
+    pub(super) fn open_brace(&mut self) {
+        self.write_open_delimiter(DelimiterKind::Brace);
+    }
+
+    pub(super) fn close_brace(&mut self) {
+        self.write_close_delimiter(DelimiterKind::Brace);
+    }
+
     pub(super) fn parenthesized<R>(&mut self, emit: impl FnOnce(&mut Self) -> R) -> R {
         self.open_paren();
         let result = emit(self);
         self.close_paren();
+        result
+    }
+
+    pub(super) fn bracketed<R>(&mut self, emit: impl FnOnce(&mut Self) -> R) -> R {
+        self.open_bracket();
+        let result = emit(self);
+        self.close_bracket();
+        result
+    }
+
+    pub(super) fn braced<R>(&mut self, emit: impl FnOnce(&mut Self) -> R) -> R {
+        self.open_brace();
+        let result = emit(self);
+        self.close_brace();
         result
     }
 
