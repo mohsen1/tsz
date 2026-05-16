@@ -480,6 +480,18 @@ const REMOTE_FIXTURE_REFS = {
   "ts-essentials": "5abe8700b42068048bd3c368e0531b6defe56558",
 };
 
+const TYPESCRIPT_VERSIONS_PATH = path.join(ROOT, "scripts/conformance/typescript-versions.json");
+
+function currentTypeScriptRef() {
+  const versions = readJsonIfExists(TYPESCRIPT_VERSIONS_PATH);
+  return versions?.current || "050880ce59e30b356b686bd3144efe24f875ebc8";
+}
+
+const TYPESCRIPT_FIXTURE_DIRS = [
+  "tests/cases/compiler",
+  "tests/cases/conformance",
+];
+
 const remoteSourceCache = new Map();
 
 function escapeHtml(str) {
@@ -516,6 +528,12 @@ function sanitizeLegacyBenchmarkData(data) {
 }
 
 function loadBenchmarks() {
+  const overrideArtifact = process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT;
+  if (overrideArtifact) {
+    const data = readJsonIfExists(overrideArtifact);
+    if (data?.results) return sanitizeLegacyBenchmarkData(data);
+  }
+
   const artifactsDir = path.join(ROOT, "artifacts");
   const ciLatest = [
     "bench-vs-tsgo-github-latest.json",
@@ -722,6 +740,25 @@ function displayName(name) {
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 }
 
+function isTypeScriptFixtureName(name) {
+  return String(name || "").endsWith(".ts") && !String(name || "").includes("/");
+}
+
+function displayBaseName(name) {
+  return displayName(name)
+    .replace(/\s+Speed Reasonable$/i, "")
+    .replace(/\s+Not Too Large$/i, "")
+    .trim();
+}
+
+function benchmarkTitle(row, category) {
+  const name = String(row?.name || "");
+  if (isProjectCategory(category)) return displayName(name);
+  if (isExternalLibraryCategory(category)) return `${libraryNameForCategory(category)} file: ${displayBaseName(name)}`;
+  if (isTypeScriptFixtureName(name)) return displayBaseName(name);
+  return displayName(name);
+}
+
 function benchmarkSlug(name) {
   return String(name || "benchmark")
     .toLowerCase()
@@ -744,6 +781,30 @@ function benchmarkKind(category) {
 
 function benchmarkFocus(row, category) {
   const name = String(row.name || "");
+  if (name === "conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts") {
+    return "Official TypeScript compiler fixture that stresses conditional type discrimination across a large union without falling off a performance cliff.";
+  }
+  if (name === "manyConstExports.ts") {
+    return "Official TypeScript compiler fixture that stresses binder/export-table setup for many constant exports.";
+  }
+  if (name === "binderBinaryExpressionStress.ts" || name === "binderBinaryExpressionStressJs.ts") {
+    return "Official TypeScript compiler fixture that stresses binder traversal over a very large binary-expression tree.";
+  }
+  if (name === "binaryArithmeticControlFlowGraphNotTooLarge.ts") {
+    return "Official TypeScript compiler fixture that keeps arithmetic control-flow graph construction bounded.";
+  }
+  if (name === "enumLiteralsSubtypeReduction.ts") {
+    return "Official TypeScript compiler fixture that exercises enum literal subtype reduction and related assignability checks.";
+  }
+  if (name === "controlFlowArrays.ts") {
+    return "Official TypeScript compiler fixture for array-sensitive control-flow analysis.";
+  }
+  if (/privacy/i.test(name)) {
+    return "Official TypeScript compiler fixture for declaration privacy checks on public APIs.";
+  }
+  if (name === "typedArrays.ts") {
+    return "Generated fixture that type-checks typed-array constructor and from() overload surfaces.";
+  }
   if (isProjectCategory(category)) {
     return "Full project type-check throughput, including module graph setup and cross-file type analysis.";
   }
@@ -1126,7 +1187,116 @@ function generatedMappedComplexSource(count) {
   return lines.join("\n").trimEnd();
 }
 
+function generatedTypedArraysSource() {
+  return `// Typed array benchmark fixture used by bench-vs-tsgo.sh.
+// Keep this strict/explicit so all compilers can parse and type-check it.
+
+function createTypedArrayInstancesFromLength(length: number) {
+    const typedArrays = [];
+    typedArrays[0] = new Int8Array(length);
+    typedArrays[1] = new Uint8Array(length);
+    typedArrays[2] = new Int16Array(length);
+    typedArrays[3] = new Uint16Array(length);
+    typedArrays[4] = new Int32Array(length);
+    typedArrays[5] = new Uint32Array(length);
+    typedArrays[6] = new Float32Array(length);
+    typedArrays[7] = new Float64Array(length);
+    typedArrays[8] = new Uint8ClampedArray(length);
+    return typedArrays;
+}
+
+function createTypedArrayInstancesFromArrayLike(obj: ArrayLike<number>) {
+    const typedArrays = [];
+    typedArrays[0] = new Int8Array(obj);
+    typedArrays[1] = new Uint8Array(obj);
+    typedArrays[2] = new Int16Array(obj);
+    typedArrays[3] = new Uint16Array(obj);
+    typedArrays[4] = new Int32Array(obj);
+    typedArrays[5] = new Uint32Array(obj);
+    typedArrays[6] = new Float32Array(obj);
+    typedArrays[7] = new Float64Array(obj);
+    typedArrays[8] = new Uint8ClampedArray(obj);
+    return typedArrays;
+}
+
+function createTypedArraysFromMapFn(
+    obj: ArrayLike<number>,
+    mapFn: (n: number, v: number) => number
+) {
+    const typedArrays = [];
+    typedArrays[0] = Int8Array.from(obj, mapFn);
+    typedArrays[1] = Uint8Array.from(obj, mapFn);
+    typedArrays[2] = Int16Array.from(obj, mapFn);
+    typedArrays[3] = Uint16Array.from(obj, mapFn);
+    typedArrays[4] = Int32Array.from(obj, mapFn);
+    typedArrays[5] = Uint32Array.from(obj, mapFn);
+    typedArrays[6] = Float32Array.from(obj, mapFn);
+    typedArrays[7] = Float64Array.from(obj, mapFn);
+    typedArrays[8] = Uint8ClampedArray.from(obj, mapFn);
+    return typedArrays;
+}
+
+const values: number[] = [1, 2, 3, 4];
+const mapped = createTypedArraysFromMapFn(values, (n, i) => n + i);
+const fromLength = createTypedArrayInstancesFromLength(128);
+const fromArrayLike = createTypedArrayInstancesFromArrayLike(values);
+const sampleCount = mapped.length + fromLength.length + fromArrayLike.length;`;
+}
+
+function generatedInferStressSource(count) {
+  const maxFunctions = Math.min(count, 30);
+  const lines = [
+    "// Infer keyword stress test",
+    "// Tests inference variable resolution in conditional types",
+    "",
+    "type UnwrapPromise<T> = T extends Promise<infer U> ? U : T;",
+    "type UnwrapArray<T> = T extends (infer U)[] ? U : T;",
+    "type MyParameters<T> = T extends (...args: infer P) => any ? P : never;",
+    "type MyReturnType<T> = T extends (...args: any[]) => infer R ? R : never;",
+    "",
+    "type FirstAndRest<T> = T extends [infer First, ...infer Rest] ? { first: First; rest: Rest } : never;",
+    "",
+    "type DeepUnwrap<T> =",
+    "    T extends Promise<infer U> ? DeepUnwrap<U> :",
+    "    T extends (infer V)[] ? DeepUnwrap<V>[] :",
+    "    T;",
+    "",
+    "type ExtractPrefix<T> = T extends `${infer P}_${string}` ? P : never;",
+    "type ExtractIfString<T> = T extends infer U extends string ? U : never;",
+    "",
+  ];
+
+  for (let i = 0; i < maxFunctions; i += 1) {
+    lines.push(`declare function func${i}(`);
+    for (let j = 0; j <= i; j += 1) {
+      lines.push(`    arg${j}: string${j === i ? "" : ","}`);
+    }
+    lines.push("): number;", "", `type Params${i} = MyParameters<typeof func${i}>;`, `type Return${i} = MyReturnType<typeof func${i}>;`, "");
+  }
+
+  lines.push(
+    "type ComplexInfer<T> = T extends {",
+    "    data: infer D;",
+    "    nested: { value: infer V }[]",
+    "} ? { data: D; values: V[] } : never;",
+    "",
+    "interface TestData {",
+    "    data: string;",
+    "    nested: { value: number }[];",
+    "}",
+    "",
+    "type Inferred = ComplexInfer<TestData>;",
+    "",
+    `declare const params: Params${maxFunctions - 1};`,
+    "declare const inferred: Inferred;",
+  );
+
+  return lines.join("\n").trimEnd();
+}
+
 function generatedBenchmarkSource(name) {
+  if (String(name || "") === "typedArrays.ts") return generatedTypedArraysSource();
+
   const unionCount = countFromName(name, /^(\d+)\s+union members$/i);
   if (unionCount) return generatedUnionSource(unionCount);
 
@@ -1171,6 +1341,9 @@ function generatedBenchmarkSource(name) {
 
   const mappedComplexCount = countFromName(name, /^Mapped complex template keys=(\d+)$/i);
   if (mappedComplexCount) return generatedMappedComplexSource(mappedComplexCount);
+
+  const inferStressCount = countFromName(name, /^Infer stress N=(\d+)$/i);
+  if (inferStressCount) return generatedInferStressSource(inferStressCount);
 
   return null;
 }
@@ -1248,10 +1421,7 @@ function readFixtureSource(name) {
   const fixtureName = String(name || "");
   if (!fixtureName.endsWith(".ts") || fixtureName.includes("/")) return null;
 
-  const candidates = [
-    path.join(ROOT, "TypeScript/tests/cases/compiler", fixtureName),
-    path.join(ROOT, "TypeScript/tests/cases/conformance", fixtureName),
-  ];
+  const candidates = TYPESCRIPT_FIXTURE_DIRS.map((dir) => path.join(ROOT, "TypeScript", dir, fixtureName));
 
   for (const candidate of candidates) {
     try {
@@ -1259,6 +1429,12 @@ function readFixtureSource(name) {
     } catch {
       // Keep looking in the next known TypeScript fixture location.
     }
+  }
+
+  const ref = currentTypeScriptRef();
+  for (const dir of TYPESCRIPT_FIXTURE_DIRS) {
+    const remote = readRemoteText(`https://raw.githubusercontent.com/microsoft/TypeScript/${ref}/${dir}/${fixtureName}`);
+    if (remote) return remote;
   }
 
   return null;
@@ -1333,6 +1509,17 @@ function sourceFilesForBenchmark(row, category) {
 
   const name = String(row.name || "fixture.ts");
   const fixtureName = name.endsWith(".ts") ? name : `${name}.ts`;
+  const artifactSource = typeof row?.source?.content === "string" && row.source.content
+    ? row.source.content.trimEnd()
+    : null;
+  if (artifactSource) {
+    return [{
+      name: row.source.path || fixtureName,
+      language: "typescript",
+      source: artifactSource,
+    }];
+  }
+
   const externalSource = isExternalLibraryCategory(category)
     ? readExternalFixtureSource(fixtureName)
     : null;
@@ -1426,12 +1613,12 @@ function decorateRow(row, category, options = {}) {
     ...row,
     category,
     category_slug: categorySlug(category),
-    display_name: displayName(row.name || ""),
+    display_name: benchmarkTitle(row, category),
     slug: benchmarkSlug(row.name),
     url: benchmarkUrl(row),
     kind: benchmarkKind(category),
     focus,
-    detail_focus: isExternalLibraryCategory(category) ? "" : focus,
+    detail_focus: focus,
     snippet: sourceFiles[0]?.source || snippetForBenchmark(row, category),
     source_files: sourceFiles,
     readme,
