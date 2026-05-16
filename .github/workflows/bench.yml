@@ -167,6 +167,12 @@ jobs:
           echo "Bench PGO cache hit for source fingerprint $fingerprint"
           touch .target-bench/dist/tsz
 
+      - name: Set up Node
+        if: steps.prepare-gate.outputs.should_run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Install pnpm
         if: steps.prepare-gate.outputs.should_run == 'true'
         run: |
@@ -438,6 +444,11 @@ jobs:
 
       - name: Unpack benchmark prep artifact
         run: tar -xf bench-prep.tar
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
 
       - name: Install pnpm
         run: |
