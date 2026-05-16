@@ -1374,6 +1374,34 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn esm_exported_object_rest_keeps_temp_local() {
+        let source = "export const { x, ...rest } = { x: 'x', y: 'y' }, y = 3;\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::ESNext,
+            no_emit_helpers: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+        let mut printer = EmitterPrinter::with_emit_plan_and_options(&parser.arena, plan, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a;\nexport var x = (_a = { x: 'x', y: 'y' }, _a).x, rest = __rest(_a, [\"x\"]), y = 3;"),
+            "Exported object-rest temp should be hoisted outside the export list.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("export var _a"),
+            "The synthesized temp must not become an exported binding.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn namespace_block_preserves_recovered_module_syntax() {
         let source = "namespace P {\n    {\n        namespace M { }\n        export = M;\n        function foo() { }\n        export { foo };\n        import I = M;\n        import I2 = require(\"foo\");\n        import * as Foo from \"ambient\";\n        import bar from \"ambient\";\n        import { baz } from \"ambient\";\n    }\n}\n";
 
