@@ -82,3 +82,42 @@ pub(crate) fn is_symbol_call_initializer(arena: &NodeArena, init_idx: NodeIndex)
         .get_identifier(expr_node)
         .is_some_and(|ident| ident.escaped_text == "Symbol")
 }
+
+pub(crate) fn has_declared_unique_symbol_owner(arena: &NodeArena, idx: NodeIndex) -> bool {
+    let Some(parent) = arena
+        .get_extended(idx)
+        .and_then(|ext| arena.get(ext.parent))
+    else {
+        return false;
+    };
+
+    if parent.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+        return true;
+    }
+
+    if parent.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+        || parent.kind == syntax_kind_ext::PROPERTY_DECLARATION
+    {
+        let mut cursor = idx;
+        while let Some(ext) = arena.get_extended(cursor) {
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent_node) = arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                return true;
+            }
+            if parent_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+            {
+                return false;
+            }
+            cursor = parent_idx;
+        }
+    }
+
+    false
+}
