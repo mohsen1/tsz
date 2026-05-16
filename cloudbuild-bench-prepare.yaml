@@ -75,12 +75,17 @@ steps:
       ./scripts/bench/bench-vs-tsgo.sh --prepare-only
       test -x .target-bench/dist/tsz
       tar -cf bench-prep.tar .target-bench/tools .target-bench/dist
+      {
+        printf 'BENCH_TARGET_SHA=%s\n' "${_BENCH_TARGET_SHA}"
+        printf 'BENCH_BUILD_DATE=%s\n' "$(date -u +%F)"
+      } > bench-prep.env
 
 artifacts:
   objects:
-    location: gs://tsz-ci_cloudbuild/bench-prep/${_BENCH_TARGET_SHA}/
+    location: gs://tsz-ci_cloudbuild/bench-prep/latest/
     paths:
       - bench-prep.tar
+      - bench-prep.env
 
 substitutions:
   _BENCH_TARGET_SHA: unknown

@@ -6,9 +6,12 @@ on:
     branches: [main]
     types: [completed]
   schedule:
-    # Two cron triggers a day so tsz.dev/benchmarks does not rely solely on
-    # workflow_run for fresh data. Spread evenly across the UTC day.
+    # Two benchmark cron triggers a day so tsz.dev/benchmarks does not rely
+    # solely on workflow_run for fresh data. Spread evenly across the UTC day.
+    # The 03:00 release cron submits the daily PGO build; the 05:00 release
+    # cron publishes the finished Cloud Build artifact without running shards.
     - cron: '0 3 * * *'
+    - cron: '0 5 * * *'
     - cron: '0 15 * * *'
   workflow_dispatch:
     inputs:
@@ -65,10 +68,21 @@ jobs:
           fi
 
           target_sha="${{ env.BENCH_TARGET_SHA }}"
-          main_sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
-          if [[ -n "$main_sha" && "$target_sha" != "$main_sha" ]]; then
-            echo "Benchmark target ${target_sha} is stale; current main is ${main_sha}. Skipping obsolete run."
-            should_run=false
+          release_only=false
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            case "${{ github.event.schedule }}" in
+              "0 3 * * *"|"0 5 * * *") release_only=true ;;
+            esac
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.publish_latest_pgo }}" == "true" ]]; then
+            release_only=true
+          fi
+
+          if [[ "$release_only" != "true" ]]; then
+            main_sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
+            if [[ -n "$main_sha" && "$target_sha" != "$main_sha" ]]; then
+              echo "Benchmark target ${target_sha} is stale; current main is ${main_sha}. Skipping obsolete run."
+              should_run=false
+            fi
           fi
 
           # Concurrency group prevents overlapping benchmark runs; the freshness
@@ -83,6 +97,7 @@ jobs:
     if: >-
       needs.bench-gate.outputs.should_run == 'true' &&
       !((github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
+        (github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') ||
         (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 90
@@ -287,7 +302,20 @@ jobs:
         run: |
           set -euo pipefail
 
+          if gcloud storage cp \
+            "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
+            bench-prep.env >/dev/null 2>&1; then
+            # shellcheck disable=SC1091
+            source bench-prep.env
+            if [[ "${BENCH_TARGET_SHA:-}" == "${{ env.BENCH_TARGET_SHA }}" &&
+                  "${BENCH_BUILD_DATE:-}" == "$(date -u +%F)" ]]; then
+              echo "Latest Cloud Build prep artifact already exists for ${BENCH_TARGET_SHA}; skipping submit."
+              exit 0
+            fi
+          fi
+
           gcloud builds submit \
+            --async \
             --project=tsz-ci \
             --region=us-central1 \
             --config=cloudbuild-bench-prepare.yaml \
@@ -295,31 +323,13 @@ jobs:
             --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}" \
             .
 
-      - name: Download Cloud Build prep artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          gcloud storage cp \
-            "gs://tsz-ci_cloudbuild/bench-prep/${BENCH_TARGET_SHA}/bench-prep.tar" \
-            bench-prep.tar
-          tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
-
-      - name: Upload benchmark prep artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: bench-prep
-          path: bench-prep.tar
-          retention-days: 1
-          if-no-files-found: error
-          compression-level: 1
-
   publish-latest-pgo:
     name: publish-latest-pgo
-    needs: bench-prepare-cloudbuild
+    needs: [bench-gate, bench-prepare-cloudbuild]
     if: >-
-      needs.bench-prepare-cloudbuild.result == 'success' &&
-      ((github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
+      always() &&
+      needs.bench-gate.outputs.should_run == 'true' &&
+      ((github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') ||
        (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
@@ -329,16 +339,62 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ env.BENCH_TARGET_SHA }}
           fetch-depth: 0
 
-      - name: Download benchmark prep artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: bench-prep
-          path: .
+      - id: cloudbuild-artifact
+        name: Download Cloud Build prep artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          wait_seconds=0
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            wait_seconds=360
+          fi
+
+          deadline=$((SECONDS + wait_seconds))
+          while true; do
+            if gcloud storage cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
+              bench-prep.env >/dev/null 2>&1 && \
+              gcloud storage cp \
+                "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.tar" \
+                bench-prep.tar >/dev/null 2>&1; then
+              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+              # shellcheck disable=SC1091
+              source bench-prep.env
+              if [[ -z "${BENCH_TARGET_SHA:-}" ]]; then
+                echo "Cloud Build manifest did not include BENCH_TARGET_SHA."
+                exit 1
+              fi
+              if [[ "${{ github.event_name }}" == "workflow_dispatch" &&
+                    "${BENCH_TARGET_SHA}" != "${{ env.BENCH_TARGET_SHA }}" ]]; then
+                echo "Cloud Build artifact is for ${BENCH_TARGET_SHA}; waiting for ${{ env.BENCH_TARGET_SHA }}."
+              elif [[ "${{ github.event_name }}" == "schedule" &&
+                      "${BENCH_BUILD_DATE:-}" != "$(date -u +%F)" ]]; then
+                echo "Cloud Build artifact is from ${BENCH_BUILD_DATE:-unknown}; waiting for today's build."
+              else
+                echo "target_sha=${BENCH_TARGET_SHA}" >> "$GITHUB_OUTPUT"
+                echo "ready=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+
+            if (( SECONDS >= deadline )); then
+              echo "No finished Cloud Build PGO artifact is available yet."
+              if [[ "${{ github.event_name }}" == "schedule" ]]; then
+                exit 1
+              fi
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "Waiting for Cloud Build PGO artifact..."
+            sleep 30
+          done
 
       - name: Stage latest PGO release asset
+        if: steps.cloudbuild-artifact.outputs.ready == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -361,17 +417,20 @@ jobs:
           ls -la dist/
 
       - name: Publish latest channel release
+        if: steps.cloudbuild-artifact.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TARGET_SHA: ${{ steps.cloudbuild-artifact.outputs.target_sha }}
         shell: bash
         run: |
           set -euo pipefail
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags --depth=1 origin "${RELEASE_TARGET_SHA}"
 
           gh release delete "${LATEST_TAG}" --cleanup-tag --yes || true
-          git tag -f "${LATEST_TAG}" "${BENCH_TARGET_SHA}"
+          git tag -f "${LATEST_TAG}" "${RELEASE_TARGET_SHA}"
           git push origin "refs/tags/${LATEST_TAG}" --force
 
           gh release create "${LATEST_TAG}" \
@@ -379,12 +438,13 @@ jobs:
             dist/tsz-${LATEST_TAG}-${LATEST_TARGET}.tar.gz.sha256 \
             dist/SHA256SUMS \
             --title "latest" \
-            --target "${BENCH_TARGET_SHA}" \
+            --target "${RELEASE_TARGET_SHA}" \
             --prerelease \
             --latest=false \
-            --notes "Daily PGO optimized tsz build for ${LATEST_TARGET}, built from ${BENCH_TARGET_SHA}."
+            --notes "Daily PGO optimized tsz build for ${LATEST_TARGET}, built from ${RELEASE_TARGET_SHA}."
 
       - name: Smoke test latest installer
+        if: steps.cloudbuild-artifact.outputs.ready == 'true'
         shell: bash
         env:
           TSZ_REPO_OWNER: ${{ github.repository_owner }}
