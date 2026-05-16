@@ -70,3 +70,24 @@ async function main() {
         "unexpected TS2339 after `await get()` — response must type as AxiosResponse<never>, not `never`. got: {codes:?}"
     );
 }
+
+#[test]
+fn await_distributes_over_value_or_promise_union() {
+    let source = r#"
+async function fromUnion<Item>(input: Item | Promise<Item>) {
+    const awaited = await input;
+    const same: Item = awaited;
+}
+
+async function fromNestedPromise<Value>(input: Promise<Value | Promise<Value>>) {
+    const awaited = await input;
+    const same: Value = awaited;
+}
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2322),
+        "`await` must distribute over value-or-promise unions and rejoin duplicate \
+         branches; got: {codes:?}"
+    );
+}

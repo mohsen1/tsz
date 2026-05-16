@@ -1506,6 +1506,67 @@ mod tests {
         );
     }
 
+    /// When a downlevel optional chain with a non-optional tail is used with
+    /// postfix `++`/`--`, the whole access path remains in the ternary branch.
+    /// `o?.a.b++` -> `(o === null || o === void 0 ? void 0 : o.a.b)++`
+    #[test]
+    fn optional_chain_in_postfix_update_keeps_tail_inside_branch() {
+        let source = "declare const o: any;\no?.a.b++;\no?.a[0]--;\no?.[\"a\"]++;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.a.b)++"),
+            "Postfix update must keep property tail inside optional-chain branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o.a[0])--"),
+            "Postfix update must keep element tail inside optional-chain branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(o === null || o === void 0 ? void 0 : o[\"a\"])++"),
+            "Postfix update must support optional element roots.\nOutput:\n{output}"
+        );
+    }
+
+    /// Prefix `++`/`--` also wraps the complete lowered optional-chain path.
+    /// `++o?.a.b` -> `++(o === null || o === void 0 ? void 0 : o.a.b)`
+    #[test]
+    fn optional_chain_in_prefix_update_keeps_tail_inside_branch() {
+        let source = "declare const o: any;\n++o?.a.b;\n--o?.a[0];\n++o?.[\"a\"];\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("++(o === null || o === void 0 ? void 0 : o.a.b)"),
+            "Prefix update must keep property tail inside optional-chain branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("--(o === null || o === void 0 ? void 0 : o.a[0])"),
+            "Prefix update must keep element tail inside optional-chain branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("++(o === null || o === void 0 ? void 0 : o[\"a\"])"),
+            "Prefix update must support optional element roots.\nOutput:\n{output}"
+        );
+    }
+
     // =====================================================================
     // write_dot_token: numeric literal double-dot disambiguation
     // =====================================================================

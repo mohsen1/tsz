@@ -1585,8 +1585,22 @@ pub(super) fn collect_diagnostics(
             // CommonJS/JSDoc constructor evidence. Importer files can otherwise
             // observe incomplete dependency shapes and emit flaky TS2339
             // diagnostics.
-            let use_sequential_checking =
-                work_items.len() <= 32 || has_large_wildcard_barrel(program, &work_items);
+            let reuse_requested = file_session_reuse_requested();
+            let parallel_reuse_requested = parallel_file_session_reuse_requested();
+            let has_parallel_order_sensitive_global_lib =
+                has_parallel_order_sensitive_global_lib(checker_libs);
+            let use_sequential_checking = work_items.len() <= 32
+                || has_large_wildcard_barrel(program, &work_items)
+                // DOM-style global declarations are order-sensitive with
+                // multiple concurrent checker contexts. Keep those projects
+                // on the deterministic single-worker path until global
+                // lookup state is fully parallel-stable.
+                || has_parallel_order_sensitive_global_lib
+                // Fresh per-file checkers can observe project-level lib/global
+                // state in scheduler order when run concurrently. If the
+                // session-reuse path is explicitly disabled, keep the fallback
+                // deterministic by using fresh checkers sequentially.
+                || !reuse_requested;
             // T2.1.B (`PERFORMANCE_PLAN.md` §6 PR table): by default,
             // the sequential no-emit path constructs one `CheckerState`
             // and re-targets it across files via
@@ -1603,7 +1617,7 @@ pub(super) fn collect_diagnostics(
             // for, so this restriction matches the use case rather
             // than narrowing it.
             let use_file_session_reuse =
-                use_sequential_checking && !extract_type_cache && file_session_reuse_requested();
+                use_sequential_checking && !extract_type_cache && reuse_requested;
             if use_file_session_reuse {
                 check_files_sequentially_with_reuse(
                     &work_items,
@@ -1622,10 +1636,7 @@ pub(super) fn collect_diagnostics(
                     extract_type_cache,
                     build_checker_binder,
                 )
-            } else if !use_sequential_checking
-                && !extract_type_cache
-                && parallel_file_session_reuse_requested()
-            {
+            } else if !use_sequential_checking && !extract_type_cache && parallel_reuse_requested {
                 // T2.1.C follow-up: reuse is now also default-on in the
                 // parallel no-emit lane, with `TSZ_DISABLE_FILE_SESSION_REUSE=1`
                 // as the shared opt-out across sequential + parallel paths.
@@ -3708,6 +3719,22 @@ fn has_esnext_umbrella_lib(checker_libs: &CheckerLibSet) -> bool {
     })
 }
 
+fn has_parallel_order_sensitive_global_lib(checker_libs: &CheckerLibSet) -> bool {
+    checker_libs.files.iter().any(|lib| {
+        Path::new(&lib.file_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(is_parallel_order_sensitive_global_lib)
+    })
+}
+
+fn is_parallel_order_sensitive_global_lib(file_name: &str) -> bool {
+    matches!(
+        file_name,
+        "lib.dom.d.ts" | "dom.d.ts" | "lib.webworker.d.ts" | "webworker.d.ts"
+    )
+}
+
 fn is_datetimeformatpart_spelling_baseline_trigger_lib(file_name: &str) -> bool {
     matches!(
         file_name,
@@ -4069,6 +4096,22 @@ interface Window {
         );
     }
 
+    #[test]
+    fn parallel_order_sensitive_lib_detection_is_scoped_to_dom_like_globals() {
+        let es_libs = checker_lib_set_for_test(&[("lib.es2018.d.ts", "interface Promise<T> {}\n")]);
+        assert!(
+            !has_parallel_order_sensitive_global_lib(&es_libs),
+            "plain ES libs should stay eligible for parallel project checking"
+        );
+
+        let dom_libs =
+            checker_lib_set_for_test(&[("lib.dom.d.ts", "interface Console { log(): void; }\n")]);
+        assert!(
+            has_parallel_order_sensitive_global_lib(&dom_libs),
+            "DOM-style globals should use deterministic project checking"
+        );
+    }
+
     fn collect_test_diagnostics_with_checker_libs(
         files: &[(&str, &str)],
         checker_libs: &CheckerLibSet,
@@ -4100,6 +4143,18 @@ interface Window {
         files: &[(&str, &str)],
         lib_files: &[std::sync::Arc<tsz::binder::lib_loader::LibFile>],
     ) -> Vec<Diagnostic> {
+        collect_test_diagnostics_with_lib_files_and_options(
+            files,
+            lib_files,
+            &ResolvedCompilerOptions::default(),
+        )
+    }
+
+    fn collect_test_diagnostics_with_lib_files_and_options(
+        files: &[(&str, &str)],
+        lib_files: &[std::sync::Arc<tsz::binder::lib_loader::LibFile>],
+        options: &ResolvedCompilerOptions,
+    ) -> Vec<Diagnostic> {
         let compile_inputs = files
             .iter()
             .map(|(file_name, source)| ((*file_name).to_string(), (*source).to_string()))
@@ -4113,7 +4168,7 @@ interface Window {
 
         collect_diagnostics(
             &program,
-            &ResolvedCompilerOptions::default(),
+            options,
             std::path::Path::new("/"),
             None,
             &checker_libs,
@@ -4200,6 +4255,53 @@ export function freeze<T>(value: T): Readonly<T> {
         assert!(
             ts2339.is_empty(),
             "Readonly alias annotations should not collapse to unknown in consumer-first program checks. Got: {ts2339:?}. All: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn large_project_checking_preserves_parallel_dom_globals() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+        assert!(
+            lib_files.len() >= 2,
+            "es5.d.ts and dom.d.ts must be available for this regression"
+        );
+
+        let owned_files = (0..40)
+            .map(|idx| {
+                (
+                    format!("pkg{idx}/file{idx}.ts"),
+                    format!("console.log(\"file{idx}\");\nconsole.warn(\"file{idx}\");\n"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let files = owned_files
+            .iter()
+            .map(|(file_name, source)| (file_name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let options = ResolvedCompilerOptions {
+            no_emit: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let reused_diagnostics = {
+            FILE_SESSION_REUSE_TEST_OVERRIDE.with(|override_value| override_value.set(Some(true)));
+            let _guard = FileSessionReuseOverrideGuard;
+            collect_test_diagnostics_with_lib_files_and_options(&files, &lib_files, &options)
+        };
+        let disabled_diagnostics = {
+            FILE_SESSION_REUSE_TEST_OVERRIDE.with(|override_value| override_value.set(Some(false)));
+            let _guard = FileSessionReuseOverrideGuard;
+            collect_test_diagnostics_with_lib_files_and_options(&files, &lib_files, &options)
+        };
+        let console_member_errors = reused_diagnostics
+            .iter()
+            .chain(disabled_diagnostics.iter())
+            .filter(|diagnostic| diagnostic.code == 2339)
+            .collect::<Vec<_>>();
+
+        assert!(
+            console_member_errors.is_empty(),
+            "large-project DOM globals must not be order-dependent. TS2339: {console_member_errors:?}. Reused: {reused_diagnostics:?}. Disabled: {disabled_diagnostics:?}"
         );
     }
 
