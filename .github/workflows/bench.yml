@@ -11,6 +11,12 @@ on:
     - cron: '0 3 * * *'
     - cron: '0 15 * * *'
   workflow_dispatch:
+    inputs:
+      publish_latest_pgo:
+        description: "Publish the latest PGO channel asset from this run"
+        required: false
+        default: false
+        type: boolean
 
 # Only one benchmark runs at a time. Let the active full run finish so it can
 # publish a merged artifact for the website; GitHub concurrency still keeps only
@@ -20,7 +26,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
   actions: write
 
 env:
@@ -251,6 +257,116 @@ jobs:
           retention-days: 1
           if-no-files-found: error
           compression-level: 1
+
+  bench-prepare-cloudbuild:
+    name: bench-prepare-cloudbuild
+    needs: bench-gate
+    if: >-
+      needs.bench-gate.outputs.should_run == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *'))
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 120
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BENCH_TARGET_SHA }}
+          fetch-depth: 1
+
+      - name: Submit benchmark prep to Cloud Build pool
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gcloud builds submit \
+            --project=tsz-ci \
+            --region=us-central1 \
+            --config=cloudbuild-bench-prepare.yaml \
+            --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
+            --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}" \
+            .
+
+  publish-latest-pgo:
+    name: publish-latest-pgo
+    needs: bench-prepare
+    if: >-
+      needs.bench-prepare.outputs.should_run == 'true' &&
+      ((github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 20
+    env:
+      LATEST_TAG: latest
+      LATEST_TARGET: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BENCH_TARGET_SHA }}
+          fetch-depth: 0
+
+      - name: Download benchmark prep artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-prep
+          path: .
+
+      - name: Stage latest PGO release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tar -xf bench-prep.tar
+          test -x .target-bench/dist/tsz
+
+          staging="tsz-${LATEST_TAG}-${LATEST_TARGET}"
+          mkdir -p "dist/${staging}"
+          cp .target-bench/dist/tsz "dist/${staging}/"
+          cp README.md LICENSE 2>/dev/null "dist/${staging}/" || true
+          tar -C dist -czf "dist/${staging}.tar.gz" "${staging}"
+          sha256sum "dist/${staging}.tar.gz" | awk '{print $1}' > "dist/${staging}.tar.gz.sha256"
+          (
+            cd dist
+            printf "%s  %s\n" \
+              "$(cat "${staging}.tar.gz.sha256")" \
+              "${staging}.tar.gz" > SHA256SUMS
+          )
+          ls -la dist/
+
+      - name: Publish latest channel release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          gh release delete "${LATEST_TAG}" --cleanup-tag --yes || true
+          git tag -f "${LATEST_TAG}" "${BENCH_TARGET_SHA}"
+          git push origin "refs/tags/${LATEST_TAG}" --force
+
+          gh release create "${LATEST_TAG}" \
+            dist/tsz-${LATEST_TAG}-${LATEST_TARGET}.tar.gz \
+            dist/tsz-${LATEST_TAG}-${LATEST_TARGET}.tar.gz.sha256 \
+            dist/SHA256SUMS \
+            --title "latest" \
+            --target "${BENCH_TARGET_SHA}" \
+            --prerelease \
+            --latest=false \
+            --notes "Daily PGO optimized tsz build for ${LATEST_TARGET}, built from ${BENCH_TARGET_SHA}."
+
+      - name: Smoke test latest installer
+        shell: bash
+        env:
+          TSZ_REPO_OWNER: ${{ github.repository_owner }}
+          TSZ_REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          install_dir="${RUNNER_TEMP}/tsz-latest-install"
+          bash scripts/install.sh --version latest --dir "${install_dir}"
+          "${install_dir}/tsz" --version
 
   bench:
     name: bench-${{ matrix.label }}
