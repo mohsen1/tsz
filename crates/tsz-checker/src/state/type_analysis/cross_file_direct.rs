@@ -952,6 +952,203 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn source_file_type_node_is_option_bag_lowerable<'b>(
+        arena: &'b NodeArena,
+        delegate_binder: &BinderState,
+        node_idx: NodeIndex,
+        seen_type_names: &mut Vec<&'b str>,
+    ) -> bool {
+        if Self::source_file_type_node_is_scope_independent(arena, node_idx) {
+            return true;
+        }
+        if node_idx.is_none() {
+            return false;
+        }
+        let Some(node) = arena.get(node_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                arena.get_type_ref(node).is_some_and(|type_ref| {
+                    let Some(name) = arena
+                        .get(type_ref.type_name)
+                        .and_then(|name_node| arena.get_identifier(name_node))
+                        .map(|ident| ident.escaped_text.as_str())
+                    else {
+                        return false;
+                    };
+
+                    if matches!(name, "Array" | "ReadonlyArray") {
+                        return type_ref.type_arguments.as_ref().is_some_and(|args| {
+                            args.nodes.len() == 1
+                                && Self::source_file_type_node_is_option_bag_lowerable(
+                                    arena,
+                                    delegate_binder,
+                                    args.nodes[0],
+                                    seen_type_names,
+                                )
+                        });
+                    }
+
+                    if type_ref
+                        .type_arguments
+                        .as_ref()
+                        .is_some_and(|args| !args.nodes.is_empty())
+                    {
+                        return false;
+                    }
+
+                    Self::source_file_type_reference_targets_option_bag_lowerable_declaration(
+                        arena,
+                        delegate_binder,
+                        name,
+                        seen_type_names,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                arena.get_composite_type(node).is_some_and(|composite| {
+                    composite.types.nodes.iter().copied().all(|member| {
+                        Self::source_file_type_node_is_option_bag_lowerable(
+                            arena,
+                            delegate_binder,
+                            member,
+                            seen_type_names,
+                        )
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::ARRAY_TYPE => {
+                arena.get_array_type(node).is_some_and(|array| {
+                    Self::source_file_type_node_is_option_bag_lowerable(
+                        arena,
+                        delegate_binder,
+                        array.element_type,
+                        seen_type_names,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::TUPLE_TYPE => {
+                arena.get_tuple_type(node).is_some_and(|tuple| {
+                    tuple.elements.nodes.iter().copied().all(|element| {
+                        Self::source_file_type_node_is_option_bag_lowerable(
+                            arena,
+                            delegate_binder,
+                            element,
+                            seen_type_names,
+                        )
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE
+                || k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE =>
+            {
+                arena.get_wrapped_type(node).is_some_and(|wrapped| {
+                    Self::source_file_type_node_is_option_bag_lowerable(
+                        arena,
+                        delegate_binder,
+                        wrapped.type_node,
+                        seen_type_names,
+                    )
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn source_file_type_reference_targets_option_bag_lowerable_declaration<'b>(
+        arena: &'b NodeArena,
+        delegate_binder: &BinderState,
+        name: &'b str,
+        seen_type_names: &mut Vec<&'b str>,
+    ) -> bool {
+        if seen_type_names.contains(&name) {
+            return false;
+        }
+        let Some(sym_id) = delegate_binder.file_locals.get(name) else {
+            return false;
+        };
+        let Some(symbol) = delegate_binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let disallowed_flags = symbol_flags::VALUE
+            | symbol_flags::CLASS
+            | symbol_flags::VALUE_MODULE
+            | symbol_flags::NAMESPACE_MODULE;
+        if symbol.flags & disallowed_flags != 0 || symbol.declarations.len() != 1 {
+            return false;
+        }
+
+        let decl_idx = symbol.declarations[0];
+        if !Self::lib_declaration_name_matches(arena, decl_idx, name) {
+            return false;
+        }
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return false;
+        };
+
+        if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
+            seen_type_names.push(name);
+            let result = arena.get_type_alias(decl_node).is_some_and(|type_alias| {
+                type_alias
+                    .type_parameters
+                    .as_ref()
+                    .is_none_or(|params| params.nodes.is_empty())
+                    && !Self::source_file_type_node_contains_kind(
+                        arena,
+                        type_alias.type_node,
+                        syntax_kind_ext::TYPE_QUERY,
+                    )
+                    && Self::source_file_type_node_is_option_bag_lowerable(
+                        arena,
+                        delegate_binder,
+                        type_alias.type_node,
+                        seen_type_names,
+                    )
+            });
+            seen_type_names.pop();
+            result
+        } else if symbol.flags & symbol_flags::INTERFACE != 0 {
+            arena.get_interface(decl_node).is_some()
+                && Self::source_file_interface_declarations_are_direct_lowerable_with_seen(
+                    &[(decl_idx, arena)],
+                    delegate_binder,
+                    seen_type_names,
+                )
+        } else {
+            false
+        }
+    }
+
+    fn source_file_local_name_def_id_for_lowering(
+        &self,
+        delegate_binder: &BinderState,
+        symbol_arena: &NodeArena,
+        type_name: &str,
+    ) -> Option<tsz_solver::def::DefId> {
+        let sym_id = delegate_binder.file_locals.get(type_name)?;
+        let symbol = delegate_binder.get_symbol(sym_id)?;
+        let allowed_flags = symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS;
+        let disallowed_flags = symbol_flags::VALUE
+            | symbol_flags::CLASS
+            | symbol_flags::VALUE_MODULE
+            | symbol_flags::NAMESPACE_MODULE;
+        if symbol.flags & allowed_flags == 0 || symbol.flags & disallowed_flags != 0 {
+            return None;
+        }
+        if symbol
+            .declarations
+            .iter()
+            .any(|&decl_idx| Self::lib_declaration_name_matches(symbol_arena, decl_idx, type_name))
+        {
+            Some(self.ctx.get_or_create_def_id(sym_id))
+        } else {
+            None
+        }
+    }
+
     fn source_file_type_node_is_generic_scope_independent(
         arena: &NodeArena,
         node_idx: NodeIndex,
@@ -1167,8 +1364,10 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn source_file_interface_declarations_are_direct_lowerable(
-        declarations: &[(NodeIndex, &NodeArena)],
+    fn source_file_interface_declarations_are_direct_lowerable_with_seen<'b>(
+        declarations: &[(NodeIndex, &'b NodeArena)],
+        delegate_binder: &BinderState,
+        seen_type_names: &mut Vec<&'b str>,
     ) -> bool {
         declarations.iter().all(|(decl_idx, arena)| {
             let Some(node) = arena.get(*decl_idx) else {
@@ -1177,6 +1376,16 @@ impl<'a> CheckerState<'a> {
             let Some(interface) = arena.get_interface(node) else {
                 return false;
             };
+            let Some(interface_name) = arena
+                .get(interface.name)
+                .and_then(|name_node| arena.get_identifier(name_node))
+                .map(|ident| ident.escaped_text.as_str())
+            else {
+                return false;
+            };
+            if seen_type_names.contains(&interface_name) {
+                return false;
+            }
             if interface
                 .type_parameters
                 .as_ref()
@@ -1185,7 +1394,8 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
 
-            interface.members.nodes.iter().copied().all(|member_idx| {
+            seen_type_names.push(interface_name);
+            let result = interface.members.nodes.iter().copied().all(|member_idx| {
                 let Some(member_node) = arena.get(member_idx) else {
                     return false;
                 };
@@ -1203,12 +1413,28 @@ impl<'a> CheckerState<'a> {
                         .type_parameters
                         .as_ref()
                         .is_none_or(|params| params.nodes.is_empty())
-                    && Self::source_file_type_node_is_scope_independent(
+                    && Self::source_file_type_node_is_option_bag_lowerable(
                         arena,
+                        delegate_binder,
                         signature.type_annotation,
+                        seen_type_names,
                     )
-            })
+            });
+            seen_type_names.pop();
+            result
         })
+    }
+
+    fn source_file_interface_declarations_are_direct_lowerable(
+        declarations: &[(NodeIndex, &NodeArena)],
+        delegate_binder: &BinderState,
+    ) -> bool {
+        let mut seen_type_names = Vec::new();
+        Self::source_file_interface_declarations_are_direct_lowerable_with_seen(
+            declarations,
+            delegate_binder,
+            &mut seen_type_names,
+        )
     }
 
     fn direct_lower_source_file_annotation_type(
@@ -1455,7 +1681,10 @@ impl<'a> CheckerState<'a> {
         };
         if direct_source_file_arena {
             if Self::interface_declarations_have_heritage_or_computed_names(&declarations)
-                || !Self::source_file_interface_declarations_are_direct_lowerable(&declarations)
+                || !Self::source_file_interface_declarations_are_direct_lowerable(
+                    &declarations,
+                    delegate_binder,
+                )
             {
                 record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
                 return None;
@@ -1469,6 +1698,13 @@ impl<'a> CheckerState<'a> {
 
         let def_id = self.ctx.get_or_create_def_id(sym_id);
         let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+            if direct_source_file_arena {
+                return self.source_file_local_name_def_id_for_lowering(
+                    delegate_binder,
+                    symbol_arena,
+                    type_name,
+                );
+            }
             (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
                 .then(|| self.resolve_actual_lib_name_to_def_id_for_lowering(type_name))
                 .flatten()
@@ -1531,7 +1767,16 @@ impl<'a> CheckerState<'a> {
             || is_direct_lowering_declaration_arena(interface_arena)
             || (allow_source_file_arena && is_direct_lowering_source_file_arena(interface_arena));
         if direct_member_arena {
+            let direct_source_file_arena =
+                allow_source_file_arena && is_direct_lowering_source_file_arena(interface_arena);
             let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+                if direct_source_file_arena {
+                    return self.source_file_local_name_def_id_for_lowering(
+                        delegate_binder,
+                        interface_arena,
+                        type_name,
+                    );
+                }
                 self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
             };
             let no_type_symbol = |_node_idx: NodeIndex| -> Option<u32> { None };
