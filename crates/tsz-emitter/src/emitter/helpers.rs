@@ -857,16 +857,34 @@ impl<'a> Printer<'a> {
                 };
                 if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
                     && let Some(prop) = self.arena.get_property_assignment(elem_node)
-                    && self.assignment_pattern_has_object_rest(prop.initializer)
                 {
-                    let nested_source_simple = self
-                        .arena
-                        .get(prop.initializer)
-                        .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
-                    count += self.estimate_object_rest_assignment_pattern_temps(
-                        prop.initializer,
-                        nested_source_simple,
-                    );
+                    let is_dynamic_computed =
+                        self.arena.get(prop.name).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        }) && self.get_property_key_text(prop.name).is_none();
+                    if is_dynamic_computed {
+                        count += 1;
+                        if self.arena.get(prop.initializer).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::BINARY_EXPRESSION
+                                || n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                || n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        }) {
+                            count += 1;
+                        }
+                    }
+
+                    if self.assignment_pattern_has_object_rest(prop.initializer) {
+                        let nested_source_simple = self
+                            .arena
+                            .get(prop.initializer)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
+                        count += self.estimate_object_rest_assignment_pattern_temps(
+                            prop.initializer,
+                            nested_source_simple,
+                        );
+                    }
                 }
             }
 

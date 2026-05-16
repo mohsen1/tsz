@@ -612,13 +612,10 @@ impl<'a> Printer<'a> {
         };
 
         let mut excluded_props: Vec<ExcludedProp> = Vec::new();
+        let mut simple_elements: Vec<NodeIndex> = Vec::new();
+        let mut emitted_any = false;
 
-        // Emit each non-rest element as manual property access
-        for (i, &elem_idx) in non_rest_elements.iter().enumerate() {
-            if i > 0 {
-                self.write(", ");
-            }
-
+        for &elem_idx in non_rest_elements {
             let Some(elem_node) = self.arena.get(elem_idx) else {
                 continue;
             };
@@ -629,6 +626,43 @@ impl<'a> Printer<'a> {
             let (static_name, is_static_computed) =
                 self.get_binding_element_property_name_info(elem_idx);
             let is_dynamic = static_name.is_empty() && self.has_computed_property_name(elem_idx);
+            let needs_manual_default = self.initializer_is_object_rest_assignment(elem.initializer);
+            let needs_manual =
+                is_dynamic || self.is_binding_pattern(elem.name) || needs_manual_default;
+
+            if !needs_manual {
+                let prop_name = if static_name.is_empty() {
+                    self.get_identifier_text(elem.name)
+                } else {
+                    static_name.clone()
+                };
+                if !prop_name.is_empty() {
+                    let is_str_lit =
+                        is_static_computed || self.is_string_literal_property_name(elem_idx);
+                    if is_str_lit {
+                        excluded_props.push(ExcludedProp::StringLiteral(prop_name));
+                    } else {
+                        excluded_props.push(ExcludedProp::Identifier(prop_name));
+                    }
+                }
+                simple_elements.push(elem_idx);
+                continue;
+            }
+
+            if !simple_elements.is_empty() {
+                if emitted_any {
+                    self.write(", ");
+                }
+                self.emit_object_pattern_without_rest(&simple_elements);
+                self.write(" = ");
+                self.write(&source_name);
+                simple_elements.clear();
+                emitted_any = true;
+            }
+
+            if emitted_any {
+                self.write(", ");
+            }
 
             if is_dynamic {
                 // Dynamic computed key: assign key expr to temp, then access
@@ -685,6 +719,7 @@ impl<'a> Printer<'a> {
                 }
 
                 excluded_props.push(ExcludedProp::Dynamic(key_temp));
+                emitted_any = true;
             } else {
                 // Static property: emit as manual property access
                 let var_name = self.get_identifier_text(elem.name);
@@ -750,7 +785,18 @@ impl<'a> Printer<'a> {
                 } else {
                     excluded_props.push(ExcludedProp::Identifier(prop_name));
                 }
+                emitted_any = true;
             }
+        }
+
+        if !simple_elements.is_empty() {
+            if emitted_any {
+                self.write(", ");
+            }
+            self.emit_object_pattern_without_rest(&simple_elements);
+            self.write(" = ");
+            self.write(&source_name);
+            emitted_any = true;
         }
 
         // Emit rest
@@ -763,7 +809,7 @@ impl<'a> Printer<'a> {
             };
             let rest_name = self.get_identifier_text(rest_elem.name);
             if !rest_name.is_empty() {
-                if !non_rest_elements.is_empty() {
+                if emitted_any {
                     self.write(", ");
                 }
                 self.write(&rest_name);
@@ -776,6 +822,19 @@ impl<'a> Printer<'a> {
                 self.write("])");
             }
         }
+    }
+
+    fn initializer_is_object_rest_assignment(&self, initializer_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(initializer_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        self.arena.get_binary_expr(node).is_some_and(|binary| {
+            binary.operator_token == tsz_scanner::SyntaxKind::EqualsToken as u16
+                && self.assignment_pattern_has_object_rest(binary.left)
+        })
     }
 
     /// Emit an object binding pattern but skip the rest element.
