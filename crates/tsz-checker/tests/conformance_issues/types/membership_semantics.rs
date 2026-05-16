@@ -1,6 +1,34 @@
 use super::super::core::*;
 
 #[test]
+fn branded_unique_symbol_aliases_are_nominally_incompatible() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+type UserId = string & { readonly __brand: unique symbol };
+type OrderId = string & { readonly __brand: unique symbol };
+
+function getUserById(id: UserId): void {}
+function getOrderById(id: OrderId): void {}
+
+const userId = "user-123" as UserId;
+const orderId = "order-123" as OrderId;
+
+getUserById(userId);
+getOrderById(orderId);
+
+getUserById(orderId);
+getOrderById(userId);
+"#,
+    );
+
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+    assert_eq!(
+        ts2345_count, 2,
+        "Expected two TS2345 diagnostics for cross-branded unique-symbol aliases.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_destructuring_fallback_literals_do_not_emit_false_assignability_errors() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
