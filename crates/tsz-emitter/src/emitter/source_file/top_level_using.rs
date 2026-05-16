@@ -1650,6 +1650,7 @@ impl<'a> Printer<'a> {
                 false,
                 Some(("", binding_name.clone())),
                 None,
+                false,
             );
             let after_len = self.writer.len();
             let full_output = self.writer.get_output().to_string();
@@ -1694,6 +1695,7 @@ impl<'a> Printer<'a> {
                 false,
                 Some(("", binding_name.clone())),
                 None,
+                false,
             );
             if let Some(prev) = prev_anon_default_name {
                 self.anonymous_default_export_name = prev;

@@ -193,7 +193,7 @@ impl<'a> Printer<'a> {
     /// This is the pure emission logic that can be reused by both the old API
     /// and the new transform system.
     pub(in crate::emitter) fn emit_class_es6(&mut self, node: &Node, idx: NodeIndex) {
-        self.emit_class_es6_with_options(node, idx, false, None, None);
+        self.emit_class_es6_with_options(node, idx, false, None, None, false);
     }
 
     pub(in crate::emitter) fn emit_class_es6_with_options(
@@ -203,6 +203,7 @@ impl<'a> Printer<'a> {
         suppress_modifiers: bool,
         assignment_prefix: Option<(&str, String)>,
         static_initializer_self_alias: Option<&str>,
+        emit_assignment_static_elements_as_statements: bool,
     ) {
         let Some(class) = self.arena.get_class(node) else {
             return;
@@ -1202,6 +1203,7 @@ impl<'a> Printer<'a> {
                     .is_some_and(|m| m.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION)
             });
         let needs_static_comma_expr = emits_as_class_expression
+            && !emit_assignment_static_elements_as_statements
             && (has_static_field_comma_expr || has_static_block_comma_expr);
         let needs_any_comma_expr = needs_static_comma_expr || needs_private_comma_expr;
         let class_expr_comma_needs_parens = needs_any_comma_expr
