@@ -200,23 +200,42 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         let index_constraint_eval = self.evaluate_type_with_env(index_constraint);
-        [index_constraint, index_constraint_eval]
-            .into_iter()
-            .filter_map(|candidate| {
+
+        // Collect keyof operands from each candidate. A candidate may be a direct
+        // `keyof X` or an intersection like `keyof X & string` — in the latter case
+        // we extract the `keyof X` members from the intersection so the index operand
+        // can still be matched against the mapped constraint's key space.
+        let mut keyof_operands: Vec<TypeId> = Vec::new();
+        for candidate in [index_constraint, index_constraint_eval] {
+            if let Some(operand) =
                 crate::query_boundaries::state::checking::keyof_target(self.ctx.types, candidate)
-            })
-            .any(|index_operand| {
-                crate::query_boundaries::state::checking::keyof_target(
-                    self.ctx.types,
-                    mapped_constraint,
-                )
-                .is_some_and(|constraint_operand| {
-                    same_object_key_space(self.ctx.types, index_operand, constraint_operand)
-                }) || crate::query_boundaries::state::checking::keyof_target(self.ctx.types, keyof)
-                    .is_some_and(|keyof_operand| {
-                        same_object_key_space(self.ctx.types, index_operand, keyof_operand)
-                    })
-            })
+            {
+                keyof_operands.push(operand);
+            } else if let Some(members) =
+                crate::query_boundaries::common::intersection_members(self.ctx.types, candidate)
+            {
+                for m in members {
+                    if let Some(operand) =
+                        crate::query_boundaries::state::checking::keyof_target(self.ctx.types, m)
+                    {
+                        keyof_operands.push(operand);
+                    }
+                }
+            }
+        }
+
+        keyof_operands.into_iter().any(|index_operand| {
+            crate::query_boundaries::state::checking::keyof_target(
+                self.ctx.types,
+                mapped_constraint,
+            )
+            .is_some_and(|constraint_operand| {
+                same_object_key_space(self.ctx.types, index_operand, constraint_operand)
+            }) || crate::query_boundaries::state::checking::keyof_target(self.ctx.types, keyof)
+                .is_some_and(|keyof_operand| {
+                    same_object_key_space(self.ctx.types, index_operand, keyof_operand)
+                })
+        })
     }
 
     pub(super) fn indexed_access_literal_property_exists_in_alias_union(

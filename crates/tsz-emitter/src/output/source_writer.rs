@@ -22,6 +22,35 @@ pub struct SourcePosition {
     pub column: u32,
 }
 
+/// Delimiter pairs that can be written through structured writer helpers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DelimiterKind {
+    /// `(` and `)`
+    Paren,
+    /// `[` and `]`
+    Bracket,
+    /// `{` and `}`
+    Brace,
+}
+
+impl DelimiterKind {
+    pub const fn open_char(self) -> char {
+        match self {
+            Self::Paren => '(',
+            Self::Bracket => '[',
+            Self::Brace => '{',
+        }
+    }
+
+    pub const fn close_char(self) -> char {
+        match self {
+            Self::Paren => ')',
+            Self::Bracket => ']',
+            Self::Brace => '}',
+        }
+    }
+}
+
 /// Writer that handles output generation and source map tracking.
 ///
 /// This abstraction separates text generation from AST traversal,
@@ -53,6 +82,14 @@ pub struct SourceWriter {
 
     /// Current source file index (for source maps)
     current_source_index: u32,
+
+    /// Structured delimiter stack for debug/test-only balance checks.
+    #[cfg(debug_assertions)]
+    delimiter_stack: Vec<DelimiterKind>,
+
+    /// Number of delimiter mismatches observed through structured helpers.
+    #[cfg(debug_assertions)]
+    delimiter_mismatch_count: u32,
 }
 
 impl SourceWriter {
@@ -74,6 +111,10 @@ impl SourceWriter {
             new_line: "\n".to_string(),
             source_map: None,
             current_source_index: 0,
+            #[cfg(debug_assertions)]
+            delimiter_stack: Vec::new(),
+            #[cfg(debug_assertions)]
+            delimiter_mismatch_count: 0,
         }
     }
 
@@ -232,6 +273,42 @@ impl SourceWriter {
         self.raw_write_char(ch);
     }
 
+    /// Write an opening delimiter and track it for debug balance checks.
+    pub fn write_open_delimiter(&mut self, delimiter: DelimiterKind) {
+        self.track_open_delimiter(delimiter);
+        self.write_char(delimiter.open_char());
+    }
+
+    /// Write a source-mapped opening delimiter and track it for debug balance checks.
+    pub fn write_open_delimiter_node(
+        &mut self,
+        delimiter: DelimiterKind,
+        source_pos: SourcePosition,
+    ) {
+        self.track_open_delimiter(delimiter);
+        let mut buf = [0u8; 4];
+        let text = delimiter.open_char().encode_utf8(&mut buf);
+        self.write_node(text, source_pos);
+    }
+
+    /// Write a closing delimiter and verify it matches the last structured opener.
+    pub fn write_close_delimiter(&mut self, delimiter: DelimiterKind) {
+        self.track_close_delimiter(delimiter);
+        self.write_char(delimiter.close_char());
+    }
+
+    /// Write a source-mapped closing delimiter and verify it matches the last opener.
+    pub fn write_close_delimiter_node(
+        &mut self,
+        delimiter: DelimiterKind,
+        source_pos: SourcePosition,
+    ) {
+        self.track_close_delimiter(delimiter);
+        let mut buf = [0u8; 4];
+        let text = delimiter.close_char().encode_utf8(&mut buf);
+        self.write_node(text, source_pos);
+    }
+
     /// Write a newline
     pub fn write_line(&mut self) {
         self.output.push_str(&self.new_line);
@@ -348,6 +425,36 @@ impl SourceWriter {
         self.current_source_index
     }
 
+    /// Whether all structured delimiter helper calls are balanced.
+    ///
+    /// This intentionally tracks only delimiters written through
+    /// `write_open_delimiter` / `write_close_delimiter`; raw text writes remain
+    /// available for existing emitter paths and transform output.
+    pub const fn delimiters_balanced(&self) -> bool {
+        #[cfg(debug_assertions)]
+        {
+            self.delimiter_stack.is_empty() && self.delimiter_mismatch_count == 0
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            true
+        }
+    }
+
+    /// Number of structured delimiter openers that have not been closed.
+    pub const fn unclosed_delimiter_count(&self) -> usize {
+        #[cfg(debug_assertions)]
+        {
+            self.delimiter_stack.len()
+        }
+
+        #[cfg(not(debug_assertions))]
+        {
+            0
+        }
+    }
+
     /// Check if we're at the start of a line
     pub const fn is_at_line_start(&self) -> bool {
         self.at_line_start
@@ -374,6 +481,11 @@ impl SourceWriter {
 
     /// Take ownership of the output string
     pub fn take_output(self) -> String {
+        let unclosed_delimiter_count = self.unclosed_delimiter_count();
+        debug_assert!(
+            self.delimiters_balanced(),
+            "structured delimiter helpers left {unclosed_delimiter_count} unclosed delimiter(s)"
+        );
         self.output
     }
 
@@ -589,6 +701,30 @@ impl SourceWriter {
             self.raw_write_char(b as char);
         }
     }
+
+    #[cfg(debug_assertions)]
+    fn track_open_delimiter(&mut self, delimiter: DelimiterKind) {
+        self.delimiter_stack.push(delimiter);
+    }
+
+    #[cfg(not(debug_assertions))]
+    const fn track_open_delimiter(&mut self, _delimiter: DelimiterKind) {}
+
+    #[cfg(debug_assertions)]
+    #[track_caller]
+    fn track_close_delimiter(&mut self, delimiter: DelimiterKind) {
+        let Some(opened) = self.delimiter_stack.pop() else {
+            self.delimiter_mismatch_count += 1;
+            panic!("unbalanced delimiter close: tried to close {delimiter:?} with no opener");
+        };
+        if opened != delimiter {
+            self.delimiter_mismatch_count += 1;
+            panic!("delimiter mismatch: opened {opened:?}, tried to close {delimiter:?}");
+        }
+    }
+
+    #[cfg(not(debug_assertions))]
+    const fn track_close_delimiter(&mut self, _delimiter: DelimiterKind) {}
 
     /// Raw write single char - updates position tracking
     /// Note: Column counting uses UTF-16 code units for source map compatibility
