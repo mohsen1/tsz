@@ -2254,6 +2254,7 @@ ensure_nextjs_fixture() {
         git -C "$NEXTJS_DIR" sparse-checkout init --no-cone
         git -C "$NEXTJS_DIR" sparse-checkout set \
             '/tsconfig-tsec.json' \
+            '/packages/next/package.json' \
             '/packages/next/tsconfig.json' \
             '/packages/next/src/'
         git -C "$NEXTJS_DIR" fetch --quiet --depth 1 origin "$NEXTJS_REF"
@@ -2267,6 +2268,10 @@ ensure_nextjs_fixture() {
         git -C "$NEXTJS_DIR" fetch --quiet --depth 1 origin "$NEXTJS_REF"
         git -C "$NEXTJS_DIR" checkout --quiet FETCH_HEAD
     fi
+
+    tsz_write_nextjs_bench_globals "$NEXTJS_DIR/packages/next/tsz-bench-globals.d.ts"
+    tsz_write_nextjs_external_module "$NEXTJS_DIR/packages/next/tsz-bench-external-module.d.ts"
+    tsz_write_nextjs_config "$NEXTJS_DIR/packages/next/tsconfig.tsz-bench.json"
 }
 
 ensure_next_app_benchmark_fixture() {
@@ -2720,7 +2725,7 @@ run_nextjs_benchmarks() {
     ensure_nextjs_fixture
     echo -e "${GREEN}✓${NC} next.js pinned at $(git -C "$NEXTJS_DIR" rev-parse --short HEAD)"
 
-    local tsconfig="$NEXTJS_DIR/packages/next/tsconfig.json"
+    local tsconfig="$NEXTJS_DIR/packages/next/tsconfig.tsz-bench.json"
     local src_dir="$NEXTJS_DIR/packages/next/src"
 
     if [ ! -f "$tsconfig" ]; then

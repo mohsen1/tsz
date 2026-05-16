@@ -251,6 +251,75 @@ tsz_write_kysely_config() {
 JSON
 }
 
+# The full Next.js row uses a sparse source checkout, not an installed Next.js
+# monorepo. Keep a bench-owned config so tsc/tsgo can validate the source graph
+# without requiring vendored compiled packages, React, Jest, or Node typings.
+tsz_write_nextjs_bench_globals() {
+  local output="$1"
+  cat > "$output" <<'TYPES'
+declare const process: any;
+declare const require: any;
+declare const __dirname: string;
+declare const __filename: string;
+declare const global: any;
+
+declare module '*' {
+  const defaultExport: any;
+  export default defaultExport;
+}
+
+declare module '*.json' {
+  const value: any;
+  export default value;
+}
+TYPES
+}
+
+tsz_write_nextjs_config() {
+  local output="$1"
+  cat > "$output" <<'JSON'
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "noCheck": true,
+    "skipLibCheck": true,
+    "ignoreDeprecations": "6.0",
+    "target": "ES2020",
+    "lib": ["DOM", "DOM.Iterable", "ES2020"],
+    "types": [],
+    "paths": {
+      "next/dist/compiled/*": ["./tsz-bench-external-module.d.ts"],
+      "next/dist/*": ["./src/*"],
+      "*": ["./tsz-bench-external-module.d.ts"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tsz-bench-globals.d.ts",
+    "tsz-bench-external-module.d.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.stories.ts",
+    "src/**/*.stories.tsx",
+    "src/**/__tests__/**",
+    "src/**/__mocks__/**"
+  ]
+}
+JSON
+}
+
+tsz_write_nextjs_external_module() {
+  local output="$1"
+  cat > "$output" <<'TYPES'
+declare const value: any;
+export default value;
+TYPES
+}
+
 tsz_write_type_challenges_solutions_config() {
   local source_dir="$1"
   local compile_dir="$2"
