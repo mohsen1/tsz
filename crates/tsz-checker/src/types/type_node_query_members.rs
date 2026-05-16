@@ -114,6 +114,41 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         (resolved != TypeId::ANY && resolved != TypeId::ERROR).then_some(resolved)
     }
 
+    /// Inline `typeof import("...")[.segments]` resolver used by
+    /// `get_type_from_type_query`.
+    ///
+    /// Returns `Some(resolved)` when `idx` is a `TYPE_QUERY` whose expression
+    /// is an `import("...")` call (optionally followed by qualified/property
+    /// access segments). The imported namespace or qualified member is
+    /// returned, with any inline `<TypeArgs>` applied via
+    /// `apply_instantiation_expression_type_arguments`. Returns `None` for any
+    /// other shape, letting the caller fall through to normal lowering.
+    ///
+    /// Without this, inline indexed-access / `keyof` on
+    /// `typeof import("...")` collapses to `ERROR` (the lowering path only
+    /// understands identifier expression names), causing utility types
+    /// (`Parameters`, `ReturnType`, `keyof`, ...) to evaluate against `ERROR`
+    /// and yield `never`. Aliased uses already go through `CheckerState`'s
+    /// `TYPE_QUERY` handler; this brings the inline path to parity.
+    pub(crate) fn try_get_type_from_inline_import_typeof_query(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(idx)?;
+        let type_query = self.ctx.arena.get_type_query(node)?;
+        if !self.is_import_call_typeof_query(type_query.expr_name) {
+            return None;
+        }
+        let imported = self.resolve_import_typeof_query_via_state(idx)?;
+        if let Some(type_arguments) = &type_query.type_arguments {
+            let type_arguments = type_arguments.clone();
+            return Some(
+                self.apply_instantiation_expression_type_arguments(imported, &type_arguments),
+            );
+        }
+        Some(imported)
+    }
+
     /// True when `expr_name` is the body of a `typeof import("...")[.member]*`
     /// type-query, i.e. an `import("...")` call optionally followed by qualified
     /// names or property accesses.

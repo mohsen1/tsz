@@ -719,7 +719,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     // Type Query (typeof)
     // =========================================================================
 
-    fn apply_instantiation_expression_type_arguments(
+    pub(crate) fn apply_instantiation_expression_type_arguments(
         &mut self,
         expr_type: TypeId,
         type_arguments: &NodeList,
@@ -887,23 +887,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return TypeId::ERROR;
         };
 
-        // `typeof import("...").<segments>` (bare or qualified) must resolve to
-        // the imported module's namespace type or qualified member type, not
-        // fall through to lowering (which returns ERROR for non-identifier
-        // expression names). Without this, inline indexed-access / keyof on
-        // `typeof import("...")` collapses to ERROR, causing utility types
-        // (Parameters, ReturnType, keyof) to evaluate against ERROR and yield
-        // `never`. Aliased uses already go through CheckerState's TYPE_QUERY
-        // handler; this brings the inline path to parity.
-        if self.is_import_call_typeof_query(type_query.expr_name)
-            && let Some(imported) = self.resolve_import_typeof_query_via_state(idx)
-        {
-            if let Some(type_arguments) = &type_query.type_arguments {
-                let type_arguments = type_arguments.clone();
-                return self
-                    .apply_instantiation_expression_type_arguments(imported, &type_arguments);
-            }
-            return imported;
+        // Route inline `typeof import("...")[.segments]` through the namespace-
+        // aware resolver before falling through to lowering. See
+        // `try_get_type_from_inline_import_typeof_query` for the full rule.
+        if let Some(resolved) = self.try_get_type_from_inline_import_typeof_query(idx) {
+            return resolved;
         }
 
         // Capture type argument node indices early (before borrows prevent access).
