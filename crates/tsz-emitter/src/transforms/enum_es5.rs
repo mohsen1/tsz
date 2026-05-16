@@ -200,9 +200,6 @@ impl<'a> EnumES5Transformer<'a> {
 
         let name =
             crate::transforms::emit_utils::identifier_text_or_empty(self.arena, enum_data.name);
-        if name.is_empty() {
-            return None;
-        }
         self.current_source_file = self.containing_source_file(enum_idx);
 
         // Build IR for: var E; (function (E) { ... })(E || (E = {}));

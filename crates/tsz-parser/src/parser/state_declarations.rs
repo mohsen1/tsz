@@ -1333,17 +1333,28 @@ impl ParserState {
         start_pos: u32,
         modifiers: Option<NodeList>,
     ) -> NodeIndex {
+        let enum_keyword_end = self.token_end();
         self.parse_expected(SyntaxKind::EnumKeyword);
 
-        let name = self.parse_identifier();
+        let name = self.parse_enum_declaration_name();
 
-        self.parse_expected(SyntaxKind::OpenBraceToken);
+        let has_open_brace = self.parse_expected(SyntaxKind::OpenBraceToken);
 
-        let members = self.parse_enum_members();
+        let members = if has_open_brace {
+            self.parse_enum_members()
+        } else {
+            self.make_node_list(Vec::new())
+        };
 
-        self.parse_expected(SyntaxKind::CloseBraceToken);
+        if has_open_brace {
+            self.parse_expected(SyntaxKind::CloseBraceToken);
+        }
 
-        let end_pos = self.token_end();
+        let end_pos = if has_open_brace {
+            self.token_end()
+        } else {
+            enum_keyword_end
+        };
         self.arena.add_enum(
             syntax_kind_ext::ENUM_DECLARATION,
             start_pos,
@@ -1354,6 +1365,31 @@ impl ParserState {
                 members,
             },
         )
+    }
+
+    fn parse_enum_declaration_name(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        let end_pos = self.token_end();
+
+        if self.is_reserved_word() {
+            // `tsc` reports the missing enum name but leaves the reserved word
+            // for the outer statement parser. This preserves recovered forms like
+            // `enum void {}` as an anonymous enum plus a following `void {}`.
+            self.error_identifier_expected();
+            return self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                start_pos,
+                end_pos,
+                IdentifierData {
+                    atom: Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            );
+        }
+
+        self.parse_identifier()
     }
 
     /// Parse enum members
