@@ -269,6 +269,11 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 );
             }
+            if let Some(display) =
+                self.checked_js_global_element_access_fallback_target_display(idx)
+            {
+                target_str = display;
+            }
             let message = format_message(
                 diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                 &[&prop_name, &source_str, &target_str],
@@ -304,7 +309,9 @@ impl<'a> CheckerState<'a> {
                 let evaluated_source = self.evaluate_type_for_assignability(source);
                 self.format_type_diagnostic(evaluated_source)
             };
-            let tgt_str = self.format_type_diagnostic(target);
+            let tgt_str = self
+                .checked_js_global_element_access_fallback_target_display(idx)
+                .unwrap_or_else(|| self.format_type_diagnostic(target));
             let prop_list: Vec<String> = missing_props
                 .iter()
                 .take(4)

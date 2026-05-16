@@ -211,12 +211,23 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let is_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = false;
+
         self.write("{ ");
+        let var_insert_pos = is_function_body_block.then_some(self.writer.len());
         for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
             if i > 0 {
                 self.write(" ");
             }
             self.emit(stmt_idx);
+        }
+        if let Some(byte_offset) = var_insert_pos
+            && !self.hoisted_assignment_temps.is_empty()
+        {
+            let var_decl = format!("var {}; ", self.hoisted_assignment_temps.join(", "));
+            self.writer.insert_at(byte_offset, &var_decl);
+            self.hoisted_assignment_temps.clear();
         }
         self.write(" }");
     }
@@ -236,9 +247,13 @@ impl<'a> Printer<'a> {
         self.write("{");
         self.write_line();
         self.increase_indent();
+        let is_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = false;
         self.ctx.block_scope_state.enter_function_scope();
         self.skip_block_opening_line_comments(block_node, block);
         self.emit_param_prologue(transforms);
+        let hoisted_var_byte_offset =
+            is_function_body_block.then_some((self.writer.len(), self.writer.current_line()));
 
         for &stmt_idx in &block.statements.nodes {
             let before_len = self.writer.len();
@@ -249,6 +264,9 @@ impl<'a> Printer<'a> {
         }
 
         self.ctx.block_scope_state.exit_scope();
+        if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {
+            self.insert_function_body_hoisted_temps_at(byte_offset, line_no);
+        }
         self.decrease_indent();
         self.write("}");
     }
@@ -309,11 +327,13 @@ impl<'a> Printer<'a> {
 
         // Clear any previous pending rest params
         self.pending_object_rest_params.clear();
+        self.pending_object_rest_param_defaults.clear();
 
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         let mut first = true;
         let mut object_rest_temp_counter = 0u32;
         let mut object_rest_temp_names = Vec::<String>::new();
+        let mut lowered_object_rest_param_seen = false;
         for &param_idx in params {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
@@ -403,6 +423,7 @@ impl<'a> Printer<'a> {
 
                 // ES2018 object rest lowering: replace destructuring param with a temp
                 if needs_rest_lowering && self.param_has_object_rest(param_idx) {
+                    lowered_object_rest_param_seen = true;
                     let temp = self.next_object_rest_param_temp_name(
                         &mut object_rest_temp_counter,
                         &mut object_rest_temp_names,
@@ -417,8 +438,10 @@ impl<'a> Printer<'a> {
                     {
                         self.skip_comments_in_range(type_node.pos, type_node.end);
                     }
-                    // Don't emit default value here — it'll be in the body as `if (_a === void 0)`
-                    // Skip initializer comments too
+                    if param.initializer.is_some() {
+                        self.write(" = ");
+                        self.emit(param.initializer);
+                    }
                     self.pending_object_rest_params.push((temp, param.name));
                     continue;
                 }
@@ -511,7 +534,19 @@ impl<'a> Printer<'a> {
                         self.pending_block_comment_space = false;
                     }
                 }
-                if param.initializer.is_some() {
+                let simple_param_name = self
+                    .arena
+                    .get(param.name)
+                    .is_some_and(|node| node.is_identifier())
+                    .then(|| self.get_identifier_text_idx(param.name))
+                    .filter(|name| !name.is_empty());
+                if lowered_object_rest_param_seen
+                    && param.initializer.is_some()
+                    && let Some(param_name) = simple_param_name
+                {
+                    self.pending_object_rest_param_defaults
+                        .push((param_name, param.initializer));
+                } else if param.initializer.is_some() {
                     self.write(" = ");
                     self.emit(param.initializer);
                 } else if self.parameter_has_missing_initializer(param_node, param) {

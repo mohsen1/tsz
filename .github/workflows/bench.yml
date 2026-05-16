@@ -18,11 +18,12 @@ on:
         default: false
         type: boolean
 
-# Only one benchmark runs at a time. Let the active full run finish so it can
-# publish a merged artifact for the website; GitHub concurrency still keeps only
-# the newest pending run and replaces older pending runs as main advances.
+# Keep CI-followup benchmarks from displacing scheduled/manual publishing runs.
+# The CI lane may still coalesce pending workflow_run triggers as main advances,
+# but the publish lane must be able to complete so the website receives fresh
+# benchmark data.
 concurrency:
-  group: bench
+  group: bench-${{ github.event_name == 'workflow_run' && 'ci-followup' || 'publish' }}
   cancel-in-progress: false
 
 permissions:
@@ -545,16 +546,21 @@ jobs:
           TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
           MAIN_SHA="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
           TARGET_SHA="${BENCH_TARGET_SHA:-${GITHUB_SHA}}"
+          EVENT_NAME="${{ github.event_name }}"
 
           gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
             "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
           echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
 
-          if [[ -n "${MAIN_SHA}" && "${TARGET_SHA}" != "${MAIN_SHA}" ]]; then
+          if [[ "${EVENT_NAME}" == "workflow_run" && -n "${MAIN_SHA}" && "${TARGET_SHA}" != "${MAIN_SHA}" ]]; then
             echo "Bench target ${TARGET_SHA} is stale; current main is ${MAIN_SHA}."
             echo "Skipping latest.json update so the public dashboard keeps the freshest successful main artifact."
             echo "should_redeploy=false" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+
+          if [[ "${EVENT_NAME}" != "workflow_run" && -n "${MAIN_SHA}" && "${TARGET_SHA}" != "${MAIN_SHA}" ]]; then
+            echo "Bench target ${TARGET_SHA} is behind current main ${MAIN_SHA}; publishing because ${EVENT_NAME} is an intentional refresh trigger."
           fi
 
           gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \

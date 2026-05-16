@@ -2,7 +2,7 @@
 
 use super::super::{ParamTransformPlan, Printer};
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::{BindingElementData, ForInOfData, Node};
+use tsz_parser::parser::node::{BindingElementData, ForInOfData, Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -105,7 +105,7 @@ impl<'a> Printer<'a> {
         if elem.initializer.is_none() {
             // Emit: , bindingName = temp.propName
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.emit_assignment_target_es5_with_computed(
                 key_idx,
@@ -123,7 +123,7 @@ impl<'a> Printer<'a> {
                 computed_key_temp.as_deref(),
             );
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(&value_name);
             self.write(" === void 0 ? ");
@@ -146,7 +146,13 @@ impl<'a> Printer<'a> {
         if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
             && let Some(computed) = self.arena.get_computed_property(key_node)
         {
-            let temp_name = self.get_temp_var_name();
+            let has_inner_class_temp =
+                self.reserve_es5_computed_key_inner_class_temps(computed.expression);
+            let temp_name = if has_inner_class_temp {
+                self.make_unique_name_fresh()
+            } else {
+                self.get_temp_var_name()
+            };
             self.write(", ");
             self.write(&temp_name);
             self.write(" = ");
@@ -213,7 +219,7 @@ impl<'a> Printer<'a> {
         if elem.initializer.is_none() {
             // Emit: , bindingName = temp[index]
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(temp_name);
             self.write("[");
@@ -229,7 +235,7 @@ impl<'a> Printer<'a> {
             self.write_usize(index);
             self.write("]");
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(&value_name);
             self.write(" === void 0 ? ");
@@ -313,7 +319,7 @@ impl<'a> Printer<'a> {
 
         if elem.initializer.is_none() {
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(temp_name);
             self.write("[");
@@ -375,7 +381,7 @@ impl<'a> Printer<'a> {
                     temp: value_name,
                 });
             } else {
-                self.write_identifier_text(elem.name);
+                self.write_binding_identifier_text(elem.name);
                 self.write(" = ");
                 self.write(temp_name);
                 self.write(".slice(");
@@ -428,7 +434,7 @@ impl<'a> Printer<'a> {
                 self.write(", ");
             }
             *first = false;
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(temp_name);
             self.write("[");
@@ -470,7 +476,7 @@ impl<'a> Printer<'a> {
                 initializer,
             } => {
                 self.write(", ");
-                self.write_identifier_text(name);
+                self.write_binding_identifier_text(name);
                 self.write(" = ");
                 self.write(&temp);
                 self.write(" === void 0 ? ");
@@ -543,7 +549,7 @@ impl<'a> Printer<'a> {
                 self.write(", ");
             }
             *first = false;
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.emit_assignment_target_es5_with_computed(
                 key_idx,
@@ -564,7 +570,7 @@ impl<'a> Printer<'a> {
                 computed_key_temp.as_deref(),
             );
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(&value_name);
             self.write(" === void 0 ? ");
@@ -587,7 +593,13 @@ impl<'a> Printer<'a> {
         if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
             && let Some(computed) = self.arena.get_computed_property(key_node)
         {
-            let temp_name = self.get_temp_var_name();
+            let has_inner_class_temp =
+                self.reserve_es5_computed_key_inner_class_temps(computed.expression);
+            let temp_name = if has_inner_class_temp {
+                self.make_unique_name_fresh()
+            } else {
+                self.get_temp_var_name()
+            };
             if !*first {
                 self.write(", ");
             }
@@ -599,6 +611,102 @@ impl<'a> Printer<'a> {
         }
 
         None
+    }
+
+    fn reserve_es5_computed_key_inner_class_temps(&mut self, expression: NodeIndex) -> bool {
+        let count = self.count_es5_static_class_expression_temps(expression);
+        if count == 0 {
+            return false;
+        }
+        self.preallocate_temp_names(count);
+        true
+    }
+
+    fn count_es5_static_class_expression_temps(&self, expression: NodeIndex) -> usize {
+        if !self.ctx.target_es5 || self.ctx.options.use_define_for_class_fields {
+            return 0;
+        }
+        let Some(node) = self.arena.get(expression) else {
+            return 0;
+        };
+
+        if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+            return if self
+                .arena
+                .get_class(node)
+                .is_some_and(|class| !self.es5_static_field_comma_inits(class).is_empty())
+            {
+                1
+            } else {
+                0
+            };
+        }
+
+        if self.arena.get_function(node).is_some()
+            || node.kind == syntax_kind_ext::CLASS_DECLARATION
+        {
+            return 0;
+        }
+
+        if let Some(access) = self.arena.get_access_expr(node) {
+            return self.count_es5_static_class_expression_temps(access.expression)
+                + self.count_es5_static_class_expression_temps(access.name_or_argument);
+        }
+
+        if let Some(binary) = self.arena.get_binary_expr(node) {
+            return self.count_es5_static_class_expression_temps(binary.left)
+                + self.count_es5_static_class_expression_temps(binary.right);
+        }
+
+        if let Some(call) = self.arena.get_call_expr(node) {
+            let callee_count = self.count_es5_static_class_expression_temps(call.expression);
+            let args_count = call.arguments.as_ref().map_or(0, |args| {
+                args.nodes
+                    .iter()
+                    .copied()
+                    .map(|arg| self.count_es5_static_class_expression_temps(arg))
+                    .sum()
+            });
+            return callee_count + args_count;
+        }
+
+        if let Some(paren) = self.arena.get_parenthesized(node) {
+            return self.count_es5_static_class_expression_temps(paren.expression);
+        }
+
+        if let Some(assertion) = self.arena.get_type_assertion(node) {
+            return self.count_es5_static_class_expression_temps(assertion.expression);
+        }
+
+        if let Some(unary) = self.arena.get_unary_expr(node) {
+            return self.count_es5_static_class_expression_temps(unary.operand);
+        }
+
+        if let Some(unary) = self.arena.get_unary_expr_ex(node) {
+            return self.count_es5_static_class_expression_temps(unary.expression);
+        }
+
+        if let Some(cond) = self.arena.get_conditional_expr(node) {
+            return self.count_es5_static_class_expression_temps(cond.condition)
+                + self.count_es5_static_class_expression_temps(cond.when_true)
+                + self.count_es5_static_class_expression_temps(cond.when_false);
+        }
+
+        if let Some(literal) = self.arena.get_literal_expr(node) {
+            return literal
+                .elements
+                .nodes
+                .iter()
+                .copied()
+                .map(|element| self.count_es5_static_class_expression_temps(element))
+                .sum();
+        }
+
+        self.arena
+            .get_children(expression)
+            .into_iter()
+            .map(|child| self.count_es5_static_class_expression_temps(child))
+            .sum()
     }
 
     /// Like `emit_es5_array_binding_element` but with first flag for separator control
@@ -635,7 +743,7 @@ impl<'a> Printer<'a> {
                 self.write(")");
                 self.emit_es5_destructuring_pattern_idx(elem.name, &value_name);
             } else {
-                self.write_identifier_text(elem.name);
+                self.write_binding_identifier_text(elem.name);
                 self.write(" = ");
                 self.write(temp_name);
                 self.write(".slice(");
@@ -687,7 +795,7 @@ impl<'a> Printer<'a> {
                 self.write(", ");
             }
             *first = false;
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(temp_name);
             self.write("[");
@@ -706,7 +814,7 @@ impl<'a> Printer<'a> {
             self.write_usize(index);
             self.write("]");
             self.write(", ");
-            self.write_identifier_text(elem.name);
+            self.write_binding_identifier_text(elem.name);
             self.write(" = ");
             self.write(&value_name);
             self.write(" === void 0 ? ");
@@ -1057,9 +1165,20 @@ impl<'a> Printer<'a> {
                             self.write(";");
                             self.write_line();
                         }
+                    } else if self.binding_target_contains_object_rest(pattern) {
+                        self.emit_param_default_assignment(&param.name, initializer);
+                        let mut started = false;
+                        self.emit_param_binding_assignments(pattern, &param.name, &mut started);
+                        if started {
+                            self.write(";");
+                            self.write_line();
+                        }
                     } else {
                         // Has both default and binding pattern: use ternary in a single var statement.
                         // TypeScript: var _b = _a === void 0 ? default : _a, _c = _b[1], ...
+                        let hoisted_start = self.hoisted_assignment_temps.len();
+                        let hoist_offset = self.writer.len();
+                        let hoist_line = self.writer.current_line();
                         let mut started = false;
                         let temp = self.get_temp_var_name();
                         self.emit_param_assignment_prefix(&mut started);
@@ -1076,20 +1195,48 @@ impl<'a> Printer<'a> {
                             self.write(";");
                             self.write_line();
                         }
+                        self.insert_param_binding_hoisted_temps(
+                            hoisted_start,
+                            hoist_offset,
+                            hoist_line,
+                        );
                     }
                 } else {
                     // Only default, no pattern: use if statement
                     self.emit_param_default_assignment(&param.name, initializer);
                 }
             } else if let Some(pattern) = param.pattern {
+                let hoisted_start = self.hoisted_assignment_temps.len();
+                let hoist_offset = self.writer.len();
+                let hoist_line = self.writer.current_line();
                 let mut started = false;
                 self.emit_param_binding_assignments(pattern, &param.name, &mut started);
                 if started {
                     self.write(";");
                     self.write_line();
                 }
+                self.insert_param_binding_hoisted_temps(hoisted_start, hoist_offset, hoist_line);
             }
         }
+    }
+
+    fn insert_param_binding_hoisted_temps(
+        &mut self,
+        hoisted_start: usize,
+        hoist_offset: usize,
+        hoist_line: u32,
+    ) {
+        let hoisted: Vec<_> = self
+            .hoisted_assignment_temps
+            .drain(hoisted_start..)
+            .collect();
+        if hoisted.is_empty() {
+            return;
+        }
+        let indent = " ".repeat(self.writer.indent_width() as usize);
+        let var_decl = format!("{}var {};", indent, hoisted.join(", "));
+        self.writer
+            .insert_line_at(hoist_offset, hoist_line, &var_decl);
     }
 
     pub(in crate::emitter) fn emit_rest_param_prologue(&mut self, transforms: &ParamTransformPlan) {
@@ -1331,7 +1478,13 @@ impl<'a> Printer<'a> {
         if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
             && let Some(computed) = self.arena.get_computed_property(key_node)
         {
-            let temp_name = self.get_temp_var_name();
+            let has_inner_class_temp =
+                self.reserve_es5_computed_key_inner_class_temps(computed.expression);
+            let temp_name = if has_inner_class_temp {
+                self.make_unique_name_fresh()
+            } else {
+                self.get_temp_var_name()
+            };
             self.emit_param_assignment_prefix(started);
             self.write(&temp_name);
             self.write(" = ");
@@ -1539,7 +1692,7 @@ impl<'a> Printer<'a> {
             if !self.has_identifier_text(rest_target) {
                 return;
             }
-            self.write_identifier_text(rest_target);
+            self.write_binding_identifier_text(rest_target);
         }
         self.write(" = ");
         self.write(temp_name);

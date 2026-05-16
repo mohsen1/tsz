@@ -522,6 +522,11 @@ pub struct Printer<'a> {
     /// statements can append the right export binding after initialization.
     pub(crate) deferred_local_export_bindings: Option<FxHashMap<String, String>>,
 
+    /// All deferred local export aliases active for the current wrapped region.
+    /// Assignment targets use this to preserve CommonJS live binding chains such
+    /// as `exports.y = exports.x = x = value`.
+    pub(crate) deferred_local_export_bindings_all: Option<FxHashMap<String, Vec<String>>>,
+
     /// When true, an inline block comment (`/* ... */`) was just emitted without a trailing
     /// newline. The next `write()` call should insert a space before non-whitespace text.
     /// This avoids double-spacing with expression emitters that handle their own comment spacing.
@@ -625,6 +630,7 @@ pub struct Printer<'a> {
     /// When a function parameter has `{ a, ...rest }`, the parameter is replaced with a temp
     /// and this stores `(temp_name, pattern_idx)` for body preamble emission.
     pub(crate) pending_object_rest_params: Vec<(String, NodeIndex)>,
+    pub(crate) pending_object_rest_param_defaults: Vec<(String, NodeIndex)>,
 
     /// Source span of a parser-recovery expression statement already folded into
     /// the previous variable statement's emitted initializer.
@@ -989,6 +995,7 @@ impl<'a> Printer<'a> {
             generated_temp_names: FxHashSet::default(),
             temp_scope_stack: Vec::new(),
             pending_object_rest_params: Vec::new(),
+            pending_object_rest_param_defaults: Vec::new(),
             consumed_recovered_expression_statement_span: None,
             pending_lowered_async_arrow_super_capture: None,
             function_scope_depth: 0,
@@ -1029,6 +1036,7 @@ impl<'a> Printer<'a> {
             commonjs_exported_var_names: FxHashSet::default(),
             commonjs_exported_var_shadow_stack: Vec::new(),
             deferred_local_export_bindings: None,
+            deferred_local_export_bindings_all: None,
             suppress_ns_qualification: false,
             suppress_commonjs_named_import_substitution: false,
             pending_class_field_inits: Vec::new(),
