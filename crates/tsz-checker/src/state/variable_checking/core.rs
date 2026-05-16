@@ -1525,13 +1525,8 @@ impl<'a> CheckerState<'a> {
                     // Note: Freshness is tracked by the TypeId flags.
                     // Fresh vs non-fresh object types are interned distinctly.
                 }
-                // `const k: unique symbol = Symbol()` — re-anchor the node-derived
-                // unique symbol to the variable's own binder symbol so that `typeof k`
-                // acts as a discriminant / element-access key that matches exactly.
-                if crate::types_domain::unique_symbol_arena::is_unique_symbol_type_annotation(
-                    &checker.ctx.arena,
-                    var_decl.type_annotation,
-                ) && checker.is_const_variable_declaration(decl_idx)
+                if checker.is_const_variable_declaration(decl_idx)
+                    && checker.is_unique_symbol_type_annotation(var_decl.type_annotation)
                     && let Some(sym_id) = checker.ctx.binder.get_node_symbol(decl_idx)
                 {
                     return checker
