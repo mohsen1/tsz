@@ -1278,6 +1278,10 @@ name = "union_tuple_source_display_tests"
 path = "tests/union_tuple_source_display_tests.rs"
 
 [[test]]
+name = "distributive_conditional_default_tests"
+path = "tests/distributive_conditional_default_tests.rs"
+
+[[test]]
 name = "track8_debt_contract_tests"
 path = "tests/track8_debt_contract_tests.rs"
 
