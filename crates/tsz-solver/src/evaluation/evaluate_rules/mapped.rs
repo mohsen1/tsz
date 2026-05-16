@@ -2023,9 +2023,7 @@ mod tests {
         template: TypeId,
     ) -> MappedType {
         let iter_atom = interner.intern_string(iter_name);
-        let outer_t = interner.intern(TypeData::TypeParameter(TypeParamInfo::simple(
-            interner.intern_string("T"),
-        )));
+        let outer_t = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
         let original_constraint = interner.keyof(outer_t);
         MappedType {
             type_param: TypeParamInfo {
