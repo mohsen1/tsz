@@ -19,7 +19,7 @@ use tsz_parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
     ApparentMemberKind, IntrinsicKind, TypeId, TypeInterner, Visibility,
-    apparent_primitive_members, visitor,
+    apparent_primitive_member_is_completion_eligible, apparent_primitive_members, visitor,
 };
 
 /// The kind of completion item, matching tsserver's `ScriptElementKind` values.
