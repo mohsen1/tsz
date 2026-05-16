@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import path from "node:path";
 
 const DIAGNOSTIC_SUBSYSTEM_RULES = [
   ["project-config", new Set(["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"])],
@@ -12,6 +13,20 @@ const DIAGNOSTIC_SUBSYSTEM_RULES = [
   ["class-this-accessor", new Set(["TS2415", "TS2511", "TS2515", "TS2526", "TS2683", "TS4113", "TS4114"])],
   ["emit-dts-nameability", new Set(["TS4023", "TS4058", "TS4082", "TS4094", "TS9005", "TS9039"])],
 ];
+
+const OWNER_TRACK_BY_SUBSYSTEM = new Map([
+  ["project-config", "Track 1 project-corpus harness/config"],
+  ["syntax-parser-jsdoc", "Track 8 syntax/parser/jsdoc parity"],
+  ["module-symbol-resolution", "Track 7 lib/module identity"],
+  ["relations-assignability", "Track 4 relation diagnostics/compatibility"],
+  ["evaluation-inference-instantiation", "Track 2/3 conditional, mapped, inference, instantiation"],
+  ["keyspace-property-indexed", "Track 4 keyspace/property/indexed access"],
+  ["flow-narrowing", "Track 3 flow/narrowing"],
+  ["class-this-accessor", "Track 4 class/this/accessor compatibility"],
+  ["emit-dts-nameability", "emit/dts nameability"],
+  ["uncoded diagnostic", "Track 1 triage"],
+  ["unclassified diagnostic", "Track 1 triage"],
+]);
 
 function toNumber(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -104,6 +119,77 @@ function lastSuccessfulPhaseFrom({ exitClass, diagnosticStatus }) {
   return null;
 }
 
+function rowStateFrom({ exitClass, diagnosticStatus }) {
+  if (exitClass === "exit success" && diagnosticStatus === "none") return "green";
+  if (exitClass === "nonzero exit") return "red";
+  return "yellow";
+}
+
+function ownerTrackFrom({ exitClass, diagnosticSubsystems }) {
+  if (exitClass === "timeout") return "Track 1 runtime/timeout triage";
+  if (exitClass === "oom") return "Track 1 residency triage";
+  if (exitClass === "crash") return "Track 1 crash triage";
+
+  const primary = diagnosticSubsystems[0]?.subsystem;
+  return OWNER_TRACK_BY_SUBSYSTEM.get(primary) || "Track 1 triage";
+}
+
+function relativeToFixture(value) {
+  if (!value) return null;
+  const fixtureRoot = process.env.COMPAT_FIXTURE_ROOT || "";
+  if (!fixtureRoot || !path.isAbsolute(value)) return value;
+
+  const relative = path.relative(fixtureRoot, value);
+  if (relative && !relative.startsWith("..") && !path.isAbsolute(relative)) {
+    return relative;
+  }
+  return value;
+}
+
+function firstDiagnosticLocation(diagnosticDeltas) {
+  for (const line of diagnosticDeltas) {
+    const withoutLabel = String(line || "").replace(/^[a-z][\w-]*:\s+/, "");
+    const parenMatch = withoutLabel.match(/^(.+?)\((\d+),(\d+)\):\s+(?:error\s+)?(TS\d{4,5})/);
+    if (parenMatch) {
+      return {
+        path: relativeToFixture(parenMatch[1]),
+        line: Number(parenMatch[2]),
+        column: Number(parenMatch[3]),
+        code: parenMatch[4],
+      };
+    }
+
+    const colonMatch = withoutLabel.match(/^(.+?):(\d+):(\d+)(?:\s+-)?\s+(?:error\s+)?(TS\d{4,5})/);
+    if (colonMatch) {
+      return {
+        path: relativeToFixture(colonMatch[1]),
+        line: Number(colonMatch[2]),
+        column: Number(colonMatch[3]),
+        code: colonMatch[4],
+      };
+    }
+  }
+  return null;
+}
+
+function reproFrom(diagnosticDeltas) {
+  const location = firstDiagnosticLocation(diagnosticDeltas);
+  const tsconfigPath = relativeToFixture(process.env.COMPAT_TSCONFIG_PATH || "");
+  const sourceRoot = relativeToFixture(process.env.COMPAT_SOURCE_ROOT || "");
+  const reducedReproPath = location?.path || sourceRoot || tsconfigPath || null;
+
+  return {
+    tsconfig_path: tsconfigPath,
+    source_root: sourceRoot,
+    first_failure_path: location?.path || null,
+    first_failure_line: location?.line ?? null,
+    first_failure_column: location?.column ?? null,
+    first_failure_code: location?.code || null,
+    reduced_repro_path: reducedReproPath,
+    command: tsconfigPath ? `$TSZ_BIN --noEmit -p ${tsconfigPath}` : null,
+  };
+}
+
 function readRows(input) {
   const result = { rows: [], malformedLineCount: 0, malformedExamples: [] };
   try {
@@ -143,9 +229,20 @@ function record() {
   const diagnosticCodes = diagnosticCodesFrom(diagnosticDeltas);
   const exitClass = process.env.COMPAT_EXIT_CLASS || "unknown";
   const diagnosticStatus = process.env.COMPAT_DIAGNOSTIC_STATUS || "unknown";
+  const state = rowStateFrom({ exitClass, diagnosticStatus });
+  const repro = reproFrom(diagnosticDeltas);
+  const knownBlockers = knownBlockersFrom({
+    exitClass,
+    phase: process.env.COMPAT_PHASE || "unknown",
+    diagnosticSubsystems,
+    diagnosticCodes,
+  });
   const row = {
     name: process.env.COMPAT_NAME || "",
+    state,
     exit_class: exitClass,
+    first_failure_class: state === "green" ? null : knownBlockers[0] || exitClass,
+    owner_track: state === "green" ? null : ownerTrackFrom({ exitClass, diagnosticSubsystems }),
     phase: process.env.COMPAT_PHASE || "unknown",
     last_successful_phase: lastSuccessfulPhaseFrom({ exitClass, diagnosticStatus }),
     diagnostic_status: diagnosticStatus,
@@ -155,12 +252,9 @@ function record() {
     diagnostic_codes: diagnosticCodes,
     emit_status: "not in scope (noEmit project check)",
     dts_status: "not in scope (noEmit project check)",
-    known_blockers: knownBlockersFrom({
-      exitClass,
-      phase: process.env.COMPAT_PHASE || "unknown",
-      diagnosticSubsystems,
-      diagnosticCodes,
-    }),
+    known_blockers: knownBlockers,
+    reduced_repro_path: repro.reduced_repro_path,
+    repro,
     exit_codes: {
       tsc: [],
       tsz: toExitCodes(process.env.COMPAT_TSZ_EXIT_CODES),
@@ -176,11 +270,10 @@ function record() {
 function summarize() {
   const { rows, malformedLineCount, malformedExamples } = readRows(process.env.SUMMARY_JSONL_FILE || "");
   const byState = rows.reduce((counts, row) => {
-    const key = row.exit_class === "exit success" && row.diagnostic_status === "none"
-      ? "green"
-      : row.exit_class === "nonzero exit"
-        ? "red"
-        : "yellow";
+    const key = row.state || rowStateFrom({
+      exitClass: row.exit_class,
+      diagnosticStatus: row.diagnostic_status,
+    });
     counts[key] = (counts[key] || 0) + 1;
     return counts;
   }, {});

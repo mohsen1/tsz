@@ -203,6 +203,8 @@ record_project_compatibility() {
   local files_reached="${6:-0}"
   local peak_memory_bytes="${7:-}"
   local tsz_exit_codes="${8:-}"
+  local tsconfig_path="${9:-}"
+  local source_root="${10:-}"
 
   COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
   COMPAT_NAME="$name" \
@@ -213,6 +215,9 @@ record_project_compatibility() {
   COMPAT_FILES_REACHED="$files_reached" \
   COMPAT_PEAK_MEMORY_BYTES="$peak_memory_bytes" \
   COMPAT_TSZ_EXIT_CODES="$tsz_exit_codes" \
+  COMPAT_TSCONFIG_PATH="$tsconfig_path" \
+  COMPAT_SOURCE_ROOT="$source_root" \
+  COMPAT_FIXTURE_ROOT="$FIXTURE_ROOT" \
   node scripts/ci/project-compatibility.mjs record
 }
 
@@ -342,7 +347,9 @@ check_project() {
       "$diagnostic_delta" \
       "$file_count" \
       "$LAST_PEAK_RSS_BYTES" \
-      "$rc"
+      "$rc" \
+      "$tsconfig" \
+      "$src_dir"
     if [[ "$rc" -eq 124 ]]; then
       echo "error: ${name} timed out after ${PROJECT_TIMEOUT}s" >&2
     else
@@ -356,7 +363,7 @@ check_project() {
     return 0
   fi
 
-  record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count" "$LAST_PEAK_RSS_BYTES" "0"
+  record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count" "$LAST_PEAK_RSS_BYTES" "0" "$tsconfig" "$src_dir"
   echo "${name} compiled successfully."
   echo "::endgroup::"
 }
