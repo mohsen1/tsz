@@ -485,7 +485,9 @@ impl<'a> CheckerContext<'a> {
     /// Callers should use this instead of the inline `main_sym_id.unwrap_or(sym_id)`
     /// recovery pattern.
     pub fn canonical_lib_sym_id(&self, name: &str, per_lib_sym_id: SymbolId) -> SymbolId {
-        if let Some(sym_id) = self.binder.file_locals.get(name) {
+        if let Some(sym_id) = self.binder.file_locals.get(name)
+            && self.symbol_is_from_actual_or_cloned_lib(sym_id)
+        {
             return sym_id;
         }
 
@@ -495,6 +497,7 @@ impl<'a> CheckerContext<'a> {
             .and_then(|idx| idx.get(name))
             .and_then(|entries| entries.iter().max_by_key(|(_, sym)| sym.0))
             .map(|&(_, sym)| sym)
+            .filter(|&sym_id| self.symbol_is_from_actual_or_cloned_lib(sym_id))
         {
             return sym_id;
         }
@@ -520,6 +523,7 @@ impl<'a> CheckerContext<'a> {
         if let Some(all_binders) = self.all_binders.as_ref() {
             for binder in all_binders.iter() {
                 if let Some(sym_id) = binder.file_locals.get(name)
+                    && self.symbol_is_from_actual_or_cloned_lib(sym_id)
                     && sym_id.0 > best.0
                 {
                     best = sym_id;
@@ -528,6 +532,7 @@ impl<'a> CheckerContext<'a> {
         }
         for lib_ctx in self.lib_contexts.iter() {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
+                && self.symbol_is_from_actual_or_cloned_lib(sym_id)
                 && sym_id.0 > best.0
             {
                 best = sym_id;
@@ -569,7 +574,9 @@ impl<'a> CheckerContext<'a> {
                                         | tsz_solver::def::DefKind::Class
                                         | tsz_solver::def::DefKind::Enum
                                         | tsz_solver::def::DefKind::Namespace
-                                )
+                                ) && info.symbol_id.is_some_and(|sym_id| {
+                                    self.symbol_is_from_actual_or_cloned_lib(SymbolId(sym_id))
+                                })
                             })
                         })
                         .max_by_key(|def_id| {

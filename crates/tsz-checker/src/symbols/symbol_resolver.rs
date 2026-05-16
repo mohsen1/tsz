@@ -1844,8 +1844,11 @@ impl<'a> CheckerState<'a> {
                 if let Some(node) = self.ctx.arena.get(node_idx)
                     && let Some(ident) = self.ctx.arena.get_identifier(node)
                 {
-                    if let Some(def_id) =
-                        self.resolve_actual_lib_name_to_def_id_for_lowering(&ident.escaped_text)
+                    if !self
+                        .ctx
+                        .file_local_type_shadow_for_lib_name(&ident.escaped_text)
+                        && let Some(def_id) =
+                            self.resolve_actual_lib_name_to_def_id_for_lowering(&ident.escaped_text)
                     {
                         return def_id;
                     }
