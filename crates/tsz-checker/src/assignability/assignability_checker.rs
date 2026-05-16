@@ -2251,9 +2251,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             if s_elem == TypeId::ERROR
-                && self
-                    .format_type_diagnostic(t_elem)
-                    .starts_with("Static<typeof ")
+                && self.static_schema_application_schema_type(t_elem).is_some()
             {
                 return false;
             }
@@ -2435,7 +2433,7 @@ impl<'a> CheckerState<'a> {
         if self.type_alias_args_are_unwitnessed(def_id, source_args.len()) {
             return false;
         }
-        if self.format_type_diagnostic(source_base) == "Static" {
+        if self.type_alias_projects_static_member(source_base) {
             return true;
         }
         let variances = tsz_solver::relations::variance::compute_type_param_variances_with_resolver(
