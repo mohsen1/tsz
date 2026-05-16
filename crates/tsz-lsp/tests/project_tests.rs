@@ -2834,6 +2834,70 @@ fn test_auto_import_via_reexport() {
 }
 
 #[test]
+fn test_auto_import_reexport_cache_refreshes_after_update_file() {
+    let mut project = Project::new();
+    project.set_file(
+        "a.ts".to_string(),
+        "export const MyUtil = 42;\n".to_string(),
+    );
+    project.set_file(
+        "barrel.ts".to_string(),
+        "export { Other } from './a';\n".to_string(),
+    );
+    project.set_file("c.ts".to_string(), "MyUtil;\n".to_string());
+
+    let completions_from_barrel = |project: &mut Project| {
+        project
+            .get_completions(
+                "c.ts",
+                Position {
+                    line: 0,
+                    character: 2,
+                },
+            )
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|item| {
+                item.label == "MyUtil"
+                    && item
+                        .detail
+                        .as_deref()
+                        .is_some_and(|detail| detail.contains("./barrel"))
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert!(
+        completions_from_barrel(&mut project).is_empty(),
+        "named-only re-export should not suggest MyUtil from barrel"
+    );
+
+    let append_star = TextEdit::new(
+        Range::new(Position::new(1, 0), Position::new(1, 0)),
+        "export * from './a';\n".to_string(),
+    );
+    project
+        .update_file("barrel.ts", &[append_star])
+        .expect("expected update_file to append wildcard re-export");
+    assert!(
+        !completions_from_barrel(&mut project).is_empty(),
+        "adding export * through update_file should refresh wildcard re-export cache"
+    );
+
+    let remove_star = TextEdit::new(
+        Range::new(Position::new(1, 0), Position::new(2, 0)),
+        String::new(),
+    );
+    project
+        .update_file("barrel.ts", &[remove_star])
+        .expect("expected update_file to remove wildcard re-export");
+    assert!(
+        completions_from_barrel(&mut project).is_empty(),
+        "removing export * through update_file should refresh wildcard re-export cache"
+    );
+}
+
+#[test]
 fn test_auto_import_reexport_prefers_shorter_source_for_duplicate_symbol_name() {
     let mut project = Project::new();
     project.set_file(
