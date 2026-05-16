@@ -1263,6 +1263,35 @@ impl<'a> CheckerState<'a> {
             return true;
         }
         self.ctx.types.get_display_alias(source) == Some(inner)
+            || self.partial_inner_alias_instantiates_to_source(inner, source)
+    }
+
+    fn partial_inner_alias_instantiates_to_source(
+        &mut self,
+        inner: TypeId,
+        source: TypeId,
+    ) -> bool {
+        let Some((base, args)) = self.application_info_or_display_alias(inner) else {
+            return false;
+        };
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))
+        else {
+            return false;
+        };
+        let Some(def) = self.ctx.definition_store.get(def_id) else {
+            return false;
+        };
+        if def.kind != tsz_solver::def::DefKind::TypeAlias || def.type_params.len() != args.len() {
+            return false;
+        }
+        let Some(body) = def.body else {
+            return false;
+        };
+
+        let substitution = TypeSubstitution::from_args(self.ctx.types, &def.type_params, &args);
+        let instantiated = instantiate_type(self.ctx.types, body, &substitution);
+        source == instantiated || self.ctx.types.get_display_alias(source) == Some(instantiated)
     }
 
     fn should_suppress_self_referential_generic_function_arg_mismatch(

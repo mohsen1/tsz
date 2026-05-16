@@ -37,6 +37,25 @@ patch(config, config);
 }
 
 #[test]
+fn homomorphic_optional_mapped_alias_operand_instantiates_to_source() {
+    let source = r#"
+type Boxed<T> = { value: T };
+type OptionalBox<T> = { [Prop in keyof Boxed<T>]?: Boxed<T>[Prop] };
+
+declare function patch<Subject>(target: Boxed<Subject>, update: OptionalBox<Subject>): void;
+
+const boxed = { value: 1 };
+patch(boxed, boxed);
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2345),
+        "homomorphic optional mapped alias operand should not emit TS2345: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn non_homomorphic_optional_mapped_self_argument_still_emits_ts2345() {
     let source = r#"
 type OptionalStrings<T> = { [K in keyof T]?: string };
