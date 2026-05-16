@@ -606,6 +606,12 @@ REGEX_LINE_COUNT_CHECKS = [
         ),
         5,
     ),
+    (
+        "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
+        [ROOT / "crates" / "tsz-emitter" / "src"],
+        re.compile(r"\bsource_text\.contains\s*\("),
+        3,
+    ),
 ]
 
 # Pin the count of LSP feature-dispatch methods in
