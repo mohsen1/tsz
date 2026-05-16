@@ -13,6 +13,14 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if query::contains_type_parameters(self.ctx.types, type_arg)
+            && query::is_application_type(self.ctx.types.as_type_database(), type_arg)
+        {
+            return self
+                .type_alias_application_infer_result_conditional_components(type_arg)
+                .is_some();
+        }
+
         let evaluated = self.evaluate_type_for_assignability(type_arg);
         evaluated != type_arg && self.type_is_infer_result_conditional(evaluated)
     }
