@@ -3157,7 +3157,6 @@ impl<'a> ES5ClassTransformer<'a> {
         ast_params: &tsz_parser::parser::NodeList,
         ir_params: &[IRParam],
     ) -> Vec<IRNode> {
-        use std::borrow::Cow;
         let mut prologue = Vec::new();
         let mut ir_idx = 0;
 
@@ -3204,7 +3203,8 @@ impl<'a> ES5ClassTransformer<'a> {
                 && name_n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 && let Some(pattern) = self.arena.get_binding_pattern(name_n)
             {
-                let mut parts = Vec::new();
+                let mut declarations = Vec::new();
+                let mut rest_excluded = Vec::new();
                 for &elem_idx in &pattern.elements.nodes {
                     if let Some(elem_node) = self.arena.get(elem_idx)
                         && let Some(elem) = self.arena.get_binding_element(elem_node)
@@ -3212,20 +3212,38 @@ impl<'a> ES5ClassTransformer<'a> {
                         let elem_name =
                             get_identifier_text(self.arena, elem.name).unwrap_or_default();
                         if !elem_name.is_empty() {
+                            if elem.dot_dot_dot_token {
+                                let excluded =
+                                    rest_excluded.iter().cloned().map(IRNode::string).collect();
+                                declarations.push(IRNode::var_decl(
+                                    elem_name,
+                                    Some(IRNode::call(
+                                        IRNode::RuntimeHelper("__rest".into()),
+                                        vec![
+                                            IRNode::id(temp_name.clone()),
+                                            IRNode::ArrayLiteral(excluded),
+                                        ],
+                                    )),
+                                ));
+                                continue;
+                            }
+
                             let prop_name = if elem.property_name.is_some() {
                                 get_identifier_text(self.arena, elem.property_name)
                                     .unwrap_or_else(|| elem_name.clone())
                             } else {
                                 elem_name.clone()
                             };
-                            parts.push(format!("{elem_name} = {temp_name}.{prop_name}"));
+                            rest_excluded.push(prop_name.clone());
+                            declarations.push(IRNode::var_decl(
+                                elem_name,
+                                Some(IRNode::prop(IRNode::id(temp_name.clone()), prop_name)),
+                            ));
                         }
                     }
                 }
-                if !parts.is_empty() {
-                    prologue.push(IRNode::ExpressionStatement(Box::new(IRNode::Raw(
-                        Cow::Owned(format!("var {}", parts.join(", "))),
-                    ))));
+                if !declarations.is_empty() {
+                    prologue.push(IRNode::VarDeclList(declarations));
                 }
             }
             ir_idx += 1;

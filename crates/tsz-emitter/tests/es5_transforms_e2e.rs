@@ -442,6 +442,70 @@ console.log(value);
 }
 
 #[test]
+fn es2015_object_rest_parameter_keeps_later_default_in_body() {
+    let output = emit_with_target(
+        "function f({ a, ...x }: any, b = a) { return b; }\n",
+        ScriptTarget::ES2015,
+    );
+
+    assert!(
+        output.contains("function f(_a, b) {"),
+        "Object-rest parameter lowering should replace only the binding pattern with a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var { a } = _a, x = __rest(_a, [\"a\"]);"),
+        "Object-rest parameter should lower to a body prologue before later defaults.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (b === void 0) { b = a; }"),
+        "A later default that references the lowered binding must run after the prologue.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_defaulted_object_rest_parameter_uses_parameter_guard() {
+    let output = emit_es5(
+        "function f({ x: { z = 12, ...nested }, ...rest } = { x: { z: 1, ka: 1 }, y: 'noo' }) {\n\
+             return rest.y + nested.ka;\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("if (_a === void 0) { _a = { x: { z: 1, ka: 1 }, y: 'noo' }; }"),
+        "Defaulted object-rest params should default the parameter temp before destructuring.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "var _b = _a.x, _c = _b.z, z = _c === void 0 ? 12 : _c, nested = __rest(_b, [\"z\"]), rest = __rest(_a, [\"x\"]);"
+        ),
+        "Nested and outer object-rest bindings should read from the defaulted parameter temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_class_method_object_rest_parameter_uses_rest_helper() {
+    let output = emit_es5(
+        "class C {\n\
+             m({ a, ...clone }: any) { }\n\
+             set p({ a, ...clone }: any) { }\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains(
+            "C.prototype.m = function (_a) {\n        var a = _a.a, clone = __rest(_a, [\"a\"]);"
+        ),
+        "ES5 class methods should lower object-rest parameters through the class IR prologue.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "set: function (_a) {\n            var a = _a.a, clone = __rest(_a, [\"a\"]);"
+        ),
+        "ES5 class accessors should lower object-rest parameters through the class IR prologue.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn array_object_rest_es2017_defers_later_default_until_after_rest_binding() {
     let output = emit_with_target(
         "let [{ ...a }, b = a]: any[] = [{ x: 1 }];",

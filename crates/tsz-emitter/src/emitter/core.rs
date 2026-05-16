@@ -630,6 +630,7 @@ pub struct Printer<'a> {
     /// When a function parameter has `{ a, ...rest }`, the parameter is replaced with a temp
     /// and this stores `(temp_name, pattern_idx)` for body preamble emission.
     pub(crate) pending_object_rest_params: Vec<(String, NodeIndex)>,
+    pub(crate) pending_object_rest_param_defaults: Vec<(String, NodeIndex)>,
 
     /// Source span of a parser-recovery expression statement already folded into
     /// the previous variable statement's emitted initializer.
@@ -994,6 +995,7 @@ impl<'a> Printer<'a> {
             generated_temp_names: FxHashSet::default(),
             temp_scope_stack: Vec::new(),
             pending_object_rest_params: Vec::new(),
+            pending_object_rest_param_defaults: Vec::new(),
             consumed_recovered_expression_statement_span: None,
             pending_lowered_async_arrow_super_capture: None,
             function_scope_depth: 0,
