@@ -887,17 +887,13 @@ impl<'a> FlowAnalyzer<'a> {
             && let Some(sym_id) = self.binder.get_global_type("ArrayBufferView")
         {
             let symbol_ref = SymbolRef(sym_id.0);
-            let mut view_type = self
-                .resolve_symbol_to_lazy(symbol_ref)
-                .unwrap_or_else(|| self.interner.reference(symbol_ref));
+            let mut view_type = self.resolve_symbol_to_lazy(symbol_ref)?;
 
             // ArrayBuffer.isView narrows to ArrayBufferView with the default
             // type argument (`ArrayBufferLike`) in TypeScript's lib.
             if let Some(array_buffer_like_sym) = self.binder.get_global_type("ArrayBufferLike") {
                 let array_buffer_like_ref = SymbolRef(array_buffer_like_sym.0);
-                let array_buffer_like = self
-                    .resolve_symbol_to_lazy(array_buffer_like_ref)
-                    .unwrap_or_else(|| self.interner.reference(array_buffer_like_ref));
+                let array_buffer_like = self.resolve_symbol_to_lazy(array_buffer_like_ref)?;
 
                 view_type = self
                     .interner
