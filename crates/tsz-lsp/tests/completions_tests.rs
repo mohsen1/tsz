@@ -3985,14 +3985,120 @@ fn test_completions_symbol_excludes_object_prototype_members() {
 }
 
 // ── Tuple member completions ─────────────────────────────────────────────────
+//
+// Structural rule: a tuple type `[T, U, ...]` exposes ALL Array.prototype members
+// because tuples are array-compatible. The full method set must be available
+// regardless of element arity, element names (named tuples), optionality, or
+// the presence of a rest element.
 
 #[test]
-fn test_completions_array_prototype_methods_on_tuple() {
+fn test_completions_tuple_exposes_all_array_prototype_methods() {
     assert_has_members(
         "const t: [string, number] = [\"a\", 1];\nt.",
         &[
-            "length", "push", "pop", "map", "filter", "forEach", "slice", "concat",
+            "length",
+            "push",
+            "pop",
+            "shift",
+            "unshift",
+            "slice",
+            "splice",
+            "concat",
+            "join",
+            "reverse",
+            "sort",
+            "map",
+            "filter",
+            "forEach",
+            "find",
+            "findIndex",
+            "reduce",
+            "reduceRight",
+            "some",
+            "every",
+            "indexOf",
+            "lastIndexOf",
+            "toString",
+            "toLocaleString",
+            "keys",
+            "values",
         ],
+    );
+}
+
+#[test]
+fn test_completions_tuple_methods_renamed_variable() {
+    // Changing the variable name must not affect the completion set.
+    assert_has_members(
+        "const pair: [boolean, string] = [true, \"x\"];\npair.",
+        &["length", "map", "filter"],
+    );
+}
+
+#[test]
+fn test_completions_named_tuple_exposes_array_methods() {
+    // Named-tuple elements are purely a label; the element types and array
+    // member set are identical to unnamed tuples.
+    assert_has_members(
+        "const coord: [x: number, y: number] = [0, 0];\ncoord.",
+        &["length", "push", "pop", "map", "filter", "reduce", "sort"],
+    );
+}
+
+#[test]
+fn test_completions_named_tuple_different_names_exposes_array_methods() {
+    // Vary the label names to prove the fix is not keyed to any specific spelling.
+    assert_has_members(
+        "const entry: [key: string, value: boolean] = [\"k\", true];\nentry.",
+        &[
+            "length", "push", "pop", "map", "filter", "reduce", "forEach",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_optional_tuple_exposes_array_methods() {
+    // Optional elements add `undefined` to the element union but the full
+    // Array.prototype member set must still be present.
+    assert_has_members(
+        "const opt: [string, number?] = [\"a\"];\nopt.",
+        &[
+            "length", "push", "pop", "map", "filter", "reduce", "some", "indexOf",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_rest_tuple_exposes_array_methods() {
+    // A rest element `...T[]` should contribute `T` (not `T[]`) to the element
+    // union so that the Array application is structurally correct. The member
+    // set must include all Array.prototype methods regardless.
+    assert_has_members(
+        "const rest: [string, ...number[]] = [\"a\", 1, 2];\nrest.",
+        &[
+            "length", "push", "pop", "map", "filter", "reduce", "sort", "forEach",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_single_element_tuple_exposes_array_methods() {
+    // Single-element tuples are still tuples; all array methods should be present.
+    assert_has_members(
+        "const single: [string] = [\"a\"];\nsingle.",
+        &[
+            "length", "push", "pop", "map", "filter", "reduce", "indexOf",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_empty_tuple_exposes_array_methods() {
+    // An empty tuple `[]` has element type `never`; the array method set must
+    // still be offered so the user can see what methods are available.
+    assert_has_members(
+        "const empty: [] = [];\nempty.",
+        &["length", "push", "pop", "map", "filter"],
     );
 }
 
