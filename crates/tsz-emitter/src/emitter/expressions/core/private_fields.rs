@@ -464,9 +464,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // ES5: lower assignment destructuring patterns
-        if self.ctx.target_es5
-            && binary.operator_token == SyntaxKind::EqualsToken as u16
+        // Lower assignment destructuring when ES5 syntax requires it, or when
+        // CommonJS live export targets require chained `exports.X = ...`
+        // assignments that cannot be represented inside native destructuring.
+        if binary.operator_token == SyntaxKind::EqualsToken as u16
             && let Some(left_node) = self.arena.get(binary.left)
             && matches!(
                 left_node.kind,
@@ -475,6 +476,8 @@ impl<'a> Printer<'a> {
                     | syntax_kind_ext::ARRAY_BINDING_PATTERN
                     | syntax_kind_ext::OBJECT_BINDING_PATTERN
             )
+            && (self.ctx.target_es5
+                || self.assignment_pattern_has_commonjs_live_export_target(binary.left))
         {
             self.emit_assignment_destructuring_es5(left_node, binary.right);
             return;
@@ -548,7 +551,11 @@ impl<'a> Printer<'a> {
             self.ctx.flags.optional_chain_needs_parens = true;
             self.ctx.flags.nullish_coalescing_needs_parens = true;
         }
-        if self.assignment_left_is_recovered_super(binary.left, binary.operator_token) {
+        if binary.operator_token == SyntaxKind::EqualsToken as u16
+            && self.emit_commonjs_live_export_assignment_target(binary.left)
+        {
+            // The live export chain emitted the left-hand side.
+        } else if self.assignment_left_is_recovered_super(binary.left, binary.operator_token) {
             self.write("super.");
         } else {
             self.emit(binary.left);

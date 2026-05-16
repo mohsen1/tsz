@@ -538,34 +538,34 @@ nextest_allow_no_tests() {
 }
 
 _UNIT_TEST_PACKAGES=(
-  -p tsz-common
-  -p tsz-scanner
-  -p tsz-parser
-  -p tsz-binder
-  -p tsz-solver
-  -p tsz-emitter
-  -p tsz-lsp
-  -p tsz-core
+  tsz-common
+  tsz-scanner
+  tsz-parser
+  tsz-binder
+  tsz-solver
+  tsz-checker
+  tsz-emitter
+  tsz-lsp
+  tsz-core
 )
 
-# Temporary runway: the `tsz-checker` lib-test target currently exceeds the
-# self-hosted runner memory limit even with one Cargo job and serialized
-# codegen. `cargo test --tests -p tsz-checker` still compiles that lib-test
-# target, so keep `tsz-checker` out of the unit job while the heavy behavior
-# gates (conformance, emit, fourslash, project compile) protect checker
-# semantics.
+# The `tsz-checker` lib-test target currently exceeds the self-hosted runner
+# memory limit even with one Cargo job and serialized codegen. Keep checker
+# integration tests in the unit job by enumerating declared `[[test]]` targets
+# and avoiding the monolithic `rustc --test crates/tsz-checker/src/lib.rs`
+# artifact.
 
 # Resolve the active package set for `run_unit_tests` / `build_unit_test_archive`.
 #
 # `_TSZ_CI_UNIT_PACKAGES_OVERRIDE` is the gate-computed narrow set for
 # draft-phase fast-fail (P4). It is a space-separated list of crate names
 # (e.g., "tsz-parser tsz-binder"). When non-empty AND the names are all
-# known workspace crates, this returns `-p NAME` per crate. Otherwise it
+# known workspace crates, this returns one crate name per line. Otherwise it
 # returns the full `_UNIT_TEST_PACKAGES`.
 #
 # Unknown names are an error rather than silent fallback — a typo'd crate
 # name would otherwise skip tests in a way that goes unnoticed.
-unit_test_packages_args() {
+unit_test_packages() {
   local override="${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}"
   if [[ -z "$override" ]]; then
     printf '%s\n' "${_UNIT_TEST_PACKAGES[@]}"
@@ -581,24 +581,67 @@ unit_test_packages_args() {
     fi
   done
   for crate in $override; do
-    if [[ "$crate" == "tsz-checker" ]]; then
+    printf '%s\n' "$crate"
+  done
+}
+
+unit_archive_package_args() {
+  local package
+  for package in "${_UNIT_TEST_PACKAGES[@]}"; do
+    if [[ "$package" == "tsz-checker" ]]; then
       continue
     fi
-    printf -- '-p\n%s\n' "$crate"
+    printf -- '-p\n%s\n' "$package"
   done
+}
+
+checker_integration_test_args() {
+  local test_name
+  while IFS= read -r test_name; do
+    printf -- '--test\n%s\n' "$test_name"
+  done < <(
+    cargo metadata --no-deps --format-version 1 \
+      | jq -r '.packages[]
+          | select(.name == "tsz-checker")
+          | .targets[]
+          | select(.kind[]? == "test")
+          | .name' \
+      | sort
+  )
 }
 
 run_unit_tests() {
   ci_section "Workspace nextest suites"
-  local pkg_args
-  mapfile -t pkg_args < <(unit_test_packages_args)
+  local package package_names checker_selected general_pkg_args checker_test_args
+  mapfile -t package_names < <(unit_test_packages)
   if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
     echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
   fi
-  if [[ "${#pkg_args[@]}" -gt 0 ]]; then
+
+  checker_selected=0
+  general_pkg_args=()
+  for package in "${package_names[@]}"; do
+    if [[ "$package" == "tsz-checker" ]]; then
+      checker_selected=1
+    else
+      general_pkg_args+=(-p "$package")
+    fi
+  done
+
+  if (( ${#general_pkg_args[@]} > 0 )); then
     cargo nextest run --profile ci --cargo-profile ci-unit \
       --build-jobs "$CARGO_BUILD_JOBS" \
-      "${pkg_args[@]}"
+      "${general_pkg_args[@]}"
+  fi
+
+  if (( checker_selected )); then
+    # The checker lib-test binary is larger than the 32 GiB CI runners can
+    # link reliably. Keep checker integration tests in unit CI while avoiding
+    # that monolithic `rustc --test crates/tsz-checker/src/lib.rs` artifact.
+    mapfile -t checker_test_args < <(checker_integration_test_args)
+    cargo nextest run --profile ci --cargo-profile ci-unit \
+      --build-jobs "$CARGO_BUILD_JOBS" \
+      -p tsz-checker "${checker_test_args[@]}"
   fi
 }
 
@@ -623,11 +666,13 @@ build_unit_test_archive() {
   tmp_archive="$(mktemp -d)/unit-tests.tar.zst"
   echo "Building unit test archive → ${tmp_archive}"
   local archive_rc=0
+  local archive_pkg_args
+  mapfile -t archive_pkg_args < <(unit_archive_package_args)
   cargo nextest archive \
     --cargo-profile ci-unit \
     --build-jobs "$CARGO_BUILD_JOBS" \
     --archive-file "$tmp_archive" \
-    "${_UNIT_TEST_PACKAGES[@]}" || archive_rc=$?
+    "${archive_pkg_args[@]}" || archive_rc=$?
   if [[ "$archive_rc" -ne 0 ]]; then
     echo "error: cargo nextest archive failed (rc=${archive_rc}); sharding unavailable" >&2
     rm -f "$tmp_archive"

@@ -1165,6 +1165,14 @@ impl<'a> Printer<'a> {
                             self.write(";");
                             self.write_line();
                         }
+                    } else if self.binding_target_contains_object_rest(pattern) {
+                        self.emit_param_default_assignment(&param.name, initializer);
+                        let mut started = false;
+                        self.emit_param_binding_assignments(pattern, &param.name, &mut started);
+                        if started {
+                            self.write(";");
+                            self.write_line();
+                        }
                     } else {
                         // Has both default and binding pattern: use ternary in a single var statement.
                         // TypeScript: var _b = _a === void 0 ? default : _a, _c = _b[1], ...

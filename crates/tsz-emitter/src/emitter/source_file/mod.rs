@@ -1463,6 +1463,145 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn object_rest_assignment_literal_rest_targets_use_temps() {
+        let source = "let a: any;\n({...{}} = {});\n({...({})} = {});\n({...[]} = {});\n({...([])} = {});\n({...{ a }} = { a: 1 });\n({...({ a })} = { a: 1 });\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a, _b;"),
+            "Bare literal rest targets should reserve hoisted assignment temps.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_a = __rest({}, []));"),
+            "Bare object literal rest target should lower to a temp assignment.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(({}) = __rest({}, []));"),
+            "Parenthesized object literal rest target should stay as a destructuring target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_b = __rest({}, []));"),
+            "Bare array literal rest target should lower to a temp assignment.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(([]) = __rest({}, []));"),
+            "Parenthesized array literal rest target should stay as a destructuring target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("({ a } = __rest({ a: 1 }, []));"),
+            "Non-empty object literal rest target should stay as a destructuring target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(({ a }) = __rest({ a: 1 }, []));"),
+            "Parenthesized non-empty object literal rest target should also stay as a destructuring target.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn object_rest_assignment_value_position_returns_rhs_value() {
+        let source = "let bar: any;\nlet value = ({ ...bar } = { x: 1 });\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a;"),
+            "Value-position object-rest assignment should hoist an RHS value temp.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_a = { x: 1 }, bar = __rest(_a, []), _a"),
+            "Object-rest assignment expressions must evaluate to their RHS value.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("let value = bar = __rest"),
+            "Value-position object-rest assignment must not evaluate to the rest target.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn dynamic_object_rest_keeps_simple_binding_groups() {
+        let source = "let obj = {};\nlet prop: any, other: any, props: any;\nlet { prop = { ...obj }, ['k' + '']: other = { ...obj }, ...props } = {};\n({ prop = { ...obj }, ['k' + '']: other = { ...obj }, ...props } = {});\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2017,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output
+                .matches("{ prop = Object.assign({}, obj) } =")
+                .count(),
+            2,
+            "Simple binding groups should stay as object patterns before dynamic keys.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("other = ") && output.contains("__rest("),
+            "Dynamic computed keys should still lower through temps and feed __rest.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn nested_object_rest_assignment_inlines_single_array_source() {
+        let source = "var x: any;\n[{ ...x }] = [{ abc: 1 }];\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2017,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("[_a] = [{ abc: 1 }], x = __rest(_a, []);"),
+            "Single-element array assignment with nested object-rest should inline the RHS.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("_a = [{ abc: 1 }]"),
+            "The RHS should not be copied to a separate source temp first.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn defaulted_nested_object_rest_assignment_uses_resolved_source() {
         let source = "let a: any, b: any, c: any = { x: { a: 1, y: 2 } }, d: any;\n({ x: { a, ...b } = d } = c);\n";
 
