@@ -62,23 +62,27 @@ default_cargo_build_jobs() {
   mem_mb="$(awk '/MemTotal:/ { printf "%d\n", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0)"
   case "${TSZ_CI_SUITE:-${_TSZ_CI_SUITE:-}}" in
     unit|unit-archive|unit-shard)
-      # Unit lib-test compiles peak at ~10-12 GiB RSS per rustc when multiple
-      # downstream crates link the workspace's interned-types graph in parallel.
-      # The 8192 MiB/job sizing tried in PR #7573 (4 cargo build jobs) caused
-      # SIGKILL on tsz-solver / tsz-checker / tsz-emitter lib-test compiles
-      # under sustained PR load on 16 May 2026 — observed in unit_compile logs
-      # as `(signal: 9, SIGKILL: kill)` after main was warmed with sccache-built
-      # rlibs that triggered different fingerprint paths during PR rebuilds.
+      # Force `CARGO_BUILD_JOBS=1` on unit. Observed RSS-per-rustc on this
+      # workspace's lib-test compiles (notably tsz-checker, tsz-emitter,
+      # tsz-solver, tsz-core lib-test) now exceeds 16 GiB per process during
+      # the LLVM codegen phase. With any -j > 1, peaks coincide and SIGKILL
+      # fires on the 8 vCPU × 32 GiB Cloud Run runner.
       #
-      # 12288 MiB/job → floor(32/12) = 2 cargo build jobs. That matches the
-      # known-safe behavior from commit 1bddbbfbf4 (16384 MiB/job, also 2 jobs)
-      # while leaving a thin margin for the 10-12 GiB lib-test peak. We do not
-      # restore the 16384 MiB cap because the empirical peak fits in 12 GiB and
-      # giving 2 jobs full reservation rights to 32 GiB wastes parallelism.
+      # History of this knob, in order:
+      #   * commit 111d24ba98 — TSZ_CI_CARGO_MB_PER_JOB=7168 globally (4 jobs)
+      #   * commit 1bddbbfbf4 — TSZ_CI_UNIT_CARGO_MB_PER_JOB=16384 (2 jobs) +
+      #       sccache disablement, after silent-exit incidents.
+      #   * PR #7573 (rolled back here) — 8192 (4 jobs). Validated on one
+      #       run-of-the-day; sustained PR load on 2026-05-16 surfaced SIGKILL
+      #       in tsz-solver/checker/emitter lib-test compile.
+      #   * 12288 (2 jobs) intermediate — still SIGKILLs (this PR's first run).
+      #   * 24576 (1 job) ← current. Safe on 32 GiB box; floor(32768/24576)=1.
       #
-      # Override via TSZ_CI_UNIT_CARGO_MB_PER_JOB on the runner if you need to
-      # bisect — 16384 was the very-conservative pre-#7573 default.
-      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-12288}"
+      # The real fix for compile time is a bigger box (Cloud Build private
+      # pool e2-highcpu-32 in PR #7591). Once that lands and is promoted, this
+      # cap stops mattering — Cloud Build runs the same compile at -j32 on a
+      # box where memory isn't the constraint.
+      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-24576}"
       ;;
     *)
       mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"
