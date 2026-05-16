@@ -5,6 +5,12 @@ use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+#[derive(Clone, Copy)]
+enum InlineBindingAccess {
+    Element(usize),
+    Property(NodeIndex),
+}
+
 /// Represents a segment of assignment destructuring output.
 /// When the right-hand side is a simple identifier, we access properties/elements directly.
 /// When complex, we create a temp variable first.
@@ -797,6 +803,17 @@ impl<'a> Printer<'a> {
         let (effective_count, has_rest) = self.count_effective_bindings(pattern_node);
         if effective_count == 1
             && !has_rest
+            && self.emit_single_nested_binding_inline(
+                pattern_node,
+                initializer,
+                first,
+                allow_expression_emit,
+            )
+        {
+            return;
+        }
+        if effective_count == 1
+            && !has_rest
             && self.emit_single_object_binding_inline_nested(
                 pattern_node,
                 initializer,
@@ -840,6 +857,135 @@ impl<'a> Printer<'a> {
         }
 
         self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
+    }
+
+    fn emit_single_nested_binding_inline(
+        &mut self,
+        pattern_node: &Node,
+        initializer: NodeIndex,
+        first: &mut bool,
+        allow_expression_emit: bool,
+    ) -> bool {
+        let mut access_path = Vec::new();
+        let Some(target) = self.single_nested_binding_access(pattern_node, &mut access_path) else {
+            return false;
+        };
+        if access_path.is_empty() {
+            return false;
+        }
+
+        if !*first {
+            self.write(", ");
+        }
+        *first = false;
+        self.write_binding_identifier_text(target);
+        self.write(" = ");
+        self.emit_initializer_access_path(initializer, &access_path, allow_expression_emit);
+        true
+    }
+
+    fn single_nested_binding_access(
+        &self,
+        pattern_node: &Node,
+        access_path: &mut Vec<InlineBindingAccess>,
+    ) -> Option<NodeIndex> {
+        let pattern = self.arena.get_binding_pattern(pattern_node)?;
+        let elem_idx = self.single_non_rest_binding_element(pattern)?;
+        let elem_node = self.arena.get(elem_idx)?;
+        let elem = self.arena.get_binding_element(elem_node)?;
+        if elem.initializer.is_some() {
+            return None;
+        }
+
+        match pattern_node.kind {
+            k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                if pattern.elements.nodes.first().copied()? != elem_idx {
+                    return None;
+                }
+                access_path.push(InlineBindingAccess::Element(0));
+            }
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                let key_idx = self.get_binding_element_property_key(elem)?;
+                let key_node = self.arena.get(key_idx)?;
+                if key_node.kind != SyntaxKind::Identifier as u16 {
+                    return None;
+                }
+                access_path.push(InlineBindingAccess::Property(key_idx));
+            }
+            _ => return None,
+        }
+
+        let name_node = self.arena.get(elem.name)?;
+        if name_node.is_identifier() {
+            return Some(elem.name);
+        }
+        if !self.is_binding_pattern(elem.name) {
+            return None;
+        }
+        self.single_nested_binding_access(name_node, access_path)
+    }
+
+    fn single_non_rest_binding_element(
+        &self,
+        pattern: &tsz_parser::parser::node::BindingPatternData,
+    ) -> Option<NodeIndex> {
+        let mut found = NodeIndex::NONE;
+        for &elem_idx in &pattern.elements.nodes {
+            if elem_idx.is_none() {
+                continue;
+            }
+            let elem_node = self.arena.get(elem_idx)?;
+            let elem = self.arena.get_binding_element(elem_node)?;
+            if elem.dot_dot_dot_token {
+                return None;
+            }
+            if found.is_some() {
+                return None;
+            }
+            found = elem_idx;
+        }
+        found.is_some().then_some(found)
+    }
+
+    fn emit_initializer_access_path(
+        &mut self,
+        initializer: NodeIndex,
+        access_path: &[InlineBindingAccess],
+        allow_expression_emit: bool,
+    ) {
+        let needs_parens = self.initializer_needs_parens_for_access(initializer);
+        if needs_parens {
+            self.write("(");
+        }
+        if allow_expression_emit {
+            self.emit(initializer);
+        } else {
+            self.emit_expression(initializer);
+        }
+        if needs_parens {
+            self.write(")");
+        }
+
+        let mut base_is_initializer = true;
+        for part in access_path {
+            match *part {
+                InlineBindingAccess::Element(index) => {
+                    self.write("[");
+                    self.write_usize(index);
+                    self.write("]");
+                    base_is_initializer = false;
+                }
+                InlineBindingAccess::Property(key_idx) => {
+                    if base_is_initializer {
+                        self.write_dot_token(initializer);
+                    } else {
+                        self.write(".");
+                    }
+                    self.write_identifier_text(key_idx);
+                    base_is_initializer = false;
+                }
+            }
+        }
     }
 
     /// Emit an expression that will be followed by `.` for property access.
