@@ -543,27 +543,11 @@ impl<'a> Printer<'a> {
             .and_then(|&idx| self.arena.get(idx))
             .map_or(node.end, |n| self.skip_trivia_forward(n.pos, n.end));
 
-        if skip_source_use_strict
-            && !self.ctx.options.remove_comments
-            && let Some(text) = self.source_text
-        {
-            while self.comment_emit_idx < self.all_comments.len()
-                && self.all_comments[self.comment_emit_idx].end <= first_stmt_pos
-            {
-                let c_pos = self.all_comments[self.comment_emit_idx].pos;
-                let c_end = self.all_comments[self.comment_emit_idx].end;
-                let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
-                if let Ok(comment_text) =
-                    crate::safe_slice::slice(text, c_pos as usize, c_end as usize)
-                {
-                    self.write_comment_with_reindent(comment_text, Some(c_pos));
-                    if c_trailing {
-                        self.write_line();
-                    } else if comment_text.starts_with("/*") {
-                        self.pending_block_comment_space = true;
-                    }
-                }
-                self.comment_emit_idx += 1;
+        if skip_source_use_strict && !self.ctx.options.remove_comments {
+            let (emitted, _, had_trailing_newline) =
+                self.emit_comments_in_range(0, first_stmt_pos, false, false);
+            if emitted && !had_trailing_newline {
+                self.pending_block_comment_space = true;
             }
         }
 

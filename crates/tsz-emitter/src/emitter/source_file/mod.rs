@@ -17,6 +17,10 @@ mod tests {
         (parser, root)
     }
 
+    fn set_emitter_source<'a>(printer: &mut EmitterPrinter<'a>, source: &'a str) {
+        printer.set_source_text(source);
+    }
+
     #[test]
     fn emit_source_file_strips_top_level_blank_lines_for_js_files() {
         // tsc strips inter-statement blank lines even from JS source files.
@@ -72,7 +76,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        printer.set_source_text(source);
+        set_emitter_source(&mut printer, source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -99,7 +103,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        printer.set_source_text(source);
+        set_emitter_source(&mut printer, source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -128,7 +132,6 @@ mod tests {
         let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
         let mut printer =
             EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
-        printer.set_source_text(source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
