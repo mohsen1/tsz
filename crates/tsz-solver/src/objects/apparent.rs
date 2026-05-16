@@ -91,6 +91,9 @@ const OBJECT_METHODS_RETURN_BOOLEAN: &[&str] =
 const OBJECT_METHODS_RETURN_STRING: &[&str] = &["toString"];
 const OBJECT_METHODS_RETURN_ANY: &[&str] = &["valueOf"];
 
+const FUNCTION_METHODS_RETURN_ANY: &[&str] = &["apply", "bind", "call"];
+const FUNCTION_VALUES_ANY: &[&str] = &["arguments", "caller", "prototype"];
+
 pub(crate) fn is_member(name: &str, list: &[&str]) -> bool {
     list.contains(&name)
 }
@@ -287,6 +290,19 @@ pub fn apparent_primitive_member_kind(
             object_member_kind(name, true)
         }
         IntrinsicKind::Object => object_member_kind(name, true),
+        IntrinsicKind::Function => {
+            if is_member(name, FUNCTION_METHODS_RETURN_ANY) {
+                return Some(ApparentMemberKind::Method(TypeId::ANY));
+            }
+            if is_member(name, FUNCTION_VALUES_ANY) {
+                return Some(ApparentMemberKind::Value(TypeId::ANY));
+            }
+            match name {
+                "length" => Some(ApparentMemberKind::Value(TypeId::NUMBER)),
+                "name" => Some(ApparentMemberKind::Value(TypeId::STRING)),
+                _ => object_member_kind(name, false),
+            }
+        }
         _ => None,
     }
 }
@@ -393,6 +409,33 @@ pub fn apparent_primitive_members(
         }
         IntrinsicKind::Object => {
             push_object_members(&mut members, true);
+        }
+        IntrinsicKind::Function => {
+            // ES5 Function prototype members present on every callable value.
+            // `name` is ES2015, but included in the bootstrap because the no-lib
+            // path targets modern runtimes; `resolve_function_property` gates it
+            // behind `!boxed_function_loaded` when a real lib is present.
+            for &name in FUNCTION_METHODS_RETURN_ANY {
+                members.push(ApparentMember {
+                    name,
+                    kind: ApparentMemberKind::Method(TypeId::ANY),
+                });
+            }
+            for &name in FUNCTION_VALUES_ANY {
+                members.push(ApparentMember {
+                    name,
+                    kind: ApparentMemberKind::Value(TypeId::ANY),
+                });
+            }
+            members.push(ApparentMember {
+                name: "length",
+                kind: ApparentMemberKind::Value(TypeId::NUMBER),
+            });
+            members.push(ApparentMember {
+                name: "name",
+                kind: ApparentMemberKind::Value(TypeId::STRING),
+            });
+            push_object_members(&mut members, false);
         }
         _ => {}
     }
