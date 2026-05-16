@@ -450,7 +450,7 @@ impl<'a> NarrowingContext<'a> {
         flags
     }
 
-    fn resolver_generation(&self) -> u64 {
+    pub(crate) fn resolver_generation(&self) -> u64 {
         self.resolver
             .map(|resolver| resolver.resolver_generation().saturating_add(1))
             .unwrap_or(0)
