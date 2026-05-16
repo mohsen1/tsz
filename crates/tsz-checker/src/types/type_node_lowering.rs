@@ -149,6 +149,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return Some(param_type);
             }
 
+            if let Some(tuple_type) = self.const_asserted_array_tuple_type_query(expr_name_idx) {
+                return Some(tuple_type);
+            }
+
             if let Some(property_type) = self.value_property_type_query(expr_name_idx) {
                 return Some(property_type);
             }

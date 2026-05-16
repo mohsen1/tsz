@@ -692,6 +692,26 @@ impl<'a> Printer<'a> {
                         i = j + 1;
                         continue;
                     }
+
+                    if escape_invalid_codepoint_sequences {
+                        out.push('\\');
+                        out.push_str(&text[i..]);
+                        break;
+                    }
+                }
+
+                if escape_invalid_codepoint_sequences
+                    && self.template_escape_sequence_is_invalid_for_string_literal(text, i)
+                {
+                    out.push('\\');
+                    out.push('\\');
+                    if let Some(ch) = text[i + 1..].chars().next() {
+                        out.push(ch);
+                        i += 1 + ch.len_utf8();
+                    } else {
+                        i += 1;
+                    }
+                    continue;
                 }
 
                 if i + 1 < bytes.len() {
@@ -731,6 +751,38 @@ impl<'a> Printer<'a> {
         }
 
         out
+    }
+
+    fn template_escape_sequence_is_invalid_for_string_literal(
+        &self,
+        text: &str,
+        slash_pos: usize,
+    ) -> bool {
+        let bytes = text.as_bytes();
+        if slash_pos + 1 >= bytes.len() {
+            return false;
+        }
+
+        match bytes[slash_pos + 1] {
+            b'u' => {
+                if slash_pos + 2 < bytes.len() && bytes[slash_pos + 2] == b'{' {
+                    return true;
+                }
+                slash_pos + 5 >= bytes.len()
+                    || !bytes[slash_pos + 2..=slash_pos + 5]
+                        .iter()
+                        .all(|byte| byte.is_ascii_hexdigit())
+            }
+            b'x' => {
+                slash_pos + 3 >= bytes.len()
+                    || !bytes[slash_pos + 2..=slash_pos + 3]
+                        .iter()
+                        .all(|byte| byte.is_ascii_hexdigit())
+            }
+            b'0' => slash_pos + 2 < bytes.len() && bytes[slash_pos + 2].is_ascii_digit(),
+            b'1'..=b'9' => true,
+            _ => false,
+        }
     }
 
     fn push_downleveled_codepoint(&self, out: &mut String, cp: u32, quote_char: char) {
@@ -793,6 +845,25 @@ impl<'a> Printer<'a> {
                 }
                 c => self.write_char(c),
             }
+        }
+    }
+
+    pub(in crate::emitter) fn emit_escaped_string_with_es5_surrogates(
+        &mut self,
+        s: &str,
+        quote_char: char,
+    ) {
+        for ch in s.chars() {
+            let cp = ch as u32;
+            if cp <= 0xFFFF {
+                self.emit_escaped_string(ch.encode_utf8(&mut [0; 4]), quote_char);
+                continue;
+            }
+
+            let adjusted = cp - 0x10000;
+            let high = 0xD800 + ((adjusted >> 10) as u16);
+            let low = 0xDC00 + ((adjusted & 0x03FF) as u16);
+            self.write(&format!("\\u{high:04X}\\u{low:04X}"));
         }
     }
 }
