@@ -715,6 +715,10 @@ impl<'a> Printer<'a> {
             Vec::new()
         };
 
+        if self.emit_esm_object_rest_export_statement(node) {
+            return;
+        }
+
         if self.is_es5_empty_binding_pattern_export_statement(node)
             && self.emit_es5_empty_binding_pattern_export(&var_stmt.declarations)
         {

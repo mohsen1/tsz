@@ -64,6 +64,9 @@ pub enum IRNode {
     /// Super keyword
     Super,
 
+    /// `import.meta`, with module-wrapper-specific printing handled by `IRPrinter`.
+    ImportMeta,
+
     // =========================================================================
     // Expressions
     // =========================================================================

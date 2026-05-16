@@ -1661,6 +1661,11 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
+            if self.is_nested_same_wrapper_assignment_display_provenance(source, target, anchor_idx)
+            {
+                return;
+            }
+
             if let Some(missing_props) =
                 self.missing_required_properties_from_index_signature_source(source, target)
             {

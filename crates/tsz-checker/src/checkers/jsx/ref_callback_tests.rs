@@ -59,6 +59,59 @@ fn intrinsic_ref_callback_uses_html_element_context_without_false_positive() {
 }
 
 #[test]
+fn intrinsic_ref_callback_uses_ast_member_declarations_for_any_recovery() {
+    let source = r#"
+        declare namespace React {
+            type Ref<T> = string | ((instance: T) => any);
+
+            interface Attributes {
+                key?: string | number;
+            }
+
+            interface ClassAttributes<T> extends Attributes {
+                ref?: Ref<T>;
+            }
+        }
+
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicClassAttributes<T> extends React.ClassAttributes<T> {}
+            interface IntrinsicElements {
+                div: React.ClassAttributes<HTMLDivElement> & {};
+            }
+        }
+
+        interface HTMLDivElement {
+            readonly spacedProp /* spacing prevents a raw `name:` match */ : string;
+            renamedProp /* spacing prevents a raw `name:` match */ : string;
+            spacedMethod /* spacing prevents a raw `name(` match */ (): string;
+        }
+
+        <div ref={node => node.spacedProp} />;
+        <div ref={node => node.renamedProp} />;
+        <div ref={node => node.spacedMethod()} />;
+        <div ref={node => node.notDeclaredOnDiv} />;
+        "#;
+    let diagnostics = check_jsx(source);
+    assert!(
+        diagnostics.iter().any(|d| {
+            d.code == 2339
+                && d.message_text.contains("notDeclaredOnDiv")
+                && d.message_text.contains("type 'HTMLDivElement'")
+        }),
+        "Expected undeclared intrinsic ref callback property to be reported, got: {diagnostics:?}"
+    );
+    for property_name in ["spacedProp", "renamedProp", "spacedMethod"] {
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code == 2339 && d.message_text.contains(property_name)),
+            "Expected AST-declared intrinsic ref callback property {property_name} to remain valid, got: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn intrinsic_ref_callback_uses_inherited_generic_html_props_context() {
     let source = r#"
         declare namespace React {

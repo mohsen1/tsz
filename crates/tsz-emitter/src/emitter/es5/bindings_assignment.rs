@@ -310,6 +310,13 @@ impl<'a> Printer<'a> {
             return false;
         };
 
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            return self.assignment_pattern_has_object_rest(binary.left);
+        }
+
         if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             let Some(lit) = self.arena.get_literal_expr(node) else {
                 return false;
@@ -355,6 +362,13 @@ impl<'a> Printer<'a> {
         let Some(node) = self.arena.get(idx) else {
             return false;
         };
+
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.arena.get_binary_expr(node)
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+        {
+            return self.assignment_pattern_has_dynamic_computed_property_name(binary.left);
+        }
 
         if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             let Some(lit) = self.arena.get_literal_expr(node) else {
@@ -424,6 +438,43 @@ impl<'a> Printer<'a> {
                     .and_then(|idx| self.arena.get(idx))
                     .is_some_and(|elem| elem.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
         })
+    }
+
+    fn assignment_object_rest_default_pattern(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let node = self.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16
+            || !self.assignment_pattern_has_object_rest(binary.left)
+        {
+            return None;
+        }
+        Some((binary.left, binary.right))
+    }
+
+    fn assignment_default_nested_pattern(&self, idx: NodeIndex) -> Option<(NodeIndex, NodeIndex)> {
+        let node = self.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(node)?;
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return None;
+        }
+        let left_node = self.arena.get(binary.left)?;
+        matches!(
+            left_node.kind,
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+        )
+        .then_some((binary.left, binary.right))
     }
 
     /// Lower object-rest assignment for targets that do not support ES2018.
@@ -628,17 +679,41 @@ impl<'a> Printer<'a> {
                         );
                         simple_elements.clear();
 
-                        let nested_source = self.object_key_access_text(source, &key);
-                        let nested_simple = self
-                            .arena
-                            .get(prop.initializer)
-                            .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
-                        self.emit_assignment_pattern_with_object_rest(
-                            prop.initializer,
-                            &nested_source,
-                            nested_simple,
-                            first,
-                        );
+                        if let Some((nested_pattern, default_expr)) =
+                            self.assignment_object_rest_default_pattern(prop.initializer)
+                        {
+                            let extract_temp = self.make_unique_name_hoisted_assignment();
+                            let default_temp = self.make_unique_name_hoisted_assignment();
+                            self.emit_assignment_separator(first);
+                            self.write(&extract_temp);
+                            self.write(" = ");
+                            self.emit_object_key_access(source, &key);
+                            self.write(", ");
+                            self.write(&default_temp);
+                            self.write(" = ");
+                            self.write(&extract_temp);
+                            self.write(" === void 0 ? ");
+                            self.emit(default_expr);
+                            self.write(" : ");
+                            self.write(&extract_temp);
+                            self.emit_assignment_pattern_with_object_rest(
+                                nested_pattern,
+                                &default_temp,
+                                true,
+                                first,
+                            );
+                        } else {
+                            let nested_source = self.object_key_access_text(source, &key);
+                            let nested_simple = self.arena.get(prop.initializer).is_some_and(|n| {
+                                n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            });
+                            self.emit_assignment_pattern_with_object_rest(
+                                prop.initializer,
+                                &nested_source,
+                                nested_simple,
+                                first,
+                            );
+                        }
                     } else {
                         simple_elements.push(elem_idx);
                     }
@@ -965,6 +1040,35 @@ impl<'a> Printer<'a> {
 
                         // Check if value is a nested pattern
                         let value_node = self.arena.get(prop.initializer);
+                        if let Some((nested_pattern, default_expr)) =
+                            self.assignment_default_nested_pattern(prop.initializer)
+                        {
+                            let extract_temp = self.make_unique_name_hoisted_assignment();
+                            let default_temp = self.make_unique_name_hoisted_assignment();
+                            self.emit_assignment_separator(first);
+                            self.write(&extract_temp);
+                            self.write(" = ");
+                            self.emit_assignment_object_key_access(
+                                source,
+                                prop.name,
+                                computed_key_temp.as_deref(),
+                            );
+                            self.write(", ");
+                            self.write(&default_temp);
+                            self.write(" = ");
+                            self.write(&extract_temp);
+                            self.write(" === void 0 ? ");
+                            self.emit(default_expr);
+                            self.write(" : ");
+                            self.write(&extract_temp);
+                            self.emit_assignment_nested_destructuring(
+                                nested_pattern,
+                                &default_temp,
+                                first,
+                            );
+                            continue;
+                        }
+
                         let is_nested = value_node.is_some_and(|n| {
                             n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                                 || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
