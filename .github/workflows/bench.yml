@@ -463,7 +463,17 @@ jobs:
           path: .
 
       - name: Unpack benchmark prep artifact
-        run: tar -xf bench-prep.tar
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tar -xf bench-prep.tar
+          test -x .target-bench/dist/tsz
+
+          # The tarball preserves the binary mtime from bench-prepare. Shard
+          # jobs run after a fresh checkout, so source files can look newer and
+          # make bench-vs-tsgo rebuild the dist binary in every shard.
+          touch .target-bench/dist/tsz
 
       - name: Set up Node
         uses: actions/setup-node@v4
