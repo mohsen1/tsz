@@ -1006,7 +1006,6 @@ impl IRNode {
             Self::GeneratorOp { value, .. } => value
                 .as_ref()
                 .is_some_and(|value| value.contains_identifier(name)),
-            Self::GeneratorTryPush { .. } => false,
             Self::IfBreak { condition, .. } => condition.contains_identifier(name),
             Self::PrivateFieldSet {
                 receiver, value, ..
@@ -1093,6 +1092,7 @@ impl IRNode {
             | Self::ContinueStatement(_)
             | Self::GeneratorSent
             | Self::GeneratorLabel
+            | Self::GeneratorTryPush { .. }
             | Self::Raw(_)
             | Self::Comment { .. }
             | Self::TrailingComment(_)
