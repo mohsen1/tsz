@@ -82,6 +82,11 @@ pub struct ProjectFile {
     pub(crate) parser: ParserState,
     pub(crate) binder: BinderState,
     pub(crate) line_map: LineMap,
+    /// Cached result of scanning statements for wildcard re-export patterns.
+    ///
+    /// Computed once at parse time and used by auto-import candidate collection
+    /// to avoid re-scanning every file's statements on each request.
+    pub(crate) has_wildcard_reexport: bool,
     /// Shared type interner for cross-file type identity.
     ///
     /// All files in a `Project` share the same `TypeInterner` via `Arc`,
@@ -135,6 +140,78 @@ fn hash_source_content(source: &str) -> u64 {
     let mut hasher = FxHasher::default();
     source.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Scan the top-level statements of a source file and return `true` if any
+/// export declaration looks like a wildcard or default re-export.
+///
+/// Called once per file at parse time; the result is stored in
+/// `ProjectFile::has_wildcard_reexport` so that auto-import candidate
+/// collection can avoid re-scanning every file's AST on each request.
+pub(crate) fn compute_has_wildcard_reexport(arena: &NodeArena, root: NodeIndex) -> bool {
+    let Some(source_file) = arena.get_source_file_at(root) else {
+        return false;
+    };
+
+    source_file.statements.nodes.iter().any(|&stmt_idx| {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
+            return arena
+                .get_export_assignment(stmt_node)
+                .is_some_and(|assign| !assign.is_export_equals);
+        }
+        if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+            return false;
+        }
+        let Some(export) = arena.get_export_decl(stmt_node) else {
+            return false;
+        };
+        if export.is_default_export {
+            return true;
+        }
+        if export.module_specifier.is_none() {
+            return false;
+        }
+        if export.export_clause.is_none() {
+            return true;
+        }
+        if arena
+            .get_identifier_text(export.export_clause)
+            .is_some_and(|name| name == "default")
+        {
+            return true;
+        }
+
+        let Some(clause_node) = arena.get(export.export_clause) else {
+            return false;
+        };
+        if clause_node.kind == SyntaxKind::Identifier as u16
+            || clause_node.kind == SyntaxKind::StringLiteral as u16
+        {
+            return true;
+        }
+        if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+            return false;
+        }
+        let Some(named) = arena.get_named_imports(clause_node) else {
+            return false;
+        };
+        named.elements.nodes.iter().any(|&spec_idx| {
+            let Some(spec) = arena.get_specifier_at(spec_idx) else {
+                return false;
+            };
+            let export_ident = if spec.name.is_some() {
+                spec.name
+            } else {
+                spec.property_name
+            };
+            arena
+                .get_identifier_text(export_ident)
+                .is_some_and(|name| name == "default")
+        })
+    })
 }
 
 impl ProjectFile {
@@ -204,6 +281,7 @@ impl ProjectFile {
 
         let line_map = LineMap::build(parser.get_source_text());
         let export_signature = ExportSignature::compute(&binder, &file_name);
+        let has_wildcard_reexport = compute_has_wildcard_reexport(arena, root);
 
         Self {
             file_name,
@@ -211,6 +289,7 @@ impl ProjectFile {
             parser,
             binder,
             line_map,
+            has_wildcard_reexport,
             type_interner,
             definition_store: None,
             type_cache: None,

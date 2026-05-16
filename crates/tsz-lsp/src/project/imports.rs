@@ -113,6 +113,20 @@ impl Project {
             .cloned()
             .collect();
 
+        // Pre-compute the set of files whose paths match the auto-import exclude
+        // patterns. Building the set once amortizes the glob-matching cost across
+        // all files in the loop, avoiding O(files × patterns) repeated work.
+        let excluded_file_set: FxHashSet<String> =
+            if self.auto_import_file_exclude_matchers.is_empty() {
+                FxHashSet::default()
+            } else {
+                all_files
+                    .iter()
+                    .filter(|f| self.auto_import_path_is_excluded(f))
+                    .cloned()
+                    .collect()
+            };
+
         let files_to_check = self.files_to_check_for_symbol(
             missing_name,
             from_file.file_name(),
@@ -164,6 +178,13 @@ impl Project {
                     )) {
                         output.push(candidate);
                     }
+                }
+
+                // Skip this file for regular import candidates if its path matches
+                // an auto-import exclude pattern. The exclusion set was precomputed
+                // once above to avoid re-running glob matching per file per symbol.
+                if excluded_file_set.contains(&file_name) {
+                    continue;
                 }
 
                 let module_specifiers = module_specifiers_cache
@@ -285,6 +306,21 @@ impl Project {
             .filter(|file_name| self.file_has_wildcard_reexport(file_name))
             .cloned()
             .collect();
+
+        // Pre-compute the set of files whose paths match the auto-import exclude
+        // patterns. This set is reused across all symbol iterations below, so
+        // glob-matching runs once per file rather than once per (symbol, file) pair.
+        let excluded_file_set: FxHashSet<String> =
+            if self.auto_import_file_exclude_matchers.is_empty() {
+                FxHashSet::default()
+            } else {
+                all_files
+                    .iter()
+                    .filter(|f| self.auto_import_path_is_excluded(f))
+                    .cloned()
+                    .collect()
+            };
+
         let mut supplemental_symbol_set = FxHashSet::default();
 
         // Get all symbols that match the prefix using the sorted symbol index
@@ -369,6 +405,13 @@ impl Project {
                     )) {
                         output.push(candidate);
                     }
+                }
+
+                // Skip this file for regular import candidates if its path matches
+                // an auto-import exclude pattern. The exclusion set is precomputed
+                // once per request to avoid re-running glob matching per (symbol, file).
+                if excluded_file_set.contains(&file_name) {
+                    continue;
                 }
 
                 let module_specifiers = module_specifiers_cache
@@ -466,73 +509,9 @@ impl Project {
     }
 
     fn file_has_wildcard_reexport(&self, file_name: &str) -> bool {
-        let Some(file) = self.files.get(file_name) else {
-            return false;
-        };
-        let arena = file.arena();
-        let Some(source_file) = arena.get_source_file_at(file.root()) else {
-            return false;
-        };
-
-        source_file.statements.nodes.iter().any(|&stmt_idx| {
-            let Some(stmt_node) = arena.get(stmt_idx) else {
-                return false;
-            };
-            if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT {
-                return arena
-                    .get_export_assignment(stmt_node)
-                    .is_some_and(|assign| !assign.is_export_equals);
-            }
-            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                return false;
-            }
-            let Some(export) = arena.get_export_decl(stmt_node) else {
-                return false;
-            };
-            if export.is_default_export {
-                return true;
-            }
-            if export.module_specifier.is_none() {
-                return false;
-            }
-            if export.export_clause.is_none() {
-                return true;
-            }
-            if arena
-                .get_identifier_text(export.export_clause)
-                .is_some_and(|name| name == "default")
-            {
-                return true;
-            }
-
-            let Some(clause_node) = arena.get(export.export_clause) else {
-                return false;
-            };
-            if clause_node.kind == SyntaxKind::Identifier as u16
-                || clause_node.kind == SyntaxKind::StringLiteral as u16
-            {
-                return true;
-            }
-            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
-                return false;
-            }
-            let Some(named) = arena.get_named_imports(clause_node) else {
-                return false;
-            };
-            named.elements.nodes.iter().any(|&spec_idx| {
-                let Some(spec) = arena.get_specifier_at(spec_idx) else {
-                    return false;
-                };
-                let export_ident = if spec.name.is_some() {
-                    spec.name
-                } else {
-                    spec.property_name
-                };
-                arena
-                    .get_identifier_text(export_ident)
-                    .is_some_and(|name| name == "default")
-            })
-        })
+        self.files
+            .get(file_name)
+            .map_or(false, |f| f.has_wildcard_reexport)
     }
 
     fn reexported_names_with_prefix(&self, file_name: &str, prefix: &str) -> Vec<String> {
@@ -3230,5 +3209,94 @@ export = ts;
             specs.iter().any(|specifier| specifier == "fs-extra"),
             "expected fs-extra re-export candidate, got {specs:?}"
         );
+    }
+
+    #[test]
+    fn has_wildcard_reexport_cached_on_project_file() {
+        use super::super::ProjectFile;
+        use super::super::core::compute_has_wildcard_reexport;
+
+        // Files without wildcard re-exports.
+        let plain = ProjectFile::new("/a.ts".to_string(), "export const x = 1;".to_string());
+        assert!(
+            !plain.has_wildcard_reexport,
+            "plain export should not be flagged as wildcard reexport"
+        );
+
+        let named_only =
+            ProjectFile::new("/b.ts".to_string(), "export { x } from './a';".to_string());
+        assert!(
+            !named_only.has_wildcard_reexport,
+            "named-only re-export should not be flagged"
+        );
+
+        // Files with wildcard re-exports.
+        let star = ProjectFile::new("/c.ts".to_string(), "export * from './a';".to_string());
+        assert!(star.has_wildcard_reexport, "export * should be flagged");
+
+        let default_reexport = ProjectFile::new(
+            "/d.ts".to_string(),
+            "export { default } from './a';".to_string(),
+        );
+        assert!(
+            default_reexport.has_wildcard_reexport,
+            "export {{ default }} re-export should be flagged"
+        );
+
+        // Compute_has_wildcard_reexport agrees with the cached field (both code paths exercise).
+        for (file, expected) in [
+            (&plain, false),
+            (&named_only, false),
+            (&star, true),
+            (&default_reexport, true),
+        ] {
+            let computed = compute_has_wildcard_reexport(file.arena(), file.root());
+            assert_eq!(
+                computed, expected,
+                "compute_has_wildcard_reexport disagrees with expected for {:?}",
+                file.file_name
+            );
+        }
+    }
+
+    #[test]
+    fn file_exclude_patterns_applied_once_per_request_not_per_symbol() {
+        // This test verifies that when multiple symbols from the same excluded file
+        // are searched, none of them appear as candidates — proving the precomputed
+        // excluded_file_set gates correctly across symbol iterations.
+        let mut project = Project::new();
+        project.set_auto_import_file_exclude_patterns(vec!["**/excluded/**".to_string()]);
+        project.set_file(
+            "/tsconfig.json".to_string(),
+            r#"{"compilerOptions":{"module":"commonjs"}}"#.to_string(),
+        );
+        project.set_file(
+            "/node_modules/excluded/index.d.ts".to_string(),
+            "export declare function alpha(): void;\nexport declare function beta(): void;\nexport declare function gamma(): void;".to_string(),
+        );
+        project.set_file(
+            "/node_modules/included/index.d.ts".to_string(),
+            "export declare function alpha(): void;".to_string(),
+        );
+        project.set_file("/src/index.ts".to_string(), "alpha".to_string());
+
+        let candidates = project.get_import_candidates_for_prefix("/src/index.ts", "al");
+
+        // The `included` package's `alpha` is reachable.
+        assert!(
+            candidates
+                .iter()
+                .any(|c| c.local_name == "alpha" && c.module_specifier.contains("included")),
+            "expected alpha from included package, got {candidates:?}"
+        );
+
+        // None of the excluded package's symbols appear.
+        for excluded_fn in ["alpha", "beta", "gamma"] {
+            assert!(
+                !candidates.iter().any(|c| c.local_name == excluded_fn
+                    && c.module_specifier.contains("excluded")),
+                "expected {excluded_fn} from excluded package to be hidden, got {candidates:?}"
+            );
+        }
     }
 }
