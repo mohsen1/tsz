@@ -214,6 +214,16 @@ fn delimiter_helpers_panic_on_mismatched_close() {
     writer.write_close_delimiter(DelimiterKind::Bracket);
 }
 
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "structured delimiter helpers left 1 unclosed delimiter(s)")]
+fn take_output_panics_on_unclosed_delimiter() {
+    let mut writer = SourceWriter::new();
+    writer.write_open_delimiter(DelimiterKind::Paren);
+
+    let _ = writer.take_output();
+}
+
 #[test]
 fn write_char_handles_newline() {
     let mut writer = SourceWriter::new();

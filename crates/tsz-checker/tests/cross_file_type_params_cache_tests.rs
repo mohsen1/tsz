@@ -102,6 +102,34 @@ fn no_constraint_no_default_generic_takes_arena_only_fast_path() {
 }
 
 #[test]
+fn scope_independent_constraint_and_default_take_arena_only_fast_path() {
+    // Constraints/defaults that lower without source-file symbol resolution
+    // can be extracted directly from the declaration arena. They should not
+    // pay for a `TypeEnvironmentCore` child checker or populate the slow-path
+    // cache.
+    let file1 = r#"
+        export type Pair<T extends string, U = T[]> = [T, U];
+    "#;
+    let file2 = r#"
+        import { Pair } from "./file1";
+        type Value = Pair<"ok">;
+        declare const value: Value;
+        value;
+    "#;
+    let (_diags, cache) = crate::test_utils::check_multi_file_with_type_params_cache(
+        &[("file2.ts", file2), ("file1.ts", file1)],
+        "file2.ts",
+        opts(),
+    );
+    assert!(
+        cache.is_empty(),
+        "scope-independent constrained/defaulted generic should take the arena-only fast path; \
+         cache had {} entries",
+        cache.len()
+    );
+}
+
+#[test]
 fn cache_stores_only_positive_type_param_results() {
     // Negative extraction results are intentionally not cached. A
     // `None` answer can be context-dependent, so memoizing it can

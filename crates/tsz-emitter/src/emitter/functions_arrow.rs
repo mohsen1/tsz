@@ -33,9 +33,9 @@ impl<'a> Printer<'a> {
         // Parser recovery parity: malformed return type like `(a): => {}` should
         // preserve recovered shape instead of applying arrow lowering.
         if self.is_recovery_arrow_missing_return_type(node, func) {
-            self.write("(");
+            self.open_paren();
             self.emit_function_parameters_js(&func.parameters.nodes);
-            self.write(")");
+            self.close_paren();
             if let Some(body_node) = self.arena.get(func.body)
                 && body_node.kind == syntax_kind_ext::BLOCK
             {
@@ -52,6 +52,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.is_static_block_await_arrow_recovery(func) {
+            self.emit_static_block_await_arrow_recovery(func);
+            return;
+        }
+
         if self.ctx.target_es5 {
             let captures_this = contains_this_reference(self.arena, _idx);
             let captures_arguments = contains_arguments_reference(self.arena, _idx);
@@ -60,6 +65,31 @@ impl<'a> Printer<'a> {
         }
 
         self.emit_arrow_function_native(func);
+    }
+
+    fn emit_static_block_await_arrow_recovery(
+        &mut self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) {
+        let source_had_parens = self.source_has_arrow_function_parens(&func.parameters.nodes);
+        let Some(&param_idx) = func.parameters.nodes.first() else {
+            return;
+        };
+        let Some(param_node) = self.arena.get(param_idx) else {
+            return;
+        };
+        let Some(param) = self.arena.get_parameter(param_node) else {
+            return;
+        };
+
+        if source_had_parens {
+            self.write("(");
+        }
+        self.emit(param.name);
+        self.write(" ");
+        if source_had_parens {
+            self.write(")");
+        }
     }
 
     fn is_recovery_arrow_missing_return_type(
@@ -151,7 +181,7 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
-            self.write("(");
+            self.open_paren();
         }
         let prev_namespace_exported_names = self.namespace_exported_names.clone();
         self.emit_function_parameters_js(&func.parameters.nodes);
@@ -167,7 +197,7 @@ impl<'a> Printer<'a> {
                     .map_or(0, |n| n.pos);
                 self.map_closing_paren_backward(search_start, body_node.pos);
             }
-            self.write(")");
+            self.close_paren();
         }
 
         // Map `=>` arrow to source position (split space from token to get correct mapping column)

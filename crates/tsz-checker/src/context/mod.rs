@@ -867,6 +867,10 @@ pub struct CheckerContext<'a> {
     /// Current type parameter scope.
     pub type_parameter_scope: FxHashMap<String, TypeId>,
 
+    /// Type-reference argument validations that completed without diagnostics
+    /// in the current lexical type-parameter scope.
+    pub type_reference_arg_validation_cache: FxHashSet<(u32, u32, u64)>,
+
     /// Depth counter for conditional type `extends` clauses.
     /// Incremented when recursing into the `extends_type` of a conditional type,
     /// used to validate TS1338: `infer` only allowed in conditional extends.

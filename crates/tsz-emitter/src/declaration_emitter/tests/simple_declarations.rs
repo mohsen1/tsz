@@ -1899,7 +1899,6 @@ export { g };
 }
 
 #[test]
-#[ignore = "broken on main: emit produces redundant `export` keyword or duplicate declarations — track in follow-up"]
 fn test_js_named_exports_preserve_explicit_export_order() {
     let source = r#"
 function require() {}

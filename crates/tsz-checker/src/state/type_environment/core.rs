@@ -1671,14 +1671,13 @@ impl<'a> CheckerState<'a> {
             return None;
         };
 
-        let mut params = Vec::with_capacity(type_parameters.nodes.len());
+        let mut has_constraint_or_default = false;
         let mut seen_names = FxHashSet::default();
         for &param_idx in &type_parameters.nodes {
             let node = arena.get(param_idx)?;
             let data = arena.get_type_parameter(node)?;
-            if data.constraint != NodeIndex::NONE || data.default != NodeIndex::NONE {
-                return None;
-            }
+            has_constraint_or_default |=
+                data.constraint != NodeIndex::NONE || data.default != NodeIndex::NONE;
 
             let name = arena
                 .get(data.name)
@@ -1687,15 +1686,45 @@ impl<'a> CheckerState<'a> {
             if !seen_names.insert(name.clone()) {
                 return None;
             }
-
-            params.push(tsz_solver::TypeParamInfo {
-                name: self.ctx.types.intern_string(&name),
-                constraint: None,
-                default: None,
-                is_const: arena.has_modifier(&data.modifiers, SyntaxKind::ConstKeyword),
-            });
         }
 
+        if has_constraint_or_default {
+            let lowering = tsz_lowering::TypeLowering::new(arena, self.ctx.types)
+                .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type());
+            let params = lowering.collect_type_parameters(type_parameters);
+            if params.len() != type_parameters.nodes.len() {
+                return None;
+            }
+            if params.iter().any(|param| {
+                param.constraint.is_some_and(|ty| {
+                    crate::query_boundaries::common::is_error_type(self.ctx.types, ty)
+                }) || param.default.is_some_and(|ty| {
+                    crate::query_boundaries::common::is_error_type(self.ctx.types, ty)
+                })
+            }) {
+                return None;
+            }
+            return Some(params);
+        }
+
+        let params = type_parameters
+            .nodes
+            .iter()
+            .filter_map(|&param_idx| {
+                let node = arena.get(param_idx)?;
+                let data = arena.get_type_parameter(node)?;
+                let name = arena
+                    .get(data.name)
+                    .and_then(|name_node| arena.get_identifier(name_node))
+                    .map(|id_data| id_data.escaped_text.clone())?;
+                Some(tsz_solver::TypeParamInfo {
+                    name: self.ctx.types.intern_string(&name),
+                    constraint: None,
+                    default: None,
+                    is_const: arena.has_modifier(&data.modifiers, SyntaxKind::ConstKeyword),
+                })
+            })
+            .collect();
         Some(params)
     }
 
@@ -1911,6 +1940,9 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                     } else {
+                        if arena.get(decl_idx).is_none() {
+                            continue;
+                        }
                         if let Some(params) = self.extract_simple_type_params_from_decl_in_arena(
                             arena.as_ref(),
                             flags,
@@ -2034,6 +2066,9 @@ impl<'a> CheckerState<'a> {
                 let arena = self.ctx.get_arena_for_file(file_idx as u32);
                 if !std::ptr::eq(arena, self.ctx.arena) {
                     checked_local = true;
+                    if arena.get(decl_idx).is_none() {
+                        continue;
+                    }
                     if let Some(params) = self.extract_simple_type_params_from_decl_in_arena(
                         arena,
                         flags,

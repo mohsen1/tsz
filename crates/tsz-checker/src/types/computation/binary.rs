@@ -76,6 +76,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn global_function_interface_type_for_instanceof(&mut self) -> Option<TypeId> {
+        if !self.ctx.compiler_options.no_lib {
+            return Some(TypeId::FUNCTION);
+        }
+
         let function_sym_id = self.ctx.binder.lib_symbol_ids.iter().find_map(|&sym_id| {
             self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
                 (symbol.escaped_name == "Function" && symbol.has_any_flags(symbol_flags::INTERFACE))
@@ -85,6 +89,10 @@ impl<'a> CheckerState<'a> {
 
         function_sym_id
             .map(|sym_id| self.get_type_of_symbol(sym_id))
+            .or_else(|| {
+                self.resolve_actual_lib_name_to_def_id_for_lowering("Function")
+                    .map(|def_id| self.ctx.types.lazy(def_id))
+            })
             .or_else(|| self.resolve_lib_type_by_name("Function"))
     }
 

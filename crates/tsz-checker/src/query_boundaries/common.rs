@@ -1703,6 +1703,14 @@ pub(crate) fn collect_lazy_def_ids(
     tsz_solver::visitor::collect_lazy_def_ids(db, root)
 }
 
+pub(crate) fn contains_lazy_def_id(
+    db: &dyn TypeDatabase,
+    root: TypeId,
+    target_def_id: tsz_solver::def::DefId,
+) -> bool {
+    tsz_solver::visitor::contains_lazy_def_id(db, root, target_def_id)
+}
+
 pub(crate) fn collect_type_queries(
     db: &dyn TypeDatabase,
     root: TypeId,
@@ -1983,18 +1991,7 @@ pub(crate) fn has_deferred_conditional_member(db: &dyn TypeDatabase, type_id: Ty
     tsz_solver::has_deferred_conditional_member(db, type_id)
 }
 
-pub(crate) const fn is_compound_assignment_operator(operator_token: u16) -> bool {
-    tsz_solver::is_compound_assignment_operator(operator_token)
-}
-
-pub(crate) const fn is_logical_compound_assignment_operator(operator_token: u16) -> bool {
-    tsz_solver::is_logical_compound_assignment_operator(operator_token)
-}
-
-pub(crate) const fn is_assignment_operator(operator_token: u16) -> bool {
-    tsz_solver::is_assignment_operator(operator_token)
-}
-
-pub(crate) const fn map_compound_assignment_to_binary(operator_token: u16) -> Option<&'static str> {
-    tsz_solver::map_compound_assignment_to_binary(operator_token)
-}
+pub(crate) use super::operator_wrappers::{
+    is_assignment_operator, is_compound_assignment_operator,
+    is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
+};
