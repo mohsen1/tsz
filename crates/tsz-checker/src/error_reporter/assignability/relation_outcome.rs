@@ -1,6 +1,11 @@
-use crate::diagnostics::{DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes};
+use crate::diagnostics::{
+    DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes, diagnostic_messages,
+    format_message,
+};
 use crate::error_reporter::assignability::is_callable_application_type;
-use crate::error_reporter::fingerprint_policy::DiagnosticAnchorKind;
+use crate::error_reporter::fingerprint_policy::{
+    DiagnosticAnchorKind, DiagnosticRenderRequest, RelatedInformationPolicy,
+};
 use crate::query_boundaries::relation_types::RelationFailure;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -74,6 +79,38 @@ impl<'a> CheckerState<'a> {
             && is_callable_application_type(self.ctx.types, target)
             && self.should_suppress_outer_callback_return_assignability(target, anchor_idx)
         {
+            return;
+        }
+        if let Some(detail) = self.private_brand_mismatch_error(source, target) {
+            let Some(anchor) =
+                self.resolve_diagnostic_anchor(anchor_idx, DiagnosticAnchorKind::Exact)
+            else {
+                return;
+            };
+            let (source_type, target_type) =
+                self.format_top_level_assignability_message_types_at(source, target, anchor_idx);
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_type, &target_type],
+            );
+            let related = vec![DiagnosticRelatedInformation {
+                category: DiagnosticCategory::Error,
+                code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                file: self.ctx.file_name.clone(),
+                start: anchor.start,
+                length: anchor.length,
+                message_text: detail,
+            }];
+            self.emit_render_request_at_anchor(
+                anchor,
+                DiagnosticRenderRequest::with_related(
+                    DiagnosticAnchorKind::Exact,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    message,
+                    related,
+                    RelatedInformationPolicy::ELABORATION,
+                ),
+            );
             return;
         }
         if matches!(failure_reason, RelationFailure::TypeMismatch { .. }) {
