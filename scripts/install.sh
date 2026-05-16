@@ -89,21 +89,49 @@ detect_target() {
 
 resolve_version() {
     if [ "$VERSION" = "latest" ]; then
-        local url
-        url=$(curl -fsSL "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" 2>/dev/null \
-            | grep -E '"tag_name"' | head -n1 | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
-        [ -n "$url" ] || die "could not determine latest release tag for ${REPO_OWNER}/${REPO_NAME}"
-        echo "$url"
+        echo "latest"
     else
         echo "$VERSION"
     fi
+}
+
+resolve_github_latest() {
+    local tag
+    tag=$(curl -fsSL "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/releases/latest" 2>/dev/null \
+        | grep -E '"tag_name"' | head -n1 | sed -E 's/.*"tag_name"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+    [ -n "$tag" ] || die "could not determine latest versioned release tag for ${REPO_OWNER}/${REPO_NAME}"
+    echo "$tag"
+}
+
+download_asset() {
+    local tag="$1"
+    local asset="$2"
+    local url="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${tag}/${asset}"
+
+    say "downloading from $url"
+    curl -fL --retry 3 --connect-timeout 10 -o "$TMP/$asset" "$url"
+}
+
+resolve_download() {
+    if [ "$VERSION" = "latest" ]; then
+        if download_asset "latest" "$ASSET"; then
+            return
+        fi
+
+        warn "latest channel asset is not available for ${TARGET}; falling back to the latest versioned release"
+        TAG="$(resolve_github_latest)"
+        ASSET="tsz-${TAG}-${TARGET}.tar.gz"
+        download_asset "$TAG" "$ASSET" || die "download failed — does ${TAG} have a build for ${TARGET}?"
+        return
+    fi
+
+    download_asset "$TAG" "$ASSET" || die "download failed — does ${TAG} have a build for ${TARGET}?"
 }
 
 TARGET="$(detect_target)"
 TAG="$(resolve_version)"
 INSTALL_DIR="$(pick_install_dir)"
 ASSET="tsz-${TAG}-${TARGET}.tar.gz"
-URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/${TAG}/${ASSET}"
 
 say "version:       $TAG"
 say "target:        $TARGET"
@@ -113,10 +141,7 @@ say "install dir:   $INSTALL_DIR"
 TMP="$(mktemp -d -t tsz-install-XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 
-say "downloading from $URL"
-if ! curl -fL --retry 3 --connect-timeout 10 -o "$TMP/$ASSET" "$URL"; then
-    die "download failed — does ${TAG} have a build for ${TARGET}?"
-fi
+resolve_download
 
 say "extracting"
 tar -xzf "$TMP/$ASSET" -C "$TMP"

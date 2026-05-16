@@ -25,9 +25,9 @@ mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE" "$TSZ_CI_WASM_PACK_CACHE"
 # absolute-floor edits. The fallback floor still protects paths without shard
 # expected counts.
 TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-12556}"
-# Temporary runway for the 2026-05-16 conformance aggregate regression.
-# Keep this path-based, not count-based: fixing one listed test must not let a
-# new unlisted regression pass CI under the same aggregate deficit.
+# Optional accepted-regression list for temporary conformance runways. Keep this
+# path-based, not count-based: fixing one listed test must not let a new
+# unlisted regression pass CI under the same aggregate deficit.
 TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS="${TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS:-scripts/conformance/conformance-accepted-regressions.txt}"
 TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1486}"
 
