@@ -553,6 +553,14 @@ impl<'a> Printer<'a> {
                 async_emitter.set_tslib_prefix(true);
                 async_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
             }
+            let blocked_disposable_names = self
+                .file_identifiers
+                .iter()
+                .chain(self.generated_temp_names.iter())
+                .cloned()
+                .collect::<Vec<_>>();
+            async_emitter
+                .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
 
             let body_has_await = async_emitter.body_contains_await(body);
             let body_is_single_line = self.arena.get(body).is_some_and(|n| self.is_single_line(n));
@@ -625,6 +633,10 @@ impl<'a> Printer<'a> {
                 (generator_body, hoisted_var_groups, Vec::new())
             };
             let generator_mappings = async_emitter.take_mappings();
+            self.next_disposable_env_id = async_emitter.disposable_env_counter();
+            for generated_name in async_emitter.take_generated_disposable_env_names() {
+                self.generated_temp_names.insert(generated_name);
+            }
 
             // Write with surrounding __awaiter wrapper
             self.write("return ");

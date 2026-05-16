@@ -167,6 +167,38 @@ fn test_variable_declaration_order() {
 }
 
 #[test]
+fn test_await_using_in_async_body_lowers_to_generator_disposable_region() {
+    let output = transform_and_print(
+        "async function foo() { await using d = { async [Symbol.asyncDispose]() {} }; await done(); }",
+    );
+
+    assert!(
+        output.contains("var env_1, d, e_1, result_1;"),
+        "Disposable region names should be hoisted before the generator body: {output}"
+    );
+    assert!(
+        output.contains("_b.trys.push([1, 3, 4, 7]);"),
+        "The async state machine should plan a try/finally region around `await using`: {output}"
+    );
+    assert!(
+        output.contains("d = __addDisposableResource(env_1"),
+        "`await using` declarations should register with __addDisposableResource: {output}"
+    );
+    assert!(
+        output.contains("result_1 = __disposeResources(env_1);"),
+        "The finally region should dispose the resource stack: {output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, result_1];"),
+        "Async disposal must suspend on the dispose promise: {output}"
+    );
+    assert!(
+        !output.contains("await using"),
+        "Raw `await using` syntax must not leak into ES5 output: {output}"
+    );
+}
+
+#[test]
 fn test_await_assignment_captures_property_target_before_yield() {
     let output = transform_and_print("async function foo() { var o; o.a = await p; after(); }");
 

@@ -87,12 +87,14 @@ impl<'a> ES5ClassTransformer<'a> {
         if let Some(source_text) = self.source_text {
             transformer.set_source_text(source_text);
         }
+        self.configure_async_disposable_context(&mut transformer);
         let inner = transformer.transform_async_generator_inner_function(
             inner_name,
             params,
             body,
             move_params_to_generator,
         );
+        self.sync_async_disposable_context(&mut transformer);
         vec![IRNode::ReturnStatement(Some(Box::new(IRNode::CallExpr {
             callee: Box::new(IRNode::RuntimeHelper("__asyncGenerator".into())),
             arguments: vec![
@@ -418,9 +420,11 @@ impl<'a> ES5ClassTransformer<'a> {
                         if let Some(source_text) = self.source_text {
                             async_transformer.set_source_text(source_text);
                         }
+                        self.configure_async_disposable_context(&mut async_transformer);
                         let has_await = async_transformer.body_contains_await(method_data.body);
                         let mut generator_body =
                             async_transformer.transform_generator_body(method_data.body, has_await);
+                        self.sync_async_disposable_context(&mut async_transformer);
                         let hoisted_var_groups =
                             AsyncES5Transformer::extract_and_remove_var_decl_groups(
                                 &mut generator_body,
@@ -546,9 +550,11 @@ impl<'a> ES5ClassTransformer<'a> {
                         if let Some(source_text) = self.source_text {
                             async_transformer.set_source_text(source_text);
                         }
+                        self.configure_async_disposable_context(&mut async_transformer);
                         let has_await = async_transformer.body_contains_await(method_data.body);
                         let mut generator_body =
                             async_transformer.transform_generator_body(method_data.body, has_await);
+                        self.sync_async_disposable_context(&mut async_transformer);
                         let hoisted_var_groups =
                             AsyncES5Transformer::extract_and_remove_var_decl_groups(
                                 &mut generator_body,

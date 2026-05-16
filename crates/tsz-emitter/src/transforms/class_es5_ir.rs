@@ -80,6 +80,7 @@ mod members;
 use helpers::*;
 
 use crate::context::transform::TransformContext;
+use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::ir::{
     IRCatchClause, IRMethodName, IRNode, IRParam, IRProperty, IRPropertyDescriptor, IRPropertyKey,
     IRPropertyKind, IRSwitchCase,
@@ -89,7 +90,7 @@ use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, collect_enclosing_source_binding_names,
     collect_private_accessors_with_reserved, collect_private_fields_with_reserved,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::node::{Node, NodeArena};
@@ -146,6 +147,9 @@ pub struct ES5ClassTransformer<'a> {
     use_define_for_class_fields: bool,
     commonjs_import_substitutions: FxHashMap<String, String>,
     module_kind: ModuleKind,
+    disposable_env_counter: Cell<u32>,
+    blocked_disposable_env_names: RefCell<FxHashSet<String>>,
+    generated_disposable_env_names: RefCell<Vec<String>>,
     /// Additional hoisted temp variable names collected from expression conversions
     /// (e.g., from computed property lowering inside object literals)
     extra_hoisted_temps: RefCell<Vec<String>>,
@@ -178,6 +182,9 @@ impl<'a> ES5ClassTransformer<'a> {
             use_define_for_class_fields: false,
             commonjs_import_substitutions: FxHashMap::default(),
             module_kind: ModuleKind::None,
+            disposable_env_counter: Cell::new(1),
+            blocked_disposable_env_names: RefCell::new(FxHashSet::default()),
+            generated_disposable_env_names: RefCell::new(Vec::new()),
             extra_hoisted_temps: RefCell::new(Vec::new()),
         }
     }
@@ -212,6 +219,42 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub const fn temp_var_counter(&self) -> u32 {
         self.temp_var_counter.get()
+    }
+
+    pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.disposable_env_counter.set(next_id);
+        *self.blocked_disposable_env_names.borrow_mut() = blocked_names.into_iter().collect();
+        self.generated_disposable_env_names.borrow_mut().clear();
+    }
+
+    pub const fn disposable_env_counter(&self) -> u32 {
+        self.disposable_env_counter.get()
+    }
+
+    pub fn take_generated_disposable_env_names(&self) -> Vec<String> {
+        std::mem::take(&mut *self.generated_disposable_env_names.borrow_mut())
+    }
+
+    fn configure_async_disposable_context(&self, transformer: &mut AsyncES5Transformer<'a>) {
+        transformer.set_disposable_env_context(
+            self.disposable_env_counter.get(),
+            self.blocked_disposable_env_names.borrow().iter().cloned(),
+        );
+    }
+
+    fn sync_async_disposable_context(&self, transformer: &mut AsyncES5Transformer<'a>) {
+        self.disposable_env_counter
+            .set(transformer.disposable_env_counter());
+        let generated = transformer.take_generated_disposable_env_names();
+        let mut blocked = self.blocked_disposable_env_names.borrow_mut();
+        let mut all_generated = self.generated_disposable_env_names.borrow_mut();
+        for name in generated {
+            blocked.insert(name.clone());
+            all_generated.push(name);
+        }
     }
 
     fn fresh_super_name(&self) -> String {

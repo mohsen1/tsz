@@ -161,6 +161,22 @@ impl<'a> ClassES5Emitter<'a> {
         self.transformer.temp_var_counter()
     }
 
+    pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.transformer
+            .set_disposable_env_context(next_id, blocked_names);
+    }
+
+    pub const fn disposable_env_counter(&self) -> u32 {
+        self.transformer.disposable_env_counter()
+    }
+
+    pub fn take_generated_disposable_env_names(&mut self) -> Vec<String> {
+        self.transformer.take_generated_disposable_env_names()
+    }
+
     /// Set transform directives for `ASTRef` nodes
     pub fn set_transforms(&mut self, transforms: TransformContext) {
         self.transforms = Some(transforms.clone());

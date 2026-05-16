@@ -256,6 +256,33 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
+    fn generator_state_name_for_function_body(body: &[IRNode]) -> Option<&'static str> {
+        if !body
+            .iter()
+            .any(|node| matches!(node, IRNode::GeneratorBody { .. }))
+        {
+            return None;
+        }
+
+        let mut hoisted_vars = Vec::new();
+        for stmt in body {
+            match stmt {
+                IRNode::VarDeclList(decls) => {
+                    for decl in decls {
+                        if let IRNode::VarDecl { name, .. } = decl {
+                            hoisted_vars.push(name.as_ref());
+                        }
+                    }
+                }
+                IRNode::VarDecl { name, .. } => hoisted_vars.push(name.as_ref()),
+                IRNode::GeneratorBody { .. } => break,
+                _ => {}
+            }
+        }
+
+        (!hoisted_vars.is_empty()).then(|| Self::generator_state_name_for_hoisted(&hoisted_vars))
+    }
+
     fn is_noop_statement(node: &IRNode) -> bool {
         match node {
             IRNode::Sequence(nodes) if nodes.is_empty() => true,
@@ -862,12 +889,19 @@ impl<'a> IRPrinter<'a> {
                 }
                 let force_multiline_empty = self.force_iife_multiline_empty
                     || matches!(name, Some(n) if self.current_class_iife_name.as_deref() == Some(&**n));
+                let previous_generator_state_name = self.generator_state_name;
+                if let Some(generator_state_name) =
+                    Self::generator_state_name_for_function_body(body)
+                {
+                    self.generator_state_name = generator_state_name;
+                }
                 self.emit_function_body_with_defaults(
                     parameters,
                     body,
                     *body_source_range,
                     force_multiline_empty,
                 );
+                self.generator_state_name = previous_generator_state_name;
             }
             IRNode::LogicalOr { left, right } => {
                 self.emit_node(left);
@@ -1662,6 +1696,23 @@ impl<'a> IRPrinter<'a> {
             IRNode::GeneratorLabel => {
                 self.write(self.generator_state_name);
                 self.write(".label");
+            }
+            IRNode::GeneratorTryPush {
+                start_label,
+                catch_label,
+                finally_label,
+                end_label,
+            } => {
+                self.write(self.generator_state_name);
+                self.write(".trys.push([");
+                self.write(&start_label.to_string());
+                self.write(", ");
+                self.write(&catch_label.to_string());
+                self.write(", ");
+                self.write(&finally_label.to_string());
+                self.write(", ");
+                self.write(&end_label.to_string());
+                self.write("]);");
             }
 
             IRNode::IfBreak {
