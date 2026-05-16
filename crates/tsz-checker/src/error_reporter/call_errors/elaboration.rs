@@ -651,6 +651,102 @@ impl<'a> CheckerState<'a> {
         self.try_elaborate_object_literal_arg_error_with_source(arg_idx, param_type, None)
     }
 
+    pub(crate) fn try_emit_polymorphic_this_object_literal_arg_errors(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+    ) -> bool {
+        let arg_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+        if arg_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(obj) = self.ctx.arena.get_literal_expr(arg_node).cloned() else {
+            return false;
+        };
+
+        let candidates = [
+            param_type,
+            self.evaluate_contextual_type(param_type),
+            self.evaluate_type_with_env(param_type),
+            self.resolve_type_for_property_access(param_type),
+            self.evaluate_type_for_assignability(param_type),
+        ];
+
+        let mut emitted = false;
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            let (prop_name_idx, prop_value_idx) = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    match self.ctx.arena.get_property_assignment(elem_node) {
+                        Some(prop) => (prop.name, prop.initializer),
+                        None => continue,
+                    }
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    match self.ctx.arena.get_shorthand_property(elem_node) {
+                        Some(prop) => (prop.name, prop.name),
+                        None => continue,
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    match self.ctx.arena.get_method_decl(elem_node) {
+                        Some(method) => (method.name, elem_idx),
+                        None => continue,
+                    }
+                }
+                _ => continue,
+            };
+
+            let is_computed_property = self
+                .ctx
+                .arena
+                .get(prop_name_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            let Some(prop_name) = self
+                .object_literal_property_name_text(prop_name_idx)
+                .or_else(|| {
+                    is_computed_property
+                        .then(|| self.get_property_name_resolved(prop_name_idx))
+                        .flatten()
+                })
+            else {
+                continue;
+            };
+
+            let source_prop_type = self.get_type_of_node(prop_value_idx);
+            if source_prop_type == TypeId::ERROR || source_prop_type == TypeId::ANY {
+                continue;
+            }
+
+            for candidate in candidates {
+                let Some((target_prop_type, _)) =
+                    self.object_literal_target_property_type(candidate, prop_name_idx, &prop_name)
+                else {
+                    continue;
+                };
+                if target_prop_type == TypeId::ERROR || target_prop_type == TypeId::ANY {
+                    continue;
+                }
+                if self.is_assignable_to(source_prop_type, target_prop_type)
+                    && self.emit_polymorphic_this_property_assignment_error(
+                        source_prop_type,
+                        target_prop_type,
+                        prop_name_idx,
+                    )
+                {
+                    emitted = true;
+                    break;
+                }
+            }
+        }
+        emitted
+    }
+
     /// Like `try_elaborate_object_literal_arg_error`, but accepts an optional
     /// `source_type_override` for cases where `get_type_of_node` returns a
     /// contextually-typed version that doesn't reflect the actual mismatch
