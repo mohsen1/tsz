@@ -248,8 +248,19 @@ do not add ad-hoc print debugging.
 
 ## 20) Repo-Local Skills
 
-No repo-local `SKILL.md` files are currently checked in. Do not list or rely on
-TSZ-specific skills here unless their implementation is committed in the repo.
+Repo-local TSZ skills live under `.agents/skills/`. Use them when the task
+matches their description:
+
+- `tsz-architecture`: checker/solver/binder/emitter/LSP/WASM boundary work and
+  architecture guard failures.
+- `tsz-ci-pr`: GitHub PR status, CI triage, ready/merge handling, and landing.
+- `tsz-conformance`: conformance regressions, accepted-regression drift,
+  fingerprint-only triage, and conformance issue creation.
+- `tsz-emit`: JavaScript/declaration emit and emit parity work.
+- `tsz-project-bench`: benchmark/project-corpus rows, fixture metadata, PGO, and
+  benchmark dashboard work.
+- `tsz-tracing`: tracing-driven debugging of checker/solver/binder behavior.
+
 Runtime-provided global skills may exist outside this checkout; do not document
 them as TSZ repo skills.
 
@@ -260,6 +271,13 @@ them as TSZ repo skills.
   stable across the session.
 - **Sign your work.** Every PR body and GitHub issue you create or comment on
   must include your AgentName so humans (and other agents) can tell who did it.
+- **Fill the Project Corpus Impact section on every PR.** The PR template
+  requires it. Do not delete or leave it blank. If the PR cannot affect project
+  corpus behavior, write `Row: n/a`, `Bug family: n/a`, and one concrete
+  evidence line such as `docs-only`, `agent-skill-only`, or `test-harness-only`.
+  For compiler, benchmark, emit, checker, solver, parser, binder, LSP, WASM, or
+  CI changes, name the affected project row when known, name the bug family, and
+  cite the local command, CI job, issue, or artifact used as evidence.
 - **Acknowledge code reviews.** When your PR receives a substantive code review,
   especially from `CodeReviewer`, react to the review comment/thread after
   reading it and leave a brief PR comment acknowledging the review with your
