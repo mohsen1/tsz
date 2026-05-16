@@ -277,7 +277,11 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                if is_builtin_array && type_param.is_none() && sym_id.is_none() {
+                if is_builtin_array
+                    && type_param.is_none()
+                    && sym_id.is_none()
+                    && !self.ctx.file_local_type_shadow_for_lib_name(name)
+                {
                     // Array/ReadonlyArray not found - check if lib files are loaded
                     // When --noLib is used, emit TS2318 instead of silently creating Array type
                     if !self.ctx.has_lib_loaded() {
@@ -381,13 +385,9 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types.application(base, lowered_args)
                     };
                 }
-                let local_array_name =
-                    self.ctx.binder.file_locals.get(name).is_some_and(|sym_id| {
-                        !self.ctx.symbol_is_from_actual_lib(sym_id)
-                            && self.symbol_has_declared_type_meaning(sym_id)
-                    });
-                let array_is_unshadowed =
-                    is_builtin_array && type_param.is_none() && !local_array_name;
+                let array_is_unshadowed = is_builtin_array
+                    && type_param.is_none()
+                    && !self.ctx.file_local_type_shadow_for_lib_name(name);
 
                 // For Array<T> / ReadonlyArray<T> with type arguments, convert to
                 // proper array types (Array(T) / Readonly(Array(T))) instead of

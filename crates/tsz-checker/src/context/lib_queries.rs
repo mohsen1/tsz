@@ -35,6 +35,16 @@ impl<'a> CheckerContext<'a> {
         None
     }
 
+    pub(crate) fn actual_lib_context_has_bare_name(&self, name: &str) -> bool {
+        !name.contains('.')
+            && name != "BuiltinIteratorReturn"
+            && self
+                .lib_contexts
+                .iter()
+                .take(self.actual_lib_file_count)
+                .any(|lib_ctx| lib_ctx.binder.file_locals.has(name))
+    }
+
     fn actual_lib_symbol_id_for_bare_name(&self, name: &str) -> Option<SymbolId> {
         if let Some(sym_id) = self.binder.file_locals.get(name)
             && self.symbol_is_from_actual_or_cloned_lib(sym_id)
@@ -146,6 +156,29 @@ impl<'a> CheckerContext<'a> {
                         )
                 })
             })
+    }
+
+    pub(crate) fn same_file_type_declaration_symbol_for_name(
+        &self,
+        name: &str,
+    ) -> Option<SymbolId> {
+        self.arena.nodes.iter().enumerate().find_map(|(idx, _)| {
+            let decl_idx = tsz_parser::NodeIndex(idx as u32);
+            if self.is_global_augmentation_declaration(name, self.arena, decl_idx) {
+                return None;
+            }
+            self.type_declaration_name_matches(self.arena, decl_idx, name)
+                .then(|| self.binder.node_symbols.get(&decl_idx.0).copied())
+                .flatten()
+        })
+    }
+
+    pub(crate) fn same_file_type_declaration_exists(&self, name: &str) -> bool {
+        self.arena.nodes.iter().enumerate().any(|(idx, _)| {
+            let decl_idx = tsz_parser::NodeIndex(idx as u32);
+            !self.is_global_augmentation_declaration(name, self.arena, decl_idx)
+                && self.type_declaration_name_matches(self.arena, decl_idx, name)
+        })
     }
 
     fn type_declaration_name_matches(

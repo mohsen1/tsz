@@ -5,11 +5,34 @@ use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::symbol_flags;
-use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn same_file_type_alias_parts_for_name(
+        &self,
+        name: &str,
+    ) -> Option<(Option<NodeList>, NodeIndex, Option<tsz_binder::SymbolId>)> {
+        self.ctx
+            .arena
+            .nodes
+            .iter()
+            .enumerate()
+            .find_map(|(idx, node)| {
+                let type_alias = self.ctx.arena.get_type_alias(node)?;
+                let alias_name = self.ctx.arena.get_identifier_text(type_alias.name)?;
+                (alias_name == name).then(|| {
+                    (
+                        type_alias.type_parameters.clone(),
+                        type_alias.type_node,
+                        self.ctx.binder.node_symbols.get(&(idx as u32)).copied(),
+                    )
+                })
+            })
+    }
+
     /// Get type from a type reference node (e.g., "number", "string", "`MyType`").
     pub(crate) fn get_type_from_type_reference(&mut self, idx: NodeIndex) -> TypeId {
         // Fuel check: prevent infinite loops in circular type references
@@ -577,7 +600,7 @@ impl<'a> CheckerState<'a> {
                 });
                 let sym_id = if !resolved_symbol_matches_name
                     && !self.ctx.file_local_type_shadow_for_lib_name(name)
-                    && self.ctx.actual_lib_def_id_for_bare_name(name).is_some()
+                    && self.ctx.actual_lib_context_has_bare_name(name)
                 {
                     None
                 } else {
@@ -585,7 +608,43 @@ impl<'a> CheckerState<'a> {
                 };
                 let is_builtin_array = is_array_like_name
                     && type_param.is_none()
+                    && !(self.ctx.actual_lib_context_has_bare_name(name)
+                        && self.ctx.same_file_type_declaration_exists(name))
+                    && !self.ctx.file_local_type_shadow_for_lib_name(name)
                     && sym_id.is_none_or(|sym_id| self.ctx.symbol_is_from_actual_lib(sym_id));
+                if !is_builtin_array
+                    && is_array_like_name
+                    && self.ctx.actual_lib_context_has_bare_name(name)
+                    && self.ctx.same_file_type_declaration_exists(name)
+                    && let Some((type_params, type_node, alias_sym_id)) =
+                        self.same_file_type_alias_parts_for_name(name)
+                    && let Some(args) = &type_ref.type_arguments
+                {
+                    let type_args = args
+                        .nodes
+                        .iter()
+                        .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                        .collect::<Vec<_>>();
+                    let (params, updates) = self.push_type_parameters(&type_params);
+                    let body = self.get_type_from_type_node(type_node);
+                    self.pop_type_parameters(updates);
+                    if params.len() == type_args.len() {
+                        if let Some(alias_sym_id) = alias_sym_id {
+                            let def_id = self.ctx.get_or_create_def_id(alias_sym_id);
+                            self.ctx.symbol_types.insert(alias_sym_id, body);
+                            self.ctx.register_resolved_type(alias_sym_id, body, params);
+                            self.ctx.clear_type_evaluation_caches_for_def(def_id);
+                            let base = self.ctx.types.factory().lazy(def_id);
+                            return self.ctx.types.factory().application(base, type_args);
+                        }
+                        return crate::query_boundaries::common::instantiate_generic(
+                            self.ctx.types,
+                            body,
+                            &params,
+                            &type_args,
+                        );
+                    }
+                }
                 if let Some(sym_id) = sym_id
                     && self.symbol_is_namespace_only(sym_id)
                 {
@@ -627,6 +686,9 @@ impl<'a> CheckerState<'a> {
                 // an alias for `T[]`.
                 let array_is_unshadowed = (name == "Array" || name == "ReadonlyArray")
                     && type_param.is_none()
+                    && !(self.ctx.actual_lib_context_has_bare_name(name)
+                        && self.ctx.same_file_type_declaration_exists(name))
+                    && !self.ctx.file_local_type_shadow_for_lib_name(name)
                     && match sym_id {
                         None => true,
                         Some(sid) => {
