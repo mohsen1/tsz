@@ -19,6 +19,7 @@ use tsz_solver::{FunctionShape, ParamInfo, TypeId};
 use super::super::call_result::CallResultContext;
 use super::super::complex::is_contextually_sensitive;
 use super::post_generic::PostGenericCallDiagnostics;
+use super::resolution_evidence::resolve_callable_with_evidence;
 
 impl<'a> CheckerState<'a> {
     fn fresh_direct_function_call_signature(
@@ -2485,53 +2486,20 @@ impl<'a> CheckerState<'a> {
             contextual_type
         };
 
-        let (
-            mut result,
-            mut instantiated_predicate,
-            mut generic_instantiated_params,
-            mut relation_evidence,
-        ) = if is_super_call {
-            (
-                self.resolve_new_with_checker_adapter(
-                    callee_type_for_call,
-                    &generic_inference_arg_types,
-                    force_bivariant_callbacks,
-                    call_resolution_contextual_type,
-                ),
-                None,
-                None,
-                Vec::new(),
-            )
-        } else if generic_inference_arg_source_markers.iter().any(|&m| m) {
-            let resolution = self.resolve_call_with_checker_adapter_and_arg_sources_evidence(
-                callee_type_for_call,
-                &generic_inference_arg_types,
-                force_bivariant_callbacks,
-                call_resolution_contextual_type,
-                actual_this_type,
-                &generic_inference_arg_source_markers,
-            );
-            (
-                resolution.result,
-                resolution.selected_type_predicate,
-                resolution.instantiated_params,
-                resolution.relation_evidence,
-            )
-        } else {
-            let resolution = self.resolve_call_with_checker_adapter_evidence(
-                callee_type_for_call,
-                &generic_inference_arg_types,
-                force_bivariant_callbacks,
-                call_resolution_contextual_type,
-                actual_this_type,
-            );
-            (
-                resolution.result,
-                resolution.selected_type_predicate,
-                resolution.instantiated_params,
-                resolution.relation_evidence,
-            )
-        };
+        let resolution = resolve_callable_with_evidence(
+            self,
+            is_super_call,
+            callee_type_for_call,
+            &generic_inference_arg_types,
+            force_bivariant_callbacks,
+            call_resolution_contextual_type,
+            actual_this_type,
+            &generic_inference_arg_source_markers,
+        );
+        let mut result = resolution.result;
+        let mut instantiated_predicate = resolution.selected_type_predicate;
+        let mut generic_instantiated_params = resolution.instantiated_params;
+        let mut relation_evidence = resolution.relation_evidence;
         // When the checker's intra-expression Round 2 produced a substitution that
         // pins type parameters the solver could not (the solver's single-pass
         // inference dropped the binding because the same parameter appears in a
@@ -2719,54 +2687,22 @@ impl<'a> CheckerState<'a> {
                 self.sanitize_generic_inference_arg_types(call.expression, args, &arg_types);
             let retry_arg_source_markers =
                 self.call_arg_source_type_annotation_markers(args, retry_generic_arg_types.len());
-            let mut retry = if is_super_call {
-                (
-                    self.resolve_new_with_checker_adapter(
-                        callee_type_for_call,
-                        &retry_generic_arg_types,
-                        force_bivariant_callbacks,
-                        contextual_type,
-                    ),
-                    None,
-                    None,
-                    Vec::new(),
-                )
-            } else if retry_arg_source_markers.iter().any(|&m| m) {
-                let resolution = self.resolve_call_with_checker_adapter_and_arg_sources_evidence(
-                    callee_type_for_call,
-                    &retry_generic_arg_types,
-                    force_bivariant_callbacks,
-                    contextual_type,
-                    actual_this_type,
-                    &retry_arg_source_markers,
-                );
-                (
-                    resolution.result,
-                    resolution.selected_type_predicate,
-                    resolution.instantiated_params,
-                    resolution.relation_evidence,
-                )
-            } else {
-                let resolution = self.resolve_call_with_checker_adapter_evidence(
-                    callee_type_for_call,
-                    &retry_generic_arg_types,
-                    force_bivariant_callbacks,
-                    contextual_type,
-                    actual_this_type,
-                );
-                (
-                    resolution.result,
-                    resolution.selected_type_predicate,
-                    resolution.instantiated_params,
-                    resolution.relation_evidence,
-                )
-            };
+            let mut retry = resolve_callable_with_evidence(
+                self,
+                is_super_call,
+                callee_type_for_call,
+                &retry_generic_arg_types,
+                force_bivariant_callbacks,
+                contextual_type,
+                actual_this_type,
+                &retry_arg_source_markers,
+            );
             // Apply the same checker-side substitution refinement to the retry's
             // freshly-inferred params, so the recheck below sees the tighter
             // expected types for the post-call assignability check.
             if let Some(checker_sub) = checker_round2_substitution.as_ref()
                 && let Some(orig_shape) = checker_round2_shape.as_ref()
-                && let Some(retry_params) = retry.2.as_mut()
+                && let Some(retry_params) = retry.instantiated_params.as_mut()
             {
                 self.refine_instantiated_params_with_checker_substitution(
                     orig_shape,
@@ -2776,7 +2712,7 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(conflicts) = direct_literal_conflict_substitution.as_ref()
                 && let Some(orig_shape) = checker_round2_shape.as_ref()
-                && let Some(retry_params) = retry.2.as_mut()
+                && let Some(retry_params) = retry.instantiated_params.as_mut()
             {
                 self.refine_bare_instantiated_params_with_direct_literal_conflicts(
                     orig_shape,
@@ -2788,22 +2724,22 @@ impl<'a> CheckerState<'a> {
                 && !retry_has_callback_body_errors
                 && !retry_has_callback_like_arg
             {
-                if let Some(instantiated_params) = retry.2.as_ref() {
+                if let Some(instantiated_params) = retry.instantiated_params.as_ref() {
                     self.recheck_generic_call_arguments_with_real_types(
-                        retry.0.clone(),
+                        retry.result.clone(),
                         instantiated_params,
                         args,
                         &arg_types,
                     )
                 } else {
-                    retry.0
+                    retry.result
                 }
             } else {
-                retry.0
+                retry.result
             };
-            instantiated_predicate = retry.1;
-            generic_instantiated_params = retry.2;
-            relation_evidence = retry.3;
+            instantiated_predicate = retry.selected_type_predicate;
+            generic_instantiated_params = retry.instantiated_params;
+            relation_evidence = retry.relation_evidence;
         }
 
         if is_generic_call

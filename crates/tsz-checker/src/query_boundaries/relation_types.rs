@@ -98,6 +98,14 @@ pub(crate) enum RelationFailure {
         source_element: TypeId,
         target_element: TypeId,
     },
+    /// Index signature value type mismatch.
+    IndexSignatureMismatch {
+        index_kind: &'static str,
+        source_value_type: TypeId,
+        target_value_type: TypeId,
+    },
+    /// Source type lacks a required index signature.
+    MissingIndexSignature { index_kind: &'static str },
     /// Return type incompatibility.
     ReturnTypeMismatch {
         source_return: TypeId,
@@ -218,6 +226,18 @@ impl RelationFailure {
                 source_element: *source_element,
                 target_element: *target_element,
             },
+            Self::IndexSignatureMismatch {
+                index_kind,
+                source_value_type,
+                target_value_type,
+            } => SubtypeFailureReason::IndexSignatureMismatch {
+                index_kind,
+                source_value_type: *source_value_type,
+                target_value_type: *target_value_type,
+            },
+            Self::MissingIndexSignature { index_kind } => {
+                SubtypeFailureReason::MissingIndexSignature { index_kind }
+            }
             Self::ReturnTypeMismatch {
                 source_return,
                 target_return,
@@ -245,7 +265,7 @@ impl RelationFailure {
             Self::ParameterCountMismatch {
                 source_count,
                 target_count,
-            } => SubtypeFailureReason::ParameterCountMismatch {
+            } => SubtypeFailureReason::TooManyParameters {
                 source_count: *source_count,
                 target_count: *target_count,
             },
@@ -402,12 +422,13 @@ impl RelationFailure {
                 target_element,
             },
             SubtypeFailureReason::IndexSignatureMismatch {
+                index_kind,
                 source_value_type,
                 target_value_type,
-                ..
-            } => Self::TypeMismatch {
-                source_type: source_value_type,
-                target_type: target_value_type,
+            } => Self::IndexSignatureMismatch {
+                index_kind,
+                source_value_type,
+                target_value_type,
             },
             SubtypeFailureReason::TooManyParameters {
                 source_count,
@@ -447,8 +468,10 @@ impl RelationFailure {
                 source_element,
                 target_element,
             },
-            SubtypeFailureReason::MissingIndexSignature { .. }
-            | SubtypeFailureReason::RecursionLimitExceeded => Self::TypeMismatch {
+            SubtypeFailureReason::MissingIndexSignature { index_kind } => {
+                Self::MissingIndexSignature { index_kind }
+            }
+            SubtypeFailureReason::RecursionLimitExceeded => Self::TypeMismatch {
                 source_type: TypeId::ERROR,
                 target_type: TypeId::ERROR,
             },

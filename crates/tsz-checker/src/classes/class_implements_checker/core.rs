@@ -1516,10 +1516,18 @@ impl<'a> CheckerState<'a> {
                                             ..
                                         } | tsz_solver::SubtypeFailureReason::PropertyTypeMismatch {
                                             ..
+                                        } | tsz_solver::SubtypeFailureReason::TypeMismatch {
+                                            ..
                                         }
                                     )
                                 });
-                            if !is_class
+                            if suppress_index_member_duplicate {
+                                // Class member compatibility with its own declared index
+                                // signature is reported separately as TS2411. If the class
+                                // index signature itself satisfies the implemented interface,
+                                // do not add a duplicate class-level TS2420 just because a
+                                // named method/property is incompatible with that index value.
+                            } else if !is_class
                                 && let Some(
                                     crate::query_boundaries::relation_types::RelationFailure::IncompatiblePropertyValue {
                                         property_name,
@@ -1543,12 +1551,6 @@ impl<'a> CheckerState<'a> {
                                     expected_str,
                                     actual_str,
                                 ));
-                            } else if suppress_index_member_duplicate {
-                                // Class member compatibility with its own declared index
-                                // signature is reported separately as TS2411. If the class
-                                // index signature itself satisfies the implemented interface,
-                                // do not add a duplicate class-level TS2420 just because a
-                                // named method/property is incompatible with that index value.
                             } else {
                                 let suppress_computed_name_class_diagnostic = is_class
                                     && !extends_same_base

@@ -3415,6 +3415,8 @@ fn test_relation_failure_covers_semantic_families() {
         "TupleArityMismatch",
         "TupleElementTypeMismatch",
         "ArrayElementMismatch",
+        "IndexSignatureMismatch",
+        "MissingIndexSignature",
         "ReturnTypeMismatch",
         "ParameterTypeMismatch",
         "ParameterCountMismatch",
@@ -3482,12 +3484,16 @@ fn test_relation_failure_preserves_canonical_solver_mapping() {
         "direct type-mismatch solver reasons must normalize through the shared TypeMismatch passthrough"
     );
     assert!(
-        source.contains("SubtypeFailureReason::MissingIndexSignature { .. }")
-            && source.contains("| SubtypeFailureReason::RecursionLimitExceeded")
+        source.contains("SubtypeFailureReason::MissingIndexSignature { index_kind }")
+            && source.contains("Self::MissingIndexSignature { index_kind }"),
+        "MissingIndexSignature must preserve index-kind detail for TS2345 elaboration"
+    );
+    assert!(
+        source.contains("SubtypeFailureReason::RecursionLimitExceeded")
             && source.contains("=> Self::TypeMismatch {")
             && source.contains("source_type: TypeId::ERROR,")
             && source.contains("target_type: TypeId::ERROR,"),
-        "MissingIndexSignature and RecursionLimitExceeded must normalize to a TypeMismatch sentinel with ERROR/ERROR"
+        "RecursionLimitExceeded must normalize to a TypeMismatch sentinel with ERROR/ERROR"
     );
     assert!(
         source.contains("SubtypeFailureReason::ArrayElementMismatch {")
@@ -3495,9 +3501,8 @@ fn test_relation_failure_preserves_canonical_solver_mapping() {
             && source.contains("SubtypeFailureReason::TupleElementTypeMismatch {")
             && source.contains("=> Self::TupleElementTypeMismatch")
             && source.contains("SubtypeFailureReason::IndexSignatureMismatch {")
-            && source.contains("source_type: source_value_type,")
-            && source.contains("target_type: target_value_type,"),
-        "array/tuple element mismatches must retain element detail, while index-signature mismatches normalize through TypeMismatch"
+            && source.contains("=> Self::IndexSignatureMismatch"),
+        "array/tuple/index-signature mismatches must retain element/value detail"
     );
 }
 

@@ -14,6 +14,7 @@ mod literal_key_preservation;
 mod namespace_conflict;
 mod nominal_lib_object_callbacks;
 mod post_generic;
+mod resolution_evidence;
 mod tail_helpers;
 
 use crate::context::TypingRequest;

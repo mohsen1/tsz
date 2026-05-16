@@ -44,11 +44,8 @@ impl<'a> CheckerState<'a> {
             let _ = self.get_type_of_node(access.expression);
             return TypeId::ERROR;
         };
-        // Parser recovery placeholders for missing member names — emitted by
-        // helpers like `create_missing_expression`. Use the canonical
-        // `is_missing_recovery_identifier` helper rather than the weaker
-        // `escaped_text.is_empty()` shorthand so we only short-circuit on
-        // true placeholders, not on a hypothetical real empty-named ident.
+        // Use the canonical missing-recovery helper rather than the weaker
+        // `escaped_text.is_empty()` shorthand, which could catch real names.
         if self
             .ctx
             .arena
