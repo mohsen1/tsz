@@ -611,6 +611,19 @@ impl<'a> Printer<'a> {
         };
 
         match node.kind {
+            k if k == syntax_kind_ext::BLOCK => {
+                self.emit_block_in_loop_iife(stmt_idx, _body_info, _captured_vars, _init_vars);
+            }
+
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                self.emit_if_statement_in_loop_iife(
+                    stmt_idx,
+                    _body_info,
+                    _captured_vars,
+                    _init_vars,
+                );
+            }
+
             // Variable statement: check if it's var (needs hoisting transform)
             // Note: LET/CONST flags are on the VARIABLE_DECLARATION_LIST child, not the statement.
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
@@ -732,6 +745,105 @@ impl<'a> Printer<'a> {
         true
     }
 
+    fn emit_block_in_loop_iife(
+        &mut self,
+        block_idx: NodeIndex,
+        body_info: &LoopBodyVarInfo,
+        captured_vars: &[String],
+        init_vars: &[String],
+    ) {
+        let Some(block_node) = self.arena.get(block_idx) else {
+            return;
+        };
+        let Some(block) = self.arena.get_block(block_node) else {
+            self.emit(block_idx);
+            return;
+        };
+
+        self.write("{");
+        self.write_line();
+        self.increase_indent();
+        for &stmt_idx in &block.statements.nodes {
+            self.emit_statement_in_loop_iife(stmt_idx, body_info, captured_vars, init_vars);
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write("}");
+    }
+
+    fn emit_if_statement_in_loop_iife(
+        &mut self,
+        if_idx: NodeIndex,
+        body_info: &LoopBodyVarInfo,
+        captured_vars: &[String],
+        init_vars: &[String],
+    ) {
+        let Some(if_node) = self.arena.get(if_idx) else {
+            return;
+        };
+        let Some(if_stmt) = self.arena.get_if_statement(if_node) else {
+            self.emit(if_idx);
+            return;
+        };
+
+        self.write("if (");
+        self.emit(if_stmt.expression);
+        self.write(")");
+        self.emit_embedded_statement_in_loop_iife(
+            if_stmt.then_statement,
+            body_info,
+            captured_vars,
+            init_vars,
+        );
+
+        if if_stmt.else_statement.is_some() {
+            self.write(" else");
+            if self
+                .arena
+                .get(if_stmt.else_statement)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IF_STATEMENT)
+            {
+                self.write(" ");
+                self.emit_if_statement_in_loop_iife(
+                    if_stmt.else_statement,
+                    body_info,
+                    captured_vars,
+                    init_vars,
+                );
+            } else {
+                self.emit_embedded_statement_in_loop_iife(
+                    if_stmt.else_statement,
+                    body_info,
+                    captured_vars,
+                    init_vars,
+                );
+            }
+        }
+    }
+
+    fn emit_embedded_statement_in_loop_iife(
+        &mut self,
+        stmt_idx: NodeIndex,
+        body_info: &LoopBodyVarInfo,
+        captured_vars: &[String],
+        init_vars: &[String],
+    ) {
+        if self
+            .arena
+            .get(stmt_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::BLOCK)
+        {
+            self.write(" ");
+            self.emit_block_in_loop_iife(stmt_idx, body_info, captured_vars, init_vars);
+            return;
+        }
+
+        self.write_line();
+        self.increase_indent();
+        self.emit_statement_in_loop_iife(stmt_idx, body_info, captured_vars, init_vars);
+        self.decrease_indent();
+    }
+
     /// Emit the loop call: _`loop_1(args)`;
     pub(in crate::emitter) fn emit_loop_call(
         &mut self,
@@ -739,7 +851,7 @@ impl<'a> Printer<'a> {
         captured_vars: &[String],
         body_info: &LoopBodyVarInfo,
     ) {
-        if body_info.has_continue || body_info.has_break || body_info.has_return {
+        if body_info.has_break || body_info.has_return {
             // Need to capture the return value
             if body_info.has_return {
                 self.write("var _state = ");
@@ -749,14 +861,6 @@ impl<'a> Printer<'a> {
                 self.write(");");
                 self.write_line();
 
-                if body_info.has_continue {
-                    self.write("if (_state === \"continue\")");
-                    self.write_line();
-                    self.increase_indent();
-                    self.write("continue;");
-                    self.decrease_indent();
-                    self.write_line();
-                }
                 if body_info.has_break {
                     self.write("if (_state === \"break\")");
                     self.write_line();
@@ -778,16 +882,6 @@ impl<'a> Printer<'a> {
                 self.write(");");
                 self.write_line();
 
-                if body_info.has_continue {
-                    self.write("if (_state === \"continue\")");
-                    self.write_line();
-                    self.increase_indent();
-                    self.write("continue;");
-                    self.decrease_indent();
-                    if body_info.has_break {
-                        self.write_line();
-                    }
-                }
                 if body_info.has_break {
                     self.write("if (_state === \"break\")");
                     self.write_line();
@@ -850,9 +944,23 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::emitter::{Printer, PrinterOptions};
+    use crate::output::printer::{PrintOptions, lower_and_print};
     use tsz_common::ScriptTarget;
     use tsz_parser::ParserState;
+
+    fn emit_es5(source: &str) -> String {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        lower_and_print(
+            &parser.arena,
+            root,
+            PrintOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        )
+        .code
+    }
 
     #[test]
     fn do_loop_capture_renames_body_let_that_shadows_parameter() {
@@ -869,18 +977,7 @@ function foo(x: number) {\n\
   use(v);\n\
 }\n";
 
-        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-        let root = parser.parse_source_file();
-        let mut printer = Printer::with_options(
-            &parser.arena,
-            PrinterOptions {
-                target: ScriptTarget::ES5,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
+        let output = emit_es5(source);
 
         assert!(
             output.contains("var x_1 = v;"),
@@ -893,6 +990,52 @@ function foo(x: number) {\n\
         assert!(
             output.contains("var v, v;"),
             "Loop body var hoist should preserve duplicate var declarations.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn for_of_loop_capture_preserves_multiline_arrow_block_spacing() {
+        let source = "function foo() {\n\
+    for (const i of [0, 1]) {\n\
+        if (i === 0) {\n\
+            continue;\n\
+        }\n\
+\n\
+        (() => {\n\
+            return i;\n\
+        })();\n\
+    }\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains("(function () {\n            return i;\n        })();"),
+            "Captured loop arrow block should preserve its multiline block body.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_loop_1(i);\n    }\n}"),
+            "Captured for-of loop call should not leave an extra blank line before the loop closes.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("_loop_1(i);\n\n    }"),
+            "Captured for-of loop call should emit exactly one line break before the closing brace.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn single_line_arrow_block_stays_compact_in_loop_capture() {
+        let source = "function foo() {\n\
+    for (const i of [0, 1]) {\n\
+        (() => { return i; })();\n\
+    }\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains("(function () { return i; })();"),
+            "Single-line arrow block should keep the compact ES5 function body.\nOutput:\n{output}"
         );
     }
 }

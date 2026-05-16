@@ -892,6 +892,11 @@ impl<'a> Printer<'a> {
             es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_printer_options(self.ctx.options.clone());
+        es5_emitter.set_module_kind(
+            self.ctx
+                .original_module_kind
+                .unwrap_or(self.ctx.options.module),
+        );
         if let Some(text) = self.source_text_for_map() {
             if self.writer.has_source_map() {
                 es5_emitter.set_source_map_context(text, self.writer.current_source_index());

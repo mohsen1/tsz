@@ -1,7 +1,38 @@
 use super::super::{ModuleKind, Printer};
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::NodeList;
+use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+
+#[derive(Clone)]
+pub(in crate::emitter) struct ObjectRestExportParts {
+    non_rest_elements: Vec<NodeIndex>,
+    bindings: Vec<ObjectRestExportBinding>,
+    rest_name: String,
+    excluded_props: Vec<String>,
+}
+
+impl ObjectRestExportParts {
+    pub(in crate::emitter) const fn needs_source_temp(&self, has_reusable_source: bool) -> bool {
+        !self.bindings.is_empty() && !has_reusable_source
+    }
+}
+
+#[derive(Clone)]
+struct ObjectRestExportBinding {
+    local_name: String,
+    property_name: String,
+}
+
+enum EsmObjectRestExportDecl {
+    ObjectRest {
+        initializer: NodeIndex,
+        parts: ObjectRestExportParts,
+    },
+    Plain(NodeIndex),
+}
 
 impl<'a> Printer<'a> {
     /// Write `exports.name` or `exports["name"]` depending on whether the name
@@ -44,6 +75,397 @@ impl<'a> Printer<'a> {
         } else {
             self.write(";");
         }
+    }
+
+    pub(in crate::emitter) fn reusable_object_rest_export_source(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind == SyntaxKind::Identifier as u16 {
+            let name = self.get_identifier_text(initializer);
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    pub(in crate::emitter) fn collect_object_rest_export_parts(
+        &self,
+        pattern_idx: NodeIndex,
+    ) -> Option<ObjectRestExportParts> {
+        let pattern_node = self.arena.get(pattern_idx)?;
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return None;
+        }
+        let pattern = self.arena.get_binding_pattern(pattern_node)?;
+        let mut non_rest_elements = Vec::new();
+        let mut bindings = Vec::new();
+        let mut rest_name = None;
+        let mut excluded_props = Vec::new();
+
+        for &elem_idx in &pattern.elements.nodes {
+            let elem_node = self.arena.get(elem_idx)?;
+            let elem = self.arena.get_binding_element(elem_node)?;
+            if elem.dot_dot_dot_token {
+                let name = self.get_identifier_text(elem.name);
+                if name.is_empty() {
+                    return None;
+                }
+                rest_name = Some(name);
+                continue;
+            }
+
+            if elem.initializer.is_some() || self.pattern_has_object_rest(elem.name) {
+                return None;
+            }
+
+            let local_name = self.get_identifier_text(elem.name);
+            if local_name.is_empty() {
+                return None;
+            }
+
+            let property_name = if elem.property_name.is_some() {
+                let prop = self.get_identifier_text_idx(elem.property_name);
+                if prop.is_empty() {
+                    return None;
+                }
+                prop
+            } else {
+                local_name.clone()
+            };
+
+            if !super::super::is_valid_identifier_name(&property_name) {
+                return None;
+            }
+
+            non_rest_elements.push(elem_idx);
+            excluded_props.push(property_name.clone());
+            bindings.push(ObjectRestExportBinding {
+                local_name,
+                property_name,
+            });
+        }
+
+        Some(ObjectRestExportParts {
+            non_rest_elements,
+            bindings,
+            rest_name: rest_name?,
+            excluded_props,
+        })
+    }
+
+    pub(in crate::emitter) fn emit_esm_object_rest_export_statement(
+        &mut self,
+        node: &Node,
+    ) -> bool {
+        if !self.is_esm_object_rest_export_statement(node) {
+            return false;
+        }
+
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        let Some((keyword, decls)) =
+            self.collect_esm_object_rest_export_decls(&var_stmt.declarations)
+        else {
+            return false;
+        };
+
+        self.write("export ");
+        self.write(if self.ctx.target_es5 { "var" } else { keyword });
+        self.write(" ");
+        for (index, decl) in decls.iter().enumerate() {
+            if index > 0 {
+                self.write(", ");
+            }
+            match decl {
+                EsmObjectRestExportDecl::ObjectRest { initializer, parts } => {
+                    if self.ctx.target_es5 {
+                        self.emit_esm_object_rest_export_decl_es5(*initializer, parts);
+                    } else {
+                        self.emit_esm_object_rest_export_decl_es2015(*initializer, parts);
+                    }
+                }
+                EsmObjectRestExportDecl::Plain(decl_idx) => self.emit(*decl_idx),
+            }
+        }
+        self.write_semicolon();
+        true
+    }
+
+    pub(in crate::emitter) fn is_esm_object_rest_export_statement(&self, node: &Node) -> bool {
+        if !self.ctx.needs_es2018_lowering
+            || !matches!(
+                self.ctx.options.module,
+                ModuleKind::ES2015 | ModuleKind::ESNext
+            )
+        {
+            return false;
+        }
+
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        if !self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+        {
+            return false;
+        }
+
+        self.collect_esm_object_rest_export_decls(&var_stmt.declarations)
+            .is_some()
+    }
+
+    fn collect_esm_object_rest_export_decls(
+        &self,
+        declarations: &NodeList,
+    ) -> Option<(&'static str, Vec<EsmObjectRestExportDecl>)> {
+        let mut keyword = None;
+        let mut decls = Vec::new();
+        let mut has_object_rest = false;
+
+        for &decl_list_idx in &declarations.nodes {
+            let decl_list_node = self.arena.get(decl_list_idx)?;
+            let flags = decl_list_node.flags as u32;
+            let current_keyword = if flags & tsz_parser::parser::node_flags::CONST != 0 {
+                "const"
+            } else if flags & tsz_parser::parser::node_flags::LET != 0 {
+                "let"
+            } else {
+                "var"
+            };
+            if let Some(previous) = keyword {
+                if previous != current_keyword {
+                    return None;
+                }
+            } else {
+                keyword = Some(current_keyword);
+            }
+
+            let decl_list = self.arena.get_variable(decl_list_node)?;
+            for &decl_idx in &decl_list.declarations.nodes {
+                let decl_node = self.arena.get(decl_idx)?;
+                let decl = self.arena.get_variable_declaration(decl_node)?;
+                if decl.initializer.is_some()
+                    && let Some(parts) = self.collect_object_rest_export_parts(decl.name)
+                {
+                    has_object_rest = true;
+                    decls.push(EsmObjectRestExportDecl::ObjectRest {
+                        initializer: decl.initializer,
+                        parts,
+                    });
+                    continue;
+                }
+
+                let name_node = self.arena.get(decl.name)?;
+                if name_node.kind != SyntaxKind::Identifier as u16 {
+                    return None;
+                }
+                decls.push(EsmObjectRestExportDecl::Plain(decl_idx));
+            }
+        }
+
+        (has_object_rest && !decls.is_empty()).then_some((keyword?, decls))
+    }
+
+    fn emit_esm_object_rest_export_decl_es5(
+        &mut self,
+        initializer: NodeIndex,
+        parts: &ObjectRestExportParts,
+    ) {
+        let reusable_source = self.reusable_object_rest_export_source(initializer);
+        let source_temp = if parts.needs_source_temp(reusable_source.is_some()) {
+            Some(self.make_unique_name_hoisted())
+        } else {
+            None
+        };
+        let source_name = source_temp.as_deref().or(reusable_source.as_deref());
+
+        let mut first = true;
+        for (binding_index, binding) in parts.bindings.iter().enumerate() {
+            if !first {
+                self.write(", ");
+            }
+            self.write(&binding.local_name);
+            self.write(" = ");
+            if binding_index == 0 && source_temp.is_some() {
+                self.write("(");
+                self.write(source_temp.as_deref().unwrap_or_default());
+                self.write(" = ");
+                self.emit(initializer);
+                self.write(", ");
+                self.write(source_temp.as_deref().unwrap_or_default());
+                self.write(")");
+            } else if let Some(source_name) = source_name {
+                self.write(source_name);
+            }
+            self.write(".");
+            self.write(&binding.property_name);
+            first = false;
+        }
+
+        if !first {
+            self.write(", ");
+        }
+        self.write(&parts.rest_name);
+        self.write(" = ");
+        self.write_helper("__rest");
+        self.write("(");
+        if let Some(source_name) = source_name {
+            self.write(source_name);
+        } else {
+            self.emit(initializer);
+        }
+        self.write(", [");
+        self.emit_object_rest_export_excluded_props(&parts.excluded_props);
+        self.write("])");
+    }
+
+    fn emit_esm_object_rest_export_decl_es2015(
+        &mut self,
+        initializer: NodeIndex,
+        parts: &ObjectRestExportParts,
+    ) {
+        let reusable_source = self.reusable_object_rest_export_source(initializer);
+        let source_temp = if parts.needs_source_temp(reusable_source.is_some()) {
+            Some(self.make_unique_name_hoisted())
+        } else {
+            None
+        };
+        let source_name = source_temp.as_deref().or(reusable_source.as_deref());
+
+        if parts.bindings.is_empty() {
+            self.write(&parts.rest_name);
+            self.write(" = ");
+            self.write_helper("__rest");
+            self.write("(");
+            self.emit(initializer);
+            self.write(", [");
+            self.emit_object_rest_export_excluded_props(&parts.excluded_props);
+            self.write("])");
+            return;
+        }
+
+        self.emit_object_pattern_without_rest(&parts.non_rest_elements);
+        self.write(" = ");
+        if let Some(source_temp) = source_temp.as_deref() {
+            self.write("(");
+            self.write(source_temp);
+            self.write(" = ");
+            self.emit(initializer);
+            self.write(", ");
+            self.write(source_temp);
+            self.write(")");
+        } else if let Some(source_name) = source_name {
+            self.write(source_name);
+        }
+        self.write(", ");
+        self.write(&parts.rest_name);
+        self.write(" = ");
+        self.write_helper("__rest");
+        self.write("(");
+        if let Some(source_name) = source_name {
+            self.write(source_name);
+        } else {
+            self.emit(initializer);
+        }
+        self.write(", [");
+        self.emit_object_rest_export_excluded_props(&parts.excluded_props);
+        self.write("])");
+    }
+
+    fn emit_object_rest_export_excluded_props(&mut self, props: &[String]) {
+        for (index, prop) in props.iter().enumerate() {
+            if index > 0 {
+                self.write(", ");
+            }
+            self.write("\"");
+            self.write(prop);
+            self.write("\"");
+        }
+    }
+
+    pub(in crate::emitter) fn emit_system_object_rest_export_initializer(
+        &mut self,
+        decl: &tsz_parser::parser::node::VariableDeclarationData,
+    ) -> bool {
+        if decl.initializer.is_none() {
+            return false;
+        }
+        let Some(parts) = self.collect_object_rest_export_parts(decl.name) else {
+            return false;
+        };
+
+        let reusable_source = self.reusable_object_rest_export_source(decl.initializer);
+        let source_temp = if parts.needs_source_temp(reusable_source.is_some()) {
+            self.arena
+                .get(decl.name)
+                .and_then(|name| self.system_object_rest_export_temps.get(&name.pos).cloned())
+                .or_else(|| Some(self.make_unique_name()))
+        } else {
+            None
+        };
+        let source_name = source_temp.as_deref().or(reusable_source.as_deref());
+
+        let mut first_piece = true;
+        if let Some(source_temp) = source_temp.as_deref()
+            && !self.ctx.needs_es2018_lowering
+        {
+            self.write(source_temp);
+            self.write(" = ");
+            self.emit(decl.initializer);
+            first_piece = false;
+        }
+
+        for (binding_index, binding) in parts.bindings.iter().enumerate() {
+            if !first_piece {
+                self.write(", ");
+            }
+            self.write("exports_1(\"");
+            self.write(&binding.local_name);
+            self.write("\", ");
+            self.write(&binding.local_name);
+            self.write(" = ");
+            if binding_index == 0 && source_temp.is_some() && self.ctx.needs_es2018_lowering {
+                self.write("(");
+                self.write(source_temp.as_deref().unwrap_or_default());
+                self.write(" = ");
+                self.emit(decl.initializer);
+                self.write(", ");
+                self.write(source_temp.as_deref().unwrap_or_default());
+                self.write(")");
+            } else if let Some(source_name) = source_name {
+                self.write(source_name);
+            }
+            self.write(".");
+            self.write(&binding.property_name);
+            self.write(")");
+            first_piece = false;
+        }
+
+        if !first_piece {
+            self.write(", ");
+        }
+        self.write("exports_1(\"");
+        self.write(&parts.rest_name);
+        self.write("\", ");
+        self.write(&parts.rest_name);
+        self.write(" = ");
+        self.write_helper("__rest");
+        self.write("(");
+        if let Some(source_name) = source_name {
+            self.write(source_name);
+        } else {
+            self.emit(decl.initializer);
+        }
+        self.write(", [");
+        self.emit_object_rest_export_excluded_props(&parts.excluded_props);
+        self.write("]))");
+        self.write_semicolon();
+        true
     }
 
     pub(in crate::emitter) fn emit_export_declaration_commonjs(
@@ -512,6 +934,12 @@ impl<'a> Printer<'a> {
                                 es5_emitter.set_indent_level(self.writer.indent_level());
                                 es5_emitter.set_transforms(self.transforms.clone());
                                 es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+                                es5_emitter.set_printer_options(self.ctx.options.clone());
+                                es5_emitter.set_module_kind(
+                                    self.ctx
+                                        .original_module_kind
+                                        .unwrap_or(self.ctx.options.module),
+                                );
                                 if let Some(text) = self.source_text_for_map() {
                                     if self.writer.has_source_map() {
                                         es5_emitter.set_source_map_context(

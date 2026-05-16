@@ -255,8 +255,27 @@ impl<'a> CheckerState<'a> {
             return Some(display);
         }
 
+        if self.is_type_alias_application(type_id) {
+            return None;
+        }
+
         let evaluated = self.evaluate_type_with_env(type_id);
         self.try_format_constructor_call_intersection_display(evaluated)
+    }
+
+    fn is_type_alias_application(&self, type_id: TypeId) -> bool {
+        let Some(app) = crate::query_boundaries::common::type_application(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
+        else {
+            return false;
+        };
+        self.ctx
+            .definition_store
+            .get(def_id)
+            .is_some_and(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
     }
 
     fn format_type_assertion_overlap_display(
@@ -301,7 +320,10 @@ impl<'a> CheckerState<'a> {
         {
             let subst = TypeSubstitution::from_args(self.ctx.types, &def.type_params, &app.args);
             let instantiated_body = instantiate_type(self.ctx.types, body, &subst);
-            if let Some(display) =
+            if !crate::query_boundaries::common::is_intersection_type(
+                self.ctx.types,
+                instantiated_body,
+            ) && let Some(display) =
                 self.try_format_constructor_call_intersection_display(instantiated_body)
             {
                 return display;
@@ -536,6 +558,24 @@ impl<'a> CheckerState<'a> {
             || common::contains_error_type(self.ctx.types, constraint)
         {
             return;
+        }
+
+        self.ensure_refs_resolved(type_arg);
+        self.ensure_refs_resolved(constraint);
+        let ready_constraint = self.resolve_lazy_type(constraint);
+        let ready_constraint = self.evaluate_type_for_assignability(ready_constraint);
+        if let Some(type_arg_constraint) =
+            common::type_parameter_constraint(self.ctx.types, type_arg)
+            && type_arg_constraint != type_arg
+            && !matches!(type_arg_constraint, TypeId::UNKNOWN | TypeId::ERROR)
+        {
+            self.ensure_refs_resolved(type_arg_constraint);
+            let ready_type_arg_constraint = self.resolve_lazy_type(type_arg_constraint);
+            let ready_type_arg_constraint =
+                self.evaluate_type_for_assignability(ready_type_arg_constraint);
+            if self.is_assignable_to_no_weak_checks(ready_type_arg_constraint, ready_constraint) {
+                return;
+            }
         }
 
         // tsc widens a literal type-arg to its primitive base when the

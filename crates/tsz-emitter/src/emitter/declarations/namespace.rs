@@ -455,7 +455,9 @@ impl<'a> Printer<'a> {
                     .or_else(|| prev_ns_name.clone());
                 self.current_namespace_name = Some(iife_param.clone());
                 self.current_namespace_source_path = Some(source_path.clone());
+                let prev_block_using_env = self.block_using_env.take();
                 self.emit_namespace_body_statements(module, &iife_param);
+                self.block_using_env = prev_block_using_env;
                 self.in_namespace_iife = prev;
                 self.namespace_scope_end = prev_scope_end;
                 self.current_namespace_name = prev_ns_name;
@@ -1735,6 +1737,37 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
 
+            let namespace_using_region = if !self.ctx.options.target.supports_es2025()
+                && self.block_has_using_declarations(stmts)
+            {
+                let using_async = self.block_has_await_using(stmts);
+                let (env_name, error_name, result_name) =
+                    self.disposable_env_names_for_node(module.body);
+                let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
+                let prev_block_using_env = self
+                    .block_using_env
+                    .replace((env_name.clone(), using_async));
+
+                self.write(env_decl_keyword);
+                self.write(" ");
+                self.write(&env_name);
+                self.write(" = { stack: [], error: void 0, hasError: false };");
+                self.write_line();
+                self.write("try {");
+                self.write_line();
+                self.increase_indent();
+
+                Some((
+                    env_name,
+                    error_name,
+                    result_name,
+                    using_async,
+                    prev_block_using_env,
+                ))
+            } else {
+                None
+            };
+
             for (stmt_i, &stmt_idx) in stmts.nodes.iter().enumerate() {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
                     continue;
@@ -2058,6 +2091,78 @@ impl<'a> Printer<'a> {
                         self.skip_comments_for_erased_node(stmt_node);
                     }
                 }
+            }
+
+            if let Some((env_name, error_name, result_name, using_async, prev_block_using_env)) =
+                namespace_using_region
+            {
+                self.decrease_indent();
+                self.write("}");
+                self.write_line();
+                self.write("catch (");
+                self.write(&error_name);
+                self.write(") {");
+                self.write_line();
+                self.increase_indent();
+                self.write(&env_name);
+                self.write(".error = ");
+                self.write(&error_name);
+                self.write(";");
+                self.write_line();
+                self.write(&env_name);
+                self.write(".hasError = true;");
+                self.write_line();
+                self.decrease_indent();
+                self.write("}");
+                self.write_line();
+                self.write("finally {");
+                self.write_line();
+                self.increase_indent();
+                if using_async {
+                    let await_kw =
+                        if self.ctx.emit_await_as_yield || self.ctx.emit_await_as_yield_await {
+                            "yield"
+                        } else {
+                            "await"
+                        };
+                    self.write(if self.ctx.target_es5 { "var" } else { "const" });
+                    self.write(" ");
+                    self.write(&result_name);
+                    self.write(" = ");
+                    self.write_helper("__disposeResources");
+                    self.write("(");
+                    self.write(&env_name);
+                    self.write(");");
+                    self.write_line();
+                    self.write("if (");
+                    self.write(&result_name);
+                    self.write(")");
+                    self.write_line();
+                    self.increase_indent();
+                    self.write(await_kw);
+                    self.write(" ");
+                    if self.ctx.emit_await_as_yield_await {
+                        self.write_helper("__await");
+                        self.write("(");
+                        self.write(&result_name);
+                        self.write(")");
+                    } else {
+                        self.write(&result_name);
+                    }
+                    self.write(";");
+                    self.write_line();
+                    self.decrease_indent();
+                } else {
+                    self.write_helper("__disposeResources");
+                    self.write("(");
+                    self.write(&env_name);
+                    self.write(");");
+                    self.write_line();
+                }
+                self.decrease_indent();
+                self.write("}");
+                self.write_line();
+                self.block_using_env = prev_block_using_env;
             }
 
             // Record this block's class/fn/enum names only after nested namespaces

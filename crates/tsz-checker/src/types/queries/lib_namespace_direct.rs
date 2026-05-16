@@ -1,19 +1,19 @@
 //! Narrow direct lowering helpers for namespace-qualified bundled-lib symbols.
 
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::entity_name_text_in_arena;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_lowering::TypeLowering;
 use tsz_parser::NodeIndex;
+use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 use super::lib_resolution::{
     collect_lib_decls_with_arenas_in_contexts, dedup_decl_arenas, lib_def_id_from_node,
     resolve_lib_fallback_arena, resolve_lib_node_in_arenas,
 };
-
-fn allow_direct_lib_interface_heritage(cache_name: &str) -> bool {
-    matches!(cache_name, "Iterator" | "Intl.Locale")
-}
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_lib_namespace_export_symbol(
@@ -132,14 +132,12 @@ impl<'a> CheckerState<'a> {
                 .insert(cache_name.to_string(), None);
             return None;
         }
-        if decls_with_arenas.iter().any(|&(decl_idx, arena)| {
-            arena
-                .get(decl_idx)
-                .and_then(|node| arena.get_interface(node))
-                .and_then(|interface| interface.heritage_clauses.as_ref())
-                .is_some_and(|clauses| !clauses.nodes.is_empty())
-        }) && !allow_direct_lib_interface_heritage(cache_name)
-        {
+        let has_resolvable_heritage = self.direct_lib_interface_heritage_is_resolvable(
+            cache_name,
+            &decls_with_arenas,
+            fallback_arena,
+        );
+        if has_resolvable_heritage == Some(false) {
             self.ctx
                 .lib_type_resolution_cache
                 .insert(cache_name.to_string(), None);
@@ -188,13 +186,16 @@ impl<'a> CheckerState<'a> {
             };
 
         let deduped = dedup_decl_arenas(&decls_with_arenas);
-        let (ty, params) =
+        let (mut ty, params) =
             lowering.lower_merged_interface_declarations_with_symbol(&deduped, Some(sym_id));
         if ty == TypeId::ERROR || ty == TypeId::UNKNOWN {
             self.ctx
                 .lib_type_resolution_cache
                 .insert(cache_name.to_string(), None);
             return None;
+        }
+        if has_resolvable_heritage == Some(true) {
+            ty = self.merge_lib_interface_heritage(ty, cache_name);
         }
 
         self.ctx.register_lib_def_resolved(sym_id, ty, params);
@@ -209,5 +210,104 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(ty)
+    }
+
+    fn direct_lib_interface_heritage_is_resolvable(
+        &self,
+        cache_name: &str,
+        decls_with_arenas: &[(NodeIndex, &NodeArena)],
+        fallback_arena: &NodeArena,
+    ) -> Option<bool> {
+        let mut saw_heritage = false;
+
+        for &(decl_idx, arena) in decls_with_arenas {
+            let Some(interface) = arena
+                .get(decl_idx)
+                .and_then(|node| arena.get_interface(node))
+            else {
+                continue;
+            };
+            let Some(heritage_clauses) = interface.heritage_clauses.as_ref() else {
+                continue;
+            };
+
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause) = arena
+                    .get(clause_idx)
+                    .and_then(|node| arena.get_heritage_clause(node))
+                else {
+                    continue;
+                };
+                if clause.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+
+                for &type_idx in &clause.types.nodes {
+                    let Some(expr_idx) = Self::lib_heritage_base_expr(arena, type_idx) else {
+                        return Some(false);
+                    };
+                    saw_heritage = true;
+                    if self
+                        .direct_lib_heritage_base_resolves(
+                            cache_name,
+                            expr_idx,
+                            decls_with_arenas,
+                            fallback_arena,
+                        )
+                        .is_none()
+                    {
+                        return Some(false);
+                    }
+                }
+            }
+        }
+
+        saw_heritage.then_some(true)
+    }
+
+    fn lib_heritage_base_expr(arena: &NodeArena, type_idx: NodeIndex) -> Option<NodeIndex> {
+        let type_node = arena.get(type_idx)?;
+        if let Some(expr_type_args) = arena.get_expr_type_args(type_node) {
+            return Some(expr_type_args.expression);
+        }
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            return arena
+                .get_type_ref(type_node)
+                .map(|type_ref| type_ref.type_name);
+        }
+        Some(type_idx)
+    }
+
+    fn direct_lib_heritage_base_resolves(
+        &self,
+        cache_name: &str,
+        expr_idx: NodeIndex,
+        decls_with_arenas: &[(NodeIndex, &NodeArena)],
+        fallback_arena: &NodeArena,
+    ) -> Option<tsz_solver::DefId> {
+        lib_def_id_from_node(
+            &self.ctx,
+            self.ctx.binder,
+            expr_idx,
+            decls_with_arenas,
+            fallback_arena,
+        )
+        .or_else(|| {
+            decls_with_arenas
+                .iter()
+                .find_map(|&(_, arena)| entity_name_text_in_arena(arena, expr_idx))
+                .or_else(|| entity_name_text_in_arena(fallback_arena, expr_idx))
+                .and_then(|name| {
+                    if let Some((namespace, _)) = cache_name.split_once('.')
+                        && !name.contains('.')
+                        && let Some(sym_id) =
+                            self.resolve_lib_namespace_export_symbol(namespace, &name)
+                    {
+                        return Some(self.ctx.get_lib_def_id(sym_id));
+                    }
+                    self.resolve_actual_lib_name_to_def_id_for_lowering(&name)
+                        .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(&name))
+                })
+        })
     }
 }

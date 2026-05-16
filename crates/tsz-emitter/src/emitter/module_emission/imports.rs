@@ -97,6 +97,12 @@ impl<'a> Printer<'a> {
         if appears_in_value_haystack {
             return true;
         }
+        if names
+            .iter()
+            .any(|name| self.is_classic_jsx_factory_root(name))
+        {
+            return true;
+        }
         // Under `--emitDecoratorMetadata`, type annotations on decorated
         // class members become *value* references at runtime via
         // `__metadata("design:type", X)`. The standard type-only strip would
@@ -200,50 +206,84 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Returns true when the given import clause's default or namespace
-    /// binding matches the configured JSX factory root name (e.g. `React`).
-    /// Such imports must be exempt from text-based value-usage elision since
-    /// JSX elements reference the factory implicitly. Mirrors the logic at
+    /// Returns true when the given import clause has a binding matching an
+    /// implicit classic JSX factory root (e.g. `React`, `h`, or a per-file
+    /// `@jsx dom` pragma). Such imports must be exempt from text-based
+    /// value-usage elision since JSX elements reference the factory implicitly.
+    ///
+    /// This includes named import specifiers because `@jsx dom` plus
+    /// `import { dom } from "./renderer"` is a real runtime dependency even
+    /// though the source has no textual `dom(...)` call before JSX transform.
+    /// Mirrors the logic at
     /// `crates/tsz-emitter/src/emitter/module_wrapper/wrapper_entry.rs`
     /// around the AMD/UMD dependency collection (`is_jsx_factory_import`).
     pub(in crate::emitter) fn is_jsx_factory_import_clause(
         &self,
         clause: &tsz_parser::parser::node::ImportClauseData,
     ) -> bool {
-        if !matches!(
-            self.ctx.options.jsx,
-            JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
-        ) {
+        let roots = self.classic_jsx_factory_roots();
+        if roots.is_empty() {
             return false;
         }
-        let factory_root = self
-            .ctx
-            .options
-            .jsx_factory
-            .as_deref()
-            .and_then(|f| f.split('.').next())
-            .unwrap_or("React");
 
         if clause.name.is_some() {
             let name = self.get_identifier_text_idx(clause.name);
-            if name == factory_root {
+            if roots.iter().any(|root| root == &name) {
                 return true;
             }
         }
 
-        if clause.named_bindings.is_some()
-            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
-            && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-            && named_imports.name.is_some()
-            && named_imports.elements.nodes.is_empty()
-        {
+        let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
+            return false;
+        };
+        let Some(named_imports) = self.arena.get_named_imports(bindings_node) else {
+            return false;
+        };
+
+        if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
             let ns_name = self.get_identifier_text_idx(named_imports.name);
-            if ns_name == factory_root {
+            if roots.iter().any(|root| root == &ns_name) {
                 return true;
             }
         }
 
-        false
+        named_imports.elements.nodes.iter().any(|&spec_idx| {
+            self.arena
+                .get(spec_idx)
+                .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                .is_some_and(|spec| {
+                    if spec.is_type_only {
+                        return false;
+                    }
+                    let local_name = self.get_identifier_text_idx(spec.name);
+                    roots.iter().any(|root| root == &local_name)
+                })
+        })
+    }
+
+    fn classic_jsx_factory_roots(&self) -> Vec<String> {
+        let uses_classic_factory = match self.jsx_pragmas.runtime {
+            Some(crate::jsx_pragmas::JsxRuntimePragma::Classic) => true,
+            Some(crate::jsx_pragmas::JsxRuntimePragma::Automatic) => false,
+            _ => matches!(
+                self.ctx.options.jsx,
+                JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
+            ),
+        };
+        if !uses_classic_factory {
+            return Vec::new();
+        }
+
+        self.jsx_pragmas.classic_factory_roots(
+            self.ctx.options.jsx_factory.as_deref(),
+            self.ctx.options.jsx_fragment_factory.as_deref(),
+        )
+    }
+
+    pub(in crate::emitter) fn is_classic_jsx_factory_root(&self, name: &str) -> bool {
+        self.classic_jsx_factory_roots()
+            .iter()
+            .any(|root| root == name)
     }
 
     /// Whether the default binding of an import clause is referenced as a
@@ -307,6 +347,7 @@ impl<'a> Printer<'a> {
             &value_haystack,
             &self.ctx.options.external_const_enum_bindings,
         );
+        let jsx_factory_roots = self.classic_jsx_factory_roots();
 
         specs
             .iter()
@@ -320,6 +361,9 @@ impl<'a> Printer<'a> {
                 };
                 let local_name = self.get_identifier_text_idx(spec.name);
                 if local_name.is_empty() {
+                    return true;
+                }
+                if jsx_factory_roots.iter().any(|root| root == &local_name) {
                     return true;
                 }
                 if crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name)

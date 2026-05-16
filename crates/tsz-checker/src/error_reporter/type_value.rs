@@ -286,8 +286,7 @@ impl<'a> CheckerState<'a> {
                     ),
                 ),
             }
-        } else if (self.is_computed_property_in_type_member(idx)
-            || self.source_span_looks_like_computed_type_member_key(idx))
+        } else if self.is_computed_property_in_type_member(idx)
             && self.computed_type_member_allows_mapped_type_suggestion(idx)
         {
             // TS2690: Type used as computed property key in type literal.
@@ -431,58 +430,6 @@ impl<'a> CheckerState<'a> {
         }
 
         true
-    }
-
-    fn source_span_looks_like_computed_type_member_key(&self, idx: NodeIndex) -> bool {
-        let Some((start, end)) = self.get_node_span(idx) else {
-            return false;
-        };
-        let Some(source_file) = self.ctx.arena.source_files.first() else {
-            return false;
-        };
-        let text: &str = &source_file.text;
-        let start = start as usize;
-        let end = end as usize;
-        if start > text.len() || end > text.len() || start > end {
-            return false;
-        }
-
-        let before = text[..start].trim_end();
-        let after = text[end..].trim_start();
-        if !before.ends_with('[') || !after.starts_with(']') {
-            return false;
-        }
-
-        let mut current = idx;
-        loop {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                return false;
-            };
-            let parent_idx = ext.parent;
-            let Some(parent) = self.ctx.arena.get(parent_idx) else {
-                return false;
-            };
-            if matches!(
-                parent.kind,
-                syntax_kind_ext::TYPE_LITERAL | syntax_kind_ext::INTERFACE_DECLARATION
-            ) {
-                return true;
-            }
-            if matches!(
-                parent.kind,
-                syntax_kind_ext::CLASS_DECLARATION
-                    | syntax_kind_ext::CLASS_EXPRESSION
-                    | syntax_kind_ext::METHOD_DECLARATION
-                    | syntax_kind_ext::PROPERTY_DECLARATION
-                    | syntax_kind_ext::FUNCTION_DECLARATION
-                    | syntax_kind_ext::FUNCTION_EXPRESSION
-                    | syntax_kind_ext::ARROW_FUNCTION
-                    | syntax_kind_ext::SOURCE_FILE
-            ) {
-                return false;
-            }
-            current = parent_idx;
-        }
     }
 
     fn computed_type_member_allows_mapped_type_suggestion(&self, idx: NodeIndex) -> bool {
@@ -1094,6 +1041,67 @@ class C1 {}
         assert!(
             diagnostics.iter().any(|diag| diag.code == 2693),
             "Expected TS2693 for computed type keyword in type member, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2690_for_type_alias_computed_type_member_key() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+type KeyName = "name";
+type Shape = {
+  [KeyName]: string;
+};
+"#,
+        );
+
+        let ts2690 = diagnostics
+            .iter()
+            .find(|diag| diag.code == 2690)
+            .expect("Expected TS2690 for type alias used as computed type member key");
+        assert!(
+            ts2690
+                .message_text
+                .contains("Did you mean to use 'K in KeyName'"),
+            "TS2690 should use the mapped-type suggestion from identifier facts, got: {ts2690:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2690_for_commented_computed_type_member_key() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+type OtherKey = "other";
+interface Shape {
+  [/* before */ OtherKey /* after */]: number;
+}
+"#,
+        );
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.code == 2690 && diag.message_text.contains("O in OtherKey")),
+            "Expected TS2690 from computed-property AST ancestry with comments around the key, got: {diagnostics:?}",
+        );
+    }
+
+    #[test]
+    fn emits_ts2693_for_type_alias_value_use_outside_computed_member_key() {
+        let diagnostics = check_source_diagnostics(
+            r#"
+type Plain = string;
+Plain;
+"#,
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2693),
+            "Expected ordinary type/value TS2693 outside computed type members, got: {diagnostics:?}",
+        );
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2690),
+            "Should not emit mapped-type suggestion outside computed type members, got: {diagnostics:?}",
         );
     }
 

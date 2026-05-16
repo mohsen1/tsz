@@ -26,10 +26,63 @@ impl<'a> Printer<'a> {
         } else {
             self.write("Math.pow(");
             self.emit_replayed_leading_exponentiation_comment(left);
+            self.emit_regex_exponentiation_operand_comments(left, right);
             self.emit(left);
             self.write(", ");
             self.emit(right);
             self.write(")");
+        }
+    }
+
+    fn emit_regex_exponentiation_operand_comments(&mut self, left: NodeIndex, right: NodeIndex) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+
+        let (Some(left_node), Some(right_node), Some(text)) = (
+            self.arena.get(left),
+            self.arena.get(right),
+            self.source_text_for_map(),
+        ) else {
+            return;
+        };
+
+        if left_node.kind != SyntaxKind::RegularExpressionLiteral as u16
+            || right_node.kind != SyntaxKind::RegularExpressionLiteral as u16
+        {
+            return;
+        }
+
+        let left_start = self.skip_trivia_forward(left_node.pos, left_node.end);
+        let right_start = self.skip_trivia_forward(right_node.pos, right_node.end);
+        if left_start >= right_start {
+            return;
+        }
+
+        // Slash-heavy regex input can expose a `/**/` range that overlaps the
+        // left regex close slash and the `**` token. When `**` becomes
+        // `Math.pow`, tsc replays that range before the first argument.
+        while let Some(comment) = self.all_comments.get(self.comment_emit_idx) {
+            let comment_pos = comment.pos;
+            let comment_end = comment.end;
+            let has_trailing_new_line = comment.has_trailing_new_line;
+            if comment_pos < left_start || comment_pos >= right_start || comment_end <= left_start {
+                break;
+            }
+
+            let Some(comment_text) = text
+                .get(comment_pos as usize..comment_end as usize)
+                .map(str::to_owned)
+            else {
+                break;
+            };
+            self.write_comment_with_reindent(&comment_text, Some(comment_pos));
+            if has_trailing_new_line {
+                self.write_line();
+            } else {
+                self.write_space();
+            }
+            self.comment_emit_idx += 1;
         }
     }
 

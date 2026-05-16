@@ -91,6 +91,32 @@ const OBJECT_METHODS_RETURN_BOOLEAN: &[&str] =
 const OBJECT_METHODS_RETURN_STRING: &[&str] = &["toString"];
 const OBJECT_METHODS_RETURN_ANY: &[&str] = &["valueOf"];
 
+/// String methods introduced after ES2015 that must not appear in the no-lib
+/// completion fallback. ES2015 methods (`includes`, `startsWith`, `endsWith`,
+/// `codePointAt`, `repeat`, `normalize`) remain because they are in the default
+/// ES2015 baseline that the fallback targets.
+const STRING_POST_ES2015_MEMBERS: &[&str] = &[
+    // es2017
+    "padStart",
+    "padEnd",
+    // es2019 (trimLeft/trimRight are non-standard aliases of trimStart/trimEnd)
+    "trimStart",
+    "trimEnd",
+    "trimLeft",
+    "trimRight",
+    // es2020
+    "matchAll",
+    // es2021
+    "replaceAll",
+    // es2022
+    "at",
+    // esnext
+    "isWellFormed",
+    "toWellFormed",
+];
+const FUNCTION_METHODS_RETURN_ANY: &[&str] = &["apply", "bind", "call"];
+const FUNCTION_VALUES_ANY: &[&str] = &["arguments", "caller", "prototype"];
+
 pub(crate) fn is_member(name: &str, list: &[&str]) -> bool {
     list.contains(&name)
 }
@@ -218,6 +244,57 @@ pub fn is_post_es5_primitive_member(kind: IntrinsicKind, name: &str) -> bool {
     }
 }
 
+/// Returns `true` if `name` belongs to the primitive type's **own** TypeScript
+/// interface at the ES2015 baseline, and therefore should appear in the no-lib
+/// fallback completion list.
+///
+/// The two structural conditions that jointly define eligibility are:
+///
+/// 1. **Own-interface membership** — the member is declared in the TypeScript
+///    `String`/`Number`/`Boolean`/`BigInt`/`Symbol` interface, not only
+///    inherited from `Object.prototype`. Members like `hasOwnProperty`,
+///    `isPrototypeOf`, `propertyIsEnumerable`, and `constructor` are excluded
+///    from every primitive; `toLocaleString`/`toString` are excluded from
+///    `Boolean` because its interface declares only `valueOf`.
+///
+/// 2. **ES2015 baseline** — string members introduced after ES2015
+///    (`padStart`/`padEnd`, `trimStart`/`trimEnd`, `matchAll`, `replaceAll`,
+///    `at`, `isWellFormed`, `toWellFormed`, and the non-standard `trimLeft`/
+///    `trimRight` aliases) are excluded. Those members are only available when
+///    the caller has configured the appropriate `lib` target; the no-lib
+///    fallback must not silently surface them.
+///
+/// This predicate is used exclusively for LSP member-completion filtering. It
+/// does **not** affect property-lookup, subtype checking, or the full apparent
+/// shape used for structural compatibility (all of which use
+/// `apparent_primitive_shape` or `apparent_primitive_member_kind` directly).
+pub fn apparent_primitive_member_is_completion_eligible(kind: IntrinsicKind, name: &str) -> bool {
+    match kind {
+        IntrinsicKind::String => {
+            if is_member(name, STRING_POST_ES2015_MEMBERS) {
+                return false;
+            }
+            name == "length"
+                || is_member(name, STRING_METHODS_RETURN_STRING)
+                || is_member(name, STRING_METHODS_RETURN_NUMBER)
+                || is_member(name, STRING_METHODS_RETURN_BOOLEAN)
+                || is_member(name, STRING_METHODS_RETURN_ANY)
+                || is_member(name, STRING_METHODS_RETURN_STRING_ARRAY)
+        }
+        IntrinsicKind::Number => is_member(name, NUMBER_METHODS_RETURN_STRING) || name == "valueOf",
+        IntrinsicKind::Boolean => {
+            // Boolean's own interface declares only `valueOf()` — toString and
+            // toLocaleString are Object.prototype contributions and must not appear.
+            name == "valueOf"
+        }
+        IntrinsicKind::Bigint => is_member(name, BIGINT_METHODS_RETURN_STRING) || name == "valueOf",
+        IntrinsicKind::Symbol => name == "description" || name == "toString" || name == "valueOf",
+        // Non-primitive kinds (Function, Object, …) are not filtered here —
+        // their members all appear in completions as-is.
+        _ => true,
+    }
+}
+
 pub fn apparent_primitive_member_kind(
     interner: &dyn TypeDatabase,
     kind: IntrinsicKind,
@@ -287,6 +364,19 @@ pub fn apparent_primitive_member_kind(
             object_member_kind(name, true)
         }
         IntrinsicKind::Object => object_member_kind(name, true),
+        IntrinsicKind::Function => {
+            if is_member(name, FUNCTION_METHODS_RETURN_ANY) {
+                return Some(ApparentMemberKind::Method(TypeId::ANY));
+            }
+            if is_member(name, FUNCTION_VALUES_ANY) {
+                return Some(ApparentMemberKind::Value(TypeId::ANY));
+            }
+            match name {
+                "length" => Some(ApparentMemberKind::Value(TypeId::NUMBER)),
+                "name" => Some(ApparentMemberKind::Value(TypeId::STRING)),
+                _ => object_member_kind(name, false),
+            }
+        }
         _ => None,
     }
 }
@@ -393,6 +483,33 @@ pub fn apparent_primitive_members(
         }
         IntrinsicKind::Object => {
             push_object_members(&mut members, true);
+        }
+        IntrinsicKind::Function => {
+            // ES5 Function prototype members present on every callable value.
+            // `name` is ES2015, but included in the bootstrap because the no-lib
+            // path targets modern runtimes; `resolve_function_property` gates it
+            // behind `!boxed_function_loaded` when a real lib is present.
+            for &name in FUNCTION_METHODS_RETURN_ANY {
+                members.push(ApparentMember {
+                    name,
+                    kind: ApparentMemberKind::Method(TypeId::ANY),
+                });
+            }
+            for &name in FUNCTION_VALUES_ANY {
+                members.push(ApparentMember {
+                    name,
+                    kind: ApparentMemberKind::Value(TypeId::ANY),
+                });
+            }
+            members.push(ApparentMember {
+                name: "length",
+                kind: ApparentMemberKind::Value(TypeId::NUMBER),
+            });
+            members.push(ApparentMember {
+                name: "name",
+                kind: ApparentMemberKind::Value(TypeId::STRING),
+            });
+            push_object_members(&mut members, false);
         }
         _ => {}
     }

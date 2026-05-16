@@ -754,7 +754,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let sig = self.ctx.arena.get_signature(member_node)?;
-            let name_text = self.node_text(sig.name)?.trim().to_string();
+            let name_text = self.get_property_name(sig.name)?;
             if name_text != prop_name || sig.type_annotation.is_none() {
                 continue;
             }
@@ -781,7 +781,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let sig = self.ctx.arena.get_signature(member_node)?;
-            let name_text = self.node_text(sig.name)?.trim().to_string();
+            let name_text = self.get_property_name(sig.name)?;
             if name_text == prop_name {
                 return Some(sig.name);
             }
@@ -962,7 +962,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 let prop_sig = self.ctx.arena.get_signature(instance_member_node)?;
-                let prop_name_text = self.node_text(prop_sig.name)?.trim().to_string();
+                let prop_name_text = self.get_property_name(prop_sig.name)?;
                 if prop_name_text != props_name || prop_sig.type_annotation.is_none() {
                     continue;
                 }

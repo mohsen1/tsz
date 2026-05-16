@@ -648,6 +648,13 @@ impl<'a> Printer<'a> {
                         );
                     }
                 }
+                k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                    self.collect_top_level_using_namespace_hoist(
+                        stmt_node,
+                        &mut local_names,
+                        &mut seen_local,
+                    );
+                }
                 k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                     let Some(export) = self.arena.get_export_decl(stmt_node) else {
                         continue;
@@ -686,6 +693,13 @@ impl<'a> Printer<'a> {
                                 &mut local_names,
                                 &mut seen_local,
                                 &mut export_named_bindings,
+                            );
+                        }
+                        k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                            self.collect_top_level_using_namespace_hoist(
+                                clause_node,
+                                &mut local_names,
+                                &mut seen_local,
                             );
                         }
                         _ if export.is_default_export => {
@@ -758,6 +772,28 @@ impl<'a> Printer<'a> {
         }
 
         hoisted_function_index_set
+    }
+
+    fn collect_top_level_using_namespace_hoist(
+        &mut self,
+        node: &Node,
+        local_names: &mut Vec<String>,
+        seen_local: &mut FxHashSet<String>,
+    ) {
+        let Some(module) = self.arena.get_module(node) else {
+            return;
+        };
+        if self.arena.is_declare(&module.modifiers) || !self.is_instantiated_module(module.body) {
+            return;
+        }
+        let name = self.get_identifier_text_idx(module.name);
+        if name.is_empty() {
+            return;
+        }
+        if seen_local.insert(name.clone()) {
+            local_names.push(name.clone());
+        }
+        self.declared_namespace_names.insert(name);
     }
 
     fn collect_top_level_using_variable_hoists(
@@ -1555,6 +1591,12 @@ impl<'a> Printer<'a> {
             es5_emitter.set_indent_level(self.writer.indent_level());
             es5_emitter.set_transforms(self.transforms.clone());
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+            es5_emitter.set_printer_options(self.ctx.options.clone());
+            es5_emitter.set_module_kind(
+                self.ctx
+                    .original_module_kind
+                    .unwrap_or(self.ctx.options.module),
+            );
             if let Some(text) = self.source_text_for_map() {
                 es5_emitter.set_source_text(text);
             }

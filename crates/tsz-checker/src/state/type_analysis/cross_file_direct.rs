@@ -10,8 +10,7 @@ use tsz_common::perf_counters::{
 };
 use tsz_lowering::TypeLowering;
 use tsz_parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{NodeAccess, NodeArena, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::def::{DefId, DefKind};
 use tsz_solver::{TypeId, TypeParamInfo};
@@ -21,6 +20,38 @@ struct DirectActualLibAliasBodyProof {
     type_params: Vec<TypeParamInfo>,
     def_id: DefId,
     outcome: DirectActualLibAliasBodyOutcome,
+}
+
+fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
+    matches!(
+        name,
+        "Capitalize"
+            | "DecoratorMetadata"
+            | "DecoratorMetadataObject"
+            | "Exclude"
+            | "Extract"
+            | "FlatArray"
+            | "IteratorResult"
+            | "LocalesArgument"
+            | "NumberFormatOptionsCurrencyDisplay"
+            | "NumberFormatOptionsSignDisplay"
+            | "NumberFormatOptionsStyle"
+            | "NumberFormatOptionsUseGrouping"
+            | "Lowercase"
+            | "NonNullable"
+            | "Omit"
+            | "Partial"
+            | "Pick"
+            | "PropertyKey"
+            | "Readonly"
+            | "Record"
+            | "ReturnType"
+            | "Required"
+            | "UnicodeBCP47LocaleIdentifier"
+            | "Uncapitalize"
+            | "Uppercase"
+            | "WeakKey"
+    )
 }
 
 pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
@@ -110,11 +141,71 @@ fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
 }
 
 fn allow_generic_actual_lib_direct_fallback(name: &str) -> bool {
-    matches!(name, "Iterator" | "Promise" | "PromiseLike")
+    matches!(
+        name,
+        "Array"
+            | "ArrayIterator"
+            | "Iterator"
+            | "Map"
+            | "MapIterator"
+            | "Object"
+            | "Promise"
+            | "PromiseLike"
+            | "RegExpStringIterator"
+            | "Set"
+            | "SetIterator"
+            | "StringIterator"
+            | "WeakMap"
+            | "WeakSet"
+    )
 }
 
 fn allow_actual_lib_declaration_proof_bypass(name: &str) -> bool {
     matches!(name, "Iterator")
+}
+
+fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
+    matches!(
+        name,
+        "Array"
+            | "Date"
+            | "DateTimeFormatOptions"
+            | "Error"
+            | "Function"
+            | "Iterator"
+            | "IteratorObject"
+            | "Locale"
+            | "Map"
+            | "NumberFormatOptions"
+            | "NumberFormatOptionsCurrencyDisplayRegistry"
+            | "NumberFormatOptionsSignDisplayRegistry"
+            | "NumberFormatOptionsStyleRegistry"
+            | "NumberFormatOptionsUseGroupingRegistry"
+            | "Object"
+            | "Promise"
+            | "RegExp"
+            | "Set"
+            | "Symbol"
+            | "WeakMap"
+            | "WeakSet"
+    )
+}
+
+fn iterator_object_has_global_augmentations(ctx: &crate::context::CheckerContext<'_>) -> bool {
+    if ctx
+        .binder
+        .global_augmentations
+        .get("IteratorObject")
+        .is_some_and(|augmentations| !augmentations.is_empty())
+    {
+        return true;
+    }
+
+    ctx.binder
+        .file_locals
+        .get("IteratorObject")
+        .and_then(|sym_id| ctx.binder.get_symbol(sym_id))
+        .is_some_and(|symbol| symbol.declarations.len() > 1)
 }
 
 impl<'a> CheckerState<'a> {
@@ -225,6 +316,99 @@ impl<'a> CheckerState<'a> {
                 };
                 arena.get_identifier_text(expr.expression) == Some("IteratorObject")
             })
+        })
+    }
+
+    fn symbol_declares_direct_actual_lib_protocol_method(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+        delegate_arena: &NodeArena,
+    ) -> bool {
+        if !symbol.has_any_flags(symbol_flags::INTERFACE) {
+            return false;
+        }
+
+        symbol.declarations.iter().any(|&decl_idx| {
+            if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                && arenas.iter().any(|arena| {
+                    Self::direct_actual_lib_interface_declares_protocol_method(
+                        arena.as_ref(),
+                        decl_idx,
+                    )
+                })
+            {
+                return true;
+            }
+
+            Self::direct_actual_lib_interface_declares_protocol_method(delegate_arena, decl_idx)
+        }) || self.actual_lib_context_declares_protocol_method(symbol.escaped_name.as_str())
+    }
+
+    fn actual_lib_context_declares_protocol_method(&self, name: &str) -> bool {
+        self.ctx
+            .lib_contexts
+            .iter()
+            .take(self.ctx.actual_lib_file_count)
+            .any(|lib_ctx| {
+                let Some(sym_id) = lib_ctx.binder.file_locals.get(name) else {
+                    return false;
+                };
+                let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) else {
+                    return false;
+                };
+                if !symbol.has_any_flags(symbol_flags::INTERFACE) {
+                    return false;
+                }
+
+                symbol.declarations.iter().any(|&decl_idx| {
+                    lib_ctx
+                        .binder
+                        .declaration_arenas
+                        .get(&(sym_id, decl_idx))
+                        .is_some_and(|arenas| {
+                            arenas.iter().any(|arena| {
+                                Self::direct_actual_lib_interface_declares_protocol_method(
+                                    arena.as_ref(),
+                                    decl_idx,
+                                )
+                            })
+                        })
+                        || Self::direct_actual_lib_interface_declares_protocol_method(
+                            lib_ctx.arena.as_ref(),
+                            decl_idx,
+                        )
+                })
+            })
+    }
+
+    fn direct_actual_lib_interface_declares_protocol_method(
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        if !is_direct_actual_lib_declaration_arena(arena) {
+            return false;
+        }
+        let Some(interface) = arena
+            .get(decl_idx)
+            .and_then(|node| arena.get_interface(node))
+        else {
+            return false;
+        };
+
+        interface.members.nodes.iter().copied().any(|member_idx| {
+            let Some(member_node) = arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::METHOD_SIGNATURE {
+                return false;
+            }
+            let Some(signature) = arena.get_signature(member_node) else {
+                return false;
+            };
+            arena
+                .get_identifier_text(signature.name)
+                .is_some_and(|name| matches!(name, "next" | "then"))
         })
     }
 
@@ -426,7 +610,8 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
             );
         let generic_alias_has_admitted_body = !params.is_empty()
-            && (common::mapped_type_id(self.ctx.types, body).is_some()
+            && (is_direct_actual_lib_alias_body_admitted(name)
+                || common::mapped_type_id(self.ctx.types, body).is_some()
                 || common::contains_conditional_type(self.ctx.types, body)
                 || common::union_members(self.ctx.types, body).is_some());
         let outcome = if non_generic_alias_has_resolved_body || generic_alias_has_admitted_body {
@@ -460,6 +645,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        let delegate_arena = delegate_arena?;
         let symbol = self.get_cross_file_symbol(sym_id)?.clone();
         let name = symbol.escaped_name.clone();
         let intl_namespace_export =
@@ -469,8 +655,13 @@ impl<'a> CheckerState<'a> {
         }
         let proven_value_interface =
             self.symbol_is_proven_direct_actual_lib_value_interface(sym_id, &symbol, &name);
+        let protocol_method_interface =
+            self.symbol_declares_direct_actual_lib_protocol_method(sym_id, &symbol, delegate_arena);
+        let admitted_value_interface = proven_value_interface
+            || protocol_method_interface
+            || is_direct_actual_lib_value_interface_name(&name);
         if symbol.has_any_flags(symbol_flags::VALUE)
-            && !proven_value_interface
+            && !admitted_value_interface
             && !allow_actual_lib_declaration_proof_bypass(&name)
         {
             if intl_namespace_export {
@@ -489,7 +680,7 @@ impl<'a> CheckerState<'a> {
                 type_params: params,
                 def_id: _def_id,
                 outcome,
-            } = self.direct_actual_lib_type_alias_body(sym_id, &symbol, &name, delegate_arena?)?;
+            } = self.direct_actual_lib_type_alias_body(sym_id, &symbol, &name, delegate_arena)?;
             if outcome != DirectActualLibAliasBodyOutcome::Success {
                 return None;
             }
@@ -501,6 +692,7 @@ impl<'a> CheckerState<'a> {
         }
         if !proven_value_interface
             && !self.symbol_declarations_are_direct_actual_lib_only(sym_id, &symbol, &name)
+            && !protocol_method_interface
             && !allow_actual_lib_declaration_proof_bypass(&name)
         {
             if intl_namespace_export {
@@ -513,17 +705,36 @@ impl<'a> CheckerState<'a> {
         let mut intl_success_outcome = None;
         let has_interface_type_params =
             self.symbol_has_direct_actual_lib_interface_type_parameters(sym_id, &symbol);
-        if has_interface_type_params && !allow_generic_actual_lib_direct_fallback(&name) {
+        if has_interface_type_params
+            && !protocol_method_interface
+            && !allow_generic_actual_lib_direct_fallback(&name)
+            && name == "IteratorObject"
+        {
+            return None;
+        }
+        if has_interface_type_params
+            && !protocol_method_interface
+            && !allow_generic_actual_lib_direct_fallback(&name)
+            && self.symbol_has_direct_actual_lib_iterator_object_heritage(sym_id, &symbol)
+            && iterator_object_has_global_augmentations(&self.ctx)
+        {
             return None;
         }
         let (direct_type, params) = if has_interface_type_params {
             let (direct_type, params) = self.resolve_lib_type_with_params(&name);
             if let Some(direct_type) = direct_type {
                 (direct_type, params)
-            } else if allow_generic_actual_lib_direct_fallback(&name) {
-                let direct_type = self.resolve_lib_interface_type_by_symbol(&name, sym_id)?;
-                let params = self.get_type_params_for_symbol(sym_id);
-                (direct_type, params)
+            } else if protocol_method_interface
+                || !self.symbol_has_direct_actual_lib_iterator_object_heritage(sym_id, &symbol)
+                || !iterator_object_has_global_augmentations(&self.ctx)
+            {
+                self.direct_cross_file_interface_lowering(
+                    sym_id,
+                    self.ctx.binder,
+                    delegate_arena,
+                    true,
+                    false,
+                )?
             } else {
                 return None;
             }
@@ -741,6 +952,221 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn source_file_type_node_is_generic_scope_independent(
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+        type_param_names: &[String],
+    ) -> bool {
+        if Self::source_file_type_node_is_scope_independent(arena, node_idx) {
+            return true;
+        }
+        if node_idx.is_none() {
+            return false;
+        }
+        let Some(node) = arena.get(node_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                arena.get_type_ref(node).is_some_and(|type_ref| {
+                    let Some(name) = arena
+                        .get(type_ref.type_name)
+                        .and_then(|name_node| arena.get_identifier(name_node))
+                        .map(|ident| ident.escaped_text.as_str())
+                    else {
+                        return false;
+                    };
+                    if type_param_names.iter().any(|param| param == name) {
+                        return type_ref
+                            .type_arguments
+                            .as_ref()
+                            .is_none_or(|args| args.nodes.is_empty());
+                    }
+                    matches!(name, "Array" | "ReadonlyArray")
+                        && type_ref.type_arguments.as_ref().is_some_and(|args| {
+                            args.nodes.len() == 1
+                                && Self::source_file_type_node_is_generic_scope_independent(
+                                    arena,
+                                    args.nodes[0],
+                                    type_param_names,
+                                )
+                        })
+                })
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
+                arena.get_conditional_type(node).is_some_and(|conditional| {
+                    let mut true_branch_names = type_param_names.to_vec();
+                    Self::collect_infer_type_param_names(
+                        arena,
+                        conditional.extends_type,
+                        &mut true_branch_names,
+                    );
+                    Self::source_file_type_node_is_generic_scope_independent(
+                        arena,
+                        conditional.check_type,
+                        type_param_names,
+                    ) && Self::source_file_type_node_is_generic_scope_independent(
+                        arena,
+                        conditional.extends_type,
+                        type_param_names,
+                    ) && Self::source_file_type_node_is_generic_scope_independent(
+                        arena,
+                        conditional.true_type,
+                        &true_branch_names,
+                    ) && Self::source_file_type_node_is_generic_scope_independent(
+                        arena,
+                        conditional.false_type,
+                        type_param_names,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::INFER_TYPE => {
+                arena.get_infer_type(node).is_some_and(|infer_type| {
+                    let Some(type_param_node) = arena.get(infer_type.type_parameter) else {
+                        return false;
+                    };
+                    let Some(type_param) = arena.get_type_parameter(type_param_node) else {
+                        return false;
+                    };
+                    type_param.constraint.is_none() && type_param.default.is_none()
+                })
+            }
+            k if k == syntax_kind_ext::ARRAY_TYPE => {
+                arena.get_array_type(node).is_some_and(|array| {
+                    Self::source_file_type_node_is_generic_scope_independent(
+                        arena,
+                        array.element_type,
+                        type_param_names,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::TUPLE_TYPE => {
+                arena.get_tuple_type(node).is_some_and(|tuple| {
+                    tuple.elements.nodes.iter().copied().all(|element| {
+                        Self::source_file_type_node_is_generic_scope_independent(
+                            arena,
+                            element,
+                            type_param_names,
+                        )
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                arena.get_composite_type(node).is_some_and(|composite| {
+                    composite.types.nodes.iter().copied().all(|member| {
+                        Self::source_file_type_node_is_generic_scope_independent(
+                            arena,
+                            member,
+                            type_param_names,
+                        )
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE
+                || k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE =>
+            {
+                arena.get_wrapped_type(node).is_some_and(|wrapped| {
+                    Self::source_file_type_node_is_generic_scope_independent(
+                        arena,
+                        wrapped.type_node,
+                        type_param_names,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                arena.get_type_operator(node).is_some_and(|operator| {
+                    Self::source_file_type_node_is_generic_scope_independent(
+                        arena,
+                        operator.type_node,
+                        type_param_names,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+                arena.get_indexed_access_type(node).is_some_and(|indexed| {
+                    Self::source_file_type_node_is_generic_scope_independent(
+                        arena,
+                        indexed.object_type,
+                        type_param_names,
+                    ) && Self::source_file_type_node_is_generic_scope_independent(
+                        arena,
+                        indexed.index_type,
+                        type_param_names,
+                    )
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn type_alias_type_param_names(arena: &NodeArena, type_alias: &TypeAliasData) -> Vec<String> {
+        type_alias
+            .type_parameters
+            .as_ref()
+            .into_iter()
+            .flat_map(|params| params.nodes.iter().copied())
+            .filter_map(|param_idx| {
+                let param_node = arena.get(param_idx)?;
+                let param = arena.get_type_parameter(param_node)?;
+                let name_node = arena.get(param.name)?;
+                let ident = arena.get_identifier(name_node)?;
+                Some(ident.escaped_text.to_string())
+            })
+            .collect()
+    }
+
+    fn collect_infer_type_param_names(arena: &NodeArena, root: NodeIndex, names: &mut Vec<String>) {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::INFER_TYPE
+                && let Some(infer_type) = arena.get_infer_type(node)
+                && let Some(type_param_node) = arena.get(infer_type.type_parameter)
+                && let Some(type_param) = arena.get_type_parameter(type_param_node)
+                && let Some(name_node) = arena.get(type_param.name)
+                && let Some(ident) = arena.get_identifier(name_node)
+                && !names.iter().any(|name| name == &ident.escaped_text)
+            {
+                names.push(ident.escaped_text.to_string());
+            }
+            stack.extend(arena.get_children(idx));
+        }
+    }
+
+    fn source_file_type_node_contains_kind(arena: &NodeArena, root: NodeIndex, kind: u16) -> bool {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            if arena.get(idx).is_some_and(|node| node.kind == kind) {
+                return true;
+            }
+            stack.extend(arena.get_children(idx));
+        }
+        false
+    }
+
+    fn source_file_type_node_contains_identifier_name(
+        arena: &NodeArena,
+        root: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            if arena
+                .get(idx)
+                .and_then(|node| arena.get_identifier(node))
+                .is_some_and(|ident| ident.escaped_text == name)
+            {
+                return true;
+            }
+            stack.extend(arena.get_children(idx));
+        }
+        false
+    }
+
     fn source_file_interface_declarations_are_direct_lowerable(
         declarations: &[(NodeIndex, &NodeArena)],
     ) -> bool {
@@ -881,6 +1307,104 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    pub(crate) fn direct_source_file_type_alias_result(
+        &mut self,
+        sym_id: SymbolId,
+        target_file_idx: Option<usize>,
+        allow_source_file_arena: bool,
+    ) -> Option<(TypeId, Vec<TypeParamInfo>)> {
+        let target_file_idx = target_file_idx?;
+        let (symbol_arena_arc, delegate_binder_arc) = {
+            let symbol_arena_arc = self.ctx.all_arenas.as_ref()?.get(target_file_idx)?.clone();
+            let delegate_binder_arc = self.ctx.all_binders.as_ref()?.get(target_file_idx)?.clone();
+            (symbol_arena_arc, delegate_binder_arc)
+        };
+        let symbol_arena = symbol_arena_arc.as_ref();
+        let delegate_binder = delegate_binder_arc.as_ref();
+        if !allow_source_file_arena || !is_direct_lowering_source_file_arena(symbol_arena) {
+            return None;
+        }
+
+        let symbol = delegate_binder.get_symbol(sym_id)?;
+        if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
+            return None;
+        }
+        if symbol.flags
+            & (symbol_flags::VALUE
+                | symbol_flags::CLASS
+                | symbol_flags::INTERFACE
+                | symbol_flags::VALUE_MODULE
+                | symbol_flags::NAMESPACE_MODULE)
+            != 0
+        {
+            return None;
+        }
+        if symbol.declarations.len() != 1 {
+            return None;
+        }
+
+        let name = symbol.escaped_name.clone();
+        let decl_idx = symbol.declarations[0];
+        if !Self::lib_type_alias_declaration_name_matches(symbol_arena, decl_idx, &name) {
+            return None;
+        }
+        let decl_node = symbol_arena.get(decl_idx)?;
+        let type_alias = symbol_arena.get_type_alias(decl_node)?;
+        let type_param_names = Self::type_alias_type_param_names(symbol_arena, type_alias);
+        let body_is_direct_lowerable = if type_param_names.is_empty() {
+            Self::source_file_type_node_is_scope_independent(symbol_arena, type_alias.type_node)
+        } else {
+            Self::source_file_type_node_is_generic_scope_independent(
+                symbol_arena,
+                type_alias.type_node,
+                &type_param_names,
+            )
+        };
+        if !body_is_direct_lowerable {
+            return None;
+        }
+
+        // Keep flow-sensitive `typeof` aliases and direct self/cycle cases on
+        // the child-checker path, where the declaring file's diagnostics and
+        // resolution stack are already handled.
+        if Self::source_file_type_node_contains_kind(
+            symbol_arena,
+            type_alias.type_node,
+            syntax_kind_ext::TYPE_QUERY,
+        ) || Self::source_file_type_node_contains_identifier_name(
+            symbol_arena,
+            type_alias.type_node,
+            &name,
+        ) {
+            return None;
+        }
+
+        let (alias_type, params) = self.lower_cross_arena_type_alias_declaration(
+            sym_id,
+            decl_idx,
+            symbol_arena,
+            type_alias,
+        );
+        if matches!(alias_type, TypeId::UNKNOWN | TypeId::ERROR) {
+            return None;
+        }
+
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        if let Some(shape) = crate::query_boundaries::state::type_environment::object_shape(
+            self.ctx.types,
+            alias_type,
+        ) {
+            self.ctx.definition_store.set_instance_shape(def_id, shape);
+        }
+        self.ctx
+            .register_def_auto_params_in_envs(def_id, alias_type, params.clone());
+        self.ctx
+            .definition_store
+            .register_type_to_def(alias_type, def_id);
+
+        Some((alias_type, params))
+    }
+
     pub(super) fn direct_cross_file_interface_lowering(
         &self,
         sym_id: SymbolId,
@@ -894,10 +1418,11 @@ impl<'a> CheckerState<'a> {
         };
 
         // Source and local test-fixture interfaces need exact binder-local symbol
-        // resolution for diagnostics. Built-in libs depend on merged declarations
-        // across many lib files and special canonical DefId handling. Keep both
-        // on the mature checker path.
-        let direct_declaration_arena = is_direct_lowering_declaration_arena(symbol_arena);
+        // resolution for diagnostics. Built-in libs may use this path only when
+        // the declaration-shape guard below proves they do not need the mature
+        // merged/heritage checker path.
+        let direct_declaration_arena = is_direct_lowering_declaration_arena(symbol_arena)
+            || is_builtin_lib_declaration_arena(symbol_arena);
         let direct_source_file_arena =
             allow_source_file_arena && is_direct_lowering_source_file_arena(symbol_arena);
         if !direct_declaration_arena && !direct_source_file_arena {
@@ -944,7 +1469,10 @@ impl<'a> CheckerState<'a> {
 
         let def_id = self.ctx.get_or_create_def_id(sym_id);
         let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
-            self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+            (!self.ctx.file_local_type_shadow_for_lib_name(type_name))
+                .then(|| self.resolve_actual_lib_name_to_def_id_for_lowering(type_name))
+                .flatten()
+                .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
         };
         let no_type_symbol = |_node_idx: NodeIndex| -> Option<u32> { None };
         let no_def_id = |_node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> { None };
@@ -984,7 +1512,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn direct_cross_file_interface_member_simple_types(
-        &self,
+        &mut self,
         interface_idx: NodeIndex,
         member_indices: &[NodeIndex],
         interface_arena: &NodeArena,
@@ -998,6 +1526,69 @@ impl<'a> CheckerState<'a> {
                 .cross_file_node_symbols_for_arena(delegate_binder, arena_ptr)
                 .and_then(|symbols| symbols.get(&interface_idx.0).copied())
         })?;
+
+        let direct_member_arena = is_direct_actual_lib_declaration_arena(interface_arena)
+            || is_direct_lowering_declaration_arena(interface_arena)
+            || (allow_source_file_arena && is_direct_lowering_source_file_arena(interface_arena));
+        if direct_member_arena {
+            let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
+                self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
+            };
+            let no_type_symbol = |_node_idx: NodeIndex| -> Option<u32> { None };
+            let no_def_id = |_node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> { None };
+            let no_value_symbol = |_node_idx: NodeIndex| -> Option<u32> { None };
+            let lazy_type_params_resolver =
+                |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
+            let lowering = TypeLowering::with_hybrid_resolver(
+                interface_arena,
+                self.ctx.types,
+                &no_type_symbol,
+                &no_def_id,
+                &no_value_symbol,
+            )
+            .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
+            .with_name_def_id_resolver(&name_resolver)
+            .with_lazy_type_params_resolver(&lazy_type_params_resolver)
+            .prefer_name_def_id_resolution();
+            let (params, lowered_members) =
+                lowering.lower_interface_members_simple_types(interface_idx, member_indices)?;
+            let substitution = type_args
+                .filter(|type_args| !params.is_empty() && type_args.len() <= params.len())
+                .and_then(|type_args| {
+                    crate::query_boundaries::type_defaults::fill_application_defaults(
+                        self.ctx.types,
+                        type_args,
+                        &params,
+                    )
+                })
+                .map(|type_args| {
+                    crate::query_boundaries::common::TypeSubstitution::from_args(
+                        self.ctx.types,
+                        &params,
+                        &type_args,
+                    )
+                });
+
+            let mut results = rustc_hash::FxHashMap::default();
+            for (member_idx, mut member_type) in lowered_members {
+                if matches!(member_type, TypeId::UNKNOWN | TypeId::ERROR) {
+                    return None;
+                }
+                if let Some(substitution) = substitution.as_ref() {
+                    member_type = crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        member_type,
+                        substitution,
+                    );
+                }
+                if matches!(member_type, TypeId::UNKNOWN | TypeId::ERROR) {
+                    return None;
+                }
+                results.insert(member_idx, member_type);
+            }
+
+            return (!results.is_empty()).then_some(results);
+        }
 
         let (interface_type, params) = self.direct_cross_file_interface_lowering(
             sym_id,

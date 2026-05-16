@@ -1,6 +1,8 @@
 use super::*;
+use crate::output::source_writer::DelimiterKind;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
+use tsz_parser::parser::node::NodeArena;
 
 /// Parse, lower, and print a source string with the given options.
 ///
@@ -49,6 +51,20 @@ fn test_streaming_writer() {
     );
 }
 
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "structured delimiter helpers left 1 unclosed delimiter")]
+fn finish_asserts_structured_delimiters_are_balanced() {
+    let arena = NodeArena::new();
+    let mut printer = Printer::new(&arena, PrintOptions::default());
+    printer
+        .inner
+        .writer
+        .write_open_delimiter(DelimiterKind::Paren);
+
+    let _ = printer.finish();
+}
+
 #[test]
 fn arrow_default_nullish_temp_is_scoped_to_es2015_body() {
     let source = "const a = (): string | undefined => undefined;\n((b = a() ?? \"d\") => {})();";
@@ -67,6 +83,25 @@ fn arrow_default_nullish_temp_is_scoped_to_es2015_body() {
     assert!(
         !output.starts_with("var _a;"),
         "Default initializer temp must not leak to file scope.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn recovered_arrow_conditional_tail_emits_branch_statements() {
+    let source = "(a?) => { return a; } ? (b)=>(c)=>81 : (c)=>(d)=>82;\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("(a) => { return a; };"),
+        "The block-bodied arrow should emit as the first recovered expression statement.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(b) => (c) => 81;"),
+        "The invalid conditional true branch should remain emit-visible.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(c) => (d) => 82;"),
+        "The invalid conditional false branch should remain emit-visible.\nOutput:\n{output}"
     );
 }
 
