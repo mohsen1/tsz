@@ -476,9 +476,20 @@ jobs:
           compression-level: 1
 
   unit:
-    # Keep unit as the first Rust compile gate. The tsz-checker lib-test target
-    # can exit silently when it is built through sccache from a restored warm
-    # target cache, so use a clean non-sccache compile path here.
+    # EXPERIMENT (PR #TBD): re-enable sccache + warm target restore + incremental
+    # compile for the unit job. The original disablement (commit 1bddbbfbf4)
+    # cited a "tsz-checker lib-test silent-exit when built through sccache from
+    # a restored warm target cache" — but no repro, log, or post-mortem links
+    # to that claim anywhere in the repo. This branch tests whether the claim
+    # is real by gathering side-by-side evidence.
+    #
+    # Compare-against: most recent main CI run with sccache OFF. Match on the
+    # nextest test list (count, pass/fail per test name). If they match, the
+    # silent-exit fear is unfounded and we save ~10 min per CI run on warm
+    # cache hits. If they don't, the diff narrows the actual bug.
+    #
+    # TSZ_CI_CACHE_SAVE_CARGO_TARGETS=0 keeps PR runs from writing to the
+    # shared bucket (no risk of poisoning main's cache).
     name: unit
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
@@ -486,9 +497,6 @@ jobs:
     timeout-minutes: 45
     env:
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-      CARGO_INCREMENTAL: "0"
-      TSZ_CI_CACHE_RESTORE: "0"
-      TSZ_CI_DISABLE_SCCACHE: "1"
       TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "0"
     steps:
       - uses: actions/checkout@v4
