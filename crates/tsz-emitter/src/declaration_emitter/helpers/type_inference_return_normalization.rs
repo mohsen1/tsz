@@ -94,6 +94,12 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return true;
         }
+        if self.source_return_type_unwraps_return_type_application(
+            source_type_text,
+            inferred_return_type,
+        ) {
+            return true;
+        }
         if self
             .source_return_type_preserves_named_application(source_type_text, inferred_return_type)
         {
@@ -104,6 +110,26 @@ impl<'a> DeclarationEmitter<'a> {
                 && self.print_type_id(inferred_return_type) != source_type_text;
         }
         !self.print_type_id(inferred_return_type).contains("typeof ")
+    }
+
+    fn source_return_type_unwraps_return_type_application(
+        &self,
+        source_type_text: &str,
+        inferred_return_type: tsz_solver::types::TypeId,
+    ) -> bool {
+        if !source_type_text.trim_start().starts_with('{') {
+            return false;
+        }
+        if self
+            .print_type_id(inferred_return_type)
+            .trim_start()
+            .starts_with("ReturnType<")
+        {
+            return true;
+        }
+        self.inferred_return_application_base_name(inferred_return_type)
+            .as_deref()
+            == Some("ReturnType")
     }
 
     fn source_return_type_preserves_named_application(
@@ -118,29 +144,28 @@ impl<'a> DeclarationEmitter<'a> {
         if printed == source_type_text || !printed.contains('<') {
             return false;
         }
-        let Some(interner) = self.type_interner else {
-            return false;
-        };
-        let application_type =
-            if tsz_solver::visitor::application_id(interner, inferred_return_type).is_some() {
-                inferred_return_type
-            } else if let Some(alias) = interner.get_display_alias(inferred_return_type) {
-                alias
-            } else {
-                return false;
-            };
-        let Some(app_id) = tsz_solver::visitor::application_id(interner, application_type) else {
-            return false;
-        };
-        let app = interner.type_application(app_id);
         let Some(source_name) = Self::leading_type_reference_name(source_type_text) else {
             return false;
         };
+        self.inferred_return_application_base_name(inferred_return_type)
+            .is_some_and(|base_name| source_name == base_name)
+    }
+
+    fn inferred_return_application_base_name(
+        &self,
+        inferred_return_type: tsz_solver::types::TypeId,
+    ) -> Option<String> {
+        let interner = self.type_interner?;
+        let application_type =
+            if tsz_solver::visitor::application_id(interner, inferred_return_type).is_some() {
+                inferred_return_type
+            } else {
+                interner.get_display_alias(inferred_return_type)?
+            };
+        let app_id = tsz_solver::visitor::application_id(interner, application_type)?;
+        let app = interner.type_application(app_id);
         let base_text = self.print_type_id(app.base);
-        let Some(base_name) = Self::leading_type_reference_name(&base_text) else {
-            return false;
-        };
-        source_name == base_name
+        Self::leading_type_reference_name(&base_text).map(str::to_string)
     }
 
     pub(in crate::declaration_emitter) fn source_return_type_is_function_type_param(
