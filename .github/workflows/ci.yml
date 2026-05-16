@@ -50,9 +50,16 @@ jobs:
             # CI run from the same SHA's open/sync events, so skip.
             if [[ "${{ github.event.action }}" == "labeled" \
                   && "${{ github.event.label.name }}" != "ci-approved" ]]; then
+              # Skip the actual CI work — a non-ci-approved label add just
+              # duplicates the existing CI run from the same SHA's open/sync
+              # events. But KEEP required_summary=true so the CI Summary job
+              # (the required-status-check name) still runs and passes via the
+              # `should_run=false` short-circuit. Setting required_summary=false
+              # here would rename the summary to "CI Light Summary", which
+              # branch protection does not recognize → PR stays BLOCKED until
+              # a non-label event fires.
               echo "Label '${{ github.event.label.name }}' is not 'ci-approved' — skipping redundant run."
               should_run=false
-              required_summary=false
             fi
             if [[ "${{ github.event.pull_request.draft }}" == "true" ]]; then
               # Draft PRs still run the light CI suite (lint, build, unit).
