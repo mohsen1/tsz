@@ -276,40 +276,18 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    // Prefer the user's source annotation: an inline `(x: number) => string`
+    // and a named `type Cb = …` share the same interned `TypeId`, so the
+    // printer would collapse both to whichever alias was registered last.
     pub(super) fn jsx_children_type_display(
         &mut self,
         props_type: TypeId,
         children_type: TypeId,
     ) -> String {
-        self.jsx_children_declared_type_text(props_type)
-            .unwrap_or_else(|| self.jsx_children_fallback_type_display(children_type))
-    }
-
-    fn jsx_children_fallback_type_display(&mut self, children_type: TypeId) -> String {
-        let children_type = self.evaluate_type_with_env(children_type);
-        let display =
-            if crate::query_boundaries::common::union_members(self.ctx.types, children_type)
-                .is_some()
-                || crate::query_boundaries::common::intersection_members(
-                    self.ctx.types,
-                    children_type,
-                )
-                .is_some()
-            {
-                self.format_type(children_type)
-            } else {
-                self.format_jsx_children_type_without_structural_aliases(children_type)
-            };
+        let display = self
+            .jsx_children_declared_type_text(props_type)
+            .unwrap_or_else(|| self.format_type(children_type));
         self.normalize_jsx_children_alias_union_display(display)
-    }
-
-    fn format_jsx_children_type_without_structural_aliases(&self, type_id: TypeId) -> String {
-        let mut formatter =
-            tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
-                .with_diagnostic_mode()
-                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
-                .with_display_properties();
-        formatter.format(type_id).into_owned()
     }
 
     fn normalize_jsx_children_alias_union_display(&self, display: String) -> String {
@@ -494,12 +472,65 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            return self
-                .node_text(sig.type_annotation)
-                .map(|text| text.trim().to_string());
+            let text = self.node_text(sig.type_annotation)?;
+            let trimmed = text.trim().trim_end_matches([';', ',']).trim_end();
+            return Some(Self::strip_namespace_qualifiers(trimmed));
         }
 
         None
+    }
+
+    /// `JSX.Element` -> `Element`; `Foo.Bar.Baz` -> `Baz`. Decimal literals,
+    /// string literals, and template literal spans pass through unchanged.
+    fn strip_namespace_qualifiers(text: &str) -> String {
+        if !text.contains('.') {
+            return text.to_string();
+        }
+        let is_start = |b: u8| b.is_ascii_alphabetic() || b == b'_' || b == b'$';
+        let is_cont = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'$';
+        let bytes = text.as_bytes();
+        let mut out = String::with_capacity(text.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            let c = bytes[i];
+            if matches!(c, b'\'' | b'"' | b'`') {
+                let start = i;
+                i += 1;
+                while i < bytes.len() {
+                    match bytes[i] {
+                        b'\\' => {
+                            i += 1;
+                            if i < bytes.len() {
+                                i += 1;
+                            }
+                        }
+                        b if b == c => {
+                            i += 1;
+                            break;
+                        }
+                        _ => i += 1,
+                    }
+                }
+                out.push_str(&text[start..i]);
+                continue;
+            }
+            if is_start(c) {
+                let start = i;
+                while i < bytes.len() && is_cont(bytes[i]) {
+                    i += 1;
+                }
+                if i + 1 < bytes.len() && bytes[i] == b'.' && is_start(bytes[i + 1]) {
+                    i += 1;
+                    continue;
+                }
+                out.push_str(&text[start..i]);
+            } else {
+                let ch = text[i..].chars().next().expect("byte boundary");
+                out.push(ch);
+                i += ch.len_utf8();
+            }
+        }
+        out
     }
 
     fn single_jsx_child_satisfies_children_type(
