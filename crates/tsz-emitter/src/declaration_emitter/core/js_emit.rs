@@ -541,6 +541,15 @@ impl<'a> DeclarationEmitter<'a> {
                     if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
                         || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
                     {
+                        let overload_signatures =
+                            self.jsdoc_overload_signatures_for_node(prop.initializer);
+                        if self.emit_jsdoc_overload_namespace_function_signatures(
+                            prop.name,
+                            member_idx,
+                            &overload_signatures,
+                        ) {
+                            continue;
+                        }
                         let Some(func) = self.arena.get_function(init_node) else {
                             continue;
                         };
@@ -580,6 +589,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("}");
         self.write_line();
+        self.emit_jsdoc_callback_type_aliases_for_object_literal_namespace(
+            initializer,
+            is_exported,
+        );
         true
     }
 
@@ -2520,6 +2533,15 @@ impl<'a> DeclarationEmitter<'a> {
                     if member_init_node.kind == syntax_kind_ext::ARROW_FUNCTION
                         || member_init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
                     {
+                        let overload_signatures =
+                            self.jsdoc_overload_signatures_for_node(prop.initializer);
+                        if self.emit_jsdoc_overload_namespace_function_signatures(
+                            prop.name,
+                            member_idx,
+                            &overload_signatures,
+                        ) {
+                            continue;
+                        }
                         let Some(func) = self.arena.get_function(member_init_node) else {
                             continue;
                         };
@@ -2559,6 +2581,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("}");
         self.write_line();
+        self.emit_jsdoc_callback_type_aliases_for_object_literal_namespace(
+            initializer,
+            is_exported,
+        );
         self.emitted_module_indicator = true;
         true
     }
