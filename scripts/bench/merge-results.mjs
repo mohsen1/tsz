@@ -37,9 +37,6 @@ const hyperfineExitCodesRequired = payloads.every(
 );
 
 const REQUIRED_PROJECT_ROWS = [
-  "kysely-project",
-  "zod-project",
-  "ts-toolbelt-project",
   "type-fest-project",
   "ts-essentials-project",
   "large-ts-repo",

@@ -123,6 +123,7 @@ pub(crate) mod js_exports;
 pub(crate) mod key_constraints;
 #[allow(dead_code)]
 pub(crate) mod name_resolution;
+mod operator_wrappers;
 #[allow(
     dead_code,
     clippy::missing_const_for_fn,
