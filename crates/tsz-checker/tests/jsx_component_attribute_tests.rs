@@ -1476,7 +1476,6 @@ let y = <Poisoned />;
 }
 
 #[test]
-#[ignore] // TODO: needs default lib types (Array, Object, etc.) to avoid TS2318 flood
 fn test_cross_file_react_class_generic_props_emit_errors() {
     let lib_source = r#"
 declare namespace JSX {
@@ -1517,7 +1516,7 @@ interface Prop {
     b: string
 }
 
-declare class MyComp<P extends Prop> extends React.Component<P, {}> {
+class MyComp<P extends Prop> extends React.Component<P, {}> {
     internalProp: P;
     render() {
         return <div>Hello</div>;
@@ -1528,7 +1527,12 @@ let x1 = <MyComp />;
 let x2 = <MyComp a="hi" />;
 "#;
 
-    let diags = cross_file_jsx_diagnostics(lib_source, main_source);
+    let diags = cross_file_jsx_diagnostics_with_mode_and_default_libs(
+        lib_source,
+        main_source,
+        JsxMode::Preserve,
+        true,
+    );
     assert!(
         has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
         "Expected TS2322 for class component prop mismatch, got: {diags:?}"
@@ -1536,7 +1540,7 @@ let x2 = <MyComp a="hi" />;
     assert!(
         has_code(
             &diags,
-            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+            diagnostic_codes::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE
         ),
         "Expected TS2739 for missing class component props, got: {diags:?}"
     );
