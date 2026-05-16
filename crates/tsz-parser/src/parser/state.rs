@@ -648,8 +648,9 @@ impl ParserState {
         }
     }
 
-    /// Returns true when the current `Unknown` token is the backslash/escape
-    /// debris from an invalid unicode escape in a declaration identifier.
+    /// Returns true when the current `Unknown` token is non-braced
+    /// backslash/escape debris from an invalid unicode escape in a declaration
+    /// identifier.
     pub(crate) fn current_unknown_starts_invalid_unicode_identifier_debris(&self) -> bool {
         if !self.is_token(SyntaxKind::Unknown) {
             return false;
@@ -658,7 +659,9 @@ impl ParserState {
         let src = self.scanner.source_text();
         let start = self.scanner.get_token_start();
         let bytes = src.as_bytes();
-        bytes.get(start) == Some(&b'\\') && bytes.get(start + 1) == Some(&b'u')
+        bytes.get(start) == Some(&b'\\')
+            && bytes.get(start + 1) == Some(&b'u')
+            && bytes.get(start + 2) != Some(&b'{')
     }
 
     /// Recover an invalid unicode escape that appears where a declaration

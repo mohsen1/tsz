@@ -2277,11 +2277,14 @@ impl ParserState {
                 //   tsc treats this as `const a, number = "missing colon";`
                 //   and emits only one TS1005 at `number`.
                 {
+                    if self.current_unknown_starts_invalid_unicode_identifier_debris() {
+                        continue;
+                    }
+
                     let can_continue = (self.is_identifier_or_keyword()
                         && !self.is_reserved_word())
                         || self.is_token(SyntaxKind::OpenBraceToken)
-                        || self.is_token(SyntaxKind::OpenBracketToken)
-                        || self.current_unknown_starts_invalid_unicode_identifier_debris();
+                        || self.is_token(SyntaxKind::OpenBracketToken);
                     if can_continue {
                         // Emit ',' expected directly, bypassing the distance-based
                         // suppression heuristic. tsc's parseDelimitedList always
