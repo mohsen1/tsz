@@ -2056,6 +2056,7 @@ fn test_solver_imports_go_through_query_boundaries() {
 // SECTION 6: DefId-First Semantic Type Resolution
 // - [x] No ad-hoc TypeData::Lazy interning                -> test_array_helpers_avoid_direct_typekey_interning (existing)
 // - [x] instanceof constructor narrowing uses real DefIds -> test_instanceof_constructor_branches_avoid_raw_symbol_reference_fallback
+// - [x] ArrayBuffer.isView fallback uses real DefIds      -> test_array_buffer_is_view_avoids_raw_symbol_reference_fallback
 // - [x] No new raw SymbolRef reference construction       -> test_checker_raw_symbol_reference_construction_budget
 // - [x] ensure_relation_input_ready used before relations  -> test_subtype_path_establishes_preconditions_before_subtype_cache_lookup (existing)
 //
@@ -5095,15 +5096,39 @@ fn test_instanceof_constructor_branches_avoid_raw_symbol_reference_fallback() {
     );
 }
 
+/// Guard: the manual `ArrayBuffer.isView` fallback must use real `DefId`-backed
+/// lazy types rather than raw SymbolId-shaped `reference(SymbolRef)` fallback.
+#[test]
+fn test_array_buffer_is_view_avoids_raw_symbol_reference_fallback() {
+    let source = fs::read_to_string("src/flow/control_flow/type_guards.rs")
+        .expect("failed to read src/flow/control_flow/type_guards.rs");
+    let branch = source
+        .split("if type_id.is_none()")
+        .nth(1)
+        .and_then(|rest| rest.split("let type_id = type_id?;").next())
+        .expect("failed to isolate ArrayBuffer.isView manual fallback branch");
+
+    assert!(
+        branch.contains("self.resolve_symbol_to_lazy(symbol_ref)?"),
+        "ArrayBuffer.isView fallback should resolve ArrayBufferView through the DefId-backed lazy helper"
+    );
+    assert!(
+        branch.contains("self.resolve_symbol_to_lazy(array_buffer_like_ref)?"),
+        "ArrayBuffer.isView fallback should resolve ArrayBufferLike through the DefId-backed lazy helper"
+    );
+    assert!(
+        !branch.contains(".reference("),
+        "ArrayBuffer.isView fallback must not create Lazy(DefId(symbol_id)) via raw SymbolRef fallback"
+    );
+}
+
 /// Guard: checker code must not add new raw `reference(SymbolRef)` fallback
-/// construction while the remaining producers migrate to real `DefId`s.
+/// construction. New checker code should resolve symbols through stable
+/// `DefId` helpers before creating `Lazy(DefId)`.
 #[test]
 fn test_checker_raw_symbol_reference_construction_budget() {
-    fn allowed_raw_reference_constructions(rel_path: &str) -> usize {
-        match rel_path {
-            "src/flow/control_flow/type_guards.rs" => 2,
-            _ => 0,
-        }
+    fn allowed_raw_reference_constructions(_rel_path: &str) -> usize {
+        0
     }
 
     fn is_raw_reference_construction(line: &str) -> bool {
