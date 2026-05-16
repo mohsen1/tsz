@@ -4284,6 +4284,198 @@ fn test_completions_symbol_excludes_object_prototype_members() {
     }
 }
 
+// ── Lib-context completion tests ─────────────────────────────────────────────
+
+const MINIMAL_BOOLEAN_LIB: &str = concat!(
+    "interface Boolean { valueOf(): boolean; }\n",
+    "interface Object { constructor: Function; hasOwnProperty(v: PropertyKey): boolean; ",
+    "isPrototypeOf(v: Object): boolean; propertyIsEnumerable(v: PropertyKey): boolean; ",
+    "toString(): string; toLocaleString(): string; valueOf(): Object; }\n",
+    "type PropertyKey = string | number | symbol;"
+);
+
+const MINIMAL_NUMBER_LIB: &str = concat!(
+    "interface Number { toString(radix?: number): string; toFixed(fractionDigits?: number): string; ",
+    "toExponential(fractionDigits?: number): string; toPrecision(precision?: number): string; ",
+    "valueOf(): number; toLocaleString(): string; }\n",
+    "interface Object { constructor: Function; hasOwnProperty(v: string): boolean; ",
+    "isPrototypeOf(v: Object): boolean; propertyIsEnumerable(v: string): boolean; }"
+);
+
+const MINIMAL_STRING_LIB: &str = concat!(
+    "interface String { charAt(pos: number): string; charCodeAt(index: number): number; ",
+    "indexOf(searchString: string, position?: number): number; slice(start?: number, end?: number): string; ",
+    "toUpperCase(): string; toLowerCase(): string; trim(): string; valueOf(): string; ",
+    "toString(): string; readonly length: number; }\n",
+    "interface Object { constructor: Function; hasOwnProperty(v: string): boolean; ",
+    "isPrototypeOf(v: Object): boolean; propertyIsEnumerable(v: string): boolean; }"
+);
+
+fn member_names_at_end_with_lib(source: &str, lib_source: &str) -> Vec<String> {
+    use crate::provider_macro::FullProviderOptions;
+    use std::sync::Arc;
+    use tsz_binder::lib_loader::LibFile;
+    use tsz_checker::context::LibContext;
+
+    let lib = Arc::new(LibFile::from_source(
+        "lib.d.ts".to_string(),
+        lib_source.to_string(),
+    ));
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(arena, root, &[Arc::clone(&lib)]);
+    let line_map = LineMap::build(source);
+    let interner = TypeInterner::new();
+    let lib_contexts = vec![LibContext {
+        arena: Arc::clone(&lib.arena),
+        binder: Arc::clone(&lib.binder),
+    }];
+    let completions = Completions::with_options_and_lib_contexts(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+        FullProviderOptions {
+            strict: false,
+            sound_mode: false,
+            checker_options: None,
+            lib_contexts: &lib_contexts,
+        },
+    );
+    let position = line_map.offset_to_position(source.len() as u32, source);
+    let mut cache = None;
+    completions
+        .get_completions_with_cache(root, position, &mut cache)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| i.label)
+        .collect()
+}
+
+fn member_names_at_end_with_full_lib(source: &str) -> Vec<String> {
+    let lib_source = include_str!("../../../crates/tsz-website/src/lib/lib.es5.d.ts");
+    member_names_at_end_with_lib(source, lib_source)
+}
+
+// These four Object.prototype members are never overridden by Boolean, Number, or String
+// boxed interfaces, so they must not appear in any primitive type's completions.
+const OBJECT_PROTOTYPE_MEMBERS: &[&str] = &[
+    "constructor",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+];
+
+fn assert_primitive_members(label: &str, names: &[String], expected: &[&str], ctx: &str) {
+    for name in expected {
+        assert!(
+            names.iter().any(|n| n == *name),
+            "{label} completions must include '{name}'; got: {names:?} ({ctx})"
+        );
+    }
+    for excluded in OBJECT_PROTOTYPE_MEMBERS {
+        assert!(
+            !names.iter().any(|n| n == *excluded),
+            "{label} completions must not include Object.prototype member '{excluded}'; got: {names:?} ({ctx})"
+        );
+    }
+}
+
+fn assert_boolean_primitive_members(names: &[String], ctx: &str) {
+    assert_primitive_members("Boolean", names, &["valueOf"], ctx);
+}
+
+fn assert_number_primitive_members(names: &[String], ctx: &str) {
+    assert_primitive_members(
+        "Number",
+        names,
+        &[
+            "toString",
+            "toFixed",
+            "toExponential",
+            "toPrecision",
+            "valueOf",
+        ],
+        ctx,
+    );
+}
+
+fn assert_string_primitive_members(names: &[String], ctx: &str) {
+    assert_primitive_members(
+        "String",
+        names,
+        &[
+            "charAt",
+            "indexOf",
+            "toUpperCase",
+            "toLowerCase",
+            "valueOf",
+            "length",
+        ],
+        ctx,
+    );
+}
+
+#[test]
+fn test_completions_boolean_no_constructor_with_lib() {
+    for source in [
+        "const b = true;\nb.",
+        "const b: boolean = false;\nb.",
+        "const flag = false;\nflag.",
+    ] {
+        let names = member_names_at_end_with_lib(source, MINIMAL_BOOLEAN_LIB);
+        assert_boolean_primitive_members(&names, source);
+    }
+}
+
+#[test]
+fn test_completions_boolean_no_constructor_with_full_lib() {
+    for source in [
+        "const b = true;\nb.",
+        "const b: boolean = false;\nb.",
+        "const flag = false;\nflag.",
+    ] {
+        let names = member_names_at_end_with_full_lib(source);
+        assert_boolean_primitive_members(&names, source);
+    }
+}
+
+#[test]
+fn test_completions_number_with_lib() {
+    for source in ["const n = 42;\nn.", "const n: number = 0;\nn.", "(3.14)."] {
+        let names = member_names_at_end_with_lib(source, MINIMAL_NUMBER_LIB);
+        assert_number_primitive_members(&names, source);
+    }
+}
+
+#[test]
+fn test_completions_string_with_lib() {
+    for source in ["const s = \"hello\";\ns.", "const s: string = \"\";\ns."] {
+        let names = member_names_at_end_with_lib(source, MINIMAL_STRING_LIB);
+        assert_string_primitive_members(&names, source);
+    }
+}
+
+#[test]
+fn test_completions_number_with_full_lib() {
+    for source in ["const n = 42;\nn.", "const n: number = 0;\nn."] {
+        let names = member_names_at_end_with_full_lib(source);
+        assert_number_primitive_members(&names, source);
+    }
+}
+
+#[test]
+fn test_completions_string_with_full_lib() {
+    for source in ["const s = \"hello\";\ns.", "const s: string = \"\";\ns."] {
+        let names = member_names_at_end_with_full_lib(source);
+        assert_string_primitive_members(&names, source);
+    }
+}
+
 // ── Tuple member completions ─────────────────────────────────────────────────
 //
 // Structural rule: a tuple type `[T, U, ...]` exposes ALL Array.prototype members
