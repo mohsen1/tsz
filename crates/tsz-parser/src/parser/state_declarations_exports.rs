@@ -2042,7 +2042,11 @@ impl ParserState {
             if self.is_contextually_reserved_label() {
                 // Emit TS1003 matching tsc's createIdentifier(false) behavior
                 self.error_identifier_expected();
-                NodeIndex::NONE
+                if self.in_static_block_context() && self.is_token(SyntaxKind::AwaitKeyword) {
+                    self.parse_identifier_name()
+                } else {
+                    NodeIndex::NONE
+                }
             } else {
                 self.parse_identifier_name()
             }
@@ -2075,7 +2079,11 @@ impl ParserState {
         {
             if self.is_contextually_reserved_label() {
                 self.error_identifier_expected();
-                NodeIndex::NONE
+                if self.in_static_block_context() && self.is_token(SyntaxKind::AwaitKeyword) {
+                    self.parse_identifier_name()
+                } else {
+                    NodeIndex::NONE
+                }
             } else {
                 self.parse_identifier_name()
             }
