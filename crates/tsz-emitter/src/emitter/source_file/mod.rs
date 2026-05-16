@@ -128,7 +128,6 @@ mod tests {
         let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
         let mut printer =
             EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
-        printer.set_source_text(source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -161,7 +160,6 @@ mod tests {
         let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
         let mut printer =
             EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
-        printer.set_source_text(source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -1370,6 +1368,66 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         assert!(
             output.contains("(bar = __rest({}, []));"),
             "Object-rest assignment lowering should still call __rest.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn defaulted_nested_object_rest_assignment_uses_resolved_source() {
+        let source = "let a: any, b: any, c: any = { x: { a: 1, y: 2 } }, d: any;\n({ x: { a, ...b } = d } = c);\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a, _b;"),
+            "Defaulted nested object-rest assignment should hoist both evaluation temps.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "(_a = c.x, _b = _a === void 0 ? d : _a, { a } = _b, b = __rest(_b, [\"a\"]));"
+            ),
+            "Nested object rest must use the resolved default source, not the default expression.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_defaulted_nested_object_rest_assignment_uses_resolved_source() {
+        let source = "let a: any, b: any, c: any = { x: { a: 1, y: 2 } }, d: any;\n({ x: { a, ...b } = d } = c);\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a, _b;"),
+            "ES5 nested object-rest assignment should hoist both evaluation temps.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "(_a = c.x, _b = _a === void 0 ? d : _a, a = _b.a, b = __rest(_b, [\"a\"]));"
+            ),
+            "ES5 nested object rest must use the resolved default source, not the default expression.\nOutput:\n{output}"
         );
     }
 
