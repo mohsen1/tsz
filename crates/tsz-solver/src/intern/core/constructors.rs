@@ -806,6 +806,9 @@ impl TypeInterner {
         // e.g., 1 | 2 | number => number
         // e.g., true | boolean => boolean
         self.absorb_literals_into_primitives(&mut flat);
+        // Merge Enum(D, X) | Enum(D, Y) → Enum(D, X | Y) so that split-then-
+        // rejoined enum members (e.g., E1.a | E1.b) display as E1, not E1 | E1.
+        self.merge_same_enum_parts(&mut flat);
         self.absorb_intersections_with_union_constituents(&mut flat);
 
         if flat.is_empty() {

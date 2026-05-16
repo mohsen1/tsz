@@ -1754,3 +1754,133 @@ fn test_narrow_type_instanceof_any_target_returns_source_unchanged() {
         "TypeGuard::Instanceof(any) on the true branch should not filter union members"
     );
 }
+
+// =============================================================================
+// Enum narrowing tests (narrow_to_type for enum sources)
+// =============================================================================
+
+#[test]
+fn test_narrow_to_type_enum_preserves_nominal_wrapper() {
+    // When v: E1 (enum) and we narrow to literal 1, the result should be Enum(E1_def, 1)
+    // not raw literal 1. This preserves the nominal identity of the enum.
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let enum_def = crate::def::DefId(100);
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let inner_union = interner.union(vec![lit1, lit2]);
+
+    // E1 = Enum(E1_def, 1 | 2)
+    let e1 = interner.intern(crate::types::TypeData::Enum(enum_def, inner_union));
+
+    // narrow_to_type(E1, 1) should yield Enum(E1_def, 1), not raw literal 1
+    let narrowed = ctx.narrow_to_type(e1, lit1);
+    let expected = interner.intern(crate::types::TypeData::Enum(enum_def, lit1));
+    assert_eq!(
+        narrowed, expected,
+        "narrow_to_type(Enum(D,1|2), 1) should produce Enum(D,1), not raw 1"
+    );
+
+    // Verify that the result is NOT the raw literal (the regression we fixed)
+    assert_ne!(
+        narrowed, lit1,
+        "narrow_to_type on an enum source must not drop the nominal wrapper"
+    );
+}
+
+#[test]
+fn test_narrow_to_type_enum_value_not_in_enum_returns_never() {
+    // When v: E1 = {a=1,b=2} and we narrow to 3, result is NEVER (3 not in E1)
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let enum_def = crate::def::DefId(100);
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let lit3 = interner.literal_number(3.0);
+    let inner_union = interner.union(vec![lit1, lit2]);
+    let e1 = interner.intern(crate::types::TypeData::Enum(enum_def, inner_union));
+
+    let narrowed = ctx.narrow_to_type(e1, lit3);
+    assert_eq!(
+        narrowed,
+        TypeId::NEVER,
+        "narrow_to_type(E1, 3) where 3 is not in E1 should be NEVER"
+    );
+}
+
+#[test]
+fn test_enum_union_parts_merge_on_join() {
+    // When control flow produces Enum(D,2) | Enum(D,1), the union should
+    // merge to Enum(D, 1|2) rather than staying as two separate enum types.
+    // This verifies the merge_same_enum_parts step in normalize_union.
+    let interner = TypeInterner::new();
+
+    let enum_def = crate::def::DefId(100);
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+
+    let part_a = interner.intern(crate::types::TypeData::Enum(enum_def, lit2));
+    let part_b = interner.intern(crate::types::TypeData::Enum(enum_def, lit1));
+
+    // Building Enum(D,2) | Enum(D,1) should give Enum(D, 1|2) = E1
+    let joined = interner.union(vec![part_a, part_b]);
+
+    let inner_12 = interner.union(vec![lit1, lit2]);
+    let e1 = interner.intern(crate::types::TypeData::Enum(enum_def, inner_12));
+
+    assert_eq!(
+        joined, e1,
+        "Enum(D,2) | Enum(D,1) should merge to Enum(D, 1|2)"
+    );
+}
+
+#[test]
+fn test_enum_narrowing_join_roundtrip() {
+    // Full roundtrip: E1 excluding 1 | narrow_to(E1, 1) should recover E1.
+    // This is the join after `if (v: E1) { v !== 1 } {}`.
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let enum_def = crate::def::DefId(200);
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let inner_union = interner.union(vec![lit1, lit2]);
+    let e1 = interner.intern(crate::types::TypeData::Enum(enum_def, inner_union));
+
+    // True branch: v !== 1 → exclude 1 → Enum(D, 2)
+    let true_branch = ctx.narrow_excluding_type(e1, lit1);
+    // False branch: v === 1 → narrow to 1 → Enum(D, 1)
+    let false_branch = ctx.narrow_to_type(e1, lit1);
+
+    // Join: Enum(D,2) | Enum(D,1) → should merge to E1
+    let joined = interner.union(vec![true_branch, false_branch]);
+    assert_eq!(
+        joined, e1,
+        "join(E1 excl 1, narrow_to(E1, 1)) should recover E1"
+    );
+}
+
+#[test]
+fn test_enum_narrowing_two_names_same_fix() {
+    // Regression coverage: the fix must not depend on any specific variable
+    // name, enum name, or type parameter name. Verify with different DefIds.
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    for def_raw in [77u32, 888, 12345] {
+        let enum_def = crate::def::DefId(def_raw);
+        let inner_a = interner.literal_number(10.0);
+        let inner_b = interner.literal_number(20.0);
+        let inner = interner.union(vec![inner_a, inner_b]);
+        let e = interner.intern(crate::types::TypeData::Enum(enum_def, inner));
+
+        let narrowed_to_a = ctx.narrow_to_type(e, inner_a);
+        let expected = interner.intern(crate::types::TypeData::Enum(enum_def, inner_a));
+        assert_eq!(
+            narrowed_to_a, expected,
+            "narrow_to_type with DefId={def_raw} should produce Enum(D,10)"
+        );
+    }
+}

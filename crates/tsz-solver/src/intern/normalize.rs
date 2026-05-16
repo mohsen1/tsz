@@ -1350,6 +1350,50 @@ impl TypeInterner {
         )
     }
 
+    /// Merge `Enum(D, X) | Enum(D, Y)` into `Enum(D, X | Y)` for same-`DefId` enum
+    /// types in the flat union list. After `sort_union_members`, same-def-id enums are
+    /// adjacent, so a single forward scan suffices.
+    ///
+    /// This preserves the nominal enum wrapper when control-flow analysis
+    /// splits and rejoins enum member types (e.g., `E1.a | E1.b` → `E1`).
+    pub(crate) fn merge_same_enum_parts(&self, flat: &mut TypeListBuffer) {
+        if flat.len() < 2 {
+            return;
+        }
+        let mut i = 0;
+        while i < flat.len() {
+            let Some(TypeData::Enum(def_a, _)) = self.lookup(flat[i]) else {
+                i += 1;
+                continue;
+            };
+            // Collect consecutive enum members with the same DefId.
+            let mut j = i + 1;
+            while j < flat.len() {
+                if let Some(TypeData::Enum(def_b, _)) = self.lookup(flat[j])
+                    && def_b == def_a
+                {
+                    j += 1;
+                    continue;
+                }
+                break;
+            }
+            if j > i + 1 {
+                // Multiple same-def enum parts: merge their inners.
+                let inners: Vec<TypeId> = flat[i..j]
+                    .iter()
+                    .filter_map(|&id| match self.lookup(id) {
+                        Some(TypeData::Enum(_, inner)) => Some(inner),
+                        _ => None,
+                    })
+                    .collect();
+                let merged_inner = self.union_from_iter(inners);
+                flat[i] = self.intern(TypeData::Enum(def_a, merged_inner));
+                flat.drain(i + 1..j);
+            }
+            i += 1;
+        }
+    }
+
     /// Absorb literal types into their corresponding primitive types.
     /// e.g., "a" | string | number => string | number
     /// e.g., 1 | 2 | number => number

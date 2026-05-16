@@ -858,6 +858,14 @@ impl<'a> NarrowingContext<'a> {
             return target_type;
         }
 
+        // Decompose Enum(D, inner) so narrowing-to runs on the inner literal
+        // union and the nominal enum wrapper is preserved.
+        if let Some(narrowed) =
+            self.narrow_enum_to_type(source_type, resolved_source, resolved_target)
+        {
+            return narrowed;
+        }
+
         // If source is a union, filter members
         // Use resolved_source for structural inspection
         if let Some(members) = union_list_id(self.db, resolved_source) {
@@ -1283,6 +1291,40 @@ impl<'a> NarrowingContext<'a> {
         }
 
         Some(self.db.intersection2(source, narrowed_constraint))
+    }
+
+    /// Unwrap `TypeData::Enum(D, inner)` so narrowing-to runs on the inner literal
+    /// union and rewraps the result with the same `DefId`, preserving nominal
+    /// enum identity. If the target is the same enum, its inner literal is used
+    /// as the effective target so narrowing stays within the enum domain.
+    /// Returns `None` for non-enum sources so callers fall through.
+    fn narrow_enum_to_type(
+        &self,
+        original_source: TypeId,
+        resolved_source: TypeId,
+        target_type: TypeId,
+    ) -> Option<TypeId> {
+        let (enum_def, inner) = crate::visitor::enum_components(self.db, resolved_source)?;
+
+        // If target is the same enum, unwrap to narrow within the enum domain.
+        let effective_target = match crate::visitor::enum_components(self.db, target_type) {
+            Some((target_def, target_inner))
+                if self.class_defs_equivalent_for_narrowing(enum_def, target_def) =>
+            {
+                target_inner
+            }
+            _ => target_type,
+        };
+
+        let narrowed_inner = self.narrow_to_type(inner, effective_target);
+
+        if narrowed_inner == TypeId::NEVER {
+            return Some(TypeId::NEVER);
+        }
+        if narrowed_inner == inner {
+            return Some(original_source);
+        }
+        Some(self.db.enum_type(enum_def, narrowed_inner))
     }
 
     /// Unwrap `TypeData::Enum(D, inner)` so exclusion runs on the inner literal
