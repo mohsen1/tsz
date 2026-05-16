@@ -14,10 +14,9 @@ steps:
       - 'CARGO_INCREMENTAL=0'
       - 'CARGO_TERM_COLOR=always'
       - 'TSZ_CI_SUITE=dist-binaries'
-      - 'TSZ_CI_SKIP_HOST_APT=1'
+      - 'TSZ_CI_SKIP_HOST_APT=0'
       - 'TSZ_CI_DISABLE_SCCACHE=1'
-      - 'TSZ_CI_CACHE_SAVE=0'
-      - 'TSZ_CI_CACHE_SAVE_CARGO_TARGETS=0'
+      - 'TSZ_CI_CACHE_SAVE_CARGO_TARGETS=1'
       - '_TSZ_DIST_ARTIFACT_URI=${_TSZ_DIST_ARTIFACT_URI}'
     script: |
       #!/usr/bin/env bash
@@ -28,7 +27,7 @@ steps:
       cargo --version
       rustc --version
 
-      scripts/ci/gcp-full-ci.sh dist-binaries
+      scripts/ci/github-suite.sh dist-binaries
 
       tar -C .target/dist-fast -cf dist-fast-binaries.tar \
         tsz tsz-server tsz-conformance generate-tsc-cache
