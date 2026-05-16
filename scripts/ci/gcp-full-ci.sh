@@ -25,10 +25,10 @@ mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE" "$TSZ_CI_WASM_PACK_CACHE"
 # absolute-floor edits. The fallback floor still protects paths without shard
 # expected counts.
 TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-12556}"
-# Temporary runway for the 2026-05-16 conformance aggregate regression:
-# current main reports 12519/12585 against an expected 12581/12585. Keep
-# the aggregate gate unblocked while the fix-forward PR restores the lost rows.
-TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT="${TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT:-62}"
+# Temporary runway for the 2026-05-16 conformance aggregate regression.
+# Keep this path-based, not count-based: fixing one listed test must not let a
+# new unlisted regression pass CI under the same aggregate deficit.
+TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS="${TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS:-scripts/conformance/conformance-accepted-regressions.txt}"
 TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1486}"
 
 cap_positive_baseline() {
@@ -1183,12 +1183,7 @@ run_conformance_aggregate() {
   if [[ "$total_expected_passed" -gt 0 ]]; then
     local expected_deficit=$(( total_expected_passed - total_passed ))
     if [[ "$expected_deficit" -gt 0 ]]; then
-      if [[ "$TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT" =~ ^[0-9]+$ \
-        && "$expected_deficit" -le "$TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT" ]]; then
-        echo "warning: conformance aggregate below expected within accepted deficit: ${total_passed} < ${total_expected_passed} (deficit ${expected_deficit}/${TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT})" >&2
-      else
-        echo "error: conformance regression: ${total_passed} < ${total_expected_passed} (deficit ${expected_deficit}, accepted ${TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT})" >&2
-        _show_conformance_regressions "$tmp_dir" "$prefix" "$total_expected_passed"
+      if ! _check_conformance_regression_allowlist "$tmp_dir" "$prefix" "$expected_deficit"; then
         return 1
       fi
     fi
@@ -1233,6 +1228,88 @@ run_conformance_aggregate() {
     echo "warning: no conformance timing shards available to publish (non-fatal)" >&2
   fi
   echo "Conformance gate passed: ${total_passed} >= ${baseline} (baseline)"
+}
+
+# Download shard failure lists and reject any failure outside the accepted set.
+_check_conformance_regression_allowlist() {
+  local tmp_dir="$1" prefix="$2" expected_deficit="$3"
+  local allowlist="${TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS:-}"
+
+  if [[ -z "$allowlist" || ! -f "$allowlist" ]]; then
+    echo "error: conformance regression deficit ${expected_deficit}, but no accepted regression list found at ${allowlist:-<unset>}" >&2
+    _show_conformance_regressions "$tmp_dir" "$prefix" "$expected_deficit"
+    return 1
+  fi
+
+  if ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+    echo "error: conformance regression deficit ${expected_deficit}, but per-shard failure lists are unavailable" >&2
+    return 1
+  fi
+
+  local all_failures_file="$tmp_dir/all-failures.txt"
+  cat "$tmp_dir"/failures-shard-*.txt 2>/dev/null | sort -u > "$all_failures_file" || true
+  local fail_count
+  fail_count="$(wc -l < "$all_failures_file" | tr -d ' ')"
+
+  if [[ "$fail_count" -ne "$expected_deficit" ]]; then
+    echo "error: conformance aggregate deficit ${expected_deficit}, but collected ${fail_count} failing test paths" >&2
+    _show_conformance_regressions "$tmp_dir" "$prefix" "$expected_deficit"
+    return 1
+  fi
+
+  python3 - "$all_failures_file" "$allowlist" "$expected_deficit" <<'PYEOF'
+import os
+import sys
+
+failures_file, allowlist_file, expected_deficit = sys.argv[1], sys.argv[2], int(sys.argv[3])
+
+def normalize(path):
+    parts = path.replace("\\", "/").split("/")
+    for i, part in enumerate(parts):
+        if part == "TypeScript":
+            return "/".join(parts[i:])
+    return "/".join(parts)
+
+def read_paths(path):
+    paths = set()
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            paths.add(normalize(line))
+    return paths
+
+failing = read_paths(failures_file)
+accepted = read_paths(allowlist_file)
+unlisted = sorted(failing - accepted)
+resolved = sorted(accepted - failing)
+
+if unlisted:
+    print("error: unlisted conformance regressions:", file=sys.stderr)
+    for path in unlisted:
+        print(f"  REGRESSED: {path}", file=sys.stderr)
+    if resolved:
+        print("", file=sys.stderr)
+        print("Accepted regressions that no longer fail in this run:", file=sys.stderr)
+        for path in resolved:
+            print(f"  RESOLVED: {path}", file=sys.stderr)
+    return_code = 1
+else:
+    print(
+        f"warning: conformance aggregate below expected only for accepted regressions: "
+        f"{len(failing)}/{len(accepted)} listed tests currently failing "
+        f"(deficit {expected_deficit})",
+        file=sys.stderr,
+    )
+    if resolved:
+        print("Accepted regressions that no longer fail in this run:", file=sys.stderr)
+        for path in resolved:
+            print(f"  RESOLVED: {path}", file=sys.stderr)
+    return_code = 0
+
+sys.exit(return_code)
+PYEOF
 }
 
 # Download per-shard failure lists and show which tests are newly failing vs snapshot.
