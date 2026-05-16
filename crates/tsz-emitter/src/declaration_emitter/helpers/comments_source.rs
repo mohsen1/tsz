@@ -91,6 +91,7 @@ impl<'a> DeclarationEmitter<'a> {
                 comment.pos,
                 comment.end,
                 next_on_same_line,
+                true,
             );
         }
     }
@@ -187,9 +188,46 @@ impl<'a> DeclarationEmitter<'a> {
                 comment.pos,
                 comment.end,
                 next_on_same_line,
+                true,
             );
         }
 
+        true
+    }
+
+    pub(crate) fn emit_jsdoc_comment_verbatim_for_pos(&mut self, pos: u32, jsdoc: &str) -> bool {
+        if self.remove_comments {
+            return true;
+        }
+        let Some(text) = self.source_file_text.clone() else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let mut actual_start = pos as usize;
+        while actual_start < bytes.len()
+            && matches!(bytes[actual_start], b' ' | b'\t' | b'\r' | b'\n')
+        {
+            actual_start += 1;
+        }
+
+        let Some(comment) = self
+            .all_comments
+            .iter()
+            .filter(|comment| comment.end as usize <= actual_start)
+            .filter(|comment| is_jsdoc_comment(comment, &text))
+            .filter(|comment| get_jsdoc_content(comment, &text) == jsdoc)
+            .max_by_key(|comment| comment.end)
+        else {
+            return false;
+        };
+
+        self.emit_jsdoc_comment_text_preserving_source(
+            &text,
+            comment.pos,
+            comment.end,
+            false,
+            false,
+        );
         true
     }
 
@@ -222,6 +260,7 @@ impl<'a> DeclarationEmitter<'a> {
         comment_pos: u32,
         comment_end: u32,
         next_on_same_line: bool,
+        normalize_inner_indent: bool,
     ) {
         let bytes = text.as_bytes();
         let ct = &text[comment_pos as usize..comment_end as usize];
@@ -279,7 +318,8 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                     }
                     let content = line[char_width..].trim_end();
-                    let content = if let Some(rest) = content.strip_prefix('*')
+                    let content = if normalize_inner_indent
+                        && let Some(rest) = content.strip_prefix('*')
                         && rest.starts_with("  ")
                     {
                         format!("* {}", rest.trim_start())
@@ -352,6 +392,7 @@ impl<'a> DeclarationEmitter<'a> {
                     c_pos,
                     c_end,
                     next_on_same_line,
+                    true,
                 );
             }
             self.comment_emit_idx += 1;
