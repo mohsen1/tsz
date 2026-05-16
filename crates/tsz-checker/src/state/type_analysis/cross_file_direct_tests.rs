@@ -1171,6 +1171,16 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
         .is_some(),
         "AddEventListenerOptions should include inherited EventListenerOptions members",
     );
+    assert_eq!(
+        state
+            .ctx
+            .lib_type_resolution_cache
+            .get("AddEventListenerOptions")
+            .copied()
+            .flatten(),
+        Some(heritage_ty),
+        "direct builtin interface lowering should publish the heritage-merged lib type",
+    );
 
     let iterable_sym_id = state
         .ctx

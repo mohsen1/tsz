@@ -2016,6 +2016,11 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
         }
+        if builtin_lib_declaration_arena && !self.lib_name_locally_augmented(&symbol.escaped_name) {
+            self.ctx
+                .lib_type_resolution_cache
+                .insert(symbol.escaped_name.clone(), Some(interface_type));
+        }
         record(DirectCrossFileInterfaceLoweringOutcome::Success);
 
         if !params.is_empty() {
