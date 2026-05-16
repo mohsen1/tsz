@@ -1877,10 +1877,10 @@ impl<'a> InferenceContext<'a> {
         spans: &[TemplateSpan],
         start_idx: usize,
     ) -> Option<Vec<String>> {
-        for span in spans.iter().skip(start_idx + 1) {
+        if let Some(span) = spans.get(start_idx + 1) {
             match span {
                 TemplateSpan::Text(text) => {
-                    let s = self.interner.resolve_atom(*text).to_string();
+                    let s = self.interner.resolve_atom(*text).as_str().to_owned();
                     return Some(vec![s]);
                 }
                 TemplateSpan::Type(type_id) => {
@@ -1914,7 +1914,7 @@ impl<'a> InferenceContext<'a> {
         }
         match self.interner.lookup(type_id)? {
             TypeData::Literal(LiteralValue::String(atom)) => {
-                Some(vec![self.interner.resolve_atom(atom).to_string()])
+                Some(vec![self.interner.resolve_atom(atom).as_str().to_owned()])
             }
             TypeData::Union(list_id) => {
                 let members = self.interner.type_list(list_id);
@@ -1926,7 +1926,7 @@ impl<'a> InferenceContext<'a> {
                     if let Some(TypeData::Literal(LiteralValue::String(atom))) =
                         self.interner.lookup(member)
                     {
-                        alternatives.push(self.interner.resolve_atom(atom).to_string());
+                        alternatives.push(self.interner.resolve_atom(atom).as_str().to_owned());
                     } else {
                         return None;
                     }
