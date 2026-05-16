@@ -120,10 +120,10 @@ fn is_enabled() -> bool {
 }
 
 fn enabled_from_env_value(value: Option<&str>) -> bool {
-    match value.map(|v| v.trim().to_ascii_lowercase()) {
-        Some(v) if matches!(v.as_str(), "0" | "off" | "false" | "no") => false,
-        _ => true,
-    }
+    !matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()),
+        Some(v) if matches!(v.as_str(), "0" | "off" | "false" | "no")
+    )
 }
 
 fn snapshot_path(dir: &Path, hash: u64) -> PathBuf {
