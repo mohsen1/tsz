@@ -558,6 +558,25 @@ impl<'a> Printer<'a> {
             None
         };
 
+        // Header comments before a source-authored `"use strict"` belong to that
+        // prologue. If we have to reposition the directive before helpers, move
+        // those comments with it instead of letting the generic helper-deferral
+        // path attach them to the first runtime statement.
+        let first_stmt_pos = source
+            .statements
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .map_or(node.end, |n| self.skip_trivia_forward(n.pos, n.end));
+
+        if skip_source_use_strict && !self.ctx.options.remove_comments {
+            let (emitted, _, had_trailing_newline) =
+                self.emit_comments_in_range(0, first_stmt_pos, false, false);
+            if emitted && !had_trailing_newline {
+                self.pending_block_comment_space = true;
+            }
+        }
+
         // Emit "use strict" when either:
         // - we need to add it (source doesn't have it), or
         // - the source has it but needs repositioning (CJS: before helpers/exports)
@@ -576,13 +595,6 @@ impl<'a> Printer<'a> {
         // Emit header comments AFTER "use strict" but BEFORE helpers.
         // Use skip_trivia_forward to find the actual token start since
         // node.pos may include leading trivia (where comments live).
-        let first_stmt_pos = source
-            .statements
-            .nodes
-            .first()
-            .and_then(|&idx| self.arena.get(idx))
-            .map_or(node.end, |n| self.skip_trivia_forward(n.pos, n.end));
-
         // When removeComments is true, tsc still emits "pinned" comments
         // (/*! ... */) that are detached from the first statement (i.e.,
         // separated by a blank line). These are typically copyright notices.
@@ -1909,11 +1921,19 @@ impl<'a> Printer<'a> {
                 } else {
                     None
                 };
+                let prev_deferred_local_export_bindings_all = if use_deferred_nested_cjs_exports {
+                    self.deferred_local_export_bindings_all
+                        .replace(cjs_deferred_export_bindings_all.clone())
+                } else {
+                    None
+                };
 
                 self.emit(stmt_idx);
 
                 if use_deferred_nested_cjs_exports {
                     self.deferred_local_export_bindings = prev_deferred_local_export_bindings;
+                    self.deferred_local_export_bindings_all =
+                        prev_deferred_local_export_bindings_all;
                 }
             }
             let emitted_output = self.writer.len() > before_len;

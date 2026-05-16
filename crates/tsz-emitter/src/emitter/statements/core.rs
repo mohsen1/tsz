@@ -37,6 +37,7 @@ impl<'a> Printer<'a> {
             && !needs_this_capture
             && is_function_body_block
             && !self.pending_object_rest_params.is_empty()
+            && self.pending_object_rest_param_defaults.is_empty()
             && self.is_single_line(node)
         {
             self.ctx.block_scope_state.enter_function_scope();
@@ -54,6 +55,7 @@ impl<'a> Printer<'a> {
         if block.statements.nodes.is_empty()
             && !needs_this_capture
             && self.pending_object_rest_params.is_empty()
+            && self.pending_object_rest_param_defaults.is_empty()
         {
             // Find the actual closing `}` position (not node.end which includes trailing trivia)
             let closing_brace_end = self.find_block_closing_brace_end(node);
@@ -167,7 +169,8 @@ impl<'a> Printer<'a> {
             && self.pending_lowered_async_arrow_super_capture.is_none()
             && self.hoisted_assignment_value_temps.is_empty()
             && self.hoisted_for_of_temps.is_empty()
-            && self.pending_object_rest_params.is_empty();
+            && self.pending_object_rest_params.is_empty()
+            && self.pending_object_rest_param_defaults.is_empty();
 
         if should_emit_single_line {
             if is_function_body_block {
@@ -274,6 +277,8 @@ impl<'a> Printer<'a> {
         // e.g., `function f(_a, b) { var { a } = _a, rest = __rest(_a, ["a"]); ... }`
         if is_function_body_block && !self.pending_object_rest_params.is_empty() {
             self.emit_pending_object_rest_param_preamble(false);
+        } else if is_function_body_block && !self.pending_object_rest_param_defaults.is_empty() {
+            self.emit_pending_object_rest_param_defaults(false);
         }
 
         let static_super_scope =
@@ -495,24 +500,7 @@ impl<'a> Printer<'a> {
         self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
 
         if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {
-            let indent = " ".repeat(self.writer.indent_width() as usize);
-            let mut ref_vars = Vec::new();
-            ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
-            ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
-
-            if !ref_vars.is_empty() {
-                let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
-                self.writer.insert_line_at(byte_offset, line_no, &var_decl);
-            }
-
-            if !self.hoisted_assignment_value_temps.is_empty() {
-                let var_decl = format!(
-                    "{}var {};",
-                    indent,
-                    self.hoisted_assignment_value_temps.join(", ")
-                );
-                self.writer.insert_line_at(byte_offset, line_no, &var_decl);
-            }
+            self.insert_function_body_hoisted_temps_at(byte_offset, line_no);
         }
 
         if let Some((byte_offset, line_no)) = block_scoped_private_byte_offset
@@ -637,9 +625,37 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn insert_function_body_hoisted_temps_at(
+        &mut self,
+        byte_offset: usize,
+        line_no: u32,
+    ) {
+        let indent = " ".repeat(self.writer.indent_width() as usize);
+        let mut ref_vars = Vec::new();
+        ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
+        ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
+
+        if !ref_vars.is_empty() {
+            let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
+            self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+        }
+
+        if !self.hoisted_assignment_value_temps.is_empty() {
+            let var_decl = format!(
+                "{}var {};",
+                indent,
+                self.hoisted_assignment_value_temps.join(", ")
+            );
+            self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+        }
+    }
+
     pub(in crate::emitter) fn emit_pending_object_rest_param_preamble(&mut self, inline: bool) {
         let rest_params: Vec<(String, NodeIndex)> =
             std::mem::take(&mut self.pending_object_rest_params);
+        for (temp_name, _) in &rest_params {
+            self.generated_temp_names.insert(temp_name.clone());
+        }
         for (i, (temp_name, pattern_idx)) in rest_params.iter().enumerate() {
             if inline && i > 0 {
                 self.write(" ");
@@ -647,6 +663,27 @@ impl<'a> Printer<'a> {
             self.write("var ");
             self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
             self.write(";");
+            if !inline {
+                self.write_line();
+            }
+        }
+        self.emit_pending_object_rest_param_defaults(inline);
+    }
+
+    pub(in crate::emitter) fn emit_pending_object_rest_param_defaults(&mut self, inline: bool) {
+        let defaults: Vec<(String, NodeIndex)> =
+            std::mem::take(&mut self.pending_object_rest_param_defaults);
+        for (i, (name, initializer)) in defaults.iter().enumerate() {
+            if inline && i > 0 {
+                self.write(" ");
+            }
+            self.write("if (");
+            self.write(name);
+            self.write(" === void 0) { ");
+            self.write(name);
+            self.write(" = ");
+            self.emit_expression(*initializer);
+            self.write("; }");
             if !inline {
                 self.write_line();
             }

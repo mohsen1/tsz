@@ -85,7 +85,7 @@ impl<'a> Printer<'a> {
         None
     }
 
-    fn es5_static_field_comma_inits(
+    pub(in crate::emitter) fn es5_static_field_comma_inits(
         &self,
         class_data: &tsz_parser::parser::node::ClassData,
     ) -> Vec<(PropertyNameEmit, NodeIndex)> {
@@ -1161,9 +1161,8 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
-        let use_static_comma = !static_field_inits.is_empty()
-            && !self.ctx.options.use_define_for_class_fields
-            && (class_data.name.is_some() || class_expr_set_function_name.is_some());
+        let use_static_comma =
+            !static_field_inits.is_empty() && !self.ctx.options.use_define_for_class_fields;
         if use_static_comma {
             es5_emitter.set_skip_static_members(true);
         }
@@ -1180,7 +1179,7 @@ impl<'a> Printer<'a> {
                 let output = es5_emitter.emit_class(class_node);
                 (candidate, output)
             }
-        } else if use_static_comma && class_expr_set_function_name.is_some() {
+        } else if use_static_comma {
             let temp_name = self.make_unique_name_from_base("class");
             let output = es5_emitter.emit_class_with_name(class_node, &temp_name);
             (temp_name, output)

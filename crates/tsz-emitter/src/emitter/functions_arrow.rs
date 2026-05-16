@@ -235,13 +235,7 @@ impl<'a> Printer<'a> {
             self.write("{");
             self.write_line();
             self.increase_indent();
-            // Emit the rest preamble
-            for (temp_name, pattern_idx) in &rest_params {
-                self.write("var ");
-                self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
-                self.write(";");
-                self.write_line();
-            }
+            self.emit_object_rest_param_prologue_entries(&rest_params);
             // Emit the concise body as a return statement
             self.write("return ");
             self.function_scope_depth += 1;
@@ -813,6 +807,16 @@ impl<'a> Printer<'a> {
         if node.kind == syntax_kind_ext::CLASS_EXPRESSION
             && let Some(class) = self.arena.get_class(node)
             && self.class_expression_initializer_needs_temp_prologue(class)
+        {
+            return true;
+        }
+
+        if self.ctx.target_es5
+            && node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            && let Some(literal) = self.arena.get_literal_expr(node)
+            && literal.elements.nodes.iter().copied().any(|element| {
+                crate::transforms::emit_utils::is_computed_property_member(self.arena, element)
+            })
         {
             return true;
         }
@@ -1392,12 +1396,16 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_object_rest_param_prologue_entries(&mut self, entries: &[(String, NodeIndex)]) {
+        for (temp_name, _) in entries {
+            self.generated_temp_names.insert(temp_name.clone());
+        }
         for (temp_name, pattern_idx) in entries {
             self.write("var ");
             self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
             self.write(";");
             self.write_line();
         }
+        self.emit_pending_object_rest_param_defaults(false);
     }
 
     /// Issue #3758: lower `async (x = init()) => body` so the default

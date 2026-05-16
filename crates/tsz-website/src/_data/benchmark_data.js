@@ -271,6 +271,18 @@ const COMPILE_CANARY_PROJECTS = [
 
 const COMPATIBILITY_CORPUS_ROWS = [
   {
+    name: "utility-types-project",
+    label: "utility-types",
+    owner: "Tracks 1, 2, 5",
+    family: "baseline utility mapped/conditional surface",
+  },
+  {
+    name: "rxjs-project",
+    label: "RxJS",
+    owner: "Tracks 1, 3, 7, 10",
+    family: "observable/subject generics, module identity, generated config pressure",
+  },
+  {
     name: "kysely-project",
     label: "Kysely",
     owner: "Tracks 2, 3, 5, 6",
@@ -305,6 +317,18 @@ const COMPATIBILITY_CORPUS_ROWS = [
     label: "large-ts-repo",
     owner: "Tracks 1, 7, 10",
     family: "residency/runtime/project graph stress",
+  },
+  {
+    name: "nextjs-fresh-app",
+    label: "generated Next app",
+    owner: "Tracks 1, 7, 9",
+    family: "generated app-router dependency/config sanity",
+  },
+  {
+    name: "vite-vanilla-ts-app",
+    label: "generated Vite app",
+    owner: "Tracks 1, 7, 9",
+    family: "generated app dependency/config sanity",
   },
   {
     name: "type-challenges-project",
