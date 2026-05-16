@@ -18,7 +18,7 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{ObjectShape, PropertyInfo, TypeId};
+use tsz_solver::{ObjectShape, PropertyInfo, SymbolRef, TypeId};
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     // =========================================================================
@@ -81,9 +81,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // Handle unique operator
             if operator == SyntaxKind::UniqueKeyword as u16 {
                 if inner_type == TypeId::SYMBOL {
-                    return self.ctx.types.unique_symbol(tsz_solver::SymbolRef(
-                        idx.0 | tsz_solver::SymbolRef::NODE_ANCHOR_BIT,
-                    ));
+                    return self
+                        .ctx
+                        .types
+                        .unique_symbol(SymbolRef(idx.0 | SymbolRef::NODE_ANCHOR_BIT));
                 }
                 return inner_type;
             }
