@@ -634,7 +634,7 @@ impl<'a> Printer<'a> {
             return if self
                 .arena
                 .get_class(node)
-                .is_some_and(|class| !self.es5_static_field_comma_inits(class).is_empty())
+                .is_some_and(|class| !self.es5_static_class_expression_elements(class).is_empty())
             {
                 1
             } else {

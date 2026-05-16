@@ -106,6 +106,21 @@ fn recovered_arrow_conditional_tail_emits_branch_statements() {
 }
 
 #[test]
+fn arrow_comments_before_token_are_erased_with_type_syntax() {
+    let source = "const a = (x: string): string /* erased */ => x;\nconst b = (x: string) => /* kept */ x;\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("const a = (x) => x;"),
+        "Comments before the arrow token belong to erased type syntax and should not lead the concise body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const b = (x) => /* kept */ x;"),
+        "Comments after the arrow token should still be preserved with the concise body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn arrow_default_optional_chain_temp_is_scoped_to_es5_body() {
     let source = "const a = (): { d: string } | undefined => undefined;\n((b = a()?.d) => {})();";
     let output = parse_lower_print(source, PrintOptions::es5());
@@ -1275,6 +1290,50 @@ fn system_exported_object_binding_bracket_access_does_not_add_numeric_dot() {
 }
 
 #[test]
+fn system_reexported_namespace_folds_export_into_es2015_iife_tail() {
+    let source = "namespace N { export const x = 1; }\nexport { N as Out };\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::System,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(r#"})(N || (exports_1("Out", N = {})));"#),
+        "System namespace re-export should be scheduled in the IIFE tail.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(r#"exports_1("Out", N);"#),
+        "System namespace re-export should not emit a redundant separate export call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_reexported_namespace_folds_export_into_es5_iife_tail() {
+    let source = "namespace N { export var x = 1; }\nexport { N as Out };\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::System,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(r#"})(N || (exports_1("Out", N = {})));"#),
+        "System ES5 namespace re-export should be scheduled in the IR IIFE tail.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(r#"exports_1("Out", N);"#),
+        "System ES5 namespace re-export should not rely on a separate export call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_commonjs_export_import_namespace_alias_keeps_export_equals() {
     let source = "namespace x { interface c {} }\nexport import a = x.c;\nexport = x;\n";
     let output = parse_lower_print(
@@ -1710,6 +1769,45 @@ fn test_top_level_enum_uses_var_at_es5() {
     assert!(
         output.contains("var E;"),
         "Top-level enum at ES5 should use 'var', got: {output}"
+    );
+}
+
+#[test]
+fn merged_enum_forward_references_to_later_block_emit_zero() {
+    let source = r#"enum E {
+    A = B,
+    A1 = E["B"],
+    B = 1,
+    C = E.D,
+    C1 = E["D"]
+}
+
+enum E {
+    D = 4
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(r#"E[E["A"] = 0] = "A";"#),
+        "Bare forward refs in the same enum block should emit 0.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(r#"E[E["A1"] = 0] = "A1";"#),
+        "Element forward refs in the same enum block should emit 0.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(r#"E[E["C"] = 0] = "C";"#),
+        "Property refs to later merged enum blocks should emit 0.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(r#"E[E["C1"] = 0] = "C1";"#),
+        "Element refs to later merged enum blocks should emit 0.\nOutput:\n{output}"
     );
 }
 

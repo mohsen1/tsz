@@ -198,7 +198,7 @@ impl<'a> Printer<'a> {
             }
 
             if class_name.is_empty() {
-                self.emit_class_es6_with_options(node, idx, false, None, None, false);
+                self.emit_class_es6_with_options(node, idx, false, None, None, None, false);
                 return;
             }
 
@@ -246,6 +246,7 @@ impl<'a> Printer<'a> {
                         true,
                         Some(("let", class_name.clone())),
                         Some(alias),
+                        Some(alias),
                         true,
                     );
                     let after_len = self.writer.len();
@@ -254,13 +255,9 @@ impl<'a> Printer<'a> {
                     let full_output = self.writer.get_output().to_string();
                     let emitted_str = &full_output[before_len..after_len];
 
-                    // The emitted text starts with `let Name = class Name {`
-                    // We need to insert `Name_1 = ` after `let Name = `
-                    // and replace body references to Name with Name_1
-                    let prefix = format!("let {class_name} = class {class_name}");
-                    let alias_prefix = format!("let {class_name} = {alias} = class {class_name}");
-
-                    let mut replaced = emitted_str.replacen(&prefix, &alias_prefix, 1);
+                    // The assignment alias is emitted structurally; only class-body
+                    // self-references need the body-scoped rewrite below.
+                    let mut replaced = emitted_str.to_string();
 
                     // Replace self-references ONLY inside the class body (between { and };)
                     // Static fields after the class close brace should keep the original name.
@@ -316,11 +313,12 @@ impl<'a> Printer<'a> {
                         true,
                         Some(("let", class_name.clone())),
                         None,
+                        None,
                         true,
                     );
                 }
             } else {
-                self.emit_class_es6_with_options(node, idx, false, None, None, false);
+                self.emit_class_es6_with_options(node, idx, false, None, None, None, false);
             }
 
             // Restore anonymous_default_export_name if we temporarily set it
@@ -370,38 +368,15 @@ impl<'a> Printer<'a> {
                 && self
                     .arena
                     .has_modifier(&class.modifiers, SyntaxKind::DefaultKeyword);
-            if let Some(ref alias) = alias_name {
-                // Emit: `Name = Name_1 = __decorate([...], Name);`
-                // We intercept the normal pattern and insert the alias assignment
-                let before_len = self.writer.len();
-                self.emit_legacy_class_decorator_assignment(
-                    &class_name,
-                    &legacy_class_decorators,
-                    commonjs_exported,
-                    commonjs_default,
-                    false,
-                    &class.members.nodes,
-                );
-                let after_len = self.writer.len();
-                let full_output = self.writer.get_output().to_string();
-                let emitted = &full_output[before_len..after_len];
-
-                // Replace `Name = __decorate` with `Name = Name_1 = __decorate`
-                let pattern = format!("{class_name} = __decorate");
-                let replacement = format!("{class_name} = {alias} = __decorate");
-                let modified = emitted.replacen(&pattern, &replacement, 1);
-                self.writer.truncate(before_len);
-                self.write(&modified);
-            } else {
-                self.emit_legacy_class_decorator_assignment(
-                    &class_name,
-                    &legacy_class_decorators,
-                    commonjs_exported,
-                    commonjs_default,
-                    false,
-                    &class.members.nodes,
-                );
-            }
+            self.emit_legacy_class_decorator_assignment(
+                &class_name,
+                &legacy_class_decorators,
+                commonjs_exported,
+                commonjs_default,
+                false,
+                alias_name.as_deref(),
+                &class.members.nodes,
+            );
 
             // Clear type parameter names after decorator emission
             self.metadata_class_type_params = None;
@@ -467,7 +442,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.emit_class_es6_with_options(node, idx, false, None, None, false);
+        self.emit_class_es6_with_options(node, idx, false, None, None, None, false);
     }
 
     pub(in crate::emitter) fn can_render_simple_tc39_decorated_class_es5(
@@ -630,27 +605,8 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        let mut output = output.trim_end_matches('\n').to_string();
-        if display_name == "default" {
-            output = output.replace(
-                "var class_1 = _classThis = class",
-                "var default_1 = _classThis = class",
-            );
-            output = output.replace(
-                "class_1 = _classThis = _classDescriptor.value",
-                "default_1 = _classThis = _classDescriptor.value",
-            );
-            output = output.replace(
-                "return class_1 = _classThis;",
-                "return default_1 = _classThis;",
-            );
-            output = output.replace(
-                "__setFunctionName(_classThis, \"class_1\")",
-                "__setFunctionName(_classThis, \"default\")",
-            );
-        }
-
-        self.write(&output);
+        let output = output.trim_end_matches('\n');
+        self.write(output);
         self.skip_comments_for_erased_node(node);
         true
     }

@@ -46,6 +46,24 @@ fn emit_enum_legacy_with_source(source: &str) -> String {
     String::new()
 }
 
+fn emit_enum_legacy_configured(
+    source: &str,
+    configure: impl FnOnce(&mut EnumES5Emitter<'_>),
+) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    if let Some(root_node) = parser.arena.get(root)
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+        && let Some(&enum_idx) = source_file.statements.nodes.first()
+    {
+        let mut emitter = EnumES5Emitter::new(&parser.arena);
+        configure(&mut emitter);
+        return emitter.emit_enum(enum_idx);
+    }
+    String::new()
+}
+
 #[test]
 fn test_numeric_enum() {
     let output = transform_enum("enum E { A, B, C }");
@@ -176,22 +194,12 @@ fn test_enum_with_property_access() {
 
 #[test]
 fn test_cjs_exported_enum_iife_tail_folding() {
-    // Verify that the IIFE tail `(E || (E = {}))` produced by emit_enum
-    // can be folded into the CJS export form `(E || (exports.E = E = {}))`.
+    // Verify that the enum emitter can fold CJS exports into the IIFE tail
+    // without rewriting already-emitted text.
     // This matches tsc's compact output for `export enum E { ... }` under CommonJS.
-    let output = emit_enum_legacy("enum E { A, B }");
-
-    // The raw output should contain the plain IIFE tail (no exports binding)
-    assert!(
-        output.contains("(E || (E = {}))"),
-        "Raw enum output should have plain IIFE tail, got: {output}"
-    );
-
-    // Apply the same string replacement used in transform_dispatch/module_emission_exports
-    let name = "E";
-    let from = format!("({name} || ({name} = {{}}))");
-    let to = format!("({name} || (exports.{name} = {name} = {{}}))");
-    let folded = output.replacen(&from, &to, 1);
+    let folded = emit_enum_legacy_configured("enum E { A, B }", |emitter| {
+        emitter.set_commonjs_export_fold("E");
+    });
 
     assert!(
         folded.contains("(E || (exports.E = E = {}))"),
@@ -201,6 +209,48 @@ fn test_cjs_exported_enum_iife_tail_folding() {
     assert!(
         folded.contains("E[E[\"A\"] = 0] = \"A\""),
         "Body should be unchanged after folding"
+    );
+}
+
+#[test]
+fn test_cjs_exported_enum_iife_tail_folding_uses_bracket_access_for_string_export_name() {
+    let folded = emit_enum_legacy_configured("enum E { A }", |emitter| {
+        emitter.set_commonjs_export_fold("not-valid");
+    });
+
+    assert!(
+        folded.contains("(E || (exports[\"not-valid\"] = E = {}))"),
+        "Folded output should use bracket access for non-identifier export names, got: {folded}"
+    );
+}
+
+#[test]
+fn test_system_exported_enum_iife_tail_folding() {
+    let folded = emit_enum_legacy_configured("enum E { A }", |emitter| {
+        emitter.set_emit_var_declaration(false);
+        emitter.set_system_export_fold("E");
+    });
+
+    assert!(
+        !folded.contains("var E;"),
+        "Merged System enum output should omit the already-hoisted var declaration, got: {folded}"
+    );
+    assert!(
+        folded.contains("})(E || (exports_1(\"E\", E = {})));"),
+        "System fold should call exports_1 from the IIFE tail, got: {folded}"
+    );
+}
+
+#[test]
+fn test_system_exported_enum_iife_tail_folds_aliases() {
+    let folded = emit_enum_legacy_configured("enum E { A }", |emitter| {
+        emitter.set_emit_var_declaration(false);
+        emitter.set_system_export_folds(["E", "Alias"]);
+    });
+
+    assert!(
+        folded.contains("})(E || (exports_1(\"Alias\", exports_1(\"E\", E = {}))));"),
+        "System fold should retain every export alias in the IIFE tail, got: {folded}"
     );
 }
 

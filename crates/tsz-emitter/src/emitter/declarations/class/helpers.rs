@@ -154,7 +154,11 @@ impl<'a> Printer<'a> {
         static_block_idx: NodeIndex,
         saved_comment_idx: usize,
     ) {
-        self.write("(() => ");
+        if self.ctx.target_es5 {
+            self.write("(function () ");
+        } else {
+            self.write("(() => ");
+        }
         self.comment_emit_idx = saved_comment_idx;
         if let Some(static_node) = self.arena.get(static_block_idx) {
             let prev = self.emitting_function_body_block;

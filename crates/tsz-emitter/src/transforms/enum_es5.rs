@@ -37,6 +37,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::transforms::emit_utils::is_valid_identifier_name;
 use crate::transforms::ir::{IRNode, IRParam};
 use crate::transforms::ir_printer::IRPrinter;
 use tsz_parser::parser::node::NodeArena;
@@ -55,6 +56,9 @@ pub struct EnumES5Transformer<'a> {
     source_text: Option<&'a str>,
     /// Names of all enum members declared so far (for qualifying self-references)
     member_names: HashSet<String>,
+    /// Names of all members in same-name enum declarations in the current source file.
+    /// This lets forward-reference detection see later merged enum blocks.
+    merged_member_names: HashSet<String>,
     /// Names of enum members that have been processed (had their IR emitted).
     /// Used to distinguish forward references (not yet processed → resolve to 0)
     /// from self-references and back-references (already processed → keep expression).
@@ -83,6 +87,31 @@ pub struct EnumES5Transformer<'a> {
     /// Previously-evaluated string enum member values from other enums.
     /// Keyed by `enum_name` → `member_name` → value.
     prior_string_values: HashMap<String, HashMap<String, String>>,
+    /// Whether this enum should emit its own `var E;` declaration.
+    emit_var_declaration: bool,
+    /// Structured module export fold for the enum IIFE tail.
+    export_fold: Option<EnumExportFold>,
+}
+
+#[derive(Clone, Debug)]
+enum EnumExportFold {
+    CommonJs { export_name: String },
+    System { export_names: Vec<String> },
+}
+
+fn commonjs_export_access(export_name: &str) -> IRNode {
+    let exports = IRNode::Identifier("exports".into());
+    if is_valid_identifier_name(export_name) {
+        IRNode::PropertyAccess {
+            object: Box::new(exports),
+            property: export_name.to_string().into(),
+        }
+    } else {
+        IRNode::ElementAccess {
+            object: Box::new(exports),
+            index: Box::new(IRNode::StringLiteral(export_name.to_string().into())),
+        }
+    }
 }
 
 impl<'a> EnumES5Transformer<'a> {
@@ -93,6 +122,7 @@ impl<'a> EnumES5Transformer<'a> {
             last_float_value: None,
             source_text: None,
             member_names: HashSet::new(),
+            merged_member_names: HashSet::new(),
             string_members: HashSet::new(),
             processed_members: HashSet::new(),
             current_member_name: String::new(),
@@ -104,11 +134,37 @@ impl<'a> EnumES5Transformer<'a> {
             prior_enum_values: HashMap::new(),
             prior_string_members: HashMap::new(),
             prior_string_values: HashMap::new(),
+            emit_var_declaration: true,
+            export_fold: None,
         }
     }
 
     pub const fn set_preserve_const_enums(&mut self, value: bool) {
         self.preserve_const_enums = value;
+    }
+
+    pub const fn set_emit_var_declaration(&mut self, value: bool) {
+        self.emit_var_declaration = value;
+    }
+
+    pub fn set_commonjs_export_fold(&mut self, export_name: &str) {
+        self.export_fold = Some(EnumExportFold::CommonJs {
+            export_name: export_name.to_string(),
+        });
+    }
+
+    pub fn set_system_export_fold(&mut self, export_name: &str) {
+        self.set_system_export_folds([export_name]);
+    }
+
+    pub fn set_system_export_folds<'b>(&mut self, export_names: impl IntoIterator<Item = &'b str>) {
+        self.export_fold = Some(EnumExportFold::System {
+            export_names: export_names
+                .into_iter()
+                .filter(|name| !name.is_empty())
+                .map(ToOwned::to_owned)
+                .collect(),
+        });
     }
 
     /// Set source text for raw expression extraction
@@ -201,28 +257,25 @@ impl<'a> EnumES5Transformer<'a> {
         let name =
             crate::transforms::emit_utils::identifier_text_or_empty(self.arena, enum_data.name);
         self.current_source_file = self.containing_source_file(enum_idx);
+        self.merged_member_names = self.collect_merged_enum_member_names(enum_idx, &name);
 
         // Build IR for: var E; (function (E) { ... })(E || (E = {}));
         let mut statements = Vec::new();
 
         // var E;
-        statements.push(IRNode::VarDecl {
-            name: name.clone().into(),
-            initializer: None,
-        });
+        if self.emit_var_declaration {
+            statements.push(IRNode::VarDecl {
+                name: name.clone().into(),
+                initializer: None,
+            });
+        }
 
         // Build IIFE body (enum member assignments)
         let body = self.transform_members(&enum_data.members, &name);
 
-        // Build IIFE argument: E || (E = {})
-        let iife_arg = IRNode::LogicalOr {
-            left: Box::new(IRNode::Identifier(name.clone().into())),
-            right: Box::new(IRNode::BinaryExpr {
-                left: Box::new(IRNode::Identifier(name.clone().into())),
-                operator: "=".to_string().into(),
-                right: Box::new(IRNode::empty_object()),
-            }),
-        };
+        // Build IIFE argument: E || (E = {}), optionally folding the module
+        // export into the same structured assignment/call.
+        let iife_arg = self.enum_iife_argument(&name);
 
         // (function (E) { body })(arg)
         let iife = IRNode::CallExpr {
@@ -239,6 +292,38 @@ impl<'a> EnumES5Transformer<'a> {
         statements.push(IRNode::ExpressionStatement(Box::new(iife)));
 
         Some(IRNode::Sequence(statements))
+    }
+
+    fn enum_iife_argument(&self, enum_name: &str) -> IRNode {
+        let plain_assignment = || IRNode::BinaryExpr {
+            left: Box::new(IRNode::Identifier(enum_name.to_string().into())),
+            operator: "=".into(),
+            right: Box::new(IRNode::empty_object()),
+        };
+
+        let right = match &self.export_fold {
+            None => plain_assignment(),
+            Some(EnumExportFold::CommonJs { export_name }) => IRNode::BinaryExpr {
+                left: Box::new(commonjs_export_access(export_name)),
+                operator: "=".into(),
+                right: Box::new(plain_assignment()),
+            },
+            Some(EnumExportFold::System { export_names }) => {
+                let mut folded = plain_assignment();
+                for export_name in export_names {
+                    folded = IRNode::CallExpr {
+                        callee: Box::new(IRNode::Identifier("exports_1".into())),
+                        arguments: vec![IRNode::StringLiteral(export_name.clone().into()), folded],
+                    };
+                }
+                IRNode::Parenthesized(Box::new(folded))
+            }
+        };
+
+        IRNode::LogicalOr {
+            left: Box::new(IRNode::Identifier(enum_name.to_string().into())),
+            right: Box::new(right),
+        }
     }
 
     /// Get the enum name without transforming
@@ -1012,8 +1097,9 @@ impl<'a> EnumES5Transformer<'a> {
             k if k == SyntaxKind::Identifier as u16 => {
                 if let Some(id) = self.arena.get_identifier(node) {
                     let name = id.escaped_text.as_str();
-                    self.member_names.contains(name)
+                    self.is_known_current_enum_member(name)
                         && !self.processed_members.contains(name)
+                        && !self.has_prior_current_enum_member(name)
                         && name != self.current_member_name
                 } else {
                     false
@@ -1031,8 +1117,9 @@ impl<'a> EnumES5Transformer<'a> {
                     && let Some(prop_id) = self.arena.get_identifier(prop_node)
                 {
                     let name = prop_id.escaped_text.as_str();
-                    self.member_names.contains(name)
+                    self.is_known_current_enum_member(name)
                         && !self.processed_members.contains(name)
+                        && !self.has_prior_current_enum_member(name)
                         && name != self.current_member_name
                 } else {
                     false
@@ -1050,8 +1137,9 @@ impl<'a> EnumES5Transformer<'a> {
                     && let Some(lit) = self.arena.get_literal(index_node)
                 {
                     let name = lit.text.as_str();
-                    self.member_names.contains(name)
+                    self.is_known_current_enum_member(name)
                         && !self.processed_members.contains(name)
+                        && !self.has_prior_current_enum_member(name)
                         && name != self.current_member_name
                 } else {
                     false
@@ -1059,6 +1147,73 @@ impl<'a> EnumES5Transformer<'a> {
             }
             _ => false,
         }
+    }
+
+    fn is_known_current_enum_member(&self, name: &str) -> bool {
+        self.member_names.contains(name) || self.merged_member_names.contains(name)
+    }
+
+    fn has_prior_current_enum_member(&self, name: &str) -> bool {
+        self.prior_enum_values
+            .get(&self.current_enum_name)
+            .is_some_and(|members| members.contains_key(name))
+            || self
+                .prior_string_values
+                .get(&self.current_enum_name)
+                .is_some_and(|members| members.contains_key(name))
+            || self
+                .prior_string_members
+                .get(&self.current_enum_name)
+                .is_some_and(|members| members.contains(name))
+    }
+
+    fn collect_merged_enum_member_names(
+        &self,
+        enum_idx: NodeIndex,
+        enum_name: &str,
+    ) -> HashSet<String> {
+        let mut names = HashSet::new();
+        if enum_name.is_empty() {
+            return names;
+        }
+
+        let Some(source_file_idx) = self.containing_source_file(enum_idx) else {
+            return names;
+        };
+        let Some(source_file_node) = self.arena.get(source_file_idx) else {
+            return names;
+        };
+
+        for node in &self.arena.nodes {
+            if node.kind != syntax_kind_ext::ENUM_DECLARATION
+                || node.pos < source_file_node.pos
+                || node.end > source_file_node.end
+            {
+                continue;
+            }
+            let Some(enum_data) = self.arena.get_enum(node) else {
+                continue;
+            };
+            let candidate_name =
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, enum_data.name);
+            if candidate_name != enum_name {
+                continue;
+            }
+            for &member_idx in &enum_data.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                let Some(member_data) = self.arena.get_enum_member(member_node) else {
+                    continue;
+                };
+                names.insert(crate::transforms::emit_utils::enum_member_name(
+                    self.arena,
+                    member_data.name,
+                ));
+            }
+        }
+
+        names
     }
 
     /// Build a dotted path from a (possibly nested) property-access expression
@@ -1642,6 +1797,26 @@ impl<'a> EnumES5Emitter<'a> {
     /// Set whether const enums should be preserved (emitted instead of erased)
     pub const fn set_preserve_const_enums(&mut self, value: bool) {
         self.transformer.set_preserve_const_enums(value);
+    }
+
+    /// Set whether the enum should emit its own `var E;` declaration.
+    pub const fn set_emit_var_declaration(&mut self, value: bool) {
+        self.transformer.set_emit_var_declaration(value);
+    }
+
+    /// Fold a CommonJS export binding into the enum IIFE tail.
+    pub fn set_commonjs_export_fold(&mut self, export_name: &str) {
+        self.transformer.set_commonjs_export_fold(export_name);
+    }
+
+    /// Fold a System export call into the enum IIFE tail.
+    pub fn set_system_export_fold(&mut self, export_name: &str) {
+        self.transformer.set_system_export_fold(export_name);
+    }
+
+    /// Fold multiple System export calls into the enum IIFE tail.
+    pub fn set_system_export_folds<'b>(&mut self, export_names: impl IntoIterator<Item = &'b str>) {
+        self.transformer.set_system_export_folds(export_names);
     }
 
     /// Emit an enum declaration

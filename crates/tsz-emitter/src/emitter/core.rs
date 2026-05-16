@@ -453,6 +453,10 @@ pub struct Printer<'a> {
     /// the closing: `(N || (exports.N = N = {}))` instead of `(N || (N = {}))`.
     pub(crate) pending_cjs_namespace_export_fold: bool,
 
+    /// SystemJS export names for the next namespace IIFE tail:
+    /// `(N || (exports_1("alias", exports_1("name", N = {}))))`.
+    pub(crate) pending_system_namespace_export_fold: Option<Vec<String>>,
+
     /// When true, the next namespace IIFE should use the plain `N || (N = {})`
     /// closing even if the name is in `default_exported_func_names`. This is set
     /// when an `export namespace N` merges with `export default function N` —
@@ -668,6 +672,7 @@ pub struct Printer<'a> {
     pub(crate) in_system_execute_body: bool,
 
     pub(crate) system_reexported_names: FxHashMap<String, String>,
+    pub(crate) system_reexported_name_lists: FxHashMap<String, Vec<String>>,
     pub(crate) system_folded_export_names: FxHashSet<String>,
 
     /// When true, the current parenthesized expression is being emitted as the
@@ -1022,6 +1027,7 @@ impl<'a> Printer<'a> {
             metadata_class_type_params: None,
             pending_block_comment_space: false,
             pending_cjs_namespace_export_fold: false,
+            pending_system_namespace_export_fold: None,
             suppress_default_export_merge_iife: false,
             pending_commonjs_class_export_name: None,
             declared_namespace_names: FxHashSet::default(),
@@ -1066,6 +1072,7 @@ impl<'a> Printer<'a> {
             paren_in_access_position: false,
             in_system_execute_body: false,
             system_reexported_names: FxHashMap::default(),
+            system_reexported_name_lists: FxHashMap::default(),
             system_folded_export_names: FxHashSet::default(),
             paren_in_new_callee: false,
             paren_is_direct_call_callee: false,

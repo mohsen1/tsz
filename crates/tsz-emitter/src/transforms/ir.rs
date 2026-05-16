@@ -532,6 +532,9 @@ pub enum IRNode {
         body: Vec<Self>,
         is_exported: bool,
         attach_to_exports: bool,
+        /// SystemJS export names folded into the namespace IIFE tail:
+        /// `N || (exports_1("alias", exports_1("name", N = {})))`.
+        system_export_names: Vec<Cow<'static, str>>,
         /// Whether to emit the `var name;` declaration for this namespace.
         /// Set to false when merging with a class/function/enum that already declared it.
         should_declare_var: bool,

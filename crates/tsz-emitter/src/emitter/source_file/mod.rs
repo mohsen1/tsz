@@ -361,7 +361,7 @@ mod tests {
             "Bare await shorthand in static blocks should recover as an empty property assignment.\nOutput:\n{output}"
         );
         assert!(
-            output.contains("await ;\n        break;\n        await ;"),
+            output.contains("await ;\n        break ;\n        await ;"),
             "Bare await labels and break labels in static blocks should recover as separate statements.\nOutput:\n{output}"
         );
         assert!(
@@ -461,6 +461,47 @@ mod tests {
         assert!(
             !output.contains("(function () {\n    var C = /** @class */"),
             "Static class expressions should not use the wrapper-IIFE form.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_static_class_expression_schedules_static_blocks_in_comma_initializer() {
+        let source = "function foo() {\n    return class {\n        static foo = 1;\n        static {\n            const c = class {\n                static bar = 2;\n                static {\n                    // do\n                }\n            };\n        }\n    };\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("return _a = /** @class */ (function () {"),
+            "Return-position class expressions should not add an unnecessary comma-wrapper paren.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_a.foo = 1,\n        (function () {"),
+            "Static blocks should be scheduled after static fields in the class-expression comma initializer.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var c = (_b = /** @class */ (function () {")
+                && output.contains("__setFunctionName(_b, \"c\"),")
+                && output.contains("_b.bar = 2,\n                (function () {"),
+            "Nested class expressions inside static blocks should get their own comma alias and schedule their own static block.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("// do"),
+            "Static-block comments should be replayed inside the lowered IIFE.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("__setFunctionName(_a, \"c\")"),
+            "Nested class expression should not reuse the outer class-expression alias.\nOutput:\n{output}"
         );
     }
 
@@ -1074,6 +1115,39 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         assert!(
             !output.contains("__setFunctionName"),
             "Named class expressions should not emit named-evaluation helper calls.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn default_tc39_decorated_named_class_keeps_class_1_binding() {
+        let source = "declare var dec: any;\nexport default @dec class class_1 {};\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2020,
+            import_helpers: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var class_1 = _classThis = class"),
+            "Named default decorated class should preserve the class_1 runtime binding.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("__setFunctionName(_classThis, \"class_1\")"),
+            "Named default decorated class should use its source name for setFunctionName.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("var default_1 = _classThis = class class_1"),
+            "Default export rewriting must not rename a real source class_1 binding.\nOutput:\n{output}"
         );
     }
 

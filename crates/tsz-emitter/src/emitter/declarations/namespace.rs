@@ -52,9 +52,13 @@ impl<'a> Printer<'a> {
             if use_cjs {
                 self.pending_cjs_namespace_export_fold = false;
             }
+            let system_export_fold = self.pending_system_namespace_export_fold.take();
             let mut es5_emitter = NamespaceES5Emitter::with_commonjs(self.arena, use_cjs);
             es5_emitter.set_target_es5(self.ctx.target_es5);
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+            if let Some(export_names) = system_export_fold.as_deref() {
+                es5_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
+            }
             if !self.ctx.module_state.default_exported_func_names.is_empty() {
                 es5_emitter.set_default_exported_func_names(
                     self.ctx
@@ -362,6 +366,11 @@ impl<'a> Printer<'a> {
         } else {
             false
         };
+        let system_export_fold = if parent_name.is_none() {
+            self.pending_system_namespace_export_fold.take()
+        } else {
+            None
+        };
 
         // Capture and consume: when an exported namespace merges with a
         // default-exported function, the IIFE closing uses the plain pattern.
@@ -482,24 +491,21 @@ impl<'a> Printer<'a> {
             self.write(".");
             self.write(&name);
             self.write(" = {}));");
+        } else if let Some(export_names) = system_export_fold.as_deref()
+            && !export_names.is_empty()
+        {
+            self.write(&name);
+            self.write(" || (");
+            self.emit_system_export_folded_namespace_assignment(export_names, &name);
+            self.write("));");
         } else if cjs_export_fold {
-            if self.in_system_execute_body {
-                // System module: (N || (exports_1("N", N = {})))
-                self.write(&name);
-                self.write(" || (exports_1(\"");
-                self.write(&name);
-                self.write("\", ");
-                self.write(&name);
-                self.write(" = {})));");
-            } else {
-                // CJS export fold: (N || (exports.N = N = {}))
-                self.write(&name);
-                self.write(" || (exports.");
-                self.write(&name);
-                self.write(" = ");
-                self.write(&name);
-                self.write(" = {}));");
-            }
+            // CJS export fold: (N || (exports.N = N = {}))
+            self.write(&name);
+            self.write(" || (exports.");
+            self.write(&name);
+            self.write(" = ");
+            self.write(&name);
+            self.write(" = {}));");
         } else if !suppress_default_merge
             && self.ctx.is_commonjs()
             && self
@@ -525,6 +531,24 @@ impl<'a> Printer<'a> {
         // loop handles them with proper next-sibling bounds, preventing
         // us from stealing comments that belong to subsequent statements.
         self.write_line();
+    }
+
+    fn emit_system_export_folded_namespace_assignment(
+        &mut self,
+        export_names: &[String],
+        name: &str,
+    ) {
+        let Some((export_name, inner_names)) = export_names.split_last() else {
+            self.write(name);
+            self.write(" = {}");
+            return;
+        };
+
+        self.write("exports_1(\"");
+        self.emit_escaped_string(export_name, '"');
+        self.write("\", ");
+        self.emit_system_export_folded_namespace_assignment(inner_names, name);
+        self.write(")");
     }
 
     /// Check if any declaration at any depth in the namespace body has the same
@@ -929,12 +953,6 @@ impl<'a> Printer<'a> {
                             "import",
                             "module",
                             "namespace",
-                            // TS parameter modifiers
-                            "private",
-                            "public",
-                            "protected",
-                            "readonly",
-                            "override",
                         ];
                         for &kw in keywords {
                             if preceding.ends_with(kw) {
@@ -948,6 +966,22 @@ impl<'a> Printer<'a> {
                                 }
                             }
                         }
+                        let parameter_modifiers: &[&str] =
+                            &["private", "public", "protected", "readonly", "override"];
+                        for &kw in parameter_modifiers {
+                            if preceding.ends_with(kw) {
+                                let kw_start = p - kw.len();
+                                let kw_before_ok = kw_start == 0
+                                    || !text_bytes[kw_start - 1].is_ascii_alphanumeric()
+                                        && text_bytes[kw_start - 1] != b'_'
+                                        && text_bytes[kw_start - 1] != b'$';
+                                if kw_before_ok
+                                    && Self::keyword_is_in_parameter_context(text_bytes, kw_start)
+                                {
+                                    return true;
+                                }
+                            }
+                        }
                     }
                 }
                 i = abs + 1;
@@ -956,6 +990,14 @@ impl<'a> Printer<'a> {
             }
         }
         false
+    }
+
+    fn keyword_is_in_parameter_context(text_bytes: &[u8], keyword_start: usize) -> bool {
+        let mut idx = keyword_start;
+        while idx > 0 && text_bytes[idx - 1].is_ascii_whitespace() {
+            idx -= 1;
+        }
+        idx > 0 && matches!(text_bytes[idx - 1], b'(' | b',')
     }
 
     /// Replace bytes inside `ranges` (absolute source positions) with spaces in

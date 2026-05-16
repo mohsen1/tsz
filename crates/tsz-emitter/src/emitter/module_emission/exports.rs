@@ -1134,6 +1134,7 @@ impl<'a> Printer<'a> {
                                     true,
                                     Some(("let", name.clone())),
                                     None,
+                                    None,
                                     false,
                                 );
                                 self.write_line();
@@ -1152,6 +1153,7 @@ impl<'a> Printer<'a> {
                                     true,  // commonjs_exported
                                     false, // commonjs_default
                                     false, // emit_commonjs_pre_assignment (already emitted above)
+                                    None,
                                     &members,
                                 );
                             }
@@ -1217,10 +1219,8 @@ impl<'a> Printer<'a> {
                         if let Some(text) = self.source_text {
                             enum_emitter.set_source_text(text);
                         }
-                        let mut output = enum_emitter.emit_enum(export.export_clause);
-                        let from = format!("({name} || ({name} = {{}}))");
-                        let to = format!("({name} || (exports.{name} = {name} = {{}}))");
-                        output = output.replacen(&from, &to, 1);
+                        enum_emitter.set_commonjs_export_fold(&name);
+                        let output = enum_emitter.emit_enum(export.export_clause);
                         let mut emit_text = output.trim_end_matches('\n');
                         while let Some((first, rest)) = emit_text.split_once('\n') {
                             if first.trim().is_empty() {
@@ -1247,10 +1247,8 @@ impl<'a> Printer<'a> {
                         if let Some(text) = self.source_text {
                             enum_emitter.set_source_text(text);
                         }
-                        let mut output = enum_emitter.emit_enum(export.export_clause);
-                        let from = format!("({name} || ({name} = {{}}))");
-                        let to = format!("({name} || (exports.{name} = {name} = {{}}))");
-                        output = output.replacen(&from, &to, 1);
+                        enum_emitter.set_commonjs_export_fold(&name);
+                        let output = enum_emitter.emit_enum(export.export_clause);
                         let emit_text = output.trim_end_matches('\n');
                         self.write(emit_text);
                     } else {

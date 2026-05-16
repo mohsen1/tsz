@@ -85,6 +85,7 @@ pub struct NamespaceES5Emitter<'a> {
     target_es5: bool,
     remove_comments: bool,
     transforms: Option<TransformContext>,
+    system_export_folds: Vec<String>,
     transformer: NamespaceES5Transformer<'a>,
 }
 
@@ -98,6 +99,7 @@ impl<'a> NamespaceES5Emitter<'a> {
             target_es5: false,
             remove_comments: false,
             transforms: None,
+            system_export_folds: Vec::new(),
             transformer: NamespaceES5Transformer::new(arena),
         }
     }
@@ -112,6 +114,7 @@ impl<'a> NamespaceES5Emitter<'a> {
             target_es5: false,
             remove_comments: false,
             transforms: None,
+            system_export_folds: Vec::new(),
             transformer: NamespaceES5Transformer::with_commonjs(arena, is_commonjs),
         }
     }
@@ -136,6 +139,18 @@ impl<'a> NamespaceES5Emitter<'a> {
     /// When true, suppress `/** @class */` annotation in output.
     pub const fn set_remove_comments(&mut self, remove: bool) {
         self.remove_comments = remove;
+    }
+
+    pub fn set_system_export_fold(&mut self, export_name: &str) {
+        self.set_system_export_folds([export_name]);
+    }
+
+    pub fn set_system_export_folds<'b>(&mut self, export_names: impl IntoIterator<Item = &'b str>) {
+        self.system_export_folds = export_names
+            .into_iter()
+            .filter(|name| !name.is_empty())
+            .map(ToOwned::to_owned)
+            .collect();
     }
 
     /// Set transform directives so that nested transforms (e.g. ES5 template
@@ -178,10 +193,11 @@ impl<'a> NamespaceES5Emitter<'a> {
         let ir = self
             .transformer
             .transform_namespace_with_var_flag(ns_idx, self.should_declare_var);
-        let ir = match ir {
+        let mut ir = match ir {
             Some(ir) => ir,
             None => return String::new(),
         };
+        self.apply_system_export_fold(&mut ir);
 
         let mut printer = if let Some(source_text) = self.source_text {
             IRPrinter::with_arena_and_source(self.arena, source_text)
@@ -206,10 +222,11 @@ impl<'a> NamespaceES5Emitter<'a> {
         let ir = self
             .transformer
             .transform_exported_namespace_with_var_flag(ns_idx, self.should_declare_var);
-        let ir = match ir {
+        let mut ir = match ir {
             Some(ir) => ir,
             None => return String::new(),
         };
+        self.apply_system_export_fold(&mut ir);
 
         let mut printer = if let Some(source_text) = self.source_text {
             IRPrinter::with_arena_and_source(self.arena, source_text)
@@ -231,6 +248,24 @@ impl<'a> NamespaceES5Emitter<'a> {
     /// Set the indent level for output
     pub const fn set_indent_level(&mut self, level: u32) {
         self.indent_level = level;
+    }
+
+    fn apply_system_export_fold(&self, ir: &mut crate::transforms::ir::IRNode) {
+        if self.system_export_folds.is_empty() {
+            return;
+        }
+        if let crate::transforms::ir::IRNode::NamespaceIIFE {
+            system_export_names,
+            ..
+        } = ir
+        {
+            *system_export_names = self
+                .system_export_folds
+                .iter()
+                .cloned()
+                .map(Into::into)
+                .collect();
+        }
     }
 }
 

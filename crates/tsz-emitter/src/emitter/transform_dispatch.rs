@@ -333,7 +333,11 @@ impl<'a> Printer<'a> {
                 if use_cjs {
                     self.pending_cjs_namespace_export_fold = false;
                 }
+                let system_export_fold = self.pending_system_namespace_export_fold.take();
                 let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                if let Some(export_names) = system_export_fold.as_deref() {
+                    ns_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
+                }
                 // Collect this block's exported vars and accumulate for cross-block sharing
                 if !ns_name_for_exports.is_empty() {
                     let block_exports = ns_emitter.collect_exported_var_names(namespace_node);
@@ -529,21 +533,11 @@ impl<'a> Printer<'a> {
                             if let Some(text) = self.source_text_for_map() {
                                 enum_emitter.set_source_text(text);
                             }
-                            let mut output = enum_emitter.emit_enum(idx);
-                            // Fold exports binding into IIFE tail
-                            let from = format!("({enum_name} || ({enum_name} = {{}}))");
-                            let to = format!(
-                                "({enum_name} || (exports.{enum_name} = {enum_name} = {{}}))"
+                            enum_emitter.set_commonjs_export_fold(&enum_name);
+                            enum_emitter.set_emit_var_declaration(
+                                !self.declared_namespace_names.contains(&enum_name),
                             );
-                            output = output.replacen(&from, &to, 1);
-                            // Handle namespace merge: strip var prefix if name
-                            // was already declared
-                            if self.declared_namespace_names.contains(&enum_name) {
-                                let var_prefix = format!("var {enum_name};\n");
-                                if output.starts_with(&var_prefix) {
-                                    output = output[var_prefix.len()..].to_string();
-                                }
-                            }
+                            let output = enum_emitter.emit_enum(idx);
                             self.declared_namespace_names.insert(enum_name.clone());
                             // Record the name so `export { E }` re-export handler
                             // skips the now-redundant `exports.E = E;`.
@@ -1747,44 +1741,35 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text {
             enum_emitter.set_source_text(text);
         }
-        let mut output = enum_emitter.emit_enum(enum_node);
+        let mut enum_name_to_declare = None;
         if let Some(enum_decl) = self.arena.get_enum_at(enum_node) {
             let enum_name = self.get_identifier_text_idx(enum_decl.name);
             if !enum_name.is_empty() {
-                if self.declared_namespace_names.contains(&enum_name) {
-                    let var_prefix = format!("var {enum_name};\n");
-                    if output.starts_with(&var_prefix) {
-                        output = output[var_prefix.len()..].to_string();
-                    }
-                }
+                enum_emitter
+                    .set_emit_var_declaration(!self.declared_namespace_names.contains(&enum_name));
 
                 if let Some(export_name) = self
                     .deferred_local_export_bindings
                     .as_ref()
                     .and_then(|bindings| bindings.get(&enum_name))
                 {
-                    let from = format!("({enum_name} || ({enum_name} = {{}}))");
-                    let export_access = if is_valid_identifier_name(export_name) {
-                        format!("exports.{export_name}")
-                    } else {
-                        format!("exports[\"{export_name}\"]")
-                    };
-                    let to = format!("({enum_name} || ({export_access} = {enum_name} = {{}}))");
-                    if output.contains(&from) {
-                        output = output.replacen(&from, &to, 1);
-                        self.ctx
-                            .module_state
-                            .iife_exported_names
-                            .insert(enum_name.clone());
-                        self.ctx
-                            .module_state
-                            .inline_exported_names
-                            .insert(export_name.clone());
-                    }
+                    enum_emitter.set_commonjs_export_fold(export_name);
+                    self.ctx
+                        .module_state
+                        .iife_exported_names
+                        .insert(enum_name.clone());
+                    self.ctx
+                        .module_state
+                        .inline_exported_names
+                        .insert(export_name.clone());
                 }
 
-                self.declared_namespace_names.insert(enum_name);
+                enum_name_to_declare = Some(enum_name);
             }
+        }
+        let output = enum_emitter.emit_enum(enum_node);
+        if let Some(enum_name) = enum_name_to_declare {
+            self.declared_namespace_names.insert(enum_name);
         }
         self.write(output.trim_end_matches('\n'));
 

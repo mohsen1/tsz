@@ -1011,6 +1011,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
             } else if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 // --- Static block ---
+                if self.skip_static_field_initializers {
+                    continue;
+                }
                 if let Some(block_data) = self.arena.get_block(member_node) {
                     let statements: Vec<IRNode> = block_data
                         .statements

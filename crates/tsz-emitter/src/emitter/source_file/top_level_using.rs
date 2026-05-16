@@ -1728,6 +1728,7 @@ impl<'a> Printer<'a> {
                 false,
                 Some(("", binding_name.clone())),
                 None,
+                None,
                 false,
             );
             let after_len = self.writer.len();
@@ -1773,6 +1774,7 @@ impl<'a> Printer<'a> {
                 idx,
                 false,
                 Some(("", binding_name.clone())),
+                None,
                 None,
                 false,
             );
