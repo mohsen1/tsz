@@ -1360,6 +1360,12 @@ impl<'a> Completions<'a> {
             if !include_private && prop.visibility != Visibility::Public {
                 continue;
             }
+            // Symbol-keyed computed properties (e.g. `[Symbol.iterator]`,
+            // `unique symbol` keys) require bracket-notation access and are
+            // excluded from dot-access member completions, matching tsc behavior.
+            if prop.is_symbol_named {
+                continue;
+            }
             let name = interner.resolve_atom(prop.name);
             // Synthetic brand properties (e.g. `__private_brand_42`) are nominal
             // class typing markers and must not appear in user-facing completions.
