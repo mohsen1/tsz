@@ -390,8 +390,12 @@ impl<'a> Printer<'a> {
         self.write(" = ");
         // Emit inline comments between = and the initializer value.
         if let Some(init_node) = self.arena.get(decl.initializer) {
+            let initializer_comment_line_break =
+                self.last_pending_comment_before_pos_has_trailing_newline(init_node.pos);
             self.emit_comments_before_pos(init_node.pos);
-            if self.pending_block_comment_space {
+            if initializer_comment_line_break && self.writer.is_at_line_start() {
+                self.write_space();
+            } else if self.pending_block_comment_space {
                 self.write_space();
                 self.pending_block_comment_space = false;
             }
