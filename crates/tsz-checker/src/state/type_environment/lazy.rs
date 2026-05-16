@@ -5,6 +5,7 @@ use crate::query_boundaries::common::{
     get_type_query_symbol_ref, lazy_def_id,
 };
 use crate::query_boundaries::state::type_environment as query;
+use crate::query_boundaries::type_predicates::contains_conditional_with_application_extends;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
@@ -273,7 +274,15 @@ impl<'a> CheckerState<'a> {
                 || crate::query_boundaries::spread::contains_unresolved_application(
                     self.ctx.types,
                     result,
-                ));
+                )
+                // `result != type_id` guards against re-running the second pass
+                // when the first pass deferred a generic conditional unchanged
+                // (type params present); we only retry when the first pass
+                // actually produced a different type containing deferred
+                // conditionals whose extends-type is still an Application
+                // (e.g. Pick/Readonly not yet expandable by TypeEnvironment).
+                || (result != type_id
+                    && contains_conditional_with_application_extends(self.ctx.types, result)));
         let final_result = if needs_resolver_pass {
             let seed_iter = if use_cache {
                 self.ctx.env_eval_cache_seed_entries()
@@ -1321,6 +1330,20 @@ impl<'a> CheckerState<'a> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
+        let lib_name = self.ctx.definition_store.get(def_id).and_then(|info| {
+            (info.file_id == Some(u32::MAX)).then(|| self.ctx.types.resolve_atom(info.name))
+        });
+        if let Some(name) = lib_name
+            && Self::in_cross_arena_interface_delegation()
+            && self.ctx.has_lib_loaded()
+        {
+            if let Some(resolved) = self.resolve_lib_type_by_name(&name) {
+                self.try_insert_def_in_type_env(def_id, resolved);
+                return Some(resolved);
+            }
+            return Some(self.ctx.types.lazy(def_id));
+        }
+
         let (sym_id, owner_file_idx) = self.ctx.def_symbol_identity(def_id)?;
         if let Some(file_idx) = owner_file_idx
             && file_idx != self.ctx.current_file_idx

@@ -1864,12 +1864,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         visited: &mut FxHashSet<(TypeId, TypeId)>,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
+        let pattern_shape = self.interner().object_shape(pattern_shape_id);
+        if let Some(source_elem) =
+            crate::type_queries::get_array_element_type(self.interner(), source)
+            && let Some(pattern_index) = &pattern_shape.number_index
+        {
+            let mut key_visited = FxHashSet::default();
+            if !self.match_infer_pattern(
+                TypeId::NUMBER,
+                pattern_index.key_type,
+                bindings,
+                &mut key_visited,
+                checker,
+            ) {
+                return false;
+            }
+            let mut value_visited = FxHashSet::default();
+            return self.match_infer_pattern(
+                source_elem,
+                pattern_index.value_type,
+                bindings,
+                &mut value_visited,
+                checker,
+            );
+        }
+
         match self.interner().lookup(source) {
             Some(
                 TypeData::Object(source_shape_id) | TypeData::ObjectWithIndex(source_shape_id),
             ) => {
                 let source_shape = self.interner().object_shape(source_shape_id);
-                let pattern_shape = self.interner().object_shape(pattern_shape_id);
                 for pattern_prop in &pattern_shape.properties {
                     let source_prop = source_shape
                         .properties
