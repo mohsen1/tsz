@@ -13,7 +13,7 @@ struct PrivateFieldAccess {
     weakmap_name: String,
 }
 
-enum DeleteOptionalChainSegment {
+enum OptionalChainSegment {
     Property(NodeIndex),
     Element(NodeIndex),
 }
@@ -776,6 +776,20 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if (unary.operator == SyntaxKind::PlusPlusToken as u16
+            || unary.operator == SyntaxKind::MinusMinusToken as u16)
+            && !self.ctx.options.target.supports_es2020()
+        {
+            let mut tail = Vec::new();
+            if let Some((access_kind, base, name_or_argument)) =
+                self.collect_update_optional_access(unary.operand, &mut tail)
+            {
+                self.write(get_operator_text(unary.operator));
+                self.emit_update_optional_access(access_kind, base, name_or_argument, &tail);
+                return;
+            }
+        }
+
         self.write(get_operator_text(unary.operator));
         if unary.operator == SyntaxKind::AsteriskToken as u16 {
             self.write_space();
@@ -823,7 +837,7 @@ impl<'a> Printer<'a> {
     fn emit_delete_optional_chain_inner(
         &mut self,
         idx: NodeIndex,
-        tail: &mut Vec<DeleteOptionalChainSegment>,
+        tail: &mut Vec<OptionalChainSegment>,
     ) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return false;
@@ -860,11 +874,9 @@ impl<'a> Printer<'a> {
             }
 
             if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                tail.push(DeleteOptionalChainSegment::Property(
-                    access.name_or_argument,
-                ));
+                tail.push(OptionalChainSegment::Property(access.name_or_argument));
             } else {
-                tail.push(DeleteOptionalChainSegment::Element(access.name_or_argument));
+                tail.push(OptionalChainSegment::Element(access.name_or_argument));
             }
             return self.emit_delete_optional_chain_inner(access.expression, tail);
         }
@@ -877,7 +889,7 @@ impl<'a> Printer<'a> {
         access_kind: u16,
         base: NodeIndex,
         name_or_argument: NodeIndex,
-        tail: &[DeleteOptionalChainSegment],
+        tail: &[OptionalChainSegment],
     ) {
         if self.is_simple_nullish_expression(base) {
             self.emit(base);
@@ -885,8 +897,8 @@ impl<'a> Printer<'a> {
             self.emit(base);
             self.write(" === void 0 ? true : delete ");
             self.emit(base);
-            self.emit_delete_optional_access_segment(access_kind, name_or_argument);
-            self.emit_delete_optional_chain_tail(tail);
+            self.emit_optional_access_segment(access_kind, name_or_argument);
+            self.emit_optional_chain_tail(tail);
             return;
         }
 
@@ -906,36 +918,97 @@ impl<'a> Printer<'a> {
         self.write(&base_temp);
         self.write(" === void 0 ? true : delete ");
         self.write(&base_temp);
-        self.emit_delete_optional_access_segment(access_kind, name_or_argument);
-        self.emit_delete_optional_chain_tail(tail);
+        self.emit_optional_access_segment(access_kind, name_or_argument);
+        self.emit_optional_chain_tail(tail);
     }
 
-    fn emit_delete_optional_access_segment(
+    fn collect_update_optional_access(
+        &self,
+        idx: NodeIndex,
+        tail: &mut Vec<OptionalChainSegment>,
+    ) -> Option<(u16, NodeIndex, NodeIndex)> {
+        let node = self.arena.get(idx)?;
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.arena.get_parenthesized(node)
+        {
+            return self.collect_update_optional_access(paren.expression, tail);
+        }
+
+        if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.arena.get_access_expr(node)
+        {
+            if access.question_dot_token {
+                return Some((node.kind, access.expression, access.name_or_argument));
+            }
+
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                tail.push(OptionalChainSegment::Property(access.name_or_argument));
+            } else {
+                tail.push(OptionalChainSegment::Element(access.name_or_argument));
+            }
+            return self.collect_update_optional_access(access.expression, tail);
+        }
+
+        None
+    }
+
+    fn emit_update_optional_access(
         &mut self,
         access_kind: u16,
+        base: NodeIndex,
         name_or_argument: NodeIndex,
+        tail: &[OptionalChainSegment],
     ) {
+        self.parenthesized(|this| {
+            if this.is_simple_nullish_expression(base) {
+                this.emit(base);
+                this.write(" === null || ");
+                this.emit(base);
+                this.write(" === void 0 ? void 0 : ");
+                this.emit(base);
+                this.emit_optional_access_segment(access_kind, name_or_argument);
+                this.emit_optional_chain_tail(tail);
+            } else {
+                let base_temp = this.make_unique_name_hoisted();
+                this.parenthesized(|this| {
+                    this.write(&base_temp);
+                    this.write(" = ");
+                    this.emit(base);
+                });
+                this.write(" === null || ");
+                this.write(&base_temp);
+                this.write(" === void 0 ? void 0 : ");
+                this.write(&base_temp);
+                this.emit_optional_access_segment(access_kind, name_or_argument);
+                this.emit_optional_chain_tail(tail);
+            }
+        });
+    }
+
+    fn emit_optional_access_segment(&mut self, access_kind: u16, name_or_argument: NodeIndex) {
         if access_kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
             self.write(".");
             self.emit_property_name_without_import_substitution(name_or_argument);
         } else {
-            self.write("[");
+            self.open_bracket();
             self.emit(name_or_argument);
-            self.write("]");
+            self.close_bracket();
         }
     }
 
-    fn emit_delete_optional_chain_tail(&mut self, tail: &[DeleteOptionalChainSegment]) {
+    fn emit_optional_chain_tail(&mut self, tail: &[OptionalChainSegment]) {
         for segment in tail.iter().rev() {
             match segment {
-                DeleteOptionalChainSegment::Property(name) => {
+                OptionalChainSegment::Property(name) => {
                     self.write(".");
                     self.emit_property_name_without_import_substitution(*name);
                 }
-                DeleteOptionalChainSegment::Element(argument) => {
-                    self.write("[");
+                OptionalChainSegment::Element(argument) => {
+                    self.open_bracket();
                     self.emit(*argument);
-                    self.write("]");
+                    self.close_bracket();
                 }
             }
         }
@@ -956,6 +1029,23 @@ impl<'a> Printer<'a> {
             let is_statement = self.ctx.flags.in_statement_expression;
             self.emit_private_field_unary_mutation(pfa, unary.operator, false, is_statement);
             return;
+        }
+
+        if (unary.operator == SyntaxKind::PlusPlusToken as u16
+            || unary.operator == SyntaxKind::MinusMinusToken as u16)
+            && !self.ctx.options.target.supports_es2020()
+        {
+            let mut tail = Vec::new();
+            if let Some((access_kind, base, name_or_argument)) =
+                self.collect_update_optional_access(unary.operand, &mut tail)
+            {
+                self.emit_update_optional_access(access_kind, base, name_or_argument, &tail);
+                if let Some(operand_node) = self.arena.get(unary.operand) {
+                    self.map_token_after_skipping_whitespace(operand_node.end, node.end);
+                }
+                self.write(get_operator_text(unary.operator));
+                return;
+            }
         }
 
         // When lowering optional chains or nullish coalescing (e.g., `o?.a++`, `(a ?? b)++`),

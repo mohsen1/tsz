@@ -769,7 +769,8 @@ impl<'a> CheckerState<'a> {
         );
         if self
             .ctx
-            .type_reference_arg_validation_cache
+            .type_reference_validation_caches
+            .arg_validation
             .contains(&validation_cache_key)
         {
             return false;
@@ -895,7 +896,8 @@ impl<'a> CheckerState<'a> {
         );
         if !count_mismatch && self.ctx.diagnostics.len() == diagnostics_before {
             self.ctx
-                .type_reference_arg_validation_cache
+                .type_reference_validation_caches
+                .arg_validation
                 .insert(validation_cache_key);
         }
         count_mismatch
@@ -1290,6 +1292,7 @@ impl<'a> CheckerState<'a> {
 
 mod array_like_constraint_helpers;
 mod callable_constraint_helpers;
+mod conditional_constraint_helpers;
 mod constraint_syntax_instantiation;
 mod constraint_validation;
 mod constructor_accessibility_helpers;

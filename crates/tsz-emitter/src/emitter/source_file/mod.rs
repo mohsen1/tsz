@@ -17,6 +17,10 @@ mod tests {
         (parser, root)
     }
 
+    fn set_emitter_source<'a>(printer: &mut EmitterPrinter<'a>, source: &'a str) {
+        printer.set_source_text(source);
+    }
+
     #[test]
     fn emit_source_file_strips_top_level_blank_lines_for_js_files() {
         // tsc strips inter-statement blank lines even from JS source files.
@@ -72,7 +76,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        printer.set_source_text(source);
+        set_emitter_source(&mut printer, source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -99,7 +103,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        printer.set_source_text(source);
+        set_emitter_source(&mut printer, source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -308,6 +312,29 @@ mod tests {
     }
 
     #[test]
+    fn strict_prologue_leading_comment_moves_before_helpers() {
+        let source = "// issue comment\n\"use strict\";\nclass A {}\nclass B extends A { constructor() { super(); } }\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.starts_with("// issue comment\n\"use strict\";\nvar __extends = "),
+            "Leading comments attached to a source strict prologue should move before helpers with the prologue.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn class_static_block_await_recovery_matches_native_emit() {
         let source = "class C {\n    static {\n        ({ [await]: 1 });\n        ({ await });\n        await:\n        break await;\n        const ff = (await) => { }\n        const fff = await => { }\n    }\n}\n";
 
@@ -333,7 +360,7 @@ mod tests {
             "Bare await shorthand in static blocks should recover as an empty property assignment.\nOutput:\n{output}"
         );
         assert!(
-            output.contains("await ;\n        break ;\n        await ;"),
+            output.contains("await ;\n        break;\n        await ;"),
             "Bare await labels and break labels in static blocks should recover as separate statements.\nOutput:\n{output}"
         );
         assert!(
@@ -341,6 +368,33 @@ mod tests {
                 "const ff = (await );\n        { }\n        const fff = await ;\n        { }"
             ),
             "Arrows with await parameters in static blocks should emit recovered parameter expressions plus body blocks.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn derived_constructor_with_prefix_statements_returns_tail_super_call() {
+        let source = "class A {}\nclass B extends A { constructor() { \"ngInject\"; console.log(\"B\"); super(); } }\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("\"ngInject\";\n        console.log(\"B\");\n        return _super.call(this) || this;"),
+            "Derived constructor with final super() should not materialize _this when no later statement needs it.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("var _this = _super.call(this) || this;"),
+            "Tail super return should avoid the _this temp.\nOutput:\n{output}"
         );
     }
 

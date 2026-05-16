@@ -1,7 +1,18 @@
 use crate::TypeDatabase;
 use crate::types::{
-    IndexSignature, IntrinsicKind, ObjectFlags, ObjectShape, PropertyInfo, TypeId, Visibility,
+    IndexSignature, IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, TypeId,
+    Visibility,
 };
+
+/// Map a `LiteralValue` to its apparent `IntrinsicKind`.
+pub const fn literal_value_intrinsic_kind(lit: &LiteralValue) -> IntrinsicKind {
+    match lit {
+        LiteralValue::String(_) => IntrinsicKind::String,
+        LiteralValue::Number(_) => IntrinsicKind::Number,
+        LiteralValue::Boolean(_) => IntrinsicKind::Boolean,
+        LiteralValue::BigInt(_) => IntrinsicKind::Bigint,
+    }
+}
 
 pub enum ApparentMemberKind {
     Value(TypeId),

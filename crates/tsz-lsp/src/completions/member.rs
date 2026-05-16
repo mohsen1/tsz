@@ -476,19 +476,12 @@ impl<'a> Completions<'a> {
             return;
         }
 
-        if let Some(literal) = visitor::literal_value(interner, evaluated) {
-            if let Some(kind) = self.literal_intrinsic_kind(&literal) {
-                self.collect_intrinsic_members(kind, interner, props);
-            }
-            return;
-        }
-
         if visitor::template_literal_id(interner, evaluated).is_some() {
             self.collect_intrinsic_members(IntrinsicKind::String, interner, props);
             return;
         }
 
-        if let Some(kind) = visitor::intrinsic_kind(interner, evaluated) {
+        if let Some(kind) = tsz_solver::apparent_intrinsic_kind(interner, evaluated) {
             self.collect_intrinsic_members(kind, interner, props);
         }
     }
@@ -1375,18 +1368,6 @@ impl<'a> Completions<'a> {
             "with",
         ] {
             self.add_property_completion(props, interner, name.to_string(), TypeId::ANY, true);
-        }
-    }
-
-    pub(super) const fn literal_intrinsic_kind(
-        &self,
-        literal: &tsz_solver::LiteralValue,
-    ) -> Option<IntrinsicKind> {
-        match literal {
-            tsz_solver::LiteralValue::String(_) => Some(IntrinsicKind::String),
-            tsz_solver::LiteralValue::Number(_) => Some(IntrinsicKind::Number),
-            tsz_solver::LiteralValue::Boolean(_) => Some(IntrinsicKind::Boolean),
-            tsz_solver::LiteralValue::BigInt(_) => Some(IntrinsicKind::Bigint),
         }
     }
 

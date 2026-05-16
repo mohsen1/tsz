@@ -804,6 +804,47 @@ export const x = <span {...o} />;
 }
 
 #[test]
+fn commonjs_exported_destructuring_uses_binding_access_paths() {
+    let source = r#"'use strict'
+// exported destructuring should read from the pattern source
+export let [bar1] = [1];
+export const { a: bar2 } = { a: 2 };
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("// exported destructuring should read from the pattern source"),
+        "Leading comments before folded CommonJS exports should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.bar1 = [1][0];"),
+        "Array binding exports should read by element index.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("[1].bar1"),
+        "Array binding exports must not use the binding name as a property.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.bar2 = { a: 2 }.a;"),
+        "Object binding exports should read by property name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn async_arguments_capture_skips_parameter_and_pattern_bindings() {
     let source = r#"export async function f({ arguments_1 }: { arguments_1: string }) {
   const [arguments_2] = ["user binding"];

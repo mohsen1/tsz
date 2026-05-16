@@ -30,6 +30,10 @@ dashmap = { workspace = true }
 stacker = "0.1.23"
 
 [[test]]
+name = "generic_multi_prop_object_literal_tests"
+path = "tests/generic_multi_prop_object_literal_tests.rs"
+
+[[test]]
 name = "abstract_constructor_argument_tests"
 path = "tests/abstract_constructor_argument_tests.rs"
 
@@ -148,6 +152,10 @@ path = "tests/ts1238_generic_decorator_tests.rs"
 [[test]]
 name = "ts2862_keyof_tparam_tests"
 path = "tests/ts2862_keyof_tparam_tests.rs"
+
+[[test]]
+name = "ts2862_generic_class_index_write_tests"
+path = "tests/ts2862_generic_class_index_write_tests.rs"
 
 [[test]]
 name = "ts1210_arguments_param_in_class_tests"
@@ -288,6 +296,10 @@ path = "tests/lib_merge_indexed_access_no_cascade_tests.rs"
 [[test]]
 name = "readonly_tuple_source_display_tests"
 path = "tests/readonly_tuple_source_display_tests.rs"
+
+[[test]]
+name = "readonly_tuple_to_array_constraint_tests"
+path = "tests/readonly_tuple_to_array_constraint_tests.rs"
 
 [[test]]
 name = "module_augmentation_isolation_tests"
@@ -492,6 +504,10 @@ path = "tests/keyof_naked_priority_tests.rs"
 [[test]]
 name = "keyof_array_literal_diagnostic_tests"
 path = "tests/keyof_array_literal_diagnostic_tests.rs"
+
+[[test]]
+name = "partial_self_argument_diagnostic_tests"
+path = "tests/partial_self_argument_diagnostic_tests.rs"
 
 [[test]]
 name = "keyof_mapped_as_clause_tests"
@@ -1098,6 +1114,10 @@ name = "template_literal_recursive_replace_tests"
 path = "tests/template_literal_recursive_replace_tests.rs"
 
 [[test]]
+name = "template_literal_union_separator_tests"
+path = "tests/template_literal_union_separator_tests.rs"
+
+[[test]]
 name = "object_element_access_diagnostics_tests"
 path = "tests/object_element_access_diagnostics_tests.rs"
 
@@ -1256,6 +1276,14 @@ path = "tests/homomorphic_indexed_access_tests.rs"
 [[test]]
 name = "homomorphic_indexed_access_edge_cases"
 path = "tests/homomorphic_indexed_access_edge_cases.rs"
+
+[[test]]
+name = "union_tuple_source_display_tests"
+path = "tests/union_tuple_source_display_tests.rs"
+
+[[test]]
+name = "distributive_conditional_default_tests"
+path = "tests/distributive_conditional_default_tests.rs"
 
 [[test]]
 name = "track8_debt_contract_tests"

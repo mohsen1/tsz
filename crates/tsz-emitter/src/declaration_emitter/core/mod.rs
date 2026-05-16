@@ -10,6 +10,7 @@ mod js_class_static;
 mod js_commonjs_constructor;
 mod js_emit;
 mod js_return_type_fallback;
+mod js_synthetic_members;
 mod preamble;
 mod setup;
 
