@@ -312,7 +312,11 @@ impl<'a> Printer<'a> {
     /// assignment target is the identifier `name`. Used to detect cases like
     /// `({ foo, bar } = foo)` where reading `foo.bar` after assigning to
     /// `foo` would observe the clobbered value.
-    fn assignment_lhs_reassigns_identifier(&self, lhs: &Node, name: &str) -> bool {
+    pub(in crate::emitter) fn assignment_lhs_reassigns_identifier(
+        &self,
+        lhs: &Node,
+        name: &str,
+    ) -> bool {
         // Object literal: `{ foo, bar }` or `{ x: foo }`
         if lhs.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             let Some(lit) = self.arena.get_literal_expr(lhs) else {
@@ -502,12 +506,37 @@ impl<'a> Printer<'a> {
         };
 
         let effective_right_idx = self.unwrap_empty_destructuring_chain(right_idx);
-        let is_simple = self
+        let mut is_simple = self
             .arena
             .get(effective_right_idx)
             .is_some_and(|n| n.is_identifier());
+        if is_simple {
+            let rhs_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                self.arena,
+                effective_right_idx,
+            );
+            if !rhs_name.is_empty()
+                && self.assignment_lhs_reassigns_identifier(left_node, &rhs_name)
+            {
+                is_simple = false;
+            }
+        }
         if !is_simple && self.assignment_object_literal_is_rest_only(left_idx) {
             self.emit_assignment_rest_only_object(left_idx, right_idx);
+            return;
+        }
+
+        if !is_simple
+            && left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            && self.assignment_array_object_rest_can_inline_source(left_idx)
+        {
+            let mut first = true;
+            self.emit_assignment_array_pattern_with_object_rest(
+                left_idx,
+                "",
+                &mut first,
+                Some(right_idx),
+            );
             return;
         }
 
@@ -632,7 +661,12 @@ impl<'a> Printer<'a> {
                 self.emit_assignment_object_rest_pattern(pattern_idx, source, source_simple, first);
             }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
-                self.emit_assignment_array_pattern_with_object_rest(pattern_idx, source, first);
+                self.emit_assignment_array_pattern_with_object_rest(
+                    pattern_idx,
+                    source,
+                    first,
+                    None,
+                );
             }
             _ => {}
         }
@@ -907,6 +941,7 @@ impl<'a> Printer<'a> {
         pattern_idx: NodeIndex,
         source: &str,
         first: &mut bool,
+        inline_source: Option<NodeIndex>,
     ) {
         let Some(node) = self.arena.get(pattern_idx) else {
             return;
@@ -936,7 +971,11 @@ impl<'a> Printer<'a> {
             }
         }
         self.write("] = ");
-        self.write(source);
+        if let Some(inline_source) = inline_source {
+            self.emit(inline_source);
+        } else {
+            self.write(source);
+        }
 
         for (nested_idx, temp) in nested_patterns {
             let nested_pattern = self
@@ -952,6 +991,16 @@ impl<'a> Printer<'a> {
                 .unwrap_or(nested_idx);
             self.emit_assignment_pattern_with_object_rest(nested_pattern, &temp, true, first);
         }
+    }
+
+    fn assignment_array_object_rest_can_inline_source(&self, pattern_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(pattern_idx) else {
+            return false;
+        };
+        let Some(lit) = self.arena.get_literal_expr(node) else {
+            return false;
+        };
+        lit.elements.nodes.len() == 1
     }
 
     fn object_key_access_text(&self, source: &str, key: &str) -> String {

@@ -802,10 +802,22 @@ impl<'a> Printer<'a> {
                 && binary.operator_token == SyntaxKind::EqualsToken as u16
                 && self.assignment_pattern_has_object_rest(binary.left)
             {
-                let source_simple = self
+                let mut source_simple = self
                     .arena
                     .get(binary.right)
                     .is_some_and(|n| n.is_identifier());
+                if source_simple {
+                    let rhs_name = crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena,
+                        binary.right,
+                    );
+                    if let Some(left_node) = self.arena.get(binary.left)
+                        && !rhs_name.is_empty()
+                        && self.assignment_lhs_reassigns_identifier(left_node, &rhs_name)
+                    {
+                        source_simple = false;
+                    }
+                }
                 count +=
                     self.estimate_object_rest_assignment_pattern_temps(binary.left, source_simple);
             }

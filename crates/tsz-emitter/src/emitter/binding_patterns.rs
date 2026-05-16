@@ -909,6 +909,19 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
+                if let Some(rest_name) = self.object_rest_only_binding_name(elem.name) {
+                    self.write(&rest_name);
+                    self.write(" = ");
+                    self.write_helper("__rest");
+                    self.write("(");
+                    self.write(source_name);
+                    self.write(".");
+                    self.write(&prop_name);
+                    self.write(", [])");
+                    first_extra = false;
+                    continue;
+                }
+
                 // Create a temp for the nested source
                 let nested_temp = self.get_temp_var_name();
                 self.write(&nested_temp.clone());
@@ -935,6 +948,25 @@ impl<'a> Printer<'a> {
             self.write(" = ");
             self.write(source_name);
         }
+    }
+
+    fn object_rest_only_binding_name(&self, pattern_idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(pattern_idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return None;
+        }
+        let pattern = self.arena.get_binding_pattern(node)?;
+        if pattern.elements.nodes.len() != 1 {
+            return None;
+        }
+        let elem_idx = pattern.elements.nodes.first().copied()?;
+        let elem_node = self.arena.get(elem_idx)?;
+        let elem = self.arena.get_binding_element(elem_node)?;
+        if !elem.dot_dot_dot_token {
+            return None;
+        }
+        let name = self.get_identifier_text(elem.name);
+        (!name.is_empty()).then_some(name)
     }
 
     /// Emit an object rest lowering for a pattern that's already assigned to a temp.

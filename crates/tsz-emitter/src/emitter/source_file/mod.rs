@@ -1472,6 +1472,34 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn nested_object_rest_assignment_inlines_single_array_source() {
+        let source = "var x: any;\n[{ ...x }] = [{ abc: 1 }];\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2017,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("[_a] = [{ abc: 1 }], x = __rest(_a, []);"),
+            "Single-element array assignment with nested object-rest should inline the RHS.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("_a = [{ abc: 1 }]"),
+            "The RHS should not be copied to a separate source temp first.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn defaulted_nested_object_rest_assignment_uses_resolved_source() {
         let source = "let a: any, b: any, c: any = { x: { a: 1, y: 2 } }, d: any;\n({ x: { a, ...b } = d } = c);\n";
 

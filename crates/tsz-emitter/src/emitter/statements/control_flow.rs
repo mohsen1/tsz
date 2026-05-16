@@ -602,6 +602,10 @@ impl<'a> Printer<'a> {
         for_in_of: &tsz_parser::parser::node::ForInOfData,
         pattern_idx: NodeIndex,
     ) {
+        let reserve_count = self.native_for_of_object_rest_assignment_temp_count(pattern_idx);
+        if reserve_count > 0 {
+            self.preallocate_assignment_temps(reserve_count);
+        }
         let temp = self.get_temp_var_name();
 
         self.write("for ");
@@ -619,9 +623,18 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        self.write("(");
+        let needs_assignment_parens = self
+            .arena
+            .get(pattern_idx)
+            .is_none_or(|pattern| pattern.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION);
+        if needs_assignment_parens {
+            self.write("(");
+        }
         self.emit_assignment_object_rest_destructuring_from_source(pattern_idx, &temp);
-        self.write(");");
+        if needs_assignment_parens {
+            self.write(")");
+        }
+        self.write_semicolon();
         self.write_line();
 
         if let Some(body_node) = self.arena.get(for_in_of.statement) {
@@ -640,6 +653,23 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+    }
+
+    fn native_for_of_object_rest_assignment_temp_count(&self, pattern_idx: NodeIndex) -> usize {
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return 0;
+        };
+        if pattern_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return 0;
+        }
+        let Some(lit) = self.arena.get_literal_expr(pattern_node) else {
+            return 0;
+        };
+        lit.elements
+            .nodes
+            .iter()
+            .filter(|&&elem_idx| self.assignment_pattern_has_object_rest(elem_idx))
+            .count()
     }
 
     /// Emit a loop body statement. If the body is a block, emit it inline.
