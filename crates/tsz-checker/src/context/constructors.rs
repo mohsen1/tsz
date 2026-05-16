@@ -189,6 +189,8 @@ impl<'a> CheckerContext<'a> {
             checked_classes: FxHashSet::default(),
             checking_computed_property_name: None,
             type_parameter_scope: FxHashMap::default(),
+            type_reference_validation_caches:
+                crate::context::TypeReferenceValidationCaches::default(),
             in_conditional_extends_depth: 0,
             typeof_param_scope: FxHashMap::default(),
             type_param_constraint_excluded_params: FxHashSet::default(),

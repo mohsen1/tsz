@@ -284,7 +284,7 @@ faster or move a red runtime/residency row toward green.
 Track these as counters or periodic audit bullets. They are more useful than
 subjective "cleanup" language.
 
-1. `CheckerContext` field count, currently pinned at `234`, plus the number of
+1. `CheckerContext` field count, currently pinned at `235`, plus the number of
    checker `source_text.contains` / file-name / rendered-message
    diagnostic decisions.
 2. Number of post-check `rewrite_*_fingerprints` passes still active.
@@ -296,7 +296,9 @@ subjective "cleanup" language.
 6. Actual-lib alias admissions and allowlists that should become stable lib
    identity queries.
 7. Emitter/DTS direct solver imports, direct type evaluation during printing,
-   and `TypeData`/`lookup()` guardrail exceptions.
+   and `TypeData`/`lookup()` guardrail exceptions. The current direct
+   `tsz_solver` import guard outside solver/checker is pinned at `39`; reduce
+   it through focused compiler-service/front-door PRs instead of broad cleanup.
 8. `Printer` and `DeclarationEmitter` ambient state fields, especially fields
    added for one transform or one baseline family.
 9. Emitter/DTS tests that assert fragments instead of exact output or structured

@@ -1,6 +1,8 @@
 use crate::context::emit::EmitContext;
 use crate::context::plan::{EmitPlan, EmitPlanBuilder};
 use crate::context::transform::{TransformContext, TransformDirective};
+use crate::emitter::JsxEmit;
+use crate::jsx_pragmas::{JsxPragmaFacts, JsxRuntimePragma};
 use std::sync::Arc;
 use tsz_common::ScriptTarget;
 use tsz_parser::parser::NodeIndex;
@@ -71,6 +73,8 @@ pub struct LoweringPass<'a> {
     pub(super) enclosing_capture_names: Vec<Arc<str>>,
     /// Source text for the source file currently being traversed.
     pub(super) current_source_text: Option<&'a str>,
+    /// File-level JSX pragma facts for the source file currently being traversed.
+    pub(super) current_jsx_pragmas: JsxPragmaFacts,
 }
 
 impl<'a> LoweringPass<'a> {
@@ -97,6 +101,7 @@ impl<'a> LoweringPass<'a> {
             enclosing_function_bodies: Vec::new(),
             enclosing_capture_names: Vec::new(),
             current_source_text: None,
+            current_jsx_pragmas: JsxPragmaFacts::default(),
         }
     }
 
@@ -331,6 +336,7 @@ impl<'a> LoweringPass<'a> {
             && !clause.is_type_only
         {
             if !self.ctx.options.verbatim_module_syntax
+                && !self.is_classic_jsx_factory_import_clause(clause)
                 && !self.import_has_value_usage_after_node(node, clause)
             {
                 if import_decl.import_clause.is_some() {
@@ -421,6 +427,69 @@ impl<'a> LoweringPass<'a> {
         if import_decl.import_clause.is_some() {
             self.visit(import_decl.import_clause);
         }
+    }
+
+    fn is_classic_jsx_factory_import_clause(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        let roots = self.classic_jsx_factory_roots();
+        if roots.is_empty() {
+            return false;
+        }
+
+        if clause.name.is_some() {
+            let name = emit_utils::identifier_text_or_empty(self.arena, clause.name);
+            if roots.iter().any(|root| root == &name) {
+                return true;
+            }
+        }
+
+        let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
+            return false;
+        };
+        let Some(named_imports) = self.arena.get_named_imports(bindings_node) else {
+            return false;
+        };
+
+        if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
+            let ns_name = emit_utils::identifier_text_or_empty(self.arena, named_imports.name);
+            if roots.iter().any(|root| root == &ns_name) {
+                return true;
+            }
+        }
+
+        named_imports.elements.nodes.iter().any(|&spec_idx| {
+            self.arena
+                .get(spec_idx)
+                .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                .is_some_and(|spec| {
+                    if spec.is_type_only {
+                        return false;
+                    }
+                    let local_name = emit_utils::identifier_text_or_empty(self.arena, spec.name);
+                    roots.iter().any(|root| root == &local_name)
+                })
+        })
+    }
+
+    fn classic_jsx_factory_roots(&self) -> Vec<String> {
+        let uses_classic_factory = match self.current_jsx_pragmas.runtime {
+            Some(JsxRuntimePragma::Classic) => true,
+            Some(JsxRuntimePragma::Automatic) => false,
+            _ => matches!(
+                self.ctx.options.jsx,
+                JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
+            ),
+        };
+        if !uses_classic_factory {
+            return Vec::new();
+        }
+
+        self.current_jsx_pragmas.classic_factory_roots(
+            self.ctx.options.jsx_factory.as_deref(),
+            self.ctx.options.jsx_fragment_factory.as_deref(),
+        )
     }
 
     fn import_has_value_usage_after_node(
@@ -1552,6 +1621,16 @@ impl<'a> LoweringPass<'a> {
         } else if self.ctx.needs_async_lowering && arrow.is_async {
             // ES2015/ES2016: arrow syntax is native but async needs lowering
             self.mark_async_helpers();
+        } else if !arrow.is_async
+            && self.function_parameters_need_body_prologue_transform(&arrow.parameters)
+        {
+            if self.function_parameters_need_rest_helper(&arrow.parameters) {
+                self.transforms.helpers_mut().rest = true;
+            }
+            self.transforms.insert(
+                idx,
+                TransformDirective::ES5FunctionParameters { function_node: idx },
+            );
         }
 
         for &param_idx in &arrow.parameters.nodes {

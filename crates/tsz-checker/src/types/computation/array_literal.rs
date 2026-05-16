@@ -790,6 +790,11 @@ impl<'a> CheckerState<'a> {
                                 .and_then(|h| h.get_array_element_type())
                         })
                         .or_else(|| {
+                            effective_contextual.and_then(|contextual| {
+                                self.resolve_array_element_type_from_index_signature(contextual)
+                            })
+                        })
+                        .or_else(|| {
                             // Fallback: when the contextual type is an object with
                             // numeric-string properties (e.g., { "0": (p1: number) => number }),
                             // look up the property by index string. This matches tsc's
@@ -1059,7 +1064,8 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             let contextual = effective_contextual?;
-            self.resolve_array_element_type_from_union_members(contextual)
+            self.resolve_array_element_type_from_index_signature(contextual)
+                .or_else(|| self.resolve_array_element_type_from_union_members(contextual))
         });
         if let Some(context_element_type) = context_element_type
             && context_element_type != TypeId::ANY
@@ -1288,6 +1294,27 @@ impl<'a> CheckerState<'a> {
         } else {
             Some(self.ctx.types.union(element_types))
         }
+    }
+
+    fn resolve_array_element_type_from_index_signature(
+        &mut self,
+        contextual: TypeId,
+    ) -> Option<TypeId> {
+        if contextual.is_nullable() {
+            return None;
+        }
+
+        if let Some(elem) =
+            crate::query_boundaries::common::array_element_type(self.ctx.types, contextual)
+        {
+            return Some(elem);
+        }
+
+        let resolved = self.resolve_lazy_type(contextual);
+        let resolved = self.evaluate_type_with_env(resolved);
+        let resolved = self.resolve_type_for_property_access(resolved);
+        let resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
+        resolver.resolve_number_index(resolved)
     }
 }
 

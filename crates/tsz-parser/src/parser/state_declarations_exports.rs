@@ -2035,7 +2035,10 @@ impl ParserState {
         // Optional label — matching tsc's isIdentifier() which returns false for
         // `await` in await/static-block context and `yield` in generator context.
         // When the label would be a contextually reserved word (e.g., `break await;` in a
-        // static block), tsc's parseIdentifier emits TS1003 "Identifier expected".
+        // static block), tsc's parseIdentifier emits TS1003 "Identifier expected" and
+        // leaves the token unconsumed. The outer statement loop then re-parses the
+        // reserved word as an expression statement (e.g. `await` as an await expression
+        // with a missing operand), which is where TS1109 originates.
         let label = if !self.can_parse_semicolon_for_restricted_production()
             && self.is_identifier_or_keyword()
         {
@@ -2067,9 +2070,10 @@ impl ParserState {
         self.parse_expected(SyntaxKind::ContinueKeyword);
 
         // For restricted productions (continue), ASI applies immediately after line break
-        // Use can_parse_semicolon_for_restricted_production() instead of can_parse_semicolon()
-        // Optional label — matching tsc's isIdentifier() which returns false for
-        // `await` in await/static-block context and `yield` in generator context.
+        // Use can_parse_semicolon_for_restricted_production() instead of can_parse_semicolon().
+        // For contextually reserved-word labels (e.g. `continue await` in a static block),
+        // see `parse_break_statement` above for the full rationale: emit TS1003 and leave
+        // the token unconsumed so the outer loop can re-parse it as an expression.
         let label = if !self.can_parse_semicolon_for_restricted_production()
             && self.is_identifier_or_keyword()
         {
@@ -2792,104 +2796,28 @@ impl ParserState {
         }
 
         self.next_token(); // consume the stray `?`
-        if self.skip_invalid_conditional_branch_to_colon() && self.is_token(SyntaxKind::ColonToken)
-        {
+        self.parse_recovered_invalid_conditional_branch_expression_statement();
+        if self.is_token(SyntaxKind::ColonToken) {
             self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
             self.next_token(); // consume the stray `:`
-            self.skip_invalid_conditional_branch_to_statement_end();
         }
+        self.parse_recovered_invalid_conditional_branch_expression_statement();
     }
 
-    fn skip_invalid_conditional_branch_to_colon(&mut self) -> bool {
-        let mut paren_depth = 0u32;
-        let mut brace_depth = 0u32;
-        let mut bracket_depth = 0u32;
-        let mut nested_conditionals = 0u32;
-
-        while !self.is_token(SyntaxKind::EndOfFileToken) {
-            match self.token() {
-                SyntaxKind::SemicolonToken
-                    if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0 =>
-                {
-                    return false;
-                }
-                SyntaxKind::OpenParenToken => paren_depth += 1,
-                SyntaxKind::CloseParenToken => paren_depth = paren_depth.saturating_sub(1),
-                SyntaxKind::OpenBraceToken => brace_depth += 1,
-                SyntaxKind::CloseBraceToken => {
-                    if brace_depth == 0 {
-                        return false;
-                    }
-                    brace_depth -= 1;
-                }
-                SyntaxKind::OpenBracketToken => bracket_depth += 1,
-                SyntaxKind::CloseBracketToken => bracket_depth = bracket_depth.saturating_sub(1),
-                SyntaxKind::QuestionToken
-                    if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0 =>
-                {
-                    nested_conditionals += 1;
-                }
-                SyntaxKind::ColonToken
-                    if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0 =>
-                {
-                    if nested_conditionals == 0 {
-                        return true;
-                    }
-                    nested_conditionals -= 1;
-                }
-                _ => {}
-            }
-            self.next_token();
+    fn parse_recovered_invalid_conditional_branch_expression_statement(&mut self) {
+        if !self.is_expression_start() {
+            return;
         }
 
-        false
-    }
-
-    fn skip_invalid_conditional_branch_to_statement_end(&mut self) {
-        let mut paren_depth = 0u32;
-        let mut brace_depth = 0u32;
-        let mut bracket_depth = 0u32;
-
-        while !self.is_token(SyntaxKind::EndOfFileToken) {
-            if paren_depth == 0
-                && brace_depth == 0
-                && bracket_depth == 0
-                && self.scanner.has_preceding_line_break()
-            {
-                break;
-            }
-
-            match self.token() {
-                SyntaxKind::SemicolonToken
-                    if paren_depth == 0 && brace_depth == 0 && bracket_depth == 0 =>
-                {
-                    self.next_token();
-                    break;
-                }
-                SyntaxKind::OpenParenToken => paren_depth += 1,
-                SyntaxKind::CloseParenToken => {
-                    if paren_depth == 0 {
-                        break;
-                    }
-                    paren_depth -= 1;
-                }
-                SyntaxKind::OpenBraceToken => brace_depth += 1,
-                SyntaxKind::CloseBraceToken => {
-                    if brace_depth == 0 {
-                        break;
-                    }
-                    brace_depth -= 1;
-                }
-                SyntaxKind::OpenBracketToken => bracket_depth += 1,
-                SyntaxKind::CloseBracketToken => {
-                    if bracket_depth == 0 {
-                        break;
-                    }
-                    bracket_depth -= 1;
-                }
-                _ => {}
-            }
-            self.next_token();
+        let pending_start = self.pending_recovered_expression_statements.len();
+        let stmt = self.parse_expression_statement();
+        let nested_recovered = self
+            .pending_recovered_expression_statements
+            .split_off(pending_start);
+        if stmt.is_some() {
+            self.pending_recovered_expression_statements.push(stmt);
         }
+        self.pending_recovered_expression_statements
+            .extend(nested_recovered);
     }
 }

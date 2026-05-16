@@ -2543,7 +2543,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let ty_for_check = crate::relations::freshness::widen_freshness(self.interner, ty);
                 let raw_constraint_satisfied = constraint_ty_raw != constraint_ty
                     && self.satisfies_raw_instantiated_constraint(ty_for_check, constraint_ty_raw);
-                if !self.checker.is_assignable_to(ty_for_check, constraint_ty)
+                let constraint_satisfied =
+                    self.arg_satisfies_type_parameter_constraint(ty_for_check, constraint_ty);
+                if !constraint_satisfied
                     && !raw_constraint_satisfied
                     && !self.callable_satisfies_top_rest_any_constraint(ty_for_check, constraint_ty)
                 {

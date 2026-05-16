@@ -102,9 +102,7 @@ impl<'a> CheckerState<'a> {
         let Some(mut children_type) = self.get_jsx_children_prop_type(props_type) else {
             return;
         };
-        let children_type_str = self
-            .get_jsx_component_prop_annotation_text(tag_name_idx, &children_prop_name)
-            .unwrap_or_else(|| self.jsx_children_type_display(props_type, children_type));
+        let children_type_str = self.jsx_children_type_display(props_type, children_type);
         let multiple_children_type = self.select_jsx_multiple_children_target_type(children_type);
         let children_type_is_originally_compound =
             crate::query_boundaries::common::union_members(self.ctx.types, children_type).is_some()
@@ -491,7 +489,7 @@ impl<'a> CheckerState<'a> {
             let Some(sig) = self.ctx.arena.get_signature(member_node) else {
                 continue;
             };
-            let prop_name_text = self.node_text(sig.name)?.trim().to_string();
+            let prop_name_text = self.get_property_name(sig.name)?;
             if prop_name_text != children_prop_name || sig.type_annotation.is_none() {
                 continue;
             }
@@ -1108,15 +1106,29 @@ impl<'a> CheckerState<'a> {
 
     fn strip_jsx_readonly_application_alias(&mut self, type_id: TypeId) -> TypeId {
         let type_id = self.resolve_type_for_property_access(type_id);
+        if let Some(inner) = self.readonly_mapped_application_arg(type_id) {
+            return self.resolve_type_for_property_access(inner);
+        }
+
         let type_id = self.evaluate_type_with_env(type_id);
+        if let Some(inner) = self.readonly_mapped_application_arg(type_id) {
+            return self.resolve_type_for_property_access(inner);
+        }
+        type_id
+    }
+
+    fn readonly_mapped_application_arg(&self, type_id: TypeId) -> Option<TypeId> {
         if let Some((base, args)) =
             crate::query_boundaries::common::application_info(self.ctx.types, type_id)
             && args.len() == 1
-            && self.format_type(base) == "Readonly"
+            && crate::query_boundaries::common::is_mapped_type_with_readonly_modifier(
+                self.ctx.types,
+                base,
+            )
         {
-            return self.resolve_type_for_property_access(args[0]);
+            return Some(args[0]);
         }
-        type_id
+        None
     }
 
     fn children_type_accepts_text(&mut self, children_type: TypeId) -> bool {
@@ -1130,14 +1142,33 @@ impl<'a> CheckerState<'a> {
         original_children_type: TypeId,
         tag_name_idx: NodeIndex,
     ) {
-        if let Some(expected_child_type) = self.jsx_multiple_children_element_type(children_type)
-            && self.report_jsx_multiple_children_individual_assignability(
+        // Fixed-length tuples (e.g. `children: [A, B]`) must fall through to the
+        // aggregate check so that the wrong child count is caught via structural
+        // assignability. Only homogeneous arrays (`T[]`) and array-containing unions
+        // (`T | T[]`) use the per-child path — those types accept any count, so the
+        // aggregate synthesized array can differ in TypeId identity from the declared
+        // type even when structurally identical, producing a spurious TS2322.
+        let resolved_children = {
+            let r = self.resolve_type_for_property_access(children_type);
+            self.evaluate_type_with_env(r)
+        };
+        let is_fixed_tuple =
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, resolved_children)
+                .is_some();
+        if !is_fixed_tuple
+            && let Some(expected_child_type) =
+                self.jsx_multiple_children_element_type(children_type)
+        {
+            // Each child is checked individually. When all pass, the aggregate
+            // synthesized array type is not checked — it can carry a different
+            // TypeId than the declared children type even when structurally
+            // identical, which would produce a spurious "T[] not assignable to T[]".
+            self.report_jsx_multiple_children_individual_assignability(
                 attributes_idx,
                 expected_child_type,
                 original_children_type,
                 None,
-            )
-        {
+            );
             return;
         }
 
@@ -1167,7 +1198,7 @@ impl<'a> CheckerState<'a> {
         attributes_idx: NodeIndex,
         children_type: TypeId,
         actual_child_type: TypeId,
-        tag_name_idx: NodeIndex,
+        _tag_name_idx: NodeIndex,
         children_type_text: &str,
         children_type_is_originally_compound: bool,
     ) {
@@ -1214,13 +1245,8 @@ impl<'a> CheckerState<'a> {
         // Use the common assignability reporter for child mismatches so TS2740/TS2741
         // rendering stays consistent with the rest of the checker.
 
-        let source_text = self.format_type_for_assignability_message(actual_child_type);
-        let children_prop_name = self.get_jsx_children_prop_name();
-        if children_type_is_originally_compound
-            || self
-                .get_jsx_component_prop_annotation_text(tag_name_idx, &children_prop_name)
-                .is_some()
-        {
+        if children_type_is_originally_compound {
+            let source_text = self.format_type_for_assignability_message(actual_child_type);
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node_msg(
                 diag_node,

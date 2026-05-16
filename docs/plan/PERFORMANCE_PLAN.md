@@ -59,6 +59,11 @@ Set an external timer or CI/status reminder for active performance PRs and
 refresh it when `main` advances. The reminder is part of the work: stale PRs are
 considered unfinished even when the code change is otherwise complete.
 
+Benchmark workflow runs must also prove they still target current `main` before
+reserving the self-hosted benchmark runner. Queued runs for obsolete main SHAs
+should skip in the cheap gate job; stale project rows are noise, not useful
+performance evidence.
+
 Distinguish timing evidence from attribution evidence:
 
 | Mode | Purpose | Counter state | Comparable to `tsgo` timing? |
@@ -88,6 +93,13 @@ Generated flat project `tsconfig` files are benchmark-owned artifacts and must
 be rewritten whenever their fixture is prepared. External fixture caches may
 outlive script revisions; stale generated configs can invalidate project rows
 by keeping old include/exclude rules.
+
+For project compatibility blockers, keep the reduced repro and project row
+tied together. The PR should name the failing benchmark row, the reduced
+compile command, the structural compiler rule being fixed, and the targeted
+test that preserves that rule. A temporary `/tmp` repro is useful evidence, but
+the durable artifact is the solver/checker test or guard row that would fail if
+the project-specific spelling changed.
 
 Do not run full conformance, full emit, or full fourslash locally.
 

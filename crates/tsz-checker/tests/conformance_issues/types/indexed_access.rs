@@ -197,6 +197,24 @@ type T00 = { [P in P]: string };
 }
 
 #[test]
+fn test_mapped_type_commented_direct_circular_constraint_reports_ts2313() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type T00 = { [Key in /* comment */ Key]: string };
+",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2313),
+        "Expected TS2313 for comment-separated mapped type parameter self reference.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2304),
+        "Should not emit TS2304 for comment-separated self-reference constraint.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_self_indexed_property_annotations_emit_ts2502() {
     let diagnostics = compile_and_get_diagnostics_with_lib(
         r#"

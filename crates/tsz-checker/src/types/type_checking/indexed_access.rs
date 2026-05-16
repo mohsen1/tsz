@@ -1062,6 +1062,12 @@ impl<'a> CheckerState<'a> {
         if self.is_assignable_to(index_type_for_check, keyof_object) {
             return;
         }
+        if self.conditional_result_branches_satisfy_constraint(index_type, keyof_object)
+            || self
+                .conditional_result_branches_satisfy_constraint(index_type_for_check, keyof_object)
+        {
+            return;
+        }
         // When the solver TypeData doesn't carry the constraint (common for type
         // parameters in generic signatures), use the AST-resolved constraint.
         // E.g. `emit<Event extends keyof M>(...args: M[Event])` — Event's
