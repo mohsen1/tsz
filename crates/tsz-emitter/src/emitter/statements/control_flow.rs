@@ -1108,6 +1108,14 @@ impl<'a> Printer<'a> {
         if let Some(jump) = self.arena.get_jump_data(node)
             && jump.label.is_some()
         {
+            if self.is_static_block_await_identifier(jump.label) {
+                self.write(" ;");
+                self.write_line();
+                self.emit(jump.label);
+                self.write(" ;");
+                self.emit_trailing_comment_after_semicolon(node);
+                return;
+            }
             self.write(" ");
             // Emit inline comments between keyword and label (e.g., `break /*c*/ label`)
             if let Some(label_node) = self.arena.get(jump.label) {
@@ -1135,6 +1143,14 @@ impl<'a> Printer<'a> {
         if let Some(jump) = self.arena.get_jump_data(node)
             && jump.label.is_some()
         {
+            if self.is_static_block_await_identifier(jump.label) {
+                self.write(" ;");
+                self.write_line();
+                self.emit(jump.label);
+                self.write(" ;");
+                self.emit_trailing_comment_after_semicolon(node);
+                return;
+            }
             self.write(" ");
             // Emit inline comments between keyword and label (e.g., `continue /*c*/ label`)
             if let Some(label_node) = self.arena.get(jump.label) {
@@ -1183,6 +1199,14 @@ impl<'a> Printer<'a> {
 
         if self.ctx.emit_await_as_yield && self.get_identifier_text_idx(labeled.label) == "await" {
             self.write("yield ;");
+            self.write_line();
+            self.emit(labeled.statement);
+            return;
+        }
+
+        if self.is_static_block_await_identifier(labeled.label) {
+            self.emit(labeled.label);
+            self.write(" ;");
             self.write_line();
             self.emit(labeled.statement);
             return;

@@ -1265,6 +1265,7 @@ impl<'a> Printer<'a> {
                         if !needs_param_prologue
                             && block.statements.nodes.len() == 1
                             && self.is_simple_return_statement(block.statements.nodes[0])
+                            && self.is_single_line(block_node)
                         {
                             self.emit_single_line_block(func.body);
                         } else if needs_param_prologue {

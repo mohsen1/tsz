@@ -121,9 +121,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(name) = target_name.as_deref() {
                     let bare = format!("required in type '{name}'");
                     let qualified = format!("required in type 'typeof {name}'");
-                    if diag.message_text.contains(&bare) {
-                        diag.message_text = diag.message_text.replace(&bare, &qualified);
-                    }
+                    diag.message_text = diag.message_text.replace(&bare, &qualified);
                 }
             }
         }
