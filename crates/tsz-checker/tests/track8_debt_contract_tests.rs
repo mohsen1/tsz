@@ -1,4 +1,5 @@
 use std::fs;
+use std::path::Path;
 
 const SOURCE_FILE_CHECKING: &str = "src/state/state_checking/source_file.rs";
 
@@ -8,8 +9,9 @@ const MAX_SOURCE_FILE_RENDERED_MESSAGE_DECISIONS: usize = 15;
 
 #[test]
 fn test_source_file_fingerprint_debt_does_not_increase() {
-    let source = fs::read_to_string(SOURCE_FILE_CHECKING)
-        .unwrap_or_else(|_| panic!("failed to read {SOURCE_FILE_CHECKING}"));
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(SOURCE_FILE_CHECKING);
+    let source =
+        fs::read_to_string(&path).unwrap_or_else(|_| panic!("failed to read {}", path.display()));
 
     let metrics = [
         (

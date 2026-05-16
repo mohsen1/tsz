@@ -778,6 +778,36 @@ interface ITest<P extends Prefixes, E extends AllPrefixData = PrefixData<P>> { }
     );
 }
 
+#[test]
+fn test_tuple_default_matching_constraint_union_member_no_ts2344() {
+    let source = r#"
+export {};
+interface Schema { readonly _output: unknown; }
+type SchemaAny = Schema;
+type TupleItems = [SchemaAny, ...SchemaAny[]];
+interface TupleDef<T extends TupleItems | [] = TupleItems> {
+    items: T;
+}
+class Tuple<
+    T extends [SchemaAny, ...SchemaAny[]] | [] = [SchemaAny, ...SchemaAny[]]
+> {
+    readonly def!: TupleDef<T>;
+}
+"#;
+
+    let diagnostics = crate::test_utils::check_source_diagnostics(source);
+    let ts2344_messages = diagnostics
+        .iter()
+        .filter(|d| d.code == 2344)
+        .map(|d| d.message_text.as_str())
+        .collect::<Vec<_>>();
+
+    assert!(
+        ts2344_messages.is_empty(),
+        "tuple defaults that syntactically match a constraint union member should not emit TS2344; got {ts2344_messages:?}"
+    );
+}
+
 /// TS2744 position must anchor at the offending forward-referenced identifier
 /// inside the type-parameter default, not at the start of the entire default
 /// expression. tsc points at the identifier itself.

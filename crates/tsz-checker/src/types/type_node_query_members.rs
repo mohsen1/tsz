@@ -114,6 +114,135 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         (resolved != TypeId::ANY && resolved != TypeId::ERROR).then_some(resolved)
     }
 
+    /// Inline `typeof import("...")[.segments]` resolver used by
+    /// `get_type_from_type_query`.
+    ///
+    /// Returns `Some(resolved)` when `idx` is a `TYPE_QUERY` whose expression
+    /// is an `import("...")` call (optionally followed by qualified/property
+    /// access segments). The imported namespace or qualified member is
+    /// returned, with any inline `<TypeArgs>` applied via
+    /// `apply_instantiation_expression_type_arguments`. Returns `None` for any
+    /// other shape, letting the caller fall through to normal lowering.
+    ///
+    /// Without this, inline indexed-access / `keyof` on
+    /// `typeof import("...")` collapses to `ERROR` (the lowering path only
+    /// understands identifier expression names), causing utility types
+    /// (`Parameters`, `ReturnType`, `keyof`, ...) to evaluate against `ERROR`
+    /// and yield `never`. Aliased uses already go through `CheckerState`'s
+    /// `TYPE_QUERY` handler; this brings the inline path to parity.
+    pub(crate) fn try_get_type_from_inline_import_typeof_query(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let node = self.ctx.arena.get(idx)?;
+        let type_query = self.ctx.arena.get_type_query(node)?;
+        if !self.is_import_call_typeof_query(type_query.expr_name) {
+            return None;
+        }
+        let imported = self.resolve_import_typeof_query_via_state(idx)?;
+        if let Some(type_arguments) = &type_query.type_arguments {
+            let type_arguments = type_arguments.clone();
+            return Some(
+                self.apply_instantiation_expression_type_arguments(imported, &type_arguments),
+            );
+        }
+        Some(imported)
+    }
+
+    /// True when `expr_name` is the body of a `typeof import("...")[.member]*`
+    /// type-query, i.e. an `import("...")` call optionally followed by qualified
+    /// names or property accesses.
+    ///
+    /// This is the inline-typeof-import detection used by [`get_type_from_type_query`]
+    /// to route to the namespace-aware resolver instead of falling through to
+    /// lowering (which returns `Error` for non-identifier expression names).
+    pub(crate) fn is_import_call_typeof_query(&self, expr_name: NodeIndex) -> bool {
+        let mut current = expr_name;
+        for _ in 0..64 {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+            match node.kind {
+                syntax_kind_ext::CALL_EXPRESSION => {
+                    let Some(call) = self.ctx.arena.get_call_expr(node) else {
+                        return false;
+                    };
+                    let Some(callee) = self.ctx.arena.get(call.expression) else {
+                        return false;
+                    };
+                    return callee.kind == SyntaxKind::ImportKeyword as u16;
+                }
+                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                    let Some(access) = self.ctx.arena.get_access_expr(node) else {
+                        return false;
+                    };
+                    if access.question_dot_token {
+                        return false;
+                    }
+                    current = access.expression;
+                }
+                syntax_kind_ext::QUALIFIED_NAME => {
+                    let Some(qn) = self.ctx.arena.get_qualified_name(node) else {
+                        return false;
+                    };
+                    current = qn.left;
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Resolve a `typeof import("...")` `TYPE_QUERY` node by reusing the
+    /// `CheckerState` namespace builder. The `TypeNodeChecker` holds a
+    /// `&mut CheckerContext`, but the namespace-building machinery lives on
+    /// `CheckerState`. We wrap the current-file context in a sibling
+    /// `CheckerState` (same arena / binder / file index), run the resolver,
+    /// and propagate the namespace bookkeeping back to the parent so display
+    /// (`typeof import("...")`) and TS2339 receiver formatting stay accurate.
+    pub(crate) fn resolve_import_typeof_query_via_state(
+        &mut self,
+        type_query_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let type_query = self
+            .ctx
+            .arena
+            .get(type_query_idx)
+            .and_then(|node| self.ctx.arena.get_type_query(node))?;
+        let expr_name = type_query.expr_name;
+        let current_file_idx = self.ctx.current_file_idx;
+        let arena = self.ctx.arena;
+        let binder = self.ctx.binder;
+        let file_name = arena.source_files.first()?.file_name.clone();
+        let mut child = CheckerState {
+            ctx: CheckerContext::with_parent_cache(
+                arena,
+                binder,
+                self.ctx.types,
+                file_name,
+                self.ctx.compiler_options.clone(),
+                self.ctx,
+            ),
+        };
+        child.ctx.copy_cross_file_state_from(self.ctx);
+        self.ctx.copy_symbol_file_targets_to_attributed(
+            &mut child.ctx,
+            tsz_common::perf_counters::CheckerCreationReason::ImportType,
+        );
+        child.ctx.current_file_idx = current_file_idx;
+        let resolved = child.resolve_typeof_import_query(expr_name);
+        // Merge namespace bookkeeping back so display/TS2339 receiver and any
+        // subsequent property access see the same namespace TypeId.
+        for (type_id, module_name) in child.ctx.namespace_module_names.drain() {
+            self.ctx
+                .namespace_module_names
+                .entry(type_id)
+                .or_insert(module_name);
+        }
+        self.ctx.merge_symbol_file_targets_from(&child.ctx);
+        resolved.filter(|&type_id| type_id != TypeId::ANY && type_id != TypeId::ERROR)
+    }
+
     fn import_call_typeof_value(&self, expr_name: NodeIndex) -> Option<TypeId> {
         let (sym_id, target_file_idx, remaining_segments) =
             self.resolve_import_call_member_symbol(expr_name)?;

@@ -1539,7 +1539,7 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    fn resolve_typeof_import_query(&mut self, expr_name: NodeIndex) -> Option<TypeId> {
+    pub(crate) fn resolve_typeof_import_query(&mut self, expr_name: NodeIndex) -> Option<TypeId> {
         let (call_idx, segments) = self.decompose_typeof_import_query(expr_name)?;
         let (module_name, specifier_node) = self.get_import_type_module_specifier(call_idx)?;
         let resolution_mode_override = self.get_import_type_resolution_mode_override(call_idx);

@@ -200,6 +200,20 @@ fn test_destructuring_rest_array() {
 }
 
 #[test]
+fn for_in_missing_destructuring_initializer_uses_void_temp() {
+    let output = emit_es5("for (var [a, b] in []) { }\n");
+
+    assert!(
+        output.contains("for (var _a = void 0, a = _a[0], b = _a[1] in [])"),
+        "ES5 for-in destructuring without an initializer should read from one void temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(void 0)[0]") && !output.contains("(void 0)[1]"),
+        "ES5 for-in destructuring must not repeat void reads for each binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_assignment_object_rest_uses_es5_lowering() {
     // Regression: when targeting ES5 the new ES2018 object-rest assignment
     // handler must NOT intercept dispatch. The ES5 destructuring lowering
