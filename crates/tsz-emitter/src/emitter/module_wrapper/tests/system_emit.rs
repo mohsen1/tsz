@@ -1,10 +1,154 @@
+use crate::context::emit::EmitContext;
 use crate::emitter::{ModuleKind, Printer, PrinterOptions};
+use crate::lowering::LoweringPass;
 use tsz_common::ScriptTarget;
 use tsz_parser::ParserState;
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     (parser, root)
+}
+
+#[test]
+fn umd_dynamic_import_only_file_gets_wrapper_and_loader_branch() {
+    let source = r#"class C {
+    _path = "./other";
+    dynamic() {
+        return import(this._path);
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::UMD,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+    let mut printer = Printer::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("(function (factory) {"),
+        "Dynamic-import-only UMD files need the wrapper factory.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "var __syncRequire = typeof module === \"object\" && typeof module.exports === \"object\";"
+        ),
+        "UMD dynamic import needs the runtime branch discriminator.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "return _a = this._path, __syncRequire ? Promise.resolve().then(() => __importStar(require(_a))) : new Promise((resolve_1, reject_1) => { require([_a], resolve_1, reject_1); }).then(__importStar);"
+        ),
+        "UMD dynamic import should preserve expression evaluation before choosing sync or AMD loading.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn umd_es5_class_method_dynamic_import_uses_loader_branch() {
+    let source = r#"class C {
+    _path = "./other";
+    dynamic() {
+        return import(this._path);
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::UMD,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+    let mut printer = Printer::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains(
+            "var __syncRequire = typeof module === \"object\" && typeof module.exports === \"object\";"
+        ),
+        "UMD dynamic import needs the runtime branch discriminator.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("C.prototype.dynamic = function () {"),
+        "Class method should be lowered through the ES5 class emitter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "return _a = this._path, __syncRequire ? Promise.resolve().then(function () { return __importStar(require(_a)); }) : new Promise(function (resolve_1, reject_1) { require([_a], resolve_1, reject_1); }).then(__importStar);"
+        ),
+        "ES5 class method dynamic import should preserve expression evaluation before choosing sync or AMD loading.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn amd_dynamic_import_only_file_gets_wrapper_and_async_require() {
+    let source = r#"const path = "./other";
+import(path);
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::AMD,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("define([\"require\", \"exports\"], function (require, exports) {"),
+        "Dynamic-import-only AMD files need the define wrapper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_a = path, new Promise((resolve_1, reject_1) => { require([_a], resolve_1, reject_1); }).then(__importStar);"
+        ),
+        "AMD dynamic import should use async require with one eager specifier evaluation.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_dynamic_import_only_file_uses_context_import() {
+    let source = r#"const path = "./other";
+import(path);
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("System.register([], function (exports_1, context_1) {"),
+        "Dynamic-import-only System files need the System.register wrapper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("context_1.import(path);"),
+        "System dynamic import should use the wrapper context import hook.\nOutput:\n{output}"
+    );
 }
 
 /// `/// <reference .../>` directives should be stripped from JS output.

@@ -421,6 +421,10 @@ pub struct Printer<'a> {
     /// Counter used for disposable resource environment names (`env_1`, `env_2`, ...).
     pub(crate) next_disposable_env_id: u32,
 
+    /// Counter used for AMD/UMD dynamic import promise callback names
+    /// (`resolve_1`, `reject_1`, ...).
+    pub(crate) next_dynamic_import_promise_id: u32,
+
     /// Per-file counters for lowered async-generator inner function names.
     pub(crate) async_generator_inner_name_counts: FxHashMap<String, u32>,
 
@@ -995,6 +999,7 @@ impl<'a> Printer<'a> {
             anonymous_default_export_name: None,
             next_anonymous_default_index: 0,
             next_disposable_env_id: 1,
+            next_dynamic_import_promise_id: 1,
             async_generator_inner_name_counts: FxHashMap::default(),
             reserved_disposable_env_names: FxHashMap::default(),
             block_using_env: None,
