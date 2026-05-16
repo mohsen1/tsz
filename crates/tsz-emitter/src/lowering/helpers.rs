@@ -6,6 +6,7 @@
 use super::*;
 use crate::emitter::JsxEmit;
 use crate::transforms::emit_utils;
+use tsz_parser::parser::node::NodeAccess;
 
 impl<'a> LoweringPass<'a> {
     // =========================================================================
@@ -1650,6 +1651,36 @@ impl<'a> LoweringPass<'a> {
                     }
                     _ => {}
                 }
+            }
+        }
+        if matches!(
+            self.ctx.options.module,
+            ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System
+        ) && self.source_has_dynamic_import_call(statements)
+        {
+            return true;
+        }
+        false
+    }
+
+    fn source_has_dynamic_import_call(&self, statements: &NodeList) -> bool {
+        let mut stack: Vec<NodeIndex> = statements.nodes.clone();
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() {
+                continue;
+            }
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && let Some(call) = self.arena.get_call_expr(node)
+                && let Some(expr_node) = self.arena.get(call.expression)
+                && expr_node.kind == SyntaxKind::ImportKeyword as u16
+            {
+                return true;
+            }
+            for child in self.arena.get_children(idx) {
+                stack.push(child);
             }
         }
         false
