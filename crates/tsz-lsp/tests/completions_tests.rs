@@ -3925,6 +3925,8 @@ fn test_completions_boolean_exposes_only_valueof() {
     for source in [
         "const b: boolean = true;\nb.",
         "const flag: boolean = false;\nflag.",
+        "const b = true;\nb.",
+        "const flag = false;\nflag.",
     ] {
         let names = member_names_at_end(source);
         for excluded in [
@@ -3937,12 +3939,59 @@ fn test_completions_boolean_exposes_only_valueof() {
         ] {
             assert!(
                 !names.contains(&excluded.to_string()),
-                "Boolean completions must not include '{excluded}'; got: {names:?}"
+                "Boolean completions must not include '{excluded}' (source: {source:?}); got: {names:?}"
             );
         }
         assert!(
             names.contains(&"valueOf".to_string()),
-            "Boolean completions must include 'valueOf'; got: {names:?}"
+            "Boolean completions must include 'valueOf' (source: {source:?}); got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_bigint_excludes_object_prototype_members() {
+    for source in [
+        "const n: bigint = 1n;\nn.",
+        "const x = 42n;\nx.",
+        "const y = 0n;\ny.",
+    ] {
+        let names = member_names_at_end(source);
+        for excluded in [
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "Bigint completions must not include Object.prototype member '{excluded}' (source: {source:?}); got: {names:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_completions_symbol_excludes_object_prototype_members() {
+    for source in [
+        "const s: symbol = Symbol();\ns.",
+        "declare const sym: symbol;\nsym.",
+    ] {
+        let names = member_names_at_end(source);
+        for excluded in [
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "Symbol completions must not include Object.prototype member '{excluded}' (source: {source:?}); got: {names:?}"
+            );
+        }
+        assert!(
+            names.contains(&"valueOf".to_string()),
+            "Symbol completions must include 'valueOf' (source: {source:?}); got: {names:?}"
         );
     }
 }
