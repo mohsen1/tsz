@@ -1262,11 +1262,7 @@ impl<'a> CheckerState<'a> {
         if source == inner {
             return true;
         }
-        if self.ctx.types.get_display_alias(source) == Some(inner) {
-            return true;
-        }
-
-        self.evaluate_type_for_assignability(source) == self.evaluate_type_for_assignability(inner)
+        self.ctx.types.get_display_alias(source) == Some(inner)
     }
 
     fn should_suppress_self_referential_generic_function_arg_mismatch(
