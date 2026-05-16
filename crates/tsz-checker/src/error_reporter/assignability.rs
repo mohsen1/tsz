@@ -716,16 +716,6 @@ impl<'a> CheckerState<'a> {
         let analysis = self.analyze_assignability_failure(source, target);
         let reason = analysis.failure_reason;
 
-        // Trace what's happening with contextualTyping33
-        if self.ctx.file_name.contains("contextualTyping33") {
-            let _src_str = self.format_type_diagnostic(source);
-            let _tgt_str = self.format_type_diagnostic(target);
-            tracing::trace!(
-                source = %_src_str, target = %_tgt_str, ?reason,
-                "diagnose_assignment"
-            );
-        }
-
         if tracing::enabled!(Level::TRACE) {
             let source_type = self.format_type_diagnostic(source);
             let target_type = self.format_type_diagnostic(target);
@@ -1658,6 +1648,11 @@ impl<'a> CheckerState<'a> {
             // Precedence gate: suppress fallback TS2322 when a more specific
             // diagnostic is already present at the same span.
             if self.has_more_specific_diagnostic_at_span(anchor.start, anchor.length) {
+                return;
+            }
+
+            if self.is_nested_same_wrapper_assignment_display_provenance(source, target, anchor_idx)
+            {
                 return;
             }
 

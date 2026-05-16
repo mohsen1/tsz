@@ -190,19 +190,16 @@ impl<'a> CheckerState<'a> {
     }
 
     fn await_expression_uses_call_like_syntax(&self, idx: NodeIndex) -> bool {
-        let Some((start, end)) = self.get_node_span(idx) else {
+        let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };
-        if end <= start {
-            return false;
-        }
-        let Some(source_file) = self.ctx.arena.source_files.first() else {
+        let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) else {
             return false;
         };
-        source_file
-            .text
-            .get(start as usize..end as usize)
-            .is_some_and(|text| text.starts_with("await("))
+        self.ctx
+            .arena
+            .get(unary.expression)
+            .is_some_and(|operand| operand.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION)
     }
 
     /// Get `PromiseLike`<T> for a given type T.

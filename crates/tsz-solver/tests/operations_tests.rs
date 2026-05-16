@@ -6243,8 +6243,7 @@ fn test_infer_generic_tuple_element() {
 }
 
 #[test]
-#[ignore = "pre-existing regression: upstream changes altered tuple rest inference"]
-fn test_infer_generic_tuple_rest_elements() {
+fn test_infer_generic_tuple_rest_elements_rejects_heterogeneous_candidates() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
@@ -6302,13 +6301,13 @@ fn test_infer_generic_tuple_rest_elements() {
         },
     ]);
     let result = infer_generic_function(&interner, &mut subtype, &func, &[tuple_arg]);
-    let expected = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
-    assert_eq!(result, expected);
+    // Current tsc keeps the first direct rest candidate and rejects the later
+    // heterogeneous element rather than inferring a union.
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
-#[ignore = "pre-existing regression: heterogeneous rest parameter inference now returns ERROR instead of union"]
-fn test_infer_generic_tuple_rest_parameter() {
+fn test_infer_generic_tuple_rest_parameter_rejects_heterogeneous_candidates() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
@@ -6356,13 +6355,13 @@ fn test_infer_generic_tuple_rest_parameter() {
         &func,
         &[TypeId::NUMBER, TypeId::STRING],
     );
-    // tsc infers T as number | string (union of candidates) and the call succeeds.
-    assert_ne!(result, TypeId::ERROR, "Expected union result, not ERROR");
+    // Current tsc keeps the first direct rest candidate and rejects the later
+    // heterogeneous argument rather than inferring a union.
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
-#[ignore = "pre-existing regression: upstream changes altered tuple rest inference"]
-fn test_infer_generic_tuple_rest_from_rest_argument() {
+fn test_infer_generic_tuple_rest_from_rest_argument_rejects_heterogeneous_candidates() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
@@ -6422,8 +6421,9 @@ fn test_infer_generic_tuple_rest_from_rest_argument() {
     ]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[tuple_arg]);
-    let expected = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
-    assert_eq!(result, expected);
+    // Current tsc keeps the first direct tuple-rest candidate and rejects the
+    // later heterogeneous rest argument rather than inferring a union.
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
@@ -7204,8 +7204,7 @@ fn test_infer_generic_index_signatures_ignore_optional_noncanonical_numeric_prop
 // Same reasoning as above - required properties don't infer from index signatures.
 
 #[test]
-#[ignore = "pre-existing regression: upstream changes altered union source inference"]
-fn test_infer_generic_union_source() {
+fn test_infer_generic_union_source_rejects_heterogeneous_property_candidates() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
@@ -7248,8 +7247,9 @@ fn test_infer_generic_union_source() {
 
     let union_arg = interner.union(vec![boxed_number, boxed_string]);
     let result = infer_generic_function(&interner, &mut subtype, &func, &[union_arg]);
-    let expected = interner.union(vec![TypeId::NUMBER, TypeId::STRING]);
-    assert_eq!(result, expected);
+    // Current tsc uses the first union member as the inference source for this
+    // direct object parameter and rejects the later incompatible member.
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
@@ -7385,8 +7385,7 @@ fn test_infer_generic_optional_union_target_with_null() {
 }
 
 #[test]
-#[ignore = "pre-existing regression: heterogeneous rest parameter inference now returns ERROR instead of union"]
-fn test_infer_generic_rest_parameters() {
+fn test_infer_generic_rest_parameters_rejects_heterogeneous_candidates() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
@@ -7420,8 +7419,9 @@ fn test_infer_generic_rest_parameters() {
         &func,
         &[TypeId::NUMBER, TypeId::STRING],
     );
-    // tsc infers T as string | number (union of candidates) and the call succeeds.
-    assert_ne!(result, TypeId::ERROR, "Expected union result, not ERROR");
+    // Current tsc keeps the first direct rest candidate and rejects the later
+    // heterogeneous argument rather than inferring a union.
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
@@ -8074,11 +8074,10 @@ fn test_rest_param_spreading_homogeneous_args() {
     assert_eq!(result, TypeId::NUMBER);
 }
 
-/// Test rest parameter type spreading with heterogeneous arguments creates union
+/// Heterogeneous direct rest arguments keep first-candidate inference and fail.
 /// function foo<T>(...args: T[]): T with mixed-type args
 #[test]
-#[ignore = "pre-existing regression: heterogeneous rest parameter inference now returns ERROR instead of union"]
-fn test_rest_param_spreading_heterogeneous_args() {
+fn test_rest_param_spreading_rejects_heterogeneous_args() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
 
@@ -8106,15 +8105,15 @@ fn test_rest_param_spreading_heterogeneous_args() {
         is_method: false,
     };
 
-    // tsc infers T as string | number | boolean (union of all candidates)
-    // and the call succeeds.
+    // Current tsc keeps the first direct rest candidate and rejects the later
+    // heterogeneous arguments rather than inferring a union.
     let result = infer_generic_function(
         &interner,
         &mut subtype,
         &func,
         &[TypeId::NUMBER, TypeId::STRING, TypeId::BOOLEAN],
     );
-    assert_ne!(result, TypeId::ERROR, "Expected union result, not ERROR");
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]

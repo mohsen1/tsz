@@ -91,6 +91,7 @@ use crate::transforms::private_fields_es5::{
 };
 use rustc_hash::FxHashMap;
 use std::cell::{Cell, RefCell};
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -144,6 +145,7 @@ pub struct ES5ClassTransformer<'a> {
     skip_static_field_initializers: bool,
     use_define_for_class_fields: bool,
     commonjs_import_substitutions: FxHashMap<String, String>,
+    module_kind: ModuleKind,
     /// Additional hoisted temp variable names collected from expression conversions
     /// (e.g., from computed property lowering inside object literals)
     extra_hoisted_temps: RefCell<Vec<String>>,
@@ -175,6 +177,7 @@ impl<'a> ES5ClassTransformer<'a> {
             skip_static_field_initializers: false,
             use_define_for_class_fields: false,
             commonjs_import_substitutions: FxHashMap::default(),
+            module_kind: ModuleKind::None,
             extra_hoisted_temps: RefCell::new(Vec::new()),
         }
     }
@@ -197,6 +200,10 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub fn set_commonjs_import_substitutions(&mut self, subs: FxHashMap<String, String>) {
         self.commonjs_import_substitutions = subs;
+    }
+
+    pub const fn set_module_kind(&mut self, module_kind: ModuleKind) {
+        self.module_kind = module_kind;
     }
 
     pub fn set_temp_var_counter(&mut self, counter: u32) {
@@ -585,7 +592,11 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut converter = AstToIr::new(self.arena)
             .with_super(self.has_extends)
             .with_super_name(self.super_name.clone())
-            .with_temp_var_counter(self.temp_var_counter.get());
+            .with_temp_var_counter(self.temp_var_counter.get())
+            .with_module_kind(self.module_kind);
+        if let Some(source_text) = self.source_text {
+            converter = converter.with_source_text(source_text);
+        }
         if let Some(ref transforms) = self.transforms {
             converter = converter.with_transforms(transforms.clone());
         }

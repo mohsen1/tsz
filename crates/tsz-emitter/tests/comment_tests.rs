@@ -248,6 +248,76 @@ fn element_access_open_bracket_finder_skips_comments_and_strings() {
 }
 
 #[test]
+fn property_access_inner_comments_stay_around_dot() {
+    let source = r#"/*1*/Array/*2*/./*3*/toString/*4*/
+
+/*1*/Array
+/*2*/./*3*/
+    // Single-line comment
+    toString/*4*/
+
+/*1*/Array
+    // Single-line comment
+    /*2*/./*3*/toString/*4*/"#;
+
+    let output = parse_and_print_with_opts(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("/*1*/ Array /*2*/. /*3*/toString; /*4*/"),
+        "Single-line property access comments should stay around the dot.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("/*1*/ Array\n    /*2*/ . /*3*/\n        // Single-line comment\n        toString; /*4*/"),
+        "Multiline property access comments should stay around the dot and property name.\nOutput:\n{output}"
+    );
+    assert!(
+        output
+            .contains("/*1*/ Array\n    // Single-line comment\n    /*2*/ . /*3*/toString; /*4*/"),
+        "Comments before a line-broken dot should stay before the emitted dot.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn optional_property_access_downlevel_replays_pre_chain_comments() {
+    let source = "/*1*/Array/*2*/?./*3*/toString/*4*/";
+
+    let output = parse_and_print_with_opts(source, PrintOptions::es6());
+
+    assert!(
+        output.contains(
+            "/*1*/ Array /*2*/ === null || Array /*2*/ === void 0 ? void 0 : Array /*2*/.toString; /*4*/"
+        ),
+        "ES2015 optional-property lowering should replay the inline pre-`?.` comment on each synthetic base use and drop the post-`?.` block comment like tsc.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn optional_property_access_downlevel_keeps_post_dot_line_comments() {
+    let source = r#"/*1*/Array/*2*/?./*3*/
+    // Single-line comment
+    toString/*4*/
+
+/*1*/Array
+    // Single-line comment
+    /*2*/?./*3*/toString/*4*/"#;
+
+    let output = parse_and_print_with_opts(source, PrintOptions::es6());
+
+    assert!(
+        output.contains(
+            "/*1*/ Array /*2*/ === null || Array /*2*/ === void 0 ? void 0 : Array /*2*/.\n// Single-line comment\ntoString; /*4*/"
+        ),
+        "ES2015 optional-property lowering should keep line comments after the optional access token while dropping the immediate block comment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "/*1*/ Array === null || Array === void 0 ? void 0 : Array\n// Single-line comment\n/*2*/ .toString; /*4*/"
+        ),
+        "Line-broken pre-`?.` comments should stay only on the final property access, not the synthetic nullish checks.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn object_literal_comments_stay_after_source_commas() {
     let source = r#"const a = {
     p0: 0, // Comment 0
@@ -377,7 +447,6 @@ function f(...// rest comment
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn template_substitution_comment_with_dollar_brace_is_preserved() {
     let source = "var x = `${/* ${ */ value}`;\n";
 
@@ -789,5 +858,20 @@ fn re_export_preserves_comment_after_star() {
     assert!(
         output.contains("from \"./b\""),
         "`from` keyword and module specifier must remain after preserved comment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn regex_exponentiation_comments_survive_math_pow_lowering() {
+    let source = "var regex4 = /**// /**/asdf /;\nvar regex5 = /**// asdf/**/ /;";
+    let output = parse_and_print_with_opts(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("var regex4 = /**/ Math.pow(/**/ / /, /asdf /);"),
+        "Block comments in slash/exponentiation trivia should stay with the first `Math.pow` argument.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var regex5 = /**/ Math.pow(/**/ / asdf/, / /);"),
+        "Trailing regex/exponentiation comments should replay before the first `Math.pow` argument.\nOutput:\n{output}"
     );
 }

@@ -92,6 +92,7 @@ pub struct AsyncES5Emitter<'a> {
     /// When true, prefix runtime helper calls with `tslib_1.` (for CJS importHelpers).
     tslib_prefix: bool,
     tslib_import_binding: String,
+    system_import_meta: bool,
 }
 
 impl<'a> AsyncES5Emitter<'a> {
@@ -107,6 +108,7 @@ impl<'a> AsyncES5Emitter<'a> {
             class_name: None,
             tslib_prefix: false,
             tslib_import_binding: "tslib_1".to_string(),
+            system_import_meta: false,
         }
     }
 
@@ -120,6 +122,10 @@ impl<'a> AsyncES5Emitter<'a> {
 
     pub fn set_tslib_import_binding(&mut self, binding: String) {
         self.tslib_import_binding = binding;
+    }
+
+    pub const fn set_system_import_meta(&mut self, enabled: bool) {
+        self.system_import_meta = enabled;
     }
 
     pub fn set_temp_var_counter(&mut self, counter: u32) {
@@ -173,6 +179,7 @@ impl<'a> AsyncES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         printer.set_tslib_prefix(self.tslib_prefix);
         printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_system_import_meta(self.system_import_meta);
         printer.emit(&ir);
         printer.take_output()
     }
@@ -189,6 +196,7 @@ impl<'a> AsyncES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         printer.set_tslib_prefix(self.tslib_prefix);
         printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_system_import_meta(self.system_import_meta);
         printer.emit(&ir);
         printer.take_output()
     }
@@ -244,6 +252,7 @@ impl<'a> AsyncES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         printer.set_tslib_prefix(self.tslib_prefix);
         printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_system_import_meta(self.system_import_meta);
         let hoisted_names: Vec<&str> = hoisted
             .iter()
             .flat_map(|group| group.iter().map(String::as_str))
@@ -285,6 +294,7 @@ impl<'a> AsyncES5Emitter<'a> {
         printer.set_indent_level(self.indent_level);
         printer.set_tslib_prefix(self.tslib_prefix);
         printer.set_tslib_import_binding(self.tslib_import_binding.clone());
+        printer.set_system_import_meta(self.system_import_meta);
         printer.emit(&ir);
         printer.take_output()
     }

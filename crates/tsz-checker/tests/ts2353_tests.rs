@@ -492,6 +492,51 @@ b = a;
 }
 
 #[test]
+fn mapped_application_assignment_reports_missing_property_with_renamed_keys() {
+    let source = r#"
+enum Kind { Left, Right }
+
+type Source<T extends Kind> = { tag: T; } & (
+  { tag: Kind.Left, leftOnly: string } |
+  { tag: Kind.Right, rightOnly: string }
+);
+
+type Projected<T extends Kind> = {
+  [Member in keyof Source<T>]: string;
+};
+
+declare let left: Projected<Kind.Left>;
+declare let right: Projected<Kind.Right>;
+left = right;
+right = left;
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2741: Vec<_> = diags.iter().filter(|(code, _)| *code == 2741).collect();
+    assert_eq!(
+        ts2741.len(),
+        2,
+        "Expected two TS2741 diagnostics for renamed remapped mapped assignments, got: {diags:?}"
+    );
+    assert!(
+        ts2741
+            .iter()
+            .any(|(_, message)| message.contains("Property 'leftOnly' is missing")),
+        "Expected missing-property diagnostic for 'leftOnly', got: {diags:?}"
+    );
+    assert!(
+        ts2741
+            .iter()
+            .any(|(_, message)| message.contains("Property 'rightOnly' is missing")),
+        "Expected missing-property diagnostic for 'rightOnly', got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322 || *code == 2353),
+        "Renamed remapped mapped assignment should classify as missing properties, got: {diags:?}"
+    );
+}
+
+#[test]
 fn mapped_array_as_clause_missing_named_property_beats_symbol_members() {
     let source = r#"
 declare const Symbol: {
@@ -803,8 +848,27 @@ function test<T extends IFoo>() {
     let diags = get_diagnostics(source);
     let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
     assert!(
-        ts2353.1.contains("'{ prop: boolean; }'"),
-        "Expected TS2353 against the concrete union member, got: {}",
+        ts2353.1.contains("'name'"),
+        "Expected TS2353 for the extra property, got: {}",
+        ts2353.1
+    );
+}
+
+#[test]
+fn union_with_generic_member_ignores_any_substring_in_alias_name_for_excess_property() {
+    let source = r#"
+interface IFoo {}
+type Many<T> = T | { prop: boolean };
+function test<T extends IFoo>() {
+    const value: Many<T> = { name: "test", prop: true };
+}
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
+    assert!(
+        ts2353.1.contains("'name'"),
+        "Expected TS2353 for the extra property, got: {}",
         ts2353.1
     );
 }

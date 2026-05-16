@@ -86,6 +86,10 @@ name = "tuple_infer_mapped_recursive_tests"
 path = "tests/tuple_infer_mapped_recursive_tests.rs"
 
 [[test]]
+name = "recursive_alias_resolution_tests"
+path = "tests/recursive_alias_resolution_tests.rs"
+
+[[test]]
 name = "tuple_rest_array_canonicalization_tests"
 path = "tests/tuple_rest_array_canonicalization_tests.rs"
 
@@ -1252,6 +1256,10 @@ path = "tests/homomorphic_indexed_access_tests.rs"
 [[test]]
 name = "homomorphic_indexed_access_edge_cases"
 path = "tests/homomorphic_indexed_access_edge_cases.rs"
+
+[[test]]
+name = "track8_debt_contract_tests"
+path = "tests/track8_debt_contract_tests.rs"
 
 [lints]
 workspace = true

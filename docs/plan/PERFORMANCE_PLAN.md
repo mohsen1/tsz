@@ -84,6 +84,17 @@ For project benchmark harness changes, measure failed-row overhead as part of
 the benchmark contract. A project row that fails pre-validation should record
 exit class and first diagnostic deltas from the first compiler invocation; it
 should not rerun the failing compiler just to populate compatibility metadata.
+Generated flat project `tsconfig` files are benchmark-owned artifacts and must
+be rewritten whenever their fixture is prepared. External fixture caches may
+outlive script revisions; stale generated configs can invalidate project rows
+by keeping old include/exclude rules.
+
+For project compatibility blockers, keep the reduced repro and project row
+tied together. The PR should name the failing benchmark row, the reduced
+compile command, the structural compiler rule being fixed, and the targeted
+test that preserves that rule. A temporary `/tmp` repro is useful evidence, but
+the durable artifact is the solver/checker test or guard row that would fail if
+the project-specific spelling changed.
 
 Do not run full conformance, full emit, or full fourslash locally.
 
