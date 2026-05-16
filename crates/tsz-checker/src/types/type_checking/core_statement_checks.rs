@@ -317,13 +317,6 @@ impl<'a> CheckerState<'a> {
                     );
                 }
                 false
-            } else if self.return_annotation_is_enumerate_length(stmt_idx) {
-                self.error_type_not_assignable_generic_at(
-                    TypeId::NUMBER,
-                    expected_type,
-                    fallback_error_node,
-                );
-                false
             } else if self.should_report_primitive_to_generic_indexed_conditional_return(
                 return_type,
                 expected_type,
@@ -408,23 +401,6 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn return_annotation_is_enumerate_length(&self, stmt_idx: NodeIndex) -> bool {
-        let Some(fn_idx) = self.find_enclosing_function(stmt_idx) else {
-            return false;
-        };
-        let Some(fn_node) = self.ctx.arena.get(fn_idx) else {
-            return false;
-        };
-        let Some(func) = self.ctx.arena.get_function(fn_node) else {
-            return false;
-        };
-        if func.type_annotation.is_none() {
-            return false;
-        }
-        self.node_text(func.type_annotation)
-            .is_some_and(|text| text.contains("Enumerate<") && text.contains("length"))
-    }
-
     fn should_report_primitive_to_generic_indexed_conditional_return(
         &self,
         source: TypeId,
@@ -435,10 +411,6 @@ impl<'a> CheckerState<'a> {
             TypeId::NUMBER | TypeId::STRING | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
         ) {
             return false;
-        }
-        let target_display = self.format_type_diagnostic(target);
-        if target_display.starts_with("Enumerate<") && target_display.contains("[\"length\"]") {
-            return true;
         }
         let Some((base, args)) =
             crate::query_boundaries::common::application_info(self.ctx.types, target)
