@@ -5,7 +5,7 @@
 //! the relation.
 
 use tsz_common::interner::Atom;
-use tsz_solver::{SubtypeFailureReason, TypeId};
+use tsz_solver::{SubtypeFailureReason, TypeId, Visibility};
 
 // ---------------------------------------------------------------------------
 // PropertyClassification: structured property-level analysis for EPC/missing
@@ -120,8 +120,18 @@ pub(crate) enum RelationFailure {
         source_count: usize,
         target_count: usize,
     },
-    /// Property modifier mismatch (optional/readonly/visibility/nominal).
-    PropertyModifierMismatch { property_name: Atom },
+    /// Optional source property cannot satisfy a required target property.
+    OptionalPropertyRequired { property_name: Atom },
+    /// Readonly property cannot satisfy a mutable property.
+    ReadonlyPropertyMismatch { property_name: Atom },
+    /// Property visibility mismatch.
+    PropertyVisibilityMismatch {
+        property_name: Atom,
+        source_visibility: Visibility,
+        target_visibility: Visibility,
+    },
+    /// Private/protected property declarations are nominally distinct.
+    PropertyNominalMismatch { property_name: Atom },
     /// Weak union violation (no common properties).
     WeakUnionViolation {
         source_type: TypeId,
@@ -239,7 +249,26 @@ impl RelationFailure {
                 source_count: *source_count,
                 target_count: *target_count,
             },
-            Self::PropertyModifierMismatch { property_name } => {
+            Self::OptionalPropertyRequired { property_name } => {
+                SubtypeFailureReason::OptionalPropertyRequired {
+                    property_name: *property_name,
+                }
+            }
+            Self::ReadonlyPropertyMismatch { property_name } => {
+                SubtypeFailureReason::ReadonlyPropertyMismatch {
+                    property_name: *property_name,
+                }
+            }
+            Self::PropertyVisibilityMismatch {
+                property_name,
+                source_visibility,
+                target_visibility,
+            } => SubtypeFailureReason::PropertyVisibilityMismatch {
+                property_name: *property_name,
+                source_visibility: *source_visibility,
+                target_visibility: *target_visibility,
+            },
+            Self::PropertyNominalMismatch { property_name } => {
                 SubtypeFailureReason::PropertyNominalMismatch {
                     property_name: *property_name,
                 }
@@ -391,13 +420,23 @@ impl RelationFailure {
                 source_count,
                 target_count,
             },
-            SubtypeFailureReason::OptionalPropertyRequired { property_name }
-            | SubtypeFailureReason::ReadonlyPropertyMismatch { property_name }
-            | SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
-                Self::PropertyModifierMismatch { property_name }
+            SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
+                Self::OptionalPropertyRequired { property_name }
             }
-            SubtypeFailureReason::PropertyVisibilityMismatch { property_name, .. } => {
-                Self::PropertyModifierMismatch { property_name }
+            SubtypeFailureReason::ReadonlyPropertyMismatch { property_name } => {
+                Self::ReadonlyPropertyMismatch { property_name }
+            }
+            SubtypeFailureReason::PropertyVisibilityMismatch {
+                property_name,
+                source_visibility,
+                target_visibility,
+            } => Self::PropertyVisibilityMismatch {
+                property_name,
+                source_visibility,
+                target_visibility,
+            },
+            SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
+                Self::PropertyNominalMismatch { property_name }
             }
             SubtypeFailureReason::TupleElementTypeMismatch {
                 index,

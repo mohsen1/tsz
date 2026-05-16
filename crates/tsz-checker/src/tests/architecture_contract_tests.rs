@@ -3418,7 +3418,10 @@ fn test_relation_failure_covers_semantic_families() {
         "ReturnTypeMismatch",
         "ParameterTypeMismatch",
         "ParameterCountMismatch",
-        "PropertyModifierMismatch",
+        "OptionalPropertyRequired",
+        "ReadonlyPropertyMismatch",
+        "PropertyVisibilityMismatch",
+        "PropertyNominalMismatch",
         "WeakUnionViolation",
         "TypeMismatch",
     ] {
@@ -3443,8 +3446,14 @@ fn test_relation_failure_preserves_canonical_solver_mapping() {
     );
     assert!(
         source.contains("SubtypeFailureReason::OptionalPropertyRequired { property_name }")
-            && source.contains("Self::PropertyModifierMismatch { property_name }"),
-        "OptionalPropertyRequired must normalize to PropertyModifierMismatch"
+            && source.contains("Self::OptionalPropertyRequired { property_name }")
+            && source.contains("SubtypeFailureReason::ReadonlyPropertyMismatch { property_name }")
+            && source.contains("Self::ReadonlyPropertyMismatch { property_name }")
+            && source.contains("SubtypeFailureReason::PropertyVisibilityMismatch")
+            && source.contains("Self::PropertyVisibilityMismatch")
+            && source.contains("SubtypeFailureReason::PropertyNominalMismatch { property_name }")
+            && source.contains("Self::PropertyNominalMismatch { property_name }"),
+        "property modifier solver reasons must preserve their specific modifier kind"
     );
     assert!(
         source.contains("SubtypeFailureReason::PropertyTypeMismatch")

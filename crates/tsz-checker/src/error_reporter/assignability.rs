@@ -623,7 +623,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
         let mut diag = self.render_relation_failure(failure_reason, source, target, anchor_idx, 0);
-        if let RelationFailure::PropertyModifierMismatch { property_name } = failure_reason
+        if let RelationFailure::PropertyNominalMismatch { property_name } = failure_reason
             && diag.related_information.is_empty()
             && let Some(detail) = self.nominal_mismatch_detail(source, target, *property_name)
         {
@@ -927,6 +927,19 @@ impl<'a> CheckerState<'a> {
                 }
                 let mut diag =
                     self.render_failure_reason(failure_reason, source, target, anchor_idx, 0);
+                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    && diag.related_information.is_empty()
+                    && let Some(detail) = self.private_brand_mismatch_error(source, target)
+                {
+                    diag.related_information.push(DiagnosticRelatedInformation {
+                        file: diag.file.clone(),
+                        start: diag.start,
+                        length: diag.length,
+                        message_text: detail,
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    });
+                }
                 if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE {
                     diag.message_text = self
                         .rewrite_declared_generic_alias_source_in_ts2322_message(
