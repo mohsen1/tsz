@@ -61,9 +61,10 @@ default_cargo_build_jobs() {
     unit|unit-archive|unit-shard)
       # Unit builds compile several large lib-test targets concurrently with
       # downstream crates. The 24 GiB cloud runners were still hitting rustc
-      # SIGKILL at 3 build jobs (8192 MiB/job), so default unit builds to 2 jobs
-      # on that class while keeping larger runners parallel.
-      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-12288}"
+      # SIGKILL at 2 build jobs while compiling tsz-checker and tsz-emitter
+      # lib-test targets together, so default unit builds to 1 job on that
+      # class while keeping larger runners parallel.
+      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-24576}"
       ;;
     *)
       mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"
