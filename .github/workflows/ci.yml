@@ -282,7 +282,7 @@ jobs:
 
   lint:
     name: lint
-    needs: [gate, unit]
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -297,7 +297,7 @@ jobs:
 
   cargo-shear:
     name: cargo-shear
-    needs: [gate, unit]
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 10
@@ -347,7 +347,7 @@ jobs:
 
   dist-binaries:
     name: dist-binaries
-    needs: [gate, unit]
+    needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
@@ -382,7 +382,7 @@ jobs:
 
   project-compile-guard:
     name: project-compile-guard
-    needs: [gate, dist-binaries, unit]
+    needs: [gate, dist-binaries]
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -405,7 +405,7 @@ jobs:
 
   wasm:
     name: wasm
-    needs: [gate, unit]
+    needs: gate
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
@@ -444,7 +444,7 @@ jobs:
 
   node-harness-prep:
     name: node-harness-prep
-    needs: [gate, unit]
+    needs: gate
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
@@ -475,11 +475,17 @@ jobs:
           if-no-files-found: warn
           compression-level: 1
 
-  unit:
-    # Keep unit as the first Rust compile gate. The tsz-checker lib-test target
-    # can exit silently when it is built through sccache from a restored warm
-    # target cache, so use a clean non-sccache compile path here.
-    name: unit
+  unit-archive:
+    # Build the workspace nextest archive once. Downstream `unit` matrix shards
+    # download this archive and run hash-partitioned slices of the test list,
+    # so 26k+ tests fan out across N runners instead of serializing on one.
+    #
+    # Caching is deliberately disabled here (no sccache, no warm target dir,
+    # no incremental). The tsz-checker lib-test target has been observed to
+    # exit silently when it's built from a restored warm target cache that
+    # was originally produced with sccache — a clean compile avoids that
+    # whole class of false-positive successes.
+    name: unit-archive
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
@@ -494,15 +500,68 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Run unit suite
-        run: scripts/ci/github-suite.sh unit
+      - name: Build and upload unit test archive
+        run: scripts/ci/github-suite.sh unit-archive
+
+  unit:
+    # Hash-partitioned test execution against the prebuilt nextest archive.
+    # Each shard downloads the archive from GCS (keyed by ${GITHUB_SHA}) and
+    # runs `nextest run --partition hash:i/N`. No cargo compile here — the
+    # archive carries pre-built test binaries.
+    name: unit-${{ matrix.shard }}
+    needs: [gate, unit-archive]
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    env:
+      _TSZ_CI_UNIT_SHARD_INDEX: ${{ matrix.shard }}
+      _TSZ_CI_UNIT_SHARD_COUNT: 8
+      TSZ_CI_CACHE_RESTORE: "0"
+      TSZ_CI_CACHE_SAVE: "0"
+      TSZ_CI_DISABLE_SCCACHE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Run unit shard
+        run: scripts/ci/github-suite.sh unit-shard
+
+  unit-aggregate:
+    # Single required-status-check name covering all unit shards. Equivalent
+    # to the pattern used by conformance-aggregate / fourslash-aggregate.
+    name: unit-aggregate
+    needs: [gate, unit-archive, unit]
+    if: needs.gate.outputs.should_run == 'true' && !cancelled()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify all unit shards passed
+        env:
+          ARCHIVE_RESULT: ${{ needs.unit-archive.result }}
+          SHARDS_RESULT: ${{ needs.unit.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$ARCHIVE_RESULT" != "success" ]]; then
+            echo "unit-archive did not succeed: ${ARCHIVE_RESULT}"
+            exit 1
+          fi
+          if [[ "$SHARDS_RESULT" != "success" ]]; then
+            echo "one or more unit shards did not succeed: ${SHARDS_RESULT}"
+            exit 1
+          fi
+          echo "All unit shards passed."
 
   conformance:
-    # Keep the heavy shards behind the unit compile gate. The checker lib-test
-    # target is large enough that concurrent conformance/fourslash/emit fanout
-    # can starve rustc on the 8-vCPU cloud runners.
+    # Conformance shards consume the dist-fast binaries artifact and run the
+    # tsz-conformance harness; they do not need unit's test outputs. Each
+    # shard runs on its own self-hosted 8-vCPU runner, so concurrent fanout
+    # does not compete with the unit-archive compile for rustc capacity.
     name: conformance-${{ matrix.shard }}
-    needs: [gate, dist-binaries, unit]
+    needs: [gate, dist-binaries]
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 75
@@ -535,8 +594,8 @@ jobs:
 
   conformance-aggregate:
     name: conformance-aggregate
-    needs: [gate, unit, conformance]
-    if: needs.gate.outputs.full_run == 'true' && needs.unit.result == 'success' && !cancelled()
+    needs: [gate, conformance]
+    if: needs.gate.outputs.full_run == 'true' && !cancelled()
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -574,7 +633,7 @@ jobs:
 
   emit:
     name: emit
-    needs: [gate, dist-binaries, node-harness-prep, unit]
+    needs: [gate, dist-binaries, node-harness-prep]
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
@@ -618,7 +677,7 @@ jobs:
     # capacity. Shift those two runners here; weighted snapshot timings reduce
     # the expected max shard work from ~328s at 4 shards to ~219s at 6 shards.
     name: fourslash-${{ matrix.shard }}
-    needs: [gate, dist-binaries, node-harness-prep, unit]
+    needs: [gate, dist-binaries, node-harness-prep]
     if: needs.gate.outputs.full_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
@@ -665,8 +724,8 @@ jobs:
 
   fourslash-aggregate:
     name: fourslash-aggregate
-    needs: [gate, unit, fourslash]
-    if: needs.gate.outputs.full_run == 'true' && needs.unit.result == 'success' && !cancelled()
+    needs: [gate, fourslash]
+    if: needs.gate.outputs.full_run == 'true' && !cancelled()
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -693,7 +752,8 @@ jobs:
       - wasm
       - wasm-web
       - node-harness-prep
-      - unit
+      - unit-archive
+      - unit-aggregate
       - conformance-aggregate
       - conformance-snapshot-gate
       - emit
@@ -724,7 +784,7 @@ jobs:
               print("CI gated off; summary passes because jobs were intentionally skipped.")
               sys.exit(0)
 
-          required = {"lint", "cargo-shear", "cargo-deny", "dist-binaries", "unit"}
+          required = {"lint", "cargo-shear", "cargo-deny", "dist-binaries", "unit-archive", "unit-aggregate"}
           pr_body = needs.get("project-corpus-pr-body")
           if pr_body and pr_body.get("result") not in ("success", "skipped"):
               print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
