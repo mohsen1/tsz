@@ -2401,3 +2401,79 @@ const bad: R1 = "nope";
         );
     }
 }
+
+// =============================================================================
+// IsUnion<T> supplement — cases not covered by distributive_conditional_default_tests.rs
+// =============================================================================
+
+const IS_UNION_PRELUDE: &str = r#"
+type IsUnion<T, U = T> = T extends U
+  ? [U] extends [T]
+    ? false
+    : true
+  : never;
+"#;
+
+#[test]
+fn is_union_of_primitives_evaluates_to_true() {
+    assert_no_ts2322(
+        &format!(
+            "{IS_UNION_PRELUDE}\n\
+            type R = IsUnion<string | number>;\n\
+            const r: R = true;\n"
+        ),
+        "IsUnion<string | number> = true",
+    );
+}
+
+#[test]
+fn is_union_diagnostic_shows_evaluated_literal_not_alias() {
+    let source = format!(
+        "{IS_UNION_PRELUDE}\n\
+        type R = IsUnion<\"a\" | \"b\">;\n\
+        const r: R = false;\n"
+    );
+    let diags = tsz_checker::test_utils::check_source_strict(&source);
+    let msgs = tsz_checker::test_utils::diagnostic_messages_with_code(&diags, 2322);
+    assert_eq!(
+        msgs.len(),
+        1,
+        "Expected exactly one TS2322; got: {diags:#?}"
+    );
+    let msg = msgs[0];
+    assert!(
+        msg.contains("'false'") && msg.contains("'true'"),
+        "Expected evaluated literal types in message; got: {msg:?}"
+    );
+    assert!(
+        !msg.contains("IsUnion"),
+        "Diagnostic must not show unevaluated alias 'IsUnion'; got: {msg:?}"
+    );
+}
+
+const EQUAL_PRELUDE: &str = r#"type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2) ? true : false;
+"#;
+
+#[test]
+fn equal_any_then_is_union_no_cross_contamination() {
+    // Equal<any, X> evaluations must not corrupt subsequent IsUnion evaluations.
+    assert_no_ts2322(
+        &format!(
+            "{EQUAL_PRELUDE}\n\
+            {IS_UNION_PRELUDE}\n\
+            type E1 = Equal<any, string>;  const e1: E1 = false;\n\
+            type E2 = Equal<any, number>;  const e2: E2 = false;\n\
+            type E3 = Equal<string, any>;  const e3: E3 = false;\n\
+            type U1 = IsUnion<\"a\" | \"b\">; const u1: U1 = true;\n\
+            type F1 = IsUnion<string>;     const f1: F1 = false;\n\
+            type U2 = IsUnion<1 | 2>;      const u2: U2 = true;\n\
+            type F2 = IsUnion<number>;     const f2: F2 = false;\n\
+            type E4 = Equal<string, string>; const e4: E4 = true;\n\
+            type E5 = Equal<{{a: 1}}, {{a: 1}}>; const e5: E5 = true;\n\
+            export {{}};\n"
+        ),
+        "Equal<any,X> then IsUnion cross-contamination",
+    );
+}
