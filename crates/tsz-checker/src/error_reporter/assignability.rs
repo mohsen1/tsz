@@ -622,6 +622,10 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
+        if matches!(failure_reason, RelationFailure::TypeMismatch { .. }) {
+            self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
+            return;
+        }
         let mut diag = self.render_relation_failure(failure_reason, source, target, anchor_idx, 0);
         if let RelationFailure::PropertyNominalMismatch { property_name } = failure_reason
             && diag.related_information.is_empty()
