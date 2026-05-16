@@ -428,6 +428,7 @@ impl<'a> Printer<'a> {
 
             // ES5 path: __awaiter + __generator state machine
             let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
+            async_emitter.set_system_import_meta(self.in_system_execute_body);
             // The generator body is nested inside `function () { ... }` in the __awaiter
             // callback, so render it at one extra indent level (matching tsc multi-line format).
             async_emitter.set_indent_level(self.writer.indent_level() + 1);
@@ -1137,6 +1138,12 @@ impl<'a> Printer<'a> {
         // Pass transform directives to the ClassES5Emitter
         es5_emitter.set_transforms(self.transforms.clone());
         es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+        es5_emitter.set_printer_options(self.ctx.options.clone());
+        es5_emitter.set_module_kind(
+            self.ctx
+                .original_module_kind
+                .unwrap_or(self.ctx.options.module),
+        );
         if let Some(text) = self.source_text_for_map() {
             if self.writer.has_source_map() {
                 es5_emitter.set_source_map_context(text, self.writer.current_source_index());

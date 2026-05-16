@@ -1314,6 +1314,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // `Application(ToPromise, [X])` to `Application(Promise, [X])`
                 // before matching `Application(Promise, [infer Y])`.
                 let pattern_app = self.interner().type_application(pattern_app_id);
+                if pattern_app.args.len() == 1
+                    && let Some(TypeData::Lazy(def_id)) = self.interner().lookup(pattern_app.base)
+                    && self.resolver().is_builtin_readonly_array_def(def_id)
+                    && let Some(source_elem) =
+                        crate::type_queries::get_array_element_type(self.interner(), source)
+                {
+                    return self.match_infer_pattern(
+                        source_elem,
+                        pattern_app.args[0],
+                        bindings,
+                        visited,
+                        checker,
+                    );
+                }
                 let mut current_source = source;
                 for _ in 0..Self::MAX_ALIAS_REDUCTION_STEPS {
                     if let Some(TypeData::Application(source_app_id)) =
