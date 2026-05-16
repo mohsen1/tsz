@@ -1478,7 +1478,9 @@ impl<'a> CheckerState<'a> {
             return target_str.to_string();
         }
 
-        if target_str.contains('<') || self.ts2820_target_contains_alias_surface(target) {
+        if self.ts2820_target_contains_application_surface(target)
+            || self.ts2820_target_contains_alias_surface(target)
+        {
             Self::widen_numeric_member_literals_in_display_text(target_str)
         } else {
             expanded_target_str
@@ -1545,6 +1547,31 @@ impl<'a> CheckerState<'a> {
             return members
                 .iter()
                 .any(|&member| self.ts2820_target_contains_alias_surface(member));
+        }
+
+        false
+    }
+
+    fn ts2820_target_contains_application_surface(&self, target: TypeId) -> bool {
+        if crate::query_boundaries::common::application_info(self.ctx.types, target).is_some() {
+            return true;
+        }
+
+        if let Some(alias) = self.ctx.types.get_display_alias(target)
+            && alias != target
+            && self.ts2820_target_contains_application_surface(alias)
+        {
+            return true;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, target).or_else(|| {
+                crate::query_boundaries::common::intersection_members(self.ctx.types, target)
+            })
+        {
+            return members
+                .iter()
+                .any(|&member| self.ts2820_target_contains_application_surface(member));
         }
 
         false
