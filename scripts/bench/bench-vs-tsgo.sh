@@ -685,7 +685,9 @@ _pgo_run() {
         if [[ "${BENCH_PGO_VERBOSE:-0}" == "1" ]]; then
             local t0 t1
             t0=$(date +%s)
-            if ! run_with_timeout "$BENCH_PGO_TSZ_TIMEOUT" env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1; then
+            if run_with_timeout "$BENCH_PGO_TSZ_TIMEOUT" env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1; then
+                run_status=0
+            else
                 run_status=$?
                 if [ "$run_status" -eq 124 ]; then
                     echo -e "${YELLOW}PGO training input \"$label\" timed out after ${BENCH_PGO_TSZ_TIMEOUT}s${NC}"
@@ -696,7 +698,9 @@ _pgo_run() {
             t1=$(date +%s)
             echo -e "  ${CYAN}pgo${NC} $label ($((t1 - t0))s)"
         else
-            if ! run_with_timeout "$BENCH_PGO_TSZ_TIMEOUT" env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1; then
+            if run_with_timeout "$BENCH_PGO_TSZ_TIMEOUT" env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1; then
+                run_status=0
+            else
                 run_status=$?
                 if [ "$run_status" -eq 124 ]; then
                     echo -e "${YELLOW}PGO training input \"$label\" timed out after ${BENCH_PGO_TSZ_TIMEOUT}s${NC}"

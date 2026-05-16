@@ -353,7 +353,7 @@ impl<'a> CheckerState<'a> {
                 self.error_type_not_assignable_generic_at(
                     return_type,
                     expected_type,
-                    source_error_node,
+                    fallback_error_node,
                 );
                 false
             } else {
