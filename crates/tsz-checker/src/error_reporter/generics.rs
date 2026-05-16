@@ -538,6 +538,24 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        self.ensure_refs_resolved(type_arg);
+        self.ensure_refs_resolved(constraint);
+        let ready_constraint = self.resolve_lazy_type(constraint);
+        let ready_constraint = self.evaluate_type_for_assignability(ready_constraint);
+        if let Some(type_arg_constraint) =
+            common::type_parameter_constraint(self.ctx.types, type_arg)
+            && type_arg_constraint != type_arg
+            && !matches!(type_arg_constraint, TypeId::UNKNOWN | TypeId::ERROR)
+        {
+            self.ensure_refs_resolved(type_arg_constraint);
+            let ready_type_arg_constraint = self.resolve_lazy_type(type_arg_constraint);
+            let ready_type_arg_constraint =
+                self.evaluate_type_for_assignability(ready_type_arg_constraint);
+            if self.is_assignable_to_no_weak_checks(ready_type_arg_constraint, ready_constraint) {
+                return;
+            }
+        }
+
         // tsc widens a literal type-arg to its primitive base when the
         // constraint is a primitive base type that the literal's primitive
         // class doesn't match (e.g. `Uppercase<42>` shows `Type 'number'`
@@ -609,7 +627,7 @@ impl<'a> CheckerState<'a> {
     /// compatible declaration merges still avoid TS2344, while incompatible
     /// merges such as `interface Node { kind: SyntaxKind }` are allowed to
     /// report the same lib diagnostics as tsc.
-    fn indexed_access_into_object_uniformly_satisfies_constraint(
+    pub(crate) fn indexed_access_into_object_uniformly_satisfies_constraint(
         &mut self,
         type_arg: TypeId,
         constraint: TypeId,

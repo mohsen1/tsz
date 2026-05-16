@@ -1915,13 +1915,15 @@ ensure_utility_types_fixture() {
         git -C "$UTILITY_TYPES_DIR" checkout --quiet --detach FETCH_HEAD
     fi
 
+    # Rewrite the generated flat tsconfig every run. External fixture clones
+    # are cached across benchmark jobs, and stale generated configs can keep
+    # obsolete include/exclude rules after this script changes.
     # Create flat tsconfig for project-mode benchmarking:
     # - excludes spec/snap test files (need @types/jest)
     # - uses skipLibCheck + types:[] to avoid needing external type deps
     # - uses ES2015 target (ES5 is deprecated in TS 6+)
     local flat_tsconfig="$UTILITY_TYPES_DIR/tsconfig.flat.json"
-    if [ ! -f "$flat_tsconfig" ]; then
-        cat > "$flat_tsconfig" << 'FLATEOF'
+    cat > "$flat_tsconfig" << 'FLATEOF'
 {
   "compilerOptions": {
     "strict": true,
@@ -1936,7 +1938,6 @@ ensure_utility_types_fixture() {
   "exclude": ["src/**/*.snap.ts", "src/**/*.spec.ts"]
 }
 FLATEOF
-    fi
 }
 
 ensure_ts_toolbelt_fixture() {
@@ -1961,13 +1962,14 @@ ensure_ts_toolbelt_fixture() {
         git -C "$TS_TOOLBELT_DIR" checkout --quiet --detach FETCH_HEAD
     fi
 
+    # Rewrite the generated flat tsconfig every run; fixture clones are cached
+    # across jobs and must pick up script-owned config changes.
     # Create flat tsconfig for project-mode benchmarking:
     # - sources only (excludes tests/scripts which need external deps)
     # - removes deprecated/unsupported options (suppressImplicitAnyIndexErrors, watch)
     # - uses skipLibCheck + types:[] to avoid needing external type deps
     local flat_tsconfig="$TS_TOOLBELT_DIR/tsconfig.flat.json"
-    if [ ! -f "$flat_tsconfig" ]; then
-        cat > "$flat_tsconfig" << 'FLATEOF'
+    cat > "$flat_tsconfig" << 'FLATEOF'
 {
   "compilerOptions": {
     "target": "ES2015",
@@ -1991,7 +1993,6 @@ ensure_ts_toolbelt_fixture() {
   "exclude": ["tests/**/*", "scripts/**/*", "node_modules/**/*"]
 }
 FLATEOF
-    fi
 }
 
 ensure_ts_essentials_fixture() {
@@ -2016,13 +2017,14 @@ ensure_ts_essentials_fixture() {
         git -C "$TS_ESSENTIALS_DIR" checkout --quiet --detach FETCH_HEAD
     fi
 
+    # Rewrite the generated flat tsconfig every run; fixture clones are cached
+    # across jobs and must pick up script-owned config changes.
     # Create flat tsconfig for project-mode benchmarking:
     # - lib sources only (excludes test dir which needs conditional-type-checks)
     # - uses es2018 lib (covers esnext.asynciterable from original config)
     # - uses skipLibCheck to avoid needing external type deps
     local flat_tsconfig="$TS_ESSENTIALS_DIR/tsconfig.flat.json"
-    if [ ! -f "$flat_tsconfig" ]; then
-        cat > "$flat_tsconfig" << 'FLATEOF'
+    cat > "$flat_tsconfig" << 'FLATEOF'
 {
   "compilerOptions": {
     "target": "es2017",
@@ -2038,7 +2040,6 @@ ensure_ts_essentials_fixture() {
   "exclude": ["test/**/*", "node_modules/**/*"]
 }
 FLATEOF
-    fi
 }
 
 # ─── Real-world fixture: rxjs ───────────────────────────────────────────────
@@ -2068,9 +2069,10 @@ ensure_rxjs_fixture() {
     if [ -d "$RXJS_DIR/packages/rxjs/src/internal" ]; then
         rxjs_src_root="packages/rxjs/src"
     fi
+    # Rewrite the generated flat tsconfig every run; fixture clones are cached
+    # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$RXJS_DIR/tsconfig.flat.json"
-    if [ ! -f "$flat_tsconfig" ]; then
-        cat > "$flat_tsconfig" << FLATEOF
+    cat > "$flat_tsconfig" << FLATEOF
 {
   "compilerOptions": {
     "target": "es2017",
@@ -2094,7 +2096,6 @@ ensure_rxjs_fixture() {
   ]
 }
 FLATEOF
-    fi
 }
 
 # ─── Real-world fixture: type-fest ──────────────────────────────────────────
@@ -2118,9 +2119,10 @@ ensure_type_fest_fixture() {
             git -C "$TYPE_FEST_DIR" checkout --quiet --detach FETCH_HEAD
         fi
     fi
+    # Rewrite the generated flat tsconfig every run; fixture clones are cached
+    # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$TYPE_FEST_DIR/tsconfig.flat.json"
-    if [ ! -f "$flat_tsconfig" ]; then
-        cat > "$flat_tsconfig" << 'FLATEOF'
+    cat > "$flat_tsconfig" << 'FLATEOF'
 {
   "compilerOptions": {
     "target": "es2017",
@@ -2137,7 +2139,6 @@ ensure_type_fest_fixture() {
   "exclude": ["test-d/**/*", "node_modules/**/*"]
 }
 FLATEOF
-    fi
 }
 
 # ─── Real-world fixture: zod ────────────────────────────────────────────────
@@ -2161,9 +2162,10 @@ ensure_zod_fixture() {
             git -C "$ZOD_DIR" checkout --quiet --detach FETCH_HEAD
         fi
     fi
+    # Rewrite the generated flat tsconfig every run; fixture clones are cached
+    # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$ZOD_DIR/tsconfig.flat.json"
-    if [ ! -f "$flat_tsconfig" ]; then
-        cat > "$flat_tsconfig" << 'FLATEOF'
+    cat > "$flat_tsconfig" << 'FLATEOF'
 {
   "compilerOptions": {
     "target": "es2017",
@@ -2185,7 +2187,6 @@ ensure_zod_fixture() {
   ]
 }
 FLATEOF
-    fi
 }
 
 # ─── Real-world fixture: kysely (extreme type-level SQL inference) ─────────
@@ -2217,8 +2218,9 @@ declare const Buffer: {
   compare(left: unknown, right: unknown): number;
 };
 GLOBALSEOF
-    if [ ! -f "$flat_tsconfig" ]; then
-        cat > "$flat_tsconfig" << 'FLATEOF'
+    # Rewrite the generated flat tsconfig every run; fixture clones are cached
+    # across jobs and must pick up script-owned config changes.
+    cat > "$flat_tsconfig" << 'FLATEOF'
 {
   "compilerOptions": {
     "target": "es2017",
@@ -2242,7 +2244,6 @@ GLOBALSEOF
   ]
 }
 FLATEOF
-    fi
 }
 
 run_utility_types_benchmarks() {

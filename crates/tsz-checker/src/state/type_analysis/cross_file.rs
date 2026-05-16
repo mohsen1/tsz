@@ -246,7 +246,7 @@ impl<'a> CheckerState<'a> {
     fn try_resolve_cross_arena_named_alias_without_child(
         &mut self,
         sym_id: SymbolId,
-    ) -> Option<TypeId> {
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         use CrossArenaAliasShortcutOutcome as AliasOutcome;
 
         let (module_name, import_name, alias_source_file_idx) = {
@@ -360,7 +360,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let mut result = self.get_type_of_symbol(target_sym_id);
+        let (mut result, params) = if target_flags & symbol_flags::TYPE_ALIAS != 0 {
+            self.type_reference_symbol_type_with_params(target_sym_id)
+        } else {
+            (self.get_type_of_symbol(target_sym_id), Vec::new())
+        };
         result = self.apply_module_augmentations(&module_name, &import_name, result);
         if result == TypeId::ERROR {
             tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
@@ -380,11 +384,11 @@ impl<'a> CheckerState<'a> {
             sym_id,
             alias_cache_file_idx as u32,
             result,
-            Vec::new(),
+            params.clone(),
         );
         tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(AliasOutcome::Success);
 
-        Some(result)
+        Some((result, params))
     }
 
     /// Delegate symbol resolution to a checker using the correct arena.
@@ -666,11 +670,28 @@ impl<'a> CheckerState<'a> {
             } else {
                 None
             };
+            let shared_actual_lib_delegation_name = self.shared_actual_lib_delegation_name(
+                sym_id,
+                delegate_arena,
+                needs_cross_file_delegation,
+            );
             if let Some(p) = perf {
                 p.delegate_cross_arena_calls
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
+
+            if symbol_type_cache_file_idx.is_none()
+                && !needs_cross_file_delegation
+                && let Some(shared_name) = shared_actual_lib_delegation_name.as_deref()
+                && let Some(cached) = self.cached_shared_actual_lib_delegation(sym_id, shared_name)
+            {
+                if let Some(p) = perf {
+                    p.delegate_cross_arena_cache_hits_lib
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                return Some(cached);
+            }
 
             if symbol_type_cache_file_idx.is_none()
                 && !needs_cross_file_delegation
@@ -714,7 +735,9 @@ impl<'a> CheckerState<'a> {
                 return Some((cached_type, cached_params));
             }
 
-            if let Some(result) = self.try_resolve_cross_arena_named_alias_without_child(sym_id) {
+            if let Some((result, params)) =
+                self.try_resolve_cross_arena_named_alias_without_child(sym_id)
+            {
                 if let Some(file_idx) = symbol_type_cache_file_idx
                     && !symbol_type_cache_from_symbol_arena
                 {
@@ -722,10 +745,10 @@ impl<'a> CheckerState<'a> {
                         sym_id,
                         file_idx as u32,
                         result,
-                        Vec::new(),
+                        params.clone(),
                     );
                 }
-                return Some((result, Vec::new()));
+                return Some((result, params));
             }
 
             if let Some(result) = self.direct_actual_lib_symbol_type(
@@ -1082,6 +1105,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .lib_delegation_cache
                     .insert_symbol_type(sym_id, (result, result_params.clone()));
+                if let Some(shared_name) = shared_actual_lib_delegation_name.as_deref() {
+                    self.cache_shared_actual_lib_delegation(shared_name, result);
+                }
             }
 
             // Write through to the canonical cross-file symbol-type cache so

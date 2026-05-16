@@ -2077,75 +2077,8 @@ fn test_equal_any_x_rejects_non_any_extends_identity() {
 
 #[test]
 fn test_outer_equal_conditional_evaluates_to_false_for_any_literal() {
-    // Top-level reproduction of the type-challenges scenario:
-    //
-    //   ((<T>() => T extends any ? 1 : 2) extends
-    //    (<T>() => T extends true ? 1 : 2)) ? true : false
-    //
-    // Should evaluate to `false`. This drives the OUTER conditional through
-    // `evaluate_conditional` -> function subtype, which is the path the actual
-    // Equal<any, X> use sites take after substitution.
-    use crate::types::{FunctionShape, ParamInfo};
     let interner = TypeInterner::new();
-
-    let lhs_t = make_unconstrained_param(&interner, "T");
-    let rhs_t = make_unconstrained_param(&interner, "T");
-
-    let one = interner.literal_number(1.0);
-    let two = interner.literal_number(2.0);
-
-    let cond_lhs = interner.conditional(ConditionalType {
-        check_type: lhs_t,
-        extends_type: TypeId::ANY,
-        true_type: one,
-        false_type: two,
-        is_distributive: true,
-    });
-    let cond_rhs = interner.conditional(ConditionalType {
-        check_type: rhs_t,
-        extends_type: TypeId::BOOLEAN_TRUE,
-        true_type: one,
-        false_type: two,
-        is_distributive: true,
-    });
-
-    let lhs_info = match interner.lookup(lhs_t) {
-        Some(TypeData::TypeParameter(info)) => info,
-        other => panic!("expected TypeParameter, got {other:?}"),
-    };
-    let rhs_info = match interner.lookup(rhs_t) {
-        Some(TypeData::TypeParameter(info)) => info,
-        other => panic!("expected TypeParameter, got {other:?}"),
-    };
-
-    let lhs_fn = interner.function(FunctionShape {
-        type_params: vec![lhs_info],
-        params: Vec::<ParamInfo>::new(),
-        this_type: None,
-        return_type: cond_lhs,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    });
-    let rhs_fn = interner.function(FunctionShape {
-        type_params: vec![rhs_info],
-        params: Vec::<ParamInfo>::new(),
-        this_type: None,
-        return_type: cond_rhs,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    });
-
-    let outer = interner.conditional(ConditionalType {
-        check_type: lhs_fn,
-        extends_type: rhs_fn,
-        true_type: TypeId::BOOLEAN_TRUE,
-        false_type: TypeId::BOOLEAN_FALSE,
-        is_distributive: false,
-    });
-
-    let result = evaluate_type(&interner, outer);
+    let result = make_equal_outer(&interner, TypeId::ANY, TypeId::BOOLEAN_TRUE);
     assert_eq!(
         result,
         TypeId::BOOLEAN_FALSE,
@@ -2156,71 +2089,8 @@ fn test_outer_equal_conditional_evaluates_to_false_for_any_literal() {
 
 #[test]
 fn test_outer_equal_conditional_evaluates_to_false_for_any_unknown() {
-    // `any` is assignable to `unknown`, but the higher-order Equal trick is
-    // an identity comparison. The nested conditional-extends comparison must
-    // therefore use strict any propagation so `any` and `unknown` do not
-    // collapse to the same extends type.
-    use crate::types::{FunctionShape, ParamInfo};
     let interner = TypeInterner::new();
-
-    let lhs_t = make_unconstrained_param(&interner, "T");
-    let rhs_t = make_unconstrained_param(&interner, "T");
-
-    let one = interner.literal_number(1.0);
-    let two = interner.literal_number(2.0);
-
-    let cond_lhs = interner.conditional(ConditionalType {
-        check_type: lhs_t,
-        extends_type: TypeId::ANY,
-        true_type: one,
-        false_type: two,
-        is_distributive: true,
-    });
-    let cond_rhs = interner.conditional(ConditionalType {
-        check_type: rhs_t,
-        extends_type: TypeId::UNKNOWN,
-        true_type: one,
-        false_type: two,
-        is_distributive: true,
-    });
-
-    let lhs_info = match interner.lookup(lhs_t) {
-        Some(TypeData::TypeParameter(info)) => info,
-        other => panic!("expected TypeParameter, got {other:?}"),
-    };
-    let rhs_info = match interner.lookup(rhs_t) {
-        Some(TypeData::TypeParameter(info)) => info,
-        other => panic!("expected TypeParameter, got {other:?}"),
-    };
-
-    let lhs_fn = interner.function(FunctionShape {
-        type_params: vec![lhs_info],
-        params: Vec::<ParamInfo>::new(),
-        this_type: None,
-        return_type: cond_lhs,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    });
-    let rhs_fn = interner.function(FunctionShape {
-        type_params: vec![rhs_info],
-        params: Vec::<ParamInfo>::new(),
-        this_type: None,
-        return_type: cond_rhs,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    });
-
-    let outer = interner.conditional(ConditionalType {
-        check_type: lhs_fn,
-        extends_type: rhs_fn,
-        true_type: TypeId::BOOLEAN_TRUE,
-        false_type: TypeId::BOOLEAN_FALSE,
-        is_distributive: false,
-    });
-
-    let result = evaluate_type(&interner, outer);
+    let result = make_equal_outer(&interner, TypeId::ANY, TypeId::UNKNOWN);
     assert_eq!(
         result,
         TypeId::BOOLEAN_FALSE,
@@ -2434,6 +2304,256 @@ fn test_conditional_number_array_extends_array_string_is_false() {
     assert_eq!(
         result, no,
         "number[] extends Array<string> should be false branch"
+    );
+}
+
+// =============================================================================
+// Equal<X, Y> pattern — `any` identity boundary tests (issues #6777 / #6742)
+// =============================================================================
+//
+// Structural rule: when two generic functions whose return types are conditional
+// types are compared for subtyping (`Equal<X, Y>` trick), the comparison of the
+// conditional `extends` clause uses identity semantics — `any` is only identical
+// to itself and is never collapsed with `1`, `unknown`, `never`, or any other
+// type.  Both `Equal<any, non-any>` and `Equal<non-any, any>` must yield `false`;
+// `Equal<any, any>` must yield `true`.
+//
+// The helper `make_equal_outer` builds:
+//   (<T>() => T extends LHS_EXTENDS ? 1 : 2) extends
+//   (<U>() => U extends RHS_EXTENDS ? 1 : 2) ? true : false
+// and evaluates it, returning the resulting `TypeId`.
+//
+// The two type-parameter names differ (`T` vs `U`) to avoid interning
+// producing the same `TypeId` for structurally-identical params when the
+// interner deduplicates by content.  Each function must own a distinct
+// type-parameter binding.
+
+fn make_equal_outer(interner: &TypeInterner, lhs_extends: TypeId, rhs_extends: TypeId) -> TypeId {
+    use crate::types::{FunctionShape, ParamInfo};
+
+    let lhs_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let rhs_info = TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let lhs_t = interner.type_param(lhs_info);
+    let rhs_t = interner.type_param(rhs_info);
+
+    let one = interner.literal_number(1.0);
+    let two = interner.literal_number(2.0);
+
+    let cond_lhs = interner.conditional(ConditionalType {
+        check_type: lhs_t,
+        extends_type: lhs_extends,
+        true_type: one,
+        false_type: two,
+        is_distributive: true,
+    });
+    let cond_rhs = interner.conditional(ConditionalType {
+        check_type: rhs_t,
+        extends_type: rhs_extends,
+        true_type: one,
+        false_type: two,
+        is_distributive: true,
+    });
+
+    let lhs_fn = interner.function(FunctionShape {
+        type_params: vec![lhs_info],
+        params: Vec::<ParamInfo>::new(),
+        this_type: None,
+        return_type: cond_lhs,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let rhs_fn = interner.function(FunctionShape {
+        type_params: vec![rhs_info],
+        params: Vec::<ParamInfo>::new(),
+        this_type: None,
+        return_type: cond_rhs,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let outer = interner.conditional(ConditionalType {
+        check_type: lhs_fn,
+        extends_type: rhs_fn,
+        true_type: TypeId::BOOLEAN_TRUE,
+        false_type: TypeId::BOOLEAN_FALSE,
+        is_distributive: false,
+    });
+
+    evaluate_type(interner, outer)
+}
+
+/// `Equal<any, any>` — identity with itself must be `true`.
+#[test]
+fn test_equal_any_any_is_true() {
+    let interner = TypeInterner::new();
+    let result = make_equal_outer(&interner, TypeId::ANY, TypeId::ANY);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_TRUE,
+        "Equal<any, any> must evaluate to true, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+/// `Equal<any, 1>` — `any` must not collapse with a number literal.
+/// Covers the primary failure from issue #6777.
+#[test]
+fn test_equal_any_number_literal_is_false() {
+    let interner = TypeInterner::new();
+    let one = interner.literal_number(1.0);
+    let result = make_equal_outer(&interner, TypeId::ANY, one);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_FALSE,
+        "Equal<any, 1> must evaluate to false, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+/// `Equal<1, any>` — reversed; `any` on the right must also be rejected.
+#[test]
+fn test_equal_number_literal_any_is_false() {
+    let interner = TypeInterner::new();
+    let one = interner.literal_number(1.0);
+    let result = make_equal_outer(&interner, one, TypeId::ANY);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_FALSE,
+        "Equal<1, any> must evaluate to false, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+/// `Equal<any, string>` — `any` is not identical to `string`.
+#[test]
+fn test_equal_any_string_is_false() {
+    let interner = TypeInterner::new();
+    let result = make_equal_outer(&interner, TypeId::ANY, TypeId::STRING);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_FALSE,
+        "Equal<any, string> must evaluate to false, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+/// `Equal<string, any>` — reversed.
+#[test]
+fn test_equal_string_any_is_false() {
+    let interner = TypeInterner::new();
+    let result = make_equal_outer(&interner, TypeId::STRING, TypeId::ANY);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_FALSE,
+        "Equal<string, any> must evaluate to false, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+/// `Equal<unknown, any>` — covers the second reported case from issue #6777.
+#[test]
+fn test_equal_unknown_any_is_false() {
+    let interner = TypeInterner::new();
+    let result = make_equal_outer(&interner, TypeId::UNKNOWN, TypeId::ANY);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_FALSE,
+        "Equal<unknown, any> must evaluate to false, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+/// `Equal<any, unknown>` — reversed.
+#[test]
+fn test_equal_any_unknown_is_false() {
+    let interner = TypeInterner::new();
+    let result = make_equal_outer(&interner, TypeId::ANY, TypeId::UNKNOWN);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_FALSE,
+        "Equal<any, unknown> must evaluate to false, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+/// `Equal<any, never>` — `any` is not `never`.
+#[test]
+fn test_equal_any_never_is_false() {
+    let interner = TypeInterner::new();
+    let result = make_equal_outer(&interner, TypeId::ANY, TypeId::NEVER);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_FALSE,
+        "Equal<any, never> must evaluate to false, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+/// `Equal<never, any>` — reversed.
+#[test]
+fn test_equal_never_any_is_false() {
+    let interner = TypeInterner::new();
+    let result = make_equal_outer(&interner, TypeId::NEVER, TypeId::ANY);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_FALSE,
+        "Equal<never, any> must evaluate to false, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+/// `Equal<string, string>` — identical concrete types remain `true` even after
+/// `Equal<any, X>` evaluations (regression gate for issue #6742 cache corruption).
+#[test]
+fn test_equal_any_does_not_corrupt_subsequent_string_identity() {
+    let interner = TypeInterner::new();
+
+    // Evaluate Equal<any, string> first (should be false).
+    let first = make_equal_outer(&interner, TypeId::ANY, TypeId::STRING);
+    assert_eq!(
+        first,
+        TypeId::BOOLEAN_FALSE,
+        "Equal<any, string> should be false"
+    );
+
+    // Then evaluate Equal<string, string> in the same interner session (should be true).
+    let second = make_equal_outer(&interner, TypeId::STRING, TypeId::STRING);
+    assert_eq!(
+        second,
+        TypeId::BOOLEAN_TRUE,
+        "Equal<string, string> must still be true after evaluating Equal<any, string>; \
+         cache corruption from any would make it false"
+    );
+}
+
+/// `Equal<number, number>` stays `true` after multiple `Equal<any, X>` calls.
+#[test]
+fn test_equal_any_does_not_corrupt_subsequent_number_identity() {
+    let interner = TypeInterner::new();
+
+    // Trigger both directions of any.
+    let _ = make_equal_outer(&interner, TypeId::ANY, TypeId::NUMBER);
+    let _ = make_equal_outer(&interner, TypeId::NUMBER, TypeId::ANY);
+
+    let result = make_equal_outer(&interner, TypeId::NUMBER, TypeId::NUMBER);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_TRUE,
+        "Equal<number, number> must be true after Equal<any, number> evaluations; \
+         got {:?}",
+        interner.lookup(result)
     );
 }
 
