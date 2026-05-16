@@ -1067,11 +1067,23 @@ pub(super) fn collect_diagnostics(
 
     // Pre-compute merged augmentations once for all binder reconstruction paths.
     let merged_augmentations = MergedAugmentations::from_program(program);
-    let affected_lib_interfaces = affected_lib_interface_names(program, checker_libs);
-    let affected_lib_extension_interfaces =
-        affected_lib_extension_interface_names(program, checker_libs, &affected_lib_interfaces);
-    let baseline_lib_datetimeformatpart_interfaces =
-        baseline_lib_datetimeformatpart_spelling_interface_names(checker_libs);
+    let can_recheck_checker_libs =
+        !options.no_check && !options.skip_lib_check && !checker_libs.files.is_empty();
+    let affected_lib_interfaces = if can_recheck_checker_libs {
+        affected_lib_interface_names(program, checker_libs)
+    } else {
+        FxHashSet::default()
+    };
+    let affected_lib_extension_interfaces = if can_recheck_checker_libs {
+        affected_lib_extension_interface_names(program, checker_libs, &affected_lib_interfaces)
+    } else {
+        FxHashSet::default()
+    };
+    let baseline_lib_datetimeformatpart_interfaces = if can_recheck_checker_libs {
+        baseline_lib_datetimeformatpart_spelling_interface_names(checker_libs)
+    } else {
+        FxHashSet::default()
+    };
 
     // Pre-create all binders for cross-file resolution.
     let all_binders: Arc<Vec<Arc<BinderState>>> = {
@@ -1378,8 +1390,7 @@ pub(super) fn collect_diagnostics(
     // module-only TS files (no `declare global`, no interface that augments
     // a lib type) this removes a fixed ~30-lib-file recheck tax that was
     // dominating the per-invocation floor (~380–430ms on tiny files).
-    let needs_lib_recheck = !options.no_check
-        && !checker_libs.files.is_empty()
+    let needs_lib_recheck = can_recheck_checker_libs
         && (!affected_lib_interfaces.is_empty() || !affected_lib_extension_interfaces.is_empty());
     let baseline_lib_diagnostics = if needs_lib_recheck {
         collect_checker_lib_baseline_fingerprints(
@@ -1393,7 +1404,7 @@ pub(super) fn collect_diagnostics(
     } else {
         FxHashSet::default()
     };
-    let baseline_lib_datetimeformatpart_diagnostics = if !options.no_check
+    let baseline_lib_datetimeformatpart_diagnostics = if can_recheck_checker_libs
         && !options.lib_is_default
         && !has_esnext_umbrella_lib(checker_libs)
         && should_preserve_datetimeformatpart_spelling_baseline(checker_libs)
@@ -4501,11 +4512,19 @@ declare namespace Intl {
     }
 
     fn collect_es2015_default_lib_diagnostics(source: &str) -> Vec<Diagnostic> {
+        collect_es2015_default_lib_diagnostics_with_options(source, |_: &mut _| {})
+    }
+
+    fn collect_es2015_default_lib_diagnostics_with_options(
+        source: &str,
+        configure: impl FnOnce(&mut ResolvedCompilerOptions),
+    ) -> Vec<Diagnostic> {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let file_path = dir.path().join("main.ts");
         std::fs::write(&file_path, source).expect("write source");
 
-        let resolved = resolved_options_for_es2015_strict_test();
+        let mut resolved = resolved_options_for_es2015_strict_test();
+        configure(&mut resolved);
         let file_paths = vec![file_path];
         let SourceReadResult {
             sources,
@@ -6842,6 +6861,52 @@ interface HTMLElement {
                     && diag.code == diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE
             }),
             "Did not expect default-lib TS2430 diagnostics from unrelated unresolved overload parameters, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn skip_lib_check_skips_default_lib_recheck_after_global_merge() {
+        let diagnostics = collect_es2015_default_lib_diagnostics_with_options(
+            r#"
+const enum SyntaxKind {
+    Modifier,
+    Decorator,
+}
+
+interface Node {
+    kind: SyntaxKind;
+}
+
+interface Modifier extends Node { kind: SyntaxKind.Modifier; }
+interface Decorator extends Node { kind: SyntaxKind.Decorator; }
+
+declare function isModifier(node: Node): node is Modifier;
+declare function isDecorator(node: Node): node is Decorator;
+
+declare function every<T, U extends T>(array: readonly T[], callback: (element: T) => element is U): array is readonly U[];
+
+declare const modifiers: readonly Decorator[] | readonly Modifier[];
+
+function foo() {
+    every(modifiers, isModifier);
+    every(modifiers, isDecorator);
+}
+"#,
+            |resolved| {
+                resolved.skip_lib_check = true;
+            },
+        );
+
+        assert!(
+            !diagnostics.iter().any(|diag| {
+                diag.file.ends_with("lib.dom.d.ts")
+                    && matches!(
+                        diag.code,
+                        diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT
+                            | diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE
+                    )
+            }),
+            "Did not expect lib.dom.d.ts TS2344/TS2430 diagnostics when skipLibCheck is enabled, got: {diagnostics:?}"
         );
     }
 
