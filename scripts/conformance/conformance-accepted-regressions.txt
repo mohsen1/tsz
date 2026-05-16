@@ -61,7 +61,6 @@ TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlFileWit
 TypeScript/tests/cases/conformance/types/intersection/recursiveIntersectionTypes.ts
 TypeScript/tests/cases/conformance/types/members/indexSignatures1.ts
 TypeScript/tests/cases/conformance/types/typeParameters/typeArgumentLists/instantiationExpressions.ts
-TypeScript/tests/cases/conformance/types/typeRelationships/comparable/equalityWithEnumTypes.ts
 TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallToOverloadedMethodWithOverloadedArguments.ts
 TypeScript/tests/cases/conformance/types/uniqueSymbol/uniqueSymbols.ts
 TypeScript/tests/cases/conformance/types/uniqueSymbol/uniqueSymbolsDeclarations.ts
