@@ -475,17 +475,18 @@ jobs:
           if-no-files-found: warn
           compression-level: 1
 
-  unit-archive:
-    # Build the workspace nextest archive once. Downstream `unit` matrix shards
-    # download this archive and run hash-partitioned slices of the test list,
-    # so 26k+ tests fan out across N runners instead of serializing on one.
-    #
-    # Caching is deliberately disabled here (no sccache, no warm target dir,
-    # no incremental). The tsz-checker lib-test target has been observed to
-    # exit silently when it's built from a restored warm target cache that
-    # was originally produced with sccache — a clean compile avoids that
-    # whole class of false-positive successes.
-    name: unit-archive
+  unit:
+    # Single nextest job (no sharding). The nextest-archive shard architecture
+    # was tried in #1657 and reverted in 7984876d7b for two reasons:
+    #   1. Many fixture-loading tests use `if !path.exists() { return }` and
+    #      silently pass when workspace source isn't on the shard runner.
+    #   2. The archive upload/download overhead (~3+ min) dominated the
+    #      modest test-execution savings.
+    # Today the bottleneck is compile (~14 min) not test execution (~3 min),
+    # so sharding test execution is not the lever. Re-evaluate sharding once
+    # the sccache silent-exit issue is fixed (then compile drops to seconds
+    # on cache hit and sharding becomes worth the overhead).
+    name: unit
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
@@ -500,60 +501,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Build and upload unit test archive
-        run: scripts/ci/github-suite.sh unit-archive
-
-  unit:
-    # Hash-partitioned test execution against the prebuilt nextest archive.
-    # Each shard downloads the archive from GCS (keyed by ${GITHUB_SHA}) and
-    # runs `nextest run --partition hash:i/N`. No cargo compile here — the
-    # archive carries pre-built test binaries.
-    name: unit-${{ matrix.shard }}
-    needs: [gate, unit-archive]
-    if: needs.gate.outputs.should_run == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7]
-    env:
-      _TSZ_CI_UNIT_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_UNIT_SHARD_COUNT: 8
-      TSZ_CI_CACHE_RESTORE: "0"
-      TSZ_CI_CACHE_SAVE: "0"
-      TSZ_CI_DISABLE_SCCACHE: "1"
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Run unit shard
-        run: scripts/ci/github-suite.sh unit-shard
-
-  unit-aggregate:
-    # Single required-status-check name covering all unit shards. Equivalent
-    # to the pattern used by conformance-aggregate / fourslash-aggregate.
-    name: unit-aggregate
-    needs: [gate, unit-archive, unit]
-    if: needs.gate.outputs.should_run == 'true' && !cancelled()
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: Verify all unit shards passed
-        env:
-          ARCHIVE_RESULT: ${{ needs.unit-archive.result }}
-          SHARDS_RESULT: ${{ needs.unit.result }}
-        run: |
-          set -euo pipefail
-          if [[ "$ARCHIVE_RESULT" != "success" ]]; then
-            echo "unit-archive did not succeed: ${ARCHIVE_RESULT}"
-            exit 1
-          fi
-          if [[ "$SHARDS_RESULT" != "success" ]]; then
-            echo "one or more unit shards did not succeed: ${SHARDS_RESULT}"
-            exit 1
-          fi
-          echo "All unit shards passed."
+      - name: Run unit suite
+        run: scripts/ci/github-suite.sh unit
 
   conformance:
     # Conformance shards consume the dist-fast binaries artifact and run the
@@ -752,8 +701,7 @@ jobs:
       - wasm
       - wasm-web
       - node-harness-prep
-      - unit-archive
-      - unit-aggregate
+      - unit
       - conformance-aggregate
       - conformance-snapshot-gate
       - emit
@@ -784,7 +732,7 @@ jobs:
               print("CI gated off; summary passes because jobs were intentionally skipped.")
               sys.exit(0)
 
-          required = {"lint", "cargo-shear", "cargo-deny", "dist-binaries", "unit-archive", "unit-aggregate"}
+          required = {"lint", "cargo-shear", "cargo-deny", "dist-binaries", "unit"}
           pr_body = needs.get("project-corpus-pr-body")
           if pr_body and pr_body.get("result") not in ("success", "skipped"):
               print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
