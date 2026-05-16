@@ -16,8 +16,14 @@ on:
           - coverage
           - fuzz
           - mutants
+          - semver
           - sanitizers
           - perf
+      semver_baseline_rev:
+        description: Optional SemVer baseline revision, for example origin/main or v0.1.10
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -114,6 +120,29 @@ jobs:
           cargo install cargo-mutants --version "${CARGO_MUTANTS_VERSION}" --locked
       - name: List focused mutants
         run: scripts/quality/run-mutants-smoke.sh
+
+  semver:
+    name: semver-checks
+    if: github.event_name == 'workflow_dispatch' && (inputs.tool == 'all' || inputs.tool == 'semver')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      CARGO_SEMVER_CHECKS_VERSION: "0.47.0"
+      TSZ_SEMVER_BASELINE_REV: ${{ inputs.semver_baseline_rev }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install cargo-semver-checks
+        run: |
+          if command -v cargo-semver-checks >/dev/null 2>&1 \
+             && cargo install --list | grep -q "^cargo-semver-checks v${CARGO_SEMVER_CHECKS_VERSION}:"; then
+            echo "cargo-semver-checks ${CARGO_SEMVER_CHECKS_VERSION} already installed"
+            exit 0
+          fi
+          cargo install cargo-semver-checks --version "${CARGO_SEMVER_CHECKS_VERSION}" --locked
+      - name: Check public Rust API compatibility
+        run: scripts/quality/run-semver-checks.sh
 
   sanitizers:
     name: sanitizer-smoke

@@ -913,7 +913,7 @@ impl<'a> CheckerState<'a> {
                             {
                                 self.prime_lib_type_params(name);
                                 if let Some(ref_sym_id) = self.ctx.binder.file_locals.get(name) {
-                                    let def_id = self.ctx.get_or_create_def_id(ref_sym_id);
+                                    let def_id = self.ctx.get_lib_def_id(ref_sym_id);
                                     if let Some(params) = self.ctx.get_def_type_params(def_id)
                                         && !params.is_empty()
                                     {

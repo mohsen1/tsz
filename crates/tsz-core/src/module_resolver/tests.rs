@@ -1337,6 +1337,15 @@ fn test_extension_from_path_dts() {
 }
 
 #[test]
+fn test_extension_from_path_arbitrary_extension_declaration() {
+    assert_eq!(
+        ModuleExtension::from_path(Path::new("native.d.node.ts")),
+        ModuleExtension::Dts
+    );
+    assert!(ModuleExtension::from_path(Path::new("/project/native.d.node.ts")).is_declaration());
+}
+
+#[test]
 fn test_extension_from_path_dmts() {
     assert_eq!(
         ModuleExtension::from_path(Path::new("types.d.mts")),
