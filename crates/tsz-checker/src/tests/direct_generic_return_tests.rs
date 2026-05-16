@@ -122,3 +122,35 @@ function forward(input: MaybeBox<Shape>): Box<Shape> {
         diagnostic_messages(errors.iter().copied())
     );
 }
+
+/// If the actual argument is a type parameter whose constraint matches the
+/// wrapper arm of `T | Wrapper<T>`, `tsc` infers through that wrapper arm. The
+/// direct fast path must not conclude that the bare type-parameter argument
+/// proves the bare `T` arm.
+#[test]
+fn generic_call_direct_union_parameter_falls_back_for_constrained_type_param_wrapper_arm() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Box<T> { value: T }
+interface MaybeBox<T> { boxed: T }
+interface Shape { id: number }
+declare function wrap<T>(value: T | MaybeBox<T>): Box<T>;
+
+function generic<U extends MaybeBox<Shape>>(input: U): Box<Shape> {
+    return wrap(input);
+}
+
+function genericBox<U extends MaybeBox<Shape>>(input: U): Box<U> {
+    return wrap(input);
+}
+"#,
+    );
+
+    let errors: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        errors.len(),
+        1,
+        "Expected only the Box<U> return to fail after wrapper-arm inference, got: {:?}",
+        diagnostic_messages(errors.iter().copied())
+    );
+}

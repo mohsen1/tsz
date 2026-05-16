@@ -77,13 +77,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }) {
             return None;
         }
-        if param_is_direct_union
-            && (self.is_contextually_sensitive(arg_types[0])
-                || !matches!(
-                    self.interner.lookup(arg_types[0]),
-                    Some(TypeData::TypeParameter(_))
-                ))
-        {
+        if param_is_direct_union {
             return None;
         }
 
