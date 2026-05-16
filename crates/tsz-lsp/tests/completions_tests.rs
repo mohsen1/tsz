@@ -4046,3 +4046,45 @@ fn test_completions_array_prototype_methods_on_readonly_tuple_different_names() 
         &["length", "map", "every", "some"],
     );
 }
+
+fn assert_primitive_completions(source: &str, expected_members: &[&str]) {
+    let names = member_names_at_end(source);
+    assert!(
+        !names.iter().any(|n| n == "constructor"),
+        "'constructor' must not appear in completions for `{source}`, got: {names:?}"
+    );
+    for expected in expected_members {
+        assert!(
+            names.iter().any(|n| n == *expected),
+            "Expected '{expected}' in completions for `{source}`, got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_boolean_excludes_constructor() {
+    for source in ["const b = true;\nb.", "const b: boolean = false;\nb."] {
+        assert_primitive_completions(source, &["toString", "valueOf"]);
+    }
+}
+
+#[test]
+fn test_completions_number_excludes_constructor() {
+    assert_primitive_completions("const n = 42;\nn.", &["toString", "toFixed"]);
+}
+
+#[test]
+fn test_completions_string_excludes_constructor() {
+    assert_primitive_completions(
+        "const s: string = \"abc\";\ns.",
+        &["length", "charAt", "slice", "indexOf"],
+    );
+}
+
+#[test]
+fn test_completions_symbol_excludes_constructor() {
+    assert_primitive_completions(
+        "const sym: symbol = Symbol();\nsym.",
+        &["toString", "valueOf"],
+    );
+}
