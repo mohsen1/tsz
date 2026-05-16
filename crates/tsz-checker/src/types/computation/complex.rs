@@ -115,6 +115,80 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    fn lib_constructor_return_type_for_type_shadow(
+        &mut self,
+        callee_expr: NodeIndex,
+    ) -> Option<TypeId> {
+        let callee_name = self.ctx.arena.get_identifier_text(callee_expr)?;
+        let crate::symbol_resolver::TypeSymbolResolution::Type(type_sym_id) =
+            self.resolve_identifier_symbol_in_type_position(callee_expr)
+        else {
+            trace!(
+                callee_name,
+                "lib_constructor_return_type_for_type_shadow: no type-position shadow"
+            );
+            return None;
+        };
+        if self.ctx.symbol_is_from_actual_or_cloned_lib(type_sym_id) {
+            trace!(
+                callee_name,
+                type_sym_id = type_sym_id.0,
+                "lib_constructor_return_type_for_type_shadow: type symbol is lib"
+            );
+            return None;
+        }
+        let resolved = self
+            .resolve_lib_type_by_name(callee_name)
+            .filter(|&ty| !matches!(ty, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN));
+        trace!(
+            callee_name,
+            type_sym_id = type_sym_id.0,
+            resolved = ?resolved,
+            "lib_constructor_return_type_for_type_shadow"
+        );
+        resolved
+    }
+
+    fn lib_constructor_type_for_type_shadow(&mut self, callee_expr: NodeIndex) -> Option<TypeId> {
+        let callee_name = self.ctx.arena.get_identifier_text(callee_expr)?;
+        let crate::symbol_resolver::TypeSymbolResolution::Type(type_sym_id) =
+            self.resolve_identifier_symbol_in_type_position(callee_expr)
+        else {
+            trace!(
+                callee_name,
+                "lib_constructor_type_for_type_shadow: no type-position shadow"
+            );
+            return None;
+        };
+        if self.ctx.symbol_is_from_actual_or_cloned_lib(type_sym_id) {
+            trace!(
+                callee_name,
+                type_sym_id = type_sym_id.0,
+                "lib_constructor_type_for_type_shadow: type symbol is lib"
+            );
+            return None;
+        }
+        let constructor_name = format!("{callee_name}Constructor");
+        let constructor_type = self
+            .resolve_lib_type_by_name(&constructor_name)
+            .or_else(|| {
+                let value_sym_id = self.find_value_symbol_in_libs(callee_name)?;
+                Some(self.get_type_of_symbol(value_sym_id))
+            })?;
+        trace!(
+            callee_name,
+            type_sym_id = type_sym_id.0,
+            constructor_type = constructor_type.0,
+            constructable = crate::query_boundaries::common::has_construct_signatures(
+                self.ctx.types,
+                constructor_type
+            ),
+            "lib_constructor_type_for_type_shadow"
+        );
+        crate::query_boundaries::common::has_construct_signatures(self.ctx.types, constructor_type)
+            .then_some(constructor_type)
+    }
+
     ///
     /// This keeps general alias typing unchanged (important for type-position behavior)
     /// while ensuring constructor resolution sees the direct constructable type.
@@ -385,6 +459,11 @@ impl<'a> CheckerState<'a> {
         } else {
             self.get_type_of_node_with_request(new_expr.expression, &read_request)
         };
+        if let Some(lib_constructor_type) =
+            self.lib_constructor_type_for_type_shadow(new_expr.expression)
+        {
+            constructor_type = lib_constructor_type;
+        }
         if let Some(export_equals_ctor) =
             self.new_expression_export_equals_constructor_type(new_expr.expression)
         {
@@ -1441,6 +1520,11 @@ impl<'a> CheckerState<'a> {
                     return_type,
                 ) {
                     return_type = fixed_return;
+                }
+                if let Some(lib_return_type) =
+                    self.lib_constructor_return_type_for_type_shadow(new_expr.expression)
+                {
+                    return_type = lib_return_type;
                 }
 
                 if let Some(contextual_type) = contextual_type {

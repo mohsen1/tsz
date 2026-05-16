@@ -2,13 +2,13 @@
 
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
-use tsz_solver::{DefId, TypeId};
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_actual_lib_name_to_def_id_for_cross_arena(
         &self,
         type_name: &str,
-    ) -> Option<DefId> {
+    ) -> Option<tsz_solver::def::DefId> {
         Self::in_cross_arena_interface_delegation()
             .then(|| self.resolve_actual_lib_name_to_def_id_for_lowering(type_name))
             .flatten()
