@@ -23,6 +23,16 @@ use tsz_common::interner::Atom;
 use super::infer::{InferenceContext, InferenceError, InferenceVar};
 use super::template_segment_prefix::match_template_segment_prefix;
 
+/// Return the byte offset (relative to `source`) of the leftmost occurrence of
+/// any string in `alternatives` starting at `pos`.
+fn find_leftmost_occurrence(source: &str, pos: usize, alternatives: &[String]) -> Option<usize> {
+    let slice = source.get(pos..)?;
+    alternatives
+        .iter()
+        .filter_map(|alt| slice.find(alt.as_str()).map(|offset| pos + offset))
+        .min()
+}
+
 impl<'a> InferenceContext<'a> {
     /// Perform structural type inference from a source type to a target type.
     ///
@@ -1822,22 +1832,15 @@ impl<'a> InferenceContext<'a> {
                             let captured = source[pos..].to_string();
                             bindings.push((var, captured));
                             pos = source.len();
+                        } else if let Some(alternatives) =
+                            self.find_next_anchor_alternatives(spans, i)
+                        {
+                            let capture_end = find_leftmost_occurrence(source, pos, &alternatives)?;
+                            let captured = source[pos..capture_end].to_string();
+                            bindings.push((var, captured));
+                            pos = capture_end;
                         } else {
-                            // Non-last span: capture until next literal anchor (non-greedy)
-                            // Find the next text span to use as an anchor
-                            if let Some(anchor_text) = self.find_next_text_anchor(spans, i) {
-                                let anchor = self.interner.resolve_atom(anchor_text).to_string();
-                                // Find the first occurrence of the anchor (non-greedy)
-                                let capture_end = source[pos..].find(&anchor)? + pos;
-                                let captured = source[pos..capture_end].to_string();
-                                bindings.push((var, captured));
-                                pos = capture_end;
-                            } else {
-                                // No text anchor found (e.g., `${infer A}${infer B}`)
-                                // Capture empty string for non-greedy match and continue
-                                bindings.push((var, String::new()));
-                                // pos remains unchanged - next infer var starts here
-                            }
+                            bindings.push((var, String::new()));
                         }
                     } else if let Some(next_pos) =
                         match_template_segment_prefix(self.interner, source, pos, *type_id)
@@ -1854,15 +1857,84 @@ impl<'a> InferenceContext<'a> {
         (pos == source.len()).then_some(bindings)
     }
 
-    /// Find the next text span after a given index to use as a matching anchor.
-    fn find_next_text_anchor(&self, spans: &[TemplateSpan], start_idx: usize) -> Option<Atom> {
-        spans.iter().skip(start_idx + 1).find_map(|span| {
-            if let TemplateSpan::Text(text) = span {
-                Some(*text)
-            } else {
-                None
+    /// Find the concrete string alternatives that act as the next anchor for a
+    /// non-greedy infer-variable capture.
+    ///
+    /// Scans spans after `start_idx` and returns the first span that can be
+    /// expressed as a finite set of string literals:
+    ///
+    /// - `TemplateSpan::Text` → `Some(vec![text])`
+    /// - `TemplateSpan::Type` holding a `Union` of string literals or a single
+    ///   string `Literal` → `Some(alternatives)`
+    ///
+    /// Returns `None` when:
+    /// - The next `Type` span is another infer / type-parameter variable (we
+    ///   cannot determine an anchor; the caller falls back to `""`).
+    /// - The next `Type` span is a non-concrete type (e.g. `string`).
+    /// - No more spans remain.
+    fn find_next_anchor_alternatives(
+        &self,
+        spans: &[TemplateSpan],
+        start_idx: usize,
+    ) -> Option<Vec<String>> {
+        for span in spans.iter().skip(start_idx + 1) {
+            match span {
+                TemplateSpan::Text(text) => {
+                    let s = self.interner.resolve_atom(*text).to_string();
+                    return Some(vec![s]);
+                }
+                TemplateSpan::Type(type_id) => {
+                    if !type_id.is_intrinsic()
+                        && let Some(
+                            TypeData::Infer(param_info) | TypeData::TypeParameter(param_info),
+                        ) = self.interner.lookup(*type_id)
+                        && self.find_type_param(param_info.name).is_some()
+                    {
+                        return None;
+                    }
+                    return self.collect_string_alternatives_for_anchor(*type_id);
+                }
             }
-        })
+        }
+        None
+    }
+
+    /// Collect the concrete string literals from a type that is being used as a
+    /// fixed separator / anchor in a template pattern.
+    ///
+    /// Handles:
+    /// - `Literal(String)` → single-element vec
+    /// - `Union` of `Literal(String)` members → all members
+    ///
+    /// Returns `None` for any type that is not a finite set of string literals
+    /// (e.g. `string`, `number`, mixed unions).
+    fn collect_string_alternatives_for_anchor(&self, type_id: TypeId) -> Option<Vec<String>> {
+        if type_id.is_intrinsic() {
+            return None;
+        }
+        match self.interner.lookup(type_id)? {
+            TypeData::Literal(LiteralValue::String(atom)) => {
+                Some(vec![self.interner.resolve_atom(atom).to_string()])
+            }
+            TypeData::Union(list_id) => {
+                let members = self.interner.type_list(list_id);
+                let mut alternatives = Vec::with_capacity(members.len());
+                for &member in members.iter() {
+                    if member.is_intrinsic() {
+                        return None;
+                    }
+                    if let Some(TypeData::Literal(LiteralValue::String(atom))) =
+                        self.interner.lookup(member)
+                    {
+                        alternatives.push(self.interner.resolve_atom(atom).to_string());
+                    } else {
+                        return None;
+                    }
+                }
+                (!alternatives.is_empty()).then_some(alternatives)
+            }
+            _ => None,
+        }
     }
 
     /// Get the "partially inferable" version of a type for property inference.
