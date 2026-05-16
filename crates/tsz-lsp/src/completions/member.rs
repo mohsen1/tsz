@@ -323,6 +323,19 @@ impl<'a> Completions<'a> {
             return;
         }
 
+        // `ReadonlyType` and `NoInfer` are transparent wrappers for member access; strip and recurse.
+        if let Some(inner) = visitor::unwrap_readonly_or_noinfer(interner, evaluated) {
+            self.collect_properties_for_type_inner(
+                inner,
+                interner,
+                checker,
+                visited,
+                props,
+                include_private,
+            );
+            return;
+        }
+
         if let Some(shape_id) = visitor::object_shape_id(interner, evaluated)
             .or_else(|| visitor::object_with_index_shape_id(interner, evaluated))
         {
@@ -827,7 +840,7 @@ impl<'a> Completions<'a> {
                         let Some(name) = self.arena.get_identifier_text(signature.name) else {
                             continue;
                         };
-                        if name != property_name || !signature.type_annotation.is_some() {
+                        if name != property_name || signature.type_annotation.is_none() {
                             continue;
                         }
                         self.append_members_from_type_node(
@@ -856,7 +869,7 @@ impl<'a> Completions<'a> {
                         let Some(name) = self.arena.get_identifier_text(prop.name) else {
                             continue;
                         };
-                        if name != property_name || !prop.type_annotation.is_some() {
+                        if name != property_name || prop.type_annotation.is_none() {
                             continue;
                         }
                         self.append_members_from_type_node(prop.type_annotation, seen_names, items);
