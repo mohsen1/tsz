@@ -723,6 +723,7 @@ impl<'a> Printer<'a> {
                             true,
                             None,
                             None,
+                            false,
                         );
                     }
                 } else {
@@ -995,7 +996,14 @@ impl<'a> Printer<'a> {
                 self.write("export ");
             }
             // Emit the class with modifiers suppressed (decorators already emitted)
-            self.emit_class_es6_with_options(clause_node, export.export_clause, true, None, None);
+            self.emit_class_es6_with_options(
+                clause_node,
+                export.export_clause,
+                true,
+                None,
+                None,
+                false,
+            );
         } else {
             if !is_merged_subsequent && !clause_emits_export_prefix {
                 self.write("export ");

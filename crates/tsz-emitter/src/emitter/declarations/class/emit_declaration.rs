@@ -192,7 +192,7 @@ impl<'a> Printer<'a> {
             }
 
             if class_name.is_empty() {
-                self.emit_class_es6_with_options(node, idx, false, None, None);
+                self.emit_class_es6_with_options(node, idx, false, None, None, false);
                 return;
             }
 
@@ -240,6 +240,7 @@ impl<'a> Printer<'a> {
                         true,
                         Some(("let", class_name.clone())),
                         Some(alias),
+                        true,
                     );
                     let after_len = self.writer.len();
 
@@ -309,10 +310,11 @@ impl<'a> Printer<'a> {
                         true,
                         Some(("let", class_name.clone())),
                         None,
+                        true,
                     );
                 }
             } else {
-                self.emit_class_es6_with_options(node, idx, false, None, None);
+                self.emit_class_es6_with_options(node, idx, false, None, None, false);
             }
 
             // Restore anonymous_default_export_name if we temporarily set it
@@ -453,7 +455,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.emit_class_es6_with_options(node, idx, false, None, None);
+        self.emit_class_es6_with_options(node, idx, false, None, None, false);
     }
 
     pub(in crate::emitter) fn can_render_simple_tc39_decorated_class_es5(
