@@ -1325,6 +1325,7 @@ impl<'a> CheckerState<'a> {
             (info.file_id == Some(u32::MAX)).then(|| self.ctx.types.resolve_atom(info.name))
         });
         if let Some(name) = lib_name
+            && Self::in_cross_arena_interface_delegation()
             && self.ctx.has_lib_loaded()
         {
             if let Some(resolved) = self.resolve_lib_type_by_name(&name) {
