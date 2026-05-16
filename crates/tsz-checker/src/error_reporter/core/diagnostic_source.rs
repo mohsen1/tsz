@@ -12,6 +12,7 @@ mod object_literal_targets;
 mod static_schema;
 mod tuple_source_display;
 mod type_query_alias;
+mod wrapper_provenance;
 
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::diagnostics as diagnostic_query;

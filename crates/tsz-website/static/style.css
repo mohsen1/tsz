@@ -173,6 +173,19 @@ body {
 
 .nav-github:hover { color: var(--text); }
 
+@media (max-width: 480px) {
+  .nav-actions,
+  .nav-github {
+    display: none;
+  }
+
+  .site-nav,
+  .page-content {
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+}
+
 /* ── Page Content ── */
 .page-content {
   max-width: var(--content-width);
@@ -614,11 +627,6 @@ tr:nth-child(even) { background: var(--table-stripe); }
   color: var(--text);
 }
 
-.bench-project-category .bench-name,
-.bench-project-category .bench-focus {
-  display: none;
-}
-
 .bench-meta {
   font-size: 0.8rem;
   color: var(--text-tertiary);
@@ -703,6 +711,29 @@ tr:nth-child(even) { background: var(--table-stripe); }
 
 .bench-row-error {
   opacity: 0.7;
+}
+
+.bench-failure-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.bench-failure-list li {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0.65rem 0;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 0.86rem;
+}
+
+.bench-failure-list span {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  text-align: right;
 }
 
 .bench-bar-status {
@@ -904,6 +935,11 @@ tr:nth-child(even) { background: var(--table-stripe); }
 }
 
 /* ── Benchmark detail pages ── */
+.benchmark-detail h1 {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .bench-breadcrumb {
   display: flex;
   gap: 0.45rem;
@@ -922,6 +958,14 @@ tr:nth-child(even) { background: var(--table-stripe); }
   max-width: none;
   color: var(--text-secondary);
   font-size: 0.9rem;
+}
+
+.bench-detail-subtitle {
+  margin: -0.35rem 0 1rem;
+  max-width: 52rem;
+  color: var(--text-secondary);
+  font-size: 1rem;
+  line-height: 1.55;
 }
 
 .bench-detail-summary strong {
@@ -997,7 +1041,10 @@ tr:nth-child(even) { background: var(--table-stripe); }
   font-family: var(--mono);
   font-size: 0.82rem;
   line-height: 1.4;
+  max-width: min(100%, 42rem);
+  overflow: hidden;
   padding: 0;
+  text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -1010,6 +1057,8 @@ tr:nth-child(even) { background: var(--table-stripe); }
 .benchmark-source-editor {
   min-height: 12rem;
   height: clamp(12rem, 34vh, 22rem);
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .benchmark-source-editor .bench-snippet {
@@ -1017,6 +1066,8 @@ tr:nth-child(even) { background: var(--table-stripe); }
   margin: 0;
   border: 0;
   border-radius: 0;
+  max-width: 100%;
+  overflow: auto;
 }
 
 .benchmark-source-editor .monaco-editor,

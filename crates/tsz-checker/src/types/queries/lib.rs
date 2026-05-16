@@ -37,6 +37,22 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|v| !v.is_empty())
     }
 
+    fn lib_name_depends_on_builtin_iterator_return(name: &str) -> bool {
+        matches!(
+            name,
+            "Array"
+                | "ArrayIterator"
+                | "Iterator"
+                | "IteratorObject"
+                | "Map"
+                | "MapIterator"
+                | "RegExpStringIterator"
+                | "Set"
+                | "SetIterator"
+                | "StringIterator"
+        )
+    }
+
     /// True when callers must skip `shared_lib_type_cache` for `name`:
     /// either this checker locally augments `name`, or `name` is multi-lib
     /// merged where property-listing order in printed diagnostic messages
@@ -46,6 +62,9 @@ impl<'a> CheckerState<'a> {
         // shared TypeIds expose property-order races to the type printer
         // (e.g. mappedTypeWithAsClauseAndLateBoundProperty).
         if name == "Array" || name.starts_with("Intl.") {
+            return true;
+        }
+        if Self::lib_name_depends_on_builtin_iterator_return(name) {
             return true;
         }
         self.lib_name_has_local_augmentation(name)
@@ -93,7 +112,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let factory = self.ctx.types.factory();
-        let lib_contexts = &*self.ctx.lib_contexts;
+        let lib_contexts = self.ctx.lib_contexts.clone();
 
         let mut lib_types: Vec<TypeId> = Vec::new();
         let mut first_params: Option<Vec<TypeParamInfo>> = None;
@@ -101,7 +120,7 @@ impl<'a> CheckerState<'a> {
         // Subsequent definitions will have their type params substituted with these.
         let mut canonical_param_type_ids: Vec<TypeId> = Vec::new();
 
-        for lib_ctx in lib_contexts {
+        for lib_ctx in lib_contexts.iter() {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
                 && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
             {
@@ -130,7 +149,7 @@ impl<'a> CheckerState<'a> {
                         node_idx,
                         &decls_with_arenas,
                         fallback_arena,
-                        lib_contexts,
+                        &lib_contexts,
                     )
                     .map(|sym_id| sym_id.0)
                 };
@@ -140,7 +159,7 @@ impl<'a> CheckerState<'a> {
                         node_idx,
                         &decls_with_arenas,
                         fallback_arena,
-                        lib_contexts,
+                        &lib_contexts,
                     )
                 };
                 let name_resolver = |type_name: &str| -> Option<tsz_solver::DefId> {
@@ -262,8 +281,12 @@ impl<'a> CheckerState<'a> {
             _ => None,
         };
 
+        if let Some(ty) = lib_type_id {
+            lib_type_id = Some(self.merge_lib_interface_heritage(ty, name));
+        }
+
         // Merge global augmentations (declare global { interface X { ... } }).
-        if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, lib_contexts) {
+        if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, &lib_contexts) {
             lib_type_id = Some(merged);
         }
 
@@ -848,10 +871,12 @@ impl<'a> CheckerState<'a> {
             && member_symbol.has_any_flags(symbol_flags::CLASS)
             && member_symbol.value_declaration.is_some()
         {
-            return Some(self.type_of_value_declaration_for_symbol(
-                resolved_member_id,
-                member_symbol.value_declaration,
-            ));
+            return Some(
+                self.type_of_value_declaration_for_symbol_without_module_augmentations(
+                    resolved_member_id,
+                    member_symbol.value_declaration,
+                ),
+            );
         }
 
         self.get_validated_member_type(resolved_member_id, property_name)
@@ -2210,6 +2235,7 @@ impl<'a> CheckerState<'a> {
             module_export_member_id,
             import_module,
             decl_file_idx,
+            is_umd_export,
         ) = {
             let symbol = self
                 .get_cross_file_symbol(sym_id)
@@ -2250,6 +2276,7 @@ impl<'a> CheckerState<'a> {
                 module_export_member_id,
                 symbol.import_module.clone(),
                 symbol.decl_file_idx as usize,
+                symbol.is_umd_export,
             )
         };
 
@@ -2279,7 +2306,12 @@ impl<'a> CheckerState<'a> {
             let member_type =
                 self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
             return if let Some(module_specifier) = import_module.as_deref() {
-                Some(self.apply_module_augmentations(module_specifier, property_name, member_type))
+                Some(self.maybe_apply_namespace_member_module_augmentations(
+                    is_umd_export,
+                    module_specifier,
+                    property_name,
+                    member_type,
+                ))
             } else {
                 Some(member_type)
             };
@@ -2295,7 +2327,12 @@ impl<'a> CheckerState<'a> {
             let member_type =
                 self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
             return if let Some(module_specifier) = import_module.as_deref() {
-                Some(self.apply_module_augmentations(module_specifier, property_name, member_type))
+                Some(self.maybe_apply_namespace_member_module_augmentations(
+                    is_umd_export,
+                    module_specifier,
+                    property_name,
+                    member_type,
+                ))
             } else {
                 Some(member_type)
             };
@@ -2313,7 +2350,8 @@ impl<'a> CheckerState<'a> {
             ) {
                 let member_type =
                     self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
-                return Some(self.apply_module_augmentations(
+                return Some(self.maybe_apply_namespace_member_module_augmentations(
+                    is_umd_export,
                     module_specifier,
                     property_name,
                     member_type,
@@ -2327,14 +2365,17 @@ impl<'a> CheckerState<'a> {
                 &mut visited_aliases,
             ) {
                 let member_type = self.get_validated_member_type(reexported_sym, property_name)?;
-                return Some(self.apply_module_augmentations(
+                return Some(self.maybe_apply_namespace_member_module_augmentations(
+                    is_umd_export,
                     module_specifier,
                     property_name,
                     member_type,
                 ));
             }
 
-            if self.module_augmentation_introduces_member(module_specifier, property_name) {
+            if !is_umd_export
+                && self.module_augmentation_introduces_member(module_specifier, property_name)
+            {
                 return Some(TypeId::ANY);
             }
 
@@ -2362,7 +2403,12 @@ impl<'a> CheckerState<'a> {
             let member_type =
                 self.resolve_validated_namespace_member(sym_id, member_id, property_name)?;
             return if let Some(module_specifier) = import_module.as_deref() {
-                Some(self.apply_module_augmentations(module_specifier, property_name, member_type))
+                Some(self.maybe_apply_namespace_member_module_augmentations(
+                    is_umd_export,
+                    module_specifier,
+                    property_name,
+                    member_type,
+                ))
             } else {
                 Some(member_type)
             };
@@ -2379,6 +2425,20 @@ impl<'a> CheckerState<'a> {
     ) -> Option<tsz_binder::SymbolId> {
         self.resolve_effective_module_exports_from_file(module_specifier, Some(source_file_idx))
             .and_then(|exports| exports.get(property_name))
+    }
+
+    fn maybe_apply_namespace_member_module_augmentations(
+        &mut self,
+        is_umd_export: bool,
+        module_specifier: &str,
+        property_name: &str,
+        member_type: TypeId,
+    ) -> TypeId {
+        if is_umd_export {
+            member_type
+        } else {
+            self.apply_module_augmentations(module_specifier, property_name, member_type)
+        }
     }
 
     fn module_augmentation_introduces_member(

@@ -1447,6 +1447,9 @@ impl<'a> CheckerState<'a> {
         let arg_count = args.len();
         for (i, &arg_idx) in args.iter().enumerate() {
             let expected = expected_for_index(i, arg_count);
+            if let Some(expected) = expected {
+                self.try_emit_polymorphic_this_object_literal_arg_errors(arg_idx, expected);
+            }
             if let Some(expected) = expected
                 && expected != TypeId::ANY
                 && expected != TypeId::UNKNOWN
