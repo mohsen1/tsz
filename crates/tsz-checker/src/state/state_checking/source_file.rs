@@ -615,9 +615,8 @@ impl<'a> CheckerState<'a> {
         });
         self.ctx.diagnostics.retain(|diag| {
             diag.code != tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                || (!is_nested_same_wrapper_assignability_message(&diag.message_text)
-                    && (!has_recursive_promise_await_diagnostic
-                        || !is_same_display_assignability_message(&diag.message_text)))
+                || !has_recursive_promise_await_diagnostic
+                || !is_same_display_assignability_message(&diag.message_text)
         });
 
         self.rewrite_infer_generic_return_fingerprints(&sf.text);
@@ -1665,51 +1664,6 @@ impl<'a> CheckerState<'a> {
             self.check_imported_members(&import, &literal.text);
         }
     }
-}
-
-fn is_nested_same_wrapper_assignability_message(message: &str) -> bool {
-    fn generic_head(display: &str) -> Option<&str> {
-        display.split_once('<').map(|(head, _)| head.trim())
-    }
-
-    let Some(source_rest) = message.strip_prefix("Type '") else {
-        return false;
-    };
-    let Some(source_end) = source_rest.find('\'') else {
-        return false;
-    };
-    let source = &source_rest[..source_end];
-    let Some(target_start) = message.find("' is not assignable to type '") else {
-        return false;
-    };
-    let target_rest = &message[target_start + "' is not assignable to type '".len()..];
-    let Some(target_end) = target_rest.find('\'') else {
-        return false;
-    };
-    let target = &target_rest[..target_end];
-
-    let Some(source_head) = generic_head(source) else {
-        return false;
-    };
-    if source_head != "Promise" && source_head != "PromiseLike" {
-        return false;
-    }
-    if generic_head(target) != Some(source_head) {
-        return false;
-    }
-    let Some((_, source_args)) = source.split_once('<') else {
-        return false;
-    };
-    let prefix = format!("{source_head}<");
-    // Source must be Wrapper<Wrapper<...>> (source arg starts with the same head)
-    if !source_args.trim_start().starts_with(&prefix) {
-        return false;
-    }
-    // Only suppress when the target arg does NOT also start with the same wrapper.
-    // e.g., PromiseLike<PromiseLike<T>> vs PromiseLike<T> → suppress (target arg = T)
-    // but Box<Box<number>> vs Box<Box<string>> → keep (target arg starts with Box<)
-    let target_args = target.split_once('<').map(|(_, rest)| rest).unwrap_or("");
-    !target_args.trim_start().starts_with(&prefix)
 }
 
 fn is_same_display_assignability_message(message: &str) -> bool {

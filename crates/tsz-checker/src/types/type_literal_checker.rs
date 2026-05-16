@@ -154,7 +154,7 @@ impl<'a> CheckerState<'a> {
                     self.validate_type_reference_type_arguments(sym_id, args, idx);
                 }
                 // Stable-identity helper: resolve symbol body + create Lazy(DefId)
-                let base_type = self.resolve_symbol_as_lazy_type(sym_id);
+                let base_type = self.resolve_symbol_as_lazy_type_named(sym_id, name);
                 if has_type_args {
                     let type_args = type_ref
                         .type_arguments
@@ -277,7 +277,11 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                if is_builtin_array && type_param.is_none() && sym_id.is_none() {
+                if is_builtin_array
+                    && type_param.is_none()
+                    && sym_id.is_none()
+                    && !self.ctx.file_local_type_shadow_for_lib_name(name)
+                {
                     // Array/ReadonlyArray not found - check if lib files are loaded
                     // When --noLib is used, emit TS2318 instead of silently creating Array type
                     if !self.ctx.has_lib_loaded() {
@@ -381,13 +385,9 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types.application(base, lowered_args)
                     };
                 }
-                let local_array_name =
-                    self.ctx.binder.file_locals.get(name).is_some_and(|sym_id| {
-                        !self.ctx.symbol_is_from_actual_lib(sym_id)
-                            && self.symbol_has_declared_type_meaning(sym_id)
-                    });
-                let array_is_unshadowed =
-                    is_builtin_array && type_param.is_none() && !local_array_name;
+                let array_is_unshadowed = is_builtin_array
+                    && type_param.is_none()
+                    && !self.ctx.file_local_type_shadow_for_lib_name(name);
 
                 // For Array<T> / ReadonlyArray<T> with type arguments, convert to
                 // proper array types (Array(T) / Readonly(Array(T))) instead of
@@ -421,7 +421,7 @@ impl<'a> CheckerState<'a> {
                     type_param
                 } else if let Some(sym_id) = sym_id {
                     // Stable-identity helper: resolve symbol body + create Lazy(DefId)
-                    self.resolve_symbol_as_lazy_type(sym_id)
+                    self.resolve_symbol_as_lazy_type_named(sym_id, name)
                 } else {
                     TypeId::ERROR
                 };
@@ -444,7 +444,7 @@ impl<'a> CheckerState<'a> {
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)
                 {
                     // Stable-identity helper: resolve symbol body + create Lazy(DefId)
-                    return self.resolve_symbol_as_lazy_type(sym_id);
+                    return self.resolve_symbol_as_lazy_type_named(sym_id, name);
                 }
                 if let Some(type_param) = self.lookup_type_parameter(name) {
                     return type_param;
@@ -493,26 +493,42 @@ impl<'a> CheckerState<'a> {
                 _ => {}
             }
 
-            if name != "Array"
+            let recovered_type_symbol = if name != "Array"
                 && let TypeSymbolResolution::ValueOnly(sym_id) =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)
             {
-                self.report_wrong_meaning(
-                    name,
-                    type_name_idx,
-                    sym_id,
-                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
-                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
-                );
-                return TypeId::ERROR;
-            }
+                match self
+                    .resolve_type_symbol_for_lowering(type_name_idx)
+                    .map(tsz_binder::SymbolId)
+                {
+                    Some(type_sym_id) => Some(type_sym_id),
+                    None => {
+                        self.report_wrong_meaning(
+                            name,
+                            type_name_idx,
+                            sym_id,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                        );
+                        return TypeId::ERROR;
+                    }
+                }
+            } else {
+                None
+            };
 
             if let Some(type_param) = self.lookup_type_parameter(name) {
                 return type_param;
             }
-            if let TypeSymbolResolution::Type(sym_id) =
-                self.resolve_identifier_symbol_in_type_position(type_name_idx)
-            {
+            if let Some(sym_id) = recovered_type_symbol.or_else(|| {
+                if let TypeSymbolResolution::Type(sym_id) =
+                    self.resolve_identifier_symbol_in_type_position(type_name_idx)
+                {
+                    Some(sym_id)
+                } else {
+                    None
+                }
+            }) {
                 // Prime lib generic metadata before resolving the symbol body so
                 // bare lib references inside type literals keep their default
                 // type arguments instead of caching an uninstantiated Lazy type.

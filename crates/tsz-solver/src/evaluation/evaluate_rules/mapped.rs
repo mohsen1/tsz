@@ -1245,7 +1245,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Extract mapped keys from a type (for mapped type iteration).
-    fn extract_mapped_keys(&mut self, type_id: TypeId) -> Option<MappedKeys> {
+    pub(super) fn extract_mapped_keys(&mut self, type_id: TypeId) -> Option<MappedKeys> {
         let key = self.interner().lookup(type_id)?;
 
         let mut keys = MappedKeys {

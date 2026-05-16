@@ -95,6 +95,129 @@ export const element = <></>;
     );
 }
 
+#[test]
+fn classic_jsx_component_tag_uses_cjs_identifier_substitution() {
+    let source = r#"/** @jsx h */
+declare const h: any;
+export const MySFC = () => <p />;
+export class MyClass {}
+export const tree = <MySFC><MyClass /></MySFC>;
+"#;
+    let output = emit_classic_cjs_jsx(source);
+
+    assert!(
+        output.contains("exports.tree = h(exports.MySFC, null,"),
+        "Inline-exported variable component tags should use the normal CJS exported-var substitution.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("h(MyClass, null)"),
+        "Exported class component tags remain lexical class references.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("h(\"p\", null)"),
+        "Intrinsic JSX tags must still emit as string literals.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn classic_jsx_namespace_factory_schedules_import_star_helper() {
+    let source = r#"/** @jsx React.createElement */
+import * as React from "./renderer";
+<h></h>;
+"#;
+    let output = emit_jsx_with_printer_options(
+        source,
+        PrinterOptions {
+            jsx: JsxEmit::React,
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            es_module_interop: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var __importStar ="),
+        "Namespace JSX factory imports need the importStar helper before module body emission.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var __createBinding ="),
+        "The importStar helper depends on createBinding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const React = __importStar(require(\"./renderer\"));"),
+        "The namespace import used only by the JSX pragma should be preserved as an interop require.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("React.createElement(\"h\", null);"),
+        "The classic JSX transform should use the pragma factory.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn jsx_runtime_classic_pragma_overrides_automatic_helper_planning() {
+    let source = r#"/* @jsxRuntime classic */
+import * as React from "react";
+export const el = <h />;
+"#;
+    let output = emit_jsx_with_printer_options(
+        source,
+        PrinterOptions {
+            jsx: JsxEmit::ReactJsx,
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            es_module_interop: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var __importStar ="),
+        "Classic runtime pragma should schedule namespace-import helpers even under global automatic JSX.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const React = __importStar(require(\"react\"));"),
+        "Classic runtime pragma should preserve the React namespace import as the factory value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("React.createElement(\"h\", null);"),
+        "Classic runtime pragma should emit createElement calls under global automatic JSX.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("react/jsx-runtime"),
+        "Classic runtime pragma must suppress the synthesized automatic runtime import.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn jsx_runtime_automatic_pragma_overrides_classic_emit() {
+    let source = r#"/* @jsxRuntime automatic */
+export const el = <h />;
+"#;
+    let output = emit_jsx_with_printer_options(
+        source,
+        PrinterOptions {
+            jsx: JsxEmit::React,
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("const jsx_runtime_1 = require(\"react/jsx-runtime\");"),
+        "Automatic runtime pragma should synthesize the JSX runtime import under global classic JSX.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.el = (0, jsx_runtime_1.jsx)(\"h\", {});"),
+        "Automatic runtime pragma should emit jsx runtime calls under global classic JSX.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("React.createElement"),
+        "Automatic runtime pragma must suppress classic createElement output.\nOutput:\n{output}"
+    );
+}
+
 // =============================================================================
 // Spread flattening: {...{...a, ...b}} → ...a, ...b
 // =============================================================================

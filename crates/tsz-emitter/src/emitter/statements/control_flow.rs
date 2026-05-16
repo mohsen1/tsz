@@ -1108,6 +1108,14 @@ impl<'a> Printer<'a> {
         if let Some(jump) = self.arena.get_jump_data(node)
             && jump.label.is_some()
         {
+            if self.is_static_block_await_identifier(jump.label) {
+                self.write(" ;");
+                self.write_line();
+                self.emit(jump.label);
+                self.write(" ;");
+                self.emit_trailing_comment_after_semicolon(node);
+                return;
+            }
             self.write(" ");
             // Emit inline comments between keyword and label (e.g., `break /*c*/ label`)
             if let Some(label_node) = self.arena.get(jump.label) {
@@ -1135,6 +1143,14 @@ impl<'a> Printer<'a> {
         if let Some(jump) = self.arena.get_jump_data(node)
             && jump.label.is_some()
         {
+            if self.is_static_block_await_identifier(jump.label) {
+                self.write(" ;");
+                self.write_line();
+                self.emit(jump.label);
+                self.write(" ;");
+                self.emit_trailing_comment_after_semicolon(node);
+                return;
+            }
             self.write(" ");
             // Emit inline comments between keyword and label (e.g., `continue /*c*/ label`)
             if let Some(label_node) = self.arena.get(jump.label) {
@@ -1188,12 +1204,32 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.is_static_block_await_identifier(labeled.label) {
+            self.emit(labeled.label);
+            self.write(" ;");
+            self.write_line();
+            self.emit(labeled.statement);
+            return;
+        }
+
         self.emit(labeled.label);
         self.write(": ");
         if (self.ctx.is_commonjs() || self.in_system_execute_body)
             && self.labeled_body_is_initializerless_export_variable(labeled.statement)
         {
             self.write(";");
+            return;
+        }
+        if self.labeled_body_needs_block(labeled.statement) {
+            self.write("{");
+            self.write_line();
+            self.increase_indent();
+            self.emit(labeled.statement);
+            if !self.writer.is_at_line_start() {
+                self.write_line();
+            }
+            self.decrease_indent();
+            self.write("}");
             return;
         }
         let before = self.writer.len();
@@ -1203,6 +1239,25 @@ impl<'a> Printer<'a> {
         if self.writer.len() == before {
             self.write(";");
         }
+    }
+
+    fn labeled_body_needs_block(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::ENUM_DECLARATION {
+            return false;
+        }
+        let Some(enum_decl) = self.arena.get_enum(stmt_node) else {
+            return false;
+        };
+        if self.arena.is_declare(&enum_decl.modifiers) {
+            return false;
+        }
+        !self
+            .arena
+            .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+            || self.ctx.options.preserve_const_enums
     }
 
     fn labeled_body_is_initializerless_export_variable(&self, stmt_idx: NodeIndex) -> bool {
