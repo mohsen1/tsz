@@ -163,6 +163,10 @@ while [[ $# -gt 0 ]]; do
             echo "  TS_ESSENTIALS_REF=<sha> Override pinned ts-essentials commit"
             echo "  NEXTJS_REF=<sha>       Override pinned next.js commit"
             echo "  VITE_APP_BENCH_DIR=<path> Override generated Vite fixture directory"
+            echo "  BENCH_PGO=0            Skip PGO training (default: 1 when llvm-profdata is available)"
+            echo "  BENCH_PGO_FETCH_UTILITY_TYPES=0  Don't fetch utility-types for PGO training (default: 1)"
+            echo "  BENCH_PGO_EXTRA_INPUTS=<path[:path]>  Extra .ts or tsconfig files to feed the PGO trainer"
+            echo "  BENCH_PGO_VERBOSE=1    Print per-input wall time during PGO Step 2"
             exit 0
             ;;
         *) shift ;;
@@ -603,6 +607,90 @@ ensure_tsc() {
     TSC="$TSC_LOCAL_BIN"
 }
 
+# Run the PGO instrumented binary over a workload mix that exercises
+# the same code paths the website plots: lib loading, mapped/conditional
+# types, deep generics, project-mode resolution. Always trains on a small
+# synthetic input first (warms CLI startup paths even when no fixture is
+# available), then layers on whichever external bench fixtures are already
+# prepared. utility-types is opportunistically fetched by the caller; the
+# rest are picked up only when prior bench runs left them in place.
+#
+# Set BENCH_PGO_EXTRA_INPUTS to a colon-separated list of additional
+# tsconfig or .ts paths to include in training. Set BENCH_PGO_VERBOSE=1
+# to surface the per-input wall time.
+collect_pgo_workload() {
+    local pgo_tsz="$1"
+    local env_prefix=()
+    [[ -n "${TSZ_LIB_DIR:-}" ]] && env_prefix=("TSZ_LIB_DIR=$TSZ_LIB_DIR")
+
+    _pgo_run() {
+        local label="$1"
+        shift
+        if [[ "${BENCH_PGO_VERBOSE:-0}" == "1" ]]; then
+            local t0 t1
+            t0=$(date +%s)
+            env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1 || true
+            t1=$(date +%s)
+            echo -e "  ${CYAN}pgo${NC} $label ($((t1 - t0))s)"
+        else
+            env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1 || true
+        fi
+    }
+
+    # 1. Tiny inline expression — exercises argv parsing, lib-resolver
+    #    bootstrap, scanner/parser/binder warm-up paths.
+    echo "const x: number = 1; type T<U> = U extends string ? U[] : U; const y: T<string> = ['a'];" \
+        | _pgo_run "stdin:scalar" "$pgo_tsz" --noEmit /dev/stdin
+
+    # 2. utility-types: small (~150 src files) but very heavy on mapped/
+    #    conditional types — the shape that dominates the website plot.
+    if [ -d "$UTILITY_TYPES_DIR" ] && [ -f "$UTILITY_TYPES_DIR/tsconfig.flat.json" ]; then
+        _pgo_run "utility-types" \
+            "$pgo_tsz" --noEmit -p "$UTILITY_TYPES_DIR/tsconfig.flat.json"
+    fi
+
+    # 3. ts-toolbelt + ts-essentials — opportunistically train if they were
+    #    fetched by a previous bench run. Both are deep-generic-heavy.
+    if [ -d "$TS_TOOLBELT_DIR" ] && [ -f "$TS_TOOLBELT_DIR/tsconfig.json" ]; then
+        _pgo_run "ts-toolbelt" \
+            "$pgo_tsz" --noEmit -p "$TS_TOOLBELT_DIR/tsconfig.json"
+    fi
+    if [ -d "$TS_ESSENTIALS_DIR" ] && [ -f "$TS_ESSENTIALS_DIR/tsconfig.json" ]; then
+        _pgo_run "ts-essentials" \
+            "$pgo_tsz" --noEmit -p "$TS_ESSENTIALS_DIR/tsconfig.json"
+    fi
+
+    # 4. TypeScript compiler test fixture — kept for back-compat with the
+    #    pre-existing training input. Only triggers when the upstream
+    #    TypeScript submodule is checked out locally (rare; tracked in
+    #    `.claude/CLAUDE.md` §19.5).
+    if [ -f "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts" ]; then
+        for _i in 1 2; do
+            _pgo_run "manyConstExports.ts" \
+                "$pgo_tsz" --noEmit \
+                "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts"
+        done
+    fi
+
+    # 5. Caller-provided extras (colon-separated). Useful when adding a new
+    #    benchmark fixture: warm PGO against it before measuring.
+    if [ -n "${BENCH_PGO_EXTRA_INPUTS:-}" ]; then
+        local IFS=":"
+        # shellcheck disable=SC2206
+        local extras=( ${BENCH_PGO_EXTRA_INPUTS} )
+        for input in "${extras[@]}"; do
+            [ -z "$input" ] && continue
+            if [ -f "$input" ] && [[ "$input" == *tsconfig*.json ]]; then
+                _pgo_run "extra:$(basename "$input")" \
+                    "$pgo_tsz" --noEmit -p "$input"
+            elif [ -f "$input" ]; then
+                _pgo_run "extra:$(basename "$input")" \
+                    "$pgo_tsz" --noEmit "$input"
+            fi
+        done
+    fi
+}
+
 check_prerequisites() {
     print_header "Prerequisites Check"
     
@@ -694,16 +782,20 @@ check_prerequisites() {
                 RUSTFLAGS="-Cprofile-generate=$pgo_dir" \
                 cargo build --profile dist -p tsz-cli --bin tsz)
 
+            # Ensure the smallest external bench fixture is present so PGO
+            # trains on workload shapes the website actually measures (mapped/
+            # conditional/utility types), not a single-token const expression.
+            # Larger fixtures (ts-toolbelt, ts-essentials, next.js) are
+            # opportunistically used when they were already prepared by an
+            # earlier bench run, but never fetched here — that would more
+            # than double cold-start wall time on first run.
+            if [[ "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}" == "1" ]]; then
+                ensure_utility_types_fixture
+            fi
+
             echo -e "${CYAN}PGO Step 2/3: Collecting profile data...${NC}"
-            # Run representative workloads
             local pgo_tsz="$pgo_target_dir/dist/tsz"
-            echo "const x: number = 1;" | ${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} "$pgo_tsz" --noEmit /dev/stdin 2>/dev/null || true
-            for _i in 1 2 3; do
-                if [ -f "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts" ]; then
-                    ${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} "$pgo_tsz" --noEmit \
-                        "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts" 2>/dev/null || true
-                fi
-            done
+            collect_pgo_workload "$pgo_tsz"
 
             echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
             "$llvm_profdata" merge -o "$pgo_merged" "$pgo_dir"/*.profraw
