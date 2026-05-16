@@ -927,9 +927,7 @@ impl<'a> Printer<'a> {
         idx: NodeIndex,
         tail: &mut Vec<OptionalChainSegment>,
     ) -> Option<(u16, NodeIndex, NodeIndex)> {
-        let Some(node) = self.arena.get(idx) else {
-            return None;
-        };
+        let node = self.arena.get(idx)?;
 
         if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
             && let Some(paren) = self.arena.get_parenthesized(node)
