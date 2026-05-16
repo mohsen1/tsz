@@ -591,6 +591,12 @@ REGEX_LINE_COUNT_CHECKS = [
         37,
     ),
     (
+        "Checker diagnostic boundary: file-name/path substring decisions (Track 10)",
+        [ROOT / "crates" / "tsz-checker" / "src"],
+        re.compile(r"\b(?:\w+\.)?file_name\.contains\s*\(|\bsource_path\.contains\s*\("),
+        9,
+    ),
+    (
         "Checker diagnostic boundary: rendered type strings as semantic input (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(
