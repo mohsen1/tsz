@@ -121,13 +121,13 @@ mod tests {
         let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
             target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
             ..Default::default()
         };
         let ctx = EmitContext::with_options(options.clone());
         let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
         let mut printer =
             EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
-        printer.set_source_text(source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -160,7 +160,6 @@ mod tests {
         let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
         let mut printer =
             EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
-        printer.set_source_text(source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -270,6 +269,78 @@ mod tests {
         assert!(
             output.contains("return __asyncGenerator(this, arguments, function () {\n        return __generator(this, function (_a) {"),
             "Async generator function expressions should use an ES5 generator state machine.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn labeled_async_function_and_enum_plan_helpers_and_block_wrapping() {
+        let source = "\"use strict\"\nlabel: async function gen1() { }\nlabel: enum E {}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.starts_with("\"use strict\";\nvar __awaiter = "),
+            "User-authored strict prologues should stay before injected helpers.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var __awaiter = "),
+            "Async functions nested in labeled statements should request the __awaiter helper.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("label: function gen1() {\n    return __awaiter(this, void 0, void 0, function* () { });\n}"),
+            "Labeled async function declarations should still be lowered in place.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("label: {\n    var E;\n    (function (E) {\n    })(E || (E = {}));\n}"),
+            "Labeled enum declarations should be block-wrapped because enum lowering emits multiple statements.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn class_static_block_await_recovery_matches_native_emit() {
+        let source = "class C {\n    static {\n        ({ [await]: 1 });\n        ({ await });\n        await:\n        break await;\n        const ff = (await) => { }\n        const fff = await => { }\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2022,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("({ [await ]: 1 });"),
+            "Bare await in static-block computed names should preserve tsc recovery spacing.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("({ await:  });"),
+            "Bare await shorthand in static blocks should recover as an empty property assignment.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("await ;\n        break ;\n        await ;"),
+            "Bare await labels and break labels in static blocks should recover as separate statements.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "const ff = (await );\n        { }\n        const fff = await ;\n        { }"
+            ),
+            "Arrows with await parameters in static blocks should emit recovered parameter expressions plus body blocks.\nOutput:\n{output}"
         );
     }
 
@@ -1334,6 +1405,94 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         assert!(
             output.contains("(bar = __rest({}, []));"),
             "Object-rest assignment lowering should still call __rest.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn defaulted_nested_object_rest_assignment_uses_resolved_source() {
+        let source = "let a: any, b: any, c: any = { x: { a: 1, y: 2 } }, d: any;\n({ x: { a, ...b } = d } = c);\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a, _b;"),
+            "Defaulted nested object-rest assignment should hoist both evaluation temps.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "(_a = c.x, _b = _a === void 0 ? d : _a, { a } = _b, b = __rest(_b, [\"a\"]));"
+            ),
+            "Nested object rest must use the resolved default source, not the default expression.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_defaulted_nested_object_rest_assignment_uses_resolved_source() {
+        let source = "let a: any, b: any, c: any = { x: { a: 1, y: 2 } }, d: any;\n({ x: { a, ...b } = d } = c);\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a, _b;"),
+            "ES5 nested object-rest assignment should hoist both evaluation temps.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "(_a = c.x, _b = _a === void 0 ? d : _a, a = _b.a, b = __rest(_b, [\"a\"]));"
+            ),
+            "ES5 nested object rest must use the resolved default source, not the default expression.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn esm_exported_object_rest_keeps_temp_local() {
+        let source = "export const { x, ...rest } = { x: 'x', y: 'y' }, y = 3;\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::ESNext,
+            no_emit_helpers: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+        let mut printer = EmitterPrinter::with_emit_plan_and_options(&parser.arena, plan, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a;\nexport var x = (_a = { x: 'x', y: 'y' }, _a).x, rest = __rest(_a, [\"x\"]), y = 3;"),
+            "Exported object-rest temp should be hoisted outside the export list.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("export var _a"),
+            "The synthesized temp must not become an exported binding.\nOutput:\n{output}"
         );
     }
 

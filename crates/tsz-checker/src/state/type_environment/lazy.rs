@@ -5,6 +5,7 @@ use crate::query_boundaries::common::{
     get_type_query_symbol_ref, lazy_def_id,
 };
 use crate::query_boundaries::state::type_environment as query;
+use crate::query_boundaries::type_predicates::contains_conditional_with_application_extends;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
@@ -273,7 +274,15 @@ impl<'a> CheckerState<'a> {
                 || crate::query_boundaries::spread::contains_unresolved_application(
                     self.ctx.types,
                     result,
-                ));
+                )
+                // `result != type_id` guards against re-running the second pass
+                // when the first pass deferred a generic conditional unchanged
+                // (type params present); we only retry when the first pass
+                // actually produced a different type containing deferred
+                // conditionals whose extends-type is still an Application
+                // (e.g. Pick/Readonly not yet expandable by TypeEnvironment).
+                || (result != type_id
+                    && contains_conditional_with_application_extends(self.ctx.types, result)));
         let final_result = if needs_resolver_pass {
             let seed_iter = if use_cache {
                 self.ctx.env_eval_cache_seed_entries()

@@ -861,6 +861,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // where the wrapper type provides enough info for a determinate result.
                 || matches!(self.interner().lookup(check_type), Some(TypeData::Lazy(_)))
                 || matches!(self.interner().lookup(extends_type), Some(TypeData::Lazy(_)))
+                // An Application in the extends position that survived evaluation means
+                // the current resolver lacks the generic body (e.g., a lib type like
+                // Pick, Readonly, or Required not yet known to the TypeEnvironment
+                // resolver). Taking the false branch would be incorrect when the
+                // Application could expand to a type that `check_type` does satisfy.
+                // Defer so a later resolver pass (CheckerContext) can expand it.
+                || matches!(self.interner().lookup(extends_type), Some(TypeData::Application(_)))
             {
                 // Subtype check failed, but either side contains unresolved type
                 // parameters or lazy references. The result is indeterminate: once
