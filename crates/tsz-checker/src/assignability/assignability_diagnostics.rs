@@ -1199,27 +1199,67 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        let target_display = self.format_type_for_assignability_message(target);
-        let Some(inner) = target_display
-            .strip_prefix("Partial<")
-            .and_then(|display| display.strip_suffix('>'))
-        else {
+        let Some(inner) = self.partial_self_argument_inner_type(target) else {
             return false;
         };
 
-        let source_display = self.format_type_for_assignability_message(source);
-        if source_display == inner {
-            return true;
+        self.type_matches_partial_self_inner(source, inner)
+    }
+
+    fn partial_self_argument_inner_type(&mut self, target: TypeId) -> Option<TypeId> {
+        let evaluated = self.evaluate_type_for_assignability(target);
+        for candidate in [target, evaluated] {
+            if let Some(inner) = self.optional_homomorphic_mapped_inner_type(candidate) {
+                return Some(inner);
+            }
+            if let Some(alias) = self.ctx.types.get_display_alias(candidate)
+                && let Some(inner) = self.optional_homomorphic_mapped_inner_type(alias)
+            {
+                return Some(inner);
+            }
         }
 
-        let source_alias = self.ctx.types.get_display_alias(source);
-        if source_alias
-            .is_some_and(|alias| self.format_type_for_assignability_message(alias) == inner)
+        let (base, args) = self.application_info_or_display_alias(target)?;
+        if args.len() == 1 && self.application_base_is_lib_partial(base) {
+            args.first().copied()
+        } else {
+            None
+        }
+    }
+
+    fn optional_homomorphic_mapped_inner_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let mapped = crate::query_boundaries::common::mapped_type_info(self.ctx.types, type_id)?;
+        if mapped.optional_modifier == Some(tsz_solver::MappedModifier::Remove)
+            || mapped.optional_modifier.is_none()
         {
+            return None;
+        }
+
+        let inner =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, mapped.constraint)?;
+        let (template_object, _) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, mapped.template)?;
+        (template_object == inner).then_some(inner)
+    }
+
+    fn application_base_is_lib_partial(&self, base: TypeId) -> bool {
+        let Some(partial_def) = self.ctx.actual_lib_def_id_for_bare_name("Partial") else {
+            return false;
+        };
+        crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))
+            == Some(partial_def)
+    }
+
+    fn type_matches_partial_self_inner(&mut self, source: TypeId, inner: TypeId) -> bool {
+        if source == inner {
+            return true;
+        }
+        if self.ctx.types.get_display_alias(source) == Some(inner) {
             return true;
         }
 
-        self.partial_inner_alias_instantiates_to_source(inner, source)
+        self.evaluate_type_for_assignability(source) == self.evaluate_type_for_assignability(inner)
     }
 
     fn should_suppress_self_referential_generic_function_arg_mismatch(
@@ -1470,43 +1510,6 @@ impl<'a> CheckerState<'a> {
             return self.type_contains_generic_mapped_constraint(constraint, visited);
         }
         false
-    }
-
-    fn partial_inner_alias_instantiates_to_source(&mut self, inner: &str, source: TypeId) -> bool {
-        let Some((alias_name, arg_names)) = parse_simple_type_application_display(inner) else {
-            return false;
-        };
-        let alias_atom = self.ctx.types.intern_string(alias_name);
-        let Some(def_ids) = self.ctx.definition_store.find_defs_by_name(alias_atom) else {
-            return false;
-        };
-        let type_args: Vec<_> = arg_names
-            .iter()
-            .filter_map(|arg_name| self.ctx.type_parameter_scope.get(*arg_name).copied())
-            .collect();
-        if type_args.len() != arg_names.len() {
-            return false;
-        }
-
-        def_ids.into_iter().any(|def_id| {
-            let Some(def) = self.ctx.definition_store.get(def_id) else {
-                return false;
-            };
-            if def.kind != tsz_solver::def::DefKind::TypeAlias
-                || def.type_params.len() != type_args.len()
-            {
-                return false;
-            }
-            let Some(body) = def.body else {
-                return false;
-            };
-            let substitution =
-                TypeSubstitution::from_args(self.ctx.types, &def.type_params, &type_args);
-            let instantiated = instantiate_type(self.ctx.types, body, &substitution);
-            instantiated == source
-                || self.evaluate_type_for_assignability(instantiated)
-                    == self.evaluate_type_for_assignability(source)
-        })
     }
 
     /// Returns true when a bivariant-assignability mismatch should produce a diagnostic.
