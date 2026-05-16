@@ -631,6 +631,29 @@ impl<'a> Printer<'a> {
     // JSX Auto Import Injection
     // =========================================================================
 
+    pub(in super::super) fn effective_jsx_emit(&self) -> JsxEmit {
+        if matches!(
+            self.ctx.options.jsx,
+            JsxEmit::Preserve | JsxEmit::ReactNative
+        ) {
+            return self.ctx.options.jsx;
+        }
+        match self
+            .source_text
+            .and_then(crate::jsx_pragmas::extract_jsx_runtime_pragma)
+        {
+            Some("classic") => JsxEmit::React,
+            Some("automatic") => {
+                if matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev) {
+                    JsxEmit::ReactJsxDev
+                } else {
+                    JsxEmit::ReactJsx
+                }
+            }
+            _ => self.ctx.options.jsx,
+        }
+    }
+
     /// Get the CJS variable name for the JSX runtime module import.
     /// e.g., "react/jsx-runtime" -> "`jsx_runtime_1`", "react/jsx-dev-runtime" -> "`jsx_dev_runtime_1`"
     ///
@@ -642,7 +665,7 @@ impl<'a> Printer<'a> {
             return var_name.clone();
         }
 
-        let suffix = match self.ctx.options.jsx {
+        let suffix = match self.effective_jsx_emit() {
             JsxEmit::ReactJsxDev => "jsx-dev-runtime",
             _ => "jsx-runtime",
         };
@@ -691,14 +714,14 @@ impl<'a> Printer<'a> {
     /// comments. Issue #4010.
     pub(in super::super) fn extract_jsx_factory_pragma(&self) -> Option<String> {
         let text = self.source_text?;
-        super::extract_jsx_factory(text)
+        crate::jsx_pragmas::extract_jsx_factory(text)
     }
 
     /// Extract `@jsxFrag <factory>` pragma (classic JSX) from the file's
     /// leading comments. Issue #4010.
     pub(in super::super) fn extract_jsx_fragment_factory_pragma(&self) -> Option<String> {
         let text = self.source_text?;
-        super::extract_jsx_fragment_factory(text)
+        crate::jsx_pragmas::extract_jsx_fragment_factory(text)
     }
 
     /// Check if the file needs JSX runtime auto-imports and return the import text.
@@ -708,7 +731,7 @@ impl<'a> Printer<'a> {
         let is_cjs = self.ctx.is_effectively_commonjs();
         // Per-file @jsxImportSource pragma overrides the global option
         let pragma_source = self.extract_jsx_import_source_pragma();
-        match self.ctx.options.jsx {
+        match self.effective_jsx_emit() {
             JsxEmit::ReactJsx => {
                 let source = pragma_source
                     .as_deref()

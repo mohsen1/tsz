@@ -262,26 +262,26 @@ impl<'a> Printer<'a> {
     }
 
     fn classic_jsx_factory_roots(&self) -> Vec<String> {
-        if !matches!(
-            self.ctx.options.jsx,
-            JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
-        ) {
+        let runtime = self
+            .source_text
+            .and_then(crate::jsx_pragmas::extract_jsx_runtime_pragma);
+        let uses_classic_factory = match runtime {
+            Some("classic") => true,
+            Some("automatic") => false,
+            _ => matches!(
+                self.ctx.options.jsx,
+                JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
+            ),
+        };
+        if !uses_classic_factory {
             return Vec::new();
         }
 
-        let mut roots = Vec::new();
-        for factory in [self.get_jsx_factory(), self.get_jsx_fragment_factory()] {
-            let Some(root) = factory.split('.').next() else {
-                continue;
-            };
-            if root.is_empty() || !super::super::is_valid_identifier_name(root) {
-                continue;
-            }
-            if !roots.iter().any(|existing| existing == root) {
-                roots.push(root.to_string());
-            }
-        }
-        roots
+        crate::jsx_pragmas::classic_jsx_factory_roots(
+            self.source_text,
+            self.ctx.options.jsx_factory.as_deref(),
+            self.ctx.options.jsx_fragment_factory.as_deref(),
+        )
     }
 
     pub(in crate::emitter) fn is_classic_jsx_factory_root(&self, name: &str) -> bool {

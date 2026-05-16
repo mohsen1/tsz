@@ -1,6 +1,7 @@
 use crate::context::emit::EmitContext;
 use crate::context::plan::{EmitPlan, EmitPlanBuilder};
 use crate::context::transform::{TransformContext, TransformDirective};
+use crate::emitter::JsxEmit;
 use std::sync::Arc;
 use tsz_common::ScriptTarget;
 use tsz_parser::parser::NodeIndex;
@@ -331,6 +332,7 @@ impl<'a> LoweringPass<'a> {
             && !clause.is_type_only
         {
             if !self.ctx.options.verbatim_module_syntax
+                && !self.is_classic_jsx_factory_import_clause(clause)
                 && !self.import_has_value_usage_after_node(node, clause)
             {
                 if import_decl.import_clause.is_some() {
@@ -421,6 +423,73 @@ impl<'a> LoweringPass<'a> {
         if import_decl.import_clause.is_some() {
             self.visit(import_decl.import_clause);
         }
+    }
+
+    fn is_classic_jsx_factory_import_clause(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        let roots = self.classic_jsx_factory_roots();
+        if roots.is_empty() {
+            return false;
+        }
+
+        if clause.name.is_some() {
+            let name = emit_utils::identifier_text_or_empty(self.arena, clause.name);
+            if roots.iter().any(|root| root == &name) {
+                return true;
+            }
+        }
+
+        let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
+            return false;
+        };
+        let Some(named_imports) = self.arena.get_named_imports(bindings_node) else {
+            return false;
+        };
+
+        if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
+            let ns_name = emit_utils::identifier_text_or_empty(self.arena, named_imports.name);
+            if roots.iter().any(|root| root == &ns_name) {
+                return true;
+            }
+        }
+
+        named_imports.elements.nodes.iter().any(|&spec_idx| {
+            self.arena
+                .get(spec_idx)
+                .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                .is_some_and(|spec| {
+                    if spec.is_type_only {
+                        return false;
+                    }
+                    let local_name = emit_utils::identifier_text_or_empty(self.arena, spec.name);
+                    roots.iter().any(|root| root == &local_name)
+                })
+        })
+    }
+
+    fn classic_jsx_factory_roots(&self) -> Vec<String> {
+        let runtime = self
+            .current_source_text
+            .and_then(crate::jsx_pragmas::extract_jsx_runtime_pragma);
+        let uses_classic_factory = match runtime {
+            Some("classic") => true,
+            Some("automatic") => false,
+            _ => matches!(
+                self.ctx.options.jsx,
+                JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
+            ),
+        };
+        if !uses_classic_factory {
+            return Vec::new();
+        }
+
+        crate::jsx_pragmas::classic_jsx_factory_roots(
+            self.current_source_text,
+            self.ctx.options.jsx_factory.as_deref(),
+            self.ctx.options.jsx_fragment_factory.as_deref(),
+        )
     }
 
     fn import_has_value_usage_after_node(
