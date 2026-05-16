@@ -27,6 +27,7 @@
 : "${TYPE_CHALLENGES_REF:=0b0b0b18bcb7ac42dc22ce26ffb438231d4754b1}"
 : "${TYPE_CHALLENGES_SOLUTIONS_REPO:=https://github.com/ghaiklor/type-challenges-solutions.git}"
 : "${TYPE_CHALLENGES_SOLUTIONS_REF:=91a6d2986650475f29eeb3bd18ebd025128aa07e}"
+: "${TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED:=78}"
 
 tsz_ensure_git_fixture() {
   local name="$1"
@@ -274,7 +275,7 @@ tsz_write_type_challenges_solutions_config() {
 
       my @order;
       my %block_by_name;
-      while ($solution =~ /```typescript\n(.*?)```/sg) {
+      while ($solution =~ /```(?:ts|typescript)\n(.*?)```/sg) {
         my $block = $1;
         my @names;
         while ($block =~ /^\s*(?:export\s+)?(?:declare\s+)?(?:type|interface|namespace)\s+([A-Za-z_\$][A-Za-z0-9_\$]*)/mg) {
@@ -317,6 +318,10 @@ tsz_write_type_challenges_solutions_config() {
 
   if [[ "$generated" -eq 0 ]]; then
     echo "error: no Type Challenges solution sources were generated from $source_dir/en" >&2
+    return 1
+  fi
+  if [[ "$generated" -ne "$TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED" ]]; then
+    echo "error: generated ${generated} Type Challenges solution sources; expected ${TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED} for ${TYPE_CHALLENGES_SOLUTIONS_REF}" >&2
     return 1
   fi
 
