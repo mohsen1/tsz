@@ -26,6 +26,17 @@ struct ObjectRestExportBinding {
     property_name: String,
 }
 
+struct DestructuringExportBinding {
+    export_name: String,
+    access: DestructuringExportAccess,
+    leading_comment_pos: u32,
+}
+
+enum DestructuringExportAccess {
+    Property(String),
+    Element(usize),
+}
+
 enum EsmObjectRestExportDecl {
     ObjectRest {
         initializer: NodeIndex,
@@ -145,6 +156,20 @@ impl<'a> Printer<'a> {
                 .deferred_local_export_bindings
                 .as_ref()
                 .is_some_and(|bindings| bindings.contains_key(local_name))
+    }
+
+    fn emit_destructuring_export_access(&mut self, access: &DestructuringExportAccess) {
+        match access {
+            DestructuringExportAccess::Property(prop_name) => {
+                self.write(".");
+                self.write(prop_name);
+            }
+            DestructuringExportAccess::Element(index) => {
+                self.write("[");
+                self.write(&index.to_string());
+                self.write("]");
+            }
+        }
     }
 
     /// Write a CJS/System export assignment for a named or default export.
@@ -1493,6 +1518,7 @@ impl<'a> Printer<'a> {
         let Some(var_stmt) = self.arena.get_variable(clause_node) else {
             return;
         };
+        self.emit_comments_before_pos(clause_node.pos);
 
         // Walk through declaration lists to find the variable declaration
         for &decl_list_idx in &var_stmt.declarations.nodes {
@@ -1547,15 +1573,18 @@ impl<'a> Printer<'a> {
                 };
 
                 // Collect non-rest elements and rest element
-                // (export_name, prop_name, leading_comment_pos)
-                let mut non_rest_elems: Vec<(String, String, u32)> = Vec::new();
+                let pattern_is_array = name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
+                let mut non_rest_elems: Vec<DestructuringExportBinding> = Vec::new();
                 let mut rest_elem: Option<String> = None;
                 let mut excluded_props: Vec<String> = Vec::new();
 
-                for &elem_idx in &pattern.elements.nodes {
+                for (element_index, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
                     let Some(elem_node) = self.arena.get(elem_idx) else {
                         continue;
                     };
+                    if elem_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                        continue;
+                    }
                     let Some(elem) = self.arena.get_binding_element(elem_node) else {
                         continue;
                     };
@@ -1570,12 +1599,18 @@ impl<'a> Printer<'a> {
                     // Get the variable (export) name
                     let var_name = self.get_identifier_text(elem.name);
 
-                    // Get the property name to access on the source object
-                    let prop_name = if elem.property_name.is_some() {
-                        let pn = self.get_identifier_text_idx(elem.property_name);
-                        if pn.is_empty() { var_name.clone() } else { pn }
+                    let access = if pattern_is_array {
+                        DestructuringExportAccess::Element(element_index)
                     } else {
-                        var_name.clone()
+                        // Get the property name to access on the source object.
+                        let prop_name = if elem.property_name.is_some() {
+                            let pn = self.get_identifier_text_idx(elem.property_name);
+                            if pn.is_empty() { var_name.clone() } else { pn }
+                        } else {
+                            var_name.clone()
+                        };
+                        excluded_props.push(prop_name.clone());
+                        DestructuringExportAccess::Property(prop_name)
                     };
 
                     let leading_comment_pos = if elem.property_name.is_some() {
@@ -1586,8 +1621,11 @@ impl<'a> Printer<'a> {
                         elem_node.pos
                     };
 
-                    excluded_props.push(prop_name.clone());
-                    non_rest_elems.push((var_name, prop_name, leading_comment_pos));
+                    non_rest_elems.push(DestructuringExportBinding {
+                        export_name: var_name,
+                        access,
+                        leading_comment_pos,
+                    });
                 }
 
                 let is_empty = non_rest_elems.is_empty() && rest_elem.is_none();
@@ -1595,7 +1633,7 @@ impl<'a> Printer<'a> {
                 // Optimization: when there's exactly one binding (no rest), skip the
                 // temp variable and emit `exports.x = (rhs).x` directly. tsc does this.
                 if non_rest_elems.len() == 1 && rest_elem.is_none() {
-                    let (export_name, prop_name, leading_comment_pos) = &non_rest_elems[0];
+                    let binding = &non_rest_elems[0];
                     // Check if RHS is a numeric literal — needs special formatting
                     // because `1.toString` is a JS parse error (`.` is decimal point).
                     // tsc emits `1..toString` (trailing dot on number, then prop access).
@@ -1603,18 +1641,18 @@ impl<'a> Printer<'a> {
                         && self
                             .arena
                             .get(decl.initializer)
-                            .is_some_and(|n| n.is_numeric_literal());
-                    self.emit_comments_before_pos(*leading_comment_pos);
+                            .is_some_and(|n| n.is_numeric_literal())
+                        && matches!(binding.access, DestructuringExportAccess::Property(_));
+                    self.emit_comments_before_pos(binding.leading_comment_pos);
                     self.write("exports.");
-                    self.write(export_name);
+                    self.write(&binding.export_name);
                     self.write(" = ");
                     self.emit(decl.initializer);
                     if init_is_numeric {
                         // Emit extra dot for numeric literal property access: 1..toString
                         self.write(".");
                     }
-                    self.write(".");
-                    self.write(prop_name);
+                    self.emit_destructuring_export_access(&binding.access);
                     self.write(";");
                     continue;
                 }
@@ -1646,12 +1684,12 @@ impl<'a> Printer<'a> {
                 } else if self.ctx.target_es5 {
                     // es5 non-empty: exports.x = (_a = expr, _a).x, exports.rest = __rest(_a, ["x"]);
                     let mut first = true;
-                    for (export_name, prop_name, _) in &non_rest_elems {
+                    for binding in &non_rest_elems {
                         if !first {
                             self.write(", ");
                         }
                         self.write("exports.");
-                        self.write(export_name);
+                        self.write(&binding.export_name);
                         self.write(" = (");
                         if first {
                             self.write(&temp_name);
@@ -1662,8 +1700,8 @@ impl<'a> Printer<'a> {
                         } else {
                             self.write(&temp_name);
                         }
-                        self.write(").");
-                        self.write(prop_name);
+                        self.write(")");
+                        self.emit_destructuring_export_access(&binding.access);
                         first = false;
                     }
                     if let Some(rest_name) = &rest_elem {
@@ -1703,14 +1741,13 @@ impl<'a> Printer<'a> {
                     self.write(" = ");
                     self.emit(decl.initializer);
 
-                    for (export_name, prop_name, _) in &non_rest_elems {
+                    for binding in &non_rest_elems {
                         self.write(", ");
                         self.write("exports.");
-                        self.write(export_name);
+                        self.write(&binding.export_name);
                         self.write(" = ");
                         self.write(&temp_name);
-                        self.write(".");
-                        self.write(prop_name);
+                        self.emit_destructuring_export_access(&binding.access);
                     }
 
                     if let Some(rest_name) = &rest_elem {
