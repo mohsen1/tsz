@@ -350,6 +350,10 @@ impl<'a> CheckerState<'a> {
                 return_type,
                 expected_type,
             ) {
+                // tsc anchors this diagnostic at the `return` statement, not
+                // the expression: there is no source-side shape to elaborate
+                // into when the return value is a primitive, so the failure
+                // belongs on the statement keyword.
                 self.error_type_not_assignable_generic_at(
                     return_type,
                     expected_type,

@@ -2869,6 +2869,10 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                // Inner per-property diagnostics suppress the outer whole-object error (tsc parity).
+                if self.object_literal_has_inner_property_diagnostics(current) {
+                    return true;
+                }
                 return self.try_elaborate_object_literal_properties(current, declared_type);
             }
             if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
@@ -2885,6 +2889,34 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             return false;
+        }
+        false
+    }
+
+    /// True if a TS2322/TS2353/TS1360 diagnostic is anchored inside any of this object literal's property spans.
+    fn object_literal_has_inner_property_diagnostics(&self, obj_idx: NodeIndex) -> bool {
+        let Some(obj_node) = self.ctx.arena.get(obj_idx) else {
+            return false;
+        };
+        let Some(obj) = self.ctx.arena.get_literal_expr(obj_node) else {
+            return false;
+        };
+        for &elem_idx in &obj.elements.nodes {
+            let Some((start, end)) = self.ctx.get_node_span(elem_idx) else {
+                continue;
+            };
+            if self.ctx.diagnostics.iter().any(|diag| {
+                matches!(
+                    diag.code,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                        | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+                        | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID
+                        | diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE
+                ) && diag.start >= start
+                    && diag.start < end
+            }) {
+                return true;
+            }
         }
         false
     }
