@@ -15,6 +15,7 @@ use crate::error_reporter::{
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -455,61 +456,56 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    pub(in crate::checkers_domain::jsx) fn jsx_alias_source_has_prop_text(
+    pub(in crate::checkers_domain::jsx) fn jsx_alias_declares_string_prop(
         &self,
         type_id: TypeId,
         prop_name: &str,
-        prop_type_text: &str,
     ) -> bool {
-        let alias_name = self.format_type(type_id);
-        let alias_name = alias_name.split('<').next().unwrap_or(alias_name.as_str());
-        if alias_name.is_empty() {
+        let alias_type = crate::query_boundaries::common::application_info(self.ctx.types, type_id)
+            .map_or(type_id, |(base, _)| base);
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias_type)
+        else {
             return false;
-        }
+        };
+        let Some(symbol_id) = self
+            .ctx
+            .definition_store
+            .get(def_id)
+            .and_then(|def| def.symbol_id)
+            .map(tsz_binder::SymbolId)
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(symbol_id) else {
+            return false;
+        };
 
-        for node_idx in 0..self.ctx.arena.nodes.len() {
-            let idx = NodeIndex(node_idx as u32);
-            let Some(node) = self.ctx.arena.get(idx) else {
-                continue;
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                return false;
             };
             if node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                continue;
+                return false;
             }
             let Some(alias) = self.ctx.arena.get_type_alias(node) else {
-                continue;
+                return false;
             };
-            if self
-                .ctx
-                .arena
-                .get(alias.name)
-                .and_then(|node| self.ctx.arena.get_identifier(node))
-                .map(|ident| self.ctx.arena.resolve_identifier_text(ident))
-                != Some(alias_name)
-            {
-                continue;
-            }
-            if self.type_node_source_has_prop_text(alias.type_node, prop_name, prop_type_text) {
-                return true;
-            }
-        }
-        false
+            self.type_node_declares_string_prop(alias.type_node, prop_name)
+        })
     }
 
-    fn type_node_source_has_prop_text(
-        &self,
-        type_node_idx: NodeIndex,
-        prop_name: &str,
-        prop_type_text: &str,
-    ) -> bool {
+    fn type_node_declares_string_prop(&self, type_node_idx: NodeIndex, prop_name: &str) -> bool {
         let Some(node) = self.ctx.arena.get(type_node_idx) else {
             return false;
         };
         if node.kind == syntax_kind_ext::INTERSECTION_TYPE
             && let Some(composite) = self.ctx.arena.get_composite_type(node)
         {
-            return composite.types.nodes.iter().any(|&member| {
-                self.type_node_source_has_prop_text(member, prop_name, prop_type_text)
-            });
+            return composite
+                .types
+                .nodes
+                .iter()
+                .any(|&member| self.type_node_declares_string_prop(member, prop_name));
         }
         if node.kind != syntax_kind_ext::TYPE_LITERAL {
             return false;
@@ -524,15 +520,14 @@ impl<'a> CheckerState<'a> {
             let Some(sig) = self.ctx.arena.get_signature(member_node) else {
                 return false;
             };
-            self.ctx
-                .arena
-                .get(sig.name)
-                .and_then(|node| self.ctx.arena.get_identifier(node))
-                .map(|ident| self.ctx.arena.resolve_identifier_text(ident))
+            crate::types_domain::queries::core::get_literal_property_name(self.ctx.arena, sig.name)
+                .as_deref()
                 == Some(prop_name)
                 && self
-                    .node_text(sig.type_annotation)
-                    .is_some_and(|text| text.trim() == prop_type_text)
+                    .ctx
+                    .arena
+                    .get(sig.type_annotation)
+                    .is_some_and(|type_node| type_node.kind == SyntaxKind::StringKeyword as u16)
         })
     }
 
