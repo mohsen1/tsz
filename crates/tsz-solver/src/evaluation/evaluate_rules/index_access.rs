@@ -436,9 +436,9 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
     }
 
     fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
-        self.evaluator
-            .apparent_literal_kind(value)
-            .and_then(|kind| self.evaluate_apparent_primitive(kind))
+        self.evaluate_apparent_primitive(crate::objects::apparent::literal_value_intrinsic_kind(
+            value,
+        ))
     }
 
     fn visit_object(&mut self, shape_id: u32) -> Self::Output {

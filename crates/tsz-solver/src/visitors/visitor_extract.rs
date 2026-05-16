@@ -207,6 +207,18 @@ pub fn literal_string(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom>
     }
 }
 
+/// Return the `IntrinsicKind` for any primitive type: intrinsic or literal.
+///
+/// Combines `intrinsic_kind` (handles `string`, `number`, etc.) with the
+/// literal-value path (handles `"foo"`, `42`, `true`) so callers don't need
+/// to duplicate the two-step pattern.
+pub fn apparent_intrinsic_kind(types: &dyn TypeDatabase, type_id: TypeId) -> Option<IntrinsicKind> {
+    intrinsic_kind(types, type_id).or_else(|| {
+        literal_value(types, type_id)
+            .map(|lit| crate::objects::apparent::literal_value_intrinsic_kind(&lit))
+    })
+}
+
 /// Extract the numeric literal if this is a number literal type.
 #[inline]
 pub fn literal_number(types: &dyn TypeDatabase, type_id: TypeId) -> Option<OrderedFloat> {

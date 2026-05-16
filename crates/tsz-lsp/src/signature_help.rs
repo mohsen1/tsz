@@ -15,9 +15,11 @@ use tsz_parser::parser::node::{CallExprData, NodeAccess};
 use tsz_parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
-    FunctionShape, IntrinsicKind, ParamInfo, TypeData, TypeId, TypePredicateTarget,
-    apparent_primitive_method_params, literal_value_intrinsic_kind, visitor,
+    FunctionShape, ParamInfo, TypeData, TypeId, TypePredicateTarget, apparent_intrinsic_kind,
+    visitor,
 };
+
+use crate::intrinsic_params::{IntrinsicParamSpec, intrinsic_method_params};
 #[cfg(test)]
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
@@ -405,28 +407,30 @@ impl<'a> SignatureHelpProvider<'a> {
         } else {
             Vec::new()
         };
-        let mut signatures = self.get_signatures_from_type(
-            callee_type,
-            &checker,
-            effective_call_kind,
-            &callee_name,
-            has_explicit_type_args,
-            &explicit_type_arg_texts,
-        );
-
-        // For primitive intrinsic methods resolved via the no-lib fallback, the type
-        // system synthesizes (...args: any[]) => ReturnType.  Replace with actual
-        // parameter names/types from the intrinsic parameter table so that signature
-        // help shows e.g. `toLowerCase(): string` instead of `toLowerCase(...args: any[]): string`.
-        self.try_rewrite_intrinsic_signatures(
+        // For primitive intrinsic methods resolved via the no-lib fallback the type
+        // system synthesizes `(...args: any[]) => ReturnType`.  Try to build directly
+        // from the intrinsic parameter table first so we never pay the cost of
+        // `get_signatures_from_type` when the result would be discarded.
+        let intrinsic_sigs = self.try_build_intrinsic_signatures(
             callee_expr,
             callee_type,
             &mut checker,
             &callee_name,
             has_explicit_type_args,
             &explicit_type_arg_texts,
-            &mut signatures,
         );
+        let mut signatures = if let Some(sigs) = intrinsic_sigs {
+            sigs
+        } else {
+            self.get_signatures_from_type(
+                callee_type,
+                &checker,
+                effective_call_kind,
+                &callee_name,
+                has_explicit_type_args,
+                &explicit_type_arg_texts,
+            )
+        };
 
         if let Some(docs) = docs {
             self.apply_signature_docs(&mut signatures, &docs);
@@ -2510,20 +2514,12 @@ impl<'a> SignatureHelpProvider<'a> {
         }
     }
 
-    fn intrinsic_kind_for_type(&self, type_id: TypeId) -> Option<IntrinsicKind> {
-        visitor::intrinsic_kind(self.interner, type_id).or_else(|| {
-            visitor::literal_value(self.interner, type_id)
-                .map(|lit| literal_value_intrinsic_kind(&lit))
-        })
-    }
-
     /// If `callee_expr` is a property-access on a primitive intrinsic type and the
-    /// resolved callee type is the synthetic `...args: any[]` fallback, replace the
-    /// signature with one derived from the known intrinsic parameter table.
-    ///
-    /// This corrects display like `toLowerCase(...args: any[]): string` →
-    /// `toLowerCase(): string` without altering any type-checking behaviour.
-    fn try_rewrite_intrinsic_signatures(
+    /// resolved callee type is the synthetic `...args: any[]` fallback, return
+    /// signatures built from the known intrinsic parameter table.  Returns `None`
+    /// when the callee is not an intrinsic method or the method isn't in the table,
+    /// so the caller can fall back to `get_signatures_from_type`.
+    fn try_build_intrinsic_signatures(
         &self,
         callee_expr: NodeIndex,
         callee_type: TypeId,
@@ -2531,28 +2527,15 @@ impl<'a> SignatureHelpProvider<'a> {
         callee_name: &str,
         has_explicit_type_args: bool,
         explicit_type_arg_texts: &[String],
-        signatures: &mut Vec<SignatureCandidate>,
-    ) {
-        let Some(return_type) = self.synthetic_apparent_method_return_type(callee_type) else {
-            return;
-        };
-        let Some(callee_node) = self.arena.get(callee_expr) else {
-            return;
-        };
-        let Some(access) = self.arena.get_access_expr(callee_node) else {
-            return;
-        };
-        let Some(method_name) = self.arena.get_identifier_text(access.name_or_argument) else {
-            return;
-        };
+    ) -> Option<Vec<SignatureCandidate>> {
+        let return_type = self.synthetic_apparent_method_return_type(callee_type)?;
+        let callee_node = self.arena.get(callee_expr)?;
+        let access = self.arena.get_access_expr(callee_node)?;
+        let method_name = self.arena.get_identifier_text(access.name_or_argument)?;
         let raw_obj_type = checker.get_type_of_node(access.expression);
         let obj_type = checker.resolve_lazy_type(raw_obj_type);
-        let Some(kind) = self.intrinsic_kind_for_type(obj_type) else {
-            return;
-        };
-        let Some(param_specs) = apparent_primitive_method_params(kind, method_name) else {
-            return;
-        };
+        let kind = apparent_intrinsic_kind(self.interner, obj_type)?;
+        let param_specs: &[IntrinsicParamSpec] = intrinsic_method_params(kind, method_name)?;
 
         let params: Vec<ParamInfo> = param_specs
             .iter()
@@ -2582,14 +2565,14 @@ impl<'a> SignatureHelpProvider<'a> {
             is_method: false,
         };
 
-        *signatures = self.signature_candidates_for_shape(
+        Some(self.signature_candidates_for_shape(
             &shape,
             checker,
             false,
             callee_name,
             has_explicit_type_args,
             explicit_type_arg_texts,
-        );
+        ))
     }
 
     fn signature_candidates_for_shape(

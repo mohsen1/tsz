@@ -516,13 +516,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     | IntrinsicKind::Bigint
                     | IntrinsicKind::Symbol => self.apparent_primitive_keyof(kind),
                 },
-                TypeData::Literal(literal) => {
-                    if let Some(kind) = self.apparent_literal_kind(&literal) {
-                        self.apparent_primitive_keyof(kind)
-                    } else {
-                        self.interner().keyof(operand)
-                    }
-                }
+                TypeData::Literal(literal) => self.apparent_primitive_keyof(
+                    crate::objects::apparent::literal_value_intrinsic_kind(&literal),
+                ),
                 TypeData::TemplateLiteral(_) => {
                     self.apparent_primitive_keyof(IntrinsicKind::String)
                 }

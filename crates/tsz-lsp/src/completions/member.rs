@@ -441,9 +441,11 @@ impl<'a> Completions<'a> {
         }
 
         if let Some(literal) = visitor::literal_value(interner, evaluated) {
-            if let Some(kind) = self.literal_intrinsic_kind(&literal) {
-                self.collect_intrinsic_members(kind, interner, props);
-            }
+            self.collect_intrinsic_members(
+                tsz_solver::literal_value_intrinsic_kind(&literal),
+                interner,
+                props,
+            );
             return;
         }
 
@@ -1262,13 +1264,6 @@ impl<'a> Completions<'a> {
                 is_method,
             );
         }
-    }
-
-    pub(super) fn literal_intrinsic_kind(
-        &self,
-        literal: &tsz_solver::LiteralValue,
-    ) -> Option<IntrinsicKind> {
-        Some(tsz_solver::literal_value_intrinsic_kind(literal))
     }
 
     pub(super) fn add_property_completion(
