@@ -333,7 +333,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let (mut result, params) = if target_flags & symbol_flags::TYPE_ALIAS != 0 {
-            self.type_reference_symbol_type_with_params(target_sym_id)
+            let target_file_idx = self.ctx.resolve_symbol_file_index(target_sym_id);
+            self.direct_source_file_type_alias_result(target_sym_id, target_file_idx, true)
+                .unwrap_or_else(|| self.type_reference_symbol_type_with_params(target_sym_id))
         } else {
             (self.get_type_of_symbol(target_sym_id), Vec::new())
         };
@@ -1249,7 +1251,9 @@ impl<'a> CheckerState<'a> {
             tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaClass,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-        checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
+        checker.ctx.current_file_idx = query_file_idx
+            .or(delegate_file_idx)
+            .unwrap_or(self.ctx.current_file_idx);
         for &id in &self.ctx.class_instance_resolution_set {
             checker.ctx.class_instance_resolution_set.insert(id);
         }
