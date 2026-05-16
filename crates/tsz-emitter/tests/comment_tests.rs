@@ -791,3 +791,18 @@ fn re_export_preserves_comment_after_star() {
         "`from` keyword and module specifier must remain after preserved comment.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn regex_exponentiation_comments_survive_math_pow_lowering() {
+    let source = "var regex4 = /**// /**/asdf /;\nvar regex5 = /**// asdf/**/ /;";
+    let output = parse_and_print_with_opts(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("var regex4 = /**/ Math.pow(/**/ / /, /asdf /);"),
+        "Block comments in slash/exponentiation trivia should stay with the first `Math.pow` argument.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var regex5 = /**/ Math.pow(/**/ / asdf/, / /);"),
+        "Trailing regex/exponentiation comments should replay before the first `Math.pow` argument.\nOutput:\n{output}"
+    );
+}

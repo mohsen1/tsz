@@ -1,6 +1,8 @@
 use super::*;
+use crate::output::source_writer::DelimiterKind;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
+use tsz_parser::parser::node::NodeArena;
 
 /// Parse, lower, and print a source string with the given options.
 ///
@@ -47,6 +49,20 @@ fn test_streaming_writer() {
         String::from_utf8(output).expect("output should be valid UTF-8"),
         "hello world"
     );
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "structured delimiter helpers left 1 unclosed delimiter")]
+fn finish_asserts_structured_delimiters_are_balanced() {
+    let arena = NodeArena::new();
+    let mut printer = Printer::new(&arena, PrintOptions::default());
+    printer
+        .inner
+        .writer
+        .write_open_delimiter(DelimiterKind::Paren);
+
+    let _ = printer.finish();
 }
 
 #[test]

@@ -160,6 +160,14 @@ pub(crate) struct JsdocParamDecl {
     pub(crate) rest: bool,
 }
 
+#[derive(Clone)]
+pub(crate) struct JsdocOverloadSignature {
+    pub(crate) comment: String,
+    pub(crate) type_params: Vec<String>,
+    pub(crate) params: Vec<JsdocParamDecl>,
+    pub(crate) return_type: String,
+}
+
 /// Lightweight `TypeResolver` backed by `TypeCacheView` data for DTS emit.
 #[allow(dead_code)]
 pub(crate) struct DtsCacheResolver<'a> {
