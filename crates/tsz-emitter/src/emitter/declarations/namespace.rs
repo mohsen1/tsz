@@ -2303,7 +2303,9 @@ impl<'a> Printer<'a> {
                         &mut wrote_any,
                     );
                 } else {
-                    if let Some(binding) = self.simple_namespace_binding_export(decl.name) {
+                    if let Some(binding) = self.simple_namespace_binding_export(decl.name)
+                        && self.can_inline_simple_namespace_binding_initializer(decl.initializer)
+                    {
                         self.emit_simple_namespace_binding_export(
                             ns_name,
                             decl.initializer,

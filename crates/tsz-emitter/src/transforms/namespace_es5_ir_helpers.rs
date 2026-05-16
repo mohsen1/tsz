@@ -540,6 +540,9 @@ fn convert_simple_exported_binding_declaration(
     }
 
     let (name, access) = binding?;
+    if !can_inline_single_namespace_binding_initializer(arena, initializer) {
+        return None;
+    }
     let converter = AstToIr::new(arena);
     let source = converter.convert_expression(initializer);
     let temps = converter.take_hoisted_temps();
@@ -714,6 +717,17 @@ fn binding_property_name_text(arena: &NodeArena, idx: NodeIndex) -> Option<Strin
         return Some(ident.escaped_text.clone());
     }
     arena.get_literal(node).map(|lit| lit.text.clone())
+}
+
+fn can_inline_single_namespace_binding_initializer(arena: &NodeArena, idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+
+    node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        || node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        || node.is_string_literal()
+        || node.is_numeric_literal()
 }
 
 /// Convert variable declarations to proper IR (`VarDecl` nodes)

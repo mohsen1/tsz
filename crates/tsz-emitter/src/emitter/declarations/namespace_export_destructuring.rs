@@ -87,6 +87,20 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn can_inline_simple_namespace_binding_initializer(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            || node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            || node.is_string_literal()
+            || node.is_numeric_literal()
+    }
+
     pub(in crate::emitter) fn reserve_namespace_destructuring_export_temps(
         &mut self,
         module: &tsz_parser::parser::node::ModuleData,
@@ -141,7 +155,9 @@ impl<'a> Printer<'a> {
                     }
                     if let Some(name_node) = self.arena.get(decl.name)
                         && name_node.is_binding_pattern()
-                        && self.simple_namespace_binding_export(decl.name).is_none()
+                        && (self.simple_namespace_binding_export(decl.name).is_none()
+                            || !self
+                                .can_inline_simple_namespace_binding_initializer(decl.initializer))
                     {
                         let temp = self.get_temp_var_name();
                         temps_by_decl.insert(decl_idx, temp.clone());
