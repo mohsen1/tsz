@@ -1618,7 +1618,9 @@ impl<'a> CheckerState<'a> {
                     },
                 )
             };
-            let tgt_str = self.format_assignability_type_for_message(target, source);
+            let tgt_str = self
+                .checked_js_global_element_access_fallback_target_display(idx)
+                .unwrap_or_else(|| self.format_assignability_type_for_message(target, source));
             let prop_list: Vec<String> = all_missing
                 .iter()
                 .take(4)
@@ -1757,6 +1759,12 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+        if depth == 0
+            && let Some(display) =
+                self.checked_js_global_element_access_fallback_target_display(idx)
+        {
+            tgt_str_qualified = display;
         }
         let prop_name_display = self.missing_property_name_for_display(property_name, target);
         let message = format_message(
@@ -2326,15 +2334,14 @@ impl<'a> CheckerState<'a> {
                 let widened_source = self.widen_type_for_display(source_type);
                 self.format_type_diagnostic(widened_source)
             };
-            let tgt_str = self
-                .property_declaring_type_name(target_type, filtered_names[0])
-                .unwrap_or_else(|| {
-                    if depth == 0 {
-                        self.format_assignability_type_for_message(target, source)
-                    } else {
-                        self.format_type_diagnostic(target_type)
-                    }
-                });
+            let tgt_str = if depth == 0 {
+                self.checked_js_global_element_access_fallback_target_display(idx)
+                    .or_else(|| self.property_declaring_type_name(target_type, filtered_names[0]))
+                    .unwrap_or_else(|| self.format_assignability_type_for_message(target, source))
+            } else {
+                self.property_declaring_type_name(target_type, filtered_names[0])
+                    .unwrap_or_else(|| self.format_type_diagnostic(target_type))
+            };
             let message = format_message(
                 diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                 &[&prop_name, &src_str, &tgt_str],
@@ -2390,7 +2397,8 @@ impl<'a> CheckerState<'a> {
             self.format_type_diagnostic(self.widen_type_for_display(display_source))
         };
         let tgt_str = if depth == 0 {
-            self.format_assignability_type_for_message(target, source)
+            self.checked_js_global_element_access_fallback_target_display(idx)
+                .unwrap_or_else(|| self.format_assignability_type_for_message(target, source))
         } else {
             self.format_type_diagnostic(target_type)
         };
@@ -2585,7 +2593,9 @@ impl<'a> CheckerState<'a> {
             let source_str = self
                 .private_identifier_missing_source_base_display(source, property_name)
                 .unwrap_or_else(|| self.format_type_diagnostic(source));
-            let target_str = self.format_type_diagnostic(target);
+            let target_str = self
+                .checked_js_global_element_access_fallback_target_display(idx)
+                .unwrap_or_else(|| self.format_type_diagnostic(target));
             let detail = format_message(
                 diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                 &[&prop_name, &source_str, &target_str],
@@ -2611,7 +2621,9 @@ impl<'a> CheckerState<'a> {
             let source_str = self
                 .private_identifier_missing_source_base_display(source, property_name)
                 .unwrap_or_else(|| self.format_type_diagnostic(source));
-            let target_str = self.format_type_diagnostic(target);
+            let target_str = self
+                .checked_js_global_element_access_fallback_target_display(idx)
+                .unwrap_or_else(|| self.format_type_diagnostic(target));
             let message = format_message(
                 diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                 &[&prop_name, &source_str, &target_str],

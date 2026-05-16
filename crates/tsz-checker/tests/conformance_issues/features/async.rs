@@ -1027,6 +1027,49 @@ Common.localize = function (string) {
 }
 
 #[test]
+fn test_js_global_element_access_or_fallback_typeof_display_uses_assignment_shape() {
+    let source = r#"
+var First = {};
+self['First'] = self['First'] || {};
+First.required = 1;
+
+var Second_$ = {};
+globalThis['Second_$'] = (globalThis['Second_$'] || ({}));
+Second_$.one = 1;
+Second_$.two = 2;
+"#;
+    let diagnostics = compile_and_get_raw_diagnostics_named_with_lib_and_options(
+        "test.js",
+        source,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+
+    let missing_property_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| matches!(diag.code, 2739 | 2740 | 2741))
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+
+    assert!(
+        missing_property_messages
+            .iter()
+            .any(|message| message.contains("typeof First")),
+        "Expected the self fallback target to render as `typeof First`.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        missing_property_messages
+            .iter()
+            .any(|message| message.contains("typeof Second_$")),
+        "Expected the globalThis fallback target to render as `typeof Second_$` through parens.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_jsdoc_typedef_string_index_signature_accepts_number_element_write() {
     let diagnostics = compile_named_files_get_diagnostics_with_lib_and_options(
         &[(

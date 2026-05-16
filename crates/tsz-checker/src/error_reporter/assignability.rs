@@ -841,10 +841,14 @@ impl<'a> CheckerState<'a> {
                             DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
                         )
                     };
-                    let tgt_str = self.format_type_for_diagnostic_role(
-                        target,
-                        DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
-                    );
+                    let tgt_str = self
+                        .checked_js_global_element_access_fallback_target_display(anchor_idx)
+                        .unwrap_or_else(|| {
+                            self.format_type_for_diagnostic_role(
+                                target,
+                                DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
+                            )
+                        });
                     let (message, code) = if missing_props.len() == 1 {
                         let prop_name = self
                             .ctx
@@ -1676,10 +1680,14 @@ impl<'a> CheckerState<'a> {
                         DiagnosticTypeDisplayRole::AssignmentSource { target, anchor_idx },
                     )
                 };
-                let tgt_str = self.format_type_for_diagnostic_role(
-                    target,
-                    DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
-                );
+                let tgt_str = self
+                    .checked_js_global_element_access_fallback_target_display(anchor_idx)
+                    .unwrap_or_else(|| {
+                        self.format_type_for_diagnostic_role(
+                            target,
+                            DiagnosticTypeDisplayRole::AssignmentTarget { source, anchor_idx },
+                        )
+                    });
                 let (message, code) = if missing_props.len() == 1 {
                     let prop_name = self
                         .ctx
