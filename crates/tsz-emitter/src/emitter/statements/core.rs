@@ -869,6 +869,9 @@ impl<'a> Printer<'a> {
             }
             self.map_trailing_semicolon(node);
             self.write_semicolon();
+            self.emit_recovered_generated_type_member_tail_after_variable_statement(
+                &var_stmt.declarations,
+            );
             self.emit_recovered_regex_slash_tail_after_variable_statement(&var_stmt.declarations);
             self.emit_recovered_class_keyword_variable_statement_tail(node);
         }
