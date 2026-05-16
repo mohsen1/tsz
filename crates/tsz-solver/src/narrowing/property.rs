@@ -359,7 +359,7 @@ impl<'a> NarrowingContext<'a> {
             return false;
         }
 
-        let key = (resolved_type, property_name);
+        let key = (resolved_type, self.resolver_generation(), property_name);
         if let Some(&cached) = self.cache.required_property_cache.borrow().get(&key) {
             return cached;
         }
@@ -413,7 +413,7 @@ impl<'a> NarrowingContext<'a> {
     /// Returns Some(type) if the property exists, None otherwise.
     pub(crate) fn get_property_type(&self, type_id: TypeId, property_name: Atom) -> Option<TypeId> {
         let resolved_type = self.resolve_type(type_id);
-        let key = (resolved_type, property_name);
+        let key = (resolved_type, self.resolver_generation(), property_name);
 
         if let Some(&cached) = self.cache.property_cache.borrow().get(&key) {
             if let Some(cached_prop_type) = cached {

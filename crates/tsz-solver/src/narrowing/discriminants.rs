@@ -284,7 +284,7 @@ impl<'a> NarrowingContext<'a> {
             return None;
         }
 
-        let key = (type_id, property);
+        let key = (type_id, self.resolver_generation(), property);
         if let Some(&cached) = self.cache.property_cache.borrow().get(&key) {
             // Don't trust a cached Lazy type — re-resolve in case the TypeEnvironment
             // has been populated since the cache entry was created.
