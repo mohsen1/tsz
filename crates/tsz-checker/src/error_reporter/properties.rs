@@ -276,7 +276,7 @@ impl<'a> CheckerState<'a> {
                 return annotation_display;
             }
         }
-        Self::collapse_pick_literal_union_display(&inferred_display).unwrap_or(inferred_display)
+        inferred_display
     }
 
     fn same_simple_alias_array_union_display(left: &str, right: &str) -> bool {
@@ -372,19 +372,22 @@ impl<'a> CheckerState<'a> {
         Some(prefix)
     }
 
-    fn collapse_pick_literal_union_display(display: &str) -> Option<String> {
-        let inner = display.strip_prefix("Pick<")?.strip_suffix('>')?;
-        let (base, keys) = inner.split_once(", ")?;
-        if !keys.contains("\" | \"") || !keys.split(" | ").all(|part| part.starts_with('"')) {
+    fn format_pick_over_all_keys_as_keyof(&mut self, target: TypeId) -> Option<String> {
+        if !self.ctx.has_lib_loaded() || self.ctx.actual_lib_file_count == 0 {
             return None;
         }
-        Some(format!("Pick<{base}, keyof {base}>"))
-    }
-
-    fn format_pick_over_all_keys_as_keyof(&mut self, target: TypeId) -> Option<String> {
         let (base, args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, target)?;
-        if args.len() != 2 || self.format_type_diagnostic(base) != "Pick" {
+            crate::query_boundaries::common::application_info(self.ctx.types, target).or_else(
+                || {
+                    let alias = self.ctx.types.get_display_alias(target)?;
+                    crate::query_boundaries::common::application_info(self.ctx.types, alias)
+                },
+            )?;
+        if args.len() != 2 {
+            return None;
+        }
+        let base_def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)?;
+        if self.ctx.actual_lib_def_id_for_bare_name("Pick")? != base_def_id {
             return None;
         }
 
