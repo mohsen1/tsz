@@ -198,7 +198,7 @@ impl<'a> Printer<'a> {
             }
 
             if class_name.is_empty() {
-                self.emit_class_es6_with_options(node, idx, false, None, None, false);
+                self.emit_class_es6_with_options(node, idx, false, None, None, None, false);
                 return;
             }
 
@@ -246,6 +246,7 @@ impl<'a> Printer<'a> {
                         true,
                         Some(("let", class_name.clone())),
                         Some(alias),
+                        Some(alias),
                         true,
                     );
                     let after_len = self.writer.len();
@@ -254,13 +255,9 @@ impl<'a> Printer<'a> {
                     let full_output = self.writer.get_output().to_string();
                     let emitted_str = &full_output[before_len..after_len];
 
-                    // The emitted text starts with `let Name = class Name {`
-                    // We need to insert `Name_1 = ` after `let Name = `
-                    // and replace body references to Name with Name_1
-                    let prefix = format!("let {class_name} = class {class_name}");
-                    let alias_prefix = format!("let {class_name} = {alias} = class {class_name}");
-
-                    let mut replaced = emitted_str.replacen(&prefix, &alias_prefix, 1);
+                    // The assignment alias is emitted structurally; only class-body
+                    // self-references need the body-scoped rewrite below.
+                    let mut replaced = emitted_str.to_string();
 
                     // Replace self-references ONLY inside the class body (between { and };)
                     // Static fields after the class close brace should keep the original name.
@@ -316,11 +313,12 @@ impl<'a> Printer<'a> {
                         true,
                         Some(("let", class_name.clone())),
                         None,
+                        None,
                         true,
                     );
                 }
             } else {
-                self.emit_class_es6_with_options(node, idx, false, None, None, false);
+                self.emit_class_es6_with_options(node, idx, false, None, None, None, false);
             }
 
             // Restore anonymous_default_export_name if we temporarily set it
@@ -444,7 +442,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.emit_class_es6_with_options(node, idx, false, None, None, false);
+        self.emit_class_es6_with_options(node, idx, false, None, None, None, false);
     }
 
     pub(in crate::emitter) fn can_render_simple_tc39_decorated_class_es5(

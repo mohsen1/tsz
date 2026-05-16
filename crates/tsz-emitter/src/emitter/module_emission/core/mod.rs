@@ -721,6 +721,7 @@ impl<'a> Printer<'a> {
                             true,
                             None,
                             None,
+                            None,
                             false,
                         );
                     }
@@ -999,6 +1000,7 @@ impl<'a> Printer<'a> {
                 clause_node,
                 export.export_clause,
                 true,
+                None,
                 None,
                 None,
                 false,

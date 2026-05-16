@@ -193,7 +193,7 @@ impl<'a> Printer<'a> {
     /// This is the pure emission logic that can be reused by both the old API
     /// and the new transform system.
     pub(in crate::emitter) fn emit_class_es6(&mut self, node: &Node, idx: NodeIndex) {
-        self.emit_class_es6_with_options(node, idx, false, None, None, false);
+        self.emit_class_es6_with_options(node, idx, false, None, None, None, false);
     }
 
     pub(in crate::emitter) fn emit_class_es6_with_options(
@@ -202,6 +202,7 @@ impl<'a> Printer<'a> {
         _idx: NodeIndex,
         suppress_modifiers: bool,
         assignment_prefix: Option<(&str, String)>,
+        assignment_alias: Option<&str>,
         static_initializer_self_alias: Option<&str>,
         emit_assignment_static_elements_as_statements: bool,
     ) {
@@ -343,6 +344,10 @@ impl<'a> Printer<'a> {
             }
             self.write(binding_name);
             self.write(" = ");
+            if let Some(alias) = assignment_alias {
+                self.write(alias);
+                self.write(" = ");
+            }
             if let Some(temp) = default_export_set_function_name_temp.as_ref() {
                 self.write(temp);
                 self.write(" = ");
