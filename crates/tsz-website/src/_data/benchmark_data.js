@@ -254,15 +254,19 @@ const TINY_BENCHMARK_MAX_LINES = 200;
 const EXPECTED_PROJECT_BENCHMARKS = [
   "large-ts-repo",
   "utility-types-project",
-  "ts-toolbelt-project",
   "ts-essentials-project",
   "nextjs",
   "nextjs-fresh-app",
   "vite-vanilla-ts-app",
   "rxjs-project",
   "type-fest-project",
+];
+
+const COMPILE_CANARY_PROJECTS = [
+  "ts-toolbelt-project",
   "zod-project",
   "kysely-project",
+  "type-challenges-project",
 ];
 
 const COMPATIBILITY_CORPUS_ROWS = [
@@ -303,6 +307,12 @@ const COMPATIBILITY_CORPUS_ROWS = [
     family: "residency/runtime/project graph stress",
   },
   {
+    name: "type-challenges-project",
+    label: "type-challenges",
+    owner: "Tracks 2, 3, 5",
+    family: "advanced type-level challenge templates",
+  },
+  {
     name: "nextjs",
     label: "Next.js full project",
     owner: "Tracks 1, 7, 9",
@@ -327,6 +337,22 @@ function withExpectedProjectRows(results) {
       winner: "error",
       ratio: 0,
       status: "not recorded in latest benchmark artifact",
+    });
+  }
+
+  for (const name of COMPILE_CANARY_PROJECTS) {
+    if (existingNames.has(name)) continue;
+    rows.push({
+      name,
+      lines: 0,
+      kb: 0,
+      tsz_ms: null,
+      tsgo_ms: null,
+      tsz_lps: null,
+      tsgo_lps: null,
+      winner: "error",
+      ratio: 0,
+      status: "compile canary tracked in CI; not timed by vs-tsgo benchmarks",
     });
   }
 
@@ -437,6 +463,7 @@ const PROJECT_README_PATHS = {
   "utility-types-project": [".target-bench/external/utility-types/README.md"],
   "ts-toolbelt-project": [".target-bench/external/ts-toolbelt/README.md"],
   "ts-essentials-project": [".target-bench/external/ts-essentials/README.md"],
+  "type-challenges-project": [".target/project-compile-guard/type-challenges/README.md"],
 };
 
 const PROJECT_README_URLS = {
@@ -446,6 +473,7 @@ const PROJECT_README_URLS = {
   "utility-types-project": "https://raw.githubusercontent.com/piotrwitek/utility-types/2ee1f6ecb241651ab22390fee7ee5349942efda2/README.md",
   "ts-toolbelt-project": "https://raw.githubusercontent.com/millsp/ts-toolbelt/b8a49285e3ed3a7d8bb8e0b433389eac46a5f140/README.md",
   "ts-essentials-project": "https://raw.githubusercontent.com/ts-essentials/ts-essentials/5abe8700b42068048bd3c368e0531b6defe56558/README.md",
+  "type-challenges-project": "https://raw.githubusercontent.com/type-challenges/type-challenges/0b0b0b18bcb7ac42dc22ce26ffb438231d4754b1/README.md",
 };
 
 const NEXTJS_FRESH_APP_README = `# Fresh Next.js app benchmark
@@ -570,17 +598,20 @@ function isTinyBenchmark(lines) {
 }
 
 function categoryFor(name, lines) {
-  if (name === "large-ts-repo") return "Projects: large-ts-repo";
-  if (name === "nextjs") return "Projects: next.js";
-  if (name === "nextjs-fresh-app") return "Projects: fresh Next.js app";
-  if (name === "vite-vanilla-ts-app") return "Projects: fresh Vite app";
-  if (name === "rxjs-project") return "Projects: rxjs";
-  if (name === "type-fest-project") return "Projects: type-fest";
-  if (name === "zod-project") return "Projects: zod";
-  if (name === "kysely-project") return "Projects: kysely";
-  if (name === "utility-types-project") return "Projects: utility-types";
-  if (name === "ts-toolbelt-project") return "Projects: ts-toolbelt";
-  if (name === "ts-essentials-project") return "Projects: ts-essentials";
+  if (name === "large-ts-repo" || name === "nextjs") return "Projects: large repositories";
+  if (name === "nextjs-fresh-app" || name === "vite-vanilla-ts-app") return "Projects: generated apps";
+  if (
+    name === "rxjs-project" ||
+    name === "type-fest-project" ||
+    name === "utility-types-project" ||
+    name === "ts-essentials-project" ||
+    name === "ts-toolbelt-project" ||
+    name === "zod-project" ||
+    name === "kysely-project" ||
+    name === "type-challenges-project"
+  ) {
+    return "Projects: external libraries";
+  }
   if (name.startsWith("utility-types/")) return "Single file: utility-types";
   if (name.startsWith("ts-toolbelt/")) return "Single file: ts-toolbelt";
   if (name.startsWith("ts-essentials/")) return "Single file: ts-essentials";
@@ -623,58 +654,17 @@ function libraryNameForCategory(category) {
 
 function categoryMeta(category) {
   return {
-    "Projects: large-ts-repo": {
-      title: "large-ts-repo",
-      repo: "https://github.com/mohsen1/large-ts-repo",
-      repoLabel: "mohsen1/large-ts-repo",
+    "Projects: large repositories": {
+      title: "Large repositories",
+      description: "Full repository type-checks that stress project graph setup, residency, and cross-file analysis.",
     },
-    "Projects: next.js": {
-      title: "next.js",
-      repo: "https://github.com/vercel/next.js",
-      repoLabel: "vercel/next.js",
+    "Projects: generated apps": {
+      title: "Generated apps",
+      description: "Generated application fixtures with modern framework dependencies and generated configs.",
     },
-    "Projects: fresh Next.js app": {
-      title: "Fresh Next.js app",
-    },
-    "Projects: fresh Vite app": {
-      title: "Fresh Vite app",
-      repo: "https://github.com/vitejs/vite",
-      repoLabel: "vitejs/vite",
-    },
-    "Projects: rxjs": {
-      title: "RxJS",
-      repo: "https://github.com/ReactiveX/rxjs",
-      repoLabel: "ReactiveX/rxjs",
-    },
-    "Projects: type-fest": {
-      title: "type-fest",
-      repo: "https://github.com/sindresorhus/type-fest",
-      repoLabel: "sindresorhus/type-fest",
-    },
-    "Projects: zod": {
-      title: "Zod",
-      repo: "https://github.com/colinhacks/zod",
-      repoLabel: "colinhacks/zod",
-    },
-    "Projects: kysely": {
-      title: "Kysely",
-      repo: "https://github.com/kysely-org/kysely",
-      repoLabel: "kysely-org/kysely",
-    },
-    "Projects: utility-types": {
-      title: "utility-types",
-      repo: "https://github.com/piotrwitek/utility-types",
-      repoLabel: "piotrwitek/utility-types",
-    },
-    "Projects: ts-toolbelt": {
-      title: "ts-toolbelt",
-      repo: "https://github.com/millsp/ts-toolbelt",
-      repoLabel: "millsp/ts-toolbelt",
-    },
-    "Projects: ts-essentials": {
-      title: "ts-essentials",
-      repo: "https://github.com/ts-essentials/ts-essentials",
-      repoLabel: "ts-essentials/ts-essentials",
+    "Projects: external libraries": {
+      title: "External libraries",
+      description: "Pinned real-world libraries and type-heavy repositories checked as project-mode fixtures.",
     },
     "Single file: utility-types": {
       title: "utility-types files",
@@ -723,6 +713,7 @@ function displayName(name) {
   if (name === "nextjs-fresh-app") return "Fresh Next.js app";
   if (name === "vite-vanilla-ts-app") return "Fresh Vite app";
   if (name === "kysely-project") return "Kysely project";
+  if (name === "type-challenges-project") return "type-challenges project";
 
   const cleaned = String(name || "")
     .replace(/^utility-types\//, "")
@@ -1658,17 +1649,9 @@ function buildGroupedBenchmarks(data) {
   const failedResults = allResults.filter((row) => isFailedBenchmark(row) && !successfulNames.has(row.name));
 
   const order = [
-    "Projects: large-ts-repo",
-    "Projects: utility-types",
-    "Projects: ts-toolbelt",
-    "Projects: ts-essentials",
-    "Projects: next.js",
-    "Projects: fresh Next.js app",
-    "Projects: fresh Vite app",
-    "Projects: rxjs",
-    "Projects: type-fest",
-    "Projects: zod",
-    "Projects: kysely",
+    "Projects: external libraries",
+    "Projects: generated apps",
+    "Projects: large repositories",
     "Single file: utility-types",
     "Single file: ts-toolbelt",
     "Single file: ts-essentials",
@@ -1843,42 +1826,23 @@ function generateCharts(data, mode = "projects") {
   }
 
   if (visibleFailedResults.length > 0) {
-    const failedTitle = mode === "projects" ? "Projects without complete timing" : "Incomplete timings";
+    const failedTitle = mode === "projects" ? "Compile canaries and incomplete project timings" : "Incomplete timings";
     const failedDescription = mode === "projects"
-      ? "Project runs recorded by CI without a full tsz and tsgo timing pair."
+      ? "Rows that are tracked for compile readiness but are not part of the timed vs-tsgo chart yet."
       : "Rows recorded by CI without a full tsz and tsgo timing pair.";
     html += `<section class="bench-category bench-failures">
   <h3 class="bench-category-title" id="failures">${escapeHtml(failedTitle)}</h3>
   <p class="bench-category-desc">${escapeHtml(failedDescription)}</p>
-  <div class="bench-chart">\n`;
+  <ul class="bench-failure-list">\n`;
     for (const r of visibleFailedResults) {
       const category = categoryFor(r.name || "", r.lines);
       const decorated = decorateRow(r, category);
-      const tszWidth = hasTiming(r.tsz_ms) ? (r.tsz_ms / chartMaxMs) * barMaxWidth : 0;
-      const tsgoWidth = hasTiming(r.tsgo_ms) ? (r.tsgo_ms / chartMaxMs) * barMaxWidth : 0;
-      const metaParts = [decorated.kind, `${fmt(r.lines || 0)} lines`, `${fmt(r.kb || 0)} KB`];
-      html += `  <div class="bench-row bench-row-error">
-    <div class="bench-name"><a href="${decorated.url}">${escapeHtml(displayName(r.name))}</a></div>
-    <div class="bench-meta">${escapeHtml(metaParts.join(" · "))}</div>
-    <p class="bench-focus bench-failure-status">${escapeHtml(statusLabel(r))}</p>
-    <div class="bench-bars">
-      <div class="bench-bar-row">
-        <span class="bench-bar-label">tsz</span>
-        ${hasTiming(r.tsz_ms)
-          ? renderBenchmarkBar("tsz", tszWidth, formatDurationMs(r.tsz_ms))
-          : `<span class="bench-bar-status">failed</span>`}
-      </div>
-      <div class="bench-bar-row">
-        <span class="bench-bar-label">tsgo</span>
-        ${hasTiming(r.tsgo_ms)
-          ? renderBenchmarkBar("tsgo", tsgoWidth, formatDurationMs(r.tsgo_ms))
-          : `<span class="bench-bar-status">n/a</span>`}
-      </div>
-    </div>
-    <a class="bench-detail-link" href="${decorated.url}">View details</a>
-  </div>\n`;
+      html += `  <li>
+    <a href="${decorated.url}">${escapeHtml(displayName(r.name))}</a>
+    <span>${escapeHtml(statusLabel(r))}</span>
+  </li>\n`;
     }
-    html += `  </div>
+    html += `  </ul>
  </section>\n`;
   }
 

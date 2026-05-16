@@ -3716,16 +3716,11 @@ fn test_completions_suppressed_after_numeric_dot_with_jsdoc_trivia() {
     );
 }
 
-// ── Primitive type completion filtering ─────────────────────────────────────
-//
-// Structural rule: member completions for primitive types (string, number,
-// boolean, bigint, symbol) must expose only members declared in the type's
-// own TypeScript interface at ES2015 baseline.  Object.prototype members
-// (constructor, hasOwnProperty, isPrototypeOf, propertyIsEnumerable) and
-// post-ES2015 string methods (padStart/padEnd, matchAll, replaceAll, …)
-// must not appear in the no-lib fallback.
+// ── Function / callable member completions ──────────────────────────────────
 
-fn primitive_member_names(source: &str) -> Vec<String> {
+/// Helper that returns the member-completion names for `<source><suffix>`
+/// where the cursor is right after the suffix (at the end of the file).
+fn member_names_at_end(source: &str) -> Vec<String> {
     let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
     let mut binder = BinderState::new();
@@ -3751,17 +3746,93 @@ fn primitive_member_names(source: &str) -> Vec<String> {
 }
 
 #[test]
+fn test_completions_function_prototype_members_on_named_function() {
+    let names = member_names_at_end("function add(a,b){return a+b;}\nadd.");
+    for expected in ["name", "length", "apply", "call", "bind", "prototype"] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected function member '{expected}' in completions, got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_function_prototype_members_on_arrow_function() {
+    let names = member_names_at_end("const mul = (x: number, y: number) => x * y;\nmul.");
+    for expected in ["name", "length", "apply", "call", "bind"] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected function member '{expected}' in arrow-function completions, got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_function_prototype_members_on_function_expression() {
+    let names = member_names_at_end("const fn = function compute(x: number) { return x; };\nfn.");
+    for expected in ["name", "length", "apply", "call", "bind"] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected function member '{expected}' in function-expression completions, got: {names:?}"
+        );
+    }
+}
+
+// ── Array member completions ─────────────────────────────────────────────────
+
+#[test]
+fn test_completions_array_prototype_methods_on_array_literal() {
+    let names = member_names_at_end("const arr = [1, 2, 3];\narr.");
+    for expected in [
+        "length",
+        "push",
+        "pop",
+        "shift",
+        "unshift",
+        "slice",
+        "splice",
+        "map",
+        "filter",
+        "forEach",
+        "find",
+        "findIndex",
+        "some",
+        "every",
+        "indexOf",
+        "lastIndexOf",
+        "join",
+        "reverse",
+        "sort",
+        "concat",
+        "reduce",
+        "reduceRight",
+    ] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected array member '{expected}' in completions, got: {names:?}"
+        );
+    }
+}
+
+// ── Primitive type completion filtering ─────────────────────────────────────
+//
+// Structural rule: member completions for primitive types (string, number,
+// boolean, bigint, symbol) must expose only members declared in the type's
+// own TypeScript interface at ES2015 baseline. Object.prototype members
+// (constructor, hasOwnProperty, isPrototypeOf, propertyIsEnumerable) and
+// post-ES2015 string methods (padStart/padEnd, matchAll, replaceAll, ...)
+// must not appear in the no-lib fallback.
+
+#[test]
 fn test_completions_string_excludes_object_prototype_members() {
-    // Object.prototype members (hasOwnProperty, isPrototypeOf, propertyIsEnumerable)
-    // must not appear on string — they are not in TypeScript's String interface.
-    // Covers issues for all three identifier spellings to prove the fix is
-    // structural, not a single-name patch.
+    // Object.prototype members must not appear on string. Multiple bindings
+    // prove the fix is structural, not a single-name patch.
     for source in [
         "const s: string = \"abc\";\ns.",
         "const t = \"hello\";\nt.",
         "const u: string = \"x\";\nu.",
     ] {
-        let names = primitive_member_names(source);
+        let names = member_names_at_end(source);
         for excluded in [
             "hasOwnProperty",
             "isPrototypeOf",
@@ -3786,10 +3857,7 @@ fn test_completions_string_excludes_object_prototype_members() {
 
 #[test]
 fn test_completions_string_excludes_post_es2015_members() {
-    // Post-ES2015 string methods must not appear in the no-lib fallback because
-    // they require an explicit lib target (ES2017+ for padStart/padEnd, ES2020
-    // for matchAll, ES2021 for replaceAll, non-standard trimLeft/trimRight).
-    let names = primitive_member_names("const s: string = \"x\";\ns.");
+    let names = member_names_at_end("const s: string = \"x\";\ns.");
     for excluded in [
         "padStart",
         "padEnd",
@@ -3808,8 +3876,6 @@ fn test_completions_string_excludes_post_es2015_members() {
             "String completions must not include post-ES2015 member '{excluded}' in no-lib fallback; got: {names:?}"
         );
     }
-    // ES2015 members (includes, startsWith, endsWith, repeat, normalize,
-    // codePointAt) must still appear — they are part of the ES2015 baseline.
     for expected in [
         "includes",
         "startsWith",
@@ -3826,11 +3892,8 @@ fn test_completions_string_excludes_post_es2015_members() {
 
 #[test]
 fn test_completions_number_excludes_object_prototype_members() {
-    // Number's interface (toFixed, toExponential, toPrecision, toString,
-    // toLocaleString, valueOf) must appear, but Object.prototype members must not.
-    // Two different variable names to prove the fix is structural.
     for source in ["const n: number = 42;\nn.", "const x: number = 0;\nx."] {
-        let names = primitive_member_names(source);
+        let names = member_names_at_end(source);
         for excluded in [
             "constructor",
             "hasOwnProperty",
@@ -3859,14 +3922,11 @@ fn test_completions_number_excludes_object_prototype_members() {
 
 #[test]
 fn test_completions_boolean_exposes_only_valueof() {
-    // TypeScript's Boolean interface declares only `valueOf(): boolean`.
-    // toString and toLocaleString are Object.prototype contributions that must
-    // not appear.  Test with two different variable names.
     for source in [
         "const b: boolean = true;\nb.",
         "const flag: boolean = false;\nflag.",
     ] {
-        let names = primitive_member_names(source);
+        let names = member_names_at_end(source);
         for excluded in [
             "constructor",
             "hasOwnProperty",
@@ -3883,6 +3943,21 @@ fn test_completions_boolean_exposes_only_valueof() {
         assert!(
             names.contains(&"valueOf".to_string()),
             "Boolean completions must include 'valueOf'; got: {names:?}"
+        );
+    }
+}
+
+// ── Tuple member completions ─────────────────────────────────────────────────
+
+#[test]
+fn test_completions_array_prototype_methods_on_tuple() {
+    let names = member_names_at_end("const t: [string, number] = [\"a\", 1];\nt.");
+    for expected in [
+        "length", "push", "pop", "map", "filter", "forEach", "slice", "concat",
+    ] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected array member '{expected}' in tuple completions, got: {names:?}"
         );
     }
 }

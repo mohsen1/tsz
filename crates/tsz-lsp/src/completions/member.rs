@@ -327,25 +327,61 @@ impl<'a> Completions<'a> {
             .or_else(|| visitor::object_with_index_shape_id(interner, evaluated))
         {
             let shape = interner.object_shape(shape_id);
-            for prop in &shape.properties {
-                if !include_private && prop.visibility != Visibility::Public {
-                    continue;
-                }
-                let name = interner.resolve_atom(prop.name);
-                // Skip synthetic brand properties used for nominal class typing.
-                // These are internal type system markers (e.g. `__private_brand_42`)
-                // and must never appear in user-facing completions.
-                if name.starts_with("__private_brand_") {
-                    continue;
-                }
-                self.add_property_completion_ex(
-                    props,
-                    interner,
-                    name,
-                    prop.type_id,
-                    prop.is_method,
-                    prop.optional,
+            self.collect_shape_props(props, interner, &shape.properties, include_private);
+            return;
+        }
+
+        // TypeData::Function (function declarations/expressions) and TypeData::Callable
+        // (interface-style callables, class constructors) both expose Function.prototype
+        // members (name, length, apply, call, bind, …).
+        // Check Function first: it covers the common case (named functions, arrows, expressions).
+        let is_function = visitor::function_shape_id(interner, evaluated).is_some();
+        let callable_id = if is_function {
+            None
+        } else {
+            visitor::callable_shape_id(interner, evaluated)
+        };
+        if is_function || callable_id.is_some() {
+            // Callable shapes may also carry explicitly declared properties (e.g. class statics).
+            if let Some(id) = callable_id {
+                let shape = interner.callable_shape(id);
+                self.collect_shape_props(props, interner, &shape.properties, include_private);
+            }
+            // Prefer the lib-defined Function interface; fall back to apparent members.
+            if let Some(boxed_fn) = interner.get_boxed_type(IntrinsicKind::Function) {
+                self.collect_properties_for_type_inner(
+                    boxed_fn, interner, checker, visited, props, false,
                 );
+            } else {
+                self.collect_intrinsic_members(IntrinsicKind::Function, interner, props);
+            }
+            return;
+        }
+
+        // Array and tuple types expose Array.prototype members (push, pop, map, …).
+        // Use the lib-defined Array<T> interface when available, substituting the
+        // element type so that method return types are as precise as possible.
+        let array_elem = visitor::array_element_type(interner, evaluated).or_else(|| {
+            visitor::tuple_list_id(interner, evaluated).map(|list_id| {
+                let elems = interner.tuple_list(list_id);
+                let elem_types: Vec<TypeId> = elems.iter().map(|e| e.type_id).collect();
+                if elem_types.is_empty() {
+                    TypeId::NEVER
+                } else if elem_types.len() == 1 {
+                    elem_types[0]
+                } else {
+                    interner.union(elem_types)
+                }
+            })
+        });
+        if let Some(elem) = array_elem {
+            if let Some(array_base) = interner.get_array_base_type() {
+                let app = interner.application(array_base, vec![elem]);
+                self.collect_properties_for_type_inner(
+                    app, interner, checker, visited, props, false,
+                );
+            } else {
+                self.collect_array_member_fallback(interner, props);
             }
             return;
         }
@@ -1242,6 +1278,34 @@ impl<'a> Completions<'a> {
         }
     }
 
+    fn collect_shape_props(
+        &self,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+        interner: &TypeInterner,
+        properties: &[tsz_solver::PropertyInfo],
+        include_private: bool,
+    ) {
+        for prop in properties {
+            if !include_private && prop.visibility != Visibility::Public {
+                continue;
+            }
+            let name = interner.resolve_atom(prop.name);
+            // Synthetic brand properties (e.g. `__private_brand_42`) are nominal
+            // class typing markers and must not appear in user-facing completions.
+            if name.starts_with("__private_brand_") {
+                continue;
+            }
+            self.add_property_completion_ex(
+                props,
+                interner,
+                name,
+                prop.type_id,
+                prop.is_method,
+                prop.optional,
+            );
+        }
+    }
+
     fn collect_intrinsic_members(
         &self,
         kind: IntrinsicKind,
@@ -1264,6 +1328,56 @@ impl<'a> Completions<'a> {
                 type_id,
                 is_method,
             );
+        }
+    }
+
+    /// No-lib fallback: emits `Array.prototype` member names with approximate return types.
+    /// Only reached when `get_array_base_type()` returns `None` (no lib loaded).
+    fn collect_array_member_fallback(
+        &self,
+        interner: &TypeInterner,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+    ) {
+        self.add_property_completion(props, interner, "length".to_string(), TypeId::NUMBER, false);
+        for name in ["indexOf", "lastIndexOf", "push", "unshift", "findIndex"] {
+            self.add_property_completion(props, interner, name.to_string(), TypeId::NUMBER, true);
+        }
+        for name in ["every", "some", "includes"] {
+            self.add_property_completion(props, interner, name.to_string(), TypeId::BOOLEAN, true);
+        }
+        for name in ["join", "toString", "toLocaleString"] {
+            self.add_property_completion(props, interner, name.to_string(), TypeId::STRING, true);
+        }
+        for name in [
+            "concat",
+            "copyWithin",
+            "entries",
+            "fill",
+            "filter",
+            "find",
+            "flat",
+            "flatMap",
+            "forEach",
+            "keys",
+            "map",
+            "pop",
+            "reduce",
+            "reduceRight",
+            "reverse",
+            "shift",
+            "slice",
+            "sort",
+            "splice",
+            "values",
+            "at",
+            "findLast",
+            "findLastIndex",
+            "toReversed",
+            "toSorted",
+            "toSpliced",
+            "with",
+        ] {
+            self.add_property_completion(props, interner, name.to_string(), TypeId::ANY, true);
         }
     }
 

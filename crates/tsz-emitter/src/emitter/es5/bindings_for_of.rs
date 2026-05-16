@@ -383,7 +383,6 @@ impl<'a> Printer<'a> {
             // Emit the loop body
             if let Some((loop_fn_name, param_vars, body_info)) = &capture_context {
                 self.emit_loop_call(loop_fn_name, param_vars, body_info);
-                self.write_line();
             } else {
                 self.emit_for_of_body(for_in_of.statement);
             }
@@ -449,6 +448,11 @@ impl<'a> Printer<'a> {
                 // If body is a block, emit its statements directly (unwrap the block)
                 if let Some(block) = self.arena.get_block(stmt_node) {
                     for &stmt_idx in &block.statements.nodes {
+                        if let Some(body_stmt) = self.arena.get(stmt_idx) {
+                            let actual_start =
+                                self.skip_trivia_forward(body_stmt.pos, body_stmt.end);
+                            self.emit_comments_before_pos(actual_start);
+                        }
                         self.emit(stmt_idx);
                         self.write_line();
                     }

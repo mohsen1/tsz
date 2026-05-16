@@ -896,6 +896,9 @@ impl<'a> Printer<'a> {
         // not find semicolons inside the erased type annotation.
         let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
         self.emit_trailing_comment_after_semicolon_in_range(node.pos, effective_end);
+        self.emit_static_block_await_arrow_recovery_blocks_after_variable_statement(
+            &var_stmt.declarations,
+        );
         self.emit_recovered_malformed_arrow_block_after_variable_statement(
             node,
             recovered_async_arrow_return.is_some(),
@@ -997,6 +1000,29 @@ impl<'a> Printer<'a> {
         let masked_line = Self::source_text_with_quoted_spans_masked(line);
         let line_for_scan = masked_line.as_str();
 
+        if self.ctx.flags.in_class_static_block
+            && Self::line_has_static_block_await_arrow_recovery(line_for_scan)
+        {
+            let Some(arrow_rel) = line_for_scan.find("=>") else {
+                return;
+            };
+            let after_arrow = start + arrow_rel + 2;
+            let Some(open_rel) = bytes[after_arrow..line_end].iter().position(|&b| b == b'{')
+            else {
+                return;
+            };
+            let open = after_arrow + open_rel;
+            let mut pos = open + 1;
+            while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            if bytes.get(pos) == Some(&b'}') {
+                self.write_line();
+                self.write("{ }");
+            }
+            return;
+        }
+
         if line_for_scan.contains("= @") && line_for_scan.contains("=>") {
             let Some(arrow_rel) = line_for_scan.find("=>") else {
                 return;
@@ -1060,7 +1086,6 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.write_semicolon();
     }
-
     fn emit_recovered_typeof_member_call_after_variable_statement(&mut self, node: &Node) {
         // Only recover when every declaration in the statement lacks an initializer.
         // If any declaration has an initializer, .typeof( is a valid property call
