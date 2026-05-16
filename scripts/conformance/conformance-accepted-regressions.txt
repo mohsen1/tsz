@@ -15,7 +15,6 @@ TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
 TypeScript/tests/cases/compiler/excessivelyLargeTupleSpread.ts
-TypeScript/tests/cases/compiler/genericMappedTypeAsClause.ts
 TypeScript/tests/cases/compiler/inDoesNotOperateOnPrimitiveTypes.ts
 TypeScript/tests/cases/compiler/inferParameterWithMethodCallInitializer.ts
 TypeScript/tests/cases/compiler/inferenceFromParameterlessLambda.ts
@@ -62,6 +61,4 @@ TypeScript/tests/cases/conformance/types/intersection/recursiveIntersectionTypes
 TypeScript/tests/cases/conformance/types/members/indexSignatures1.ts
 TypeScript/tests/cases/conformance/types/typeParameters/typeArgumentLists/instantiationExpressions.ts
 TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallToOverloadedMethodWithOverloadedArguments.ts
-TypeScript/tests/cases/conformance/types/uniqueSymbol/uniqueSymbols.ts
-TypeScript/tests/cases/conformance/types/uniqueSymbol/uniqueSymbolsDeclarations.ts
 TypeScript/tests/cases/conformance/types/unknown/unknownType2.ts
