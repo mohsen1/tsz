@@ -2265,6 +2265,62 @@ fn property_access_on_paren_cast_paren_object_literal_emits_single_paren() {
     );
 }
 
+#[test]
+fn erased_object_literal_access_does_not_wrap_return_expression() {
+    let source = r#"
+function prop() {
+    return ({ a: 1 } as { a: number }).a;
+}
+function elem(key: string) {
+    return ({ a: 1 } as Record<string, number>)[key];
+}
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("return { a: 1 }.a;"),
+        "Return property access should not keep type-erasure parens.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return { a: 1 }[key];"),
+        "Return element access should not keep type-erasure parens.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return ({ a: 1 }.a);") && !output.contains("return ({ a: 1 }[key]);"),
+        "Return expressions should not be wrapped like statement expressions.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn erased_object_literal_access_wraps_statement_expression() {
+    let source = r#"
+({ a: 1 } as { a: number }).a;
+({ a: 1 } as Record<string, number>)["a"];
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("({ a: 1 }.a);"),
+        "Statement property access must stay parenthesized to avoid parsing as a block.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("({ a: 1 }[\"a\"]);"),
+        "Statement element access must stay parenthesized to avoid parsing as a block.\nOutput:\n{output}"
+    );
+}
+
 /// Regression: `export default (X as T)` where `X` is a class or function
 /// expression. The parens only existed to delimit the type cast; after
 /// erasure they look removable, but stripping them silently changes the
