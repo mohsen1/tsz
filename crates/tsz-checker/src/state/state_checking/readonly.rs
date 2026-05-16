@@ -659,18 +659,20 @@ impl<'a> CheckerState<'a> {
         // Receiver is a non-type-parameter that contains free type parameters
         // (e.g. `Dict<T>`, `Record<keyof Shape, V>`, an interface with a
         // declared index signature, etc.). tsc emits TS2862 here only when
-        // the receiver's *key space* is genuinely deferred — i.e. after
-        // evaluation in the current environment the receiver is still a
-        // generic mapped type whose key constraint contains a free type
-        // parameter (e.g. `{ [K in keyof T]: ... }`, `Record<keyof T, V>`).
+        // the receiver's *key space* is genuinely deferred — i.e. the receiver
+        // is, or instantiates to, a generic mapped type whose key constraint
+        // contains a free type parameter (e.g. `{ [K in keyof T]: ... }`,
+        // `Record<keyof T, V>`).
         //
         // Concretely declared index signatures (class instance types,
         // interfaces, `Record<string, V>`, etc.) reduce to `ObjectWithIndex`
         // with a known string/number key — writes through them go through
         // ordinary assignability and TS2322 reports any real mismatch.
         if !object_is_type_parameter {
-            let evaluated_object = self.evaluate_type_with_env(object_type);
-            return common_query::is_generic_mapped_type(self.ctx.types, evaluated_object);
+            if common_query::is_generic_mapped_application(self.ctx.types, &self.ctx, object_type) {
+                return true;
+            }
+            return common_query::is_generic_mapped_type(self.ctx.types, object_type);
         }
 
         // When the object IS a type parameter T, the index must reference a foreign

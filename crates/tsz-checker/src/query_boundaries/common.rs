@@ -345,6 +345,33 @@ pub(crate) fn is_generic_application_with_type_params(
     false
 }
 
+/// Check whether an application's aliased body is a generic mapped type after
+/// substituting the application's type arguments.
+pub(crate) fn is_generic_mapped_application<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> bool {
+    let Some((base, args)) = tsz_solver::type_queries::get_application_info(db, type_id) else {
+        return false;
+    };
+    let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(db, base) else {
+        return false;
+    };
+    let Some(type_params) = resolver.get_lazy_type_params(def_id) else {
+        return false;
+    };
+    if type_params.is_empty() {
+        return false;
+    }
+    let Some(body) = resolver.resolve_lazy(def_id, db.as_type_database()) else {
+        return false;
+    };
+    let substitution = TypeSubstitution::from_args(db.as_type_database(), &type_params, &args);
+    let instantiated = instantiate_type(db, body, &substitution);
+    is_generic_mapped_type(db.as_type_database(), instantiated)
+}
+
 /// Check if a type contains type parameters that require instantiation,
 /// but correctly handles mapped types by only checking their constraint and
 /// name_type (not the template, which always contains the iteration variable).
