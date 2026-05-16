@@ -58,50 +58,19 @@ TSC_NPM_SPEC="${TSC_NPM_SPEC:-}"
 
 # External benchmark fixtures (not checked into git)
 EXTERNAL_BENCH_DIR="${EXTERNAL_BENCH_DIR:-$BENCH_TARGET_DIR/external}"
-UTILITY_TYPES_REPO="${UTILITY_TYPES_REPO:-https://github.com/piotrwitek/utility-types.git}"
-# pinned to v3.11.0 commit for reproducible benchmarks
-UTILITY_TYPES_REF="${UTILITY_TYPES_REF:-2ee1f6ecb241651ab22390fee7ee5349942efda2}"
+# shellcheck source=scripts/bench/project-fixtures.sh
+source "$SCRIPT_DIR/project-fixtures.sh"
+# Project fixture pins live in project-fixtures.sh for benchmark/CI parity.
 UTILITY_TYPES_DIR="$EXTERNAL_BENCH_DIR/utility-types"
-TS_TOOLBELT_REPO="${TS_TOOLBELT_REPO:-https://github.com/millsp/ts-toolbelt.git}"
-# pinned commit for reproducible benchmarks
-TS_TOOLBELT_REF="${TS_TOOLBELT_REF:-b8a49285e3ed3a7d8bb8e0b433389eac46a5f140}"
 TS_TOOLBELT_DIR="$EXTERNAL_BENCH_DIR/ts-toolbelt"
-TS_ESSENTIALS_REPO="${TS_ESSENTIALS_REPO:-https://github.com/ts-essentials/ts-essentials.git}"
-# pinned commit for reproducible benchmarks
-TS_ESSENTIALS_REF="${TS_ESSENTIALS_REF:-5abe8700b42068048bd3c368e0531b6defe56558}"
 TS_ESSENTIALS_DIR="$EXTERNAL_BENCH_DIR/ts-essentials"
-NEXTJS_REPO="${NEXTJS_REPO:-https://github.com/vercel/next.js.git}"
-# pinned canary commit for reproducible benchmarks
-NEXTJS_REF="${NEXTJS_REF:-09851e208cc62c8b6fe7a953b42c88e843129178}"
 NEXTJS_DIR="$EXTERNAL_BENCH_DIR/next.js"
 NEXT_APP_BENCH_DIR="${NEXT_APP_BENCH_DIR:-$EXTERNAL_BENCH_DIR/next-app-live}"
 VITE_APP_BENCH_DIR="${VITE_APP_BENCH_DIR:-$EXTERNAL_BENCH_DIR/vite-vanilla-ts-live}"
-# Real-world reactive library — Observable / Subject deep generics, ~150 source files.
-# REF empty by default: the fixture clones the default branch tip. Set
-# RXJS_REF=<sha> to pin a specific commit for reproducible benches.
-RXJS_REPO="${RXJS_REPO:-https://github.com/ReactiveX/rxjs.git}"
-# Pinned to 7.8.2 — last release before the v8 monorepo split. The v8 layout
-# uses workspace-relative `@rxjs/observable` imports that require path mapping
-# our flat tsconfig doesn't model. 7.8.2 has the classic `src/internal` layout.
-RXJS_REF="${RXJS_REF:-e5351d02e225e275ac0e497c7b66eaa5f0c88791}"
 RXJS_DIR="$EXTERNAL_BENCH_DIR/rxjs"
-# Pure TypeScript utility types from sindresorhus — bigger surface than ts-toolbelt/ts-essentials.
-TYPE_FEST_REPO="${TYPE_FEST_REPO:-https://github.com/sindresorhus/type-fest.git}"
-# Pinned to v5.6.0 for benchmark reproducibility.
-TYPE_FEST_REF="${TYPE_FEST_REF:-4005f60b65a7bd224154d6da46f45a63b42ce70f}"
 TYPE_FEST_DIR="$EXTERNAL_BENCH_DIR/type-fest"
-# Schema validation library with deep z.infer<typeof> inference.
-ZOD_REPO="${ZOD_REPO:-https://github.com/colinhacks/zod.git}"
-# Pinned to v3.9.8 for benchmark reproducibility (zod v4 has its own monorepo).
-ZOD_REF="${ZOD_REF:-93b0b6892cc0cfee8d0bec4e2e1242c7df771f95}"
 ZOD_DIR="$EXTERNAL_BENCH_DIR/zod"
-# SQL query builder famous for extreme type-level inference (Kysely).
-KYSELY_REPO="${KYSELY_REPO:-https://github.com/kysely-org/kysely.git}"
-# Pinned to v0.28.16 for benchmark reproducibility.
-KYSELY_REF="${KYSELY_REF:-d4911be21cd568d3694dc7f879f72390635226d7}"
 KYSELY_DIR="$EXTERNAL_BENCH_DIR/kysely"
-LARGE_TS_REPO="${LARGE_TS_REPO:-https://github.com/mohsen1/large-ts-repo.git}"
-LARGE_TS_REF="${LARGE_TS_REF:-e1b22bda18664a507ed0da19c155e0365d585b18}"
 LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
 # The local fallback was previously implicit, which silently contaminated
 # PR-quality numbers on any developer machine that happened to have a
@@ -129,6 +98,9 @@ FORCE_REBUILD=false
 PREPARE_ONLY=false
 NEXTJS_BENCHMARK_ENABLED="${NEXTJS_BENCHMARK_ENABLED:-0}"
 TSZ_BENCH_INCLUDE_COMPILE_CANARIES="${TSZ_BENCH_INCLUDE_COMPILE_CANARIES:-0}"
+BENCH_NPM_INSTALL_TIMEOUT="${BENCH_NPM_INSTALL_TIMEOUT:-900}"
+BENCH_PGO_TSZ_TIMEOUT="${BENCH_PGO_TSZ_TIMEOUT:-900}"
+BENCH_CARGO_BUILD_TIMEOUT="${BENCH_CARGO_BUILD_TIMEOUT:-1200}"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --quick) QUICK_MODE=true; shift ;;
@@ -168,6 +140,11 @@ while [[ $# -gt 0 ]]; do
             echo "  BENCH_PGO=0            Skip PGO training (default: 1 when llvm-profdata is available)"
             echo "  BENCH_PGO_CACHE=0      Don't reuse the cached profdata across runs (default: 1)"
             echo "  BENCH_PGO_FETCH_UTILITY_TYPES=0  Don't fetch utility-types for PGO training (default: 1)"
+            echo "  BENCH_PGO_TSZ_TIMEOUT=<seconds>  Timeout for each PGO training compiler invocation (default: 900)"
+            echo "  BENCH_CARGO_BUILD_TIMEOUT=<seconds>  Timeout for each cargo build in check_prerequisites (default: 1200)"
+            echo "  BENCH_PGO_FETCH_CORE_PROJECTS=1  Fetch/train ts-toolbelt/ts-essentials during PGO (default: 0; slower)"
+            echo "  BENCH_PGO_SYNTHETIC=0  Don't train PGO on generated benchmark stress cases (default: 1)"
+            echo "  BENCH_PGO_PANIC_UNWIND=1  Build the trainer with panic=unwind for crashy inputs (default: 0)"
             echo "  BENCH_PGO_EXTRA_INPUTS=<path[:path]>  Extra .ts or tsconfig files to feed the PGO trainer"
             echo "  BENCH_PGO_VERBOSE=1    Print per-input wall time during PGO Step 2"
             exit 0
@@ -206,6 +183,54 @@ print_header() {
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${BOLD}  $1${NC}"
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+hash_stdin_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum | awk '{print $1}'
+    else
+        shasum -a 256 | awk '{print $1}'
+    fi
+}
+
+hash_file_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
+pgo_profile_fingerprint() {
+    {
+        printf 'rustc=%s\n' "$(rustc -vV 2>/dev/null | tr '\n' ';')"
+        printf 'BENCH_PGO_SYNTHETIC=%s\n' "${BENCH_PGO_SYNTHETIC:-1}"
+        printf 'BENCH_PGO_FETCH_UTILITY_TYPES=%s\n' "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}"
+        printf 'BENCH_PGO_FETCH_CORE_PROJECTS=%s\n' "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}"
+        printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
+        printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
+        printf 'UTILITY_TYPES_REF=%s\n' "$UTILITY_TYPES_REF"
+        printf 'TS_TOOLBELT_REF=%s\n' "$TS_TOOLBELT_REF"
+        printf 'TS_ESSENTIALS_REF=%s\n' "$TS_ESSENTIALS_REF"
+        printf 'RXJS_REF=%s\n' "$RXJS_REF"
+        printf 'TYPE_FEST_REF=%s\n' "$TYPE_FEST_REF"
+        if git -C "$PROJECT_ROOT/TypeScript" rev-parse HEAD >/dev/null 2>&1; then
+            printf 'TypeScript=%s\n' "$(git -C "$PROJECT_ROOT/TypeScript" rev-parse HEAD)"
+        fi
+        git -C "$PROJECT_ROOT" ls-files \
+            Cargo.lock \
+            Cargo.toml \
+            .cargo/config.toml \
+            'crates/**/Cargo.toml' \
+            'crates/**/*.rs' \
+            scripts/bench/project-fixtures.sh \
+            scripts/bench/bench-vs-tsgo.sh |
+            sort |
+            while IFS= read -r file; do
+                [ -f "$PROJECT_ROOT/$file" ] || continue
+                printf '%s  %s\n' "$(hash_file_sha256 "$PROJECT_ROOT/$file")" "$file"
+            done
+    } | hash_stdin_sha256
 }
 
 print_subheader() {
@@ -318,6 +343,24 @@ run_with_timeout() {
     # SIGKILL exit code is 137 (128+9)
     if [ "$exit_code" -eq 137 ]; then
         return 124
+    fi
+    return "$exit_code"
+}
+
+run_cargo_build() {
+    local description="$1"
+    shift
+
+    (cd "$PROJECT_ROOT" && run_with_timeout "$BENCH_CARGO_BUILD_TIMEOUT" env "$@")
+    local exit_code=$?
+    if [ "$exit_code" -eq 0 ]; then
+        return 0
+    fi
+
+    if [ "$exit_code" -eq 124 ]; then
+        echo -e "${RED}✗ $description timed out after ${BENCH_CARGO_BUILD_TIMEOUT}s${NC}"
+    else
+        echo -e "${RED}✗ $description failed (exit $exit_code)${NC}"
     fi
     return "$exit_code"
 }
@@ -527,12 +570,16 @@ ensure_tsgo() {
 
     if [ ! -x "$TSGO_LOCAL_BIN" ] || [ "$installed_spec" != "$TSGO_NPM_SPEC" ]; then
         echo -e "${CYAN}Installing tsgo locally (${TSGO_NPM_SPEC})...${NC}"
-        npm install \
+        if ! run_with_timeout "$BENCH_NPM_INSTALL_TIMEOUT" npm install \
             --prefix "$TSGO_TOOL_DIR" \
             --no-audit \
             --no-fund \
             --loglevel=error \
-            "$TSGO_NPM_SPEC" >/dev/null
+            "$TSGO_NPM_SPEC" >/dev/null; then
+            echo -e "${RED}✗ tsgo install timed out after ${BENCH_NPM_INSTALL_TIMEOUT}s${NC}"
+            echo -e "${RED}  command: npm install --prefix \"$TSGO_TOOL_DIR\" \"$TSGO_NPM_SPEC\"${NC}"
+            exit 1
+        fi
         printf '%s\n' "$TSGO_NPM_SPEC" > "$spec_file"
     fi
 
@@ -593,12 +640,16 @@ ensure_tsc() {
 
     if [ ! -x "$TSC_LOCAL_BIN" ] || [ "$installed_spec" != "$resolved_spec" ]; then
         echo -e "${CYAN}Installing tsc locally (${resolved_spec})...${NC}"
-        npm install \
+        if ! run_with_timeout "$BENCH_NPM_INSTALL_TIMEOUT" npm install \
             --prefix "$TSC_TOOL_DIR" \
             --no-audit \
             --no-fund \
             --loglevel=error \
-            "typescript@${resolved_spec}" >/dev/null
+            "typescript@${resolved_spec}" >/dev/null; then
+            echo -e "${RED}✗ tsc install timed out after ${BENCH_NPM_INSTALL_TIMEOUT}s${NC}"
+            echo -e "${RED}  command: npm install --prefix \"$TSC_TOOL_DIR\" \"typescript@${resolved_spec}\"${NC}"
+            exit 1
+        fi
         printf '%s\n' "$resolved_spec" > "$spec_file"
     fi
 
@@ -610,13 +661,14 @@ ensure_tsc() {
     TSC="$TSC_LOCAL_BIN"
 }
 
-# Run the PGO instrumented binary over a workload mix that exercises
-# the same code paths the website plots: lib loading, mapped/conditional
-# types, deep generics, project-mode resolution. Always trains on a small
-# synthetic input first (warms CLI startup paths even when no fixture is
-# available), then layers on whichever external bench fixtures are already
-# prepared. utility-types is opportunistically fetched by the caller; the
-# rest are picked up only when prior bench runs left them in place.
+# Run the PGO instrumented binary over a workload mix that exercises the same
+# code paths the website plots: lib loading, mapped/conditional types, deep
+# generics, project-mode resolution, best-common-type, inference, and CFA
+# stress. Always trains on generated synthetic inputs first (available even in
+# a clean checkout), then layers on whichever external bench fixtures are
+# present. utility-types/ts-toolbelt/ts-essentials can be opportunistically
+# fetched by the caller; the rest are picked up only when prior bench runs left
+# them in place.
 #
 # Set BENCH_PGO_EXTRA_INPUTS to a colon-separated list of additional
 # tsconfig or .ts paths to include in training. Set BENCH_PGO_VERBOSE=1
@@ -626,17 +678,32 @@ collect_pgo_workload() {
     local env_prefix=()
     [[ -n "${TSZ_LIB_DIR:-}" ]] && env_prefix=("TSZ_LIB_DIR=$TSZ_LIB_DIR")
 
-    _pgo_run() {
+_pgo_run() {
         local label="$1"
         shift
+        local run_status=0
         if [[ "${BENCH_PGO_VERBOSE:-0}" == "1" ]]; then
             local t0 t1
             t0=$(date +%s)
-            env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1 || true
+            if ! run_with_timeout "$BENCH_PGO_TSZ_TIMEOUT" env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1; then
+                run_status=$?
+                if [ "$run_status" -eq 124 ]; then
+                    echo -e "${YELLOW}PGO training input \"$label\" timed out after ${BENCH_PGO_TSZ_TIMEOUT}s${NC}"
+                else
+                    echo -e "${YELLOW}PGO training input \"$label\" failed (exit $run_status)${NC}"
+                fi
+            fi
             t1=$(date +%s)
             echo -e "  ${CYAN}pgo${NC} $label ($((t1 - t0))s)"
         else
-            env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1 || true
+            if ! run_with_timeout "$BENCH_PGO_TSZ_TIMEOUT" env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1; then
+                run_status=$?
+                if [ "$run_status" -eq 124 ]; then
+                    echo -e "${YELLOW}PGO training input \"$label\" timed out after ${BENCH_PGO_TSZ_TIMEOUT}s${NC}"
+                else
+                    echo -e "${YELLOW}PGO training input \"$label\" failed (exit $run_status)${NC}"
+                fi
+            fi
         fi
     }
 
@@ -645,25 +712,86 @@ collect_pgo_workload() {
     echo "const x: number = 1; type T<U> = U extends string ? U[] : U; const y: T<string> = ['a'];" \
         | _pgo_run "stdin:scalar" "$pgo_tsz" --noEmit /dev/stdin
 
-    # 2. utility-types: small (~150 src files) but very heavy on mapped/
+    # 2. Generated stress cases mirror the benchmark shards directly, so the
+    #    profile is not dominated by one project fixture or one tiny input.
+    if [[ "${BENCH_PGO_SYNTHETIC:-1}" == "1" ]]; then
+        local pgo_tmp
+        pgo_tmp="$(mktemp -d "$BENCH_TARGET_DIR/pgo-train.XXXXXX")"
+        local -a generated_inputs=()
+
+        generate_complex_file 50 "$pgo_tmp/complex_generics.ts"
+        generated_inputs+=("$pgo_tmp/complex_generics.ts")
+        generate_deeppartial_optional_chain_file 50 "$pgo_tmp/deeppartial_optional_chain.ts"
+        generated_inputs+=("$pgo_tmp/deeppartial_optional_chain.ts")
+        generate_shallow_optional_chain_file 50 "$pgo_tmp/shallow_optional_chain.ts"
+        generated_inputs+=("$pgo_tmp/shallow_optional_chain.ts")
+        generate_union_file 100 "$pgo_tmp/union_members.ts"
+        generated_inputs+=("$pgo_tmp/union_members.ts")
+        generate_recursive_generic_file 25 "$pgo_tmp/recursive_generic.ts"
+        generated_inputs+=("$pgo_tmp/recursive_generic.ts")
+        generate_conditional_distribution_file 50 "$pgo_tmp/conditional_dist.ts"
+        generated_inputs+=("$pgo_tmp/conditional_dist.ts")
+        generate_mapped_type_file 100 "$pgo_tmp/mapped_type.ts"
+        generated_inputs+=("$pgo_tmp/mapped_type.ts")
+        generate_template_literal_file 50 "$pgo_tmp/template_literal.ts"
+        generated_inputs+=("$pgo_tmp/template_literal.ts")
+        generate_deep_subtype_file 30 "$pgo_tmp/deep_subtype.ts"
+        generated_inputs+=("$pgo_tmp/deep_subtype.ts")
+        generate_intersection_file 50 "$pgo_tmp/intersection.ts"
+        generated_inputs+=("$pgo_tmp/intersection.ts")
+        generate_infer_stress_file 15 "$pgo_tmp/infer_stress.ts"
+        generated_inputs+=("$pgo_tmp/infer_stress.ts")
+        generate_cfa_stress_file 50 "$pgo_tmp/cfa_stress.ts"
+        generated_inputs+=("$pgo_tmp/cfa_stress.ts")
+        generate_bct_stress_file 50 "$pgo_tmp/bct_stress.ts"
+        generated_inputs+=("$pgo_tmp/bct_stress.ts")
+        generate_constraint_conflict_file 30 "$pgo_tmp/constraint_conflict.ts"
+        generated_inputs+=("$pgo_tmp/constraint_conflict.ts")
+        generate_mapped_complex_template_file 50 "$pgo_tmp/mapped_complex_template.ts"
+        generated_inputs+=("$pgo_tmp/mapped_complex_template.ts")
+
+        local generated
+        for generated in "${generated_inputs[@]}"; do
+            _pgo_run "synthetic:$(basename "$generated")" \
+                "$pgo_tsz" --noEmit "$generated"
+        done
+        rm -rf "$pgo_tmp"
+    fi
+
+    # 3. utility-types: small (~150 src files) but very heavy on mapped/
     #    conditional types — the shape that dominates the website plot.
     if [ -d "$UTILITY_TYPES_DIR" ] && [ -f "$UTILITY_TYPES_DIR/tsconfig.flat.json" ]; then
         _pgo_run "utility-types" \
             "$pgo_tsz" --noEmit -p "$UTILITY_TYPES_DIR/tsconfig.flat.json"
     fi
 
-    # 3. ts-toolbelt + ts-essentials — opportunistically train if they were
-    #    fetched by a previous bench run. Both are deep-generic-heavy.
-    if [ -d "$TS_TOOLBELT_DIR" ] && [ -f "$TS_TOOLBELT_DIR/tsconfig.json" ]; then
-        _pgo_run "ts-toolbelt" \
-            "$pgo_tsz" --noEmit -p "$TS_TOOLBELT_DIR/tsconfig.json"
+    # 4. ts-toolbelt + ts-essentials are useful deep-generic training inputs,
+    #    but too slow for the default cold bench-prepare path. Keep them opt-in
+    #    for deliberate local/CI experiments.
+    if [[ "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}" == "1" ]]; then
+        if [ -d "$TS_TOOLBELT_DIR" ] && [ -f "$TS_TOOLBELT_DIR/tsconfig.flat.json" ]; then
+            _pgo_run "ts-toolbelt" \
+                "$pgo_tsz" --noEmit -p "$TS_TOOLBELT_DIR/tsconfig.flat.json"
+        fi
+        if [ -d "$TS_ESSENTIALS_DIR" ] && [ -f "$TS_ESSENTIALS_DIR/tsconfig.flat.json" ]; then
+            _pgo_run "ts-essentials" \
+                "$pgo_tsz" --noEmit -p "$TS_ESSENTIALS_DIR/tsconfig.flat.json"
+        fi
     fi
-    if [ -d "$TS_ESSENTIALS_DIR" ] && [ -f "$TS_ESSENTIALS_DIR/tsconfig.json" ]; then
-        _pgo_run "ts-essentials" \
-            "$pgo_tsz" --noEmit -p "$TS_ESSENTIALS_DIR/tsconfig.json"
+    if [ -d "$RXJS_DIR" ] && [ -f "$RXJS_DIR/tsconfig.flat.json" ]; then
+        _pgo_run "rxjs" "$pgo_tsz" --noEmit -p "$RXJS_DIR/tsconfig.flat.json"
+    fi
+    if [ -d "$TYPE_FEST_DIR" ] && [ -f "$TYPE_FEST_DIR/tsconfig.flat.json" ]; then
+        _pgo_run "type-fest" "$pgo_tsz" --noEmit -p "$TYPE_FEST_DIR/tsconfig.flat.json"
+    fi
+    if [ -d "$VITE_APP_BENCH_DIR" ] && [ -f "$VITE_APP_BENCH_DIR/tsconfig.json" ]; then
+        _pgo_run "vite-vanilla-ts-app" "$pgo_tsz" --noEmit -p "$VITE_APP_BENCH_DIR/tsconfig.json"
+    fi
+    if [ -d "$NEXT_APP_BENCH_DIR" ] && [ -f "$NEXT_APP_BENCH_DIR/tsconfig.json" ]; then
+        _pgo_run "nextjs-fresh-app" "$pgo_tsz" --noEmit -p "$NEXT_APP_BENCH_DIR/tsconfig.json"
     fi
 
-    # 4. TypeScript compiler test fixture — kept for back-compat with the
+    # 5. TypeScript compiler test fixture — kept for back-compat with the
     #    pre-existing training input. Only triggers when the upstream
     #    TypeScript submodule is checked out locally (rare; tracked in
     #    `.claude/CLAUDE.md` §19.5).
@@ -675,7 +803,7 @@ collect_pgo_workload() {
         done
     fi
 
-    # 5. Caller-provided extras (colon-separated). Useful when adding a new
+    # 6. Caller-provided extras (colon-separated). Useful when adding a new
     #    benchmark fixture: warm PGO against it before measuring.
     if [ -n "${BENCH_PGO_EXTRA_INPUTS:-}" ]; then
         local IFS=":"
@@ -765,11 +893,11 @@ check_prerequisites() {
         local pgo_dir="$BENCH_TARGET_DIR/pgo-data"
         local pgo_merged="$pgo_dir/merged.profdata"
         # Cross-run profdata cache so iterative bench dev doesn't redo the
-        # ~5min instrumented-build + training cycle when source hasn't
-        # changed since the last bench run. Invalidated when any *.rs file
-        # in the workspace is newer than the cached profdata.
+        # instrumented-build + training cycle when the source/toolchain/training
+        # workload fingerprint has not changed since the last bench run.
         local pgo_cache_dir="$BENCH_TARGET_DIR/pgo-cache"
         local pgo_cache_profdata="$pgo_cache_dir/merged.profdata"
+        local pgo_cache_marker="$pgo_cache_dir/profile.fingerprint"
         local pgo_target_dir
         local optimized_target_dir
         mkdir -p "$BENCH_TARGET_DIR"
@@ -784,18 +912,20 @@ check_prerequisites() {
 
         if [ "$use_pgo" = true ] && [ -n "$llvm_profdata" ] && [ -x "$llvm_profdata" ]; then
             local skip_pgo_collect=false
-            if [[ "${BENCH_PGO_CACHE:-1}" == "1" && -f "$pgo_cache_profdata" ]]; then
-                local newer_src
-                newer_src="$(find "$PROJECT_ROOT" \
-                    \( -path "$BENCH_TARGET_DIR" -o -path "$PROJECT_ROOT/.git" \) -prune -o \
-                    -type f -name "*.rs" -newer "$pgo_cache_profdata" -print -quit 2>/dev/null)"
-                if [ -z "$newer_src" ]; then
+            local profdata_ready=false
+            local pgo_fingerprint
+            pgo_fingerprint="$(pgo_profile_fingerprint)"
+            if [[ "${BENCH_PGO_CACHE:-1}" == "1" && -f "$pgo_cache_profdata" && -f "$pgo_cache_marker" ]]; then
+                local cached_fingerprint
+                cached_fingerprint="$(tr -d '[:space:]' < "$pgo_cache_marker" 2>/dev/null || true)"
+                if [[ "$cached_fingerprint" == "$pgo_fingerprint" ]]; then
                     echo -e "${CYAN}PGO cache hit: reusing $pgo_cache_profdata${NC}"
                     mkdir -p "$pgo_dir"
                     cp "$pgo_cache_profdata" "$pgo_merged"
                     skip_pgo_collect=true
+                    profdata_ready=true
                 else
-                    echo -e "${YELLOW}PGO cache stale (source changed: $newer_src); regenerating profile data${NC}"
+                    echo -e "${YELLOW}PGO cache stale (training fingerprint changed); regenerating profile data${NC}"
                 fi
             fi
 
@@ -803,51 +933,92 @@ check_prerequisites() {
                 echo -e "${CYAN}PGO Step 1/3: Building instrumented binary...${NC}"
                 rm -rf "$pgo_dir"
                 mkdir -p "$pgo_dir"
-                (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$pgo_target_dir" \
+                # Keep trainer codegen aligned with the final dist build by
+                # default; otherwise LLVM discards a lot of profile counts as
+                # CFG hash mismatches during profile-use. BENCH_PGO_PANIC_UNWIND=1
+                # is still useful when deliberately training on crashy inputs,
+                # because panic=abort can skip LLVM's profiling atexit flush.
+                local pgo_generate_rustflags="-Cprofile-generate=$pgo_dir -Ctarget-cpu=native"
+                if [[ "${BENCH_PGO_PANIC_UNWIND:-0}" == "1" ]]; then
+                    pgo_generate_rustflags="$pgo_generate_rustflags -Cpanic=unwind"
+                fi
+                run_cargo_build \
+                    "PGO Step 1/3: instrumented binary build" \
+                    CARGO_TARGET_DIR="$pgo_target_dir" \
                     CARGO_INCREMENTAL=0 \
-                    RUSTFLAGS="-Cprofile-generate=$pgo_dir" \
-                    cargo build --profile dist -p tsz-cli --bin tsz)
+                    RUSTFLAGS="$pgo_generate_rustflags" \
+                    cargo build --profile dist -p tsz-cli --bin tsz || true
 
-                # Ensure the smallest external bench fixture is present so PGO
-                # trains on workload shapes the website actually measures (mapped/
-                # conditional/utility types), not a single-token const expression.
-                # Larger fixtures (ts-toolbelt, ts-essentials, next.js) are
-                # opportunistically used when they were already prepared by an
-                # earlier bench run, but never fetched here — that would more
-                # than double cold-start wall time on first run.
+                # Ensure representative external bench fixtures are present so
+                # PGO trains on workload shapes the website actually measures,
+                # not a single-token const expression. The clones are best-effort:
+                # transient network failures should not abort bench-prepare; PGO
+                # still trains on generated synthetic inputs.
                 if [[ "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}" == "1" ]]; then
-                    ensure_utility_types_fixture
+                    if ! ensure_utility_types_fixture; then
+                        echo -e "${YELLOW}Warning: utility-types fetch failed; continuing without it for PGO training${NC}"
+                    fi
+                fi
+                if [[ "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}" == "1" ]]; then
+                    if ! ensure_ts_toolbelt_fixture; then
+                        echo -e "${YELLOW}Warning: ts-toolbelt fetch failed; continuing without it for PGO training${NC}"
+                    fi
+                    if ! ensure_ts_essentials_fixture; then
+                        echo -e "${YELLOW}Warning: ts-essentials fetch failed; continuing without it for PGO training${NC}"
+                    fi
                 fi
 
                 echo -e "${CYAN}PGO Step 2/3: Collecting profile data...${NC}"
                 local pgo_tsz="$pgo_target_dir/dist/tsz"
                 collect_pgo_workload "$pgo_tsz"
 
-                "$llvm_profdata" merge -o "$pgo_merged" "$pgo_dir"/*.profraw
-
-                # Persist the merged profdata for the next run's cache lookup.
-                if [[ "${BENCH_PGO_CACHE:-1}" == "1" ]]; then
-                    mkdir -p "$pgo_cache_dir"
-                    cp "$pgo_merged" "$pgo_cache_profdata"
+                # An empty glob (bash without nullglob) passes a literal "*.profraw"
+                # path to llvm-profdata and fails; array-glob + -e avoids the fork
+                # and the TOCTOU window between a count check and the merge call.
+                local profraw_files=("$pgo_dir"/*.profraw)
+                if [[ -e "${profraw_files[0]}" ]]; then
+                    "$llvm_profdata" merge -o "$pgo_merged" "${profraw_files[@]}"
+                    profdata_ready=true
+                    if [[ "${BENCH_PGO_CACHE:-1}" == "1" ]]; then
+                        mkdir -p "$pgo_cache_dir"
+                        cp "$pgo_merged" "$pgo_cache_profdata"
+                        printf '%s\n' "$pgo_fingerprint" > "$pgo_cache_marker"
+                    fi
+                else
+                    echo -e "${YELLOW}PGO training produced no profraw files; skipping PGO optimization${NC}"
                 fi
             fi
 
-            echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
-            if ! (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
-                CARGO_INCREMENTAL=0 \
-                RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
-                cargo build --profile dist -p tsz-cli --bin tsz); then
-                # LLVM PGO can fail when the profile-use link step encounters
-                # incompatible bitcode/ProfileSummary metadata in this toolchain.
-                # Fall back to a clean non-PGO dist build so benchmark runs still
-                # complete successfully.
-                echo -e "${YELLOW}PGO dist build failed; falling back to a clean standard dist build${NC}"
+            if [[ "$profdata_ready" == true ]]; then
+                echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
+                if ! run_cargo_build \
+                    "PGO Step 3/3: optimized binary build" \
+                    CARGO_TARGET_DIR="$optimized_target_dir" \
+                    CARGO_INCREMENTAL=0 \
+                    RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
+                    cargo build --profile dist -p tsz-cli --bin tsz; then
+                    # LLVM PGO can fail when the profile-use link step encounters
+                    # incompatible bitcode/ProfileSummary metadata in this toolchain.
+                    echo -e "${YELLOW}PGO dist build failed; falling back to a clean standard dist build${NC}"
+                    rm -rf "$optimized_target_dir"
+                    optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
+                    run_cargo_build \
+                        "PGO Step 3 fallback: standard dist build" \
+                        CARGO_TARGET_DIR="$optimized_target_dir" \
+                        CARGO_INCREMENTAL=0 \
+                        RUSTFLAGS="-Ctarget-cpu=native" \
+                        cargo build --profile dist -p tsz-cli --bin tsz
+                fi
+            else
+                echo -e "${YELLOW}PGO Step 3/3: no profile data available; using standard dist build${NC}"
                 rm -rf "$optimized_target_dir"
                 optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
-                (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
+                run_cargo_build \
+                    "PGO Step 3: standard dist build" \
+                    CARGO_TARGET_DIR="$optimized_target_dir" \
                     CARGO_INCREMENTAL=0 \
                     RUSTFLAGS="-Ctarget-cpu=native" \
-                    cargo build --profile dist -p tsz-cli --bin tsz)
+                    cargo build --profile dist -p tsz-cli --bin tsz
             fi
             mkdir -p "$TSZ_OUTPUT_DIR"
             install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"
@@ -859,10 +1030,12 @@ check_prerequisites() {
             else
                 echo -e "${YELLOW}PGO unavailable (llvm-profdata not found), using standard build${NC}"
             fi
-            (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
+            run_cargo_build \
+                "Standard dist build" \
+                CARGO_TARGET_DIR="$optimized_target_dir" \
                 CARGO_INCREMENTAL=0 \
                 RUSTFLAGS="-Ctarget-cpu=native" \
-                cargo build --profile dist -p tsz-cli --bin tsz)
+                cargo build --profile dist -p tsz-cli --bin tsz
             mkdir -p "$TSZ_OUTPUT_DIR"
             install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"
             rm -rf "$optimized_target_dir"
@@ -2118,26 +2291,7 @@ ensure_vite_app_benchmark_fixture() {
 
 ensure_utility_types_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-
-    if [ ! -d "$UTILITY_TYPES_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning utility-types fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_DIR"
-    fi
-
-    # If users modified the local fixture, reclone to keep benchmarks deterministic
-    if [ -n "$(git -C "$UTILITY_TYPES_DIR" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${YELLOW}utility-types fixture is dirty; recloning for reproducibility...${NC}"
-        rm -rf "$UTILITY_TYPES_DIR"
-        git clone --quiet --no-tags --depth 1 "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_DIR"
-    fi
-
-    local current_ref
-    current_ref="$(git -C "$UTILITY_TYPES_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-    if [ "$current_ref" != "$UTILITY_TYPES_REF" ]; then
-        echo -e "${CYAN}Pinning utility-types to ${UTILITY_TYPES_REF:0:12}...${NC}"
-        git -C "$UTILITY_TYPES_DIR" fetch --quiet --depth 1 origin "$UTILITY_TYPES_REF"
-        git -C "$UTILITY_TYPES_DIR" checkout --quiet --detach FETCH_HEAD
-    fi
+    tsz_ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$UTILITY_TYPES_DIR" 1
 
     # Rewrite the generated flat tsconfig every run. External fixture clones
     # are cached across benchmark jobs, and stale generated configs can keep
@@ -2147,44 +2301,12 @@ ensure_utility_types_fixture() {
     # - uses skipLibCheck + types:[] to avoid needing external type deps
     # - uses ES2015 target (ES5 is deprecated in TS 6+)
     local flat_tsconfig="$UTILITY_TYPES_DIR/tsconfig.flat.json"
-    cat > "$flat_tsconfig" << 'FLATEOF'
-{
-  "compilerOptions": {
-    "strict": true,
-    "lib": ["dom", "es2017"],
-    "types": [],
-    "target": "ES2015",
-    "module": "commonjs",
-    "skipLibCheck": true,
-    "noEmit": true
-  },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.snap.ts", "src/**/*.spec.ts"]
-}
-FLATEOF
+    tsz_write_utility_types_config "$flat_tsconfig"
 }
 
 ensure_ts_toolbelt_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-
-    if [ ! -d "$TS_TOOLBELT_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning ts-toolbelt fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_DIR"
-    fi
-
-    if [ -n "$(git -C "$TS_TOOLBELT_DIR" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${YELLOW}ts-toolbelt fixture is dirty; recloning for reproducibility...${NC}"
-        rm -rf "$TS_TOOLBELT_DIR"
-        git clone --quiet --no-tags --depth 1 "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_DIR"
-    fi
-
-    local current_ref
-    current_ref="$(git -C "$TS_TOOLBELT_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-    if [ "$current_ref" != "$TS_TOOLBELT_REF" ]; then
-        echo -e "${CYAN}Pinning ts-toolbelt to ${TS_TOOLBELT_REF:0:12}...${NC}"
-        git -C "$TS_TOOLBELT_DIR" fetch --quiet --depth 1 origin "$TS_TOOLBELT_REF"
-        git -C "$TS_TOOLBELT_DIR" checkout --quiet --detach FETCH_HEAD
-    fi
+    tsz_ensure_git_fixture "ts-toolbelt" "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF" "$TS_TOOLBELT_DIR" 1
 
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
@@ -2193,53 +2315,12 @@ ensure_ts_toolbelt_fixture() {
     # - removes deprecated/unsupported options (suppressImplicitAnyIndexErrors, watch)
     # - uses skipLibCheck + types:[] to avoid needing external type deps
     local flat_tsconfig="$TS_TOOLBELT_DIR/tsconfig.flat.json"
-    cat > "$flat_tsconfig" << 'FLATEOF'
-{
-  "compilerOptions": {
-    "target": "ES2015",
-    "module": "commonjs",
-    "lib": ["esnext", "dom"],
-    "types": [],
-    "strict": false,
-    "strictNullChecks": true,
-    "strictFunctionTypes": true,
-    "noImplicitAny": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "esModuleInterop": true,
-    "downlevelIteration": true,
-    "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true,
-    "noEmit": true,
-    "ignoreDeprecations": "6.0"
-  },
-  "include": ["sources/**/*.ts"],
-  "exclude": ["tests/**/*", "scripts/**/*", "node_modules/**/*"]
-}
-FLATEOF
+    tsz_write_ts_toolbelt_config "$flat_tsconfig"
 }
 
 ensure_ts_essentials_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-
-    if [ ! -d "$TS_ESSENTIALS_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning ts-essentials fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_DIR"
-    fi
-
-    if [ -n "$(git -C "$TS_ESSENTIALS_DIR" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${YELLOW}ts-essentials fixture is dirty; recloning for reproducibility...${NC}"
-        rm -rf "$TS_ESSENTIALS_DIR"
-        git clone --quiet --no-tags --depth 1 "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_DIR"
-    fi
-
-    local current_ref
-    current_ref="$(git -C "$TS_ESSENTIALS_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-    if [ "$current_ref" != "$TS_ESSENTIALS_REF" ]; then
-        echo -e "${CYAN}Pinning ts-essentials to ${TS_ESSENTIALS_REF:0:12}...${NC}"
-        git -C "$TS_ESSENTIALS_DIR" fetch --quiet --depth 1 origin "$TS_ESSENTIALS_REF"
-        git -C "$TS_ESSENTIALS_DIR" checkout --quiet --detach FETCH_HEAD
-    fi
+    tsz_ensure_git_fixture "ts-essentials" "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF" "$TS_ESSENTIALS_DIR" 1
 
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
@@ -2248,226 +2329,53 @@ ensure_ts_essentials_fixture() {
     # - uses es2018 lib (covers esnext.asynciterable from original config)
     # - uses skipLibCheck to avoid needing external type deps
     local flat_tsconfig="$TS_ESSENTIALS_DIR/tsconfig.flat.json"
-    cat > "$flat_tsconfig" << 'FLATEOF'
-{
-  "compilerOptions": {
-    "target": "es2017",
-    "module": "commonjs",
-    "strict": true,
-    "lib": ["es2018"],
-    "types": [],
-    "skipLibCheck": true,
-    "noEmit": true,
-    "forceConsistentCasingInFileNames": true
-  },
-  "include": ["lib/**/*.ts"],
-  "exclude": ["test/**/*", "node_modules/**/*"]
-}
-FLATEOF
+    tsz_write_ts_essentials_config "$flat_tsconfig"
 }
 
 # ─── Real-world fixture: rxjs ───────────────────────────────────────────────
 ensure_rxjs_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    if [ ! -d "$RXJS_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning rxjs fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$RXJS_REPO" "$RXJS_DIR"
-    fi
-    if [ -n "$(git -C "$RXJS_DIR" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${YELLOW}rxjs fixture is dirty; recloning for reproducibility...${NC}"
-        rm -rf "$RXJS_DIR"
-        git clone --quiet --no-tags --depth 1 "$RXJS_REPO" "$RXJS_DIR"
-    fi
-    if [ -n "$RXJS_REF" ]; then
-        local current_ref
-        current_ref="$(git -C "$RXJS_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-        if [ "$current_ref" != "$RXJS_REF" ]; then
-            echo -e "${CYAN}Pinning rxjs to ${RXJS_REF:0:12}...${NC}"
-            git -C "$RXJS_DIR" fetch --quiet --depth 1 origin "$RXJS_REF"
-            git -C "$RXJS_DIR" checkout --quiet --detach FETCH_HEAD
-        fi
-    fi
+    tsz_ensure_git_fixture "rxjs" "$RXJS_REPO" "$RXJS_REF" "$RXJS_DIR" 1
     # rxjs has been a monorepo since the v8 work — `src/internal` moved to
     # `packages/rxjs/src/internal`. Detect both layouts.
-    local rxjs_src_root="src"
-    if [ -d "$RXJS_DIR/packages/rxjs/src/internal" ]; then
-        rxjs_src_root="packages/rxjs/src"
-    fi
+    local rxjs_src_root
+    rxjs_src_root="$(tsz_rxjs_src_root "$RXJS_DIR")"
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$RXJS_DIR/tsconfig.flat.json"
-    cat > "$flat_tsconfig" << FLATEOF
-{
-  "compilerOptions": {
-    "target": "es2017",
-    "module": "esnext",
-    "strict": true,
-    "lib": ["es2018", "dom"],
-    "types": [],
-    "skipLibCheck": true,
-    "noEmit": true,
-    "noCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "bundler"
-  },
-  "include": ["${rxjs_src_root}/internal/**/*.ts"],
-  "exclude": [
-    "**/*.spec.ts",
-    "**/*.test.ts",
-    "node_modules/**/*",
-    "**/internal/observable/dom/**",
-    "**/internal/umd.ts"
-  ]
-}
-FLATEOF
+    tsz_write_rxjs_config "$flat_tsconfig" "$rxjs_src_root"
 }
 
 # ─── Real-world fixture: type-fest ──────────────────────────────────────────
 ensure_type_fest_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    if [ ! -d "$TYPE_FEST_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning type-fest fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$TYPE_FEST_REPO" "$TYPE_FEST_DIR"
-    fi
-    if [ -n "$(git -C "$TYPE_FEST_DIR" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${YELLOW}type-fest fixture is dirty; recloning for reproducibility...${NC}"
-        rm -rf "$TYPE_FEST_DIR"
-        git clone --quiet --no-tags --depth 1 "$TYPE_FEST_REPO" "$TYPE_FEST_DIR"
-    fi
-    if [ -n "$TYPE_FEST_REF" ]; then
-        local current_ref
-        current_ref="$(git -C "$TYPE_FEST_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-        if [ "$current_ref" != "$TYPE_FEST_REF" ]; then
-            echo -e "${CYAN}Pinning type-fest to ${TYPE_FEST_REF:0:12}...${NC}"
-            git -C "$TYPE_FEST_DIR" fetch --quiet --depth 1 origin "$TYPE_FEST_REF"
-            git -C "$TYPE_FEST_DIR" checkout --quiet --detach FETCH_HEAD
-        fi
-    fi
+    tsz_ensure_git_fixture "type-fest" "$TYPE_FEST_REPO" "$TYPE_FEST_REF" "$TYPE_FEST_DIR" 1
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$TYPE_FEST_DIR/tsconfig.flat.json"
-    cat > "$flat_tsconfig" << 'FLATEOF'
-{
-  "compilerOptions": {
-    "target": "es2017",
-    "module": "esnext",
-    "strict": true,
-    "lib": ["es2022"],
-    "types": [],
-    "skipLibCheck": true,
-    "noEmit": true,
-    "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "bundler"
-  },
-  "include": ["source/**/*.d.ts", "index.d.ts"],
-  "exclude": ["test-d/**/*", "node_modules/**/*"]
-}
-FLATEOF
+    tsz_write_type_fest_config "$flat_tsconfig"
 }
 
 # ─── Real-world fixture: zod ────────────────────────────────────────────────
 ensure_zod_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    if [ ! -d "$ZOD_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning zod fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$ZOD_REPO" "$ZOD_DIR"
-    fi
-    if [ -n "$(git -C "$ZOD_DIR" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${YELLOW}zod fixture is dirty; recloning for reproducibility...${NC}"
-        rm -rf "$ZOD_DIR"
-        git clone --quiet --no-tags --depth 1 "$ZOD_REPO" "$ZOD_DIR"
-    fi
-    if [ -n "$ZOD_REF" ]; then
-        local current_ref
-        current_ref="$(git -C "$ZOD_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-        if [ "$current_ref" != "$ZOD_REF" ]; then
-            echo -e "${CYAN}Pinning zod to ${ZOD_REF:0:12}...${NC}"
-            git -C "$ZOD_DIR" fetch --quiet --depth 1 origin "$ZOD_REF"
-            git -C "$ZOD_DIR" checkout --quiet --detach FETCH_HEAD
-        fi
-    fi
+    tsz_ensure_git_fixture "zod" "$ZOD_REPO" "$ZOD_REF" "$ZOD_DIR" 1
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$ZOD_DIR/tsconfig.flat.json"
-    cat > "$flat_tsconfig" << 'FLATEOF'
-{
-  "compilerOptions": {
-    "target": "es2017",
-    "module": "esnext",
-    "strict": true,
-    "lib": ["es2022", "dom"],
-    "types": [],
-    "skipLibCheck": true,
-    "noEmit": true,
-    "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "bundler"
-  },
-  "include": ["src/**/*.ts", "packages/zod/src/**/*.ts"],
-  "exclude": [
-    "**/*.test.ts",
-    "**/__tests__/**",
-    "**/benchmarks/**",
-    "node_modules/**/*"
-  ]
-}
-FLATEOF
+    tsz_write_zod_config "$flat_tsconfig"
 }
 
 # ─── Real-world fixture: kysely (extreme type-level SQL inference) ─────────
 ensure_kysely_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    if [ ! -d "$KYSELY_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning kysely fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$KYSELY_REPO" "$KYSELY_DIR"
-    fi
-    if [ -n "$(git -C "$KYSELY_DIR" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${YELLOW}kysely fixture is dirty; recloning for reproducibility...${NC}"
-        rm -rf "$KYSELY_DIR"
-        git clone --quiet --no-tags --depth 1 "$KYSELY_REPO" "$KYSELY_DIR"
-    fi
-    if [ -n "$KYSELY_REF" ]; then
-        local current_ref
-        current_ref="$(git -C "$KYSELY_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-        if [ "$current_ref" != "$KYSELY_REF" ]; then
-            echo -e "${CYAN}Pinning kysely to ${KYSELY_REF:0:12}...${NC}"
-            git -C "$KYSELY_DIR" fetch --quiet --depth 1 origin "$KYSELY_REF"
-            git -C "$KYSELY_DIR" checkout --quiet --detach FETCH_HEAD
-        fi
-    fi
+    tsz_ensure_git_fixture "kysely" "$KYSELY_REPO" "$KYSELY_REF" "$KYSELY_DIR" 1
     local flat_tsconfig="$KYSELY_DIR/tsconfig.flat.json"
     local bench_globals="$KYSELY_DIR/tsz-bench-globals.d.ts"
-    cat > "$bench_globals" << 'GLOBALSEOF'
-declare const Buffer: {
-  isBuffer(value: unknown): boolean;
-  compare(left: unknown, right: unknown): number;
-};
-GLOBALSEOF
+    tsz_write_kysely_globals "$bench_globals"
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
-    cat > "$flat_tsconfig" << 'FLATEOF'
-{
-  "compilerOptions": {
-    "target": "es2017",
-    "module": "esnext",
-    "strict": true,
-    "lib": ["es2022", "dom"],
-    "types": [],
-    "skipLibCheck": true,
-    "noEmit": true,
-    "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "bundler"
-  },
-  "include": ["src/**/*.ts", "tsz-bench-globals.d.ts"],
-  "exclude": [
-    "**/*.test.ts",
-    "test/**/*",
-    "node_modules/**/*",
-    "**/dialect/mssql/**",
-    "**/util/object-utils.ts",
-    "**/util/performance-now.ts"
-  ]
-}
-FLATEOF
+    tsz_write_kysely_config "$flat_tsconfig"
 }
 
 run_utility_types_benchmarks() {

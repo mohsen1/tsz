@@ -25,7 +25,10 @@ mkdir -p "$CARGO_HOME" "$NPM_CONFIG_CACHE" "$TSZ_CI_WASM_PACK_CACHE"
 # absolute-floor edits. The fallback floor still protects paths without shard
 # expected counts.
 TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR="${TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR:-12556}"
-TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT="${TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT:-38}"
+# Temporary runway for the 2026-05-16 conformance aggregate regression.
+# Keep this path-based, not count-based: fixing one listed test must not let a
+# new unlisted regression pass CI under the same aggregate deficit.
+TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS="${TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS:-scripts/conformance/conformance-accepted-regressions.txt}"
 TSZ_CI_DTS_ACCEPTED_FLOOR="${TSZ_CI_DTS_ACCEPTED_FLOOR:-1486}"
 
 cap_positive_baseline() {
@@ -59,17 +62,27 @@ default_cargo_build_jobs() {
   mem_mb="$(awk '/MemTotal:/ { printf "%d\n", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0)"
   case "${TSZ_CI_SUITE:-${_TSZ_CI_SUITE:-}}" in
     unit|unit-archive|unit-shard)
-      # Unit builds compile large lib-test targets concurrently with downstream
-      # crates. tsz-checker's lib-test is the peak RSS consumer (~6-8 GiB at
-      # cgu=4). Sizing at 8192 MiB/job gives 32 GiB / 8 GiB = 4 cargo build
-      # jobs on the 32 GiB cloud runners — restoring the historical default
-      # (commit 111d24ba98 used 7168 MiB/job globally, also yielding 4 jobs).
-      # The 16384 MiB/job cap was added in commit 1bddbbfbf4 alongside the
-      # sccache disablement as a bundled defensive move; with sccache still
-      # off the smaller cap is safe. If rustc starts hitting SIGKILL on the
-      # checker lib-test compile, override via TSZ_CI_UNIT_CARGO_MB_PER_JOB
-      # (12288 → 2 jobs, 16384 → 2 jobs).
-      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-8192}"
+      # Force `CARGO_BUILD_JOBS=1` on unit. Observed RSS-per-rustc on this
+      # workspace's lib-test compiles (notably tsz-checker, tsz-emitter,
+      # tsz-solver, tsz-core lib-test) now exceeds 16 GiB per process during
+      # the LLVM codegen phase. With any -j > 1, peaks coincide and SIGKILL
+      # fires on the 8 vCPU × 32 GiB Cloud Run runner.
+      #
+      # History of this knob, in order:
+      #   * commit 111d24ba98 — TSZ_CI_CARGO_MB_PER_JOB=7168 globally (4 jobs)
+      #   * commit 1bddbbfbf4 — TSZ_CI_UNIT_CARGO_MB_PER_JOB=16384 (2 jobs) +
+      #       sccache disablement, after silent-exit incidents.
+      #   * PR #7573 (rolled back here) — 8192 (4 jobs). Validated on one
+      #       run-of-the-day; sustained PR load on 2026-05-16 surfaced SIGKILL
+      #       in tsz-solver/checker/emitter lib-test compile.
+      #   * 12288 (2 jobs) intermediate — still SIGKILLs (this PR's first run).
+      #   * 24576 (1 job) ← current. Safe on 32 GiB box; floor(32768/24576)=1.
+      #
+      # The real fix for compile time is a bigger box (Cloud Build private
+      # pool e2-highcpu-32 in PR #7591). Once that lands and is promoted, this
+      # cap stops mattering — Cloud Build runs the same compile at -j32 on a
+      # box where memory isn't the constraint.
+      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-24576}"
       ;;
     *)
       mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"
@@ -494,6 +507,7 @@ run_lint() {
   cargo fmt --all --check || return $?
   scripts/arch/check-workspace-metadata.sh || return $?
   scripts/check-crate-root-files.sh || return $?
+  node scripts/bench/test-merge-results.mjs || return $?
   # Use the dedicated ci-lint profile (debug=false, incremental=false,
   # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
   # — separate cache key from .target/debug so dev incrementals on a
@@ -525,28 +539,34 @@ nextest_allow_no_tests() {
 }
 
 _UNIT_TEST_PACKAGES=(
-  -p tsz-common
-  -p tsz-scanner
-  -p tsz-parser
-  -p tsz-binder
-  -p tsz-solver
-  -p tsz-checker
-  -p tsz-emitter
-  -p tsz-lsp
-  -p tsz-core
+  tsz-common
+  tsz-scanner
+  tsz-parser
+  tsz-binder
+  tsz-solver
+  tsz-checker
+  tsz-emitter
+  tsz-lsp
+  tsz-core
 )
+
+# The `tsz-checker` lib-test target currently exceeds the self-hosted runner
+# memory limit even with one Cargo job and serialized codegen. Keep checker
+# integration tests in the unit job by enumerating declared `[[test]]` targets
+# and avoiding the monolithic `rustc --test crates/tsz-checker/src/lib.rs`
+# artifact.
 
 # Resolve the active package set for `run_unit_tests` / `build_unit_test_archive`.
 #
 # `_TSZ_CI_UNIT_PACKAGES_OVERRIDE` is the gate-computed narrow set for
 # draft-phase fast-fail (P4). It is a space-separated list of crate names
 # (e.g., "tsz-parser tsz-binder"). When non-empty AND the names are all
-# known workspace crates, this returns `-p NAME` per crate. Otherwise it
+# known workspace crates, this returns one crate name per line. Otherwise it
 # returns the full `_UNIT_TEST_PACKAGES`.
 #
 # Unknown names are an error rather than silent fallback — a typo'd crate
 # name would otherwise skip tests in a way that goes unnoticed.
-unit_test_packages_args() {
+unit_test_packages() {
   local override="${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}"
   if [[ -z "$override" ]]; then
     printf '%s\n' "${_UNIT_TEST_PACKAGES[@]}"
@@ -562,20 +582,68 @@ unit_test_packages_args() {
     fi
   done
   for crate in $override; do
-    printf -- '-p\n%s\n' "$crate"
+    printf '%s\n' "$crate"
   done
+}
+
+unit_archive_package_args() {
+  local package
+  for package in "${_UNIT_TEST_PACKAGES[@]}"; do
+    if [[ "$package" == "tsz-checker" ]]; then
+      continue
+    fi
+    printf -- '-p\n%s\n' "$package"
+  done
+}
+
+checker_integration_test_args() {
+  local test_name
+  while IFS= read -r test_name; do
+    printf -- '--test\n%s\n' "$test_name"
+  done < <(
+    cargo metadata --no-deps --format-version 1 \
+      | jq -r '.packages[]
+          | select(.name == "tsz-checker")
+          | .targets[]
+          | select(.kind[]? == "test")
+          | .name' \
+      | sort
+  )
 }
 
 run_unit_tests() {
   ci_section "Workspace nextest suites"
-  local pkg_args
-  mapfile -t pkg_args < <(unit_test_packages_args)
+  local package package_names checker_selected general_pkg_args checker_test_args
+  mapfile -t package_names < <(unit_test_packages)
   if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
     echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
   fi
-  cargo nextest run --profile ci --cargo-profile ci-unit \
-    --build-jobs "$CARGO_BUILD_JOBS" \
-    "${pkg_args[@]}"
+
+  checker_selected=0
+  general_pkg_args=()
+  for package in "${package_names[@]}"; do
+    if [[ "$package" == "tsz-checker" ]]; then
+      checker_selected=1
+    else
+      general_pkg_args+=(-p "$package")
+    fi
+  done
+
+  if (( ${#general_pkg_args[@]} > 0 )); then
+    cargo nextest run --profile ci --cargo-profile ci-unit \
+      --build-jobs "$CARGO_BUILD_JOBS" \
+      "${general_pkg_args[@]}"
+  fi
+
+  if (( checker_selected )); then
+    # The checker lib-test binary is larger than the 32 GiB CI runners can
+    # link reliably. Keep checker integration tests in unit CI while avoiding
+    # that monolithic `rustc --test crates/tsz-checker/src/lib.rs` artifact.
+    mapfile -t checker_test_args < <(checker_integration_test_args)
+    cargo nextest run --profile ci --cargo-profile ci-unit \
+      --build-jobs "$CARGO_BUILD_JOBS" \
+      -p tsz-checker "${checker_test_args[@]}"
+  fi
 }
 
 build_unit_test_archive() {
@@ -599,11 +667,13 @@ build_unit_test_archive() {
   tmp_archive="$(mktemp -d)/unit-tests.tar.zst"
   echo "Building unit test archive → ${tmp_archive}"
   local archive_rc=0
+  local archive_pkg_args
+  mapfile -t archive_pkg_args < <(unit_archive_package_args)
   cargo nextest archive \
     --cargo-profile ci-unit \
     --build-jobs "$CARGO_BUILD_JOBS" \
     --archive-file "$tmp_archive" \
-    "${_UNIT_TEST_PACKAGES[@]}" || archive_rc=$?
+    "${archive_pkg_args[@]}" || archive_rc=$?
   if [[ "$archive_rc" -ne 0 ]]; then
     echo "error: cargo nextest archive failed (rc=${archive_rc}); sharding unavailable" >&2
     rm -f "$tmp_archive"
@@ -1159,12 +1229,7 @@ run_conformance_aggregate() {
   if [[ "$total_expected_passed" -gt 0 ]]; then
     local expected_deficit=$(( total_expected_passed - total_passed ))
     if [[ "$expected_deficit" -gt 0 ]]; then
-      if [[ "$TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT" =~ ^[0-9]+$ \
-        && "$expected_deficit" -le "$TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT" ]]; then
-        echo "warning: conformance aggregate below expected within accepted deficit: ${total_passed} < ${total_expected_passed} (deficit ${expected_deficit}/${TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT})" >&2
-      else
-        echo "error: conformance regression: ${total_passed} < ${total_expected_passed} (deficit ${expected_deficit}, accepted ${TSZ_CI_CONFORMANCE_ACCEPTED_DEFICIT})" >&2
-        _show_conformance_regressions "$tmp_dir" "$prefix" "$total_expected_passed"
+      if ! _check_conformance_regression_allowlist "$tmp_dir" "$prefix" "$expected_deficit"; then
         return 1
       fi
     fi
@@ -1209,6 +1274,80 @@ run_conformance_aggregate() {
     echo "warning: no conformance timing shards available to publish (non-fatal)" >&2
   fi
   echo "Conformance gate passed: ${total_passed} >= ${baseline} (baseline)"
+}
+
+# Download shard failure lists and reject any failure outside the accepted set.
+_check_conformance_regression_allowlist() {
+  local tmp_dir="$1" prefix="$2" expected_deficit="$3"
+  local allowlist="${TSZ_CI_CONFORMANCE_ACCEPTED_REGRESSIONS:-}"
+
+  if [[ -z "$allowlist" || ! -f "$allowlist" ]]; then
+    echo "error: conformance regression deficit ${expected_deficit}, but no accepted regression list found at ${allowlist:-<unset>}" >&2
+    _show_conformance_regressions "$tmp_dir" "$prefix" "$expected_deficit"
+    return 1
+  fi
+
+  if ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+    echo "error: conformance regression deficit ${expected_deficit}, but per-shard failure lists are unavailable" >&2
+    return 1
+  fi
+
+  local all_failures_file="$tmp_dir/all-failures.txt"
+  cat "$tmp_dir"/failures-shard-*.txt 2>/dev/null | sort -u > "$all_failures_file" || true
+
+  python3 - "$all_failures_file" "$allowlist" "$expected_deficit" <<'PYEOF'
+import os
+import sys
+
+failures_file, allowlist_file, expected_deficit = sys.argv[1], sys.argv[2], int(sys.argv[3])
+
+def normalize(path):
+    parts = path.replace("\\", "/").split("/")
+    for i, part in enumerate(parts):
+        if part == "TypeScript":
+            return "/".join(parts[i:])
+    return "/".join(parts)
+
+def read_paths(path):
+    paths = set()
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            paths.add(normalize(line))
+    return paths
+
+failing = read_paths(failures_file)
+accepted = read_paths(allowlist_file)
+unlisted = sorted(failing - accepted)
+resolved = sorted(accepted - failing)
+
+if unlisted:
+    print("error: unlisted conformance regressions:", file=sys.stderr)
+    for path in unlisted:
+        print(f"  REGRESSED: {path}", file=sys.stderr)
+    if resolved:
+        print("", file=sys.stderr)
+        print("Accepted regressions that no longer fail in this run:", file=sys.stderr)
+        for path in resolved:
+            print(f"  RESOLVED: {path}", file=sys.stderr)
+    return_code = 1
+else:
+    print(
+        f"warning: conformance aggregate below expected only for accepted regressions: "
+        f"{len(failing)}/{len(accepted)} listed tests currently failing "
+        f"(deficit {expected_deficit})",
+        file=sys.stderr,
+    )
+    if resolved:
+        print("Accepted regressions that no longer fail in this run:", file=sys.stderr)
+        for path in resolved:
+            print(f"  RESOLVED: {path}", file=sys.stderr)
+    return_code = 0
+
+sys.exit(return_code)
+PYEOF
 }
 
 # Download per-shard failure lists and show which tests are newly failing vs snapshot.

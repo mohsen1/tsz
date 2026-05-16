@@ -31,6 +31,8 @@ jobs:
       full_run: ${{ steps.gate.outputs.full_run }}
       rust_cache_refresh: ${{ steps.gate.outputs.rust_cache_refresh }}
       required_summary: ${{ steps.gate.outputs.required_summary }}
+      bench_shell_only: ${{ steps.gate.outputs.bench_shell_only }}
+      compiler_checks_required: ${{ steps.gate.outputs.compiler_checks_required }}
       unit_packages: ${{ steps.gate.outputs.unit_packages }}
     steps:
       - id: gate
@@ -44,6 +46,8 @@ jobs:
           required_summary=true
           rust_cache_refresh=false
           cache_key_changed=false
+          bench_shell_only=false
+          compiler_checks_required=true
           unit_packages=""
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             # The `labeled` event triggers on every label add. We only care
@@ -109,6 +113,33 @@ jobs:
                   printf '  %s\n' $(printf '%s\n' "$all_paths" | sort -u)
                   should_run=false
                 fi
+                compiler_paths=$(printf '%s\n' "$all_paths" \
+                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                  || true)
+                if [[ -z "$compiler_paths" ]]; then
+                  compiler_checks_required=false
+                  echo "PR diff has no compiler/runtime paths; unit and conformance remain visible but are not required by CI Summary."
+                fi
+              fi
+            fi
+            # Bench script-only changes do not need Rust compiler CI. Keep the
+            # required CI Summary alive, but replace lint/unit/dist/wasm/heavy
+            # jobs with a cheap bash syntax smoke job below. CI workflow edits,
+            # Cargo files, Rust crates, JS helpers, and non-bench shell scripts
+            # still take the normal path.
+            if [[ "$should_run" == "true" && -n "${all_paths:-}" ]]; then
+              bench_shell_paths=$(printf '%s\n' "$all_paths" \
+                | grep -E '^scripts/bench/[^/]+\.sh$' \
+                || true)
+              non_bench_shell_paths=$(printf '%s\n' "$all_paths" \
+                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^scripts/bench/[^/]+\.sh$' \
+                || true)
+              if [[ -n "$bench_shell_paths" && -z "$non_bench_shell_paths" ]]; then
+                echo "PR diff only changes bench shell scripts/docs — running bench shell smoke only:"
+                printf '%s\n' "$bench_shell_paths" | sort -u | sed 's/^/  /'
+                should_run=false
+                full_run=false
+                bench_shell_only=true
               fi
             fi
             # P4 — draft-phase fast-fail: narrow the unit job to the touched
@@ -288,6 +319,8 @@ jobs:
           echo "full_run=${full_run}" >> "$GITHUB_OUTPUT"
           echo "rust_cache_refresh=${rust_cache_refresh}" >> "$GITHUB_OUTPUT"
           echo "required_summary=${required_summary}" >> "$GITHUB_OUTPUT"
+          echo "bench_shell_only=${bench_shell_only}" >> "$GITHUB_OUTPUT"
+          echo "compiler_checks_required=${compiler_checks_required}" >> "$GITHUB_OUTPUT"
           echo "unit_packages=${unit_packages}" >> "$GITHUB_OUTPUT"
 
   project-corpus-pr-body:
@@ -351,6 +384,20 @@ jobs:
           fi
 
           echo "Project corpus impact metadata is present."
+
+  bench-script-smoke:
+    name: bench-script-smoke
+    needs: gate
+    if: needs.gate.outputs.bench_shell_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Check bench shell syntax
+        shell: bash
+        run: bash -n scripts/bench/*.sh
 
   lint:
     name: lint
@@ -604,10 +651,9 @@ jobs:
     #
     # `_TSZ_CI_UNIT_PACKAGES_OVERRIDE` (set by the gate as `unit_packages`) is
     # a space-separated list of crate names. When non-empty, the unit script
-    # runs `cargo nextest run -p <crate>` for just those crates instead of the
-    # full workspace — used as the P4 draft-phase fast-fail (gate only sets
-    # this for draft PRs whose changes are localized to known unit-tested
-    # crate source).
+    # runs unit tests for just those crates instead of the full workspace.
+    # tsz-checker is special-cased to run declared integration targets without
+    # compiling its oversized lib-test artifact.
     name: unit
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
@@ -617,6 +663,10 @@ jobs:
       SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
       CARGO_INCREMENTAL: "0"
       TSZ_CI_DISABLE_SCCACHE: "1"
+      # Temporary safety cap while conformance aggregate is being unblocked:
+      # run 25961843637 still SIGKILLed tsz-checker lib-test compilation at
+      # one cargo build job before ci-unit codegen was serialized.
+      TSZ_CI_UNIT_CARGO_MB_PER_JOB: "16384"
       TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "1"
       _TSZ_CI_UNIT_PACKAGES_OVERRIDE: ${{ needs.gate.outputs.unit_packages }}
     steps:
@@ -625,6 +675,46 @@ jobs:
           fetch-depth: 1
       - name: Run unit suite
         run: scripts/ci/github-suite.sh unit
+
+  unit-cloudbuild:
+    # EXPERIMENT: run the unit suite on Cloud Build private pool
+    # `tsz-ci-build-pool` (e2-highcpu-32, 32 vCPU × 32 GiB) and compare wall
+    # clock against the Cloud Run `unit` job above. The compile is the
+    # bottleneck (~12 min on 8 vCPU); 4× the cores should drop it to ~4 min.
+    #
+    # Submitted as a parallel job — the existing `unit` is still required for
+    # green CI. Promote unit-cloudbuild and demote `unit` after a week of
+    # apples-to-apples timing data.
+    #
+    # Budget: ~$0.024/min × ~5 min × 200 runs/day ≈ $720/month at full PR
+    # cadence. Under the $1k approved cap.
+    #
+    # continue-on-error keeps a Cloud Build flake from blocking the workflow.
+    # Not in the required-status set, so failure here is informational only.
+    name: unit-cloudbuild
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Submit unit build to Cloud Build pool
+        # `gcloud builds submit` tars the working directory, uploads it to the
+        # default tsz-ci_cloudbuild GCS staging bucket, then triggers the
+        # private-pool build. The previous attempt pointed at the
+        # thirdface-ai-oauth_cloudbuild bucket — the tsz-gh-runners SA cannot
+        # write there.
+        run: |
+          set -euo pipefail
+          gcloud builds submit \
+            --project=tsz-ci \
+            --region=us-central1 \
+            --config=cloudbuild-unit.yaml \
+            --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
+            .
 
   conformance:
     # Conformance shards consume the dist-fast binaries artifact and run the
@@ -814,6 +904,7 @@ jobs:
     name: ${{ needs.gate.outputs.required_summary == 'true' && 'CI Summary' || 'CI Light Summary' }}
     needs:
       - gate
+      - bench-script-smoke
       - lint
       - cargo-shear
       - cargo-deny
@@ -845,16 +936,29 @@ jobs:
           gate = needs["gate"]
           should_run = gate.get("outputs", {}).get("should_run") == "true"
           full_run = gate.get("outputs", {}).get("full_run") == "true"
+          bench_shell_only = gate.get("outputs", {}).get("bench_shell_only") == "true"
+          compiler_checks_required = gate.get("outputs", {}).get("compiler_checks_required") != "false"
 
           if gate.get("result") != "success":
               print(f"gate did not pass: {gate.get('result')}")
               sys.exit(1)
 
           if not should_run:
+              if bench_shell_only:
+                  bench_smoke = needs.get("bench-script-smoke", {})
+                  if bench_smoke.get("result") != "success":
+                      print(f"bench-script-smoke did not pass: {bench_smoke.get('result')}")
+                      sys.exit(1)
+                  print("Bench shell-only CI passed: bench-script-smoke.")
+                  sys.exit(0)
               print("CI gated off; summary passes because jobs were intentionally skipped.")
               sys.exit(0)
 
-          required = {"lint", "cargo-shear", "cargo-deny", "dist-binaries", "unit"}
+          required = {"lint", "cargo-shear", "cargo-deny", "dist-binaries"}
+          if compiler_checks_required:
+              required.add("unit")
+          else:
+              print("Compiler checks are non-required for this non-compiler diff.")
           pr_body = needs.get("project-corpus-pr-body")
           if pr_body and pr_body.get("result") not in ("success", "skipped"):
               print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
@@ -862,15 +966,18 @@ jobs:
 
           if full_run:
               required.update({
-                  "wasm",
-                  "wasm-web",
                   "project-compile-guard",
-                  "node-harness-prep",
-                  "conformance-aggregate",
                   "conformance-snapshot-gate",
-                  "emit",
-                  "fourslash-aggregate",
               })
+              if compiler_checks_required:
+                  required.update({
+                      "wasm",
+                      "wasm-web",
+                      "node-harness-prep",
+                      "conformance-aggregate",
+                      "emit",
+                      "fourslash-aggregate",
+                  })
 
           failures = []
           for name, data in needs.items():

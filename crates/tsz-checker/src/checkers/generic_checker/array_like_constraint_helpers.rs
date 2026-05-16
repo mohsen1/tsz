@@ -5,7 +5,7 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(super) fn satisfies_array_like_constraint(
+    pub(crate) fn satisfies_array_like_constraint(
         &mut self,
         source: TypeId,
         target: TypeId,

@@ -323,6 +323,19 @@ impl<'a> Completions<'a> {
             return;
         }
 
+        // `ReadonlyType` and `NoInfer` are transparent wrappers for member access; strip and recurse.
+        if let Some(inner) = visitor::unwrap_readonly_or_noinfer(interner, evaluated) {
+            self.collect_properties_for_type_inner(
+                inner,
+                interner,
+                checker,
+                visited,
+                props,
+                include_private,
+            );
+            return;
+        }
+
         if let Some(shape_id) = visitor::object_shape_id(interner, evaluated)
             .or_else(|| visitor::object_with_index_shape_id(interner, evaluated))
         {
@@ -476,19 +489,12 @@ impl<'a> Completions<'a> {
             return;
         }
 
-        if let Some(literal) = visitor::literal_value(interner, evaluated) {
-            if let Some(kind) = self.literal_intrinsic_kind(&literal) {
-                self.collect_intrinsic_members(kind, interner, props);
-            }
-            return;
-        }
-
         if visitor::template_literal_id(interner, evaluated).is_some() {
             self.collect_intrinsic_members(IntrinsicKind::String, interner, props);
             return;
         }
 
-        if let Some(kind) = visitor::intrinsic_kind(interner, evaluated) {
+        if let Some(kind) = tsz_solver::apparent_intrinsic_kind(interner, evaluated) {
             self.collect_intrinsic_members(kind, interner, props);
         }
     }
@@ -834,7 +840,7 @@ impl<'a> Completions<'a> {
                         let Some(name) = self.arena.get_identifier_text(signature.name) else {
                             continue;
                         };
-                        if name != property_name || !signature.type_annotation.is_some() {
+                        if name != property_name || signature.type_annotation.is_none() {
                             continue;
                         }
                         self.append_members_from_type_node(
@@ -863,7 +869,7 @@ impl<'a> Completions<'a> {
                         let Some(name) = self.arena.get_identifier_text(prop.name) else {
                             continue;
                         };
-                        if name != property_name || !prop.type_annotation.is_some() {
+                        if name != property_name || prop.type_annotation.is_none() {
                             continue;
                         }
                         self.append_members_from_type_node(prop.type_annotation, seen_names, items);
@@ -1314,9 +1320,6 @@ impl<'a> Completions<'a> {
     ) {
         let members = apparent_primitive_members(interner, kind);
         for member in members {
-            if !apparent_primitive_member_is_completion_eligible(kind, member.name) {
-                continue;
-            }
             let type_id = match member.kind {
                 ApparentMemberKind::Value(type_id) | ApparentMemberKind::Method(type_id) => type_id,
             };
@@ -1378,18 +1381,6 @@ impl<'a> Completions<'a> {
             "with",
         ] {
             self.add_property_completion(props, interner, name.to_string(), TypeId::ANY, true);
-        }
-    }
-
-    pub(super) const fn literal_intrinsic_kind(
-        &self,
-        literal: &tsz_solver::LiteralValue,
-    ) -> Option<IntrinsicKind> {
-        match literal {
-            tsz_solver::LiteralValue::String(_) => Some(IntrinsicKind::String),
-            tsz_solver::LiteralValue::Number(_) => Some(IntrinsicKind::Number),
-            tsz_solver::LiteralValue::Boolean(_) => Some(IntrinsicKind::Boolean),
-            tsz_solver::LiteralValue::BigInt(_) => Some(IntrinsicKind::Bigint),
         }
     }
 

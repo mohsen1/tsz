@@ -1079,6 +1079,71 @@ fn jsx_react_type_union_with_string_does_not_emit_ts2786() {
 }
 
 #[test]
+fn jsx_class_construct_readonly_mapped_props_uses_shape_not_alias_name() {
+    let sources = [
+        (
+            "renamed readonly mapped alias",
+            r#"
+        declare namespace JSX {
+            interface Element extends React.ReactElement<any> {}
+            interface ElementClass extends React.Component<any> {
+                render(): React.ReactNode;
+            }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements {}
+        }
+        declare namespace React {
+            type ReactNode = ReactElement<any> | string | number | null;
+            interface ReactElement<P> { props: P; }
+            type Frozen<T> = { readonly [Q in keyof T]: T[Q]; };
+            class Component<P = {}> {
+                props: Frozen<P>;
+                render(): ReactNode;
+            }
+        }
+        interface Props { x?: number; }
+        class Widget extends React.Component<Props> {}
+        <Widget />;
+        "#,
+        ),
+        (
+            "readonly mapped intersection",
+            r#"
+        declare namespace JSX {
+            interface Element extends React.ReactElement<any> {}
+            interface ElementClass extends React.Component<any> {
+                render(): React.ReactNode;
+            }
+            interface ElementAttributesProperty { props: {}; }
+            interface ElementChildrenAttribute { children: {}; }
+            interface IntrinsicElements { div: {}; }
+        }
+        declare namespace React {
+            type ReactNode = ReactElement<any> | string | number | null | undefined;
+            interface ReactElement<P> { props: P; }
+            type Locked<X> = { readonly [Name in keyof X]: X[Name]; };
+            class Component<P = {}> {
+                props: Locked<P> & Locked<{ children?: ReactNode }>;
+                render(): ReactNode;
+            }
+        }
+        interface Props { label?: string; }
+        class Panel extends React.Component<Props> {}
+        <Panel><div /></Panel>;
+        "#,
+        ),
+    ];
+
+    for (case_name, source) in sources {
+        let diagnostics = check_jsx_codes(source);
+        assert!(
+            !diagnostics.contains(&2786),
+            "{case_name}: readonly mapped class props should suppress TS2786 without relying on alias spelling, got: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn jsx_overload_mismatch_reports_ts2769_before_ts2786() {
     let diagnostics = check_jsx_codes(
         r#"
@@ -2901,5 +2966,85 @@ let v = <Comp x={3} />;
     assert!(
         diagnostics.iter().any(|d| d.code == 2322),
         "Without any-spread, mismatched explicit attr must produce TS2322; got: {diagnostics:?}"
+    );
+}
+
+// --- children union (Element | Element[]) no spurious TS2322 ---
+
+const JSX_CHILDREN_UNION_PRELUDE: &str = r#"
+namespace JSX {
+    export interface Element {}
+    export interface ElementAttributesProperty { props: {}; }
+    export interface ElementChildrenAttribute { children: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements { div: {}; h1: {}; }
+}
+"#;
+
+fn make_children_union_source(children_type: &str, jsx_body: &str) -> String {
+    format!(
+        r#"{JSX_CHILDREN_UNION_PRELUDE}
+interface Props {{ children: {children_type}; }}
+declare function Comp(p: Props): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+{jsx_body}
+"#,
+    )
+}
+
+#[test]
+fn jsx_children_union_element_or_array_two_direct_children_no_ts2322() {
+    let src = make_children_union_source(
+        "JSX.Element | JSX.Element[]",
+        "let k = <Comp><A /><B /></Comp>;",
+    );
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Two direct element children for Element|Element[] must not produce TS2322; got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_children_union_single_child_no_ts2322() {
+    let src =
+        make_children_union_source("JSX.Element | JSX.Element[]", "let k = <Comp><A /></Comp>;");
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Single element child for Element|Element[] must not produce TS2322; got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_children_union_three_direct_children_no_ts2322() {
+    let src = make_children_union_source(
+        "JSX.Element | JSX.Element[]",
+        "declare function C(): JSX.Element; let k = <Comp><A /><B /><C /></Comp>;",
+    );
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Three direct element children for Element|Element[] must not produce TS2322; got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_children_union_node_name_variant_no_ts2322() {
+    // Verify fix is not tied to the name "Element": use a user-defined Node type.
+    let src = format!(
+        r#"{JSX_CHILDREN_UNION_PRELUDE}
+interface MyNode {{}}
+interface NodeProps {{ children: MyNode | MyNode[]; }}
+declare function Widget(p: NodeProps): JSX.Element;
+declare function Child(): JSX.Element;
+let k = <Widget><Child /><Child /></Widget>;
+"#,
+    );
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Two children for MyNode|MyNode[] must not produce TS2322; got: {codes:?}"
     );
 }

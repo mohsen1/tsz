@@ -843,6 +843,46 @@ function foo2<T extends unknown[]>(value: T): Enumerate<T['length']> {
 }
 
 #[test]
+fn renamed_generic_tuple_length_return_uses_structural_conditional_indexed_shape() {
+    let source = r#"
+interface Array<T> {
+    length: number;
+}
+
+type _PrependNextNum<A extends unknown[]> = A['length'] extends infer T
+    ? [T, ...A] extends [...infer X]
+        ? X
+        : never
+    : never;
+
+type _Range<A extends unknown[], N extends number> = N extends A['length']
+    ? A
+    : _Range<_PrependNextNum<A>, N> & number;
+
+type CountFromLength<N extends number> = number extends N
+    ? number
+    : _Range<[], N> extends (infer E)[]
+    ? E
+    : never;
+
+function foo2<T extends unknown[]>(value: T): CountFromLength<T['length']> {
+    return value.length;
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2322
+                && diag.message_text.contains(
+                    "Type 'number' is not assignable to type 'CountFromLength<T[\"length\"]>'",
+                )
+        }),
+        "generic tuple length return should be reported from conditional/indexed-access shape, not an alias spelling. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn recursive_tuple_spread_length_index_access_is_valid() {
     let source = r#"
 type NTuple<N extends number, Tup extends unknown[] = []> =

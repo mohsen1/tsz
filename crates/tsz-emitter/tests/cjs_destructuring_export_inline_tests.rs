@@ -64,6 +64,75 @@ fn cjs_inline_export_handles_object_destructuring_binding() {
     );
 }
 
+#[test]
+fn cjs_live_export_aliases_update_on_simple_assignment() {
+    let source = r#"
+export let exportedFoo: any;
+let nonexportedFoo: any;
+
+exportedFoo = null;
+nonexportedFoo = null;
+
+export { nonexportedFoo };
+export { exportedFoo as foo, nonexportedFoo as nfoo };
+"#;
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        output.contains("exports.foo = exports.exportedFoo = null;"),
+        "Assignment to an inline-exported local must also update later export aliases.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.nfoo = exports.nonexportedFoo = nonexportedFoo = null;"),
+        "Assignment to a deferred local export must update all export aliases at the assignment site.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn cjs_live_export_aliases_update_inside_destructuring_assignment() {
+    let source = r#"
+export let exportedFoo: any;
+let nonexportedFoo: any;
+
+({ exportedFoo, nonexportedFoo } = null as any);
+({ foo: exportedFoo, bar: nonexportedFoo } = null as any);
+([exportedFoo, nonexportedFoo] = null as any);
+
+export { nonexportedFoo };
+export { exportedFoo as foo, nonexportedFoo as nfoo };
+"#;
+    let opts = PrintOptions {
+        target: ScriptTarget::ES2015,
+        module: ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        output.contains(
+            "exports.foo = exports.exportedFoo = _a.exportedFoo, exports.nfoo = exports.nonexportedFoo = nonexportedFoo = _a.nonexportedFoo"
+        ),
+        "Object destructuring assignment must lower to live CommonJS export chains.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "exports.foo = exports.exportedFoo = _b.foo, exports.nfoo = exports.nonexportedFoo = nonexportedFoo = _b.bar"
+        ),
+        "Renamed object destructuring assignment must update all live CommonJS exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "exports.foo = exports.exportedFoo = _c[0], exports.nfoo = exports.nonexportedFoo = nonexportedFoo = _c[1]"
+        ),
+        "Array destructuring assignment must update all live CommonJS exports.\nOutput:\n{output}"
+    );
+}
+
 /// Regression for `declarationEmitSimpleComputedNames1`: a computed property
 /// name on an *object-literal* method is a runtime expression and must pick
 /// up the inline `exports.X` rewrite for CJS-exported names. The same
