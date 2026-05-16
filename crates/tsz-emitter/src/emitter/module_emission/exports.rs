@@ -512,6 +512,12 @@ impl<'a> Printer<'a> {
                                 es5_emitter.set_indent_level(self.writer.indent_level());
                                 es5_emitter.set_transforms(self.transforms.clone());
                                 es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+                                es5_emitter.set_printer_options(self.ctx.options.clone());
+                                es5_emitter.set_module_kind(
+                                    self.ctx
+                                        .original_module_kind
+                                        .unwrap_or(self.ctx.options.module),
+                                );
                                 if let Some(text) = self.source_text_for_map() {
                                     if self.writer.has_source_map() {
                                         es5_emitter.set_source_map_context(
