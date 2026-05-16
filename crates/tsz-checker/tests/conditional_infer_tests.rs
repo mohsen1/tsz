@@ -547,6 +547,64 @@ const bad3: F3 = [[42]];
     );
 }
 
+/// Issue #6307 anti-hardcoding gate. The recursive `Array<infer ?>` flatten
+/// rule is *structural* — it must not depend on the user choosing the name
+/// `U` for the inferred element type, nor on a specific recursion depth that
+/// happens to match a fixture. Vary both: rename the infer variable, vary
+/// the element type, vary the depth, and exercise a negative case where the
+/// leaf is not an array so the conditional terminates without firing the
+/// recursive branch.
+#[test]
+fn recursive_array_application_infer_flatten_rule_is_structural() {
+    let source = r#"
+// Rename the infer variable: U -> X. The rule is "T extends Array<infer ?>",
+// the name must not matter.
+type FlattenX<T> = T extends Array<infer X> ? FlattenX<X> : T;
+
+// String element, deeper recursion than the reported repro.
+type FS5 = FlattenX<string[][][][][]>;
+const fs5: FS5 = "leaf";
+
+// Object element terminates the recursion at depth 1.
+type FO1 = FlattenX<{ tag: number }[]>;
+const fo1: FO1 = { tag: 1 };
+
+// Non-array input: the conditional's false branch returns T unchanged.
+type FN0 = FlattenX<number>;
+const fn0: FN0 = 42;
+
+// Different infer name choice on a sibling alias still resolves.
+type FlattenE<S> = S extends Array<infer E> ? FlattenE<E> : S;
+type FE2 = FlattenE<boolean[][][]>;
+const fe2: FE2 = true;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2322),
+        "recursive Array<infer ?> flatten rule must be name- and depth-independent. Actual diagnostics: {diagnostics:#?}"
+    );
+
+    let rejection_source = r#"
+type FlattenX<T> = T extends Array<infer X> ? FlattenX<X> : T;
+
+type FS5 = FlattenX<string[][][][][]>;
+type FE2 = FlattenX<boolean[][][]>;
+type FN0 = FlattenX<number>;
+
+const bad_fs5: FS5 = ["still", "an", "array"];
+const bad_fe2: FE2 = [true, false];
+const bad_fn0: FN0 = [1];
+"#;
+
+    let diagnostics = check_source_strict_with_default_libs(rejection_source);
+    let ts2322_count = diagnostics.iter().filter(|diag| diag.code == 2322).count();
+    assert_eq!(
+        ts2322_count, 3,
+        "renamed/deeper Array<infer ?> flatten must still reject array assignments to the resolved leaf. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn recursive_awaited_application_emits_ts2589_at_outer_alias() {
     let source = r#"
