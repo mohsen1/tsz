@@ -256,6 +256,8 @@ fn test_in_property_narrowing_reuses_property_cache() {
     assert_eq!(narrow_again, obj);
     assert_eq!(cache.property_cache.borrow().len(), 2);
 
+    let resolver_generation = ctx.resolver_generation();
+
     let ctx_false = NarrowingContext::with_cache(&interner, &cache);
     let narrowed_false = ctx_false.narrow_type(union, &guard, GuardSense::Negative);
     let expected = TypeId::NUMBER;
@@ -264,7 +266,7 @@ fn test_in_property_narrowing_reuses_property_cache() {
 
     // Ensure the property cache includes the resolved object-shape lookup path
     // and can be reused across guard sense changes.
-    let kind_key = (obj, kind_name);
+    let kind_key = (obj, resolver_generation, kind_name);
     assert!(cache.property_cache.borrow().contains_key(&kind_key));
 }
 
@@ -311,27 +313,36 @@ fn test_negative_in_property_narrowing_reuses_required_property_cache() {
     let guard = TypeGuard::InProperty(kind_name);
 
     let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let required_direct = ctx.is_property_required(required_obj, kind_name);
+    let optional_direct = ctx.is_property_required(optional_obj, kind_name);
+    let number_direct = ctx.is_property_required(TypeId::NUMBER, kind_name);
+    assert!(required_direct);
+    assert!(!optional_direct);
+    assert!(!number_direct);
+    assert_eq!(cache.required_property_cache.borrow().len(), 3);
+
     let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
     let expected = interner.union(vec![optional_obj, TypeId::NUMBER]);
     assert_eq!(narrowed, expected);
 
     assert_eq!(cache.required_property_cache.borrow().len(), 3);
-    assert!(
+    let required_cached =
         cache
             .required_property_cache
             .borrow()
-            .get(&(required_obj, kind_name))
-            .copied()
-            .unwrap_or_default()
-    );
-    assert!(
-        !cache
-            .required_property_cache
-            .borrow()
-            .get(&(optional_obj, kind_name))
-            .copied()
-            .unwrap_or(false)
-    );
+            .iter()
+            .any(|((type_id, _, prop), is_required)| {
+                *type_id == required_obj && *prop == kind_name && *is_required
+            });
+    assert!(required_cached);
+
+    let optional_cached = cache
+        .required_property_cache
+        .borrow()
+        .iter()
+        .filter(|((type_id, _, prop), _)| *type_id == optional_obj && *prop == kind_name)
+        .all(|(_, is_required)| !*is_required);
+    assert!(optional_cached);
 
     let narrowed_again = ctx.narrow_type(union, &guard, GuardSense::Negative);
     assert_eq!(narrowed_again, expected);
