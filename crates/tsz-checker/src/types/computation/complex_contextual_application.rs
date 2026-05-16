@@ -4,7 +4,11 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    fn application_bases_are_same_nominal_type(&self, left: TypeId, right: TypeId) -> bool {
+    pub(crate) fn application_bases_are_same_nominal_type(
+        &self,
+        left: TypeId,
+        right: TypeId,
+    ) -> bool {
         if left == right {
             return true;
         }
@@ -19,7 +23,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn application_base_symbol_id(&self, base: TypeId) -> Option<tsz_binder::SymbolId> {
+    pub(crate) fn application_base_symbol_id(&self, base: TypeId) -> Option<tsz_binder::SymbolId> {
         if let Some(def_id) = query::lazy_def_id(self.ctx.types, base) {
             return self.ctx.def_to_symbol_id(def_id);
         }
