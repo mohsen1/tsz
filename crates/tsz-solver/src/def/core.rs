@@ -400,7 +400,7 @@ impl DefinitionInfo {
     }
 
     /// Convert `SemanticDefKind` to `DefKind`.
-    pub fn kind_from_semantic(kind: tsz_binder::SemanticDefKind) -> DefKind {
+    pub const fn kind_from_semantic(kind: tsz_binder::SemanticDefKind) -> DefKind {
         match kind {
             tsz_binder::SemanticDefKind::TypeAlias => DefKind::TypeAlias,
             tsz_binder::SemanticDefKind::Interface => DefKind::Interface,
