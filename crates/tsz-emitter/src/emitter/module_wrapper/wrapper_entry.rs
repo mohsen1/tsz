@@ -1,4 +1,4 @@
-use super::super::{JsxEmit, Printer};
+use super::super::Printer;
 use super::{SystemDependencyAction, SystemDependencyPlan};
 use crate::emitter::ModuleKind;
 use std::collections::{HashMap, HashSet};
@@ -1032,20 +1032,8 @@ impl<'a> Printer<'a> {
                 // When JSX mode requires a factory, don't elide imports matching
                 // the factory name — JSX elements implicitly reference it but the
                 // text-based heuristic won't find it in the source.
-                let is_jsx_factory = matches!(
-                    self.ctx.options.jsx,
-                    JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
-                ) && {
-                    let import_name = self.get_identifier_text_idx(import_decl.import_clause);
-                    let factory_root = self
-                        .ctx
-                        .options
-                        .jsx_factory
-                        .as_deref()
-                        .and_then(|f| f.split('.').next())
-                        .unwrap_or("React");
-                    import_name == factory_root
-                };
+                let import_name = self.get_identifier_text_idx(import_decl.import_clause);
+                let is_jsx_factory = self.is_classic_jsx_factory_root(&import_name);
                 // Check value-level usage: `import x = require("m")` where
                 // `x` is only used in type positions should not be included in
                 // AMD deps (tsc elides these).
@@ -1171,34 +1159,7 @@ impl<'a> Printer<'a> {
             // not appear in AMD deps (tsc uses checker info to elide these).
             // Skip this check for JSX factory imports which are implicitly
             // referenced by JSX elements.
-            let is_jsx_factory_import = matches!(
-                self.ctx.options.jsx,
-                JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
-            ) && {
-                let factory_root = self
-                    .ctx
-                    .options
-                    .jsx_factory
-                    .as_deref()
-                    .and_then(|f| f.split('.').next())
-                    .unwrap_or("React");
-                let mut is_factory = false;
-                // Check default import name
-                if clause.name.is_some() {
-                    let name = self.get_identifier_text_idx(clause.name);
-                    if name == factory_root {
-                        is_factory = true;
-                    }
-                }
-                // Check namespace import name (`import * as React`)
-                if !is_factory
-                    && let Some(ns) = &namespace_name
-                    && ns == factory_root
-                {
-                    is_factory = true;
-                }
-                is_factory
-            };
+            let is_jsx_factory_import = self.is_jsx_factory_import_clause(clause);
 
             if !is_jsx_factory_import && !self.import_has_value_usage_after_node(stmt_node, clause)
             {

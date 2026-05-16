@@ -257,8 +257,10 @@ impl<'a> CheckerState<'a> {
         // runtime, so `return a` (where `a` is some unrelated type) is
         // idiomatic and not an error in `--checkJs` mode. Mirrors tsc's
         // `isJavaScriptFile`-gated bypass in `checkReturnStatement`.
-        let skip_assignability =
-            is_in_constructor && (return_data.expression.is_none() || self.is_js_file());
+        let skip_assignability = is_in_constructor
+            && (return_data.expression.is_none() || self.is_js_file())
+            || (return_data.expression.is_none()
+                && self.type_references_unresolved_import(expected_type));
 
         // Track whether assignability check passed — when it fails, the solver's
         // failure reason already emits the appropriate diagnostic (including TS2353
@@ -394,6 +396,16 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    fn type_references_unresolved_import(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::collect_all_types(self.ctx.types, type_id)
+            .into_iter()
+            .any(|ty| {
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty)
+                    .and_then(|def_id| self.ctx.def_to_symbol_id(def_id))
+                    .is_some_and(|sym_id| self.is_unresolved_import_symbol_id(sym_id))
+            })
     }
 
     fn return_annotation_is_enumerate_length(&self, stmt_idx: NodeIndex) -> bool {

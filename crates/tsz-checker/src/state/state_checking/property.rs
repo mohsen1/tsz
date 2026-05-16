@@ -488,7 +488,10 @@ impl<'a> CheckerState<'a> {
                     // let the diagnostic display use the concrete arm if it is the
                     // only EPC-relevant member.
                     if resolved_member == TypeId::ANY
-                        && !self.format_type_diagnostic(target).contains("any")
+                        && !crate::query_boundaries::assignability::contains_any_type(
+                            self.ctx.types,
+                            target,
+                        )
                     {
                         has_unresolved_member = true;
                         continue;

@@ -682,6 +682,36 @@ export const Foo = () => <div/>;
 }
 
 #[test]
+fn amd_jsx_factory_named_import_from_pragma_kept_in_helpers_check() {
+    use crate::emitter::JsxEmit;
+    let source = r#"/** @jsx h */
+import { h } from "./renderer";
+export const Foo = () => <div/>;
+"#;
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::AMD,
+        jsx: JsxEmit::React,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("\"./renderer\""),
+        "AMD wrapper should keep a named import used only as an implicit @jsx factory.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("renderer_1.h"),
+        "AMD JSX factory call should route through the wrapped import substitution.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_react_jsx_runtime_dependency_is_wrapped() {
     use crate::emitter::JsxEmit;
     let source = r#"namespace JSX {}

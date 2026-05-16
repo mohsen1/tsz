@@ -1,6 +1,8 @@
 use super::*;
+use crate::output::source_writer::DelimiterKind;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
+use tsz_parser::parser::node::NodeArena;
 
 /// Parse, lower, and print a source string with the given options.
 ///
@@ -47,6 +49,20 @@ fn test_streaming_writer() {
         String::from_utf8(output).expect("output should be valid UTF-8"),
         "hello world"
     );
+}
+
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "structured delimiter helpers left 1 unclosed delimiter")]
+fn finish_asserts_structured_delimiters_are_balanced() {
+    let arena = NodeArena::new();
+    let mut printer = Printer::new(&arena, PrintOptions::default());
+    printer
+        .inner
+        .writer
+        .write_open_delimiter(DelimiterKind::Paren);
+
+    let _ = printer.finish();
 }
 
 #[test]
@@ -2262,6 +2278,62 @@ fn property_access_on_paren_cast_paren_object_literal_emits_single_paren() {
     assert!(
         !output.contains("(({}).foo)"),
         "Outer parens around the property access are redundant when the receiver is already parenthesized.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn erased_object_literal_access_does_not_wrap_return_expression() {
+    let source = r#"
+function prop() {
+    return ({ a: 1 } as { a: number }).a;
+}
+function elem(key: string) {
+    return ({ a: 1 } as Record<string, number>)[key];
+}
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("return { a: 1 }.a;"),
+        "Return property access should not keep type-erasure parens.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return { a: 1 }[key];"),
+        "Return element access should not keep type-erasure parens.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return ({ a: 1 }.a);") && !output.contains("return ({ a: 1 }[key]);"),
+        "Return expressions should not be wrapped like statement expressions.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn erased_object_literal_access_wraps_statement_expression() {
+    let source = r#"
+({ a: 1 } as { a: number }).a;
+({ a: 1 } as Record<string, number>)["a"];
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("({ a: 1 }.a);"),
+        "Statement property access must stay parenthesized to avoid parsing as a block.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("({ a: 1 }[\"a\"]);"),
+        "Statement element access must stay parenthesized to avoid parsing as a block.\nOutput:\n{output}"
     );
 }
 

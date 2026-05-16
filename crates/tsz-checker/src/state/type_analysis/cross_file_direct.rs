@@ -77,7 +77,7 @@ fn is_dom_like_builtin_lib_file_name(file_name: &str) -> bool {
         || stem.starts_with("webworker.")
 }
 
-fn is_direct_actual_lib_declaration_arena(arena: &NodeArena) -> bool {
+pub(crate) fn is_direct_actual_lib_declaration_arena(arena: &NodeArena) -> bool {
     arena.source_files.first().is_some_and(|source_file| {
         if !source_file.is_declaration_file {
             return false;
@@ -107,14 +107,6 @@ fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
         .source_files
         .first()
         .is_some_and(|source_file| !source_file.is_declaration_file)
-}
-
-fn allow_generic_actual_lib_direct_fallback(name: &str) -> bool {
-    matches!(name, "Iterator" | "Promise" | "PromiseLike")
-}
-
-fn allow_actual_lib_declaration_proof_bypass(name: &str) -> bool {
-    matches!(name, "Iterator")
 }
 
 impl<'a> CheckerState<'a> {
@@ -225,6 +217,99 @@ impl<'a> CheckerState<'a> {
                 };
                 arena.get_identifier_text(expr.expression) == Some("IteratorObject")
             })
+        })
+    }
+
+    fn symbol_declares_direct_actual_lib_protocol_method(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+        delegate_arena: &NodeArena,
+    ) -> bool {
+        if !symbol.has_any_flags(symbol_flags::INTERFACE) {
+            return false;
+        }
+
+        symbol.declarations.iter().any(|&decl_idx| {
+            if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                && arenas.iter().any(|arena| {
+                    Self::direct_actual_lib_interface_declares_protocol_method(
+                        arena.as_ref(),
+                        decl_idx,
+                    )
+                })
+            {
+                return true;
+            }
+
+            Self::direct_actual_lib_interface_declares_protocol_method(delegate_arena, decl_idx)
+        }) || self.actual_lib_context_declares_protocol_method(symbol.escaped_name.as_str())
+    }
+
+    fn actual_lib_context_declares_protocol_method(&self, name: &str) -> bool {
+        self.ctx
+            .lib_contexts
+            .iter()
+            .take(self.ctx.actual_lib_file_count)
+            .any(|lib_ctx| {
+                let Some(sym_id) = lib_ctx.binder.file_locals.get(name) else {
+                    return false;
+                };
+                let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) else {
+                    return false;
+                };
+                if !symbol.has_any_flags(symbol_flags::INTERFACE) {
+                    return false;
+                }
+
+                symbol.declarations.iter().any(|&decl_idx| {
+                    lib_ctx
+                        .binder
+                        .declaration_arenas
+                        .get(&(sym_id, decl_idx))
+                        .is_some_and(|arenas| {
+                            arenas.iter().any(|arena| {
+                                Self::direct_actual_lib_interface_declares_protocol_method(
+                                    arena.as_ref(),
+                                    decl_idx,
+                                )
+                            })
+                        })
+                        || Self::direct_actual_lib_interface_declares_protocol_method(
+                            lib_ctx.arena.as_ref(),
+                            decl_idx,
+                        )
+                })
+            })
+    }
+
+    fn direct_actual_lib_interface_declares_protocol_method(
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        if !is_direct_actual_lib_declaration_arena(arena) {
+            return false;
+        }
+        let Some(interface) = arena
+            .get(decl_idx)
+            .and_then(|node| arena.get_interface(node))
+        else {
+            return false;
+        };
+
+        interface.members.nodes.iter().copied().any(|member_idx| {
+            let Some(member_node) = arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::METHOD_SIGNATURE {
+                return false;
+            }
+            let Some(signature) = arena.get_signature(member_node) else {
+                return false;
+            };
+            arena
+                .get_identifier_text(signature.name)
+                .is_some_and(|name| matches!(name, "next" | "then"))
         })
     }
 
@@ -460,6 +545,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        let delegate_arena = delegate_arena?;
         let symbol = self.get_cross_file_symbol(sym_id)?.clone();
         let name = symbol.escaped_name.clone();
         let intl_namespace_export =
@@ -469,9 +555,11 @@ impl<'a> CheckerState<'a> {
         }
         let proven_value_interface =
             self.symbol_is_proven_direct_actual_lib_value_interface(sym_id, &symbol, &name);
+        let protocol_method_interface =
+            self.symbol_declares_direct_actual_lib_protocol_method(sym_id, &symbol, delegate_arena);
         if symbol.has_any_flags(symbol_flags::VALUE)
             && !proven_value_interface
-            && !allow_actual_lib_declaration_proof_bypass(&name)
+            && !protocol_method_interface
         {
             if intl_namespace_export {
                 record_direct_actual_lib_intl_interface_outcome(
@@ -489,7 +577,7 @@ impl<'a> CheckerState<'a> {
                 type_params: params,
                 def_id: _def_id,
                 outcome,
-            } = self.direct_actual_lib_type_alias_body(sym_id, &symbol, &name, delegate_arena?)?;
+            } = self.direct_actual_lib_type_alias_body(sym_id, &symbol, &name, delegate_arena)?;
             if outcome != DirectActualLibAliasBodyOutcome::Success {
                 return None;
             }
@@ -501,7 +589,7 @@ impl<'a> CheckerState<'a> {
         }
         if !proven_value_interface
             && !self.symbol_declarations_are_direct_actual_lib_only(sym_id, &symbol, &name)
-            && !allow_actual_lib_declaration_proof_bypass(&name)
+            && !protocol_method_interface
         {
             if intl_namespace_export {
                 record_direct_actual_lib_intl_interface_outcome(
@@ -513,14 +601,14 @@ impl<'a> CheckerState<'a> {
         let mut intl_success_outcome = None;
         let has_interface_type_params =
             self.symbol_has_direct_actual_lib_interface_type_parameters(sym_id, &symbol);
-        if has_interface_type_params && !allow_generic_actual_lib_direct_fallback(&name) {
+        if has_interface_type_params && !protocol_method_interface {
             return None;
         }
         let (direct_type, params) = if has_interface_type_params {
             let (direct_type, params) = self.resolve_lib_type_with_params(&name);
             if let Some(direct_type) = direct_type {
                 (direct_type, params)
-            } else if allow_generic_actual_lib_direct_fallback(&name) {
+            } else if protocol_method_interface {
                 let direct_type = self.resolve_lib_interface_type_by_symbol(&name, sym_id)?;
                 let params = self.get_type_params_for_symbol(sym_id);
                 (direct_type, params)

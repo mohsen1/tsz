@@ -1623,6 +1623,33 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let late_bound_members = self.collect_ts_late_bound_assignment_members(func.name);
 
+        if self.source_is_js_file {
+            let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(func_idx);
+            if self.emit_jsdoc_overload_function_signatures(
+                func_idx,
+                true,
+                self.should_emit_export_keyword(),
+                &jsdoc_overload_signatures,
+            ) {
+                if should_emit_late_bound_namespace {
+                    self.emit_ts_late_bound_function_namespace_from_members(
+                        func.name,
+                        true,
+                        &late_bound_members,
+                    );
+                }
+                self.emit_js_function_like_class_if_needed(
+                    func.name,
+                    &func.parameters,
+                    func.body,
+                    true,
+                    func_idx,
+                );
+                self.emit_js_namespace_export_aliases_for_name(func.name, true);
+                return;
+            }
+        }
+
         self.write_indent();
         if self.should_emit_export_keyword() {
             self.write("export ");

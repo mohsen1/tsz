@@ -1461,7 +1461,10 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    fn evaluate_type_for_assignability_inner(&mut self, type_id: TypeId) -> TypeId {
+    pub(super) fn evaluate_type_for_assignability_inner(&mut self, type_id: TypeId) -> TypeId {
+        if let Some(evaluated) = self.evaluate_lazy_alias_for_assignability(type_id) {
+            return evaluated;
+        }
         if let Some(distributed) = self.distribute_intersection_union_for_assignability(type_id) {
             return distributed;
         }
@@ -1524,6 +1527,13 @@ impl<'a> CheckerState<'a> {
             }
             AssignabilityEvalKind::Resolved => type_id,
         };
+
+        if evaluated != type_id && evaluated != TypeId::ERROR && evaluated != TypeId::ANY {
+            let further = self.evaluate_type_for_assignability(evaluated);
+            if further != TypeId::ERROR && further != TypeId::ANY {
+                evaluated = further;
+            }
+        }
 
         // Distribution pass: normalize compound types so mixed representations do not
         // leak into relation checks (for example, `Lazy(Class)` + resolved class object).
@@ -2241,9 +2251,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
             if s_elem == TypeId::ERROR
-                && self
-                    .format_type_diagnostic(t_elem)
-                    .starts_with("Static<typeof ")
+                && self.static_schema_application_schema_type(t_elem).is_some()
             {
                 return false;
             }
@@ -2425,7 +2433,7 @@ impl<'a> CheckerState<'a> {
         if self.type_alias_args_are_unwitnessed(def_id, source_args.len()) {
             return false;
         }
-        if self.format_type_diagnostic(source_base) == "Static" {
+        if self.type_alias_projects_static_member(source_base) {
             return true;
         }
         let variances = tsz_solver::relations::variance::compute_type_param_variances_with_resolver(

@@ -4207,9 +4207,10 @@ fn test_checker_file_size_ceiling() {
     // (#1869); 3095→3105 for the globalThis property/element access TS7017/
     // TS7053 emission fix and intersection-annotation TS2339 receiver display;
     // 3105→3130 for contextual implicit-any deferral and class recovery guards;
-    // 3130→3145 for generic assertion predicate instantiation fix (issue #5790).
+    // 3130→3145 for generic assertion predicate instantiation fix (issue #5790);
+    // 3145→3148 for the Kysely alias-identity included-alias assignability path.
     // Track a future split as a follow-up.
-    const MAX_LOC_CEILING: usize = 3145;
+    const MAX_LOC_CEILING: usize = 3148;
     assert!(
         max_lines <= MAX_LOC_CEILING,
         "Largest checker source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \

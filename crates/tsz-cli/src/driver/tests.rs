@@ -2119,3 +2119,172 @@ export default validate;
         "exporter.d.ts should be emitted for default export merges"
     );
 }
+
+/// Regression: `export { } from "./missing"` (and the type-only variant)
+/// must not emit TS2307. The export clause binds nothing from the module,
+/// so tsc skips module resolution entirely. The rule is structural: a
+/// present `NAMED_EXPORTS` clause with zero specifiers is the empty-clause
+/// shape, regardless of the `type` modifier or the chosen module specifier
+/// text. See issue #6688.
+#[test]
+fn test_empty_named_export_from_missing_module_does_not_emit_ts2307() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("file.ts"),
+        r#"export type { } from "./does-not-exist-a";
+export { } from "./does-not-exist-b";
+export {};
+"#,
+    )
+    .expect("write file");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        dir.path().join("file.ts").to_string_lossy().as_ref(),
+    ])
+    .expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    let ts2307: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        })
+        .collect();
+    assert!(
+        ts2307.is_empty(),
+        "Did not expect TS2307 for empty `export {{ }} from \"...\"` or `export type {{ }} from \"...\"`. Got: {ts2307:?}"
+    );
+}
+
+/// Adjacent shape: a non-empty `export type { X } from "./missing"` MUST
+/// still emit TS2307 because the clause references a member of the module.
+/// This guards against the empty-clause gate over-suppressing real
+/// resolution errors. Two different specifier names exercise that the
+/// fix is not keyed off any user-chosen identifier.
+#[test]
+fn test_nonempty_named_export_from_missing_module_still_emits_ts2307() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("file.ts"),
+        r#"export type { Foo } from "./does-not-exist-a";
+export { bar } from "./does-not-exist-b";
+"#,
+    )
+    .expect("write file");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        dir.path().join("file.ts").to_string_lossy().as_ref(),
+    ])
+    .expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    let ts2307_count = result
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        })
+        .count();
+    assert_eq!(
+        ts2307_count, 2,
+        "Expected two TS2307 diagnostics for non-empty re-exports from missing modules, got: {:?}",
+        result.diagnostics
+    );
+}
+
+/// Adjacent shape: `import type { } from "./missing"` and the non-type
+/// variant `import { } from "./missing"` still resolve the module per tsc.
+/// The empty-clause gate is intentionally export-side only.
+#[test]
+fn test_empty_named_import_from_missing_module_still_emits_ts2307() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("file_type.ts"),
+        r#"import type { } from "./does-not-exist-c";
+export {};
+"#,
+    )
+    .expect("write file_type");
+    fs::write(
+        dir.path().join("file_value.ts"),
+        r#"import { } from "./does-not-exist-d";
+export {};
+"#,
+    )
+    .expect("write file_value");
+
+    for fname in ["file_type.ts", "file_value.ts"] {
+        let args = CliArgs::try_parse_from([
+            "tsz",
+            "--noEmit",
+            "--pretty",
+            "false",
+            dir.path().join(fname).to_string_lossy().as_ref(),
+        ])
+        .expect("parse args");
+        let result = compile(&args, dir.path()).expect("compile succeeds");
+        let ts2307_count = result
+            .diagnostics
+            .iter()
+            .filter(|diag| {
+                diag.code
+                    == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+            })
+            .count();
+        assert_eq!(
+            ts2307_count, 1,
+            "Expected TS2307 for empty named import from missing module ({fname}); the export-side gate must not affect imports. Got: {:?}",
+            result.diagnostics
+        );
+    }
+}
+
+/// Adjacent shape: `export * from "./missing"` (and the namespace and
+/// type-only star variants) still emit TS2307. These have no
+/// `NAMED_EXPORTS` clause — the export-clause is absent (`export *`) or
+/// is a `NAMESPACE_EXPORT` node (`export * as ns`) — so the empty-clause
+/// gate does not apply and the normal resolution path runs.
+#[test]
+fn test_wildcard_export_from_missing_module_still_emits_ts2307() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("file.ts"),
+        r#"export * from "./does-not-exist-e";
+export * as ns from "./does-not-exist-f";
+export type * from "./does-not-exist-g";
+"#,
+    )
+    .expect("write file");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--noEmit",
+        "--pretty",
+        "false",
+        dir.path().join("file.ts").to_string_lossy().as_ref(),
+    ])
+    .expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    let ts2307_count = result
+        .diagnostics
+        .iter()
+        .filter(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+        })
+        .count();
+    assert_eq!(
+        ts2307_count, 3,
+        "Expected three TS2307 diagnostics for wildcard/namespace/type-only star re-exports from missing modules, got: {:?}",
+        result.diagnostics
+    );
+}

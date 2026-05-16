@@ -1873,7 +1873,6 @@ export const timestamp = now();
 }
 
 #[test]
-#[ignore] // TODO: declaration emit should report TS7056 for private import type alias
 fn declaration_emit_reports_ts7056_for_private_import_type_alias() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
@@ -4116,6 +4115,60 @@ fn compile_no_check_no_emit_is_parse_only() {
 }
 
 #[test]
+fn compile_skip_lib_check_no_emit_declaration_project_is_parse_only() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "skipLibCheck": true,
+            "types": [],
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["index.d.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.d.ts"),
+        r#"
+import type {MissingImport} from "missing-package";
+export type UsesMissing = MissingImport | MissingName;
+export interface Broken {
+    value: ;
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.iter().any(|code| *code < 2000),
+        "expected parse diagnostics to survive skipLibCheck, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2307),
+        "expected skipLibCheck declaration project to suppress missing imports, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2304),
+        "expected skipLibCheck declaration project to suppress semantic missing-name errors, got: {:?}",
+        result.diagnostics
+    );
+    assert_eq!(
+        result.files_read.len(),
+        1,
+        "non-listFiles pure declaration no-emit path should avoid default-lib reads"
+    );
+}
+
+#[test]
 fn compile_higher_order_compose_reports_callback_property_error() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -6190,7 +6243,6 @@ const bad: B[] = Array.from(inputA.values());
 }
 
 #[test]
-#[ignore] // TODO: Promise should be assignable to PromiseLike with default libs
 fn merged_program_promise_is_assignable_to_promise_like_with_default_libs() {
     let files = vec![(
         "main.ts".to_string(),
@@ -8683,7 +8735,6 @@ fn compile_rejects_root_slash_package_import_specifier_under_node16() {
 }
 
 #[test]
-#[ignore = "module resolution for node-next/nodenext not yet complete"]
 fn compile_resolves_package_imports_prefers_types_condition() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -8693,6 +8744,7 @@ fn compile_resolves_package_imports_prefers_types_condition() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "module": "node16",
             "moduleResolution": "node16",
             "noEmitOnError": true
           },
@@ -9060,7 +9112,6 @@ export const value = new Namespace.Foo();
 }
 
 #[test]
-#[ignore = "module resolution for node-next/nodenext not yet complete"]
 fn compile_node_next_resolves_js_extension_to_ts() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -9070,6 +9121,7 @@ fn compile_node_next_resolves_js_extension_to_ts() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "module": "nodenext",
             "moduleResolution": "nodenext",
             "noEmitOnError": true
           },
@@ -9096,7 +9148,6 @@ fn compile_node_next_resolves_js_extension_to_ts() {
 }
 
 #[test]
-#[ignore = "module resolution for node-next/nodenext not yet complete"]
 fn compile_node_next_prefers_mts_for_module_package() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -9106,6 +9157,7 @@ fn compile_node_next_prefers_mts_for_module_package() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "module": "nodenext",
             "moduleResolution": "nodenext",
             "noEmitOnError": true
           },
@@ -9134,18 +9186,16 @@ fn compile_node_next_prefers_mts_for_module_package() {
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    assert!(!result.diagnostics.is_empty());
     assert!(
-        result
-            .diagnostics
-            .iter()
-            .any(|diag| diag.file.contains("node_modules/pkg/index.mts"))
+        result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "Expected TS2307 because NodeNext package fallback does not resolve index.mts source files, got diagnostics: {:?}",
+        result.diagnostics
     );
     assert!(!base.join("dist/src/index.js").is_file());
 }
 
 #[test]
-#[ignore = "module resolution for node-next/nodenext not yet complete"]
 fn compile_node_next_prefers_cts_for_commonjs_package() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -9155,6 +9205,7 @@ fn compile_node_next_prefers_cts_for_commonjs_package() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
+            "module": "nodenext",
             "moduleResolution": "nodenext",
             "noEmitOnError": true
           },
@@ -9183,12 +9234,11 @@ fn compile_node_next_prefers_cts_for_commonjs_package() {
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    assert!(!result.diagnostics.is_empty());
     assert!(
-        result
-            .diagnostics
-            .iter()
-            .any(|diag| diag.file.contains("node_modules/pkg/index.cts"))
+        result.diagnostics.iter().any(|diag| diag.code
+            == diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "Expected TS2307 because NodeNext package fallback does not resolve index.cts source files, got diagnostics: {:?}",
+        result.diagnostics
     );
     assert!(!base.join("dist/src/index.js").is_file());
 }
@@ -12830,7 +12880,6 @@ export function wrap<T>(value: T, count: number = 1): T[] {
 }
 
 #[test]
-#[ignore] // TODO: generic utility library classes should compile without errors
 fn compile_generic_utility_library_classes() {
     // Test generic utility classes
     let temp = TempDir::new().expect("temp dir");
