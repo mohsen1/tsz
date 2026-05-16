@@ -1314,9 +1314,6 @@ impl<'a> Completions<'a> {
     ) {
         let members = apparent_primitive_members(interner, kind);
         for member in members {
-            if !apparent_primitive_member_is_completion_eligible(kind, member.name) {
-                continue;
-            }
             let type_id = match member.kind {
                 ApparentMemberKind::Value(type_id) | ApparentMemberKind::Method(type_id) => type_id,
             };

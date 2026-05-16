@@ -15,8 +15,7 @@ pub mod index_signatures;
 mod literal;
 
 pub use apparent::{
-    ApparentMemberKind, apparent_object_member_kind,
-    apparent_primitive_member_is_completion_eligible, apparent_primitive_member_kind,
+    ApparentMemberKind, apparent_object_member_kind, apparent_primitive_member_kind,
     apparent_primitive_members, apparent_primitive_shape,
 };
 pub use collect::*;
