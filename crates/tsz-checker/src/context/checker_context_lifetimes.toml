@@ -134,7 +134,7 @@ closures_with_contextual_this_type = { lifetime = "FileLocalReset", reason = "ch
 checking_classes = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 checked_classes = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 type_parameter_scope = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
-type_reference_arg_validation_cache = { lifetime = "FileLocalReset", reason = "checker-local type-reference validation memo tied to active file node ids and lexical type-parameter scope" }
+type_reference_validation_caches = { lifetime = "FileLocalReset", reason = "checker-local type-reference validation/instantiation memos tied to active file node ids and lexical type-parameter scope" }
 in_conditional_extends_depth = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 typeof_param_scope = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 type_param_constraint_excluded_params = { lifetime = "FileLocalReset", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
