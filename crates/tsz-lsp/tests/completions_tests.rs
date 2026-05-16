@@ -3715,3 +3715,174 @@ fn test_completions_suppressed_after_numeric_dot_with_jsdoc_trivia() {
         "Completions must be suppressed after `0.<jsdoc>` since the prior token is numeric, got: {items:?}"
     );
 }
+
+// ── Primitive type completion filtering ─────────────────────────────────────
+//
+// Structural rule: member completions for primitive types (string, number,
+// boolean, bigint, symbol) must expose only members declared in the type's
+// own TypeScript interface at ES2015 baseline.  Object.prototype members
+// (constructor, hasOwnProperty, isPrototypeOf, propertyIsEnumerable) and
+// post-ES2015 string methods (padStart/padEnd, matchAll, replaceAll, …)
+// must not appear in the no-lib fallback.
+
+fn primitive_member_names(source: &str) -> Vec<String> {
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let interner = TypeInterner::new();
+    let completions = Completions::new_with_types(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let position = line_map.offset_to_position(source.len() as u32, source);
+    let mut cache = None;
+    completions
+        .get_completions_with_cache(root, position, &mut cache)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| i.label)
+        .collect()
+}
+
+#[test]
+fn test_completions_string_excludes_object_prototype_members() {
+    // Object.prototype members (hasOwnProperty, isPrototypeOf, propertyIsEnumerable)
+    // must not appear on string — they are not in TypeScript's String interface.
+    // Covers issues for all three identifier spellings to prove the fix is
+    // structural, not a single-name patch.
+    for source in [
+        "const s: string = \"abc\";\ns.",
+        "const t = \"hello\";\nt.",
+        "const u: string = \"x\";\nu.",
+    ] {
+        let names = primitive_member_names(source);
+        for excluded in [
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+            "constructor",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "String completions must not include Object.prototype member '{excluded}'; got: {names:?}"
+            );
+        }
+        for expected in [
+            "length", "charAt", "indexOf", "slice", "toString", "valueOf",
+        ] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "String completions must include own-interface member '{expected}'; got: {names:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_completions_string_excludes_post_es2015_members() {
+    // Post-ES2015 string methods must not appear in the no-lib fallback because
+    // they require an explicit lib target (ES2017+ for padStart/padEnd, ES2020
+    // for matchAll, ES2021 for replaceAll, non-standard trimLeft/trimRight).
+    let names = primitive_member_names("const s: string = \"x\";\ns.");
+    for excluded in [
+        "padStart",
+        "padEnd",
+        "matchAll",
+        "replaceAll",
+        "trimStart",
+        "trimEnd",
+        "trimLeft",
+        "trimRight",
+        "isWellFormed",
+        "toWellFormed",
+        "at",
+    ] {
+        assert!(
+            !names.contains(&excluded.to_string()),
+            "String completions must not include post-ES2015 member '{excluded}' in no-lib fallback; got: {names:?}"
+        );
+    }
+    // ES2015 members (includes, startsWith, endsWith, repeat, normalize,
+    // codePointAt) must still appear — they are part of the ES2015 baseline.
+    for expected in [
+        "includes",
+        "startsWith",
+        "endsWith",
+        "repeat",
+        "codePointAt",
+    ] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "String completions must include ES2015 member '{expected}'; got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_number_excludes_object_prototype_members() {
+    // Number's interface (toFixed, toExponential, toPrecision, toString,
+    // toLocaleString, valueOf) must appear, but Object.prototype members must not.
+    // Two different variable names to prove the fix is structural.
+    for source in ["const n: number = 42;\nn.", "const x: number = 0;\nx."] {
+        let names = primitive_member_names(source);
+        for excluded in [
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "Number completions must not include Object.prototype member '{excluded}'; got: {names:?}"
+            );
+        }
+        for expected in [
+            "toFixed",
+            "toExponential",
+            "toPrecision",
+            "toString",
+            "valueOf",
+        ] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "Number completions must include own-interface member '{expected}'; got: {names:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_completions_boolean_exposes_only_valueof() {
+    // TypeScript's Boolean interface declares only `valueOf(): boolean`.
+    // toString and toLocaleString are Object.prototype contributions that must
+    // not appear.  Test with two different variable names.
+    for source in [
+        "const b: boolean = true;\nb.",
+        "const flag: boolean = false;\nflag.",
+    ] {
+        let names = primitive_member_names(source);
+        for excluded in [
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+            "toLocaleString",
+            "toString",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "Boolean completions must not include '{excluded}'; got: {names:?}"
+            );
+        }
+        assert!(
+            names.contains(&"valueOf".to_string()),
+            "Boolean completions must include 'valueOf'; got: {names:?}"
+        );
+    }
+}
