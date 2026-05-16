@@ -3,7 +3,7 @@
 use crate::context::CheckerContext;
 use std::sync::Arc;
 use tsz_binder::{BinderState, SymbolId};
-use tsz_solver::{DefId, TypeId, TypeParamInfo};
+use tsz_solver::{TypeId, TypeParamInfo};
 
 pub(crate) fn selected_lib_symbol_for_name(
     ctx: &CheckerContext<'_>,
@@ -56,7 +56,7 @@ pub(crate) fn register_selected_lib_def_resolved(
     selected_from_lib_context: bool,
     ty: TypeId,
     params: Vec<TypeParamInfo>,
-) -> DefId {
+) -> tsz_solver::def::DefId {
     if !selected_from_lib_context {
         return ctx.register_lib_def_resolved(sym_id, ty, params);
     }
