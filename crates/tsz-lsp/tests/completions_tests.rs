@@ -4332,44 +4332,175 @@ fn test_completions_array_prototype_methods_on_readonly_tuple_different_names() 
     );
 }
 
-fn assert_primitive_completions(source: &str, expected_members: &[&str]) {
-    let names = member_names_at_end(source);
-    assert!(
-        !names.iter().any(|n| n == "constructor"),
-        "'constructor' must not appear in completions for `{source}`, got: {names:?}"
-    );
-    for expected in expected_members {
+// ── Primitive completion filtering ───────────────────────────────────────────
+
+/// Members that must never appear in primitive completions because they are
+/// only inherited from `Object.prototype`. Verifying multiple variable names
+/// proves the filter is structural and not keyed on identifier text.
+const OBJECT_PROTOTYPE_ONLY: &[&str] = &[
+    "constructor",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+];
+
+/// Post-ES2015 string methods that must not appear in the no-lib fallback
+/// because the apparent fallback's baseline is ES2015 and tsc does not list
+/// these in completions when no later lib is loaded.
+const STRING_POST_ES2015_NAMES: &[&str] = &[
+    "padStart",
+    "padEnd",
+    "trimStart",
+    "trimEnd",
+    "trimLeft",
+    "trimRight",
+    "matchAll",
+    "replaceAll",
+    "at",
+    "isWellFormed",
+    "toWellFormed",
+];
+
+fn assert_absent(label: &str, names: &[String], forbidden: &[&str]) {
+    for name in forbidden {
         assert!(
-            names.iter().any(|n| n == *expected),
-            "Expected '{expected}' in completions for `{source}`, got: {names:?}"
+            !names.iter().any(|n| n == name),
+            "{label}: completion '{name}' should not appear, got: {names:?}"
+        );
+    }
+}
+
+fn assert_present(label: &str, names: &[String], required: &[&str]) {
+    for name in required {
+        assert!(
+            names.iter().any(|n| n == name),
+            "{label}: expected completion '{name}' to appear, got: {names:?}"
         );
     }
 }
 
 #[test]
-fn test_completions_boolean_excludes_constructor() {
-    for source in ["const b = true;\nb.", "const b: boolean = false;\nb."] {
-        assert_primitive_completions(source, &["toString", "valueOf"]);
+fn test_completions_string_excludes_object_prototype_only() {
+    // Use two different variable names to prove the filter is structural and
+    // not driven by identifier spelling.
+    for source in [
+        "const s: string = \"\";\ns.",
+        "const value: string = \"abc\";\nvalue.",
+    ] {
+        let names = member_names_at_end(source);
+        assert_absent(source, &names, OBJECT_PROTOTYPE_ONLY);
+        // String's `toLocaleString` is inherited from Object.prototype; lib.es5
+        // does not redeclare it on the `String` interface.
+        assert_absent(source, &names, &["toLocaleString"]);
     }
 }
 
 #[test]
-fn test_completions_number_excludes_constructor() {
-    assert_primitive_completions("const n = 42;\nn.", &["toString", "toFixed"]);
+fn test_completions_string_excludes_post_es2015_methods() {
+    for source in [
+        "const s: string = \"\";\ns.",
+        "const literal = \"hello\";\nliteral.",
+    ] {
+        let names = member_names_at_end(source);
+        assert_absent(source, &names, STRING_POST_ES2015_NAMES);
+    }
 }
 
 #[test]
-fn test_completions_string_excludes_constructor() {
-    assert_primitive_completions(
-        "const s: string = \"abc\";\ns.",
-        &["length", "charAt", "slice", "indexOf"],
+fn test_completions_string_retains_es5_baseline() {
+    let names = member_names_at_end("const s: string = \"\";\ns.");
+    assert_present(
+        "string",
+        &names,
+        &[
+            "length",
+            "charAt",
+            "charCodeAt",
+            "concat",
+            "indexOf",
+            "lastIndexOf",
+            "match",
+            "replace",
+            "search",
+            "slice",
+            "split",
+            "substring",
+            "toLowerCase",
+            "toUpperCase",
+            "trim",
+            "toString",
+            "valueOf",
+        ],
     );
 }
 
 #[test]
-fn test_completions_symbol_excludes_constructor() {
-    assert_primitive_completions(
-        "const sym: symbol = Symbol();\nsym.",
-        &["toString", "valueOf"],
+fn test_completions_number_excludes_object_prototype_only() {
+    for source in [
+        "const n: number = 0;\nn.",
+        "const count: number = 42;\ncount.",
+    ] {
+        let names = member_names_at_end(source);
+        assert_absent(source, &names, OBJECT_PROTOTYPE_ONLY);
+    }
+}
+
+#[test]
+fn test_completions_number_retains_own_interface_members() {
+    let names = member_names_at_end("const n: number = 0;\nn.");
+    // Number's lib.es5 interface redeclares `toLocaleString` and `toString`,
+    // so they must remain. `valueOf`, `toFixed`, etc. are also owned.
+    assert_present(
+        "number",
+        &names,
+        &[
+            "toString",
+            "toLocaleString",
+            "toFixed",
+            "toExponential",
+            "toPrecision",
+            "valueOf",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_boolean_excludes_object_prototype_only() {
+    for source in [
+        "const b: boolean = true;\nb.",
+        "const flag: boolean = false;\nflag.",
+    ] {
+        let names = member_names_at_end(source);
+        assert_absent(source, &names, OBJECT_PROTOTYPE_ONLY);
+        // The lib.es5 `Boolean` interface declares only `valueOf`; `toString`
+        // and `toLocaleString` reach booleans through `Object.prototype`.
+        assert_absent(source, &names, &["toString", "toLocaleString"]);
+    }
+}
+
+#[test]
+fn test_completions_boolean_retains_own_interface_members() {
+    let names = member_names_at_end("const b: boolean = true;\nb.");
+    assert_present("boolean", &names, &["valueOf"]);
+}
+
+#[test]
+fn test_completions_object_intrinsic_keeps_object_prototype_members() {
+    // The `object` (non-primitive) type's apparent members are exactly the
+    // `Object.prototype` set. The primitive-completion filter must not strip
+    // them, or `o.` becomes nearly empty.
+    let names = member_names_at_end("const o: object = {};\no.");
+    assert_present(
+        "object",
+        &names,
+        &[
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+            "toLocaleString",
+            "toString",
+            "valueOf",
+        ],
     );
 }
