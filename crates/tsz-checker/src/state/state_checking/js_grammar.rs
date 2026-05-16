@@ -89,7 +89,7 @@ impl<'a> CheckerState<'a> {
             }
 
             syntax_kind_ext::MODULE_DECLARATION => {
-                let keyword = self.get_module_keyword(stmt_idx, node);
+                let keyword = self.get_module_keyword(node);
                 let error_node = self.ctx.arena.get_module(node).map_or(stmt_idx, |m| m.name);
                 self.error_ts_only_declaration(keyword, error_node);
             }
@@ -489,11 +489,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Helper: Determine if a module declaration uses 'module' or 'namespace' keyword.
-    fn get_module_keyword(
-        &self,
-        node_idx: NodeIndex,
-        node: &tsz_parser::parser::node::Node,
-    ) -> &'static str {
+    fn get_module_keyword(&self, node: &tsz_parser::parser::node::Node) -> &'static str {
         let Some(module) = self.ctx.arena.get_module(node) else {
             return "module";
         };
@@ -507,9 +503,7 @@ impl<'a> CheckerState<'a> {
             return "module";
         }
 
-        // Check source text for module vs namespace keyword
-        let node_text = self.node_text(node_idx).unwrap_or_default();
-        if node_text.starts_with("namespace") || node_text.contains("namespace ") {
+        if node.has_namespace_flag() {
             "namespace"
         } else {
             "module"

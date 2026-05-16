@@ -165,6 +165,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
+            // Parenthesized type: recurse through `check` so the inner node
+            // dispatches to its dedicated handler (e.g. TYPE_QUERY's
+            // typeof-import resolution). Falling through to `lower_type` would
+            // strip the parens but then call lowering directly on the inner
+            // node, bypassing checker-specific handling and returning ERROR
+            // for typeof-import expressions.
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
+                if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+                    self.check(wrapped.type_node)
+                } else {
+                    TypeId::ERROR
+                }
+            }
+
             // Fall back to TypeLowering for type nodes not handled above
             // (conditional types, indexed access types, etc.)
             _ => self.lower_with_resolvers(idx, true, true),
