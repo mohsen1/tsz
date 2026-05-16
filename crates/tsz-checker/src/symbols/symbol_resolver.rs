@@ -1632,13 +1632,7 @@ impl<'a> CheckerState<'a> {
                     matches!(ident.escaped_text.as_str(), "Array" | "ReadonlyArray")
                         && self
                             .ctx
-                            .binder
-                            .file_locals
-                            .get(ident.escaped_text.as_str())
-                            .is_some_and(|sym_id| {
-                                !self.ctx.symbol_is_from_actual_lib(sym_id)
-                                    && self.symbol_has_declared_type_meaning(sym_id)
-                            });
+                            .file_local_type_shadow_for_lib_name(ident.escaped_text.as_str());
                 if !shadows_compiler_managed_type {
                     return None;
                 }
@@ -1844,6 +1838,14 @@ impl<'a> CheckerState<'a> {
                 if let Some(node) = self.ctx.arena.get(node_idx)
                     && let Some(ident) = self.ctx.arena.get_identifier(node)
                 {
+                    if !self
+                        .ctx
+                        .file_local_type_shadow_for_lib_name(&ident.escaped_text)
+                        && let Some(def_id) =
+                            self.resolve_actual_lib_name_to_def_id_for_lowering(&ident.escaped_text)
+                    {
+                        return def_id;
+                    }
                     let expected_name = if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
                         symbol.escaped_name.clone()
                     } else {

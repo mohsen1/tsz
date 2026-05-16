@@ -91,6 +91,35 @@ fn test_lowering_pass_es2022_accessor_class_skips_private_field_helpers() {
 }
 
 #[test]
+fn test_lowering_pass_es2015_param_class_temp_uses_body_prologue() {
+    let source = "function foo(y = class { static c = x; get [x]() { return x; } }, x = 1) {}";
+    let (arena, root) = parse(source);
+    let mut ctx = EmitContext::default();
+    ctx.set_target(ScriptTarget::ES2015);
+
+    let lowering = LoweringPass::new(&arena, &ctx);
+    let transforms = lowering.run(root);
+
+    let root_node = arena.get(root).expect("expected source file node");
+    let source_file = arena
+        .get_source_file(root_node)
+        .expect("expected source file data");
+    let function_idx = *source_file
+        .statements
+        .nodes
+        .first()
+        .expect("expected function declaration");
+
+    assert!(
+        matches!(
+            transforms.get(function_idx),
+            Some(TransformDirective::ES5FunctionParameters { .. })
+        ),
+        "ES2015 parameter initializers that need function-scoped class temps should use a body prologue"
+    );
+}
+
+#[test]
 fn test_lowering_pass_commonjs_export() {
     let (arena, root) = parse("export class Foo {}");
     let mut ctx = EmitContext::default();

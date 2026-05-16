@@ -74,11 +74,8 @@ impl<'a> Printer<'a> {
             .as_deref()
             .map(std::sync::Arc::<str>::from);
 
-        let has_super_capture =
-            !super_capture.property_names.is_empty() || super_capture.needs_element_index;
-        let emit_single_line_body = (body_is_empty_single_line || body_is_single_line)
-            && !body_has_comment
-            && !has_super_capture;
+        let emit_single_line_body =
+            (body_is_empty_single_line || body_is_single_line) && !body_has_comment;
 
         self.write(" {");
         if self.ctx.target_es5 {

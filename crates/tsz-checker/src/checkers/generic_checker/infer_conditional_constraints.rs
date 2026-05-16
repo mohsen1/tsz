@@ -199,6 +199,204 @@ impl<'a> CheckerState<'a> {
         self.infer_type_appears_as_tuple_rest(cond_extends, cond_true)
     }
 
+    pub(crate) fn array_element_infer_alias_satisfies_constraint(
+        &mut self,
+        type_arg: TypeId,
+        inst_constraint: TypeId,
+    ) -> bool {
+        let Some(candidates) = self.instantiated_alias_body_candidates(type_arg) else {
+            return false;
+        };
+
+        candidates.into_iter().any(|candidate| {
+            self.is_assignable_to_no_weak_checks(candidate, inst_constraint)
+                || self.base_union_members_satisfy_constraint(candidate, inst_constraint)
+                || self.conditional_array_element_infer_satisfies_constraint(
+                    candidate,
+                    inst_constraint,
+                )
+        })
+    }
+
+    fn instantiated_alias_body_candidates(&mut self, type_arg: TypeId) -> Option<Vec<TypeId>> {
+        let db = self.ctx.types.as_type_database();
+        let (base, args) = query::application_base_and_args(db, type_arg)?;
+        let def_id = query::lazy_def_id(db, base)?;
+
+        let direct_alias = self.direct_source_alias_body_for_def(def_id);
+        let (body, params) = if let Some((body, params)) = direct_alias {
+            (body, params)
+        } else {
+            let body = self
+                .ctx
+                .type_env
+                .try_borrow()
+                .ok()
+                .and_then(|env| env.get_def(def_id))
+                .or_else(|| self.ctx.definition_store.get_body(def_id))?;
+            let params = self
+                .ctx
+                .get_def_type_params(def_id)
+                .or_else(|| self.infer_alias_type_params_from_body(body, args.len()))?;
+            (body, params)
+        };
+        if params.len() != args.len() {
+            return None;
+        }
+
+        let instantiated = crate::query_boundaries::common::instantiate_generic(
+            self.ctx.types,
+            body,
+            &params,
+            &args,
+        );
+
+        let mut candidates = Vec::with_capacity(5);
+        candidates.push(instantiated);
+        candidates.push(self.resolve_lazy_type(instantiated));
+        candidates.push(self.evaluate_type_with_env_uncached(instantiated));
+        candidates.push(self.evaluate_type_for_assignability(instantiated));
+        candidates.push(self.evaluate_type_for_assignability(type_arg));
+        candidates.sort_by_key(|ty| ty.0);
+        candidates.dedup();
+        Some(candidates)
+    }
+
+    fn direct_source_alias_body_for_def(
+        &mut self,
+        def_id: tsz_solver::def::DefId,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        if let Some(result) = self
+            .ctx
+            .def_to_symbol_id_with_fallback(def_id)
+            .and_then(|sym_id| self.direct_source_alias_body_for_symbol(sym_id))
+        {
+            return Some(result);
+        }
+
+        let name_atom = self.ctx.definition_store.get_name(def_id)?;
+        let name = self.ctx.types.resolve_atom_ref(name_atom);
+        let entries = self
+            .ctx
+            .global_file_locals_index
+            .as_ref()
+            .and_then(|idx| idx.get(name.as_ref()))?
+            .clone();
+        for (file_idx, sym_id) in entries {
+            let Some(binder) = self.ctx.get_binder_for_file(file_idx) else {
+                continue;
+            };
+            let Some(symbol) = binder.get_symbol(sym_id) else {
+                continue;
+            };
+            if symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS == 0
+                || symbol.escaped_name != name.as_ref()
+            {
+                continue;
+            }
+            if let Some(result) =
+                self.direct_source_file_type_alias_result(sym_id, Some(file_idx), true)
+            {
+                return Some(result);
+            }
+        }
+        None
+    }
+
+    fn direct_source_alias_body_for_symbol(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        let alias_target = {
+            let symbol = self.get_cross_file_symbol(sym_id)?;
+            if symbol.flags & tsz_binder::symbol_flags::ALIAS == 0 {
+                None
+            } else {
+                let module_name = symbol.import_module.clone()?;
+                let import_name = symbol.import_name.clone()?;
+                let source_file_idx = (symbol.decl_file_idx != u32::MAX)
+                    .then_some(symbol.decl_file_idx as usize)
+                    .or_else(|| self.ctx.resolve_symbol_file_index(sym_id));
+                Some((module_name, import_name, source_file_idx))
+            }
+        };
+        let target_sym_id = if let Some((module_name, import_name, source_file_idx)) = alias_target
+        {
+            self.resolve_cross_file_export_from_file(&module_name, &import_name, source_file_idx)?
+        } else {
+            sym_id
+        };
+        let file_idx = self.ctx.resolve_symbol_file_index(target_sym_id);
+        self.direct_source_file_type_alias_result(target_sym_id, file_idx, true)
+    }
+
+    fn infer_alias_type_params_from_body(
+        &self,
+        body: TypeId,
+        expected_len: usize,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        if expected_len != 1 {
+            return None;
+        }
+        let db = self.ctx.types.as_type_database();
+        let (check_type, _extends_type, _true_type, _false_type) =
+            query::full_conditional_type_components(db, body)?;
+        query::named_type_param_info(db, check_type).map(|info| vec![info])
+    }
+
+    fn conditional_array_element_infer_satisfies_constraint(
+        &mut self,
+        type_id: TypeId,
+        inst_constraint: TypeId,
+    ) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let Some((cond_check, cond_extends, cond_true, cond_false)) =
+            query::full_conditional_type_components(db, type_id)
+        else {
+            return false;
+        };
+        if cond_false != TypeId::NEVER || !query::is_infer_type(db, cond_true) {
+            return false;
+        }
+        if !self.array_like_pattern_extracts_infer(cond_extends, cond_true) {
+            return false;
+        }
+
+        let check_candidates = [
+            cond_check,
+            self.resolve_lazy_type(cond_check),
+            self.evaluate_type_with_env_uncached(cond_check),
+            self.evaluate_type_for_assignability(cond_check),
+        ];
+        let elements = check_candidates
+            .into_iter()
+            .filter_map(|candidate| self.array_like_element_type(candidate))
+            .collect::<Vec<_>>();
+        elements.into_iter().any(|element| {
+            self.is_assignable_to_no_weak_checks(element, inst_constraint)
+                || self.base_union_members_satisfy_constraint(element, inst_constraint)
+        })
+    }
+
+    fn array_like_pattern_extracts_infer(&mut self, pattern: TypeId, infer_type: TypeId) -> bool {
+        let pattern_candidates = [
+            pattern,
+            self.resolve_lazy_type(pattern),
+            self.evaluate_type_with_env_uncached(pattern),
+            self.evaluate_type_for_assignability(pattern),
+        ];
+        pattern_candidates
+            .into_iter()
+            .filter_map(|candidate| self.array_like_element_type(candidate))
+            .any(|element| element == infer_type)
+    }
+
+    fn array_like_element_type(&self, type_id: TypeId) -> Option<TypeId> {
+        let db = self.ctx.types.as_type_database();
+        query::array_element_type(db, type_id)
+            .or_else(|| query::number_index_value_type(db, type_id))
+    }
+
     pub(super) fn type_arg_evaluates_to_array_like_infer_result_conditional(
         &mut self,
         type_arg: TypeId,

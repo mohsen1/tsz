@@ -1000,13 +1000,90 @@ pub(super) fn collect_diagnostics(
         };
     }
 
+    // `skipLibCheck` skips semantic checking for declaration files, but the
+    // normal checker setup below still builds project-wide checker state before
+    // discovering that every work item is skipped. Utility-type packages such
+    // as type-fest are often pure `.d.ts` projects with `skipLibCheck`; for
+    // pure no-emit checks, parse/module diagnostics are the only remaining
+    // output. Return before constructing checker binders, `ProgramContext`, the
+    // shared `DefinitionStore`, and lib recheck baselines. Mixed projects stay
+    // on the normal path so `.ts` files can still consume declaration exports.
+    if options.no_emit
+        && options.skip_lib_check
+        && !options.emit_declarations
+        && program
+            .files
+            .iter()
+            .all(|file| is_declaration_file(&file.file_name))
+    {
+        use rayon::prelude::*;
+
+        let mut diagnostics: Vec<Diagnostic> = program
+            .files
+            .par_iter()
+            .map(|file| {
+                collect_no_check_file_diagnostics(file, options, program_has_real_syntax_errors)
+            })
+            .flatten()
+            .collect();
+
+        for (file_idx, file_diags) in per_file_ts7016_diagnostics.iter().enumerate() {
+            diagnostics.extend(file_diags.iter().cloned());
+            if let Some(file) = program.files.get(file_idx) {
+                used_paths.insert(PathBuf::from(&file.file_name));
+            }
+        }
+
+        if let Some(c) = cache {
+            c.type_caches.retain(|path, _| used_paths.contains(path));
+            c.diagnostics.retain(|path, _| used_paths.contains(path));
+            c.export_hashes.retain(|path, _| used_paths.contains(path));
+        }
+
+        diagnostics.extend(detect_missing_tslib_helper_diagnostics(
+            program,
+            options,
+            base_dir,
+            &file_is_esm_map,
+        ));
+
+        let module_dep_stats = if collect_compile_stats {
+            Some(compute_module_dependency_stats(
+                program.files.len(),
+                resolved_module_paths.as_ref(),
+            ))
+        } else {
+            None
+        };
+
+        return CollectDiagnosticsResult {
+            diagnostics,
+            request_cache_counters,
+            query_cache_stats: Some(tsz_solver::QueryCacheStatistics::default()),
+            def_store_stats: None,
+            module_dep_stats,
+        };
+    }
+
     // Pre-compute merged augmentations once for all binder reconstruction paths.
     let merged_augmentations = MergedAugmentations::from_program(program);
-    let affected_lib_interfaces = affected_lib_interface_names(program, checker_libs);
-    let affected_lib_extension_interfaces =
-        affected_lib_extension_interface_names(program, checker_libs, &affected_lib_interfaces);
-    let baseline_lib_datetimeformatpart_interfaces =
-        baseline_lib_datetimeformatpart_spelling_interface_names(checker_libs);
+    let can_recheck_checker_libs =
+        !options.no_check && !options.skip_lib_check && !checker_libs.files.is_empty();
+    let affected_lib_interfaces = if can_recheck_checker_libs {
+        affected_lib_interface_names(program, checker_libs)
+    } else {
+        FxHashSet::default()
+    };
+    let affected_lib_extension_interfaces = if can_recheck_checker_libs {
+        affected_lib_extension_interface_names(program, checker_libs, &affected_lib_interfaces)
+    } else {
+        FxHashSet::default()
+    };
+    let baseline_lib_datetimeformatpart_interfaces = if can_recheck_checker_libs {
+        baseline_lib_datetimeformatpart_spelling_interface_names(checker_libs)
+    } else {
+        FxHashSet::default()
+    };
 
     // Pre-create all binders for cross-file resolution.
     let all_binders: Arc<Vec<Arc<BinderState>>> = {
@@ -1313,8 +1390,7 @@ pub(super) fn collect_diagnostics(
     // module-only TS files (no `declare global`, no interface that augments
     // a lib type) this removes a fixed ~30-lib-file recheck tax that was
     // dominating the per-invocation floor (~380–430ms on tiny files).
-    let needs_lib_recheck = !options.no_check
-        && !checker_libs.files.is_empty()
+    let needs_lib_recheck = can_recheck_checker_libs
         && (!affected_lib_interfaces.is_empty() || !affected_lib_extension_interfaces.is_empty());
     let baseline_lib_diagnostics = if needs_lib_recheck {
         collect_checker_lib_baseline_fingerprints(
@@ -1328,7 +1404,7 @@ pub(super) fn collect_diagnostics(
     } else {
         FxHashSet::default()
     };
-    let baseline_lib_datetimeformatpart_diagnostics = if !options.no_check
+    let baseline_lib_datetimeformatpart_diagnostics = if can_recheck_checker_libs
         && !options.lib_is_default
         && !has_esnext_umbrella_lib(checker_libs)
         && should_preserve_datetimeformatpart_spelling_baseline(checker_libs)
@@ -4282,6 +4358,65 @@ export function freeze<T>(value: T): Readonly<T> {
     }
 
     #[test]
+    fn skip_lib_check_pure_declaration_no_emit_skips_semantic_diagnostics() {
+        let options = ResolvedCompilerOptions {
+            no_emit: true,
+            skip_lib_check: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[(
+                "index.d.ts",
+                r#"
+export type UsesMissing = Missing;
+export interface Broken {
+    value: ;
+}
+"#,
+            )],
+            &options,
+            std::path::Path::new("/"),
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code < 2000),
+            "parse diagnostics must still surface under skipLibCheck: {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2304),
+            "skipLibCheck must suppress declaration-file semantic diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn skip_lib_check_mixed_project_still_checks_source_files() {
+        let options = ResolvedCompilerOptions {
+            no_emit: true,
+            skip_lib_check: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                ("types.d.ts", "export type UsesMissing = Missing;\n"),
+                ("main.ts", "const value: string = 1;\n"),
+            ],
+            &options,
+            std::path::Path::new("/"),
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2322),
+            "non-declaration source files must still be checked under skipLibCheck: {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2304),
+            "declaration-file semantic diagnostics must remain suppressed: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn collect_diagnostics_preserves_builtin_lib_ts2552_spelling_baseline() {
         let checker_libs = checker_lib_set_for_test(&[
             (
@@ -4377,11 +4512,19 @@ declare namespace Intl {
     }
 
     fn collect_es2015_default_lib_diagnostics(source: &str) -> Vec<Diagnostic> {
+        collect_es2015_default_lib_diagnostics_with_options(source, |_: &mut _| {})
+    }
+
+    fn collect_es2015_default_lib_diagnostics_with_options(
+        source: &str,
+        configure: impl FnOnce(&mut ResolvedCompilerOptions),
+    ) -> Vec<Diagnostic> {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let file_path = dir.path().join("main.ts");
         std::fs::write(&file_path, source).expect("write source");
 
-        let resolved = resolved_options_for_es2015_strict_test();
+        let mut resolved = resolved_options_for_es2015_strict_test();
+        configure(&mut resolved);
         let file_paths = vec![file_path];
         let SourceReadResult {
             sources,
@@ -6477,7 +6620,6 @@ interface Buzz { id: number; buzz: string }
     }
 
     #[test]
-    #[ignore] // TODO: should report implicit any for primitive union property callback
     fn test_collect_diagnostics_reports_implicit_any_for_primitive_union_property_callback() {
         let dir = tempfile::TempDir::new().expect("temp dir");
         let file_path = dir.path().join("main.ts");
@@ -6719,6 +6861,52 @@ interface HTMLElement {
                     && diag.code == diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE
             }),
             "Did not expect default-lib TS2430 diagnostics from unrelated unresolved overload parameters, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn skip_lib_check_skips_default_lib_recheck_after_global_merge() {
+        let diagnostics = collect_es2015_default_lib_diagnostics_with_options(
+            r#"
+const enum SyntaxKind {
+    Modifier,
+    Decorator,
+}
+
+interface Node {
+    kind: SyntaxKind;
+}
+
+interface Modifier extends Node { kind: SyntaxKind.Modifier; }
+interface Decorator extends Node { kind: SyntaxKind.Decorator; }
+
+declare function isModifier(node: Node): node is Modifier;
+declare function isDecorator(node: Node): node is Decorator;
+
+declare function every<T, U extends T>(array: readonly T[], callback: (element: T) => element is U): array is readonly U[];
+
+declare const modifiers: readonly Decorator[] | readonly Modifier[];
+
+function foo() {
+    every(modifiers, isModifier);
+    every(modifiers, isDecorator);
+}
+"#,
+            |resolved| {
+                resolved.skip_lib_check = true;
+            },
+        );
+
+        assert!(
+            !diagnostics.iter().any(|diag| {
+                diag.file.ends_with("lib.dom.d.ts")
+                    && matches!(
+                        diag.code,
+                        diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT
+                            | diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE
+                    )
+            }),
+            "Did not expect lib.dom.d.ts TS2344/TS2430 diagnostics when skipLibCheck is enabled, got: {diagnostics:?}"
         );
     }
 

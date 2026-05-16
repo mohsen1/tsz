@@ -1577,6 +1577,106 @@ fn compile_inner(
         });
     }
 
+    // `skipLibCheck` suppresses semantic diagnostics for declaration files.
+    // For a pure no-emit declaration-file project, there is no source file that
+    // can consume lib or declaration symbols, and tsc also suppresses missing
+    // imports from the skipped `.d.ts` files. Avoid loading default libs and
+    // avoid binding the declaration files; parse diagnostics, config
+    // diagnostics, type-reference diagnostics, and binary-file diagnostics are
+    // still reported. Keep list/explain/diagnostics modes on the full path so
+    // their file lists and counts continue to include libs.
+    if resolved.no_emit
+        && resolved.skip_lib_check
+        && !resolved.emit_declarations
+        && !args.list_files
+        && !args.explain_files
+        && !args.diagnostics
+        && !args.extended_diagnostics
+        && sources
+            .iter()
+            .all(|source| is_declaration_file(&source.path))
+    {
+        let parse_start = Instant::now();
+        let compile_inputs: Vec<(String, String)> = sources
+            .into_iter()
+            .map(|source| {
+                let text = source.text.unwrap_or_default();
+                (source.path.to_string_lossy().into_owned(), text)
+            })
+            .collect();
+        let parse_results = parallel::parse_files_parallel(compile_inputs);
+        let parse_bind_duration = parse_start.elapsed();
+        perf_log_phase("parse_skip_lib_check_declarations", parse_start);
+
+        config_diagnostics.extend(collect_source_reference_lib_diagnostics(
+            &parse_results
+                .iter()
+                .map(|result| SourceEntry {
+                    path: PathBuf::from(&result.file_name),
+                    text: result
+                        .arena
+                        .get_source_file_at(result.source_file)
+                        .map(|source_file| source_file.text.as_ref().to_string()),
+                    is_binary: false,
+                    suppress_parser_diagnostics: false,
+                })
+                .collect::<Vec<_>>(),
+            resolved.checker.no_lib,
+        ));
+
+        let mut diagnostics = collect_parse_only_no_check_diagnostics(&parse_results, &resolved);
+
+        if !binary_file_names_to_suppress.is_empty() {
+            diagnostics.retain(|d| !binary_file_names_to_suppress.contains(&d.file));
+        }
+
+        if has_deprecation_diagnostics {
+            let has_grammar_errors = diagnostics
+                .iter()
+                .any(|d| is_grammar_error_for_deprecation_priority(d.code));
+
+            if has_grammar_errors {
+                remove_deprecation_diagnostics(&mut config_diagnostics);
+            } else {
+                diagnostics.retain(|d| {
+                    (d.code == 2318 && d.file.is_empty() && d.start == 0) || d.code == 2792
+                });
+            }
+        }
+
+        diagnostics.extend(config_diagnostics);
+        diagnostics.extend(binary_file_diagnostics);
+        diagnostics.extend(type_file_diagnostics);
+        diagnostics.sort_by(|left, right| {
+            left.file
+                .cmp(&right.file)
+                .then(left.start.cmp(&right.start))
+                .then(left.code.cmp(&right.code))
+        });
+
+        return Ok(CompilationResult {
+            diagnostics,
+            emitted_files: Vec::new(),
+            files_read: user_files_read,
+            file_infos,
+            no_emit: resolved.no_emit,
+            request_cache_counters: tsz::checker::context::RequestCacheCounters::default(),
+            interned_types_count: 0,
+            interner_estimated_bytes: 0,
+            query_cache_stats: None,
+            def_store_stats: None,
+            phase_timings: PhaseTimings {
+                io_read_ms: io_read_duration.as_secs_f64() * 1000.0,
+                parse_bind_ms: parse_bind_duration.as_secs_f64() * 1000.0,
+                total_ms: compile_start.elapsed().as_secs_f64() * 1000.0,
+                ..PhaseTimings::default()
+            },
+            residency_stats: None,
+            module_dep_stats: None,
+            invalidation_summaries: Vec::new(),
+        });
+    }
+
     let disable_default_libs = resolved.lib_is_default && sources_have_no_default_lib(&sources);
     // `@noTypesAndSymbols` source comments must not override the project's
     // resolved compiler options here either. The tsc `/// <reference no-default-lib />`

@@ -67,6 +67,9 @@ pub struct EnumES5Transformer<'a> {
     member_values: HashMap<String, i64>,
     /// Evaluated string values of enum members (for constant folding in string concatenation)
     string_member_values: HashMap<String, String>,
+    /// Source file containing the enum currently being transformed.
+    /// Used to resolve top-level `const` initializers in enum constant expressions.
+    current_source_file: Option<NodeIndex>,
     /// The enum parameter name used inside the IIFE (for qualifying self-references)
     current_enum_name: String,
     /// When true, emit const enums instead of erasing them
@@ -77,6 +80,9 @@ pub struct EnumES5Transformer<'a> {
     /// Previously-evaluated string enum member names from other enums.
     /// Keyed by `enum_name` → set of member names that have string values.
     prior_string_members: HashMap<String, HashSet<String>>,
+    /// Previously-evaluated string enum member values from other enums.
+    /// Keyed by `enum_name` → `member_name` → value.
+    prior_string_values: HashMap<String, HashMap<String, String>>,
 }
 
 impl<'a> EnumES5Transformer<'a> {
@@ -92,10 +98,12 @@ impl<'a> EnumES5Transformer<'a> {
             current_member_name: String::new(),
             member_values: HashMap::new(),
             string_member_values: HashMap::new(),
+            current_source_file: None,
             current_enum_name: String::new(),
             preserve_const_enums: false,
             prior_enum_values: HashMap::new(),
             prior_string_members: HashMap::new(),
+            prior_string_values: HashMap::new(),
         }
     }
 
@@ -135,6 +143,22 @@ impl<'a> EnumES5Transformer<'a> {
             .collect();
     }
 
+    /// Set previously-evaluated string enum member values for cross-enum folding.
+    pub fn set_prior_string_values(
+        &mut self,
+        values: &rustc_hash::FxHashMap<String, rustc_hash::FxHashMap<String, String>>,
+    ) {
+        self.prior_string_values = values
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.iter().map(|(mk, mv)| (mk.clone(), mv.clone())).collect(),
+                )
+            })
+            .collect();
+    }
+
     /// Get the accumulated member values for this enum (for persisting across declarations).
     pub const fn get_member_values(&self) -> &HashMap<String, i64> {
         &self.member_values
@@ -143,6 +167,11 @@ impl<'a> EnumES5Transformer<'a> {
     /// Get the string member names for this enum.
     pub const fn get_string_members(&self) -> &HashSet<String> {
         &self.string_members
+    }
+
+    /// Get evaluated string member values for this enum.
+    pub const fn get_string_member_values(&self) -> &HashMap<String, String> {
+        &self.string_member_values
     }
 
     /// Get the current enum name (from the last `transform_enum` call).
@@ -171,9 +200,7 @@ impl<'a> EnumES5Transformer<'a> {
 
         let name =
             crate::transforms::emit_utils::identifier_text_or_empty(self.arena, enum_data.name);
-        if name.is_empty() {
-            return None;
-        }
+        self.current_source_file = self.containing_source_file(enum_idx);
 
         // Build IR for: var E; (function (E) { ... })(E || (E = {}));
         let mut statements = Vec::new();
@@ -917,6 +944,9 @@ impl<'a> EnumES5Transformer<'a> {
                 if let Some(&val) = self.member_values.get(id.escaped_text.as_str()) {
                     return Some(val as f64);
                 }
+                if let Some(val) = self.resolve_top_level_const(id.escaped_text.as_str()) {
+                    return val.map(|n| n as f64);
+                }
                 match id.escaped_text.as_str() {
                     "NaN" => Some(f64::NAN),
                     "Infinity" => Some(f64::INFINITY),
@@ -1050,6 +1080,69 @@ impl<'a> EnumES5Transformer<'a> {
         None
     }
 
+    fn containing_source_file(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
+        for _ in 0..100 {
+            let ext = self.arena.get_extended(idx)?;
+            if ext.parent.is_none() {
+                let node = self.arena.get(idx)?;
+                return (node.kind == syntax_kind_ext::SOURCE_FILE).then_some(idx);
+            }
+            idx = ext.parent;
+        }
+        None
+    }
+
+    fn resolve_top_level_const(&self, name: &str) -> Option<Option<i64>> {
+        let source_file_idx = self.current_source_file?;
+        let source_file_node = self.arena.get(source_file_idx)?;
+        let source_file = self.arena.get_source_file(source_file_node)?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = self.arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    if !self.arena.is_const_variable_declaration(decl_idx) {
+                        continue;
+                    }
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    let Some(decl_name) = self.arena.get(decl.name) else {
+                        continue;
+                    };
+                    let Some(ident) = self.arena.get_identifier(decl_name) else {
+                        continue;
+                    };
+                    if ident.escaped_text == name {
+                        return Some(
+                            decl.initializer
+                                .is_some()
+                                .then(|| self.evaluate_constant_expression(decl.initializer))
+                                .flatten(),
+                        );
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     /// Try to evaluate a constant expression to its numeric value.
     /// Handles numeric literals, binary/unary expressions, parenthesized expressions,
     /// and references to previously evaluated enum members (both bare identifiers and
@@ -1075,6 +1168,9 @@ impl<'a> EnumES5Transformer<'a> {
                     && let Some(&val) = prior.get(id.escaped_text.as_str())
                 {
                     return Some(val);
+                }
+                if let Some(val) = self.resolve_top_level_const(id.escaped_text.as_str()) {
+                    return val;
                 }
                 None
             }
@@ -1296,6 +1392,11 @@ impl<'a> EnumES5Transformer<'a> {
                     return Some(n.to_string());
                 }
                 // Check prior blocks of the same merged enum
+                if let Some(prior) = self.prior_string_values.get(&self.current_enum_name)
+                    && let Some(s) = prior.get(id.escaped_text.as_str())
+                {
+                    return Some(s.clone());
+                }
                 if let Some(prior) = self.prior_enum_values.get(&self.current_enum_name)
                     && let Some(&n) = prior.get(id.escaped_text.as_str())
                 {
@@ -1318,11 +1419,21 @@ impl<'a> EnumES5Transformer<'a> {
                     if let Some(s) = self.string_member_values.get(prop_id.escaped_text.as_str()) {
                         return Some(s.clone());
                     }
+                    if let Some(prior) = self.prior_string_values.get(&self.current_enum_name)
+                        && let Some(s) = prior.get(prop_id.escaped_text.as_str())
+                    {
+                        return Some(s.clone());
+                    }
                     if let Some(&n) = self.member_values.get(prop_id.escaped_text.as_str()) {
                         return Some(n.to_string());
                     }
                 }
                 // Cross-enum reference
+                if let Some(prior) = self.prior_string_values.get(obj_id.escaped_text.as_str())
+                    && let Some(value) = prior.get(prop_id.escaped_text.as_str())
+                {
+                    return Some(value.clone());
+                }
                 if let Some(prior) = self.prior_enum_values.get(obj_id.escaped_text.as_str())
                     && let Some(&n) = prior.get(prop_id.escaped_text.as_str())
                 {
@@ -1330,8 +1441,52 @@ impl<'a> EnumES5Transformer<'a> {
                 }
                 None
             }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                let access = self.arena.get_access_expr(node)?;
+                let obj_node = self.arena.get(access.expression)?;
+                if !obj_node.is_identifier() {
+                    return None;
+                }
+                let obj_id = self.arena.get_identifier(obj_node)?;
+                let member_name = self.string_literal_key(access.name_or_argument)?;
+
+                if obj_id.escaped_text == self.current_enum_name {
+                    if let Some(s) = self.string_member_values.get(member_name.as_str()) {
+                        return Some(s.clone());
+                    }
+                    if let Some(prior) = self.prior_string_values.get(&self.current_enum_name)
+                        && let Some(s) = prior.get(member_name.as_str())
+                    {
+                        return Some(s.clone());
+                    }
+                    if let Some(&n) = self.member_values.get(member_name.as_str()) {
+                        return Some(n.to_string());
+                    }
+                }
+                if let Some(prior) = self.prior_string_values.get(obj_id.escaped_text.as_str())
+                    && let Some(value) = prior.get(member_name.as_str())
+                {
+                    return Some(value.clone());
+                }
+                if let Some(prior) = self.prior_enum_values.get(obj_id.escaped_text.as_str())
+                    && let Some(&n) = prior.get(member_name.as_str())
+                {
+                    return Some(n.to_string());
+                }
+                None
+            }
             _ => None,
         }
+    }
+
+    fn string_literal_key(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        if node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            return self.arena.get_literal(node).map(|lit| lit.text.clone());
+        }
+        None
     }
 
     /// Check if an expression is syntactically string-valued per tsc's rules.
@@ -1414,6 +1569,29 @@ impl<'a> EnumES5Transformer<'a> {
                         && let Some(name) = prop_name
                     {
                         return prior.contains(name);
+                    }
+                    false
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(access) = self.arena.get_access_expr(node) {
+                    let obj_node = self.arena.get(access.expression);
+                    let obj_name = obj_node
+                        .and_then(|n| self.arena.get_identifier(n))
+                        .map(|id| id.escaped_text.as_str());
+                    let Some(member_name) = self.string_literal_key(access.name_or_argument) else {
+                        return false;
+                    };
+
+                    if obj_name == Some(self.current_enum_name.as_str()) {
+                        return self.string_members.contains(member_name.as_str());
+                    }
+                    if let Some(obj_name) = obj_name
+                        && let Some(prior) = self.prior_string_members.get(obj_name)
+                    {
+                        return prior.contains(member_name.as_str());
                     }
                     false
                 } else {

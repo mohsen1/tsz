@@ -1985,7 +1985,6 @@ fn jsx_construct_sig_with_outer_type_params_no_false_ts2786() {
 /// whole-object assignability check determines the final result. Our solver
 /// currently accepts this (consistent with tsc's JSX attribute checking).
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn jsx_discriminated_union_props_full_concrete_union_no_ts2322() {
     let diagnostics = check_jsx_codes(
         r#"
@@ -2133,6 +2132,31 @@ fn jsx_multiple_children_no_ts2746_when_children_type_accepts_array() {
     assert!(
         !diagnostics.contains(&2746),
         "Multiple children should be allowed when children type includes array-like union member, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_multiple_children_readonly_mapped_wrapper_uses_shape_not_alias_name() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        type Frozen<T> = { readonly [Slot in keyof T]: T[Slot] };
+        type Renderable = string | number | Element;
+        declare namespace JSX {
+            interface Element {}
+            interface ElementChildrenAttribute { children: {}; }
+            interface IntrinsicElements { span: {}; }
+        }
+        declare class ComponentBase<P = {}> {
+            props: P & Frozen<{ children: Renderable[] }>;
+            render(): Renderable;
+        }
+        class Panel extends ComponentBase {}
+        <Panel><span /><span /></Panel>;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2746),
+        "Multiple children should use the structurally readonly mapped wrapper member, got: {diagnostics:?}"
     );
 }
 

@@ -17,11 +17,15 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::SOURCE_FILE => {
                 if let Some(sf) = self.arena.get_source_file(node) {
                     let previous_source_text = self.current_source_text;
+                    let previous_jsx_pragmas = self.current_jsx_pragmas.clone();
                     self.current_source_text = Some(sf.text.as_ref());
+                    self.current_jsx_pragmas =
+                        crate::jsx_pragmas::JsxPragmaFacts::from_source(sf.text.as_ref());
                     for &stmt in &sf.statements.nodes {
                         self.visit(stmt);
                     }
                     self.current_source_text = previous_source_text;
+                    self.current_jsx_pragmas = previous_jsx_pragmas;
                 }
             }
             k if k == syntax_kind_ext::BLOCK
@@ -98,6 +102,11 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
                 if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
                     self.visit(expr_stmt.expression);
+                }
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                if let Some(labeled) = self.arena.get_labeled_statement(node) {
+                    self.visit(labeled.statement);
                 }
             }
             k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
@@ -557,7 +566,7 @@ impl<'a> LoweringPass<'a> {
                 }
             }
             k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
-                if self.ctx.target_es5 {
+                if self.tagged_template_needs_template_object_lowering(node) {
                     self.transforms.insert(
                         idx,
                         TransformDirective::ES5TemplateLiteral { template_node: idx },
@@ -806,6 +815,51 @@ impl<'a> LoweringPass<'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn tagged_template_needs_template_object_lowering(&self, node: &Node) -> bool {
+        if self.ctx.target_es5 {
+            return true;
+        }
+
+        !self.ctx.options.target.supports_es2018()
+            && self
+                .arena
+                .get_tagged_template(node)
+                .is_some_and(|tagged| self.template_has_invalid_escape(tagged.template))
+    }
+
+    fn template_has_invalid_escape(&self, template_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(template_idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == SyntaxKind::TemplateHead as u16
+                || k == SyntaxKind::TemplateMiddle as u16
+                || k == SyntaxKind::TemplateTail as u16 =>
+            {
+                self.arena
+                    .get_literal(node)
+                    .is_some_and(|lit| lit.has_invalid_escape)
+            }
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                let Some(template) = self.arena.get_template_expr(node) else {
+                    return false;
+                };
+                if self.template_has_invalid_escape(template.head) {
+                    return true;
+                }
+                template.template_spans.nodes.iter().any(|&span_idx| {
+                    self.arena
+                        .get(span_idx)
+                        .and_then(|span_node| self.arena.get_template_span(span_node))
+                        .is_some_and(|span| self.template_has_invalid_escape(span.literal))
+                })
+            }
+            _ => false,
         }
     }
 }

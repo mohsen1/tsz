@@ -249,6 +249,44 @@ const r: Next<number> = result;
 }
 
 #[test]
+fn custom_iterator_result_name_does_not_trigger_iterator_result_required_value_rule() {
+    let diagnostics = with_lib_contexts(
+        r#"
+interface MyIteratorYieldResult<TYield> {
+    done?: false;
+    value: TYield;
+}
+interface MyIteratorReturnResult<TReturn> {
+    done: true;
+    value: TReturn;
+}
+type MyIteratorResult<T, TReturn = any> =
+    | MyIteratorYieldResult<T>
+    | MyIteratorReturnResult<TReturn>;
+
+interface Next<A> {
+    readonly done?: boolean;
+    readonly value: A;
+}
+
+declare const result: MyIteratorResult<number, undefined>;
+const r: Next<number> = result;
+"#,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_diagnostic_code(&diagnostics, 2322),
+        "Renamed IteratorResult-like aliases should still reject through normal structural assignability, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn promise_suffixed_generic_wrapper_does_not_suppress_nested_argument_mismatch() {
     let diagnostics = get_all_diagnostics(
         r#"
@@ -1948,6 +1986,66 @@ b = a;
             .any(|message| message
                 .contains("Type 'C<number>' is not assignable to type 'C<string>'.")),
         "expected C<number> -> C<string> TS2322 display, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn inferred_generic_class_new_preserves_application_display() {
+    let source = r#"
+namespace FirstSource {
+    export interface OptionalShape<T, U> {
+        one: T;
+        two?: U;
+    }
+    var obj: OptionalShape<number, string> = { one: 1 };
+    export var value = obj;
+}
+
+namespace FirstTarget {
+    export class RequiredShape<T, U> {
+        constructor(public one: T, public two: U) {}
+    }
+    var instance = new RequiredShape(1, "a");
+    export var value = instance;
+}
+
+FirstTarget.value = FirstSource.value;
+
+namespace SecondSource {
+    export interface MaybePair<X, Y> {
+        left: X;
+        right?: Y;
+    }
+    var obj: MaybePair<boolean, number> = { left: true };
+    export var value = obj;
+}
+
+namespace SecondTarget {
+    export class StrictPair<A, B> {
+        constructor(public left: A, public right: B) {}
+    }
+    var instance = new StrictPair(false, 1);
+    export var value = instance;
+}
+
+SecondTarget.value = SecondSource.value;
+"#;
+
+    let messages = ts2322_messages(source);
+
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("OptionalShape<number, string>")
+                && message.contains("RequiredShape<number, string>")
+        }),
+        "expected inferred RequiredShape application display, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|message| {
+            message.contains("MaybePair<boolean, number>")
+                && message.contains("StrictPair<boolean, number>")
+        }),
+        "expected inferred StrictPair application display, got: {messages:?}"
     );
 }
 
@@ -6556,6 +6654,328 @@ const literalFromType: AType = "A";
     );
 }
 
+#[test]
+fn scoped_destructured_typeof_indexed_access_uses_binding_type() {
+    let source = r#"
+type IsolationLevel = 'read committed' | 'serializable';
+type Tedious = { ISOLATION_LEVEL: Record<string, number> };
+
+class Driver {
+  #tedious: Tedious;
+
+  constructor(tedious: Tedious) {
+    this.#tedious = tedious;
+  }
+
+  getLevel(isolationLevel: IsolationLevel): number {
+    const { ISOLATION_LEVEL } = this.#tedious;
+    const mapper: Record<
+      IsolationLevel,
+      (typeof ISOLATION_LEVEL)[keyof typeof ISOLATION_LEVEL]
+    > = {
+      'read committed': ISOLATION_LEVEL.READ_COMMITTED,
+      serializable: ISOLATION_LEVEL.SERIALIZABLE,
+    };
+
+    return mapper[isolationLevel];
+  }
+}
+"#;
+    let diags = diagnostics_for_source(source);
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected local destructured typeof indexed access to resolve to number; got: {diags:#?}"
+    );
+    assert!(
+        !has_diagnostic_code(
+            &diags,
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+        ),
+        "expected mapped Record keys to stay concrete; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn imported_destructured_typeof_indexed_access_uses_binding_type() {
+    let config = r#"
+export type Tedious = { ISOLATION_LEVEL: Record<string, number> };
+"#;
+    let driver = r#"
+import type { Tedious } from './config';
+
+type IsolationLevel = 'read committed' | 'serializable';
+
+class Driver {
+  #tedious: Tedious;
+
+  constructor(tedious: Tedious) {
+    this.#tedious = tedious;
+  }
+
+  getLevel(isolationLevel: IsolationLevel): number {
+    const { ISOLATION_LEVEL } = this.#tedious;
+    const mapper: Record<
+      IsolationLevel,
+      (typeof ISOLATION_LEVEL)[keyof typeof ISOLATION_LEVEL]
+    > = {
+      'read committed': ISOLATION_LEVEL.READ_COMMITTED,
+      serializable: ISOLATION_LEVEL.SERIALIZABLE,
+    };
+
+    return mapper[isolationLevel];
+  }
+}
+"#;
+    let diags = tsz_checker::test_utils::check_multi_file(
+        &[("./config.ts", config), ("./driver.ts", driver)],
+        "./driver.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected imported destructured typeof indexed access to resolve to number; got: {diags:#?}"
+    );
+    assert!(
+        !has_diagnostic_code(
+            &diags,
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+        ),
+        "expected imported mapped Record keys to stay concrete; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn imported_array_item_type_from_const_array_preserves_literals() {
+    let type_utils_padding: String = (0..140)
+        .map(|idx| format!("export type PaddingAlias{idx} = {{ value: {idx} }};\n"))
+        .collect();
+    let type_utils = format!(
+        r#"
+{type_utils_padding}
+export type ArrayItemType<T> = T extends ReadonlyArray<infer I> ? I : never;
+"#
+    );
+    let driver = r#"
+import type { ArrayItemType } from '../util/type-utils.js';
+
+export const TRANSACTION_ISOLATION_LEVELS = [
+  'read uncommitted',
+  'read committed',
+  'repeatable read',
+  'serializable',
+  'snapshot',
+] as const;
+
+export type IsolationLevel = ArrayItemType<typeof TRANSACTION_ISOLATION_LEVELS>;
+
+export interface TransactionSettings {
+  readonly accessMode?: AccessMode;
+  readonly isolationLevel?: IsolationLevel;
+}
+
+export const TRANSACTION_ACCESS_MODES = ['read only', 'read write'] as const;
+
+export type AccessMode = ArrayItemType<typeof TRANSACTION_ACCESS_MODES>;
+
+export function validateTransactionSettings(settings: TransactionSettings): void {
+  if (
+    settings.accessMode &&
+    !TRANSACTION_ACCESS_MODES.includes(settings.accessMode)
+  ) {
+    throw new Error(`invalid transaction access mode ${settings.accessMode}`);
+  }
+
+  if (
+    settings.isolationLevel &&
+    !TRANSACTION_ISOLATION_LEVELS.includes(settings.isolationLevel)
+  ) {
+    throw new Error(`invalid transaction isolation level ${settings.isolationLevel}`);
+  }
+}
+"#;
+    let type_error = r#"
+export type KyselyTypeError<E extends string> = { __error__: E } & never;
+"#;
+    let config = r#"
+import type { KyselyTypeError } from '../../util/type-error.js';
+
+export interface Tedious {
+  connectionFactory: () => TediousConnection | Promise<TediousConnection>;
+  ISOLATION_LEVEL: TediousIsolationLevel;
+  Request: TediousRequestClass;
+  resetConnectionOnRelease?: KyselyTypeError<'deprecated'>;
+  TYPES: TediousTypes;
+}
+export type TediousIsolationLevel = Record<string, number>;
+export type TediousConnection = {
+  beginTransaction(
+    callback: (err: Error | null | undefined) => void,
+    name?: string | undefined,
+    isolationLevel?: number | undefined,
+  ): void;
+  connect(connectListener: (err?: Error) => void): void;
+  on(event: 'error', listener: (error: unknown) => void): this;
+  on(event: string, listener: (...args: any[]) => void): this;
+};
+export interface TediousRequestClass {
+  new (
+    sqlTextOrProcedure: string | undefined,
+    callback: (error?: Error | null, rowCount?: number, rows?: any) => void,
+    options?: { statementColumnEncryptionSetting?: any },
+  ): TediousRequest;
+}
+export declare class TediousRequest {}
+export interface TediousTypes {
+  NVarChar: TediousDataType;
+  [x: string]: TediousDataType;
+}
+export interface TediousDataType {}
+"#;
+    let database_connection = r#"
+import type { TransactionSettings } from './driver.js';
+
+export interface DatabaseConnection {
+  beginTransaction(settings: TransactionSettings): Promise<void>;
+}
+"#;
+    let usage = r#"
+import type { IsolationLevel, TransactionSettings } from '../../driver/driver.js';
+import type { DatabaseConnection } from '../../driver/database-connection.js';
+import type { Tedious, TediousConnection } from './mssql-dialect-config.js';
+
+const LOCAL_TRANSACTION_ISOLATION_LEVELS = [
+  'read uncommitted',
+  'read committed',
+  'repeatable read',
+  'serializable',
+  'snapshot',
+] as const;
+
+class Driver implements DatabaseConnection {
+  #tedious: Tedious;
+  #connection: TediousConnection;
+
+  constructor(tedious: Tedious, connection: TediousConnection) {
+    this.#tedious = tedious;
+    this.#connection = connection;
+  }
+
+  async beginTransaction(settings: TransactionSettings): Promise<void> {
+    const { isolationLevel } = settings;
+
+    await new Promise((resolve, reject) =>
+      this.#connection.beginTransaction(
+        (error) => {
+          if (error) reject(error);
+          else resolve(undefined);
+        },
+        isolationLevel ? 'tx' : undefined,
+        isolationLevel ? this.#getTediousIsolationLevel(isolationLevel) : undefined,
+      ),
+    );
+  }
+
+  #getTediousIsolationLevel(isolationLevel: IsolationLevel) {
+    if (!LOCAL_TRANSACTION_ISOLATION_LEVELS.includes(isolationLevel)) {
+      throw new Error(`invalid transaction isolation level ${isolationLevel}`);
+    }
+
+    const { ISOLATION_LEVEL } = this.#tedious;
+
+    const mapper: Record<
+      IsolationLevel,
+      (typeof ISOLATION_LEVEL)[keyof typeof ISOLATION_LEVEL]
+    > = {
+      'read committed': ISOLATION_LEVEL.READ_COMMITTED,
+      'read uncommitted': ISOLATION_LEVEL.READ_UNCOMMITTED,
+      'repeatable read': ISOLATION_LEVEL.REPEATABLE_READ,
+      serializable: ISOLATION_LEVEL.SERIALIZABLE,
+      snapshot: ISOLATION_LEVEL.SNAPSHOT,
+    };
+
+    const tediousIsolationLevel = mapper[isolationLevel];
+    if (tediousIsolationLevel === undefined) {
+      throw new Error(`Unknown isolation level: ${isolationLevel}`);
+    }
+
+    return tediousIsolationLevel;
+  }
+}
+
+const bad: IsolationLevel = 'nope';
+const badNumber: IsolationLevel = 1;
+"#;
+    let driver_diags = tsz_checker::test_utils::check_multi_file(
+        &[
+            ("./src/util/type-error.ts", type_error),
+            ("./src/util/type-utils.ts", type_utils.as_str()),
+            ("./src/driver/driver.ts", driver),
+        ],
+        "./src/driver/driver.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        !has_diagnostic_code(&driver_diags, 2345),
+        "expected imported const-array item type to be accepted by includes() in defining module; got: {driver_diags:#?}"
+    );
+
+    let diags = tsz_checker::test_utils::check_multi_file(
+        &[
+            ("./src/util/type-error.ts", type_error),
+            ("./src/util/type-utils.ts", type_utils.as_str()),
+            ("./src/driver/driver.ts", driver),
+            ("./src/driver/database-connection.ts", database_connection),
+            ("./src/dialect/mssql/mssql-dialect-config.ts", config),
+            ("./src/dialect/mssql/mssql-driver.ts", usage),
+        ],
+        "./src/dialect/mssql/mssql-driver.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        has_diagnostic_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "expected imported const-array item type to reject unrelated literals; got: {diags:#?}"
+    );
+    assert!(
+        diags
+            .iter()
+            .filter(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+            .count()
+            >= 2,
+        "expected imported const-array item type to reject string and number literals; got: {diags:#?}"
+    );
+    assert!(
+        !diags.iter().any(|diag| {
+            diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                && diag.message_text.contains("Record<IsolationLevel")
+                && diag.message_text.contains("[number]")
+        }),
+        "expected indexing Record<IsolationLevel, number> by IsolationLevel to be number; got: {diags:#?}"
+    );
+    assert!(
+        !has_diagnostic_code(&diags, 2345),
+        "expected imported const-array item type to be accepted by includes(); got: {diags:#?}"
+    );
+    assert!(
+        !has_diagnostic_code(
+            &diags,
+            diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
+        ),
+        "expected Record keys from imported const-array item type; got: {diags:#?}"
+    );
+}
+
 // =============================================================================
 // Type alias instantiation with template-literal interpolation (TS2322)
 // =============================================================================
@@ -7354,5 +7774,174 @@ const wrong: Select<Bird, "bird"> = { tag: "fish", wings: 6 };
             .iter()
             .any(|message| message.contains("Type '6' is not assignable to type '2 | 4'")),
         "expected inline numeric-union property mismatch, got: {messages:#?}"
+    );
+}
+
+// =============================================================================
+// Intersection source assigned to callable-interface target (issue #6202)
+// =============================================================================
+
+/// Structural rule: when an intersection containing a function member and object
+/// members is assigned to a callable interface with properties, the failure message
+/// must list only properties not supplied by any intersection member.
+#[test]
+fn intersection_function_object_satisfies_callable_interface_with_matching_props() {
+    // All required call sig and properties are satisfied by the intersection.
+    let source = r#"
+interface CallableWithProps {
+  (x: number): string;
+  version: string;
+}
+
+const cwp: CallableWithProps = Object.assign(
+  (x: number) => x.toString(),
+  { version: "1.0" }
+);
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors: fn-object intersection should satisfy callable interface with matching properties. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn intersection_type_alias_satisfies_callable_interface_with_matching_props() {
+    // Same structural rule via explicit type alias (not Object.assign).
+    let source = r#"
+interface CallableWithProps {
+  (x: number): string;
+  version: string;
+}
+
+type FnWithVersion = ((x: number) => string) & { version: string };
+declare const fn1: FnWithVersion;
+const cwp: CallableWithProps = fn1;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors: explicit fn-object intersection alias should satisfy callable interface. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn intersection_function_object_missing_one_prop_reports_only_that_prop() {
+    // The intersection provides `version` but not `name`.
+    // The error should name only `name`, not both `version` and `name`.
+    let source = r#"
+interface RequiresAll {
+  (x: number): string;
+  version: string;
+  name: string;
+}
+
+type FnWithVersionOnly = ((x: number) => string) & { version: string };
+declare const cwp2: FnWithVersionOnly;
+const cwp: RequiresAll = cwp2;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        !diagnostics.is_empty(),
+        "Expected an error when required property `name` is missing from intersection source."
+    );
+    // Should NOT report `version` as missing; it is supplied by the object member.
+    for diag in &diagnostics {
+        let msg = &diag.message_text;
+        assert!(
+            !msg.contains("version"),
+            "Error message should not mention `version` (it is present in the intersection): {msg}"
+        );
+    }
+}
+
+#[test]
+fn intersection_type_alias_missing_one_prop_reports_only_that_prop() {
+    // Same rule via explicit intersection alias.
+    let source = r#"
+interface RequiresAll {
+  (x: number): string;
+  version: string;
+  name: string;
+}
+
+type FnWithVersion = ((x: number) => string) & { version: string };
+declare const fn1: FnWithVersion;
+const cwp: RequiresAll = fn1;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        !diagnostics.is_empty(),
+        "Expected an error when required property `name` is missing from intersection alias."
+    );
+    for diag in &diagnostics {
+        let msg = &diag.message_text;
+        assert!(
+            !msg.contains("version"),
+            "Error message should not mention `version` (it is present in intersection member): {msg}"
+        );
+    }
+}
+
+#[test]
+fn intersection_function_object_all_props_missing_reports_all() {
+    // The intersection has no object member providing properties.
+    // The error should list both required properties.
+    let source = r#"
+interface RequiresAll {
+  (x: number): string;
+  version: string;
+  name: string;
+}
+
+type FnOnly = (x: number) => string;
+declare const cwp2: FnOnly;
+const cwp: RequiresAll = cwp2;
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        !diagnostics.is_empty(),
+        "Expected an error when all required properties are missing from intersection source."
+    );
+}
+
+#[test]
+fn inline_intersection_satisfies_callable_interface_multiple_props() {
+    // Intersection with multiple properties covering all target requirements.
+    let source = r#"
+interface FullCallable {
+  (x: number): string;
+  name: string;
+  version: number;
+}
+
+const fc: FullCallable = Object.assign(
+  (x: number) => x.toString(),
+  { name: "fn", version: 1 }
+);
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors: fn-object intersection with all props should satisfy callable interface. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn named_function_with_assign_satisfies_callable_interface() {
+    // Named function (not arrow) assigned via Object.assign.
+    let source = r#"
+interface CallableWithProps {
+  (x: number): string;
+  version: string;
+}
+
+function myFn(x: number): string { return x.toString(); }
+const cwp: CallableWithProps = Object.assign(myFn, { version: "1.0" });
+"#;
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors: named function + Object.assign should satisfy callable interface. Got: {diagnostics:#?}"
     );
 }

@@ -239,6 +239,10 @@ pub struct ParserState {
     /// statement that deferred a missing `}`. When the statement terminator is
     /// reached, emit TS1005 `'}' expected.` at `;` to match tsc recovery.
     pub(crate) pending_jsx_missing_close_brace_in_expression_statement: u32,
+    /// Extra expression statements recovered while parsing a preceding statement.
+    /// Used for invalid conditional tails after block-bodied arrows where tsc
+    /// still emits the branch expressions as standalone statements.
+    pub(crate) pending_recovered_expression_statements: Vec<NodeIndex>,
     /// Current lower bound for scanning parse diagnostics when JSX recovery
     /// absorbs statement terminators into `JsxText`.
     pub(crate) jsx_missing_brace_semicolon_window_start: Option<u32>,
@@ -358,6 +362,7 @@ impl ParserState {
             type_member_container_depth: 0,
             in_tagged_template: false,
             pending_jsx_missing_close_brace_in_expression_statement: 0,
+            pending_recovered_expression_statements: Vec::new(),
             jsx_missing_brace_semicolon_window_start: None,
             suppress_next_jsx_missing_brace_at_semicolon: false,
             in_jsx_attribute_initializer_element: false,
@@ -406,6 +411,7 @@ impl ParserState {
         self.type_member_container_depth = 0;
         self.in_tagged_template = false;
         self.pending_jsx_missing_close_brace_in_expression_statement = 0;
+        self.pending_recovered_expression_statements.clear();
         self.jsx_missing_brace_semicolon_window_start = None;
         self.suppress_next_jsx_missing_brace_at_semicolon = false;
         self.in_jsx_attribute_initializer_element = false;
@@ -646,6 +652,67 @@ impl ParserState {
         if self.is_identifier_or_keyword() && self.scanner.get_token_text_ref() == "u" {
             self.next_token(); // consume `u`, leaving `{`
         }
+    }
+
+    /// Returns true when the current `Unknown` token is non-braced
+    /// backslash/escape debris from an invalid unicode escape in a declaration
+    /// identifier.
+    pub(crate) fn current_unknown_starts_invalid_unicode_identifier_debris(&self) -> bool {
+        if !self.is_token(SyntaxKind::Unknown) {
+            return false;
+        }
+
+        let src = self.scanner.source_text();
+        let start = self.scanner.get_token_start();
+        let bytes = src.as_bytes();
+        bytes.get(start) == Some(&b'\\')
+            && bytes.get(start + 1) == Some(&b'u')
+            && bytes.get(start + 2) != Some(&b'{')
+    }
+
+    /// Recover an invalid unicode escape that appears where a declaration
+    /// identifier is required. `tsc` drops the leading backslash and keeps the
+    /// `u...` debris as identifier text, optionally merging the adjacent
+    /// identifier token when the scanner split after a valid-but-illegal
+    /// identifier-start escape such as `\u0031a`.
+    pub(crate) fn parse_recovered_invalid_unicode_escape_identifier(&mut self) -> NodeIndex {
+        debug_assert!(self.current_unknown_starts_invalid_unicode_identifier_debris());
+        let start_pos = self.token_pos();
+        let mut end_pos = self.token_end();
+        let token_text = self.scanner.get_token_text_ref();
+        let mut recovered = token_text
+            .strip_prefix('\\')
+            .unwrap_or(token_text)
+            .to_string();
+
+        self.parse_error_at_current_token(
+            tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+            tsz_common::diagnostics::diagnostic_codes::INVALID_CHARACTER,
+        );
+        self.next_token();
+
+        while self.token_pos() == end_pos && self.is_identifier_or_keyword() {
+            let text = if (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0 {
+                self.scanner.get_token_value_ref().to_string()
+            } else {
+                self.scanner.get_token_text_ref().to_string()
+            };
+            recovered.push_str(&text);
+            end_pos = self.token_end();
+            self.next_token();
+        }
+
+        self.arena.add_identifier(
+            SyntaxKind::Identifier as u16,
+            start_pos,
+            end_pos,
+            IdentifierData {
+                atom: Atom::NONE,
+                escaped_text: recovered,
+                original_text: None,
+                type_arguments: None,
+            },
+        )
     }
 
     /// Consume a keyword token, checking for TS1260 (keywords cannot contain escape characters).
@@ -3099,6 +3166,13 @@ impl ParserState {
             end: 0,
             has_trailing_comma: false,
         }
+    }
+
+    pub(crate) fn drain_pending_recovered_expression_statements(
+        &mut self,
+        statements: &mut Vec<NodeIndex>,
+    ) {
+        statements.append(&mut self.pending_recovered_expression_statements);
     }
 
     /// Get operator precedence

@@ -2,6 +2,7 @@
 //! delegating type resolution to child checkers, tracking cross-file targets,
 //! and cross-file interface declaration merging.
 use crate::state::CheckerState;
+use crate::symbols_domain::name_text::expression_name_text_in_arena;
 use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::perf_counters::{
@@ -15,35 +16,6 @@ pub(crate) use super::cross_file_query_types::CrossFileQueryKind;
 
 thread_local! {
     static CROSS_ARENA_INTERFACE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-}
-
-fn entity_name_text_in_arena(arena: &tsz_parser::NodeArena, idx: NodeIndex) -> Option<String> {
-    let node = arena.get(idx)?;
-
-    if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-        return arena
-            .get_identifier(node)
-            .map(|ident| ident.escaped_text.clone());
-    }
-
-    if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-        let qn = arena.get_qualified_name(node)?;
-        let left = entity_name_text_in_arena(arena, qn.left)?;
-        let right = entity_name_text_in_arena(arena, qn.right)?;
-        return Some(format!("{left}.{right}"));
-    }
-
-    if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-        && let Some(access) = arena.get_access_expr(node)
-    {
-        let left = entity_name_text_in_arena(arena, access.expression)?;
-        let right = arena
-            .get(access.name_or_argument)
-            .and_then(|right_node| arena.get_identifier(right_node))?;
-        return Some(format!("{left}.{}", right.escaped_text));
-    }
-
-    None
 }
 
 impl<'a> CheckerState<'a> {
@@ -102,9 +74,9 @@ impl<'a> CheckerState<'a> {
         let name = if node.kind == syntax_kind_ext::TYPE_REFERENCE {
             arena
                 .get_type_ref(node)
-                .and_then(|type_ref| entity_name_text_in_arena(arena, type_ref.type_name))
+                .and_then(|type_ref| expression_name_text_in_arena(arena, type_ref.type_name))
         } else {
-            entity_name_text_in_arena(arena, node_idx)
+            expression_name_text_in_arena(arena, node_idx)
         };
 
         let Some(name) = name else {
@@ -246,7 +218,7 @@ impl<'a> CheckerState<'a> {
     fn try_resolve_cross_arena_named_alias_without_child(
         &mut self,
         sym_id: SymbolId,
-    ) -> Option<TypeId> {
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         use CrossArenaAliasShortcutOutcome as AliasOutcome;
 
         let (module_name, import_name, alias_source_file_idx) = {
@@ -360,7 +332,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let mut result = self.get_type_of_symbol(target_sym_id);
+        let (mut result, params) = if target_flags & symbol_flags::TYPE_ALIAS != 0 {
+            let target_file_idx = self.ctx.resolve_symbol_file_index(target_sym_id);
+            self.direct_source_file_type_alias_result(target_sym_id, target_file_idx, true)
+                .unwrap_or_else(|| self.type_reference_symbol_type_with_params(target_sym_id))
+        } else {
+            (self.get_type_of_symbol(target_sym_id), Vec::new())
+        };
         result = self.apply_module_augmentations(&module_name, &import_name, result);
         if result == TypeId::ERROR {
             tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(
@@ -380,11 +358,11 @@ impl<'a> CheckerState<'a> {
             sym_id,
             alias_cache_file_idx as u32,
             result,
-            Vec::new(),
+            params.clone(),
         );
         tsz_common::perf_counters::record_cross_arena_alias_shortcut_outcome(AliasOutcome::Success);
 
-        Some(result)
+        Some((result, params))
     }
 
     /// Delegate symbol resolution to a checker using the correct arena.
@@ -666,11 +644,28 @@ impl<'a> CheckerState<'a> {
             } else {
                 None
             };
+            let shared_actual_lib_delegation_name = self.shared_actual_lib_delegation_name(
+                sym_id,
+                delegate_arena,
+                needs_cross_file_delegation,
+            );
             if let Some(p) = perf {
                 p.delegate_cross_arena_calls
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             let _delegate_depth_guard = tsz_common::perf_counters::enter_delegate();
+
+            if symbol_type_cache_file_idx.is_none()
+                && !needs_cross_file_delegation
+                && let Some(shared_name) = shared_actual_lib_delegation_name.as_deref()
+                && let Some(cached) = self.cached_shared_actual_lib_delegation(sym_id, shared_name)
+            {
+                if let Some(p) = perf {
+                    p.delegate_cross_arena_cache_hits_lib
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                return Some(cached);
+            }
 
             if symbol_type_cache_file_idx.is_none()
                 && !needs_cross_file_delegation
@@ -714,7 +709,9 @@ impl<'a> CheckerState<'a> {
                 return Some((cached_type, cached_params));
             }
 
-            if let Some(result) = self.try_resolve_cross_arena_named_alias_without_child(sym_id) {
+            if let Some((result, params)) =
+                self.try_resolve_cross_arena_named_alias_without_child(sym_id)
+            {
                 if let Some(file_idx) = symbol_type_cache_file_idx
                     && !symbol_type_cache_from_symbol_arena
                 {
@@ -722,10 +719,10 @@ impl<'a> CheckerState<'a> {
                         sym_id,
                         file_idx as u32,
                         result,
-                        Vec::new(),
+                        params.clone(),
                     );
                 }
-                return Some((result, Vec::new()));
+                return Some((result, params));
             }
 
             if let Some(result) = self.direct_actual_lib_symbol_type(
@@ -816,6 +813,41 @@ impl<'a> CheckerState<'a> {
                     );
                 }
                 return Some((direct_type, Vec::new()));
+            }
+
+            let direct_target_file_idx =
+                if symbol_type_cache_from_symbol_arena || needs_cross_file_delegation {
+                    symbol_type_cache_file_idx
+                } else {
+                    None
+                };
+            if let Some((direct_type, direct_params)) = self.direct_source_file_type_alias_result(
+                sym_id,
+                direct_target_file_idx,
+                symbol_type_cache_from_symbol_arena,
+            ) {
+                self.ctx.symbol_types.insert(sym_id, direct_type);
+                if let Some(file_idx) = symbol_type_cache_file_idx
+                    && (!symbol_type_cache_from_symbol_arena || direct_params.is_empty())
+                {
+                    if symbol_type_cache_from_symbol_arena {
+                        self.ctx.cache_stable_source_file_symbol_arena_type(
+                            sym_id,
+                            file_idx as u32,
+                            source_cache_scope,
+                            direct_type,
+                            direct_params.clone(),
+                        );
+                    } else {
+                        self.ctx.cache_cross_file_symbol_type(
+                            sym_id,
+                            file_idx as u32,
+                            direct_type,
+                            direct_params.clone(),
+                        );
+                    }
+                }
+                return Some((direct_type, direct_params));
             }
 
             if let Some(p) = perf {
@@ -1082,6 +1114,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx
                     .lib_delegation_cache
                     .insert_symbol_type(sym_id, (result, result_params.clone()));
+                if let Some(shared_name) = shared_actual_lib_delegation_name.as_deref() {
+                    self.cache_shared_actual_lib_delegation(shared_name, result);
+                }
             }
 
             // Write through to the canonical cross-file symbol-type cache so
@@ -1216,7 +1251,9 @@ impl<'a> CheckerState<'a> {
             tsz_common::perf_counters::CheckerCreationReason::DelegateCrossArenaClass,
         ));
         checker.ctx.lib_contexts = self.ctx.lib_contexts.clone();
-        checker.ctx.current_file_idx = delegate_file_idx.unwrap_or(self.ctx.current_file_idx);
+        checker.ctx.current_file_idx = query_file_idx
+            .or(delegate_file_idx)
+            .unwrap_or(self.ctx.current_file_idx);
         for &id in &self.ctx.class_instance_resolution_set {
             checker.ctx.class_instance_resolution_set.insert(id);
         }
@@ -1491,9 +1528,9 @@ impl<'a> CheckerState<'a> {
 
         // O(1) via global_arena_index (replaces O(N) position scan)
         let delegate_file_idx = self.ctx.get_file_idx_for_arena(interface_arena);
-        let delegate_binder = delegate_file_idx
-            .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
-            .unwrap_or(self.ctx.binder);
+        let delegate_binder_arc = delegate_file_idx
+            .and_then(|file_idx| self.ctx.all_binders.as_ref()?.get(file_idx).cloned());
+        let delegate_binder = delegate_binder_arc.as_deref().unwrap_or(self.ctx.binder);
 
         let mut results = rustc_hash::FxHashMap::default();
         let mut misses = Vec::new();
@@ -1892,7 +1929,7 @@ impl<'a> CheckerState<'a> {
                                 (type_idx, None)
                             };
 
-                        let Some(name) = entity_name_text_in_arena(arena, expr_idx) else {
+                        let Some(name) = expression_name_text_in_arena(arena, expr_idx) else {
                             continue;
                         };
                         let Some(base_sym_id) = self.resolve_cross_file_global_type_symbol(&name)

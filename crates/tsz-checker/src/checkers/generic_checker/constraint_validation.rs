@@ -3,7 +3,6 @@
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -39,19 +38,6 @@ impl<'a> CheckerState<'a> {
             .diagnostics
             .iter()
             .any(|d| d.code == code && d.start >= start && d.start < end)
-    }
-
-    fn type_arg_is_unknown_keyword(&self, type_arg_idx: NodeIndex) -> bool {
-        self.node_text(type_arg_idx)
-            .is_some_and(|text| text.trim() == "unknown")
-            || self
-                .type_arg_identifier_name(type_arg_idx)
-                .is_some_and(|name| name == "unknown")
-            || self
-                .ctx
-                .arena
-                .get(type_arg_idx)
-                .is_some_and(|node| node.kind == SyntaxKind::UnknownKeyword as u16)
     }
 
     /// Validate each type argument against its corresponding type parameter
@@ -235,6 +221,18 @@ impl<'a> CheckerState<'a> {
                     constraint,
                     type_args_list.nodes.get(i).copied(),
                 ) {
+                    continue;
+                }
+
+                if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                    && self.syntax_instantiated_type_arg_satisfies_constraint(
+                        type_arg,
+                        arg_idx,
+                        type_params,
+                        &type_args,
+                        constraint,
+                    )
+                {
                     continue;
                 }
 
@@ -458,6 +456,15 @@ impl<'a> CheckerState<'a> {
                                                 || inst_constraint == TypeId::ANY
                                                 || self
                                                     .is_assignable_to(infer_base, inst_constraint)
+                                                || {
+                                                    let evaluated =
+                                                        self.evaluate_type_for_assignability(type_arg);
+                                                    evaluated != type_arg
+                                                        && self.is_assignable_to(
+                                                            evaluated,
+                                                            inst_constraint,
+                                                        )
+                                                }
                                                 || self
                                                     .infer_result_satisfies_via_check_constraint(
                                                         base,
@@ -477,6 +484,11 @@ impl<'a> CheckerState<'a> {
                                                     )
                                                 || self
                                                     .infer_result_satisfies_via_application_arg_constraints(
+                                                        type_arg,
+                                                        inst_constraint,
+                                                    )
+                                                || self
+                                                    .array_element_infer_alias_satisfies_constraint(
                                                         type_arg,
                                                         inst_constraint,
                                                     )
@@ -955,6 +967,10 @@ impl<'a> CheckerState<'a> {
                                         type_arg,
                                         inst_constraint,
                                     )
+                                    || self.array_element_infer_alias_satisfies_constraint(
+                                        type_arg,
+                                        inst_constraint,
+                                    )
                                     || self.infer_result_satisfies_via_referenced_constraints(
                                         type_arg,
                                         inst_constraint,
@@ -1344,6 +1360,7 @@ impl<'a> CheckerState<'a> {
                             );
                             continue;
                         }
+                        self.ensure_refs_resolved(base);
                         let base_for_check = self.resolve_lazy_members_in_union(base);
                         let base_for_check = self.evaluate_type_for_assignability(base_for_check);
                         let mut is_satisfied = self
@@ -1355,6 +1372,10 @@ impl<'a> CheckerState<'a> {
                             || self
                                 .satisfies_array_like_constraint(base_for_check, inst_constraint)
                             || self.infer_result_satisfies_via_referenced_constraints(
+                                type_arg,
+                                inst_constraint,
+                            )
+                            || self.array_element_infer_alias_satisfies_constraint(
                                 type_arg,
                                 inst_constraint,
                             );
@@ -1507,7 +1528,6 @@ impl<'a> CheckerState<'a> {
                         } else {
                             self.is_assignable_to_no_weak_checks(type_arg, instantiated_constraint)
                         });
-
                 // When the constraint is all-optional and the structural check
                 // passed (because all-optional types have no required properties),
                 // separately check for weak type violation (TS2559).
@@ -1563,6 +1583,10 @@ impl<'a> CheckerState<'a> {
                     is_satisfied = self
                         .satisfies_array_like_constraint(type_arg, instantiated_constraint)
                         || self.type_arg_evaluates_to_array_like_infer_result_conditional(
+                            type_arg,
+                            instantiated_constraint,
+                        )
+                        || self.array_element_infer_alias_satisfies_constraint(
                             type_arg,
                             instantiated_constraint,
                         );

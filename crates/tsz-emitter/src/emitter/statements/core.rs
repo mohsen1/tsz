@@ -715,6 +715,10 @@ impl<'a> Printer<'a> {
             Vec::new()
         };
 
+        if self.emit_esm_object_rest_export_statement(node) {
+            return;
+        }
+
         if self.is_es5_empty_binding_pattern_export_statement(node)
             && self.emit_es5_empty_binding_pattern_export(&var_stmt.declarations)
         {
@@ -851,10 +855,20 @@ impl<'a> Printer<'a> {
         let recovered_arrow_return = recovered_async_arrow_return
             .as_ref()
             .or(recovered_bare_arrow_return.as_ref());
+        let recovered_arrow_property_tail = if recovered_arrow_return.is_none() {
+            self.recovered_parenthesized_arrow_property_tail(&var_stmt.declarations)
+        } else {
+            None
+        };
         if !using_is_lowered {
             if let Some(return_name) = recovered_arrow_return {
                 self.write(", ");
                 self.write(return_name);
+            } else if let Some((tail_name, consumed_span)) = recovered_arrow_property_tail {
+                self.write(", ");
+                self.write(&tail_name);
+                self.consumed_recovered_expression_statement_span =
+                    Some((consumed_span.0, consumed_span.1, tail_name));
             }
             if let Some(last_end) =
                 self.variable_statement_last_emitted_declaration_end(&var_stmt.declarations)
@@ -869,6 +883,9 @@ impl<'a> Printer<'a> {
             }
             self.map_trailing_semicolon(node);
             self.write_semicolon();
+            self.emit_recovered_generated_type_member_tail_after_variable_statement(
+                &var_stmt.declarations,
+            );
             self.emit_recovered_regex_slash_tail_after_variable_statement(&var_stmt.declarations);
             self.emit_recovered_class_keyword_variable_statement_tail(node);
         }
@@ -879,6 +896,9 @@ impl<'a> Printer<'a> {
         // not find semicolons inside the erased type annotation.
         let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
         self.emit_trailing_comment_after_semicolon_in_range(node.pos, effective_end);
+        self.emit_static_block_await_arrow_recovery_blocks_after_variable_statement(
+            &var_stmt.declarations,
+        );
         self.emit_recovered_malformed_arrow_block_after_variable_statement(
             node,
             recovered_async_arrow_return.is_some(),
@@ -980,6 +1000,29 @@ impl<'a> Printer<'a> {
         let masked_line = Self::source_text_with_quoted_spans_masked(line);
         let line_for_scan = masked_line.as_str();
 
+        if self.ctx.flags.in_class_static_block
+            && Self::line_has_static_block_await_arrow_recovery(line_for_scan)
+        {
+            let Some(arrow_rel) = line_for_scan.find("=>") else {
+                return;
+            };
+            let after_arrow = start + arrow_rel + 2;
+            let Some(open_rel) = bytes[after_arrow..line_end].iter().position(|&b| b == b'{')
+            else {
+                return;
+            };
+            let open = after_arrow + open_rel;
+            let mut pos = open + 1;
+            while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            if bytes.get(pos) == Some(&b'}') {
+                self.write_line();
+                self.write("{ }");
+            }
+            return;
+        }
+
         if line_for_scan.contains("= @") && line_for_scan.contains("=>") {
             let Some(arrow_rel) = line_for_scan.find("=>") else {
                 return;
@@ -1043,7 +1086,6 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.write_semicolon();
     }
-
     fn emit_recovered_typeof_member_call_after_variable_statement(&mut self, node: &Node) {
         // Only recover when every declaration in the statement lacks an initializer.
         // If any declaration has an initializer, .typeof( is a valid property call
@@ -1480,6 +1522,10 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if self.consume_recovered_expression_statement(node) {
+            return;
+        }
+
         // Suppress bare `declare;` expression statements that are artifacts of the parser
         // not recognizing `declare` as a modifier before certain keywords (e.g.,
         // `declare import a = b;`, `declare export function f() {}`). We distinguish
@@ -1585,78 +1631,6 @@ impl<'a> Printer<'a> {
             self.emit(expression);
         }
         self.ctx.flags.in_statement_expression = prev_stmt_expr;
-    }
-
-    fn emit_recovered_regex_slash_tail_after_variable_statement(
-        &mut self,
-        declarations: &NodeList,
-    ) -> bool {
-        let Some(text) = self.source_text else {
-            return false;
-        };
-
-        let mut last_initializer = NodeIndex::NONE;
-        for &decl_list_idx in &declarations.nodes {
-            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
-                continue;
-            };
-            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
-                continue;
-            };
-            for &decl_idx in &decl_list.declarations.nodes {
-                let Some(decl_node) = self.arena.get(decl_idx) else {
-                    continue;
-                };
-                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-                    continue;
-                };
-                if decl.initializer.is_some() {
-                    last_initializer = decl.initializer;
-                }
-            }
-        }
-
-        let Some(init_node) = self.arena.get(last_initializer) else {
-            return false;
-        };
-        if init_node.kind != SyntaxKind::RegularExpressionLiteral as u16 {
-            return false;
-        }
-
-        let start = init_node.end.min(text.len() as u32) as usize;
-        let end = self
-            .variable_statement_effective_end(declarations)
-            .min(text.len() as u32) as usize;
-        if start >= end {
-            return false;
-        }
-
-        let bytes = text.as_bytes();
-        let mut i = start;
-        while i < end && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
-            i += 1;
-        }
-        if bytes.get(i) != Some(&b']') {
-            return false;
-        }
-        i += 1;
-        while i < end && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
-            i += 1;
-        }
-        if bytes.get(i) != Some(&b'/') {
-            return false;
-        }
-        i += 1;
-        while i < end && matches!(bytes[i], b' ' | b'\t' | b'\r' | b'\n') {
-            i += 1;
-        }
-        if i < end && bytes.get(i) != Some(&b';') {
-            return false;
-        }
-
-        self.write_line();
-        self.write("/;");
-        true
     }
 
     fn emit_recovered_jsx_unary_trailing_less_than(
