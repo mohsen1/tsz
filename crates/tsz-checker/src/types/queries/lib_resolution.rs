@@ -835,21 +835,58 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .binder
                 .get_global_type_with_libs(name, &lib_binders)
+        })
+        .or_else(|| {
+            resolve_name_to_lib_symbol(
+                name,
+                self.ctx.binder,
+                self.ctx.global_file_locals_index.as_deref(),
+                self.ctx
+                    .all_binders
+                    .as_ref()
+                    .map(|binders| binders.as_ref().as_slice()),
+                &self.ctx.lib_contexts,
+            )
         });
 
-        if let Some(sym_id) = sym_id {
+        let selected_symbol = sym_id
+            .and_then(|sym_id| {
+                self.ctx
+                    .binder
+                    .get_symbol_with_libs(sym_id, &lib_binders)
+                    .is_some_and(|symbol| symbol.escaped_name == name)
+                    .then_some((sym_id, None))
+            })
+            .or_else(|| {
+                self.ctx
+                    .lib_contexts
+                    .iter()
+                    .take(self.ctx.actual_lib_file_count)
+                    .find_map(|lib_ctx| {
+                        let sym_id = lib_ctx.binder.file_locals.get(name)?;
+                        lib_ctx
+                            .binder
+                            .get_symbol(sym_id)
+                            .is_some_and(|symbol| symbol.escaped_name == name)
+                            .then_some((sym_id, Some(Arc::clone(&lib_ctx.binder))))
+                    })
+            });
+
+        if let Some((sym_id, selected_binder_arc)) = selected_symbol {
+            let selected_from_lib_context = selected_binder_arc.is_some();
+            let selected_binder = selected_binder_arc.as_deref().unwrap_or(self.ctx.binder);
             // Get the symbol's declaration(s) from the main file's binder
-            if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+            if let Some(symbol) = selected_binder.get_symbol_with_libs(sym_id, &lib_binders) {
                 symbol_has_interface = symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE);
                 let fallback_arena = resolve_lib_fallback_arena(
-                    self.ctx.binder,
+                    selected_binder,
                     sym_id,
                     &lib_contexts,
                     self.ctx.arena,
                 );
 
                 let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
-                    self.ctx.binder,
+                    selected_binder,
                     sym_id,
                     &symbol.declarations,
                     fallback_arena,
@@ -872,7 +909,7 @@ impl<'a> CheckerState<'a> {
                                 .is_some_and(|args| !args.nodes.is_empty());
                             if has_type_args
                                 && let Some(ref_sym_id) = resolve_lib_node_in_arenas(
-                                    self.ctx.binder,
+                                    selected_binder,
                                     type_ref.type_name,
                                     &decls_with_arenas,
                                     fallback_arena,
@@ -883,6 +920,10 @@ impl<'a> CheckerState<'a> {
                                     .ctx
                                     .binder
                                     .get_symbol_with_libs(ref_sym_id, &lib_binders)
+                                    .or_else(|| {
+                                        selected_binder
+                                            .get_symbol_with_libs(ref_sym_id, &lib_binders)
+                                    })
                                     .map(|symbol| symbol.escaped_name.clone());
                                 if let Some(ref_name) = ref_name {
                                     let _ = self.resolve_lib_type_by_name(&ref_name);
@@ -913,7 +954,7 @@ impl<'a> CheckerState<'a> {
                 // maintaining per-call caches. The `resolver` closure extracts
                 // the raw `u32` at the TypeLowering boundary; all internal
                 // resolution uses type-safe `SymbolId`.
-                let binder = &self.ctx.binder;
+                let binder = selected_binder;
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
                     resolve_lib_node_in_arenas(binder, node_idx, &decls_with_arenas, fallback_arena)
                         .map(|sym_id| sym_id.0)
@@ -968,6 +1009,15 @@ impl<'a> CheckerState<'a> {
 
                     if !is_type_alias {
                         let deduped = dedup_decl_arenas(&decls_with_arenas);
+                        let interface_sym_id = if selected_from_lib_context {
+                            let def_id = self.ctx.get_canonical_lib_def_id(name, sym_id);
+                            self.ctx
+                                .def_symbol_identity(def_id)
+                                .map(|(sym_id, _)| sym_id)
+                                .unwrap_or(sym_id)
+                        } else {
+                            sym_id
+                        };
 
                         // Use lower_merged_interface_declarations for proper multi-arena support.
                         // Pass sym_id so the resulting Object type gets stamped with the
@@ -976,13 +1026,23 @@ impl<'a> CheckerState<'a> {
                         let (ty, params) = lowering
                             .lower_merged_interface_declarations_with_symbol(
                                 &deduped,
-                                Some(sym_id),
+                                Some(interface_sym_id),
                             );
 
                         // If lowering succeeded (not ERROR), use the result
                         if ty != TypeId::ERROR {
                             // Register DefId, type params, and body in one step.
-                            self.ctx.register_lib_def_resolved(sym_id, ty, params);
+                            if selected_from_lib_context {
+                                let def_id = self.ctx.get_canonical_lib_def_id(name, sym_id);
+                                self.ctx.insert_def_type_params(def_id, params.clone());
+                                self.ctx.register_def_auto_params_in_envs(
+                                    def_id,
+                                    ty,
+                                    params.clone(),
+                                );
+                            } else {
+                                self.ctx.register_lib_def_resolved(sym_id, ty, params);
+                            }
 
                             lib_types.push(ty);
                         }
@@ -1001,8 +1061,16 @@ impl<'a> CheckerState<'a> {
                                     alias_lowering.lower_type_alias_declaration(alias);
                                 if ty != TypeId::ERROR {
                                     // Register DefId, type params, and body in one step.
-                                    let def_id =
-                                        self.ctx.register_lib_def_resolved(sym_id, ty, params);
+                                    let def_id = if selected_from_lib_context {
+                                        let def_id =
+                                            self.ctx.get_canonical_lib_def_id(name, sym_id);
+                                        self.ctx.insert_def_type_params(def_id, params.clone());
+                                        self.ctx
+                                            .register_def_auto_params_in_envs(def_id, ty, params);
+                                        def_id
+                                    } else {
+                                        self.ctx.register_lib_def_resolved(sym_id, ty, params)
+                                    };
 
                                     // CRITICAL: Return Lazy(DefId) instead of the structural body.
                                     // Application types only expand when the base is Lazy, not when
