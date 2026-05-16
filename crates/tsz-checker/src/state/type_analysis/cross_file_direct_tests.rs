@@ -210,6 +210,38 @@ fn source_file_direct_interface_lowering_accepts_scope_independent_members() {
 }
 
 #[test]
+fn direct_interface_lowering_accepts_well_known_symbol_computed_names() {
+    let (arena, declarations) = parse_interface_declarations(
+        r#"
+            interface IterableLike {
+                [Symbol.iterator](): Iterator<string>;
+            }
+            interface LocalComputed {
+                [local](): void;
+            }
+        "#,
+    );
+
+    let well_known = vec![(declarations[0], &arena)];
+    assert!(CheckerState::interface_declarations_have_computed_names(
+        &well_known
+    ));
+    assert!(
+        !CheckerState::interface_declarations_have_unsupported_computed_names(&well_known),
+        "well-known Symbol.* computed names are lowered structurally by TypeLowering",
+    );
+
+    let local = vec![(declarations[1], &arena)];
+    assert!(CheckerState::interface_declarations_have_computed_names(
+        &local
+    ));
+    assert!(
+        CheckerState::interface_declarations_have_unsupported_computed_names(&local),
+        "arbitrary computed names still need the normal checker path",
+    );
+}
+
+#[test]
 fn source_file_direct_interface_lowering_rejects_scope_dependent_members() {
     let (arena, binder, _types) = parse_bound_source(
         r#"
@@ -1138,6 +1170,40 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
         )
         .is_some(),
         "AddEventListenerOptions should include inherited EventListenerOptions members",
+    );
+
+    let iterable_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("DOMTokenList")
+        .expect("DOMTokenList should resolve to a dom lib symbol");
+    let iterable_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&iterable_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("DOMTokenList should have a delegate arena");
+    let (iterable_ty, iterable_params) = state
+        .direct_cross_file_interface_lowering(
+            iterable_sym_id,
+            state.ctx.binder,
+            iterable_arena,
+            false,
+            false,
+        )
+        .expect("builtin dom interfaces with well-known Symbol.* members should lower directly");
+    assert!(iterable_params.is_empty());
+    let iterator = state.ctx.types.intern_string("[Symbol.iterator]");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            iterable_ty,
+            iterator,
+        )
+        .is_some(),
+        "DOMTokenList should preserve its well-known Symbol.iterator member",
     );
 }
 

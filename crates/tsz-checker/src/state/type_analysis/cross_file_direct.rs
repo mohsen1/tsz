@@ -971,6 +971,70 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn computed_property_name_is_well_known_symbol(arena: &NodeArena, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let Some(expr_node) = arena.get(computed.expression) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = arena.get_access_expr(expr_node) else {
+            return false;
+        };
+        let Some(base_node) = arena.get(access.expression) else {
+            return false;
+        };
+        let Some(base_ident) = arena.get_identifier(base_node) else {
+            return false;
+        };
+        base_ident.escaped_text == "Symbol"
+            && arena
+                .get(access.name_or_argument)
+                .and_then(|name_node| arena.get_identifier(name_node))
+                .is_some()
+    }
+
+    fn interface_declarations_have_unsupported_computed_names(
+        declarations: &[(NodeIndex, &NodeArena)],
+    ) -> bool {
+        declarations.iter().any(|(decl_idx, arena)| {
+            let Some(node) = arena.get(*decl_idx) else {
+                return false;
+            };
+            let Some(interface) = arena.get_interface(node) else {
+                return false;
+            };
+            interface.members.nodes.iter().copied().any(|member_idx| {
+                let Some(member_node) = arena.get(member_idx) else {
+                    return false;
+                };
+                let name_idx = arena
+                    .get_signature(member_node)
+                    .map(|signature| signature.name)
+                    .or_else(|| {
+                        arena
+                            .get_accessor(member_node)
+                            .map(|accessor| accessor.name)
+                    });
+                name_idx
+                    .and_then(|idx| arena.get(idx).map(|name_node| (idx, name_node)))
+                    .is_some_and(|(idx, name_node)| {
+                        name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                            && !Self::computed_property_name_is_well_known_symbol(arena, idx)
+                    })
+            })
+        })
+    }
+
     fn source_file_type_node_is_scope_independent(arena: &NodeArena, node_idx: NodeIndex) -> bool {
         if node_idx.is_none() {
             return false;
@@ -1875,6 +1939,8 @@ impl<'a> CheckerState<'a> {
         };
         let has_heritage = Self::interface_declarations_have_heritage(&declarations);
         let has_computed_names = Self::interface_declarations_have_computed_names(&declarations);
+        let has_unsupported_computed_names =
+            Self::interface_declarations_have_unsupported_computed_names(&declarations);
         let builtin_lib_declaration_arena = is_builtin_lib_declaration_arena(symbol_arena);
         if direct_source_file_arena {
             if has_heritage
@@ -1888,7 +1954,7 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
         } else if !allow_complex_declarations
-            && (has_computed_names || (has_heritage && !builtin_lib_declaration_arena))
+            && (has_unsupported_computed_names || (has_heritage && !builtin_lib_declaration_arena))
         {
             record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
             return None;
