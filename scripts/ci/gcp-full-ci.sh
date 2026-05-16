@@ -573,6 +573,9 @@ unit_test_packages_args() {
     fi
   done
   for crate in $override; do
+    if [[ "$crate" == "tsz-checker" ]]; then
+      continue
+    fi
     printf -- '-p\n%s\n' "$crate"
   done
 }
@@ -584,10 +587,12 @@ run_unit_tests() {
   if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
     echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
   fi
-  cargo nextest run --profile ci --cargo-profile ci-unit \
-    --build-jobs "$CARGO_BUILD_JOBS" \
-    "${pkg_args[@]}"
-  if [[ -z "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
+  if [[ "${#pkg_args[@]}" -gt 0 ]]; then
+    cargo nextest run --profile ci --cargo-profile ci-unit \
+      --build-jobs "$CARGO_BUILD_JOBS" \
+      "${pkg_args[@]}"
+  fi
+  if [[ -z "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" || " ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE} " == *" tsz-checker "* ]]; then
     cargo nextest run --profile ci --cargo-profile ci-unit \
       --build-jobs "$CARGO_BUILD_JOBS" \
       "${_CHECKER_INTEGRATION_TEST_PACKAGES[@]}"
