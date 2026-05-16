@@ -24,28 +24,14 @@ impl<'a> Printer<'a> {
         if binary.operator_token == SyntaxKind::AsteriskAsteriskEqualsToken as u16 {
             self.emit_exponentiation_assignment(binary.left, left, right);
         } else {
-            self.write("Math.pow");
-            self.open_paren();
+            self.write("Math.pow(");
             self.emit_replayed_leading_exponentiation_comment(left);
-            self.emit_pending_exponentiation_operand_comments(left);
             self.emit_regex_exponentiation_operand_comments(left, right);
             self.emit(left);
             self.write(", ");
-            self.emit_pending_exponentiation_operand_comments(right);
             self.emit(right);
-            self.close_paren();
+            self.write(")");
         }
-    }
-
-    fn emit_pending_exponentiation_operand_comments(&mut self, operand: NodeIndex) {
-        let Some(node) = self.arena.get(operand) else {
-            return;
-        };
-        let actual_start = self.skip_trivia_forward(node.pos, node.end);
-        if actual_start <= node.pos {
-            return;
-        }
-        self.emit_comments_before_pos(actual_start);
     }
 
     fn emit_regex_exponentiation_operand_comments(&mut self, left: NodeIndex, right: NodeIndex) {
