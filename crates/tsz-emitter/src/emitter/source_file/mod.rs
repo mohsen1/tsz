@@ -1409,6 +1409,54 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn object_rest_assignment_literal_rest_targets_use_temps() {
+        let source = "let a: any;\n({...{}} = {});\n({...({})} = {});\n({...[]} = {});\n({...([])} = {});\n({...{ a }} = { a: 1 });\n({...({ a })} = { a: 1 });\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a, _b;"),
+            "Bare literal rest targets should reserve hoisted assignment temps.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_a = __rest({}, []));"),
+            "Bare object literal rest target should lower to a temp assignment.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(({}) = __rest({}, []));"),
+            "Parenthesized object literal rest target should stay as a destructuring target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_b = __rest({}, []));"),
+            "Bare array literal rest target should lower to a temp assignment.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(([]) = __rest({}, []));"),
+            "Parenthesized array literal rest target should stay as a destructuring target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("({ a } = __rest({ a: 1 }, []));"),
+            "Non-empty object literal rest target should stay as a destructuring target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(({ a }) = __rest({ a: 1 }, []));"),
+            "Parenthesized non-empty object literal rest target should also stay as a destructuring target.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn object_rest_assignment_value_position_returns_rhs_value() {
         let source = "let bar: any;\nlet value = ({ ...bar } = { x: 1 });\n";
 

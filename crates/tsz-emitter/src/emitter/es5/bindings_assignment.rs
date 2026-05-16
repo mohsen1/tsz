@@ -626,7 +626,7 @@ impl<'a> Printer<'a> {
             self.write(" = ");
             self.emit(right_idx);
             self.write(", ");
-            self.emit(spread.expression);
+            self.emit_assignment_object_rest_target(spread.expression);
             self.write(" = ");
             self.write_helper("__rest");
             self.write("(");
@@ -637,12 +637,71 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.emit(spread.expression);
+        self.emit_assignment_object_rest_target(spread.expression);
         self.write(" = ");
         self.write_helper("__rest");
         self.write("(");
         self.emit(right_idx);
         self.write(", [])");
+    }
+
+    fn emit_assignment_object_rest_target(&mut self, target: NodeIndex) {
+        if self.assignment_object_rest_target_needs_temp(target) {
+            let temp = self.make_unique_name_hoisted_assignment();
+            self.write(&temp);
+        } else {
+            self.emit(target);
+        }
+    }
+
+    fn assignment_object_rest_target_needs_temp(&self, target: NodeIndex) -> bool {
+        if self.assignment_object_rest_target_is_empty_pattern(target) {
+            return true;
+        }
+
+        self.assignment_object_rest_target_source_is_bare_empty_pattern(target)
+    }
+
+    fn assignment_object_rest_target_is_empty_pattern(&self, target: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(target) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            || node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        {
+            return self
+                .arena
+                .get_literal_expr(node)
+                .is_some_and(|literal| literal.elements.nodes.is_empty());
+        }
+
+        if node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+            || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            return self
+                .arena
+                .get_binding_pattern(node)
+                .is_some_and(|pattern| pattern.elements.nodes.is_empty());
+        }
+
+        false
+    }
+
+    fn assignment_object_rest_target_source_is_bare_empty_pattern(
+        &self,
+        target: NodeIndex,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(node) = self.arena.get(target) else {
+            return false;
+        };
+        let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        let end = (node.end as usize).min(text.len());
+        text.get(start.min(end)..end)
+            .is_some_and(|source| matches!(source.trim(), "{}" | "[]"))
     }
 
     fn emit_assignment_pattern_with_object_rest(
@@ -824,7 +883,7 @@ impl<'a> Printer<'a> {
             && let Some(spread) = self.arena.get_spread(rest_node)
         {
             self.emit_assignment_separator(first);
-            self.emit(spread.expression);
+            self.emit_assignment_object_rest_target(spread.expression);
             self.write(" = ");
             self.write_helper("__rest");
             self.write("(");
@@ -1335,7 +1394,7 @@ impl<'a> Printer<'a> {
                     // { ...rest } → rest = __rest(source, ["prop1", "prop2"])
                     if let Some(spread) = self.arena.get_spread(elem_node) {
                         self.emit_assignment_separator(first);
-                        self.emit_assignment_target(spread.expression);
+                        self.emit_assignment_object_rest_target(spread.expression);
                         self.write(" = ");
                         self.write_helper("__rest");
                         self.write("(");
