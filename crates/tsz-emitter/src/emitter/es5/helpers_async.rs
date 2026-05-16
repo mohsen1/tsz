@@ -240,11 +240,6 @@ impl<'a> Printer<'a> {
                 syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                     current = parent_idx;
                 }
-                syntax_kind_ext::NON_NULL_EXPRESSION
-                | syntax_kind_ext::TYPE_ASSERTION
-                | syntax_kind_ext::AS_EXPRESSION
-                | syntax_kind_ext::SATISFIES_EXPRESSION
-                | syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => return true,
                 syntax_kind_ext::RETURN_STATEMENT => return false,
                 _ => return true,
             }
