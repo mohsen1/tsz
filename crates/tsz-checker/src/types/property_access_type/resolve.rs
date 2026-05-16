@@ -1849,6 +1849,25 @@ impl<'a> CheckerState<'a> {
 
                     if !used_class_chain_method_type
                         && direct_class_this_receiver
+                        && let Some(class_idx) = self.nearest_enclosing_class(access.expression)
+                    {
+                        let summary = self.summarize_class_chain(class_idx);
+                        if let Some(member_info) = summary.member_info(property_name, false, true)
+                            && !matches!(
+                                member_info.type_id,
+                                TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+                            )
+                            && member_info.type_id != prop_type
+                        {
+                            prop_type = member_info.type_id;
+                            used_class_chain_method_type =
+                                summary.member_kind(property_name, false, true)
+                                    == Some(ClassMemberKind::MethodLike);
+                        }
+                    }
+
+                    if !used_class_chain_method_type
+                        && direct_class_this_receiver
                         && let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
                             self.ctx.types,
                             object_type_for_access,
