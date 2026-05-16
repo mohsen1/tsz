@@ -66,7 +66,6 @@ pub(crate) mod construct_signatures;
     clippy::manual_map
 )]
 pub(crate) mod definite_assignment;
-pub(crate) mod definition_identity;
 #[allow(
     dead_code,
     clippy::missing_const_for_fn,
