@@ -803,8 +803,27 @@ function test<T extends IFoo>() {
     let diags = get_diagnostics(source);
     let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
     assert!(
-        ts2353.1.contains("'{ prop: boolean; }'"),
-        "Expected TS2353 against the concrete union member, got: {}",
+        ts2353.1.contains("'name'"),
+        "Expected TS2353 for the extra property, got: {}",
+        ts2353.1
+    );
+}
+
+#[test]
+fn union_with_generic_member_ignores_any_substring_in_alias_name_for_excess_property() {
+    let source = r#"
+interface IFoo {}
+type Many<T> = T | { prop: boolean };
+function test<T extends IFoo>() {
+    const value: Many<T> = { name: "test", prop: true };
+}
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
+    assert!(
+        ts2353.1.contains("'name'"),
+        "Expected TS2353 for the extra property, got: {}",
         ts2353.1
     );
 }

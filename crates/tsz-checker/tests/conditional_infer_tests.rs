@@ -2,6 +2,19 @@
 
 use tsz_checker::diagnostics::Diagnostic;
 
+fn assert_no_ts2322(source: &str, label: &str) {
+    let diags = tsz_checker::test_utils::check_source_strict(source);
+    let errors: Vec<&Diagnostic> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        errors.is_empty(),
+        "[{label}] expected no TS2322, got:\n{:#?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.start, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+}
+
 fn check_source_strict_with_default_libs(source: &str) -> Vec<Diagnostic> {
     let libs = tsz_checker::test_utils::load_default_lib_files();
     tsz_checker::test_utils::check_source_with_libs(
@@ -40,6 +53,158 @@ export {};
             .iter()
             .map(|d| (d.code, d.start, d.length, d.message_text.clone()))
             .collect::<Vec<_>>()
+    );
+}
+
+// =============================================================================
+// Equal<X, Y> identity pattern — `any` boundary tests (issues #6777 / #6742)
+// =============================================================================
+//
+// Structural rule: when two generic functions with conditional return types are
+// compared for subtyping (the type-challenges `Equal<X, Y>` trick), `any` must
+// not be treated as a universal wildcard inside the conditional `extends` clause.
+// `Equal<any, non-any>` and `Equal<non-any, any>` both evaluate to `false`;
+// only `Equal<any, any>` evaluates to `true`.
+
+#[test]
+fn equal_any_literal_is_false() {
+    assert_no_ts2322(
+        r#"
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2) ? true : false;
+
+type E = Equal<any, 1>;
+const e: E = false;
+
+export {};
+"#,
+        "Equal<any, 1> = false",
+    );
+}
+
+#[test]
+fn equal_unknown_any_is_false() {
+    assert_no_ts2322(
+        r#"
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2) ? true : false;
+
+type E = Equal<unknown, any>;
+const e: E = false;
+
+export {};
+"#,
+        "Equal<unknown, any> = false",
+    );
+}
+
+#[test]
+fn equal_any_any_is_true() {
+    assert_no_ts2322(
+        r#"
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2) ? true : false;
+
+type E = Equal<any, any>;
+const e: E = true;
+
+export {};
+"#,
+        "Equal<any, any> = true",
+    );
+}
+
+/// Full matrix: false-cases followed by true-cases in one file.
+/// Regression gate for issue #6742 (cache corruption from `any` evaluations).
+#[test]
+fn equal_any_matrix_no_cache_corruption() {
+    assert_no_ts2322(
+        r#"
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2) ? true : false;
+
+// --- should be false ---
+type F1 = Equal<any, 1>;       const f1: F1 = false;
+type F2 = Equal<any, string>;  const f2: F2 = false;
+type F3 = Equal<any, unknown>; const f3: F3 = false;
+type F4 = Equal<unknown, any>; const f4: F4 = false;
+type F5 = Equal<1, any>;       const f5: F5 = false;
+type F6 = Equal<string, any>;  const f6: F6 = false;
+type F7 = Equal<any, never>;   const f7: F7 = false;
+type F8 = Equal<never, any>;   const f8: F8 = false;
+
+// --- should be true (must not be corrupted by the any-cases above) ---
+type T1 = Equal<string, string>;     const t1: T1 = true;
+type T2 = Equal<number, number>;     const t2: T2 = true;
+type T3 = Equal<{ a: 1 }, { a: 1 }>; const t3: T3 = true;
+type T4 = Equal<any, any>;           const t4: T4 = true;
+
+export {};
+"#,
+        "equal any matrix / cache corruption",
+    );
+}
+
+#[test]
+fn equal_nested_any_object_property_is_false() {
+    assert_no_ts2322(
+        r#"
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2) ? true : false;
+
+type F = Equal<{ a: any }, { a: string }>;   const f: F = false;
+type G = Equal<{ a: string }, { a: any }>;   const g: G = false;
+type T = Equal<{ a: string }, { a: string }>; const t: T = true;
+
+export {};
+"#,
+        "Equal with nested any in object property",
+    );
+}
+
+#[test]
+fn equal_any_array_element_is_false() {
+    assert_no_ts2322(
+        r#"
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2) ? true : false;
+
+type F1 = Equal<any[], string[]>;  const f1: F1 = false;
+type F2 = Equal<string[], any[]>;  const f2: F2 = false;
+type T1 = Equal<string[], string[]>; const t1: T1 = true;
+
+export {};
+"#,
+        "Equal with any in array element position",
+    );
+}
+
+/// Naming of the type-parameter (`T`, `P`, `K`, `Item`) must not affect the result.
+#[test]
+fn equal_any_identity_independent_of_param_name() {
+    assert_no_ts2322(
+        r#"
+type EqualP<X, Y>    = (<P>()    => P    extends X ? 1 : 2) extends (<P>()    => P    extends Y ? 1 : 2) ? true : false;
+type EqualK<X, Y>    = (<K>()    => K    extends X ? 1 : 2) extends (<K>()    => K    extends Y ? 1 : 2) ? true : false;
+type EqualItem<X, Y> = (<Item>() => Item extends X ? 1 : 2) extends (<Item>() => Item extends Y ? 1 : 2) ? true : false;
+
+const fp: EqualP<any, 1>    = false;
+const fk: EqualK<any, 1>    = false;
+const fi: EqualItem<any, 1> = false;
+
+const tp: EqualP<string, string>    = true;
+const tk: EqualK<string, string>    = true;
+const ti: EqualItem<string, string> = true;
+
+export {};
+"#,
+        "Equal any identity independent of param name",
     );
 }
 

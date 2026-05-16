@@ -4,10 +4,12 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT_DIR"
 
-TSZ_BIN="${TSZ_BIN:-$ROOT_DIR/.target/dist-fast/tsz}"
+DEFAULT_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT_DIR/.target}"
+TSZ_BIN="${TSZ_BIN:-$DEFAULT_TARGET_DIR/dist-fast/tsz}"
 FIXTURE_ROOT="${TSZ_PROJECT_COMPILE_FIXTURE_ROOT:-$ROOT_DIR/.target/project-compile-guard}"
 PROJECT_TIMEOUT="${TSZ_PROJECT_COMPILE_TIMEOUT:-90}"
 INCLUDE_GENERATED_APPS="${TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS:-1}"
+PROJECT_FILTER="${TSZ_PROJECT_COMPILE_FILTER:-}"
 
 UTILITY_TYPES_REPO="${UTILITY_TYPES_REPO:-https://github.com/piotrwitek/utility-types.git}"
 UTILITY_TYPES_REF="${UTILITY_TYPES_REF:-2ee1f6ecb241651ab22390fee7ee5349942efda2}"
@@ -185,31 +187,49 @@ check_project() {
   echo "::endgroup::"
 }
 
-ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$FIXTURE_ROOT/utility-types"
-write_utility_types_config
-check_project "utility-types-project" "$FIXTURE_ROOT/utility-types/tsconfig.tsz-guard.json"
+should_check_project() {
+  local name="$1"
+  [[ -z "$PROJECT_FILTER" || "$name" =~ $PROJECT_FILTER ]]
+}
 
-ensure_git_fixture "ts-essentials" "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF" "$FIXTURE_ROOT/ts-essentials"
-write_ts_essentials_config
-check_project "ts-essentials-project" "$FIXTURE_ROOT/ts-essentials/tsconfig.tsz-guard.json"
+if should_check_project "utility-types-project"; then
+  ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$FIXTURE_ROOT/utility-types"
+  write_utility_types_config
+  check_project "utility-types-project" "$FIXTURE_ROOT/utility-types/tsconfig.tsz-guard.json"
+fi
 
-ensure_git_fixture "rxjs" "$RXJS_REPO" "$RXJS_REF" "$FIXTURE_ROOT/rxjs"
-write_rxjs_config
-check_project "rxjs-project" "$FIXTURE_ROOT/rxjs/tsconfig.tsz-guard.json"
+if should_check_project "ts-essentials-project"; then
+  ensure_git_fixture "ts-essentials" "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF" "$FIXTURE_ROOT/ts-essentials"
+  write_ts_essentials_config
+  check_project "ts-essentials-project" "$FIXTURE_ROOT/ts-essentials/tsconfig.tsz-guard.json"
+fi
 
-ensure_git_fixture "type-fest" "$TYPE_FEST_REPO" "$TYPE_FEST_REF" "$FIXTURE_ROOT/type-fest"
-write_type_fest_config
-check_project "type-fest-project" "$FIXTURE_ROOT/type-fest/tsconfig.tsz-guard.json"
+if should_check_project "rxjs-project"; then
+  ensure_git_fixture "rxjs" "$RXJS_REPO" "$RXJS_REF" "$FIXTURE_ROOT/rxjs"
+  write_rxjs_config
+  check_project "rxjs-project" "$FIXTURE_ROOT/rxjs/tsconfig.tsz-guard.json"
+fi
 
-if [[ "$INCLUDE_GENERATED_APPS" == "1" ]]; then
+if should_check_project "type-fest-project"; then
+  ensure_git_fixture "type-fest" "$TYPE_FEST_REPO" "$TYPE_FEST_REF" "$FIXTURE_ROOT/type-fest"
+  write_type_fest_config
+  check_project "type-fest-project" "$FIXTURE_ROOT/type-fest/tsconfig.tsz-guard.json"
+fi
+
+if [[ "$INCLUDE_GENERATED_APPS" == "1" ]] \
+  && { should_check_project "vite-vanilla-ts-app" || should_check_project "nextjs-fresh-app"; }; then
   if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
     echo "error: node and npm are required for generated app project compile guards" >&2
     exit 1
   fi
 
-  node scripts/bench/generate-vite-app-fixture.mjs "$FIXTURE_ROOT/vite-vanilla-ts-live"
-  check_project "vite-vanilla-ts-app" "$FIXTURE_ROOT/vite-vanilla-ts-live/tsconfig.json"
+  if should_check_project "vite-vanilla-ts-app"; then
+    node scripts/bench/generate-vite-app-fixture.mjs "$FIXTURE_ROOT/vite-vanilla-ts-live"
+    check_project "vite-vanilla-ts-app" "$FIXTURE_ROOT/vite-vanilla-ts-live/tsconfig.json"
+  fi
 
-  node scripts/bench/generate-next-app-fixture.mjs "$FIXTURE_ROOT/next-app-live"
-  check_project "nextjs-fresh-app" "$FIXTURE_ROOT/next-app-live/tsconfig.json"
+  if should_check_project "nextjs-fresh-app"; then
+    node scripts/bench/generate-next-app-fixture.mjs "$FIXTURE_ROOT/next-app-live"
+    check_project "nextjs-fresh-app" "$FIXTURE_ROOT/next-app-live/tsconfig.json"
+  fi
 fi
