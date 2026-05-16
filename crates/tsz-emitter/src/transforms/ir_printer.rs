@@ -1927,9 +1927,6 @@ impl<'a> IRPrinter<'a> {
                                 self.make_ast_printer_options(),
                             );
                             self.configure_ast_printer_namespace(&mut printer);
-                            if let Some(source_text) = self.source_text {
-                                printer.set_source_text(source_text);
-                            }
                             printer.emit(*idx);
                             let output = printer.get_output().trim_end();
                             self.write_embedded_output(output);
