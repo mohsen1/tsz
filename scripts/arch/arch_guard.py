@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Optional
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
@@ -632,6 +633,13 @@ LSP_FEATURE_METHOD_COUNT_CHECKS = [
     ),
 ]
 
+PROJECT_DASHBOARD_ROW_CHECKS = [
+    (
+        "Project corpus dashboard: expected project rows must be visible (Track 1)",
+        ROOT / "crates" / "tsz-website" / "src" / "_data" / "benchmark_data.js",
+    ),
+]
+
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/mod.rs",
@@ -1054,6 +1062,82 @@ def scan_speculation_guard_struct_count(
         )
         return hits
     return []
+
+
+def extract_js_array_strings(text: str, const_name: str) -> Optional[list[str]]:
+    """Extract string literals from a simple `const NAME = [...]` JS array."""
+    match = re.search(
+        rf"\bconst\s+{re.escape(const_name)}\s*=\s*\[(?P<body>.*?)\]\s*;",
+        text,
+        re.DOTALL,
+    )
+    if match is None:
+        return None
+    return re.findall(r'"([^"]+)"', match.group("body"))
+
+
+def extract_project_dashboard_row_names(text: str) -> Optional[list[str]]:
+    """Extract `name` fields from `COMPATIBILITY_CORPUS_ROWS` objects."""
+    match = re.search(
+        r"\bconst\s+COMPATIBILITY_CORPUS_ROWS\s*=\s*\[(?P<body>.*?)\]\s*;",
+        text,
+        re.DOTALL,
+    )
+    if match is None:
+        return None
+    return re.findall(r'\bname:\s*"([^"]+)"', match.group("body"))
+
+
+def scan_project_dashboard_rows(path: pathlib.Path) -> list[str]:
+    """Ensure every expected project benchmark row is present in the dashboard.
+
+    `benchmark_data.js` has two separate row inventories:
+
+    - `EXPECTED_PROJECT_BENCHMARKS` / `COMPILE_CANARY_PROJECTS` define the
+      project rows that must exist as benchmark/CI compatibility records.
+    - `COMPATIBILITY_CORPUS_ROWS` defines the rows rendered by the public
+      project compatibility dashboard.
+
+    Track 1 requires public rows for every required project. This guard keeps
+    the render inventory in lockstep with the expected benchmark/canary row
+    inventories without hard-coding the project names here.
+    """
+    if not path.exists():
+        return [f"{relative_path(path)}:0 benchmark data file is missing"]
+
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    expected = extract_js_array_strings(text, "EXPECTED_PROJECT_BENCHMARKS")
+    canary = extract_js_array_strings(text, "COMPILE_CANARY_PROJECTS")
+    dashboard = extract_project_dashboard_row_names(text)
+    rel = relative_path(path)
+    hits: list[str] = []
+
+    if expected is None:
+        hits.append(f"{rel}:0 missing EXPECTED_PROJECT_BENCHMARKS array")
+        expected = []
+    if canary is None:
+        hits.append(f"{rel}:0 missing COMPILE_CANARY_PROJECTS array")
+        canary = []
+    if dashboard is None:
+        hits.append(f"{rel}:0 missing COMPATIBILITY_CORPUS_ROWS array")
+        dashboard = []
+
+    required = sorted(set(expected) | set(canary))
+    dashboard_set = set(dashboard)
+    required_set = set(required)
+
+    for name in required:
+        if name not in dashboard_set:
+            hits.append(f"{rel}:0 missing compatibility dashboard row for {name}")
+
+    for name in sorted(dashboard_set - required_set):
+        hits.append(f"{rel}:0 stale compatibility dashboard row for {name}")
+
+    duplicates = sorted({name for name in dashboard if dashboard.count(name) > 1})
+    for name in duplicates:
+        hits.append(f"{rel}:0 duplicate compatibility dashboard row for {name}")
+
+    return hits
 
 
 def scan_regex_line_count(
@@ -1657,6 +1741,12 @@ def main() -> int:
 
     for name, file_path, max_guard_count in SPECULATION_GUARD_NAME_CHECKS:
         hits = scan_speculation_guard_struct_count(file_path, max_guard_count)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, file_path in PROJECT_DASHBOARD_ROW_CHECKS:
+        hits = scan_project_dashboard_rows(file_path)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
