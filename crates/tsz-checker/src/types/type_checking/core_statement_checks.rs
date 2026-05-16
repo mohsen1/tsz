@@ -178,6 +178,35 @@ impl<'a> CheckerState<'a> {
             }
             let mut return_type =
                 self.get_type_of_node_with_request(return_data.expression, &request);
+            if let Some(contextual_type) = request.contextual_type
+                && self
+                    .ctx
+                    .arena
+                    .get(return_data.expression)
+                    .is_some_and(|expr_node| expr_node.kind == syntax_kind_ext::NEW_EXPRESSION)
+                && (self
+                    .contextual_application_recovers_unknown_result(return_type, contextual_type)
+                    || self.contextual_application_recovers_type_param_result(
+                        return_type,
+                        contextual_type,
+                    )
+                    || (crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        return_type,
+                    ) && self
+                        .ctx
+                        .arena
+                        .get_call_expr_at(return_data.expression)
+                        .is_some_and(|new_expr| {
+                            self.contextual_application_matches_new_target(
+                                new_expr.expression,
+                                contextual_type,
+                            )
+                        })))
+                && self.is_assignable_to(contextual_type, expected_type)
+            {
+                return_type = contextual_type;
+            }
             self.ctx.preserve_literal_types = prev_preserve_literals;
             if self.ctx.in_async_context() {
                 // Use unwrap_async_return_type_for_body which handles unions

@@ -431,7 +431,14 @@ impl<'a> Printer<'a> {
             let Some(pattern_node) = self.arena.get(pattern_idx) else {
                 continue;
             };
-            self.emit_es5_destructuring_pattern_direct(pattern_node, "(void 0)", &mut first);
+            let temp_name = self.get_temp_var_name();
+            if !first {
+                self.write(", ");
+            }
+            first = false;
+            self.write(&temp_name);
+            self.write(" = void 0");
+            self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
         }
         true
     }
