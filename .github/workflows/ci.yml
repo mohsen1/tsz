@@ -747,6 +747,16 @@ jobs:
     # still tailed in fourslash-2 at 6m23, while conformance had spare
     # capacity. Shift those two runners here; weighted snapshot timings reduce
     # the expected max shard work from ~328s at 4 shards to ~219s at 6 shards.
+    #
+    # 2026-05-16: bumped 6 -> 10 shards. The LPT (longest-processing-time-first)
+    # weighted balancer in `scripts/fourslash/runner.cjs:216` is already
+    # producing 0.0% imbalance across the snapshot; the wall-time gain at 10
+    # shards comes purely from splitting the ~477s of CPU per shard at N=6
+    # into ~286s per shard at N=10 (40% reduction on the slowest shard's
+    # cumulative work). The downside is +4 concurrent runners during the
+    # fourslash phase — accept this tradeoff because fourslash is on the
+    # critical path for ready-for-review CI, and conformance has spare
+    # capacity per the prior comment.
     name: fourslash-${{ matrix.shard }}
     needs: [gate, dist-binaries, node-harness-prep]
     if: needs.gate.outputs.full_run == 'true'
@@ -755,10 +765,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
     env:
       _TSZ_CI_FOURSLASH_SHARD_INDEX: ${{ matrix.shard }}
-      _TSZ_CI_FOURSLASH_SHARD_COUNT: 6
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 10
       TSZ_CI_FOURSLASH_SHARD_STRATEGY: weighted
       TSZ_CI_FOURSLASH_WORKERS: 8
       TSZ_CI_FOURSLASH_TIMEOUT_MS: 60000
@@ -801,7 +811,7 @@ jobs:
     timeout-minutes: 15
     env:
       GITHUB_SHA: ${{ github.sha }}
-      _TSZ_CI_FOURSLASH_SHARD_COUNT: 6
+      _TSZ_CI_FOURSLASH_SHARD_COUNT: 10
       TSZ_CI_CACHE_SAVE: "0"
     steps:
       - uses: actions/checkout@v4
