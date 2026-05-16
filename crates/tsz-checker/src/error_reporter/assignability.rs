@@ -1033,11 +1033,9 @@ impl<'a> CheckerState<'a> {
             self.canonicalize_assignment_numeric_literal_union_display(source, target, source_str);
         target_str =
             self.canonicalize_assignment_numeric_literal_union_display(target, source, target_str);
-        if let Some(widened) = self.rewrite_standalone_literal_source_for_keyof_display(
-            &source_str,
-            &target_str,
-            target,
-        ) {
+        if let Some(widened) =
+            self.rewrite_standalone_literal_source_for_keyof_display(source, target)
+        {
             source_str = widened;
         }
         let (source_str, mut target_str) =
@@ -1069,50 +1067,48 @@ impl<'a> CheckerState<'a> {
 
     pub(in crate::error_reporter) fn rewrite_standalone_literal_source_for_keyof_display(
         &mut self,
-        source_display: &str,
-        target_display: &str,
+        source: TypeId,
         target: TypeId,
     ) -> Option<String> {
-        let evaluated_target = self.evaluate_type_for_assignability(target);
-        let target_alias_origin = self
-            .ctx
-            .types
-            .get_display_alias(target)
-            .or_else(|| self.ctx.types.get_display_alias(evaluated_target));
-        let target_is_generic_keyof =
-            crate::query_boundaries::common::contains_type_parameters(self.ctx.types, target)
-                || crate::query_boundaries::common::contains_type_parameters(
-                    self.ctx.types,
-                    evaluated_target,
-                )
-                || target_alias_origin
-                    .and_then(|alias| {
-                        crate::query_boundaries::common::keyof_inner_type(self.ctx.types, alias)
-                    })
-                    .is_some_and(|operand| {
-                        crate::query_boundaries::common::contains_type_parameters(
-                            self.ctx.types,
-                            operand,
-                        ) || crate::query_boundaries::common::contains_type_parameters(
-                            self.ctx.types,
-                            self.evaluate_type_for_assignability(operand),
-                        )
-                    });
-        if !target_display.starts_with("keyof ") || !target_is_generic_keyof {
+        if !self.target_is_generic_keyof_display(target) {
             return None;
         }
 
-        if source_display == "true" || source_display == "false" {
-            return Some("boolean".to_string());
+        crate::query_boundaries::common::literal_value(self.ctx.types, source)?;
+        match crate::query_boundaries::common::widen_literal_to_primitive(self.ctx.types, source) {
+            TypeId::BOOLEAN => Some("boolean".to_string()),
+            TypeId::STRING => Some("string".to_string()),
+            TypeId::NUMBER => Some("number".to_string()),
+            _ => None,
         }
-        if source_display.starts_with('"') && source_display.ends_with('"') {
-            return Some("string".to_string());
-        }
-        if source_display.parse::<f64>().is_ok() {
-            return Some("number".to_string());
-        }
+    }
 
-        None
+    fn target_is_generic_keyof_display(&mut self, target: TypeId) -> bool {
+        let evaluated_target = self.evaluate_type_for_assignability(target);
+        for candidate in [target, evaluated_target] {
+            if self.type_is_generic_keyof(candidate) {
+                return true;
+            }
+            if let Some(alias) = self.ctx.types.get_display_alias(candidate)
+                && self.type_is_generic_keyof(alias)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn type_is_generic_keyof(&mut self, type_id: TypeId) -> bool {
+        let Some(operand) =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        crate::query_boundaries::common::contains_type_parameters(self.ctx.types, operand)
+            || crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                self.evaluate_type_for_assignability(operand),
+            )
     }
 
     pub(super) fn format_top_level_assignability_message_types_at(
