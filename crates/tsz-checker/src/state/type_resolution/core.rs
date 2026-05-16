@@ -517,16 +517,71 @@ impl<'a> CheckerState<'a> {
                         Some(sym_id)
                     }
                     TypeSymbolResolution::ValueOnly(_) => {
-                        // Route through wrong-meaning boundary: value used as type
-                        use crate::query_boundaries::name_resolution::NameLookupKind;
-                        self.report_wrong_meaning_diagnostic(
-                            name,
-                            type_name_idx,
-                            NameLookupKind::Value,
-                        );
-                        return TypeId::ERROR;
+                        if let Some(target_sym_id) = self
+                            .resolve_type_symbol_for_lowering(type_name_idx)
+                            .map(tsz_binder::SymbolId)
+                            .or_else(|| self.resolve_type_only_import_alias_target_symbol(name))
+                        {
+                            Some(target_sym_id)
+                        } else {
+                            // Route through wrong-meaning boundary: value used as type
+                            use crate::query_boundaries::name_resolution::NameLookupKind;
+                            self.report_wrong_meaning_diagnostic(
+                                name,
+                                type_name_idx,
+                                NameLookupKind::Value,
+                            );
+                            return TypeId::ERROR;
+                        }
                     }
                     TypeSymbolResolution::NotFound => None,
+                };
+                let sym_id = self
+                    .resolve_type_symbol_for_lowering(type_name_idx)
+                    .map(tsz_binder::SymbolId)
+                    .or(sym_id)
+                    .or_else(|| {
+                        self.ctx
+                            .binder
+                            .file_locals
+                            .get(name)
+                            .filter(|&sym_id| self.symbol_has_declared_type_meaning(sym_id))
+                    })
+                    .or_else(|| {
+                        let entries = self.ctx.global_file_locals_index.as_ref()?.get(name)?;
+                        entries.iter().find_map(|&(file_idx, sym_id)| {
+                            if file_idx != self.ctx.current_file_idx {
+                                return None;
+                            }
+                            let binder = self.ctx.get_binder_for_file(file_idx)?;
+                            binder
+                                .get_symbol(sym_id)
+                                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
+                                .then_some(sym_id)
+                        })
+                    });
+                let lib_binders = self.get_lib_binders();
+                let resolved_symbol_matches_name = sym_id.is_some_and(|sym_id| {
+                    self.ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .or_else(|| {
+                            self.ctx
+                                .resolve_symbol_file_index(sym_id)
+                                .and_then(|file_idx| self.ctx.get_binder_for_file(file_idx))
+                                .and_then(|binder| binder.get_symbol(sym_id))
+                        })
+                        .or_else(|| self.get_cross_file_symbol(sym_id))
+                        .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+                        .is_some_and(|symbol| symbol.escaped_name == name)
+                });
+                let sym_id = if !resolved_symbol_matches_name
+                    && !self.ctx.file_local_type_shadow_for_lib_name(name)
+                    && self.ctx.actual_lib_def_id_for_bare_name(name).is_some()
+                {
+                    None
+                } else {
+                    sym_id
                 };
                 let is_builtin_array = is_array_like_name
                     && type_param.is_none()

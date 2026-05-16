@@ -1844,6 +1844,11 @@ impl<'a> CheckerState<'a> {
                 if let Some(node) = self.ctx.arena.get(node_idx)
                     && let Some(ident) = self.ctx.arena.get_identifier(node)
                 {
+                    if let Some(def_id) =
+                        self.resolve_actual_lib_name_to_def_id_for_lowering(&ident.escaped_text)
+                    {
+                        return def_id;
+                    }
                     let expected_name = if let Some(symbol) = self.get_cross_file_symbol(sym_id) {
                         symbol.escaped_name.clone()
                     } else {

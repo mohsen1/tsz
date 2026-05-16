@@ -493,26 +493,42 @@ impl<'a> CheckerState<'a> {
                 _ => {}
             }
 
-            if name != "Array"
+            let recovered_type_symbol = if name != "Array"
                 && let TypeSymbolResolution::ValueOnly(sym_id) =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)
             {
-                self.report_wrong_meaning(
-                    name,
-                    type_name_idx,
-                    sym_id,
-                    crate::query_boundaries::name_resolution::NameLookupKind::Value,
-                    crate::query_boundaries::name_resolution::NameLookupKind::Type,
-                );
-                return TypeId::ERROR;
-            }
+                match self
+                    .resolve_type_symbol_for_lowering(type_name_idx)
+                    .map(tsz_binder::SymbolId)
+                {
+                    Some(type_sym_id) => Some(type_sym_id),
+                    None => {
+                        self.report_wrong_meaning(
+                            name,
+                            type_name_idx,
+                            sym_id,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Value,
+                            crate::query_boundaries::name_resolution::NameLookupKind::Type,
+                        );
+                        return TypeId::ERROR;
+                    }
+                }
+            } else {
+                None
+            };
 
             if let Some(type_param) = self.lookup_type_parameter(name) {
                 return type_param;
             }
-            if let TypeSymbolResolution::Type(sym_id) =
-                self.resolve_identifier_symbol_in_type_position(type_name_idx)
-            {
+            if let Some(sym_id) = recovered_type_symbol.or_else(|| {
+                if let TypeSymbolResolution::Type(sym_id) =
+                    self.resolve_identifier_symbol_in_type_position(type_name_idx)
+                {
+                    Some(sym_id)
+                } else {
+                    None
+                }
+            }) {
                 // Prime lib generic metadata before resolving the symbol body so
                 // bare lib references inside type literals keep their default
                 // type arguments instead of caching an uninstantiated Lazy type.
