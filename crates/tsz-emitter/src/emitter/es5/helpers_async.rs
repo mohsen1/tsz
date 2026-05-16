@@ -11,6 +11,32 @@ use crate::emitter::declarations::class::replace_identifier;
 use crate::transforms::emit_utils;
 use std::sync::Arc;
 
+#[derive(Clone)]
+pub(in crate::emitter) struct Es5StaticClassExpressionField {
+    pub name_emit: PropertyNameEmit,
+    pub initializer: NodeIndex,
+    pub member_pos: u32,
+}
+
+#[derive(Clone)]
+pub(in crate::emitter) enum Es5StaticClassExpressionElement {
+    Field(Es5StaticClassExpressionField),
+    StaticBlock {
+        block: NodeIndex,
+        saved_comment_idx: usize,
+        member_pos: u32,
+    },
+}
+
+impl Es5StaticClassExpressionElement {
+    const fn member_pos(&self) -> u32 {
+        match self {
+            Self::Field(field) => field.member_pos,
+            Self::StaticBlock { member_pos, .. } => *member_pos,
+        }
+    }
+}
+
 fn avoid_generator_state_collision(segment: &str, class_temp: &str) -> String {
     if class_temp != "_a" || !segment.contains("function (_a)") {
         return segment.to_string();
@@ -85,16 +111,24 @@ impl<'a> Printer<'a> {
         None
     }
 
-    pub(in crate::emitter) fn es5_static_field_comma_inits(
+    pub(in crate::emitter) fn es5_static_class_expression_elements(
         &self,
         class_data: &tsz_parser::parser::node::ClassData,
-    ) -> Vec<(PropertyNameEmit, NodeIndex)> {
+    ) -> Vec<Es5StaticClassExpressionElement> {
         let mut inits = Vec::new();
 
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
+            if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                inits.push(Es5StaticClassExpressionElement::StaticBlock {
+                    block: member_idx,
+                    saved_comment_idx: self.static_block_inner_comment_index(member_node),
+                    member_pos: member_node.pos,
+                });
+                continue;
+            }
             if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
                 continue;
             }
@@ -121,11 +155,38 @@ impl<'a> Printer<'a> {
             }
 
             if let Some(name_emit) = self.get_property_name_emit(prop.name) {
-                inits.push((name_emit, prop.initializer));
+                inits.push(Es5StaticClassExpressionElement::Field(
+                    Es5StaticClassExpressionField {
+                        name_emit,
+                        initializer: prop.initializer,
+                        member_pos: member_node.pos,
+                    },
+                ));
             }
         }
 
+        inits.sort_by_key(Es5StaticClassExpressionElement::member_pos);
         inits
+    }
+
+    fn static_block_inner_comment_index(&self, member_node: &Node) -> usize {
+        let brace_pos = if let Some(text) = self.source_text_for_map() {
+            let bytes = text.as_bytes();
+            let start = std::cmp::min(member_node.pos as usize, bytes.len());
+            let end = std::cmp::min(member_node.end as usize, bytes.len());
+            bytes[start..end]
+                .iter()
+                .position(|&byte| byte == b'{')
+                .map(|offset| (start + offset + 1) as u32)
+                .unwrap_or(member_node.end)
+        } else {
+            member_node.end
+        };
+        let mut idx = self.comment_emit_idx;
+        while idx < self.all_comments.len() && self.all_comments[idx].end <= brace_pos {
+            idx += 1;
+        }
+        idx
     }
 
     fn es5_class_iife_expression_from_var(output: &str, class_name: &str) -> Option<String> {
@@ -145,13 +206,30 @@ impl<'a> Printer<'a> {
         if let Some(first) = lines.next() {
             self.write(first);
         }
+        let lines: Vec<&str> = lines.collect();
+        let strip_indent = lines
+            .iter()
+            .filter(|line| !line.is_empty())
+            .map(|line| line.len() - line.trim_start_matches(' ').len())
+            .min()
+            .unwrap_or(0);
         for line in lines {
             self.write_line();
             if !line.is_empty() {
                 self.write(&extra_indent);
-                self.write(line);
+                self.write(line.get(strip_indent..).unwrap_or(line));
             }
         }
+    }
+
+    fn class_expression_static_comma_needs_parens(&self, class_node: NodeIndex) -> bool {
+        self.arena
+            .get_extended(class_node)
+            .and_then(|ext| self.arena.get(ext.parent))
+            .is_none_or(|parent| {
+                parent.kind != syntax_kind_ext::RETURN_STATEMENT
+                    && parent.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            })
     }
 
     fn emit_es5_static_class_expression_comma(
@@ -159,9 +237,10 @@ impl<'a> Printer<'a> {
         class_node: NodeIndex,
         class_name: &str,
         class_iife_expr: &str,
-        static_field_inits: &[(PropertyNameEmit, NodeIndex)],
+        static_elements: &[Es5StaticClassExpressionElement],
         set_function_name: Option<&str>,
     ) {
+        let needs_parens = self.class_expression_static_comma_needs_parens(class_node);
         let temp = if self.class_expression_is_in_loop_body(class_node) {
             let temp = self.make_unique_name();
             self.block_scoped_private_temps.push(temp.clone());
@@ -170,7 +249,9 @@ impl<'a> Printer<'a> {
             self.make_unique_name_hoisted()
         };
 
-        self.write("(");
+        if needs_parens {
+            self.write("(");
+        }
         self.write(&temp);
         self.write(" = ");
         self.write_multiline_fragment(class_iife_expr);
@@ -179,91 +260,123 @@ impl<'a> Printer<'a> {
             self.emit_class_expr_set_function_name_comma_item(&temp, name);
         }
 
-        for (name_emit, init_idx) in static_field_inits {
-            self.write(",");
-            self.write_line();
-            self.increase_indent();
-            self.write(&temp);
-            match name_emit {
-                PropertyNameEmit::Dot(name) => {
-                    self.write(".");
-                    self.write(name);
-                }
-                PropertyNameEmit::Bracket(name) | PropertyNameEmit::BracketNumeric(name) => {
-                    self.write("[");
-                    self.write(name);
-                    self.write("]");
-                }
-            }
-            self.write(" = ");
+        for element in static_elements {
+            match element {
+                Es5StaticClassExpressionElement::Field(field) => {
+                    self.write(",");
+                    self.write_line();
+                    self.increase_indent();
+                    self.write(&temp);
+                    match &field.name_emit {
+                        PropertyNameEmit::Dot(name) => {
+                            self.write(".");
+                            self.write(name);
+                        }
+                        PropertyNameEmit::Bracket(name)
+                        | PropertyNameEmit::BracketNumeric(name) => {
+                            self.write("[");
+                            self.write(name);
+                            self.write("]");
+                        }
+                    }
+                    self.write(" = ");
 
-            let prev_self_alias = self.scoped_class_expression_self_alias.clone();
-            if !class_name.is_empty() && class_name != temp {
-                self.scoped_class_expression_self_alias = Some((
-                    Arc::<str>::from(class_name),
-                    Arc::<str>::from(temp.as_str()),
-                ));
-            }
-            let before = self.writer.len();
-            self.with_scoped_static_initializer_context_cleared(|this| {
-                this.emit_expression(*init_idx);
-            });
-            let after = self.writer.len();
-            self.scoped_class_expression_self_alias = prev_self_alias;
+                    let prev_self_alias = self.scoped_class_expression_self_alias.clone();
+                    if !class_name.is_empty() && class_name != temp {
+                        self.scoped_class_expression_self_alias = Some((
+                            Arc::<str>::from(class_name),
+                            Arc::<str>::from(temp.as_str()),
+                        ));
+                    }
+                    let before = self.writer.len();
+                    self.with_scoped_static_initializer_context_cleared(|this| {
+                        this.emit_expression(field.initializer);
+                    });
+                    let after = self.writer.len();
+                    self.scoped_class_expression_self_alias = prev_self_alias;
 
-            if !class_name.is_empty() && class_name != temp {
-                let full = self.writer.get_output().to_string();
-                let segment = &full[before..after];
-                let replaced = replace_identifier(segment, class_name, &temp);
-                let replaced = avoid_generator_state_collision(&replaced, &temp);
-                if replaced != segment {
-                    self.writer.truncate(before);
-                    self.write(&replaced);
+                    if !class_name.is_empty() && class_name != temp {
+                        let full = self.writer.get_output().to_string();
+                        let segment = &full[before..after];
+                        let replaced = replace_identifier(segment, class_name, &temp);
+                        let replaced = avoid_generator_state_collision(&replaced, &temp);
+                        if replaced != segment {
+                            self.writer.truncate(before);
+                            self.write(&replaced);
+                        }
+                    } else {
+                        let full = self.writer.get_output().to_string();
+                        let segment = &full[before..after];
+                        let replaced = avoid_generator_state_collision(segment, &temp);
+                        if replaced != segment {
+                            self.writer.truncate(before);
+                            self.write(&replaced);
+                        }
+                    }
+                    self.decrease_indent();
                 }
-            } else {
-                let full = self.writer.get_output().to_string();
-                let segment = &full[before..after];
-                let replaced = avoid_generator_state_collision(segment, &temp);
-                if replaced != segment {
-                    self.writer.truncate(before);
-                    self.write(&replaced);
+                Es5StaticClassExpressionElement::StaticBlock {
+                    block,
+                    saved_comment_idx,
+                    ..
+                } => {
+                    self.write(",");
+                    self.write_line();
+                    self.increase_indent();
+                    self.emit_static_block_iife_expression(*block, *saved_comment_idx);
+                    self.decrease_indent();
                 }
             }
-            self.decrease_indent();
         }
 
         self.write(",");
         self.write_line();
         self.increase_indent();
         self.write(&temp);
-        self.write(")");
+        if needs_parens {
+            self.write(")");
+        }
         self.decrease_indent();
     }
 
     fn emit_es5_static_class_expression_statements(
         &mut self,
         class_name: &str,
-        static_field_inits: &[(PropertyNameEmit, NodeIndex)],
+        static_elements: &[Es5StaticClassExpressionElement],
     ) {
-        for (name_emit, init_idx) in static_field_inits {
-            self.write(class_name);
-            match name_emit {
-                PropertyNameEmit::Dot(name) => {
-                    self.write(".");
-                    self.write(name);
+        for element in static_elements {
+            match element {
+                Es5StaticClassExpressionElement::Field(field) => {
+                    self.write(class_name);
+                    match &field.name_emit {
+                        PropertyNameEmit::Dot(name) => {
+                            self.write(".");
+                            self.write(name);
+                        }
+                        PropertyNameEmit::Bracket(name)
+                        | PropertyNameEmit::BracketNumeric(name) => {
+                            self.write("[");
+                            self.write(name);
+                            self.write("]");
+                        }
+                    }
+                    self.write(" = ");
+                    self.with_scoped_static_initializer_context_cleared(|this| {
+                        this.emit_expression(field.initializer);
+                    });
+                    self.write(";");
+                    self.write_line();
                 }
-                PropertyNameEmit::Bracket(name) | PropertyNameEmit::BracketNumeric(name) => {
-                    self.write("[");
-                    self.write(name);
-                    self.write("]");
+                Es5StaticClassExpressionElement::StaticBlock {
+                    block,
+                    saved_comment_idx,
+                    ..
+                } => {
+                    self.emit_static_block_iife_expression(*block, *saved_comment_idx);
+                    self.write(";");
+                    self.write_line();
                 }
             }
-            self.write(" = ");
-            self.with_scoped_static_initializer_context_cleared(|this| {
-                this.emit_expression(*init_idx);
-            });
-            self.write(";");
-            self.write_line();
         }
     }
 
@@ -1130,7 +1243,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        let static_field_inits = self.es5_static_field_comma_inits(class_data);
+        let static_elements = self.es5_static_class_expression_elements(class_data);
 
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
@@ -1162,7 +1275,7 @@ impl<'a> Printer<'a> {
             None
         };
         let use_static_comma =
-            !static_field_inits.is_empty() && !self.ctx.options.use_define_for_class_fields;
+            !static_elements.is_empty() && !self.ctx.options.use_define_for_class_fields;
         if use_static_comma {
             es5_emitter.set_skip_static_members(true);
         }
@@ -1201,7 +1314,7 @@ impl<'a> Printer<'a> {
                 class_node,
                 &class_name,
                 &class_iife_expr,
-                &static_field_inits,
+                &static_elements,
                 class_expr_set_function_name.as_deref(),
             );
             return;
@@ -1236,7 +1349,7 @@ impl<'a> Printer<'a> {
             self.write_line();
         }
         if use_static_comma {
-            self.emit_es5_static_class_expression_statements(&class_name, &static_field_inits);
+            self.emit_es5_static_class_expression_statements(&class_name, &static_elements);
         }
 
         self.write("return ");

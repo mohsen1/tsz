@@ -465,6 +465,47 @@ mod tests {
     }
 
     #[test]
+    fn es5_static_class_expression_schedules_static_blocks_in_comma_initializer() {
+        let source = "function foo() {\n    return class {\n        static foo = 1;\n        static {\n            const c = class {\n                static bar = 2;\n                static {\n                    // do\n                }\n            };\n        }\n    };\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("return _a = /** @class */ (function () {"),
+            "Return-position class expressions should not add an unnecessary comma-wrapper paren.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_a.foo = 1,\n        (function () {"),
+            "Static blocks should be scheduled after static fields in the class-expression comma initializer.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var c = (_b = /** @class */ (function () {")
+                && output.contains("__setFunctionName(_b, \"c\"),")
+                && output.contains("_b.bar = 2,\n                (function () {"),
+            "Nested class expressions inside static blocks should get their own comma alias and schedule their own static block.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("// do"),
+            "Static-block comments should be replayed inside the lowered IIFE.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("__setFunctionName(_a, \"c\")"),
+            "Nested class expression should not reuse the outer class-expression alias.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_nested_static_class_expression_reuses_outer_alias_in_async_method() {
         let source = "class A {\n    static B = class B {\n        static func2() { return new Promise((resolve) => { resolve(null); }); }\n        static C = class C {\n            static async func() { await B.func2(); }\n        }\n    }\n}\nA.B.C.func();\n";
 
