@@ -84,6 +84,10 @@ For project benchmark harness changes, measure failed-row overhead as part of
 the benchmark contract. A project row that fails pre-validation should record
 exit class and first diagnostic deltas from the first compiler invocation; it
 should not rerun the failing compiler just to populate compatibility metadata.
+Generated flat project `tsconfig` files are benchmark-owned artifacts and must
+be rewritten whenever their fixture is prepared. External fixture caches may
+outlive script revisions; stale generated configs can invalidate project rows
+by keeping old include/exclude rules.
 
 Do not run full conformance, full emit, or full fourslash locally.
 

@@ -1000,6 +1000,71 @@ pub(super) fn collect_diagnostics(
         };
     }
 
+    // `skipLibCheck` skips semantic checking for declaration files, but the
+    // normal checker setup below still builds project-wide checker state before
+    // discovering that every work item is skipped. Utility-type packages such
+    // as type-fest are often pure `.d.ts` projects with `skipLibCheck`; for
+    // pure no-emit checks, parse/module diagnostics are the only remaining
+    // output. Return before constructing checker binders, `ProgramContext`, the
+    // shared `DefinitionStore`, and lib recheck baselines. Mixed projects stay
+    // on the normal path so `.ts` files can still consume declaration exports.
+    if options.no_emit
+        && options.skip_lib_check
+        && !options.emit_declarations
+        && program
+            .files
+            .iter()
+            .all(|file| is_declaration_file(&file.file_name))
+    {
+        use rayon::prelude::*;
+
+        let mut diagnostics: Vec<Diagnostic> = program
+            .files
+            .par_iter()
+            .map(|file| {
+                collect_no_check_file_diagnostics(file, options, program_has_real_syntax_errors)
+            })
+            .flatten()
+            .collect();
+
+        for (file_idx, file_diags) in per_file_ts7016_diagnostics.iter().enumerate() {
+            diagnostics.extend(file_diags.iter().cloned());
+            if let Some(file) = program.files.get(file_idx) {
+                used_paths.insert(PathBuf::from(&file.file_name));
+            }
+        }
+
+        if let Some(c) = cache {
+            c.type_caches.retain(|path, _| used_paths.contains(path));
+            c.diagnostics.retain(|path, _| used_paths.contains(path));
+            c.export_hashes.retain(|path, _| used_paths.contains(path));
+        }
+
+        diagnostics.extend(detect_missing_tslib_helper_diagnostics(
+            program,
+            options,
+            base_dir,
+            &file_is_esm_map,
+        ));
+
+        let module_dep_stats = if collect_compile_stats {
+            Some(compute_module_dependency_stats(
+                program.files.len(),
+                resolved_module_paths.as_ref(),
+            ))
+        } else {
+            None
+        };
+
+        return CollectDiagnosticsResult {
+            diagnostics,
+            request_cache_counters,
+            query_cache_stats: Some(tsz_solver::QueryCacheStatistics::default()),
+            def_store_stats: None,
+            module_dep_stats,
+        };
+    }
+
     // Pre-compute merged augmentations once for all binder reconstruction paths.
     let merged_augmentations = MergedAugmentations::from_program(program);
     let affected_lib_interfaces = affected_lib_interface_names(program, checker_libs);
@@ -4278,6 +4343,65 @@ export function freeze<T>(value: T): Readonly<T> {
         assert!(
             !codes.contains(&2322),
             "TS2322 must not fire under --noCheck --declaration, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn skip_lib_check_pure_declaration_no_emit_skips_semantic_diagnostics() {
+        let options = ResolvedCompilerOptions {
+            no_emit: true,
+            skip_lib_check: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[(
+                "index.d.ts",
+                r#"
+export type UsesMissing = Missing;
+export interface Broken {
+    value: ;
+}
+"#,
+            )],
+            &options,
+            std::path::Path::new("/"),
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code < 2000),
+            "parse diagnostics must still surface under skipLibCheck: {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2304),
+            "skipLibCheck must suppress declaration-file semantic diagnostics: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn skip_lib_check_mixed_project_still_checks_source_files() {
+        let options = ResolvedCompilerOptions {
+            no_emit: true,
+            skip_lib_check: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                ("types.d.ts", "export type UsesMissing = Missing;\n"),
+                ("main.ts", "const value: string = 1;\n"),
+            ],
+            &options,
+            std::path::Path::new("/"),
+        );
+
+        assert!(
+            diagnostics.iter().any(|diag| diag.code == 2322),
+            "non-declaration source files must still be checked under skipLibCheck: {diagnostics:?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|diag| diag.code == 2304),
+            "declaration-file semantic diagnostics must remain suppressed: {diagnostics:?}"
         );
     }
 

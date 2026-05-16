@@ -4115,6 +4115,60 @@ fn compile_no_check_no_emit_is_parse_only() {
 }
 
 #[test]
+fn compile_skip_lib_check_no_emit_declaration_project_is_parse_only() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true,
+            "skipLibCheck": true,
+            "types": [],
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["index.d.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("index.d.ts"),
+        r#"
+import type {MissingImport} from "missing-package";
+export type UsesMissing = MissingImport | MissingName;
+export interface Broken {
+    value: ;
+}
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.iter().any(|code| *code < 2000),
+        "expected parse diagnostics to survive skipLibCheck, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2307),
+        "expected skipLibCheck declaration project to suppress missing imports, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2304),
+        "expected skipLibCheck declaration project to suppress semantic missing-name errors, got: {:?}",
+        result.diagnostics
+    );
+    assert_eq!(
+        result.files_read.len(),
+        1,
+        "non-listFiles pure declaration no-emit path should avoid default-lib reads"
+    );
+}
+
+#[test]
 fn compile_higher_order_compose_reports_callback_property_error() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
