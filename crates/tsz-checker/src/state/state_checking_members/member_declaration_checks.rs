@@ -407,7 +407,8 @@ impl<'a> CheckerState<'a> {
 
         match node.kind {
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                if !self.ctx.symbol_resolution_set.is_empty()
+                    && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
                     && let Some(sym_id) = self
                         .resolve_type_symbol_for_lowering(type_ref.type_name)
                         .map(tsz_binder::SymbolId)
@@ -639,9 +640,15 @@ impl<'a> CheckerState<'a> {
                         .and_then(|(name, _)| {
                             let param_node = self.ctx.arena.get(mapped.type_parameter)?;
                             let param = self.ctx.arena.get_type_parameter(param_node)?;
-                            let constraint = param.constraint;
-                            let constraint_text = self.node_text(constraint)?.trim().to_string();
-                            if constraint_text == name.as_str() {
+                            let constraint_node = self.ctx.arena.get(param.constraint)?;
+                            let constraint_ref = self.ctx.arena.get_type_ref(constraint_node)?;
+                            if constraint_ref.type_arguments.is_some() {
+                                return None;
+                            }
+                            let constraint_name = self.ctx.arena.get(constraint_ref.type_name)?;
+                            let constraint_ident =
+                                self.ctx.arena.get_identifier(constraint_name)?;
+                            if constraint_ident.escaped_text == name.as_str() {
                                 Some(())
                             } else {
                                 None

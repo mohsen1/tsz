@@ -102,6 +102,9 @@ impl<'a> CheckerState<'a> {
         ) else {
             return;
         };
+        let target_display =
+            self.checked_js_global_element_access_fallback_target_display(fallback_idx);
+
         for diag in &mut self.ctx.diagnostics[diag_count_before..] {
             if matches!(
                 diag.code,
@@ -113,6 +116,13 @@ impl<'a> CheckerState<'a> {
             {
                 diag.start = anchor.start;
                 diag.length = anchor.length;
+                if let Some(display) = target_display.as_deref()
+                    && let Some(name) = display.strip_prefix("typeof ")
+                {
+                    let bare = format!("required in type '{name}'");
+                    let qualified = format!("required in type '{display}'");
+                    diag.message_text = diag.message_text.replace(&bare, &qualified);
+                }
             }
         }
     }

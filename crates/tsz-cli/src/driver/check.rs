@@ -89,7 +89,8 @@ pub(super) struct CheckerLibSet {
     pub(super) contexts: Arc<Vec<LibContext>>,
 }
 
-/// Check if a filename is a TypeScript declaration file (.d.ts, .d.cts, .d.mts).
+/// Check if a filename is a TypeScript declaration file (`.d.ts`, `.d.cts`,
+/// `.d.mts`, or `.d.<ext>.ts`).
 fn is_declaration_file(name: &str) -> bool {
     tsz::module_resolver::ModuleExtension::from_path(std::path::Path::new(name)).is_declaration()
 }
@@ -105,13 +106,53 @@ fn file_session_reuse_test_override() -> Option<bool> {
     FILE_SESSION_REUSE_TEST_OVERRIDE.with(std::cell::Cell::get)
 }
 
+// File-session reuse policy.
+//
+// Previously this defaulted to ON (PRs #6870 sequential and #6893 parallel),
+// optimising the counter `state_constructed` on 40-400 file projects. At
+// 1k+ files the reuse path regresses wall time by 4-14x; see PR #7521 and
+// `docs/architecture/LSP_PERF_EXPERIMENTS_2026-05-16.md`. Measurements
+// across the full scale-cliff matrix (monorepo-001..006) show reuse OFF
+// is faster at every fixture size we tested:
+//
+//   101 files:    1.5x faster off
+//   1,010 files:  3.9x faster off
+//   5,099 files:  4.6x faster off
+//   5,251 files:  5.4x faster off (cross-pkg mapped types)
+//   10,299 files: only finishes with reuse off (E8 1.47 M LOC synthetic)
+//
+// The default is therefore OFF. Two opt-in knobs remain:
+//   * `TSZ_FILE_SESSION_REUSE=1` opts back in (legacy explicit-opt-in knob
+//     from the pre-#6870 era).
+//   * `TSZ_DISABLE_FILE_SESSION_REUSE=1` continues to force off, preserving
+//     scripts that already pin the off behaviour. Takes precedence over
+//     the enable knob.
+//
+// The LSP server binaries (`tsz_lsp`, `tsz_server`) do not consume this
+// driver and are unaffected — they reuse state through the `tsz-lsp`
+// `Project` API by construction.
+
+/// Pure policy function so tests can assert the env-var rules without
+/// touching process-global state. `disable_set` is true when
+/// `TSZ_DISABLE_FILE_SESSION_REUSE` is present in the environment;
+/// `enable_set` is true when `TSZ_FILE_SESSION_REUSE` is present.
+fn file_session_reuse_from_env(disable_set: bool, enable_set: bool) -> bool {
+    if disable_set {
+        return false;
+    }
+    enable_set
+}
+
 fn file_session_reuse_requested() -> bool {
     #[cfg(test)]
     if let Some(enabled) = file_session_reuse_test_override() {
         return enabled;
     }
 
-    std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_none()
+    file_session_reuse_from_env(
+        std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_some(),
+        std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some(),
+    )
 }
 
 fn parallel_file_session_reuse_requested() -> bool {
@@ -120,15 +161,10 @@ fn parallel_file_session_reuse_requested() -> bool {
         return enabled;
     }
 
-    if std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_some() {
-        return false;
-    }
-
-    // `TSZ_FILE_SESSION_REUSE` used to opt into this path explicitly.
-    // Keep treating it as an accepted compatibility knob while defaulting
-    // to reuse when the global disable knob is not set.
-    let _legacy_opt_in = std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some();
-    true
+    file_session_reuse_from_env(
+        std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_some(),
+        std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some(),
+    )
 }
 
 const FILE_SESSION_REUSE_PARALLEL_CHUNK_SIZE: usize = 8;
@@ -1584,15 +1620,33 @@ pub(super) fn collect_diagnostics(
             // CommonJS/JSDoc constructor evidence. Importer files can otherwise
             // observe incomplete dependency shapes and emit flaky TS2339
             // diagnostics.
-            let use_sequential_checking =
-                work_items.len() <= 32 || has_large_wildcard_barrel(program, &work_items);
-            // T2.1.B (`PERFORMANCE_PLAN.md` §6 PR table): by default,
-            // the sequential no-emit path constructs one `CheckerState`
-            // and re-targets it across files via
-            // `CheckerContext::switch_to_file` instead of constructing
-            // one per file. `TSZ_DISABLE_FILE_SESSION_REUSE=1` opts out.
-            // This flag applies to the sequential branch here; the
-            // parallel branch below has its own chunked worker-reuse path.
+            let reuse_requested = file_session_reuse_requested();
+            let parallel_reuse_requested = parallel_file_session_reuse_requested();
+            let has_parallel_order_sensitive_global_lib =
+                has_parallel_order_sensitive_global_lib(checker_libs);
+            let use_sequential_checking = work_items.len() <= 32
+                || has_large_wildcard_barrel(program, &work_items)
+                // DOM-style global declarations are order-sensitive with
+                // multiple concurrent checker contexts. Keep those projects
+                // on the deterministic single-worker path until global
+                // lookup state is fully parallel-stable.
+                || has_parallel_order_sensitive_global_lib
+                // Fresh per-file checkers can observe project-level lib/global
+                // state in scheduler order when run concurrently. If the
+                // session-reuse path is explicitly disabled, keep the fallback
+                // deterministic by using fresh checkers sequentially.
+                || !reuse_requested;
+            // T2.1.B (`PERFORMANCE_PLAN.md` §6 PR table): the sequential
+            // no-emit path *can* construct one `CheckerState` and re-target
+            // it across files via `CheckerContext::switch_to_file` instead
+            // of constructing one per file. As of PR #7521 + the experiment
+            // doc at `docs/architecture/LSP_PERF_EXPERIMENTS_2026-05-16.md`,
+            // this is OPT-IN (`TSZ_FILE_SESSION_REUSE=1`) because the reuse
+            // path regresses wall time 4-14x at 1k+ files. The fresh-checker
+            // branch below (`check_file_with_fresh_checker`) is the default.
+            // This flag applies to the sequential branch here; the parallel
+            // branch below has its own chunked worker-reuse path with the
+            // same opt-in default.
             // `extract_type_cache=true` (set when `--emit` or
             // `--declaration` is on) consumes the `CheckerState` per
             // file via `extract_cache(self)`. The reuse path holds
@@ -1602,7 +1656,7 @@ pub(super) fn collect_diagnostics(
             // for, so this restriction matches the use case rather
             // than narrowing it.
             let use_file_session_reuse =
-                use_sequential_checking && !extract_type_cache && file_session_reuse_requested();
+                use_sequential_checking && !extract_type_cache && reuse_requested;
             if use_file_session_reuse {
                 check_files_sequentially_with_reuse(
                     &work_items,
@@ -1621,13 +1675,11 @@ pub(super) fn collect_diagnostics(
                     extract_type_cache,
                     build_checker_binder,
                 )
-            } else if !use_sequential_checking
-                && !extract_type_cache
-                && parallel_file_session_reuse_requested()
-            {
-                // T2.1.C follow-up: reuse is now also default-on in the
-                // parallel no-emit lane, with `TSZ_DISABLE_FILE_SESSION_REUSE=1`
-                // as the shared opt-out across sequential + parallel paths.
+            } else if !use_sequential_checking && !extract_type_cache && parallel_reuse_requested {
+                // T2.1.C follow-up: parallel chunked worker reuse is
+                // opt-in via `TSZ_FILE_SESSION_REUSE=1` (was default-on
+                // before PR #7521; see comment above on
+                // `file_session_reuse_requested`).
                 tsz::parallel::ensure_rayon_global_pool();
                 check_files_in_parallel_chunks_with_reuse(
                     &work_items,
@@ -2560,9 +2612,12 @@ pub(super) fn check_file_for_parallel<'a>(
 /// - The actual `check_source_file` work and diagnostic
 ///   post-processing (via `run_check_on_existing_checker`)
 ///
-/// Caller's contract: enabled by default for sequential no-emit runs;
-/// `TSZ_DISABLE_FILE_SESSION_REUSE=1` opts out. The flag-off path
-/// goes through `check_file_for_parallel` per file unchanged.
+/// Caller's contract: OPT-IN for sequential no-emit runs via
+/// `TSZ_FILE_SESSION_REUSE=1` (see `file_session_reuse_requested`
+/// for why this was flipped from default-on in PR #7521).
+/// `TSZ_DISABLE_FILE_SESSION_REUSE=1` continues to force off. The
+/// flag-off path goes through `check_file_for_parallel` per file
+/// unchanged.
 ///
 /// **Correctness gate**: this path must produce byte-identical
 /// diagnostics to the flag-off path under any conformance fixture,
@@ -3707,6 +3762,22 @@ fn has_esnext_umbrella_lib(checker_libs: &CheckerLibSet) -> bool {
     })
 }
 
+fn has_parallel_order_sensitive_global_lib(checker_libs: &CheckerLibSet) -> bool {
+    checker_libs.files.iter().any(|lib| {
+        Path::new(&lib.file_name)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(is_parallel_order_sensitive_global_lib)
+    })
+}
+
+fn is_parallel_order_sensitive_global_lib(file_name: &str) -> bool {
+    matches!(
+        file_name,
+        "lib.dom.d.ts" | "dom.d.ts" | "lib.webworker.d.ts" | "webworker.d.ts"
+    )
+}
+
 fn is_datetimeformatpart_spelling_baseline_trigger_lib(file_name: &str) -> bool {
     matches!(
         file_name,
@@ -3972,6 +4043,45 @@ mod tests {
         parallel::merge_bind_results(bind_results)
     }
 
+    /// Asserts the post-PR-#7521 file-session reuse default: OFF unless
+    /// the user opts back in via `TSZ_FILE_SESSION_REUSE=1`. Before
+    /// PR #7521 the default was ON (set by PRs #6870 / #6893) which
+    /// regressed wall time 4-14x at 1k+ files; see
+    /// `docs/architecture/LSP_PERF_EXPERIMENTS_2026-05-16.md`.
+    ///
+    /// Failure modes this test catches:
+    ///   * someone accidentally reverts the default-OFF policy
+    ///     (`file_session_reuse_from_env(false, false)` returns true)
+    ///   * `TSZ_FILE_SESSION_REUSE=1` opt-in stops working
+    ///   * `TSZ_DISABLE_FILE_SESSION_REUSE=1` opt-out stops working
+    ///   * the disable knob stops taking precedence over the enable knob
+    #[test]
+    fn file_session_reuse_env_policy_pr_7521() {
+        // Default (no env vars set): reuse OFF.
+        assert!(
+            !file_session_reuse_from_env(false, false),
+            "PR #7521: default reuse policy must be OFF (no env vars set)"
+        );
+
+        // Explicit opt-in: TSZ_FILE_SESSION_REUSE=1 turns reuse back on.
+        assert!(
+            file_session_reuse_from_env(false, true),
+            "TSZ_FILE_SESSION_REUSE=1 must opt back in"
+        );
+
+        // Explicit opt-out: TSZ_DISABLE_FILE_SESSION_REUSE=1 forces OFF.
+        assert!(
+            !file_session_reuse_from_env(true, false),
+            "TSZ_DISABLE_FILE_SESSION_REUSE=1 must force reuse OFF"
+        );
+
+        // Disable beats enable: both set => OFF.
+        assert!(
+            !file_session_reuse_from_env(true, true),
+            "TSZ_DISABLE_FILE_SESSION_REUSE=1 must take precedence over TSZ_FILE_SESSION_REUSE=1"
+        );
+    }
+
     #[test]
     fn detects_large_wildcard_barrel() {
         let mut files = Vec::new();
@@ -4068,6 +4178,22 @@ interface Window {
         );
     }
 
+    #[test]
+    fn parallel_order_sensitive_lib_detection_is_scoped_to_dom_like_globals() {
+        let es_libs = checker_lib_set_for_test(&[("lib.es2018.d.ts", "interface Promise<T> {}\n")]);
+        assert!(
+            !has_parallel_order_sensitive_global_lib(&es_libs),
+            "plain ES libs should stay eligible for parallel project checking"
+        );
+
+        let dom_libs =
+            checker_lib_set_for_test(&[("lib.dom.d.ts", "interface Console { log(): void; }\n")]);
+        assert!(
+            has_parallel_order_sensitive_global_lib(&dom_libs),
+            "DOM-style globals should use deterministic project checking"
+        );
+    }
+
     fn collect_test_diagnostics_with_checker_libs(
         files: &[(&str, &str)],
         checker_libs: &CheckerLibSet,
@@ -4099,6 +4225,18 @@ interface Window {
         files: &[(&str, &str)],
         lib_files: &[std::sync::Arc<tsz::binder::lib_loader::LibFile>],
     ) -> Vec<Diagnostic> {
+        collect_test_diagnostics_with_lib_files_and_options(
+            files,
+            lib_files,
+            &ResolvedCompilerOptions::default(),
+        )
+    }
+
+    fn collect_test_diagnostics_with_lib_files_and_options(
+        files: &[(&str, &str)],
+        lib_files: &[std::sync::Arc<tsz::binder::lib_loader::LibFile>],
+        options: &ResolvedCompilerOptions,
+    ) -> Vec<Diagnostic> {
         let compile_inputs = files
             .iter()
             .map(|(file_name, source)| ((*file_name).to_string(), (*source).to_string()))
@@ -4112,7 +4250,7 @@ interface Window {
 
         collect_diagnostics(
             &program,
-            &ResolvedCompilerOptions::default(),
+            options,
             std::path::Path::new("/"),
             None,
             &checker_libs,
@@ -4199,6 +4337,53 @@ export function freeze<T>(value: T): Readonly<T> {
         assert!(
             ts2339.is_empty(),
             "Readonly alias annotations should not collapse to unknown in consumer-first program checks. Got: {ts2339:?}. All: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn large_project_checking_preserves_parallel_dom_globals() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+        assert!(
+            lib_files.len() >= 2,
+            "es5.d.ts and dom.d.ts must be available for this regression"
+        );
+
+        let owned_files = (0..40)
+            .map(|idx| {
+                (
+                    format!("pkg{idx}/file{idx}.ts"),
+                    format!("console.log(\"file{idx}\");\nconsole.warn(\"file{idx}\");\n"),
+                )
+            })
+            .collect::<Vec<_>>();
+        let files = owned_files
+            .iter()
+            .map(|(file_name, source)| (file_name.as_str(), source.as_str()))
+            .collect::<Vec<_>>();
+        let options = ResolvedCompilerOptions {
+            no_emit: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let reused_diagnostics = {
+            FILE_SESSION_REUSE_TEST_OVERRIDE.with(|override_value| override_value.set(Some(true)));
+            let _guard = FileSessionReuseOverrideGuard;
+            collect_test_diagnostics_with_lib_files_and_options(&files, &lib_files, &options)
+        };
+        let disabled_diagnostics = {
+            FILE_SESSION_REUSE_TEST_OVERRIDE.with(|override_value| override_value.set(Some(false)));
+            let _guard = FileSessionReuseOverrideGuard;
+            collect_test_diagnostics_with_lib_files_and_options(&files, &lib_files, &options)
+        };
+        let console_member_errors = reused_diagnostics
+            .iter()
+            .chain(disabled_diagnostics.iter())
+            .filter(|diagnostic| diagnostic.code == 2339)
+            .collect::<Vec<_>>();
+
+        assert!(
+            console_member_errors.is_empty(),
+            "large-project DOM globals must not be order-dependent. TS2339: {console_member_errors:?}. Reused: {reused_diagnostics:?}. Disabled: {disabled_diagnostics:?}"
         );
     }
 
@@ -5606,9 +5791,11 @@ export type RowToColumns<TColumns> = {
         assert!(is_declaration_file("types.d.ts"));
         assert!(is_declaration_file("index.d.mts"));
         assert!(is_declaration_file("index.d.cts"));
+        assert!(is_declaration_file("native.d.node.ts"));
         assert!(is_declaration_file("/path/to/file.d.ts"));
         assert!(is_declaration_file("/path/to/file.d.mts"));
         assert!(is_declaration_file("/path/to/file.d.cts"));
+        assert!(is_declaration_file("/path/to/file.d.node.ts"));
 
         assert!(!is_declaration_file("index.ts"));
         assert!(!is_declaration_file("index.mts"));

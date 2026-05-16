@@ -2135,6 +2135,31 @@ fn jsx_multiple_children_no_ts2746_when_children_type_accepts_array() {
     );
 }
 
+#[test]
+fn jsx_multiple_children_readonly_mapped_wrapper_uses_shape_not_alias_name() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        type Frozen<T> = { readonly [Slot in keyof T]: T[Slot] };
+        type Renderable = string | number | Element;
+        declare namespace JSX {
+            interface Element {}
+            interface ElementChildrenAttribute { children: {}; }
+            interface IntrinsicElements { span: {}; }
+        }
+        declare class ComponentBase<P = {}> {
+            props: P & Frozen<{ children: Renderable[] }>;
+            render(): Renderable;
+        }
+        class Panel extends ComponentBase {}
+        <Panel><span /><span /></Panel>;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2746),
+        "Multiple children should use the structurally readonly mapped wrapper member, got: {diagnostics:?}"
+    );
+}
+
 /// Intra-expression JSX generic inference: when all attributes are function-valued
 /// (no concrete attrs), bootstrap inference from attrs whose contextual parameter
 /// types are concrete (don't depend on type params being inferred).
@@ -2876,5 +2901,85 @@ let v = <Comp x={3} />;
     assert!(
         diagnostics.iter().any(|d| d.code == 2322),
         "Without any-spread, mismatched explicit attr must produce TS2322; got: {diagnostics:?}"
+    );
+}
+
+// --- children union (Element | Element[]) no spurious TS2322 ---
+
+const JSX_CHILDREN_UNION_PRELUDE: &str = r#"
+namespace JSX {
+    export interface Element {}
+    export interface ElementAttributesProperty { props: {}; }
+    export interface ElementChildrenAttribute { children: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements { div: {}; h1: {}; }
+}
+"#;
+
+fn make_children_union_source(children_type: &str, jsx_body: &str) -> String {
+    format!(
+        r#"{JSX_CHILDREN_UNION_PRELUDE}
+interface Props {{ children: {children_type}; }}
+declare function Comp(p: Props): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+{jsx_body}
+"#,
+    )
+}
+
+#[test]
+fn jsx_children_union_element_or_array_two_direct_children_no_ts2322() {
+    let src = make_children_union_source(
+        "JSX.Element | JSX.Element[]",
+        "let k = <Comp><A /><B /></Comp>;",
+    );
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Two direct element children for Element|Element[] must not produce TS2322; got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_children_union_single_child_no_ts2322() {
+    let src =
+        make_children_union_source("JSX.Element | JSX.Element[]", "let k = <Comp><A /></Comp>;");
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Single element child for Element|Element[] must not produce TS2322; got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_children_union_three_direct_children_no_ts2322() {
+    let src = make_children_union_source(
+        "JSX.Element | JSX.Element[]",
+        "declare function C(): JSX.Element; let k = <Comp><A /><B /><C /></Comp>;",
+    );
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Three direct element children for Element|Element[] must not produce TS2322; got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_children_union_node_name_variant_no_ts2322() {
+    // Verify fix is not tied to the name "Element": use a user-defined Node type.
+    let src = format!(
+        r#"{JSX_CHILDREN_UNION_PRELUDE}
+interface MyNode {{}}
+interface NodeProps {{ children: MyNode | MyNode[]; }}
+declare function Widget(p: NodeProps): JSX.Element;
+declare function Child(): JSX.Element;
+let k = <Widget><Child /><Child /></Widget>;
+"#,
+    );
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Two children for MyNode|MyNode[] must not produce TS2322; got: {codes:?}"
     );
 }

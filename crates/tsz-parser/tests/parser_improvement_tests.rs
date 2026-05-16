@@ -103,7 +103,7 @@ fn block_bodied_arrow_statement_recovers_invalid_conditional_tail_without_branch
     let colon_pos = source.find(" : ").expect("outer colon") as u32 + 1;
     let first_branch_arrow = source.find("(b)=>").expect("true branch arrow") as u32 + 3;
     let second_branch_arrow = source.find("(c)=>81").expect("nested true branch arrow") as u32 + 3;
-    let (parser, _root) = parse_source(source);
+    let (parser, root) = parse_source(source);
 
     let diagnostics = parser.get_diagnostics();
     let actual: Vec<_> = diagnostics
@@ -123,8 +123,22 @@ fn block_bodied_arrow_statement_recovers_invalid_conditional_tail_without_branch
         !diagnostics
             .iter()
             .any(|diag| diag.start == first_branch_arrow || diag.start == second_branch_arrow),
-        "branch-local arrows are recovery debris and must not produce cascaded TS1005 diagnostics: {diagnostics:?}"
+        "branch-local arrows are recovered statements and must not produce cascaded TS1005 diagnostics: {diagnostics:?}"
     );
+
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    assert_eq!(
+        source_file.statements.nodes.len(),
+        3,
+        "tsc keeps the invalid conditional branches as recovered expression statements"
+    );
+    for &stmt_idx in &source_file.statements.nodes {
+        assert_eq!(
+            parser.get_arena().get(stmt_idx).unwrap().kind,
+            crate::parser::syntax_kind_ext::EXPRESSION_STATEMENT,
+            "each recovered conditional piece should remain an expression statement"
+        );
+    }
 }
 
 #[test]

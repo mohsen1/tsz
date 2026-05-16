@@ -43,6 +43,8 @@ jobs:
       should_run: ${{ steps.gate.outputs.should_run }}
     steps:
       - id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -56,7 +58,16 @@ jobs:
             fi
           fi
 
-          # Concurrency group handles all coalescing - no debounce or explicit run checks needed
+          target_sha="${{ env.BENCH_TARGET_SHA }}"
+          main_sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
+          if [[ -n "$main_sha" && "$target_sha" != "$main_sha" ]]; then
+            echo "Benchmark target ${target_sha} is stale; current main is ${main_sha}. Skipping obsolete run."
+            should_run=false
+          fi
+
+          # Concurrency group prevents overlapping benchmark runs; the freshness
+          # check above prevents queued obsolete main SHAs from consuming the
+          # benchmark runner after newer merges land.
 
           echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
 
@@ -94,7 +105,7 @@ jobs:
           path: |
             .target-bench/tools
             .ci-cache/pnpm-store
-          key: bench-tools-${{ runner.os }}-${{ hashFiles('scripts/bench/bench-vs-tsgo.sh', 'scripts/package-lock.json', 'scripts/package.json') }}
+          key: bench-tools-${{ runner.os }}-${{ hashFiles('scripts/bench/bench-vs-tsgo.sh', 'scripts/bench/project-fixtures.sh', 'scripts/package-lock.json', 'scripts/package.json') }}
           restore-keys: |
             bench-tools-${{ runner.os }}-
 
@@ -103,7 +114,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .target-bench/dist
-          key: bench-pgo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'crates/**/Cargo.toml', 'crates/**/*.rs', 'scripts/bench/bench-vs-tsgo.sh') }}
+          key: bench-pgo-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'crates/**/Cargo.toml', 'crates/**/*.rs', 'scripts/bench/bench-vs-tsgo.sh', 'scripts/bench/project-fixtures.sh') }}
           restore-keys: |
             bench-pgo-${{ runner.os }}-
 
@@ -120,6 +131,7 @@ jobs:
               .cargo/config.toml \
               'crates/**/Cargo.toml' \
               'crates/**/*.rs' \
+              scripts/bench/project-fixtures.sh \
               scripts/bench/bench-vs-tsgo.sh |
               sort |
               xargs sha256sum |
@@ -201,6 +213,7 @@ jobs:
               .cargo/config.toml \
               'crates/**/Cargo.toml' \
               'crates/**/*.rs' \
+              scripts/bench/project-fixtures.sh \
               scripts/bench/bench-vs-tsgo.sh |
               sort |
               xargs sha256sum |
@@ -274,7 +287,7 @@ jobs:
             filter: 'Mapped complex template keys'
           - label: projects
             timeout: 120
-            filter: 'utility-types|ts-toolbelt|ts-essentials|utility-types-project|ts-toolbelt-project|ts-essentials-project|rxjs-project|type-fest-project|zod-project|kysely-project|vite-vanilla-ts-app|nextjs-fresh-app|nextjs'
+            filter: 'utility-types/|ts-toolbelt/|ts-essentials/|utility-types-project|ts-essentials-project|rxjs-project|type-fest-project|vite-vanilla-ts-app|nextjs-fresh-app|nextjs'
           - label: large-ts-repo
             timeout: 120
             filter: '^large-ts-repo$'
@@ -295,7 +308,7 @@ jobs:
           path: |
             .target-bench/external
             .ci-cache/pnpm-store
-          key: bench-fixtures-${{ matrix.label }}-${{ runner.os }}-${{ hashFiles('scripts/bench/bench-vs-tsgo.sh') }}
+          key: bench-fixtures-${{ matrix.label }}-${{ runner.os }}-${{ hashFiles('scripts/bench/bench-vs-tsgo.sh', 'scripts/bench/project-fixtures.sh') }}
           restore-keys: |
             bench-fixtures-${{ matrix.label }}-${{ runner.os }}-
             bench-fixtures-${{ runner.os }}-

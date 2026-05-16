@@ -1,6 +1,34 @@
 use super::super::core::*;
 
 #[test]
+fn branded_unique_symbol_aliases_are_nominally_incompatible() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+type UserId = string & { readonly __brand: unique symbol };
+type OrderId = string & { readonly __brand: unique symbol };
+
+function getUserById(id: UserId): void {}
+function getOrderById(id: OrderId): void {}
+
+const userId = "user-123" as UserId;
+const orderId = "order-123" as OrderId;
+
+getUserById(userId);
+getOrderById(orderId);
+
+getUserById(orderId);
+getOrderById(userId);
+"#,
+    );
+
+    let ts2345_count = diagnostics.iter().filter(|(code, _)| *code == 2345).count();
+    assert_eq!(
+        ts2345_count, 2,
+        "Expected two TS2345 diagnostics for cross-branded unique-symbol aliases.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_destructuring_fallback_literals_do_not_emit_false_assignability_errors() {
     let diagnostics = compile_and_get_diagnostics_named(
         "test.ts",
@@ -795,6 +823,49 @@ function f<T>(thing: T & (0 | 1 | 2)) {
                 && message.contains("Type 'T & (0 | 2 | 1)' is not assignable to type 'object'.")
         }),
         "Expected TS2322 with canonical numeric-literal union display, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_in_operator_numeric_literal_intersection_canonicalizes_declared_union_order() {
+    let source = r#"
+function f<U>(thing: U & (1 | 2 | 0)) {
+  "key" in thing;
+}
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.enable_source_file_test_pragmas();
+    checker.ctx.report_unresolved_imports = true;
+    types.literal_number(2.0);
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect();
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Type 'U & (0 | 2 | 1)' is not assignable to type 'object'.")
+        }),
+        "Expected TS2322 with canonical numeric-literal union display for renamed/reordered annotation, got: {diagnostics:#?}"
     );
 }
 

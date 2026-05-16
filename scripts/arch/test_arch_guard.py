@@ -1394,5 +1394,143 @@ class ArchGuardSpeculationGuardNameTests(unittest.TestCase):
             )
 
 
+class ArchGuardRegexLineCountTests(unittest.TestCase):
+    """Cover Track 10 count ratchets in `REGEX_LINE_COUNT_CHECKS`.
+
+    These checks make post-check fingerprint rewrites, checker source-text
+    snippet decisions, and rendered-type string decisions visible in the
+    shared architecture guard output.
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _make_tree(self, files: dict[str, str]):
+        tmp = tempfile.mkdtemp()
+        root = pathlib.Path(tmp)
+        for rel, content in files.items():
+            full = root / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        return root
+
+    def _check_by_name(self, needle: str):
+        for entry in self.arch_guard.REGEX_LINE_COUNT_CHECKS:
+            name, _search_roots, pattern, max_lines = entry
+            if needle in name:
+                return pattern, max_lines
+        self.fail(f"missing REGEX_LINE_COUNT_CHECKS entry containing {needle!r}")
+
+    def test_flags_rewrite_fingerprint_function_defs(self):
+        pattern, _max_lines = self._check_by_name("rewrite_*_fingerprints")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/source_file.rs": (
+                    "fn rewrite_alpha_fingerprints(&mut self) {}\n"
+                    "self.rewrite_beta_fingerprints();\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("source_file.rs:1", hits[0])
+        self.assertIn("total matching lines: 1", hits[1])
+
+    def test_flags_source_text_contains_lines(self):
+        pattern, _max_lines = self._check_by_name("source_text.contains")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/source_decision.rs": (
+                    'if source_text.contains("fixture shape") {}\n'
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("source_decision.rs:1", hits[0])
+
+    def test_flags_file_name_and_path_substring_decisions(self):
+        pattern, _max_lines = self._check_by_name("file-name/path")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/file_decision.rs": (
+                    'if file_name.contains("node_modules") {}\n'
+                    "if source_file.file_name.contains(\"node_modules\") {}\n"
+                    'if !source_path.contains("/node_modules/") {}\n'
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 4, f"unexpected hits: {hits!r}")
+        self.assertIn("file_decision.rs:1", hits[0])
+        self.assertIn("file_decision.rs:2", hits[1])
+        self.assertIn("file_decision.rs:3", hits[2])
+
+    def test_flags_rendered_type_string_decisions(self):
+        pattern, _max_lines = self._check_by_name("rendered type strings")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/rendered.rs": (
+                    'if self.format_type(ty).contains("Readonly<") {}\n'
+                    'if matches!(self.format_type(base).as_str(), "Element") {}\n'
+                    "let display = self.format_type(ty);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn("rendered.rs:1", hits[0])
+        self.assertIn("rendered.rs:2", hits[1])
+
+    def test_excludes_tests_and_comment_lines(self):
+        pattern, _max_lines = self._check_by_name("source_text.contains")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/foo_tests.rs": (
+                    'if source_text.contains("test") {}\n'
+                ),
+                "crates/tsz-checker/tests/integration.rs": (
+                    'if source_text.contains("test") {}\n'
+                ),
+                "crates/tsz-checker/src/commented.rs": (
+                    '// if source_text.contains("comment") {}\n'
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_passes_when_at_or_under_cap(self):
+        pattern, _max_lines = self._check_by_name("source_text.contains")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/a.rs": 'if source_text.contains("a") {}\n',
+                "crates/tsz-checker/src/b.rs": 'if source_text.contains("b") {}\n',
+            }
+        )
+        self.assertEqual(self.arch_guard.scan_regex_line_count([root], pattern, 2), [])
+        self.assertEqual(self.arch_guard.scan_regex_line_count([root], pattern, 3), [])
+
+    def test_track10_checks_are_registered(self):
+        names = [entry[0] for entry in self.arch_guard.REGEX_LINE_COUNT_CHECKS]
+        self.assertTrue(any("post-check" in name for name in names))
+        self.assertTrue(any("source_text.contains" in name for name in names))
+        self.assertTrue(any("file-name/path" in name for name in names))
+        self.assertTrue(any("rendered type strings" in name for name in names))
+
+    def test_real_counts_pass_at_pinned_caps(self):
+        """The pinned caps must match the live count (no off-by-one)."""
+        for entry in self.arch_guard.REGEX_LINE_COUNT_CHECKS:
+            name, search_roots, pattern, max_lines = entry
+            hits = self.arch_guard.scan_regex_line_count(
+                search_roots, pattern, max_lines
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
