@@ -6,11 +6,11 @@
 //! property key names (not `never`).
 //!
 //! Root cause: `Pick<T, K>` is a lib-type Application that the first-pass
-//! TypeEnvironment resolver cannot expand. Previously, `evaluate_conditional`
+//! `TypeEnvironment` resolver cannot expand. Previously, `evaluate_conditional`
 //! took the false branch (`never`) for every key, producing an all-`never`
-//! mapped object and therefore a `never` IndexAccess result. The fix defers the
+//! mapped object and therefore a `never` `IndexAccess` result. The fix defers the
 //! conditional when the extends-type is still an unevaluated Application; the
-//! second resolver pass (CheckerContext) then correctly expands `Pick` and
+//! second resolver pass (`CheckerContext`) then correctly expands `Pick` and
 //! evaluates each key's conditional.
 
 use crate::context::CheckerOptions;
