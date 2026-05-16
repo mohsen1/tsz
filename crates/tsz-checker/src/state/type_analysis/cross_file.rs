@@ -848,14 +848,19 @@ impl<'a> CheckerState<'a> {
                 return Some((direct_type, Vec::new()));
             }
 
-            let declaration_alias_arena = if let Some(file_idx) = cross_file_idx {
-                self.ctx
-                    .all_arenas
-                    .as_ref()
-                    .and_then(|arenas| arenas.get(file_idx).cloned())
-            } else {
-                self.ctx.binder.symbol_arenas.get(&sym_id).cloned()
-            };
+            let declaration_alias_arena = direct_target_owned
+                .as_ref()
+                .map(|(arena, _, _)| std::sync::Arc::clone(arena))
+                .or_else(|| {
+                    if let Some(file_idx) = cross_file_idx {
+                        self.ctx
+                            .all_arenas
+                            .as_ref()
+                            .and_then(|arenas| arenas.get(file_idx).cloned())
+                    } else {
+                        self.ctx.binder.symbol_arenas.get(&sym_id).cloned()
+                    }
+                });
             let declaration_alias_file_idx = declaration_alias_arena
                 .as_deref()
                 .and_then(|arena| self.ctx.get_file_idx_for_arena(arena));

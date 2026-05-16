@@ -1558,6 +1558,82 @@ fn direct_declaration_file_type_alias_lowers_builtin_dom_alias_body() {
         .expect("builtin declaration alias should populate the lib delegation cache");
     assert_eq!(cached_ty, ty);
     assert!(cached_params.is_empty());
+
+    let generic_sym_id = binder
+        .file_locals
+        .get("ReadableStreamReadResult")
+        .expect("ReadableStreamReadResult should resolve to a DOM lib type alias");
+    let generic_delegate_arena = binder
+        .symbol_arenas
+        .get(&generic_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("ReadableStreamReadResult should have a delegate arena");
+
+    let (generic_ty, generic_params) = state
+        .direct_declaration_file_type_alias_result(generic_sym_id, generic_delegate_arena)
+        .expect("generic DOM declaration type alias should lower directly");
+
+    assert_eq!(generic_params.len(), 1);
+    assert_ne!(generic_ty, TypeId::UNKNOWN);
+    assert_ne!(generic_ty, TypeId::ERROR);
+    assert!(
+        crate::query_boundaries::common::union_members(&types, generic_ty).is_some(),
+        "ReadableStreamReadResult<T> should lower to its union body",
+    );
+    let (cached_generic_ty, cached_generic_params) = state
+        .ctx
+        .lib_delegation_cache
+        .symbol_type(generic_sym_id)
+        .expect("generic builtin declaration alias should populate the lib delegation cache");
+    assert_eq!(cached_generic_ty, generic_ty);
+    assert_eq!(cached_generic_params.len(), 1);
+}
+
+#[test]
+fn direct_declaration_file_type_alias_preserves_generic_type_params() {
+    let (arena, binder, types) = parse_bound_source_with_name(
+        "node_modules/pkg/index.d.ts",
+        r#"
+                export type MaybeValue<X> = X | null;
+            "#,
+    );
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "node_modules/pkg/index.d.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let sym_id = binder
+        .file_locals
+        .get("MaybeValue")
+        .expect("MaybeValue should bind");
+
+    let (ty, params) = state
+        .direct_declaration_file_type_alias_result(sym_id, arena.as_ref())
+        .expect("generic external declaration alias should lower directly");
+
+    assert_eq!(params.len(), 1);
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert!(
+        crate::query_boundaries::common::union_members(&types, ty).is_some(),
+        "MaybeValue<X> should lower to its union body",
+    );
+    let def_id = state
+        .ctx
+        .get_existing_def_id(sym_id)
+        .expect("generic alias DefId should be registered");
+    assert_eq!(
+        state
+            .ctx
+            .get_def_type_params(def_id)
+            .unwrap_or_default()
+            .len(),
+        1,
+        "generic declaration alias parameters should be stored for lazy resolution",
+    );
 }
 
 #[test]

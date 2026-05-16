@@ -1834,14 +1834,6 @@ impl<'a> CheckerState<'a> {
         }
         let decl_node = symbol_arena.get(decl_idx)?;
         let type_alias = symbol_arena.get_type_alias(decl_node)?;
-        if type_alias
-            .type_parameters
-            .as_ref()
-            .is_some_and(|params| !params.nodes.is_empty())
-        {
-            return None;
-        }
-
         if Self::source_file_type_node_contains_kind(
             symbol_arena,
             type_alias.type_node,
@@ -1860,7 +1852,7 @@ impl<'a> CheckerState<'a> {
             symbol_arena,
             type_alias,
         );
-        if !params.is_empty() || matches!(alias_type, TypeId::UNKNOWN | TypeId::ERROR) {
+        if matches!(alias_type, TypeId::UNKNOWN | TypeId::ERROR) {
             return None;
         }
 
