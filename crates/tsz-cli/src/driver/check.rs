@@ -136,7 +136,7 @@ fn file_session_reuse_test_override() -> Option<bool> {
 /// touching process-global state. `disable_set` is true when
 /// `TSZ_DISABLE_FILE_SESSION_REUSE` is present in the environment;
 /// `enable_set` is true when `TSZ_FILE_SESSION_REUSE` is present.
-fn file_session_reuse_from_env(disable_set: bool, enable_set: bool) -> bool {
+const fn file_session_reuse_from_env(disable_set: bool, enable_set: bool) -> bool {
     if disable_set {
         return false;
     }

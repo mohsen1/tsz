@@ -849,8 +849,7 @@ impl Server {
             if !response_actions.iter().any(|action| {
                 action.get("fixName").and_then(serde_json::Value::as_str) == Some("import")
             }) && error_codes
-                .iter()
-                .any(|code| *code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+                .contains(&tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
                 && let Some(action) = self.verbatim_commonjs_auto_import_codefix_action(
                     file_path,
                     &content,
