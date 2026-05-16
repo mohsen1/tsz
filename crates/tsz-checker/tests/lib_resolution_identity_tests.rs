@@ -4404,6 +4404,39 @@ const iter3 = iter2.flatMap(() => g1);
 }
 
 #[test]
+fn test_namespace_iterator_class_does_not_use_builtin_defaults_in_errors() {
+    let lib_files = load_lib_files_with_es2015_sublibs();
+    if lib_files.is_empty() {
+        return;
+    }
+    let diagnostics = compile_with_es2015_sublibs(
+        r#"
+namespace N {
+  export class Iterator<T> {
+    next(): T {
+      throw new Error();
+    }
+  }
+}
+class Bad extends N.Iterator<number> {
+  override next(): string {
+    return "";
+  }
+}
+"#,
+    );
+
+    assert!(
+        has_diagnostic_code_message(&diagnostics, 2416, "Iterator<number>"),
+        "Expected user-defined namespace Iterator diagnostic to keep its written arity. Got: {diagnostics:#?}"
+    );
+    assert!(
+        !has_diagnostic_code_message(&diagnostics, 2416, "Iterator<number, undefined, unknown>"),
+        "Expected user-defined namespace Iterator not to receive builtin Iterator defaults. Got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_map_iterator_next_uses_strict_builtin_iterator_return() {
     let lib_files = load_lib_files_with_es2015_sublibs();
     if lib_files.is_empty() {
