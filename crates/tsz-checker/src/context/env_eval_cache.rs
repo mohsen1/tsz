@@ -4,11 +4,7 @@ use super::{CheckerContext, EnvEvalCacheEntry};
 
 impl<'a> CheckerContext<'a> {
     fn type_mentions_def(&self, type_id: TypeId, def_id: tsz_solver::DefId) -> bool {
-        crate::query_boundaries::common::lazy_def_id(self.types, type_id) == Some(def_id)
-            || crate::query_boundaries::common::get_application_lazy_def_id(self.types, type_id)
-                == Some(def_id)
-            || crate::query_boundaries::common::collect_lazy_def_ids(self.types, type_id)
-                .contains(&def_id)
+        crate::query_boundaries::common::contains_lazy_def_id(self.types, type_id, def_id)
     }
 
     pub(crate) fn lookup_env_eval_cache(&self, type_id: TypeId) -> Option<EnvEvalCacheEntry> {
