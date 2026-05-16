@@ -31,6 +31,7 @@ jobs:
       full_run: ${{ steps.gate.outputs.full_run }}
       rust_cache_refresh: ${{ steps.gate.outputs.rust_cache_refresh }}
       required_summary: ${{ steps.gate.outputs.required_summary }}
+      unit_packages: ${{ steps.gate.outputs.unit_packages }}
     steps:
       - id: gate
         env:
@@ -43,6 +44,7 @@ jobs:
           required_summary=true
           rust_cache_refresh=false
           cache_key_changed=false
+          unit_packages=""
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
             # The `labeled` event triggers on every label add. We only care
             # about the `ci-approved` label (used to opt fork PRs into CI).
@@ -100,6 +102,68 @@ jobs:
                   printf '  %s\n' $(printf '%s\n' "$all_paths" | sort -u)
                   should_run=false
                 fi
+              fi
+            fi
+            # P4 — draft-phase fast-fail: narrow the unit job to the touched
+            # crates' tests when the diff is safely localized. Ready-for-review
+            # PRs always run the full unit suite (correctness gate); only draft
+            # PRs use the narrow set.
+            #
+            # Narrowing is "safe" when EVERY changed file is either:
+            #   * under `crates/<known-unit-crate>/src|tests|benches|examples/`
+            #   * a `.md`/docs path (already filtered by docs-only above)
+            # And NONE of these "blast-radius" paths is touched:
+            #   * root `Cargo.{toml,lock}`, `.cargo/`, `rust-toolchain*`
+            #   * `crates/*/Cargo.toml`, `crates/*/build.rs`
+            #   * `scripts/ci/`, `.github/workflows/`
+            #   * a non-unit-tested crate (tsz-cli, tsz-conformance, tsz-lowering,
+            #     tsz-wasm, tsz-website) — these can transitively affect unit
+            #     test behavior via integration points
+            #
+            # When a blast-radius path is touched, fall back to the full unit
+            # suite even on drafts. Lint always runs across the full workspace
+            # regardless, so compile breakage in any crate still surfaces fast.
+            if [[ "$should_run" == "true" \
+                  && "${{ github.event.pull_request.draft }}" == "true" \
+                  && -n "$all_paths" ]]; then
+              # Paths that force the full unit suite even on drafts.
+              blast_paths=$(printf '%s\n' "$all_paths" \
+                | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|scripts/ci/|\.github/workflows/|crates/[^/]+/(Cargo\.toml|build\.rs))' \
+                || true)
+              # Source under crates/<X>/, excluding the blast paths above.
+              crate_paths=$(printf '%s\n' "$all_paths" \
+                | grep -E '^crates/[^/]+/(src|tests|benches|examples)/' \
+                || true)
+              # Catch-all: anything else (root files, scripts/, TypeScript/, etc.)
+              # not yet classified.
+              other_paths=$(printf '%s\n' "$all_paths" \
+                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^crates/[^/]+/(src|tests|benches|examples)/|^Cargo\.(lock|toml)$|^\.cargo/|^rust-toolchain|^scripts/ci/|^\.github/workflows/|^crates/[^/]+/(Cargo\.toml|build\.rs)$' \
+                || true)
+              if [[ -z "$blast_paths" && -z "$other_paths" && -n "$crate_paths" ]]; then
+                # Extract distinct crate names from the matching paths.
+                touched_crates=$(printf '%s\n' "$crate_paths" \
+                  | sed -E 's|^crates/([^/]+)/.*|\1|' \
+                  | sort -u)
+                known_unit_crates="tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-checker tsz-emitter tsz-lsp tsz-core"
+                all_known=true
+                for crate in $touched_crates; do
+                  case " $known_unit_crates " in
+                    *" $crate "*) ;;
+                    *) all_known=false; break;;
+                  esac
+                done
+                if [[ "$all_known" == "true" ]]; then
+                  unit_packages=$(printf '%s' "$touched_crates" | tr '\n' ' ' | sed 's/ *$//')
+                  echo "P4 draft fast-fail: narrowing unit to: ${unit_packages}"
+                  printf '  touched: %s\n' $(printf '%s\n' "$crate_paths" | sort -u)
+                fi
+              fi
+              if [[ -z "$unit_packages" ]]; then
+                reasons=""
+                [[ -n "$blast_paths" ]] && reasons+="blast-radius paths touched; "
+                [[ -n "$other_paths" ]] && reasons+="unclassified paths touched; "
+                [[ -z "$crate_paths" && -z "$reasons" ]] && reasons="no crate source changes"
+                echo "P4 draft fast-fail: NOT narrowing (${reasons:-no eligible crates})"
               fi
             fi
             if [[ "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
@@ -217,6 +281,7 @@ jobs:
           echo "full_run=${full_run}" >> "$GITHUB_OUTPUT"
           echo "rust_cache_refresh=${rust_cache_refresh}" >> "$GITHUB_OUTPUT"
           echo "required_summary=${required_summary}" >> "$GITHUB_OUTPUT"
+          echo "unit_packages=${unit_packages}" >> "$GITHUB_OUTPUT"
 
   project-corpus-pr-body:
     name: project-corpus-pr-body
@@ -479,6 +544,13 @@ jobs:
     # Keep unit as the first Rust compile gate. The tsz-checker lib-test target
     # can exit silently when it is built through sccache from a restored warm
     # target cache, so use a clean non-sccache compile path here.
+    #
+    # `_TSZ_CI_UNIT_PACKAGES_OVERRIDE` (set by the gate as `unit_packages`) is
+    # a space-separated list of crate names. When non-empty, the unit script
+    # runs `cargo nextest run -p <crate>` for just those crates instead of the
+    # full workspace — used as the P4 draft-phase fast-fail (gate only sets
+    # this for draft PRs whose changes are localized to known unit-tested
+    # crate source).
     name: unit
     needs: gate
     if: needs.gate.outputs.should_run == 'true'
@@ -490,6 +562,7 @@ jobs:
       TSZ_CI_CACHE_RESTORE: "0"
       TSZ_CI_DISABLE_SCCACHE: "1"
       TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "0"
+      _TSZ_CI_UNIT_PACKAGES_OVERRIDE: ${{ needs.gate.outputs.unit_packages }}
     steps:
       - uses: actions/checkout@v4
         with:

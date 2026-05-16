@@ -529,11 +529,46 @@ _UNIT_TEST_PACKAGES=(
   -p tsz-core
 )
 
+# Resolve the active package set for `run_unit_tests` / `build_unit_test_archive`.
+#
+# `_TSZ_CI_UNIT_PACKAGES_OVERRIDE` is the gate-computed narrow set for
+# draft-phase fast-fail (P4). It is a space-separated list of crate names
+# (e.g., "tsz-parser tsz-binder"). When non-empty AND the names are all
+# known workspace crates, this returns `-p NAME` per crate. Otherwise it
+# returns the full `_UNIT_TEST_PACKAGES`.
+#
+# Unknown names are an error rather than silent fallback — a typo'd crate
+# name would otherwise skip tests in a way that goes unnoticed.
+unit_test_packages_args() {
+  local override="${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}"
+  if [[ -z "$override" ]]; then
+    printf '%s\n' "${_UNIT_TEST_PACKAGES[@]}"
+    return
+  fi
+  local known=" tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-checker tsz-emitter tsz-lsp tsz-core "
+  local crate
+  for crate in $override; do
+    if [[ "$known" != *" $crate "* ]]; then
+      echo "error: _TSZ_CI_UNIT_PACKAGES_OVERRIDE contains unknown crate '$crate'" >&2
+      echo "  valid crates:${known}" >&2
+      return 2
+    fi
+  done
+  for crate in $override; do
+    printf -- '-p\n%s\n' "$crate"
+  done
+}
+
 run_unit_tests() {
   ci_section "Workspace nextest suites"
+  local pkg_args
+  mapfile -t pkg_args < <(unit_test_packages_args)
+  if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
+    echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
+  fi
   cargo nextest run --profile ci --cargo-profile ci-unit \
     --build-jobs "$CARGO_BUILD_JOBS" \
-    "${_UNIT_TEST_PACKAGES[@]}"
+    "${pkg_args[@]}"
 }
 
 build_unit_test_archive() {
