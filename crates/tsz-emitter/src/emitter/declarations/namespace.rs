@@ -2303,15 +2303,24 @@ impl<'a> Printer<'a> {
                         &mut wrote_any,
                     );
                 } else {
-                    let mut names = Vec::new();
-                    self.collect_binding_names(decl.name, &mut names);
-                    for name in names {
-                        self.write_namespace_export_separator(&mut wrote_any);
-                        self.write(ns_name);
-                        self.write(".");
-                        self.write(&name);
-                        self.write(" = ");
-                        self.emit_expression(decl.initializer);
+                    if let Some(binding) = self.simple_namespace_binding_export(decl.name) {
+                        self.emit_simple_namespace_binding_export(
+                            ns_name,
+                            decl.initializer,
+                            &binding,
+                            &mut wrote_any,
+                        );
+                    } else {
+                        let mut names = Vec::new();
+                        self.collect_binding_names(decl.name, &mut names);
+                        for name in names {
+                            self.write_namespace_export_separator(&mut wrote_any);
+                            self.write(ns_name);
+                            self.write(".");
+                            self.write(&name);
+                            self.write(" = ");
+                            self.emit_expression(decl.initializer);
+                        }
                     }
                 }
             }

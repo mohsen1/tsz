@@ -424,6 +424,19 @@ pub(super) fn convert_exported_variable_declarations(
                     if let Some(name_node) = arena.get(decl.name)
                         && is_binding_pattern_kind(name_node.kind)
                     {
+                        if let Some((assignment, temps)) =
+                            convert_simple_exported_binding_declaration(
+                                arena,
+                                ns_name,
+                                decl.name,
+                                decl.initializer,
+                            )
+                        {
+                            hoisted_temps.extend(temps);
+                            result.push(assignment);
+                            continue;
+                        }
+
                         let temp =
                             crate::transforms::emit_utils::next_temp_var_name(&mut temp_counter);
                         let converter = AstToIr::new(arena);
@@ -490,6 +503,66 @@ pub(super) fn convert_exported_variable_declarations(
 const fn is_binding_pattern_kind(kind: u16) -> bool {
     kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
         || kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+}
+
+fn convert_simple_exported_binding_declaration(
+    arena: &NodeArena,
+    ns_name: &str,
+    pattern_idx: NodeIndex,
+    initializer: NodeIndex,
+) -> Option<(IRNode, Vec<String>)> {
+    let pattern_node = arena.get(pattern_idx)?;
+    let pattern = arena.get_binding_pattern(pattern_node)?;
+
+    let mut binding = None;
+    for (index, &element_idx) in pattern.elements.nodes.iter().enumerate() {
+        let element_node = arena.get(element_idx)?;
+        if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+            continue;
+        }
+        let element = arena.get_binding_element(element_node)?;
+        if element.dot_dot_dot_token || element.initializer.is_some() || binding.is_some() {
+            return None;
+        }
+
+        let name = get_identifier_text(arena, element.name)?;
+        let access = if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            SimpleBindingAccess::Element(index)
+        } else {
+            let prop_idx = if element.property_name.is_some() {
+                element.property_name
+            } else {
+                element.name
+            };
+            SimpleBindingAccess::Property(binding_property_name_text(arena, prop_idx)?)
+        };
+        binding = Some((name, access));
+    }
+
+    let (name, access) = binding?;
+    let converter = AstToIr::new(arena);
+    let source = converter.convert_expression(initializer);
+    let temps = converter.take_hoisted_temps();
+    let value = match access {
+        SimpleBindingAccess::Property(prop_name) => IRNode::prop(source, prop_name),
+        SimpleBindingAccess::Element(index) => {
+            IRNode::elem(source, IRNode::number(index.to_string()))
+        }
+    };
+
+    Some((
+        IRNode::NamespaceExport {
+            namespace: ns_name.to_string().into(),
+            name: name.into(),
+            value: Box::new(value),
+        },
+        temps,
+    ))
+}
+
+enum SimpleBindingAccess {
+    Property(String),
+    Element(usize),
 }
 
 fn emit_namespace_binding_pattern_assignments(

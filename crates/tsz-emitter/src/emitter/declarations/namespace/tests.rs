@@ -135,6 +135,31 @@ fn namespace_exported_destructuring_uses_temp_in_esnext_path() {
 }
 
 #[test]
+fn namespace_single_exported_destructuring_reads_initializer_directly() {
+    let source =
+        "namespace M {\n    export let [bar5] = [1];\n    export const { a: bar7 } = { a: 1 };\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("M.bar5 = [1][0];"),
+        "Single array binding export should read by element index without a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("M.bar7 = { a: 1 }.a;"),
+        "Single object binding export should read by property name without a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _a;"),
+        "Single binding exports should not reserve a namespace destructuring temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn namespace_exported_destructuring_temp_hoists_before_class() {
     let source = "namespace m {\n    export class c {}\n    export var [x, y] = [10, new c()];\n}";
     let (parser, root) = parse_test_source(source);
