@@ -843,6 +843,42 @@ function foo2<T extends unknown[]>(value: T): Enumerate<T['length']> {
 }
 
 #[test]
+fn type_challenges_json_parser_alias_result_satisfies_array_constraint() {
+    let source = r#"
+type Token = any;
+type ParseResult<Value, Rest extends Token[]> = [Value, Rest];
+type Tokenize<Input extends string, State extends Token[] = []> = Token[];
+type ParseLiteral<Rest extends Token[]> = ParseResult<any, Rest>;
+
+type Parse<Input extends string> = ParseLiteral<Tokenize<Input>>[0];
+"#;
+
+    let diagnostics = check_source_strict_with_default_libs(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2344),
+        "alias result with a declared array constraint should not emit TS2344. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn renamed_alias_type_parameter_constraint_satisfies_array_argument_slot() {
+    let source = r#"
+type Item = any;
+type Pair<Head, Tail extends Item[]> = [Head, Tail];
+type Produce<Name extends string> = Item[];
+type Consume<Queue extends Item[]> = Pair<unknown, Queue>;
+
+type Result<Name extends string> = Consume<Produce<Name>>;
+"#;
+
+    let diagnostics = check_source_strict_with_default_libs(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2344),
+        "renamed alias result with a declared array constraint should not emit TS2344. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn renamed_generic_tuple_length_return_uses_structural_conditional_indexed_shape() {
     let source = r#"
 interface Array<T> {
