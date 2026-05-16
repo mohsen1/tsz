@@ -1034,7 +1034,7 @@ impl<'a> CheckerState<'a> {
         let def_id_resolver = |node_idx: NodeIndex| self.resolve_def_id_for_lowering(node_idx);
         let value_resolver = |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
         let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
-            self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+            self.resolve_actual_lib_name_to_def_id_for_cross_arena(type_name)
                 .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
                 .or_else(|| {
                     resolve_name_to_lib_symbol(
@@ -1272,37 +1272,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         set
-    }
-
-    /// Resolve a symbol to its structural type and return a `Lazy(DefId)` reference.
-    ///
-    /// This is the canonical stable-identity helper that consolidates the common
-    /// two-step pattern:
-    ///   1. `type_reference_symbol_type(sym_id)` — ensures the symbol's body is
-    ///      materialized in `type_env`
-    ///   2. `ctx.create_lazy_type_ref(sym_id)` — creates `TypeData::Lazy(DefId)`
-    ///
-    /// Use this in type literal and type reference resolution paths instead of
-    /// manually calling both steps.
-    pub(crate) fn resolve_symbol_as_lazy_type(&mut self, sym_id: SymbolId) -> TypeId {
-        let _ = self.type_reference_symbol_type(sym_id);
-        self.ctx.create_lazy_type_ref(sym_id)
-    }
-
-    /// Resolve a named type reference to a lazy base while preserving canonical
-    /// standard-lib identity across delegated checker contexts.
-    pub(crate) fn resolve_symbol_as_lazy_type_named(
-        &mut self,
-        sym_id: SymbolId,
-        name: &str,
-    ) -> TypeId {
-        if self.ctx.has_lib_loaded() && self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
-            let _ = self.resolve_lib_type_by_name(name);
-            let def_id = self.ctx.get_canonical_lib_def_id(name, sym_id);
-            return self.ctx.types.lazy(def_id);
-        }
-
-        self.resolve_symbol_as_lazy_type(sym_id)
     }
 
     /// Like `type_reference_symbol_type` but also returns the type parameters used.
@@ -1723,7 +1692,9 @@ impl<'a> CheckerState<'a> {
                             scoped.push_str(type_name);
                             self.resolve_entity_name_text_to_def_id_for_lowering(&scoped)
                         })
-                        .or_else(|| self.resolve_actual_lib_name_to_def_id_for_lowering(type_name))
+                        .or_else(|| {
+                            self.resolve_actual_lib_name_to_def_id_for_cross_arena(type_name)
+                        })
                         .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))
                         .or_else(|| {
                             resolve_name_to_lib_symbol(
@@ -1984,7 +1955,9 @@ impl<'a> CheckerState<'a> {
                                     self.resolve_entity_name_text_to_def_id_for_lowering(&scoped)
                                 })
                                 .or_else(|| {
-                                    self.resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                                    self.resolve_actual_lib_name_to_def_id_for_cross_arena(
+                                        type_name,
+                                    )
                                 })
                                 .or_else(|| {
                                     self.resolve_entity_name_text_to_def_id_for_lowering(type_name)
