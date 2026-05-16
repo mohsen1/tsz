@@ -719,7 +719,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     // Type Query (typeof)
     // =========================================================================
 
-    fn apply_instantiation_expression_type_arguments(
+    pub(crate) fn apply_instantiation_expression_type_arguments(
         &mut self,
         expr_type: TypeId,
         type_arguments: &NodeList,
@@ -886,6 +886,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(type_query) = self.ctx.arena.get_type_query(node) else {
             return TypeId::ERROR;
         };
+
+        // Route inline `typeof import("...")[.segments]` through the namespace-
+        // aware resolver before falling through to lowering. See
+        // `try_get_type_from_inline_import_typeof_query` for the full rule.
+        if let Some(resolved) = self.try_get_type_from_inline_import_typeof_query(idx) {
+            return resolved;
+        }
 
         // Capture type argument node indices early (before borrows prevent access).
         // When present, the base type will be wrapped in Application(base, args)
