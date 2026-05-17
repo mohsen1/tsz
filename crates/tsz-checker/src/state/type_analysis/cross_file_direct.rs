@@ -841,6 +841,17 @@ impl<'a> CheckerState<'a> {
                     )
                 })
             }
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                arena.get_type_operator(node).is_some_and(|operator| {
+                    operator.operator == tsz_scanner::SyntaxKind::ReadonlyKeyword as u16
+                        && Self::source_file_type_node_is_option_bag_lowerable(
+                            arena,
+                            delegate_binder,
+                            operator.type_node,
+                            seen_type_names,
+                        )
+                })
+            }
             _ => false,
         }
     }
@@ -1224,6 +1235,55 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    fn source_file_interface_member_is_direct_lowerable(
+        arena: &NodeArena,
+        delegate_binder: &BinderState,
+        member_idx: NodeIndex,
+    ) -> bool {
+        let Some(member_node) = arena.get(member_idx) else {
+            return false;
+        };
+        if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+            return false;
+        }
+        let Some(signature) = arena.get_signature(member_node) else {
+            return false;
+        };
+        if signature
+            .parameters
+            .as_ref()
+            .is_some_and(|params| !params.nodes.is_empty())
+            || signature
+                .type_parameters
+                .as_ref()
+                .is_some_and(|params| !params.nodes.is_empty())
+        {
+            return false;
+        }
+
+        let mut seen_type_names = Vec::new();
+        Self::source_file_type_node_is_option_bag_lowerable(
+            arena,
+            delegate_binder,
+            signature.type_annotation,
+            &mut seen_type_names,
+        )
+    }
+
+    fn source_file_interface_members_are_direct_lowerable(
+        arena: &NodeArena,
+        delegate_binder: &BinderState,
+        member_indices: &[NodeIndex],
+    ) -> bool {
+        member_indices.iter().copied().all(|member_idx| {
+            Self::source_file_interface_member_is_direct_lowerable(
+                arena,
+                delegate_binder,
+                member_idx,
+            )
+        })
+    }
+
     fn direct_lower_source_file_annotation_type(
         &mut self,
         annotation: NodeIndex,
@@ -1318,6 +1378,64 @@ impl<'a> CheckerState<'a> {
             symbol_arena,
             allow_source_file_arena,
         )
+    }
+
+    pub(super) fn direct_builtin_lib_variable_annotation_type(
+        &mut self,
+        sym_id: SymbolId,
+        delegate_binder: &BinderState,
+        symbol_arena: &NodeArena,
+    ) -> Option<TypeId> {
+        if !is_builtin_lib_declaration_arena(symbol_arena) {
+            return None;
+        }
+        let symbol = delegate_binder
+            .get_symbol(sym_id)
+            .or_else(|| self.get_cross_file_symbol(sym_id))?;
+        if symbol.flags & symbol_flags::VARIABLE == 0 {
+            return None;
+        }
+        if symbol.flags & (symbol_flags::MODULE | symbol_flags::ALIAS) != 0 {
+            return None;
+        }
+        if symbol.declarations.len() != 1 {
+            return None;
+        }
+
+        let decl_idx = symbol.value_declaration.into_option()?;
+        let decl_node = symbol_arena.get(decl_idx)?;
+        let variable = symbol_arena.get_variable_declaration(decl_node)?;
+        let annotation = variable.type_annotation.into_option()?;
+        let annotation_node = symbol_arena.get(annotation)?;
+        if annotation_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = symbol_arena.get_type_ref(annotation_node)?;
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+        let type_name = Self::entity_name_text_in_direct_arena(symbol_arena, type_ref.type_name)?;
+        if self.ctx.file_local_type_shadow_for_lib_name(&type_name) {
+            return None;
+        }
+        let def_id = self
+            .resolve_actual_lib_name_to_def_id_for_lowering(&type_name)
+            .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(&type_name))?;
+        if self.ctx.definition_store.get_kind(def_id)? != DefKind::Interface {
+            return None;
+        }
+        if self
+            .ctx
+            .get_def_type_params(def_id)
+            .is_some_and(|params| !params.is_empty())
+        {
+            return None;
+        }
+        Some(self.ctx.types.lazy(def_id))
     }
 
     pub(crate) fn direct_source_file_type_alias_result(
@@ -1659,6 +1777,15 @@ impl<'a> CheckerState<'a> {
         if direct_member_arena {
             let direct_source_file_arena =
                 allow_source_file_arena && is_direct_lowering_source_file_arena(interface_arena);
+            if direct_source_file_arena
+                && !Self::source_file_interface_members_are_direct_lowerable(
+                    interface_arena,
+                    delegate_binder,
+                    member_indices,
+                )
+            {
+                return None;
+            }
             let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
                 if direct_source_file_arena {
                     return self.source_file_local_name_def_id_for_lowering(
@@ -1813,3 +1940,7 @@ mod cached_base_tests;
 #[cfg(test)]
 #[path = "cross_file_direct_cache_tests.rs"]
 mod cache_tests;
+
+#[cfg(test)]
+#[path = "cross_file_direct_variable_tests.rs"]
+mod variable_tests;

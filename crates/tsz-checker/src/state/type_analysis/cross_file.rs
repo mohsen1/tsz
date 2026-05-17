@@ -629,6 +629,50 @@ impl<'a> CheckerState<'a> {
                     arena_arc.map(|arena| (arena, binder, file_idx))
                 })
             };
+            let direct_builtin_variable_type = direct_target_owned.as_ref().and_then(
+                |(symbol_arena, delegate_binder, _delegate_file_idx)| {
+                    self.direct_builtin_lib_variable_annotation_type(
+                        sym_id,
+                        delegate_binder.as_deref().unwrap_or(current_binder),
+                        symbol_arena.as_ref(),
+                    )
+                },
+            );
+            if let Some(direct_type) = direct_builtin_variable_type {
+                self.ctx.symbol_types.insert(sym_id, direct_type);
+                if let Some(file_idx) = symbol_type_cache_file_idx {
+                    if symbol_type_cache_from_symbol_arena {
+                        self.ctx.cache_stable_source_file_symbol_arena_type(
+                            sym_id,
+                            file_idx as u32,
+                            source_cache_scope,
+                            direct_type,
+                            Vec::new(),
+                        );
+                    } else {
+                        self.ctx.cache_cross_file_symbol_type(
+                            sym_id,
+                            file_idx as u32,
+                            direct_type,
+                            Vec::new(),
+                        );
+                    }
+                }
+                if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
+                    self.ctx
+                        .lib_delegation_cache
+                        .insert_symbol_type(sym_id, (direct_type, Vec::new()));
+                    if let Some(shared_name) = shared_actual_lib_delegation_name.as_deref() {
+                        self.cache_final_actual_lib_interface_type(
+                            sym_id,
+                            shared_name,
+                            direct_type,
+                        );
+                        self.cache_shared_actual_lib_delegation(shared_name, direct_type);
+                    }
+                }
+                return Some((direct_type, Vec::new()));
+            }
             if let Some((symbol_arena, delegate_binder, _delegate_file_idx)) =
                 direct_target_owned.as_ref()
                 && let Some((direct_type, direct_params)) = self
@@ -1518,7 +1562,7 @@ impl<'a> CheckerState<'a> {
             interface_arena,
             delegate_binder,
             type_args,
-            false,
+            true,
         ) {
             if type_args.is_none()
                 && let Some(file_idx) = delegate_file_idx
