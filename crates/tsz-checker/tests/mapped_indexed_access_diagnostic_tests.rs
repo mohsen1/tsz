@@ -109,6 +109,50 @@ f.register(s, null);
 }
 
 #[test]
+fn generic_key_call_through_mapped_application_preserves_indexed_return() {
+    let source = r#"
+interface IndexedModel {
+    prop0: { value: number; tag: "prop0"; nested: { flag: boolean } };
+    prop1: { value: number; tag: "prop1"; nested: { flag: boolean } };
+}
+
+type IndexedReaders<T> = { [K in keyof T]: (value: T[K]) => T[K] };
+
+declare const model: IndexedModel;
+declare const readers: IndexedReaders<IndexedModel>;
+
+function readIndexed<K extends keyof IndexedModel>(key: K): IndexedModel[K] {
+    return readers[key](model[key]);
+}
+
+interface RenamedModel {
+    alpha: { value: string; nested: { flag: boolean } };
+    beta: { value: boolean; nested: { flag: boolean } };
+}
+
+type RenamedReaders<Source> = { [Member in keyof Source]: (value: Source[Member]) => Source[Member] };
+
+declare const renamedModel: RenamedModel;
+declare const renamedReaders: RenamedReaders<RenamedModel>;
+
+function readRenamed<Key extends keyof RenamedModel>(key: Key): RenamedModel[Key] {
+    return renamedReaders[key](renamedModel[key]);
+}
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect();
+
+    assert!(
+        ts2322.is_empty(),
+        "generic mapped-reader calls should preserve the indexed return type, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn remapped_mapped_type_constraint_indexed_access_diagnostics_match_tsc_surface() {
     let source = r#"
 type Mapped2<K extends string> = { [P in K as `get${P}`]: { a: P } };
