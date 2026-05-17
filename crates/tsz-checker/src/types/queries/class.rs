@@ -1011,14 +1011,29 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Collect names of `infer X` variables that are direct span expressions
-    /// in a template-literal-type within `extends_type`. Those positions
-    /// implicitly constrain `X` to `string` per tsc's inference rules.
-    pub(crate) fn collect_template_span_infer_names(
+    /// Walk `extends_type` collecting every `infer X` name together with its
+    /// implicit constraint (`Some(TypeId::STRING)` when `X` is a direct span
+    /// expression of a template-literal-type, `None` otherwise).
+    ///
+    /// Uses the same traversal strategy as `push_infer_bindings_from_extends`:
+    /// span-position `INFER_TYPE` node indices are pre-collected when the
+    /// enclosing `TEMPLATE_LITERAL_TYPE` is encountered (which is always an
+    /// ancestor), so the check is O(1) per infer node. Explicit descent into
+    /// `infer_data.type_parameter` mirrors the binding path and ensures that
+    /// infer names nested inside infer constraints (e.g.
+    /// `` `${infer K extends `${infer V}`}` ``) are also discovered and their
+    /// implicit constraints assigned correctly.
+    pub(crate) fn collect_infer_bindings_with_span_constraints(
         &self,
         extends_type: NodeIndex,
-    ) -> rustc_hash::FxHashSet<String> {
-        let mut result = rustc_hash::FxHashSet::default();
+    ) -> Vec<(String, Option<TypeId>)> {
+        if extends_type.is_none() {
+            return Vec::new();
+        }
+        let mut result: Vec<(String, Option<TypeId>)> = Vec::new();
+        let mut seen: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
+        let mut span_infer_nodes: rustc_hash::FxHashSet<NodeIndex> =
+            rustc_hash::FxHashSet::default();
         let mut stack = vec![extends_type];
         while let Some(idx) = stack.pop() {
             let Some(node) = self.ctx.arena.get(idx) else {
@@ -1031,17 +1046,31 @@ impl<'a> CheckerState<'a> {
                             && let Some(span) = self.ctx.arena.get_template_span(span_node)
                             && let Some(expr_node) = self.ctx.arena.get(span.expression)
                             && expr_node.kind == syntax_kind_ext::INFER_TYPE
-                            && let Some(infer) = self.ctx.arena.get_infer_type(expr_node)
-                            && let Some(tp_node) = self.ctx.arena.get(infer.type_parameter)
-                            && let Some(tp) = self.ctx.arena.get_type_parameter(tp_node)
-                            && let Some(name_node) = self.ctx.arena.get(tp.name)
-                            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                         {
-                            result.insert(ident.escaped_text.clone());
+                            span_infer_nodes.insert(span.expression);
                         }
                     }
                 }
-                // Spans were accessed directly above; no need to descend into children.
+                // Fall through to get_children: infer constraints may contain
+                // nested template literals that must also be walked.
+            } else if node.kind == syntax_kind_ext::INFER_TYPE {
+                if let Some(infer_data) = self.ctx.arena.get_infer_type(node) {
+                    if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
+                        && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                        && let Some(name_node) = self.ctx.arena.get(tp_data.name)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                    {
+                        let name = ident.escaped_text.clone();
+                        if seen.insert(name.clone()) {
+                            let constraint =
+                                span_infer_nodes.contains(&idx).then_some(TypeId::STRING);
+                            result.push((name, constraint));
+                        }
+                    }
+                    // Explicit descent into type_parameter picks up infer names
+                    // nested in constraints (`infer X extends `${infer Y}``).
+                    stack.push(infer_data.type_parameter);
+                }
                 continue;
             }
             for child_idx in self.ctx.arena.get_children(idx) {
