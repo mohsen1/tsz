@@ -318,6 +318,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // template is `M0[K]`, not `Partial<M0>[K]`.
         let is_homomorphic = source_object.is_some();
 
+        // A filtering/remapping `as` clause can still use the original source
+        // property template (`T[K]`). In that case, preserved optional source
+        // properties must carry their declared type through the mapped result
+        // rather than the read type (`T[K]` -> `T | undefined`). Conditional
+        // extends identity checks observe that difference even when ordinary
+        // assignability does not.
+        let template_reads_source_property =
+            source_object.is_some_and(|source| match self.interner().lookup(mapped.template) {
+                Some(TypeData::IndexAccess(obj, idx)) if obj == source => {
+                    matches!(
+                        self.interner().lookup(idx),
+                        Some(TypeData::TypeParameter(param)) if param.name == mapped.type_param.name
+                    )
+                }
+                _ => false,
+            });
+        let should_use_declared_source_property_type =
+            is_identity_homomorphic || template_reads_source_property;
+
         // PERF: Memoize source properties into a hash map for O(1) lookup during the key loop.
         // This avoids repeated O(N) collect_properties calls inside the loop.
         // Also capture resolved_source once to avoid double evaluate(source) calls.
@@ -522,7 +541,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // For non-optional properties in identity homomorphic types, the
             // evaluated T[K] equals the declared type, so we can also skip.
             //
-            let property_type = if is_identity_homomorphic
+            let property_type = if should_use_declared_source_property_type
                 && !source_has_type_params
                 && let Some(&(_, _, declared_type, _, _, _)) = source_info
             {
@@ -623,7 +642,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 source_readonly,
             );
 
-            let property_type = if is_identity_homomorphic
+            let property_type = if should_use_declared_source_property_type
                 && !source_has_type_params
                 && let Some(&(_, _, declared_type, _, _, _)) = source_info
             {
