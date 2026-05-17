@@ -66,8 +66,8 @@ struct LookupCacheEntry {
 // On macOS, each thread_local! access goes through __tls_get_addr (~10-15ns).
 // By combining into one TLS access, we halve the overhead.
 
-const INTERN_CACHE_BITS: u32 = 9;
-const INTERN_CACHE_SIZE: usize = 1 << INTERN_CACHE_BITS; // 512
+const INTERN_CACHE_BITS: u32 = 11;
+const INTERN_CACHE_SIZE: usize = 1 << INTERN_CACHE_BITS; // 2048
 #[allow(dead_code)]
 const INTERN_CACHE_MASK: u64 = (INTERN_CACHE_SIZE as u64) - 1;
 
