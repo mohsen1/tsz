@@ -902,6 +902,7 @@ impl<'a> LoweringPass<'a> {
         let mut directives = Vec::new();
         if self.ctx.target_es5 {
             if func.is_async {
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 if func.asterisk_token {
                     self.mark_async_generator_helpers();
                 } else {
@@ -910,12 +911,10 @@ impl<'a> LoweringPass<'a> {
                 directives.push(TransformDirective::ES5AsyncFunction { function_node });
             } else if func.asterisk_token {
                 self.transforms.helpers_mut().generator = true;
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 directives.push(TransformDirective::ES5GeneratorFunction { function_node });
             } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-                // Mark rest helper if parameters have rest
-                if self.function_parameters_need_rest_helper(&func.parameters) {
-                    self.transforms.helpers_mut().mark_rest();
-                }
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 directives.push(TransformDirective::ES5FunctionParameters { function_node });
             }
         } else if func.is_async
@@ -929,9 +928,7 @@ impl<'a> LoweringPass<'a> {
                 self.mark_async_helpers();
             }
         } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-            if self.function_parameters_need_rest_helper(&func.parameters) {
-                self.transforms.helpers_mut().mark_rest();
-            }
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             directives.push(TransformDirective::ES5FunctionParameters { function_node });
         }
 
@@ -1285,15 +1282,14 @@ impl<'a> LoweringPass<'a> {
             } else {
                 self.mark_async_helpers();
             }
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             TransformDirective::ES5AsyncFunction { function_node: idx }
         } else if self.ctx.target_es5 && func.asterisk_token {
             self.transforms.helpers_mut().generator = true;
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             TransformDirective::ES5GeneratorFunction { function_node: idx }
         } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-            // Mark rest helper if parameters have rest
-            if self.function_parameters_need_rest_helper(&func.parameters) {
-                self.transforms.helpers_mut().mark_rest();
-            }
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             TransformDirective::ES5FunctionParameters { function_node: idx }
         } else {
             TransformDirective::Identity
@@ -1613,6 +1609,7 @@ impl<'a> LoweringPass<'a> {
             if arrow.is_async {
                 self.mark_async_helpers();
             }
+            self.mark_function_parameter_transform_helpers(&arrow.parameters);
 
             // If this arrow function captures lexical `this`, increment the
             // capture level so that nested `this` references get substituted.
@@ -1648,9 +1645,7 @@ impl<'a> LoweringPass<'a> {
         } else if !arrow.is_async
             && self.function_parameters_need_body_prologue_transform(&arrow.parameters)
         {
-            if self.function_parameters_need_rest_helper(&arrow.parameters) {
-                self.transforms.helpers_mut().rest = true;
-            }
+            self.mark_function_parameter_transform_helpers(&arrow.parameters);
             self.transforms.insert(
                 idx,
                 TransformDirective::ES5FunctionParameters { function_node: idx },
@@ -1929,6 +1924,7 @@ impl<'a> LoweringPass<'a> {
 
         if self.ctx.target_es5 {
             if func.is_async {
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 if func.asterisk_token {
                     self.mark_async_generator_helpers();
                 } else {
@@ -1940,14 +1936,13 @@ impl<'a> LoweringPass<'a> {
                 );
             } else if func.asterisk_token {
                 self.transforms.helpers_mut().generator = true;
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 self.transforms.insert(
                     idx,
                     TransformDirective::ES5GeneratorFunction { function_node: idx },
                 );
             } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-                if self.function_parameters_need_rest_helper(&func.parameters) {
-                    self.transforms.helpers_mut().mark_rest();
-                }
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 self.transforms.insert(
                     idx,
                     TransformDirective::ES5FunctionParameters { function_node: idx },
@@ -1965,9 +1960,7 @@ impl<'a> LoweringPass<'a> {
                 self.mark_async_helpers();
             }
         } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-            if self.function_parameters_need_rest_helper(&func.parameters) {
-                self.transforms.helpers_mut().mark_rest();
-            }
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             self.transforms.insert(
                 idx,
                 TransformDirective::ES5FunctionParameters { function_node: idx },

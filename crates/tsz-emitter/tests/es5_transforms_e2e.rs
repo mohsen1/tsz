@@ -4,7 +4,8 @@
 //! correct ES5 output for destructuring, class, and async transforms.
 
 use crate::context::emit::EmitContext;
-use crate::emitter::{ModuleKind, Printer as EmitPrinter, PrinterOptions};
+use crate::emitter::ModuleKind;
+use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
 use crate::lowering::LoweringPass;
 use crate::output::printer::{PrintOptions, lower_and_print};
 use tsz_common::common::ScriptTarget;
@@ -46,7 +47,24 @@ fn emit_es5_with_comments(source: &str) -> String {
     };
     let ctx = EmitContext::with_options(options.clone());
     let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
-    let mut printer = EmitPrinter::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+    let mut printer = EmitterPrinter::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+fn emit_es5_downlevel_iteration(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES5,
+        downlevel_iteration: true,
+        remove_comments: true,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
     printer.set_source_text(source);
     printer.emit(root);
     printer.get_output().to_string()
@@ -667,6 +685,47 @@ fn es5_defaulted_object_rest_parameter_uses_parameter_guard() {
             "var _b = _a.x, _c = _b.z, z = _c === void 0 ? 12 : _c, nested = __rest(_b, [\"z\"]), rest = __rest(_a, [\"x\"]);"
         ),
         "Nested and outer object-rest bindings should read from the defaulted parameter temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_downlevel_iteration_array_parameter_uses_read_helper() {
+    let output = emit_es5_downlevel_iteration(
+        "function one([], {}) {}\n\
+         function two([], [a, b, c]: number[]) {}\n",
+    );
+
+    assert!(
+        output.contains("function one(_a, _b)"),
+        "Empty binding parameters should still be replaced with parameter temps.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__read(_a, 0)"),
+        "Empty array binding parameters should not create an unused read helper call.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _c = __read(_b, 3), a = _c[0], b = _c[1], c = _c[2];"),
+        "Non-empty array binding parameters under downlevelIteration must read the iterable once before indexing.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_downlevel_iteration_nested_array_parameter_reads_each_array_pattern() {
+    let output = emit_es5_downlevel_iteration(
+        "function nested([[a], , ...rest]: Iterable<any>) { return a; }\n",
+    );
+
+    assert!(
+        output.contains("__read(_a)"),
+        "Array binding parameters with rest should read the parameter without a fixed limit.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__read(_c, 1)"),
+        "Nested array binding patterns should also read their iterable source before indexing.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("rest = _b.slice(2)"),
+        "Array rest parameters should slice from the read array temp.\nOutput:\n{output}"
     );
 }
 
