@@ -297,6 +297,50 @@ fn test_instantiate_composite_noop_preserves_type_id() {
         ..CallableShape::default()
     });
     assert_eq!(instantiate_type(&interner, callable, &subst), callable);
+
+    let array = interner.array(TypeId::NUMBER);
+    assert_eq!(instantiate_type(&interner, array, &subst), array);
+
+    let conditional = interner.conditional(ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::NUMBER,
+        false_type: TypeId::BOOLEAN,
+        is_distributive: false,
+    });
+    assert_eq!(
+        instantiate_type(&interner, conditional, &subst),
+        conditional
+    );
+
+    let readonly = interner.readonly_type(array);
+    assert_eq!(instantiate_type(&interner, readonly, &subst), readonly);
+
+    let no_infer = interner.no_infer(TypeId::STRING);
+    assert_eq!(instantiate_type(&interner, no_infer, &subst), no_infer);
+
+    let t_name = interner.intern_string("T");
+    let k_name = interner.intern_string("K");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let k_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let indexed_access = interner.intern(TypeData::IndexAccess(t_param, k_param));
+    assert_eq!(
+        instantiate_type(&interner, indexed_access, &subst),
+        indexed_access
+    );
+
+    let keyof = interner.keyof(t_param);
+    assert_eq!(instantiate_type(&interner, keyof, &subst), keyof);
 }
 
 #[test]

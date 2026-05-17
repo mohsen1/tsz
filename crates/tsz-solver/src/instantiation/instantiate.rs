@@ -902,7 +902,11 @@ impl<'a> TypeInstantiator<'a> {
             // Array: instantiate element type
             TypeData::Array(elem) => {
                 let instantiated_elem = self.instantiate(*elem);
-                self.interner.array(instantiated_elem)
+                if instantiated_elem == *elem {
+                    self.interner.intern(*key)
+                } else {
+                    self.interner.array(instantiated_elem)
+                }
             }
 
             // Tuple: instantiate all elements, flattening variadic spreads.
@@ -1319,7 +1323,11 @@ impl<'a> TypeInstantiator<'a> {
                     false_type: self.instantiate(cond.false_type),
                     is_distributive: cond.is_distributive,
                 };
-                self.interner.conditional(instantiated)
+                if instantiated == cond {
+                    self.interner.intern(*key)
+                } else {
+                    self.interner.conditional(instantiated)
+                }
             }
 
             // Mapped: instantiate constraint and template
@@ -1789,13 +1797,21 @@ impl<'a> TypeInstantiator<'a> {
                 if crate::visitor::contains_type_parameters(self.interner, inst_obj)
                     || crate::visitor::contains_type_parameters(self.interner, inst_idx)
                 {
-                    return self.interner.index_access(inst_obj, inst_idx);
+                    return if inst_obj == *obj && inst_idx == *idx {
+                        self.interner.intern(*key)
+                    } else {
+                        self.interner.index_access(inst_obj, inst_idx)
+                    };
                 }
                 if self.preserve_meta_types
                     || index_access_operand_needs_resolver(self.interner, inst_obj)
                     || index_access_operand_needs_resolver(self.interner, inst_idx)
                 {
-                    return self.interner.index_access(inst_obj, inst_idx);
+                    return if inst_obj == *obj && inst_idx == *idx {
+                        self.interner.intern(*key)
+                    } else {
+                        self.interner.index_access(inst_obj, inst_idx)
+                    };
                 }
                 // Evaluate immediately to achieve O(1) equality
                 crate::evaluation::evaluate::evaluate_index_access(
@@ -1829,10 +1845,18 @@ impl<'a> TypeInstantiator<'a> {
                 // Without this, mapped types like `{ [P in keyof T]: ... }` collapse to `{}`
                 // because `keyof object` = `never`.
                 if crate::visitor::contains_type_parameters(self.interner, inst_operand) {
-                    return self.interner.keyof(inst_operand);
+                    return if inst_operand == *operand {
+                        self.interner.intern(*key)
+                    } else {
+                        self.interner.keyof(inst_operand)
+                    };
                 }
                 if self.preserve_meta_types {
-                    return self.interner.keyof(inst_operand);
+                    return if inst_operand == *operand {
+                        self.interner.intern(*key)
+                    } else {
+                        self.interner.keyof(inst_operand)
+                    };
                 }
                 if matches!(
                     self.interner.lookup(inst_operand),
@@ -1843,7 +1867,11 @@ impl<'a> TypeInstantiator<'a> {
                             | TypeData::IndexAccess(_, _)
                     )
                 ) {
-                    return self.interner.keyof(inst_operand);
+                    return if inst_operand == *operand {
+                        self.interner.intern(*key)
+                    } else {
+                        self.interner.keyof(inst_operand)
+                    };
                 }
                 // Evaluate immediately to expand keyof { a: 1 } -> "a"
                 let result =
@@ -1866,13 +1894,21 @@ impl<'a> TypeInstantiator<'a> {
             // ReadonlyType: instantiate the operand
             TypeData::ReadonlyType(operand) => {
                 let inst_operand = self.instantiate(*operand);
-                self.interner.readonly_type(inst_operand)
+                if inst_operand == *operand {
+                    self.interner.intern(*key)
+                } else {
+                    self.interner.readonly_type(inst_operand)
+                }
             }
 
             // NoInfer: preserve wrapper, instantiate inner
             TypeData::NoInfer(inner) => {
                 let inst_inner = self.instantiate(*inner);
-                self.interner.no_infer(inst_inner)
+                if inst_inner == *inner {
+                    self.interner.intern(*key)
+                } else {
+                    self.interner.no_infer(inst_inner)
+                }
             }
 
             // Template literal: instantiate embedded types
