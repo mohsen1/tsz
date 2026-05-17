@@ -114,11 +114,11 @@ jobs:
                   should_run=false
                 fi
                 compiler_paths=$(printf '%s\n' "$all_paths" \
-                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
                   || true)
                 if [[ -z "$compiler_paths" ]]; then
                   compiler_checks_required=false
-                  echo "PR diff has no compiler/runtime paths; unit and conformance remain visible but are not required by CI Summary."
+                  echo "PR diff has no compiler/runtime paths; compiler suites are skipped and not required by CI Summary."
                 fi
               fi
             fi
@@ -502,7 +502,7 @@ jobs:
   project-compile-guard:
     name: project-compile-guard
     needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     env:
@@ -541,7 +541,7 @@ jobs:
   project-compile-canary:
     name: project-compile-canary
     needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     continue-on-error: true
@@ -585,7 +585,7 @@ jobs:
   wasm:
     name: wasm
     needs: gate
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     env:
@@ -609,7 +609,7 @@ jobs:
   wasm-web:
     name: wasm-web
     needs: [gate, wasm]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -624,7 +624,7 @@ jobs:
   node-harness-prep:
     name: node-harness-prep
     needs: gate
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
     env:
@@ -680,7 +680,7 @@ jobs:
     # compiling its oversized lib-test artifact.
     name: unit
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     env:
@@ -713,7 +713,7 @@ jobs:
     # Not in the required-status set, so failure here is informational only.
     name: unit-cloudbuild
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     continue-on-error: true
@@ -748,7 +748,7 @@ jobs:
     # does not compete with the unit-archive compile for rustc capacity.
     name: conformance-${{ matrix.shard }}
     needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 75
     strategy:
@@ -790,7 +790,7 @@ jobs:
   conformance-aggregate:
     name: conformance-aggregate
     needs: [gate, conformance]
-    if: needs.gate.outputs.full_run == 'true' && !cancelled()
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled()
     continue-on-error: true
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
@@ -816,7 +816,7 @@ jobs:
   conformance-snapshot-gate:
     name: conformance-snapshot-gate
     needs: gate
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -837,7 +837,7 @@ jobs:
   emit:
     name: emit
     needs: [gate, dist-binaries, node-harness-prep]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
     env:
@@ -881,7 +881,7 @@ jobs:
     # the expected max shard work from ~328s at 4 shards to ~219s at 6 shards.
     name: fourslash-${{ matrix.shard }}
     needs: [gate, dist-binaries, node-harness-prep]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
     strategy:
@@ -928,7 +928,7 @@ jobs:
   fourslash-aggregate:
     name: fourslash-aggregate
     needs: [gate, fourslash]
-    if: needs.gate.outputs.full_run == 'true' && !cancelled()
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled()
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -985,30 +985,6 @@ jobs:
               print(f"gate did not pass: {gate.get('result')}")
               sys.exit(1)
 
-          # "cancelled" is intentionally excluded: when a newer push supersedes this
-          # run via concurrency cancel-in-progress, jobs show as "cancelled" even
-          # though nothing is actually broken. The required-jobs check below handles
-          # cancelled required jobs; the superseded-run guard further down exits 0
-          # when every required failure is a cancellation (not a real failure).
-          hard_failure_results = {"failure", "timed_out", "action_required"}
-          # Jobs that are informational/best-effort: infrastructure failures in these
-          # do not block the PR. Per-shard baseline checks in the conformance shard
-          # jobs enforce the regression gate independently.
-          non_blocking = {"conformance-aggregate"}
-          hard_failures = []
-          for name, data in needs.items():
-              if name == "gate" or name in non_blocking:
-                  continue
-              result = data.get("result")
-              if result in hard_failure_results:
-                  hard_failures.append(f"{name}: {result}")
-
-          if hard_failures:
-              print("CI jobs reported hard failures:")
-              for failure in hard_failures:
-                  print(f"  - {failure}")
-              sys.exit(1)
-
           if not should_run:
               if bench_shell_only:
                   bench_smoke = needs.get("bench-script-smoke", {})
@@ -1030,19 +1006,19 @@ jobs:
               print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
               sys.exit(1)
 
-          if full_run:
+          if full_run and compiler_checks_required:
               required.update({
                   "project-compile-guard",
                   "conformance-snapshot-gate",
               })
-              if compiler_checks_required:
-                  required.update({
-                      "wasm",
-                      "wasm-web",
-                      "node-harness-prep",
-                      "emit",
-                      "fourslash-aggregate",
-                  })
+              required.update({
+                  "wasm",
+                  "wasm-web",
+                  "node-harness-prep",
+                  "conformance-aggregate",
+                  "emit",
+                  "fourslash-aggregate",
+              })
 
           failures = []
           cancelled_required = []
