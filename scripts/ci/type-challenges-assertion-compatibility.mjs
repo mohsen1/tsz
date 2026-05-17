@@ -2,7 +2,17 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const [, , classificationPath, candidateDir, outFile, fixtureRoot = ""] = process.argv;
+const [
+  ,
+  ,
+  classificationPath,
+  candidateDir,
+  outFile,
+  fixtureRoot = "",
+  cleanSubsetManifestPath = "",
+  cleanSubsetClassificationPath = "",
+  cleanSubsetDir = cleanSubsetManifestPath ? path.dirname(cleanSubsetManifestPath) : "",
+] = process.argv;
 
 if (!classificationPath || !candidateDir || !outFile) {
   console.error(
@@ -42,6 +52,14 @@ function validateReport(report) {
 
 validateReport(report);
 
+const cleanSubsetManifest =
+  cleanSubsetManifestPath && fs.existsSync(cleanSubsetManifestPath)
+    ? JSON.parse(fs.readFileSync(cleanSubsetManifestPath, "utf8"))
+    : null;
+const cleanSubsetClassification =
+  cleanSubsetClassificationPath && fs.existsSync(cleanSubsetClassificationPath)
+    ? JSON.parse(fs.readFileSync(cleanSubsetClassificationPath, "utf8"))
+    : null;
 const tsc = report.compilers?.tsc || {};
 const tsz = report.compilers?.tsz || {};
 const comparison = report.comparison || {};
@@ -183,6 +201,25 @@ const row = {
       candidateFileComparisonCounts.tscAcceptedTszRejected ?? null,
     tsc_rejected_tsz_accepted:
       candidateFileComparisonCounts.tscRejectedTszAccepted ?? null,
+    tsc_clean_subset: cleanSubsetManifest
+      ? {
+          manifest_path: rel(cleanSubsetManifestPath),
+          classification_path: cleanSubsetClassification
+            ? rel(cleanSubsetClassificationPath)
+            : null,
+          tsconfig_path: cleanSubsetDir
+            ? rel(path.join(cleanSubsetDir, "tsconfig.tsz-guard.json"))
+            : null,
+          generated_assertions: cleanSubsetManifest.counts?.tscAcceptedAssertions ?? null,
+          rejected_from_full_corpus: cleanSubsetManifest.counts?.tscRejectedAssertions ?? null,
+          tsc_status: cleanSubsetClassification?.compilers?.tsc?.status ?? null,
+          tsz_status: cleanSubsetClassification?.compilers?.tsz?.status ?? null,
+          tsc_diagnostic_free:
+            cleanSubsetClassification?.compilers?.tsc?.candidateDiagnostics?.candidatesWithoutDiagnostics ?? null,
+          tsz_diagnostic_free:
+            cleanSubsetClassification?.compilers?.tsz?.candidateDiagnostics?.candidatesWithoutDiagnostics ?? null,
+        }
+      : null,
   },
 };
 
