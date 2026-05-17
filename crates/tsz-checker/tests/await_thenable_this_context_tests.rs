@@ -1,5 +1,8 @@
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::check_source_code_messages as diagnostics;
+use tsz_checker::test_utils::{
+    check_source_code_messages as diagnostics, check_source_with_libs_code_messages,
+    load_default_lib_files,
+};
 use tsz_common::common::{ModuleKind, ScriptTarget};
 
 fn diagnostic_codes(source: &str, module: ModuleKind, target: ScriptTarget) -> Vec<u32> {
@@ -15,6 +18,77 @@ fn diagnostic_codes(source: &str, module: ModuleKind, target: ScriptTarget) -> V
     .into_iter()
     .map(|diagnostic| diagnostic.code)
     .collect()
+}
+
+#[test]
+fn await_direct_standard_lib_promise_resolve_skips_invalid_thenable_this_diagnostic() {
+    let libs = load_default_lib_files();
+    assert!(!libs.is_empty(), "default lib files must be available");
+
+    let diags = check_source_with_libs_code_messages(
+        r#"
+async function process<T extends Record<string, unknown>>(input: T): Promise<T> {
+    const result = await Promise.resolve(input);
+    return result;
+}
+"#,
+        "test.ts",
+        CheckerOptions::default(),
+        &libs,
+    );
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 1320),
+        "Direct standard-library Promise applications cannot fail TS1320 thenable-this validation. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn await_local_promise_like_named_type_still_validates_then_this_type() {
+    let diags = diagnostics(
+        r#"
+interface PromiseLike<T> {
+    then(this: { required: string }, onfulfilled?: ((value: T) => void) | null): void;
+}
+declare const bad: PromiseLike<string>;
+async function test() {
+    await bad;
+}
+"#,
+    );
+    assert!(
+        diags.iter().any(|(code, _)| *code == 1320),
+        "Local PromiseLike applications must still run structural TS1320 validation. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn await_standard_lib_promise_shell_still_validates_bad_thenable_payload() {
+    let libs = load_default_lib_files();
+    assert!(!libs.is_empty(), "default lib files must be available");
+
+    let diags = check_source_with_libs_code_messages(
+        r#"
+interface BadThenable {
+    then(this: { required: string }, onfulfilled?: ((value: number) => void) | null): void;
+}
+declare const nestedPromise: Promise<BadThenable>;
+declare const nestedPromiseLike: PromiseLike<BadThenable>;
+declare const normalizedPayload: Promise<Awaited<BadThenable>>;
+async function test() {
+    await nestedPromise;
+    await nestedPromiseLike;
+    await normalizedPayload;
+}
+"#,
+        "test.ts",
+        CheckerOptions::default(),
+        &libs,
+    );
+    let ts1320_count = diags.iter().filter(|(code, _)| *code == 1320).count();
+    assert_eq!(
+        ts1320_count, 2,
+        "Standard-library Promise shells must skip only their own then check and still validate the awaited payload. Got: {diags:#?}"
+    );
 }
 
 #[test]
