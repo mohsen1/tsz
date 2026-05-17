@@ -889,6 +889,35 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
                 }
+                if matches!(
+                    name,
+                    "Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize"
+                ) && !is_builtin_array
+                    && self.ctx.file_local_type_shadow_for_lib_name(name)
+                    && self.ctx.same_file_type_declaration_exists(name)
+                    && let Some(sym_id) = sym_id
+                {
+                    self.ensure_def_ready_for_lowering(sym_id, name);
+                    let type_args = type_ref
+                        .type_arguments
+                        .as_ref()
+                        .map(|args| {
+                            args.nodes
+                                .iter()
+                                .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default();
+                    let def_id = self
+                        .resolve_def_id_for_lowering(type_name_idx)
+                        .unwrap_or_else(|| self.ctx.get_or_create_def_id(sym_id));
+                    let base = self.ctx.types.factory().lazy(def_id);
+                    return if type_args.is_empty() {
+                        base
+                    } else {
+                        self.ctx.types.factory().application(base, type_args)
+                    };
+                }
                 if name == "Readonly"
                     && !is_intrinsic_type
                     && !is_builtin_array
