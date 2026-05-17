@@ -1,5 +1,5 @@
 use rustc_hash::FxHashSet;
-use tsz_binder::{BinderState, SymbolId};
+use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_parser::parser::node::FunctionData;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
@@ -3668,6 +3668,9 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(symbol) = binder.symbols.get(sym_id) else {
             return;
         };
+        if symbol.is_exported || symbol.has_any_flags(symbol_flags::EXPORT_VALUE) {
+            return;
+        }
         for decl_idx in symbol.all_declarations() {
             if !self.arena.is_const_variable_declaration(decl_idx) {
                 continue;

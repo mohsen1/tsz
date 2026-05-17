@@ -1541,6 +1541,31 @@ export const ExampleFunctionalComponent = ({ "data-testid": dataTestId, [dynProp
 }
 
 #[test]
+fn test_js_exported_computed_param_key_does_not_emit_synthetic_duplicate() {
+    let output = emit_js_dts_with_usage_analysis(
+        "export const key = \"x\";\nexport const f = ({ [key]: value }) => value;\n",
+    );
+
+    assert!(
+        output.contains("export const key: \"x\";"),
+        "Expected exported computed key const to emit through the normal export path: {output}"
+    );
+    assert!(
+        output.contains("export function f({ [key]: value }"),
+        "Expected exported JS arrow variable to emit as a function using the exported computed key: {output}"
+    );
+    assert!(
+        output.contains("x: any;"),
+        "Expected computed binding key to resolve to the literal property name: {output}"
+    );
+    assert_eq!(
+        output.matches("const key:").count(),
+        1,
+        "Did not expect a duplicate synthetic local declaration for an already exported computed key: {output}"
+    );
+}
+
+#[test]
 fn test_js_multiline_typedef_before_variable_comment_is_preserved() {
     let source = r#"
 /**
