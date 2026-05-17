@@ -3,6 +3,7 @@
 use crate::state::CheckerState;
 use crate::state_type_analysis::cross_file_direct::is_builtin_lib_declaration_arena;
 use tsz_binder::SymbolId;
+use tsz_binder::symbol_flags;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 fn shared_actual_lib_delegation_cache_key(name: &str) -> String {
@@ -60,6 +61,59 @@ impl<'a> CheckerState<'a> {
             shared
                 .entry(shared_actual_lib_delegation_cache_key(shared_name))
                 .or_insert(Some(result));
+        }
+    }
+
+    pub(crate) fn cache_final_actual_lib_interface_type(
+        &mut self,
+        sym_id: SymbolId,
+        shared_name: &str,
+        result: TypeId,
+    ) {
+        if matches!(result, TypeId::ERROR | TypeId::UNKNOWN)
+            || self.lib_name_locally_augmented(shared_name)
+        {
+            return;
+        }
+        if !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
+            return;
+        }
+        let Some(arena) = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref)
+        else {
+            return;
+        };
+        if !is_builtin_lib_declaration_arena(arena) {
+            return;
+        }
+        let Some(symbol) = self.get_cross_file_symbol(sym_id) else {
+            return;
+        };
+        if !symbol.has_any_flags(symbol_flags::INTERFACE) {
+            return;
+        }
+        if !self.cached_lib_type_is_usable(shared_name, Some(result)) {
+            return;
+        }
+
+        if self
+            .ctx
+            .lib_type_resolution_cache
+            .get(shared_name)
+            .is_none_or(Option::is_none)
+        {
+            self.ctx
+                .lib_type_resolution_cache
+                .insert(shared_name.to_string(), Some(result));
+        }
+        if let Some(shared) = self.ctx.shared_lib_type_cache.as_ref() {
+            if shared.get(shared_name).is_none_or(|entry| entry.is_none()) {
+                shared.insert(shared_name.to_string(), Some(result));
+            }
         }
     }
 }

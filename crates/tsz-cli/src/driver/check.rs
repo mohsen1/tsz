@@ -108,12 +108,13 @@ fn file_session_reuse_test_override() -> Option<bool> {
 
 // File-session reuse policy.
 //
-// Previously this defaulted to ON (PRs #6870 sequential and #6893 parallel),
-// optimising the counter `state_constructed` on 40-400 file projects. At
-// 1k+ files the reuse path regresses wall time by 4-14x; see PR #7521 and
-// `docs/architecture/LSP_PERF_EXPERIMENTS_2026-05-16.md`. Measurements
-// across the full scale-cliff matrix (monorepo-001..006) show reuse OFF
-// is faster at every fixture size we tested:
+// Previously this defaulted to ON for all batch CLI projects (PRs #6870
+// sequential and #6893 parallel), optimising the counter `state_constructed`
+// on 40-400 file projects. At 1k+ files the reuse path regresses wall time by
+// 4-14x; see PR #7521 and
+// `docs/architecture/LSP_PERF_EXPERIMENTS_2026-05-16.md`. Measurements across
+// the full scale-cliff matrix (monorepo-001..006) show reuse OFF is faster at
+// every large fixture size we tested:
 //
 //   101 files:    1.5x faster off
 //   1,010 files:  3.9x faster off
@@ -121,7 +122,10 @@ fn file_session_reuse_test_override() -> Option<bool> {
 //   5,251 files:  5.4x faster off (cross-pkg mapped types)
 //   10,299 files: only finishes with reuse off (E8 1.47 M LOC synthetic)
 //
-// The default is therefore OFF. Two opt-in knobs remain:
+// Tiny generated apps are a different regime: sequential fresh-checker setup
+// dominates, while there is not enough per-file work for residual reused state
+// to accumulate. Keep reuse ON for those small no-emit sequential checks and
+// OFF elsewhere. Two env knobs remain:
 //   * `TSZ_FILE_SESSION_REUSE=1` opts back in (legacy explicit-opt-in knob
 //     from the pre-#6870 era).
 //   * `TSZ_DISABLE_FILE_SESSION_REUSE=1` continues to force off, preserving
@@ -131,6 +135,8 @@ fn file_session_reuse_test_override() -> Option<bool> {
 // The LSP server binaries (`tsz_lsp`, `tsz_server`) do not consume this
 // driver and are unaffected — they reuse state through the `tsz-lsp`
 // `Project` API by construction.
+
+const FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES: usize = 32;
 
 /// Pure policy function so tests can assert the env-var rules without
 /// touching process-global state. `disable_set` is true when
@@ -143,15 +149,30 @@ const fn file_session_reuse_from_env(disable_set: bool, enable_set: bool) -> boo
     enable_set
 }
 
-fn file_session_reuse_requested() -> bool {
+const fn file_session_reuse_from_workload(
+    disable_set: bool,
+    enable_set: bool,
+    work_item_count: usize,
+) -> bool {
+    if disable_set {
+        return false;
+    }
+    if enable_set {
+        return true;
+    }
+    work_item_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
+}
+
+fn file_session_reuse_requested(work_item_count: usize) -> bool {
     #[cfg(test)]
     if let Some(enabled) = file_session_reuse_test_override() {
         return enabled;
     }
 
-    file_session_reuse_from_env(
+    file_session_reuse_from_workload(
         std::env::var_os("TSZ_DISABLE_FILE_SESSION_REUSE").is_some(),
         std::env::var_os("TSZ_FILE_SESSION_REUSE").is_some(),
+        work_item_count,
     )
 }
 
@@ -1620,7 +1641,7 @@ pub(super) fn collect_diagnostics(
             // CommonJS/JSDoc constructor evidence. Importer files can otherwise
             // observe incomplete dependency shapes and emit flaky TS2339
             // diagnostics.
-            let reuse_requested = file_session_reuse_requested();
+            let reuse_requested = file_session_reuse_requested(work_items.len());
             let parallel_reuse_requested = parallel_file_session_reuse_requested();
             let has_parallel_order_sensitive_global_lib =
                 has_parallel_order_sensitive_global_lib(checker_libs);
@@ -1641,9 +1662,11 @@ pub(super) fn collect_diagnostics(
             // it across files via `CheckerContext::switch_to_file` instead
             // of constructing one per file. As of PR #7521 + the experiment
             // doc at `docs/architecture/LSP_PERF_EXPERIMENTS_2026-05-16.md`,
-            // this is OPT-IN (`TSZ_FILE_SESSION_REUSE=1`) because the reuse
-            // path regresses wall time 4-14x at 1k+ files. The fresh-checker
-            // branch below (`check_file_with_fresh_checker`) is the default.
+            // this is automatic only for tiny no-emit batches and otherwise
+            // OPT-IN (`TSZ_FILE_SESSION_REUSE=1`) because the reuse path
+            // regresses wall time 4-14x at 1k+ files. The fresh-checker branch
+            // below (`check_file_with_fresh_checker`) remains the default for
+            // larger batch CLI projects.
             // This flag applies to the sequential branch here; the parallel
             // branch below has its own chunked worker-reuse path with the
             // same opt-in default.
@@ -4043,14 +4066,14 @@ mod tests {
         parallel::merge_bind_results(bind_results)
     }
 
-    /// Asserts the post-PR-#7521 file-session reuse default: OFF unless
+    /// Asserts the post-PR-#7521 file-session reuse env policy: OFF unless
     /// the user opts back in via `TSZ_FILE_SESSION_REUSE=1`. Before
     /// PR #7521 the default was ON (set by PRs #6870 / #6893) which
     /// regressed wall time 4-14x at 1k+ files; see
     /// `docs/architecture/LSP_PERF_EXPERIMENTS_2026-05-16.md`.
     ///
     /// Failure modes this test catches:
-    ///   * someone accidentally reverts the default-OFF policy
+    ///   * someone accidentally reverts the env default-OFF policy
     ///     (`file_session_reuse_from_env(false, false)` returns true)
     ///   * `TSZ_FILE_SESSION_REUSE=1` opt-in stops working
     ///   * `TSZ_DISABLE_FILE_SESSION_REUSE=1` opt-out stops working
@@ -4079,6 +4102,42 @@ mod tests {
         assert!(
             !file_session_reuse_from_env(true, true),
             "TSZ_DISABLE_FILE_SESSION_REUSE=1 must take precedence over TSZ_FILE_SESSION_REUSE=1"
+        );
+    }
+
+    #[test]
+    fn file_session_reuse_workload_policy_keeps_reuse_to_tiny_batches() {
+        assert!(
+            file_session_reuse_from_workload(false, false, 10),
+            "tiny no-emit batches should reuse the checker by default"
+        );
+        assert!(
+            file_session_reuse_from_workload(
+                false,
+                false,
+                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES
+            ),
+            "the documented tiny-project boundary should be inclusive"
+        );
+        assert!(
+            !file_session_reuse_from_workload(
+                false,
+                false,
+                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1
+            ),
+            "larger batch CLI projects must keep the post-#7521 reuse-off default"
+        );
+        assert!(
+            file_session_reuse_from_workload(
+                false,
+                true,
+                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1
+            ),
+            "TSZ_FILE_SESSION_REUSE=1 must still opt larger projects into reuse"
+        );
+        assert!(
+            !file_session_reuse_from_workload(true, true, 10),
+            "TSZ_DISABLE_FILE_SESSION_REUSE=1 must override tiny-project auto reuse"
         );
     }
 

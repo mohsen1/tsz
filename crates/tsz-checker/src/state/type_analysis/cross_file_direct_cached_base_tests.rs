@@ -64,9 +64,13 @@ fn cached_final_builtin_base_allows_deep_dom_leaf_direct_lowering() {
         .resolve_lib_type_by_name("HTMLElement")
         .expect("HTMLElement should resolve through the mature lib path");
     let shared_cache = Arc::new(dashmap::DashMap::new());
-    shared_cache.insert("HTMLElement".to_string(), Some(html_ty));
+    shared_cache.insert("HTMLElement".to_string(), None);
     state.ctx.shared_lib_type_cache = Some(shared_cache);
-    state.ctx.lib_type_resolution_cache.remove("HTMLElement");
+    state
+        .ctx
+        .lib_type_resolution_cache
+        .insert("HTMLElement".to_string(), None);
+    state.cache_final_actual_lib_interface_type(html_sym_id, "HTMLElement", html_ty);
     assert_eq!(
         state
             .ctx
@@ -74,8 +78,18 @@ fn cached_final_builtin_base_allows_deep_dom_leaf_direct_lowering() {
             .get("HTMLElement")
             .copied()
             .flatten(),
-        None,
-        "the direct guard should be able to rely on the shared final-base cache",
+        Some(html_ty),
+        "final actual-lib interface publication should populate the local cache",
+    );
+    assert_eq!(
+        state
+            .ctx
+            .shared_lib_type_cache
+            .as_ref()
+            .and_then(|shared| shared.get("HTMLElement").map(|entry| *entry))
+            .flatten(),
+        Some(html_ty),
+        "final actual-lib interface publication should populate the shared cache",
     );
 
     let div_sym_id = state

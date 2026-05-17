@@ -576,6 +576,7 @@ impl<'a> CheckerState<'a> {
                 needs_cross_file_delegation,
             ) {
                 if let Some(shared_name) = shared_actual_lib_delegation_name.as_deref() {
+                    self.cache_final_actual_lib_interface_type(sym_id, shared_name, result.0);
                     self.cache_shared_actual_lib_delegation(shared_name, result.0);
                 }
                 return Some(result);
@@ -663,6 +664,11 @@ impl<'a> CheckerState<'a> {
                         .lib_delegation_cache
                         .insert_symbol_type(sym_id, (direct_type, direct_params.clone()));
                     if let Some(shared_name) = shared_actual_lib_delegation_name.as_deref() {
+                        self.cache_final_actual_lib_interface_type(
+                            sym_id,
+                            shared_name,
+                            direct_type,
+                        );
                         self.cache_shared_actual_lib_delegation(shared_name, direct_type);
                     }
                 }
@@ -740,6 +746,7 @@ impl<'a> CheckerState<'a> {
                     && !needs_cross_file_delegation
                     && let Some(shared_name) = shared_actual_lib_delegation_name.as_deref()
                 {
+                    self.cache_final_actual_lib_interface_type(sym_id, shared_name, direct_type);
                     self.cache_shared_actual_lib_delegation(shared_name, direct_type);
                 }
                 return Some((direct_type, direct_params));
@@ -1066,6 +1073,7 @@ impl<'a> CheckerState<'a> {
                     .lib_delegation_cache
                     .insert_symbol_type(sym_id, (result, result_params.clone()));
                 if let Some(shared_name) = shared_actual_lib_delegation_name.as_deref() {
+                    self.cache_final_actual_lib_interface_type(sym_id, shared_name, result);
                     self.cache_shared_actual_lib_delegation(shared_name, result);
                 }
             }
