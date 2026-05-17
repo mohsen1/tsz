@@ -876,6 +876,14 @@ impl<'a> Printer<'a> {
                 return;
             }
 
+            if self.in_system_execute_body
+                && clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                && let Some(var_stmt) = self.arena.get_variable(clause_node)
+                && self.all_declarations_lack_initializer(&var_stmt.declarations)
+            {
+                return;
+            }
+
             let clause_kind = clause_node.kind;
             let is_decl = clause_kind == syntax_kind_ext::VARIABLE_STATEMENT
                 || clause_kind == syntax_kind_ext::FUNCTION_DECLARATION

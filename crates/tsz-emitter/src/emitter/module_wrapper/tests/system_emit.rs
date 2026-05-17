@@ -864,6 +864,78 @@ fn system_object_binding_initializer_assigns_hoisted_name() {
 }
 
 #[test]
+fn system_statement_scoped_erased_export_keeps_referenced_binding() {
+    let source = "if (true)\nexport const cssExports: CssExports;\nexport default cssExports;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var cssExports;"),
+        "System wrapper should hoist the statement-scoped exported binding for later exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (true)"),
+        "System wrapper should preserve the recovered if statement shell.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"default\", cssExports);"),
+        "System default export should reference the hoisted local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports_1(\"cssExports\""),
+        "The erased statement-scoped export should not emit its own runtime export call.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.cssExports"),
+        "Nested System recovery output must not fall back to CommonJS exports.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_statement_scoped_erased_export_can_feed_named_export() {
+    let source = "if (true)\nexport let value: number;\nexport { value as renamed };\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var value;"),
+        "System wrapper should hoist the statement-scoped local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"renamed\", value);"),
+        "System named export should publish the hoisted local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.value"),
+        "Nested System recovery output must not fall back to CommonJS exports.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_exported_object_rest_uses_planned_temp() {
     let source = "export const { x, ...rest } = { x: 'x', y: 'y' };\n";
 

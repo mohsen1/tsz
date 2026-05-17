@@ -642,6 +642,27 @@ impl<'a> Printer<'a> {
                     self.collect_system_variable_hoisted_names(node, names, seen);
                 }
             }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export_decl) = self.arena.get_export_decl(node)
+                    && export_decl.module_specifier.is_none()
+                    && !export_decl.is_default_export
+                    && let Some(clause_node) = self.arena.get(export_decl.export_clause)
+                    && clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                    && !self
+                        .arena
+                        .get_variable(clause_node)
+                        .is_some_and(|var_stmt| {
+                            self.arena
+                                .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+                        })
+                {
+                    for name in self.collect_variable_names_from_node(clause_node) {
+                        if !name.is_empty() && seen.insert(name.clone()) {
+                            names.push(name);
+                        }
+                    }
+                }
+            }
             k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
                 if let Some(block) = self.arena.get_block(node) {
                     let statements = block.statements.nodes.clone();
