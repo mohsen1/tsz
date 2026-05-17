@@ -86,11 +86,25 @@ function validateInputs(candidateManifest, classification) {
   }
   const generatedAssertions = candidateManifest.counts?.generatedAssertions;
   if (
-    generatedAssertions !== undefined &&
-    (!Number.isInteger(generatedAssertions) || generatedAssertions !== entries.length)
+    !Number.isInteger(generatedAssertions) ||
+    generatedAssertions !== entries.length
   ) {
     fail(
       `candidate manifest counts.generatedAssertions (${generatedAssertions}) does not match entries length (${entries.length})`,
+    );
+  }
+
+  if (classification.candidateManifest?.fixture !== candidateManifest.fixture) {
+    fail(
+      `classification candidate manifest fixture (${classification.candidateManifest?.fixture || "<missing>"}) does not match candidate manifest fixture (${candidateManifest.fixture})`,
+    );
+  }
+
+  const classifiedGeneratedAssertions =
+    classification.candidateManifest?.counts?.generatedAssertions;
+  if (classifiedGeneratedAssertions !== generatedAssertions) {
+    fail(
+      `classification candidate manifest counts.generatedAssertions (${classifiedGeneratedAssertions}) does not match candidate manifest count (${generatedAssertions})`,
     );
   }
 
