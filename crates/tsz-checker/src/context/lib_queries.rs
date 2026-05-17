@@ -75,6 +75,9 @@ impl<'a> CheckerContext<'a> {
         if self.current_file_type_shadow_for_name(name) {
             return true;
         }
+        if self.same_file_type_declaration_exists(name) {
+            return true;
+        }
 
         self.binder.file_locals.get(name).is_some_and(|sym_id| {
             let is_actual_or_merged_lib = self.symbol_is_from_actual_lib(sym_id)

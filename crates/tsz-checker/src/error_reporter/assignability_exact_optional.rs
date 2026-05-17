@@ -104,9 +104,8 @@ impl<'a> CheckerState<'a> {
         if !crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, source) {
             return false;
         }
-        if crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, target) {
-            return false;
-        }
+        let target_includes_undefined =
+            crate::query_boundaries::class_type::type_includes_undefined(self.ctx.types, target);
 
         let anchor_idx = self.ctx.arena.skip_parenthesized_and_assertions(anchor_idx);
         let Some(anchor_node) = self.ctx.arena.get(anchor_idx) else {
@@ -219,6 +218,11 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
+        if target_includes_undefined
+            && !self.write_target_is_declared_optional_property(write_target_idx)
+        {
+            return false;
+        }
 
         let declared_read_target =
             self.declared_property_read_type_for_write_target(write_target_idx);
@@ -265,6 +269,48 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    fn write_target_is_declared_optional_property(&mut self, write_target_idx: NodeIndex) -> bool {
+        let Some(write_target_node) = self.ctx.arena.get(write_target_idx) else {
+            return false;
+        };
+        let Some(access) = self.ctx.arena.get_access_expr(write_target_node) else {
+            return false;
+        };
+        let property_name = if write_target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            self.ctx
+                .arena
+                .get_identifier_at(access.name_or_argument)
+                .map(|ident| ident.escaped_text.to_string())
+        } else {
+            self.get_literal_string_from_node(access.name_or_argument)
+                .or_else(|| {
+                    self.get_literal_index_from_node(access.name_or_argument)
+                        .map(|index| index.to_string())
+                })
+        };
+        let Some(property_name) = property_name else {
+            return false;
+        };
+
+        let object_type = self.get_type_of_node_with_request(
+            access.expression,
+            &crate::context::TypingRequest::for_write_context(),
+        );
+        let object_type = self.evaluate_application_type(object_type);
+        let object_type = self.resolve_type_for_property_access(object_type);
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
+        else {
+            return false;
+        };
+        let atom = self.ctx.types.intern_string(&property_name);
+        shape
+            .properties
+            .iter()
+            .any(|prop| prop.name == atom && prop.optional)
     }
 
     fn declared_property_read_type_for_write_target(

@@ -176,7 +176,6 @@ pub(super) fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
             | "NumberFormatOptionsUseGroupingRegistry"
             | "Object"
             | "Promise"
-            | "RegExp"
             | "Set"
             | "Symbol"
             | "WeakMap"

@@ -760,7 +760,6 @@ impl<'a> CheckerState<'a> {
                 }
                 return Some((direct_type, Vec::new()));
             }
-
             let declaration_alias_arena = direct_target_owned
                 .as_ref()
                 .map(|(arena, _, _)| std::sync::Arc::clone(arena))
@@ -804,7 +803,6 @@ impl<'a> CheckerState<'a> {
                 }
                 return Some((direct_type, direct_params));
             }
-
             let direct_target_file_idx =
                 if symbol_type_cache_from_symbol_arena || needs_cross_file_delegation {
                     symbol_type_cache_file_idx
@@ -838,6 +836,30 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 return Some((direct_type, direct_params));
+            }
+            if let Some(direct_type) =
+                direct_target_owned
+                    .as_ref()
+                    .and_then(|(arena, binder, file_idx)| {
+                        let binder = binder.as_deref().unwrap_or(current_binder);
+                        self.direct_source_file_function_declaration_result(
+                            sym_id,
+                            Some((arena.as_ref(), binder, *file_idx)),
+                            true,
+                        )
+                    })
+            {
+                self.ctx.symbol_types.insert(sym_id, direct_type);
+                if let Some(file_idx) = symbol_type_cache_file_idx {
+                    self.ctx.cache_stable_source_file_symbol_arena_type(
+                        sym_id,
+                        file_idx as u32,
+                        source_cache_scope,
+                        direct_type,
+                        Vec::new(),
+                    );
+                }
+                return Some((direct_type, Vec::new()));
             }
 
             if let Some(p) = perf {

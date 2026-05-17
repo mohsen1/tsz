@@ -241,34 +241,39 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let (is_interface, declarations) = {
+        let (is_interface, symbol_name, declarations) = {
             let symbol = self
                 .get_cross_file_symbol(sym_id)
                 .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
             (
                 symbol.has_any_flags(tsz_binder::symbol_flags::INTERFACE),
+                symbol.escaped_name.clone(),
                 symbol.declarations.clone(),
             )
         };
         if !is_interface {
             return None;
         }
+        let skip_current_file_shadow = self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+            && self.ctx.file_local_type_shadow_for_lib_name(&symbol_name);
 
+        let mut own_member_types = Vec::new();
         let mut inherited_bases = Vec::new();
         for decl_idx in declarations {
-            if self
-                .ctx
-                .arena
-                .get(decl_idx)
-                .and_then(|node| self.ctx.arena.get_interface(node))
-                .is_some()
+            if !skip_current_file_shadow
+                && self
+                    .ctx
+                    .arena
+                    .get(decl_idx)
+                    .and_then(|node| self.ctx.arena.get_interface(node))
+                    .is_some()
             {
                 if let Some(member_type) = self.recover_interface_own_member_type_in_arena(
                     decl_idx,
                     self.ctx.arena,
                     prop_name,
                 ) {
-                    return Some(member_type);
+                    own_member_types.push(member_type);
                 }
                 inherited_bases.extend(
                     self.interface_heritage_base_symbols_in_arena(decl_idx, self.ctx.arena),
@@ -284,6 +289,9 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or_default();
             for arena in declaration_arenas {
                 let arena = arena.as_ref();
+                if skip_current_file_shadow && std::ptr::eq(arena, self.ctx.arena) {
+                    continue;
+                }
                 if arena
                     .get(decl_idx)
                     .and_then(|node| arena.get_interface(node))
@@ -294,11 +302,15 @@ impl<'a> CheckerState<'a> {
                 if let Some(member_type) =
                     self.recover_interface_own_member_type_in_arena(decl_idx, arena, prop_name)
                 {
-                    return Some(member_type);
+                    own_member_types.push(member_type);
                 }
                 inherited_bases
                     .extend(self.interface_heritage_base_symbols_in_arena(decl_idx, arena));
             }
+        }
+
+        if let Some(member_type) = self.combine_recovered_interface_member_types(own_member_types) {
+            return Some(member_type);
         }
 
         let mut inherited_member_types = Vec::new();

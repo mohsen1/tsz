@@ -475,6 +475,9 @@ impl<'a> CheckerState<'a> {
         let delegate_arena = delegate_arena?;
         let symbol = self.get_cross_file_symbol(sym_id)?.clone();
         let name = symbol.escaped_name.clone();
+        if self.ctx.file_local_type_shadow_for_lib_name(&name) {
+            return None;
+        }
         let intl_namespace_export =
             self.symbol_is_actual_lib_namespace_export("Intl", &name, sym_id);
         if !symbol.has_any_flags(symbol_flags::TYPE) {
@@ -1103,7 +1106,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_local_name_def_id_for_lowering(
+    pub(super) fn source_file_local_name_def_id_for_lowering(
         &self,
         delegate_binder: &BinderState,
         symbol_arena: &NodeArena,
@@ -1760,14 +1763,10 @@ impl<'a> CheckerState<'a> {
                 record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
                 return None;
             }
-        } else if (!allow_complex_declarations
-            && (has_unsupported_computed_names || (has_heritage && !builtin_lib_declaration_arena)))
-            || (builtin_lib_declaration_arena
-                && has_heritage
-                && self.interface_declarations_have_in_progress_builtin_heritage_base(
-                    &declarations,
-                    &symbol.escaped_name,
-                ))
+        } else if (builtin_lib_declaration_arena && has_heritage)
+            || (!allow_complex_declarations
+                && (has_unsupported_computed_names
+                    || (has_heritage && !builtin_lib_declaration_arena)))
         {
             record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
             return None;
@@ -1827,10 +1826,8 @@ impl<'a> CheckerState<'a> {
         }
         record(DirectCrossFileInterfaceLoweringOutcome::Success);
 
-        if !params.is_empty() {
-            self.ctx.insert_def_type_params(def_id, params.clone());
-        }
-        self.ctx.definition_store.set_body(def_id, interface_type);
+        self.ctx
+            .register_def_auto_params_in_envs(def_id, interface_type, params.clone());
         self.ctx
             .definition_store
             .register_type_to_def(interface_type, def_id);

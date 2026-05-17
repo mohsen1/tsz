@@ -15,6 +15,7 @@ mod cross_file_cache;
 mod cross_file_delegation;
 pub(crate) mod cross_file_direct;
 mod cross_file_direct_files;
+mod cross_file_direct_functions;
 mod cross_file_env_merge;
 pub(crate) mod cross_file_query_types;
 mod cross_file_residue;
