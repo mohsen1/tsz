@@ -437,15 +437,49 @@ write_type_challenges_assertion_classification() {
         "$clean_manifest" \
         "$clean_output"
     fi
-    node scripts/ci/type-challenges-assertion-compatibility.mjs \
-      "$output" \
-      "$candidate_dir" \
-      "$PROJECT_COMPATIBILITY_JSONL" \
-      "$FIXTURE_ROOT" \
-      "$clean_manifest" \
-      "$clean_output" \
-      "$clean_dir"
+    if should_check_project "type-challenges-assertion-candidates"; then
+      node scripts/ci/type-challenges-assertion-compatibility.mjs \
+        "$output" \
+        "$candidate_dir" \
+        "$PROJECT_COMPATIBILITY_JSONL" \
+        "$FIXTURE_ROOT" \
+        "$clean_manifest" \
+        "$clean_output" \
+        "$clean_dir"
+    fi
   fi
+}
+
+type_challenges_assertion_clean_count() {
+  local manifest="$1"
+  node -e '
+const fs = require("fs");
+const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const count = Number(manifest?.counts?.tscAcceptedAssertions ?? 0);
+process.stdout.write(Number.isFinite(count) ? String(count) : "0");
+' "$manifest"
+}
+
+check_type_challenges_assertions_tsc_clean() {
+  local subset_dir="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean"
+  local manifest="$subset_dir/type-challenges-assertions-tsc-clean-manifest.json"
+  local tsconfig="$subset_dir/tsconfig.tsz-guard.json"
+
+  if [[ ! -f "$manifest" || ! -f "$tsconfig" ]]; then
+    return 0
+  fi
+
+  local accepted_count
+  accepted_count="$(type_challenges_assertion_clean_count "$manifest")"
+  if [[ "$accepted_count" -eq 0 ]]; then
+    echo "Skipping type-challenges-assertions-tsc-clean; no tsc-clean assertion candidates were materialized."
+    return 0
+  fi
+
+  check_project \
+    "type-challenges-assertions-tsc-clean" \
+    "$tsconfig" \
+    "$subset_dir/assertions"
 }
 
 check_project() {
@@ -586,6 +620,13 @@ if should_check_project "type-challenges-assertion-candidates"; then
   ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
   write_type_challenges_solutions_config
 fi
+
+if should_check_project "type-challenges-assertions-tsc-clean"; then
+  ensure_git_fixture "type-challenges" "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF" "$FIXTURE_ROOT/type-challenges"
+  write_type_challenges_config
+  ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
+  write_type_challenges_solutions_config
+fi
 }
 
 case "$PROJECT_SET" in
@@ -608,6 +649,9 @@ esac
 write_type_challenges_pairing_report
 write_type_challenges_assertion_candidates
 write_type_challenges_assertion_classification
+if should_check_project "type-challenges-assertions-tsc-clean"; then
+  check_type_challenges_assertions_tsc_clean
+fi
 
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "Project compile failures: $FAILURES"
