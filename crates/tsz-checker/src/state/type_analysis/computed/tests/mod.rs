@@ -122,3 +122,111 @@ fn ordered_namespace_export_entries_follow_first_declaration_span() {
         ]
     );
 }
+
+fn checker_for_source(source: &str) -> (tsz_parser::parser::ParserState, tsz_binder::BinderState) {
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    let mut parser = ParserState::new("/test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    (parser, binder)
+}
+
+#[test]
+fn simple_local_interface_fastpath_accepts_non_generic_type_references() {
+    use tsz_checker::context::CheckerOptions;
+
+    let (parser, binder) = checker_for_source(
+        r#"
+interface Leaf { value: string }
+interface Holder { item: Leaf }
+"#,
+    );
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "/test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let holder_sym = binder
+        .file_locals
+        .get("Holder")
+        .expect("Holder interface should bind");
+    let declarations = binder
+        .get_symbol(holder_sym)
+        .expect("Holder symbol should exist")
+        .declarations
+        .clone();
+
+    let ty = checker
+        .try_lower_simple_local_interface_object(
+            holder_sym,
+            &declarations,
+            super::simple_local_interface::SimpleLocalInterfaceFacts {
+                has_out_of_arena_decl: false,
+                has_cross_file_same_index: false,
+                has_local_interface_decl: true,
+                has_local_interface_heritage_extends: false,
+                has_local_computed_property_name: false,
+                suppress_missing_interface_decl_reject: false,
+            },
+        )
+        .expect("non-generic type references should stay on the simple interface fast path");
+    let item = types.intern_string("item");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(types.as_type_database(), ty, item)
+            .is_some(),
+        "fast-lowered Holder should retain the referenced property",
+    );
+}
+
+#[test]
+fn simple_local_interface_fastpath_rejects_generic_bare_type_references() {
+    use tsz_checker::context::CheckerOptions;
+
+    let (parser, binder) = checker_for_source(
+        r#"
+interface Box<T> { value: T }
+interface Holder { item: Box }
+"#,
+    );
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "/test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let holder_sym = binder
+        .file_locals
+        .get("Holder")
+        .expect("Holder interface should bind");
+    let declarations = binder
+        .get_symbol(holder_sym)
+        .expect("Holder symbol should exist")
+        .declarations
+        .clone();
+
+    assert!(
+        checker
+            .try_lower_simple_local_interface_object(
+                holder_sym,
+                &declarations,
+                super::simple_local_interface::SimpleLocalInterfaceFacts {
+                    has_out_of_arena_decl: false,
+                    has_cross_file_same_index: false,
+                    has_local_interface_decl: true,
+                    has_local_interface_heritage_extends: false,
+                    has_local_computed_property_name: false,
+                    suppress_missing_interface_decl_reject: false,
+                },
+            )
+            .is_none(),
+        "generic references without type arguments should fall back to the normal diagnostic path",
+    );
+}
