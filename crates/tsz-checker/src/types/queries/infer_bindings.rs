@@ -439,6 +439,13 @@ impl<'a> CheckerState<'a> {
                 }
                 // Fall through to get_children: infer constraints may contain
                 // nested template literals that must also be walked.
+            } else if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE_SPAN {
+                // get_children does not handle TEMPLATE_LITERAL_TYPE_SPAN (kind=205),
+                // so explicitly push the expression child (which may be INFER_TYPE).
+                if let Some(span) = self.ctx.arena.get_template_span(node) {
+                    stack.push(span.expression);
+                }
+                continue;
             } else if node.kind == syntax_kind_ext::INFER_TYPE {
                 if let Some(infer_data) = self.ctx.arena.get_infer_type(node) {
                     if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
