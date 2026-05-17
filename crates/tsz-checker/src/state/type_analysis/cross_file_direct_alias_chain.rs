@@ -71,7 +71,9 @@ impl<'a> CheckerState<'a> {
                 {
                     return false;
                 }
-                seen.push(sym_id);
+                if !seen.push(sym_id) {
+                    return false;
+                }
                 let result = Self::source_file_type_node_is_local_alias_chain_lowerable(
                     arena,
                     binder,

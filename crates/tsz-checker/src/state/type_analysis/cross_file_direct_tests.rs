@@ -790,6 +790,29 @@ fn direct_source_file_type_alias_rejects_chain_containing_typeof() {
 }
 
 #[test]
+fn direct_source_file_type_alias_rejects_chain_when_alias_guard_limit_is_hit() {
+    let mut target_source = String::from("type A130 = string;\n");
+    for index in (1..130).rev() {
+        target_source.push_str(&format!("type A{index} = A{};\n", index + 1));
+    }
+    target_source.push_str("export type Alias = A1;\n");
+
+    with_two_file_state(
+        &target_source,
+        "import { Alias } from './target';",
+        |state, target_binder| {
+            let alias_sym = target_binder.file_locals.get("Alias").expect("Alias");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(alias_sym, Some(1), true)
+                    .is_none(),
+                "alias chains that exceed the recursion guard must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_interface_member_simple_type_substitutes_source_type_params() {
     let (target_arena, target_binder, types) = parse_bound_source(
         r#"
