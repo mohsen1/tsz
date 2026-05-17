@@ -139,16 +139,28 @@ jobs:
         run: |
           set -euo pipefail
 
+          manifest_value() {
+            local key="$1"
+            grep -E "^${key}=" bench-prep.env | tail -n1 | cut -d= -f2-
+          }
+
+          rm -f bench-prep.env bench-prep.tar
           if gcloud storage cp \
-            "gs://tsz-ci_cloudbuild/bench-prep/${BENCH_TARGET_SHA}/bench-prep.env" \
-            bench-prep.env >/dev/null 2>&1; then
-            # shellcheck disable=SC1091
-            source bench-prep.env
-            if [[ "${BENCH_TARGET_SHA:-}" == "${{ env.BENCH_TARGET_SHA }}" &&
-                  "${BENCH_PGO_OPTIMIZED:-}" == "1" ]]; then
+              "gs://tsz-ci_cloudbuild/bench-prep/${BENCH_TARGET_SHA}/bench-prep.env" \
+              bench-prep.env >/dev/null 2>&1 && \
+            gcloud storage cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/${BENCH_TARGET_SHA}/bench-prep.tar" \
+              bench-prep.tar >/dev/null 2>&1; then
+            manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
+            manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
+            if [[ "${manifest_target_sha}" == "${{ env.BENCH_TARGET_SHA }}" &&
+                  "${manifest_pgo_optimized}" == "1" ]] && \
+              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null && \
+              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null; then
               echo "Cloud Build PGO prep artifact already exists for ${BENCH_TARGET_SHA}; skipping submit."
               exit 0
             fi
+            echo "Existing Cloud Build PGO prep artifact is incomplete or stale; submitting a fresh build."
           fi
 
           gcloud builds submit \
