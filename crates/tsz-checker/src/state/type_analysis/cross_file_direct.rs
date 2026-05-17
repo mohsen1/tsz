@@ -10,7 +10,7 @@ use tsz_common::perf_counters::{
 };
 use tsz_lowering::TypeLowering;
 use tsz_parser::NodeIndex;
-use tsz_parser::parser::node::{NodeAccess, NodeArena, TypeAliasData};
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::def::{DefId, DefKind};
 use tsz_solver::{TypeId, TypeParamInfo};
@@ -1157,191 +1157,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_type_node_is_generic_scope_independent(
-        arena: &NodeArena,
-        node_idx: NodeIndex,
-        type_param_names: &[String],
-    ) -> bool {
-        if Self::source_file_type_node_is_scope_independent(arena, node_idx) {
-            return true;
-        }
-        if node_idx.is_none() {
-            return false;
-        }
-        let Some(node) = arena.get(node_idx) else {
-            return false;
-        };
-
-        match node.kind {
-            k if k == syntax_kind_ext::TYPE_REFERENCE => {
-                arena.get_type_ref(node).is_some_and(|type_ref| {
-                    let Some(name) = arena
-                        .get(type_ref.type_name)
-                        .and_then(|name_node| arena.get_identifier(name_node))
-                        .map(|ident| ident.escaped_text.as_str())
-                    else {
-                        return false;
-                    };
-                    if type_param_names.iter().any(|param| param == name) {
-                        return type_ref
-                            .type_arguments
-                            .as_ref()
-                            .is_none_or(|args| args.nodes.is_empty());
-                    }
-                    matches!(name, "Array" | "ReadonlyArray")
-                        && type_ref.type_arguments.as_ref().is_some_and(|args| {
-                            args.nodes.len() == 1
-                                && Self::source_file_type_node_is_generic_scope_independent(
-                                    arena,
-                                    args.nodes[0],
-                                    type_param_names,
-                                )
-                        })
-                })
-            }
-            k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
-                arena.get_conditional_type(node).is_some_and(|conditional| {
-                    let mut true_branch_names = type_param_names.to_vec();
-                    Self::collect_infer_type_param_names(
-                        arena,
-                        conditional.extends_type,
-                        &mut true_branch_names,
-                    );
-                    Self::source_file_type_node_is_generic_scope_independent(
-                        arena,
-                        conditional.check_type,
-                        type_param_names,
-                    ) && Self::source_file_type_node_is_generic_scope_independent(
-                        arena,
-                        conditional.extends_type,
-                        type_param_names,
-                    ) && Self::source_file_type_node_is_generic_scope_independent(
-                        arena,
-                        conditional.true_type,
-                        &true_branch_names,
-                    ) && Self::source_file_type_node_is_generic_scope_independent(
-                        arena,
-                        conditional.false_type,
-                        type_param_names,
-                    )
-                })
-            }
-            k if k == syntax_kind_ext::INFER_TYPE => {
-                arena.get_infer_type(node).is_some_and(|infer_type| {
-                    let Some(type_param_node) = arena.get(infer_type.type_parameter) else {
-                        return false;
-                    };
-                    let Some(type_param) = arena.get_type_parameter(type_param_node) else {
-                        return false;
-                    };
-                    type_param.constraint.is_none() && type_param.default.is_none()
-                })
-            }
-            k if k == syntax_kind_ext::ARRAY_TYPE => {
-                arena.get_array_type(node).is_some_and(|array| {
-                    Self::source_file_type_node_is_generic_scope_independent(
-                        arena,
-                        array.element_type,
-                        type_param_names,
-                    )
-                })
-            }
-            k if k == syntax_kind_ext::TUPLE_TYPE => {
-                arena.get_tuple_type(node).is_some_and(|tuple| {
-                    tuple.elements.nodes.iter().copied().all(|element| {
-                        Self::source_file_type_node_is_generic_scope_independent(
-                            arena,
-                            element,
-                            type_param_names,
-                        )
-                    })
-                })
-            }
-            k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
-                arena.get_composite_type(node).is_some_and(|composite| {
-                    composite.types.nodes.iter().copied().all(|member| {
-                        Self::source_file_type_node_is_generic_scope_independent(
-                            arena,
-                            member,
-                            type_param_names,
-                        )
-                    })
-                })
-            }
-            k if k == syntax_kind_ext::PARENTHESIZED_TYPE
-                || k == syntax_kind_ext::OPTIONAL_TYPE
-                || k == syntax_kind_ext::REST_TYPE =>
-            {
-                arena.get_wrapped_type(node).is_some_and(|wrapped| {
-                    Self::source_file_type_node_is_generic_scope_independent(
-                        arena,
-                        wrapped.type_node,
-                        type_param_names,
-                    )
-                })
-            }
-            k if k == syntax_kind_ext::TYPE_OPERATOR => {
-                arena.get_type_operator(node).is_some_and(|operator| {
-                    Self::source_file_type_node_is_generic_scope_independent(
-                        arena,
-                        operator.type_node,
-                        type_param_names,
-                    )
-                })
-            }
-            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
-                arena.get_indexed_access_type(node).is_some_and(|indexed| {
-                    Self::source_file_type_node_is_generic_scope_independent(
-                        arena,
-                        indexed.object_type,
-                        type_param_names,
-                    ) && Self::source_file_type_node_is_generic_scope_independent(
-                        arena,
-                        indexed.index_type,
-                        type_param_names,
-                    )
-                })
-            }
-            _ => false,
-        }
-    }
-
-    fn type_alias_type_param_names(arena: &NodeArena, type_alias: &TypeAliasData) -> Vec<String> {
-        type_alias
-            .type_parameters
-            .as_ref()
-            .into_iter()
-            .flat_map(|params| params.nodes.iter().copied())
-            .filter_map(|param_idx| {
-                let param_node = arena.get(param_idx)?;
-                let param = arena.get_type_parameter(param_node)?;
-                let name_node = arena.get(param.name)?;
-                let ident = arena.get_identifier(name_node)?;
-                Some(ident.escaped_text.to_string())
-            })
-            .collect()
-    }
-
-    fn collect_infer_type_param_names(arena: &NodeArena, root: NodeIndex, names: &mut Vec<String>) {
-        let mut stack = vec![root];
-        while let Some(idx) = stack.pop() {
-            let Some(node) = arena.get(idx) else {
-                continue;
-            };
-            if node.kind == syntax_kind_ext::INFER_TYPE
-                && let Some(infer_type) = arena.get_infer_type(node)
-                && let Some(type_param_node) = arena.get(infer_type.type_parameter)
-                && let Some(type_param) = arena.get_type_parameter(type_param_node)
-                && let Some(name_node) = arena.get(type_param.name)
-                && let Some(ident) = arena.get_identifier(name_node)
-                && !names.iter().any(|name| name == &ident.escaped_text)
-            {
-                names.push(ident.escaped_text.to_string());
-            }
-            stack.extend(arena.get_children(idx));
-        }
-    }
-
     fn source_file_type_node_contains_kind(arena: &NodeArena, root: NodeIndex, kind: u16) -> bool {
         let mut stack = vec![root];
         while let Some(idx) = stack.pop() {
@@ -1576,6 +1391,17 @@ impl<'a> CheckerState<'a> {
         if symbol.declarations.len() != 1 {
             return None;
         }
+        let source_cache_scope = self.ctx.source_file_symbol_type_cache_scope();
+        if let Some((cached_type, cached_params)) =
+            self.ctx.cached_stable_source_file_symbol_arena_type(
+                sym_id,
+                target_file_idx as u32,
+                source_cache_scope,
+            )
+        {
+            self.ctx.symbol_types.insert(sym_id, cached_type);
+            return Some((cached_type, cached_params));
+        }
 
         let name = symbol.escaped_name.clone();
         let decl_idx = symbol.declarations[0];
@@ -1584,19 +1410,6 @@ impl<'a> CheckerState<'a> {
         }
         let decl_node = symbol_arena.get(decl_idx)?;
         let type_alias = symbol_arena.get_type_alias(decl_node)?;
-        let type_param_names = Self::type_alias_type_param_names(symbol_arena, type_alias);
-        let body_is_direct_lowerable = if type_param_names.is_empty() {
-            Self::source_file_type_node_is_scope_independent(symbol_arena, type_alias.type_node)
-        } else {
-            Self::source_file_type_node_is_generic_scope_independent(
-                symbol_arena,
-                type_alias.type_node,
-                &type_param_names,
-            )
-        };
-        if !body_is_direct_lowerable {
-            return None;
-        }
 
         // Keep flow-sensitive `typeof` aliases and direct self/cycle cases on
         // the child-checker path, where the declaring file's diagnostics and
@@ -1622,6 +1435,9 @@ impl<'a> CheckerState<'a> {
         if matches!(alias_type, TypeId::UNKNOWN | TypeId::ERROR) {
             return None;
         }
+        if tsz_solver::contains_error_type(self.ctx.types, alias_type) {
+            return None;
+        }
 
         let def_id = self.ctx.get_or_create_def_id(sym_id);
         if let Some(shape) = crate::query_boundaries::state::type_environment::object_shape(
@@ -1635,6 +1451,13 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .definition_store
             .register_type_to_def(alias_type, def_id);
+        self.ctx.cache_stable_source_file_symbol_arena_type(
+            sym_id,
+            target_file_idx as u32,
+            source_cache_scope,
+            alias_type,
+            params.clone(),
+        );
 
         Some((alias_type, params))
     }

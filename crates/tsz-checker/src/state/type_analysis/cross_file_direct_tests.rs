@@ -611,7 +611,7 @@ fn delegate_source_file_type_alias_caches_generic_params() {
 }
 
 #[test]
-fn direct_source_file_type_alias_rejects_complex_generic_typeof_and_self_references() {
+fn direct_source_file_type_alias_lowers_resolved_alias_dependencies() {
     let (generic_arena, generic_binder, types) = parse_bound_source(
         r#"
                 type Maybe<X> = X | null;
@@ -629,6 +629,7 @@ fn direct_source_file_type_alias_rejects_complex_generic_typeof_and_self_referen
         CheckerOptions::default(),
     );
     let mut state = CheckerState { ctx };
+    state.ctx.share_owner_symbol_type_results = true;
     state.ctx.set_all_arenas(Arc::new(vec![
         Arc::clone(&requester_arena),
         Arc::clone(&generic_arena),
@@ -638,21 +639,68 @@ fn direct_source_file_type_alias_rejects_complex_generic_typeof_and_self_referen
         Arc::clone(&generic_binder),
     ]));
     let box_sym = generic_binder.file_locals.get("Box").expect("Box symbol");
-    assert!(
-        state
-            .direct_source_file_type_alias_result(box_sym, Some(1), true)
-            .is_none(),
-        "generic/alias-dependent source aliases stay on the child-checker path",
+    let source_cache_scope = state.ctx.source_file_symbol_type_cache_scope();
+    let (box_ty, box_params) = state
+        .direct_source_file_type_alias_result(box_sym, Some(1), true)
+        .expect("resolved generic alias dependencies should lower directly");
+    assert_ne!(box_ty, TypeId::UNKNOWN);
+    assert_ne!(box_ty, TypeId::ERROR);
+    assert_eq!(
+        box_params.len(),
+        1,
+        "Box<T> should preserve its type parameter"
     );
+    assert_eq!(
+        state
+            .ctx
+            .cached_stable_source_file_symbol_arena_type(box_sym, 1, source_cache_scope),
+        Some((box_ty, box_params.clone())),
+        "direct source alias lowering should populate the stable source-file cache",
+    );
+
     let wrapped_sym = generic_binder
         .file_locals
         .get("Wrapped")
         .expect("Wrapped symbol");
+    let (wrapped_ty, wrapped_params) = state
+        .direct_source_file_type_alias_result(wrapped_sym, Some(1), true)
+        .expect("resolved non-generic alias applications should lower directly");
+    assert_ne!(wrapped_ty, TypeId::UNKNOWN);
+    assert_ne!(wrapped_ty, TypeId::ERROR);
+    assert!(
+        wrapped_params.is_empty(),
+        "Wrapped should not synthesize type parameters"
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_unresolved_typeof_and_self_references() {
+    let (missing_arena, missing_binder, types) =
+        parse_bound_source("export type Bad<T> = Missing<T>;");
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import { Bad } from './target';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&missing_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&missing_binder),
+    ]));
+    let bad_sym = missing_binder.file_locals.get("Bad").expect("Bad symbol");
     assert!(
         state
-            .direct_source_file_type_alias_result(wrapped_sym, Some(1), true)
+            .direct_source_file_type_alias_result(bad_sym, Some(1), true)
             .is_none(),
-        "alias-dependent source aliases stay on the child-checker path",
+        "unresolved alias references must stay on the child-checker path",
     );
 
     let (typeof_arena, typeof_binder, types) = parse_bound_source(
