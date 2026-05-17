@@ -17,4 +17,4 @@ case "$(uname -s)" in
 esac
 
 RUSTFLAGS="-Zsanitizer=${sanitizer}" scripts/safe-run.sh --limit "${TSZ_SANITIZER_MEMORY_LIMIT:-75%}" -- \
-  cargo +nightly test -Zbuild-std --target "$target" -p "$package" --lib
+  rustup run nightly cargo test -Zbuild-std --target "$target" -p "$package" --lib
