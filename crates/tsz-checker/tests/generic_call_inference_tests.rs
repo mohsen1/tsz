@@ -4786,3 +4786,100 @@ bar("hi", () => 42);
         "type mismatch (string vs number for T) should still produce an error. Got: {diags:#?}"
     );
 }
+
+// === Parameterless lambda Round-1 inference (inferenceFromParameterlessLambda) ===
+//
+// Rule: When a parameterless arrow function `() => expr` is passed as an
+// argument to a generic function whose corresponding parameter type has `T`
+// only in its return position (for example, `Make<T>` = `() => T`), `tsc` uses
+// the concrete return type for `T` inference in Round 1. tsz must not suppress
+// that inference by setting the arg type to `Unknown`.
+
+/// Basic case: `T` inferred from parameterless lambda return type when the
+/// other arg (`Take<T>`) would be context-sensitive.
+#[test]
+fn parameterless_lambda_infers_t_from_return_type() {
+    let source = r#"
+function foo<T>(o: Take<T>, i: Make<T>) { }
+interface Make<T> {
+    (): T;
+}
+interface Take<T> {
+    (n: T): void;
+}
+foo(n => n.length, () => 'hi');
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T should be inferred as string from `() => 'hi'`; `n` must not be unknown. Got: {diags:#?}"
+    );
+}
+
+/// Same rule with renamed type param `K` and renamed interfaces
+/// (`Produce`/`Consume`).
+#[test]
+fn parameterless_lambda_infers_k_from_return_type_renamed() {
+    let source = r#"
+function bar<K>(consumer: Consume<K>, producer: Produce<K>) { }
+interface Produce<K> {
+    (): K;
+}
+interface Consume<K> {
+    (val: K): void;
+}
+bar(val => val.toFixed(), () => 42);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "K should be inferred as number from `() => 42`; `val` must not be unknown. Got: {diags:#?}"
+    );
+}
+
+/// Type alias variant: same structural rule expressed via type aliases instead
+/// of interfaces.
+#[test]
+fn parameterless_lambda_infers_t_type_alias_variant() {
+    let source = r#"
+type Getter<T> = () => T;
+type Setter<T> = (v: T) => void;
+function wire<T>(set: Setter<T>, get: Getter<T>): void { }
+wire(v => v.trim(), () => 'hello');
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T should be inferred as string from type-alias `Getter<T>`. Got: {diags:#?}"
+    );
+}
+
+/// Parameterless lambda with numeric return confirms the fix is not
+/// string-specific.
+#[test]
+fn parameterless_lambda_infers_number_from_return() {
+    let source = r#"
+function pair<T>(use: (x: T) => void, make: () => T): void { }
+pair(x => x * 2, () => 10);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "T should be inferred as number from `() => 10`. Got: {diags:#?}"
+    );
+}
+
+/// Non-parameterless lambda: when the callback has a parameter, suppression in
+/// Round 1 is still correct and context flows in from Round 2.
+#[test]
+fn context_sensitive_lambda_still_deferred_to_round2() {
+    let source = r#"
+function apply<T>(transform: (x: T) => T, value: T): T { return transform(value); }
+const result = apply(x => x, 'hello');
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "context-sensitive lambda with a param should still resolve via Round 2. Got: {diags:#?}"
+    );
+}

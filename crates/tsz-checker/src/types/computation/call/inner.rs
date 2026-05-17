@@ -963,7 +963,18 @@ impl<'a> CheckerState<'a> {
                         if self.sensitive_callback_placeholder_should_skip_round1_inference(
                             &shape, param_type,
                         ) {
-                            *arg_type = TypeId::UNKNOWN;
+                            // Parameterless lambdas are never context-sensitive: their
+                            // return type comes from the body, not from the contextual T.
+                            // Keep their concrete type for Round 1 inference so that e.g.
+                            // `foo(n => n.length, () => 'hi')` correctly infers T=string.
+                            let is_parameterless = self
+                                .ctx
+                                .arena
+                                .get_function(arg_node)
+                                .is_some_and(|func| func.parameters.nodes.is_empty());
+                            if !is_parameterless {
+                                *arg_type = TypeId::UNKNOWN;
+                            }
                         }
                     }
                     // Nested calls whose outer contextual type was intentionally skipped in
