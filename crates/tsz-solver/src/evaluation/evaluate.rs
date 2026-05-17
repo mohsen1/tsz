@@ -2374,18 +2374,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Unlike resolve_ref, resolve_type_query is aware that TypeQuery needs the
         // constructor type, not the instance type that may be stored under SymbolRef
         // in TypeEnvironment (inserted by type_reference_symbol_type).
+        //
+        // We must evaluate the resolved type (as visit_lazy does) because the resolver
+        // may return a Lazy(DefId) that still needs unfolding — e.g. DateConstructor.
         if let Some(resolved) = self.resolver.resolve_type_query(symbol, self.interner) {
-            return resolved;
+            return self.evaluate_resolved_or_original(resolved, original_type_id);
         }
 
         // Fallback: try DefId-based resolution if no SymbolRef mapping exists
         if let Some(def_id) = self.resolver.symbol_to_def_id(symbol)
             && let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner)
         {
-            return resolved;
+            return self.evaluate_resolved_or_original(resolved, original_type_id);
         }
 
         original_type_id
+    }
+
+    /// Evaluate `resolved` if it differs from `original`; avoids re-entering a
+    /// type that resolved to itself (which would trigger the cycle guard unnecessarily).
+    #[inline]
+    fn evaluate_resolved_or_original(&mut self, resolved: TypeId, original: TypeId) -> TypeId {
+        if resolved == original {
+            original
+        } else {
+            self.evaluate(resolved)
+        }
     }
 
     /// Visit a generic type application: Base<Args>

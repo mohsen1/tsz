@@ -2618,6 +2618,98 @@ fn is_union_diagnostic_shows_evaluated_literal_not_alias() {
     );
 }
 
+// =============================================================================
+// Constructor return type infer — typeof Class patterns (issue #6157)
+// Rule: when a constructor pattern `new (...) => infer I` checks a `typeof C`
+// expression, the check type must be fully evaluated from the TypeQuery before
+// pattern matching, and construct signatures must be selected (not call signatures)
+// when the source Callable carries both.
+// =============================================================================
+
+fn assert_no_ts2322_with_libs(source: &str, label: &str) {
+    let diags = check_source_strict_with_default_libs(source);
+    let errors: Vec<&Diagnostic> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        errors.is_empty(),
+        "[{label}] expected no TS2322, got:\n{:#?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.start, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn constructor_infer_typeof_date_returns_date_not_never() {
+    // `typeof Date` has both call (returns string) and construct (returns Date) sigs.
+    // The constructor pattern must use construct signatures → I = Date.
+    let source = r#"
+type InstanceOf<T> = T extends new (...args: any[]) => infer I ? I : never;
+type IO = InstanceOf<typeof Date>;
+const io: IO = new Date();
+export {};
+"#;
+    assert_no_ts2322_with_libs(source, "InstanceOf<typeof Date> = Date");
+}
+
+#[test]
+fn constructor_infer_user_class_without_libs() {
+    // User-defined class `typeof Cls` must also resolve correctly.
+    // Tests that visit_type_query deep-evaluates Lazy types.
+    assert_no_ts2322(
+        r#"
+class Cls { x: number = 1; }
+type InstanceOf<T> = T extends new (...args: any[]) => infer I ? I : never;
+type R = InstanceOf<typeof Cls>;
+const r: R = new Cls();
+export {};
+"#,
+        "InstanceOf<typeof Cls> = Cls",
+    );
+}
+
+#[test]
+fn constructor_infer_renamed_type_param_k_user_class() {
+    // Renamed outer and infer params must not change the result — the fix must be structural.
+    assert_no_ts2322(
+        r#"
+class Widget { name: string = ""; }
+type ConstructedBy<K> = K extends new (...args: any[]) => infer Result ? Result : never;
+type W = ConstructedBy<typeof Widget>;
+const w: W = new Widget();
+export {};
+"#,
+        "ConstructedBy<typeof Widget> = Widget",
+    );
+}
+
+#[test]
+fn constructor_infer_typeof_map_returns_map_not_never() {
+    // Map also has both call and construct sigs — confirms construct-sig selection is general.
+    let source = r#"
+type InstanceOf<T> = T extends new (...args: any[]) => infer I ? I : never;
+type M = InstanceOf<typeof Map>;
+const m: M = new Map();
+export {};
+"#;
+    assert_no_ts2322_with_libs(source, "InstanceOf<typeof Map> = Map");
+}
+
+#[test]
+fn constructor_infer_non_constructable_yields_never() {
+    // A plain call-only function type must not match a construct pattern → `never`.
+    // `never` is assignable to `string` so `"ok" as never` should be fine.
+    assert_no_ts2322(
+        r#"
+type InstanceOf<T> = T extends new (...args: any[]) => infer I ? I : never;
+type R = InstanceOf<() => string>;
+const r: R = "ok" as never;
+export {};
+"#,
+        "InstanceOf<() => string> = never",
+    );
+}
+
 const EQUAL_PRELUDE: &str = r#"type Equal<X, Y> =
   (<T>() => T extends X ? 1 : 2) extends
   (<T>() => T extends Y ? 1 : 2) ? true : false;
