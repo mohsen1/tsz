@@ -218,6 +218,24 @@ withTempDir((dir) => {
   assert.notEqual(sourceResult.status, 0);
   assert.match(sourceResult.stderr, /unsafe manifest source path: \.\.\/alpha\.md/);
 });
+
+withTempDir((dir) => {
+  const compileDir = path.join(dir, "compile");
+  const manifestPath = path.join(compileDir, "type-challenges-solutions-manifest.json");
+  fs.mkdirSync(path.join(compileDir, "solutions"), { recursive: true });
+  fs.writeFileSync(path.join(compileDir, "solutions", "alpha.ts"), "type Alpha = string;\n");
+
+  const badLevel = path.join(dir, "bad-level.tsv");
+  fs.writeFileSync(
+    badLevel,
+    "output\tsource\tid\tlevel\ttitle\nsolutions/alpha.ts\ten/alpha.md\t1\tweird\tAlpha\n",
+    "utf8",
+  );
+  const result = runManifest(badLevel, manifestPath);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unknown challenge level weird/);
+});
+
 withTempDir((dir) => {
   const compileDir = path.join(dir, "compile");
   const manifestPath = path.join(compileDir, "type-challenges-solutions-manifest.json");
