@@ -109,6 +109,16 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
+  const rows = [
+    ...REQUIRED_PROJECT_ROWS.map((name) => projectRow(name)),
+    projectRow("utility-types-project"),
+  ];
+  const result = runMerge(dir, rows);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /utility-types-project: duplicate project row/);
+});
+
+withTempDir((dir) => {
   const result = runMerge(dir, [projectRow(COMPILE_CANARY_PROJECT_ROWS[0])]);
   assert.equal(result.status, 0, result.stderr);
   const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
