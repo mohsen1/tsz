@@ -689,8 +689,8 @@ impl<'a> CheckerState<'a> {
                 return Some((cached_type, cached_params));
             }
 
-            if let Some(cache_file_idx) = symbol_type_cache_file_idx
-                && let Some((cached_type, cached_params)) = if symbol_type_cache_from_symbol_arena {
+            let cross_file_cache_hit = symbol_type_cache_file_idx.and_then(|cache_file_idx| {
+                if symbol_type_cache_from_symbol_arena {
                     self.ctx.cached_stable_source_file_symbol_arena_type(
                         sym_id,
                         cache_file_idx as u32,
@@ -700,7 +700,8 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .cached_cross_file_symbol_type(sym_id, cache_file_idx as u32)
                 }
-            {
+            });
+            if let Some((cached_type, cached_params)) = cross_file_cache_hit {
                 if let Some(p) = perf {
                     p.delegate_cross_arena_cache_hits_cross_file
                         .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
