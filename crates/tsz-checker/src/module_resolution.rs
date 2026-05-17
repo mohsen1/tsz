@@ -67,6 +67,10 @@ fn strip_ts_extension(path: &str) -> &str {
     path
 }
 
+fn is_ts_js_json_extension(dot_ext: &str) -> bool {
+    TS_EXTENSIONS.contains(&dot_ext) || dot_ext == ".json"
+}
+
 /// Detect `<base>.d.<ext>.ts` files where `<ext>` is a TS/JS/JSON extension.
 /// These are treated specially (see the `ARBITRARY_EXT_TAILS` documentation).
 fn is_arbitrary_extension_declaration_file(file_name: &str) -> bool {
@@ -891,7 +895,7 @@ pub fn resolve_specifier_via_file_index(
         let base_part = &stem[..dot_pos];
         let dot_ext = &stem[dot_pos..]; // ".html", ".css", etc.
         // Reject if the dot belongs to a directory component, not the file name.
-        if !dot_ext.contains('/') && !TS_EXTENSIONS.contains(&dot_ext) {
+        if !dot_ext.contains('/') && !is_ts_js_json_extension(dot_ext) {
             buf.clear();
             buf.push_str(base_part);
             buf.push_str(".d");

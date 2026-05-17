@@ -1165,6 +1165,16 @@ fn test_fast_resolver_resolves_svelte_specifier() {
 }
 
 #[test]
+fn test_fast_resolver_does_not_treat_json_as_arbitrary_extension() {
+    let files = ["/proj/app.ts", "/proj/config.d.json.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/app.ts", "./config.json", &idx),
+        None,
+    );
+}
+
+#[test]
 fn test_fast_resolver_arbitrary_ext_decl_matches_legacy_map() {
     // Every specifier that build_module_resolution_maps registers for
     // arbitrary-extension declaration files must also be found by the fast
