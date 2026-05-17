@@ -1136,6 +1136,11 @@ impl<'a> CheckerState<'a> {
                 self.evaluate_application_type(resolved_prop_name_type);
             let assignability_prop_name_type = self.evaluate_type_for_assignability(prop_name_type);
 
+            if let Some(sym_id) = self.resolve_computed_unique_symbol_property(computed.expression)
+            {
+                return Some(format!("__unique_{}", sym_id.0));
+            }
+
             // Fallback: when the computed expression is an identifier referencing a
             // variable initialized with or annotated as `Symbol.xxx`, resolve to the
             // canonical `[Symbol.xxx]` property name.  This handles patterns like:
@@ -1265,7 +1270,7 @@ impl<'a> CheckerState<'a> {
         }
         if self
             .get_property_name_resolved(name_idx)
-            .is_some_and(|name| name.starts_with("[Symbol."))
+            .is_some_and(|name| name.starts_with("[Symbol.") || name.starts_with("__unique_"))
         {
             return true;
         }
@@ -1283,6 +1288,41 @@ impl<'a> CheckerState<'a> {
         self.ctx.checking_computed_property_name = prev_checking;
 
         crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type).is_some()
+    }
+
+    fn resolve_computed_unique_symbol_property(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<tsz_binder::SymbolId> {
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            symbol.primary_declaration()?
+        };
+        let mut decl_idx = decl;
+        let mut decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            decl_idx = self.ctx.arena.get_extended(decl_idx)?.parent;
+            decl_node = self.ctx.arena.get(decl_idx)?;
+        }
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
+            || !self.ctx.arena.is_const_variable_declaration(decl_idx)
+        {
+            return None;
+        }
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let has_unique_annotation = var_decl.type_annotation.is_some()
+            && self.is_unique_symbol_type_annotation(var_decl.type_annotation);
+        let has_symbol_initializer = var_decl.initializer.is_some()
+            && (self.is_symbol_call_initializer(var_decl.initializer)
+                || self.is_symbol_for_call_initializer(var_decl.initializer));
+
+        (has_unique_annotation || has_symbol_initializer).then_some(sym_id)
     }
 
     /// For an identifier expression, trace back to the variable's declaration

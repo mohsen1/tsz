@@ -2365,6 +2365,14 @@ impl<'a> TypeLowering<'a> {
             {
                 return Some(name);
             }
+            if let Some(value_resolver) = self.value_resolver
+                && let Some(symbol_id) = value_resolver(computed.expression)
+            {
+                return Some(
+                    self.interner
+                        .intern_string(&format!("__unique_{}", symbol_id)),
+                );
+            }
         }
         None
     }
@@ -2387,6 +2395,9 @@ impl<'a> TypeLowering<'a> {
         }
         self.computed_symbol_name_resolver
             .is_some_and(|resolver| resolver(computed.expression))
+            || self
+                .value_resolver
+                .is_some_and(|resolver| resolver(computed.expression).is_some())
     }
 
     /// Try to resolve a computed property expression to a well-known symbol name.
