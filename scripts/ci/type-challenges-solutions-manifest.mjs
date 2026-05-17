@@ -75,6 +75,21 @@ function validateUniqueChallengeIds(entries) {
   }
 }
 
+function validateUniqueEntryField(entries, field, label) {
+  const seen = new Map();
+  for (const entry of entries) {
+    const value = entry[field];
+    const previous = seen.get(value);
+    if (previous) {
+      console.error(
+        `error: duplicate Type Challenges solution ${label} ${value}: ${previous.source} and ${entry.source}`,
+      );
+      process.exit(1);
+    }
+    seen.set(value, entry);
+  }
+}
+
 function validateManifestPath(value, label, requiredPrefix) {
   if (
     path.isAbsolute(value) ||
@@ -128,6 +143,8 @@ const entries = lines
   });
 
 validateUniqueChallengeIds(entries);
+validateUniqueEntryField(entries, "output", "output");
+validateUniqueEntryField(entries, "source", "source");
 
 if (entries.length !== expectedGenerated) {
   console.error(
