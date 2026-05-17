@@ -266,12 +266,9 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|c| c.in_constructor);
 
-        // Use the return expression as the anchor for both elaboration and the
-        // final diagnostic. tsc anchors TS2322 at the returned expression, not
-        // the `return` keyword, so the column in the fingerprint matches the
-        // expression position. The `return` keyword anchor (`fallback_error_node`)
-        // is reserved for the primitive-to-generic-indexed-conditional path below,
-        // where there is no expression-level shape to report on.
+        // tsc anchors TS2322 at the returned expression, not the `return` keyword.
+        // `fallback_error_node` is reserved for the primitive-to-generic-indexed-
+        // conditional path below, which has no expression-level shape to anchor on.
         let source_error_node = if return_data.expression.is_some() {
             return_data.expression
         } else {
