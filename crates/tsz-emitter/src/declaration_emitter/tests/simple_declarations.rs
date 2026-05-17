@@ -5008,6 +5008,56 @@ fn test_jsdoc_property_typedef_preserves_alias_description() {
 }
 
 #[test]
+fn test_jsdoc_typedef_same_line_link_description_is_preserved() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @typedef {Object} D1
+ * @property {1} e Just link to {@link NS.R} this time
+ * @property {1} m Wyatt Earp loved {@link N integers} I bet.
+ */
+
+/** @typedef {number} Attempt {@link https://wat} {@linkcode I think lingcod is better} {@linkplain or lutefisk}*/
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "/**\n * {@link https://wat} {@linkcode I think lingcod is better} {@linkplain or lutefisk}\n */\ntype Attempt = number;"
+        ),
+        "Expected same-line typedef link text to become alias JSDoc: {output}"
+    );
+    assert!(
+        output.contains("/**\n     * Just link to {@link NS.R} this time\n     */\n    e: 1;"),
+        "Expected property link tags to remain on object typedef members: {output}"
+    );
+    assert!(
+        output
+            .contains("/**\n     * Wyatt Earp loved {@link N integers} I bet.\n     */\n    m: 1;"),
+        "Expected renamed-link property text to remain on object typedef members: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_typedef_same_line_plain_description_is_preserved() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * Leading alias sentence.
+ * @typedef {string} RenamedAlias trailing alias sentence.
+ */
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "/**\n * Leading alias sentence.\n * trailing alias sentence.\n */\ntype RenamedAlias = string;"
+        ),
+        "Expected leading and same-line typedef descriptions to be preserved: {output}"
+    );
+}
+
+#[test]
 fn test_js_class_static_method_augmentation_emits_namespace_merge() {
     let source = r#"
 export class Clazz {
