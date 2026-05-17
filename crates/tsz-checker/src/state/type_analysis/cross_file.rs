@@ -365,6 +365,66 @@ impl<'a> CheckerState<'a> {
         Some((result, params))
     }
 
+    fn cached_symbol_arena_or_cross_file_symbol_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: usize,
+        source_cache_scope: u64,
+        symbol_type_cache_from_symbol_arena: bool,
+    ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        let file_idx = file_idx as u32;
+        if !symbol_type_cache_from_symbol_arena {
+            return self.ctx.cached_cross_file_symbol_type(sym_id, file_idx);
+        }
+
+        self.ctx
+            .cached_stable_source_file_symbol_arena_type(sym_id, file_idx, source_cache_scope)
+            .or_else(|| {
+                self.ctx.cached_source_file_symbol_arena_type(
+                    sym_id,
+                    file_idx,
+                    source_cache_scope,
+                    self.ctx.current_file_idx as u32,
+                )
+            })
+    }
+
+    fn cache_symbol_arena_or_cross_file_symbol_type(
+        &self,
+        sym_id: SymbolId,
+        file_idx: usize,
+        source_cache_scope: u64,
+        symbol_type_cache_from_symbol_arena: bool,
+        type_id: TypeId,
+        type_params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        let file_idx = file_idx as u32;
+        if !symbol_type_cache_from_symbol_arena {
+            self.ctx
+                .cache_cross_file_symbol_type(sym_id, file_idx, type_id, type_params);
+            return;
+        }
+
+        if type_params.is_empty() {
+            self.ctx.cache_stable_source_file_symbol_arena_type(
+                sym_id,
+                file_idx,
+                source_cache_scope,
+                type_id,
+                type_params,
+            );
+        } else {
+            self.ctx.cache_source_file_symbol_arena_type(
+                sym_id,
+                file_idx,
+                source_cache_scope,
+                self.ctx.current_file_idx as u32,
+                type_id,
+                type_params,
+            );
+        }
+    }
+
     /// Delegate symbol resolution to a checker using the correct arena.
     ///
     /// When a symbol's arena differs from the current arena (cross-file symbol),
@@ -690,16 +750,13 @@ impl<'a> CheckerState<'a> {
             }
 
             if let Some(cache_file_idx) = symbol_type_cache_file_idx
-                && let Some((cached_type, cached_params)) = if symbol_type_cache_from_symbol_arena {
-                    self.ctx.cached_stable_source_file_symbol_arena_type(
+                && let Some((cached_type, cached_params)) = self
+                    .cached_symbol_arena_or_cross_file_symbol_type(
                         sym_id,
-                        cache_file_idx as u32,
+                        cache_file_idx,
                         source_cache_scope,
+                        symbol_type_cache_from_symbol_arena,
                     )
-                } else {
-                    self.ctx
-                        .cached_cross_file_symbol_type(sym_id, cache_file_idx as u32)
-                }
             {
                 if let Some(p) = perf {
                     p.delegate_cross_arena_cache_hits_cross_file
@@ -769,25 +826,15 @@ impl<'a> CheckerState<'a> {
                     )
             {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
-                if let Some(file_idx) = symbol_type_cache_file_idx
-                    && (!symbol_type_cache_from_symbol_arena || direct_params.is_empty())
-                {
-                    if symbol_type_cache_from_symbol_arena {
-                        self.ctx.cache_stable_source_file_symbol_arena_type(
-                            sym_id,
-                            file_idx as u32,
-                            source_cache_scope,
-                            direct_type,
-                            direct_params.clone(),
-                        );
-                    } else {
-                        self.ctx.cache_cross_file_symbol_type(
-                            sym_id,
-                            file_idx as u32,
-                            direct_type,
-                            direct_params.clone(),
-                        );
-                    }
+                if let Some(file_idx) = symbol_type_cache_file_idx {
+                    self.cache_symbol_arena_or_cross_file_symbol_type(
+                        sym_id,
+                        file_idx,
+                        source_cache_scope,
+                        symbol_type_cache_from_symbol_arena,
+                        direct_type,
+                        direct_params.clone(),
+                    );
                 }
                 if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
                     self.ctx
@@ -827,25 +874,15 @@ impl<'a> CheckerState<'a> {
                 symbol_type_cache_from_symbol_arena,
             ) {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
-                if let Some(file_idx) = symbol_type_cache_file_idx
-                    && (!symbol_type_cache_from_symbol_arena || direct_params.is_empty())
-                {
-                    if symbol_type_cache_from_symbol_arena {
-                        self.ctx.cache_stable_source_file_symbol_arena_type(
-                            sym_id,
-                            file_idx as u32,
-                            source_cache_scope,
-                            direct_type,
-                            direct_params.clone(),
-                        );
-                    } else {
-                        self.ctx.cache_cross_file_symbol_type(
-                            sym_id,
-                            file_idx as u32,
-                            direct_type,
-                            direct_params.clone(),
-                        );
-                    }
+                if let Some(file_idx) = symbol_type_cache_file_idx {
+                    self.cache_symbol_arena_or_cross_file_symbol_type(
+                        sym_id,
+                        file_idx,
+                        source_cache_scope,
+                        symbol_type_cache_from_symbol_arena,
+                        direct_type,
+                        direct_params.clone(),
+                    );
                 }
                 return Some((direct_type, direct_params));
             }
@@ -1122,25 +1159,15 @@ impl<'a> CheckerState<'a> {
             // Write through to the canonical cross-file symbol-type cache so
             // other parallel checkers can reuse this result without rebuilding
             // a child checker.
-            if let Some(target_file_idx) = symbol_type_cache_file_idx
-                && (!symbol_type_cache_from_symbol_arena || result_params.is_empty())
-            {
-                if symbol_type_cache_from_symbol_arena {
-                    self.ctx.cache_stable_source_file_symbol_arena_type(
-                        sym_id,
-                        target_file_idx as u32,
-                        source_cache_scope,
-                        result,
-                        result_params.clone(),
-                    );
-                } else {
-                    self.ctx.cache_cross_file_symbol_type(
-                        sym_id,
-                        target_file_idx as u32,
-                        result,
-                        result_params.clone(),
-                    );
-                }
+            if let Some(target_file_idx) = symbol_type_cache_file_idx {
+                self.cache_symbol_arena_or_cross_file_symbol_type(
+                    sym_id,
+                    target_file_idx,
+                    source_cache_scope,
+                    symbol_type_cache_from_symbol_arena,
+                    result,
+                    result_params.clone(),
+                );
             }
 
             self.ctx.leave_recursion();
@@ -1988,3 +2015,121 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 #[path = "cross_file_query_kind_tests.rs"]
 mod cross_file_query_kind_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{CheckerContext, CheckerOptions};
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::NodeArena;
+    use tsz_solver::def::DefinitionStore;
+    use tsz_solver::{TypeInterner, TypeParamInfo};
+
+    fn cache_test_state<'a>(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a TypeInterner,
+    ) -> CheckerState<'a> {
+        let mut ctx = CheckerContext::new_with_shared_def_store(
+            arena,
+            binder,
+            types,
+            "requester.ts".to_string(),
+            CheckerOptions::default(),
+            Arc::new(DefinitionStore::new()),
+        );
+        ctx.share_owner_symbol_type_results = true;
+        ctx.current_file_idx = 3;
+        CheckerState { ctx }
+    }
+
+    #[test]
+    fn generic_source_file_symbol_arena_results_use_requester_scoped_cache() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let state = cache_test_state(&arena, &binder, &types);
+        let sym_id = SymbolId(11);
+        let file_idx = 7;
+        let scope = 0xCAFE_BABE_DEAD_BEEF;
+        let params = vec![TypeParamInfo {
+            name: types.intern_string("T"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        }];
+
+        state.cache_symbol_arena_or_cross_file_symbol_type(
+            sym_id,
+            file_idx,
+            scope,
+            true,
+            TypeId::STRING,
+            params.clone(),
+        );
+
+        assert_eq!(
+            state
+                .ctx
+                .cached_stable_source_file_symbol_arena_type(sym_id, file_idx as u32, scope),
+            None,
+            "generic source-file symbols are requester-scoped, not globally stable",
+        );
+        assert_eq!(
+            state
+                .ctx
+                .cached_source_file_symbol_arena_type(
+                    sym_id,
+                    file_idx as u32,
+                    scope,
+                    state.ctx.current_file_idx as u32,
+                )
+                .map(|(type_id, params)| (type_id, params.len())),
+            Some((TypeId::STRING, 1)),
+        );
+        assert_eq!(
+            state
+                .cached_symbol_arena_or_cross_file_symbol_type(sym_id, file_idx, scope, true)
+                .map(|(type_id, params)| (type_id, params.len())),
+            Some((TypeId::STRING, 1)),
+        );
+    }
+
+    #[test]
+    fn non_generic_source_file_symbol_arena_results_stay_stable() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let state = cache_test_state(&arena, &binder, &types);
+        let sym_id = SymbolId(12);
+        let file_idx = 8;
+        let scope = 0xDEAD_BEEF_CAFE_BABE;
+
+        state.cache_symbol_arena_or_cross_file_symbol_type(
+            sym_id,
+            file_idx,
+            scope,
+            true,
+            TypeId::NUMBER,
+            Vec::new(),
+        );
+
+        assert_eq!(
+            state
+                .ctx
+                .cached_stable_source_file_symbol_arena_type(sym_id, file_idx as u32, scope)
+                .map(|(type_id, params)| (type_id, params.len())),
+            Some((TypeId::NUMBER, 0)),
+        );
+        assert_eq!(
+            state.ctx.cached_source_file_symbol_arena_type(
+                sym_id,
+                file_idx as u32,
+                scope,
+                state.ctx.current_file_idx as u32,
+            ),
+            None,
+        );
+    }
+}
