@@ -37,6 +37,7 @@ TypeScript/tests/cases/conformance/es2020/intlNumberFormatES2020.ts
 TypeScript/tests/cases/conformance/es2023/intlNumberFormatES2023.ts
 TypeScript/tests/cases/conformance/es2024/sharedMemory.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment2.ts
+TypeScript/tests/cases/conformance/esDecorators/esDecorators-preservesThis.ts
 TypeScript/tests/cases/conformance/expressions/binaryOperators/instanceofOperator/instanceofOperatorWithRHSHasSymbolHasInstance.ts
 TypeScript/tests/cases/conformance/externalModules/typeOnly/importEquals2.ts
 TypeScript/tests/cases/conformance/externalModules/umd-augmentation-2.ts
