@@ -18,6 +18,7 @@ steps:
       - 'TSZ_CI_SKIP_HOST_APT=0'
       - 'TSZ_CI_DISABLE_SCCACHE=1'
       - 'TSZ_CI_CACHE_SAVE_CARGO_TARGETS=1'
+      - '_TSZ_DIST_ARTIFACT_URI=${_TSZ_DIST_ARTIFACT_URI}'
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
@@ -36,6 +37,8 @@ steps:
     name: gcr.io/cloud-builders/gsutil
     waitFor: ['dist-binaries']
     automapSubstitutions: true
+    env:
+      - '_TSZ_DIST_ARTIFACT_URI=${_TSZ_DIST_ARTIFACT_URI}'
     script: |
       #!/usr/bin/env bash
       set -euo pipefail
