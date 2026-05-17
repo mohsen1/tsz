@@ -603,3 +603,37 @@ fn infer_type_span_varies_names() {
         "infer Captured",
     );
 }
+
+#[test]
+fn rest_tuple_element_span_excludes_trailing_bracket() {
+    // Unlabeled rest element: [...T] — REST_TYPE must end after T, not after ]
+    assert_span("type A = [...T];", syntax_kind_ext::REST_TYPE, "...T");
+}
+
+#[test]
+fn rest_tuple_element_span_varies_names() {
+    assert_span(
+        "type A = [...Items];",
+        syntax_kind_ext::REST_TYPE,
+        "...Items",
+    );
+}
+
+#[test]
+fn infer_type_parameter_span_excludes_trailing_question() {
+    // The inner TYPE_PARAMETER node for `infer U` must end before `?`, not include it
+    assert_span(
+        "type A = X extends infer U ? U : never;",
+        syntax_kind_ext::TYPE_PARAMETER,
+        "U",
+    );
+}
+
+#[test]
+fn infer_type_parameter_span_varies_names() {
+    assert_span(
+        "type A = X extends infer Result ? Result : never;",
+        syntax_kind_ext::TYPE_PARAMETER,
+        "Result",
+    );
+}

@@ -1159,7 +1159,7 @@ impl ParserState {
             self.context_flags &= !crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
             let element_type = self.parse_type();
             self.context_flags = saved_flags;
-            let rest_end = self.token_end();
+            let rest_end = self.token_full_start();
             let rest_node = self.arena.add_wrapped_type(
                 syntax_kind_ext::REST_TYPE,
                 start_pos,
@@ -1173,7 +1173,7 @@ impl ParserState {
             // (TS17019), but tsc still parses it as an optional wrapping the
             // rest so the type displays as `[...?T]` in declaration emit.
             if self.parse_optional(SyntaxKind::QuestionToken) {
-                let end_pos = self.token_end();
+                let end_pos = self.token_full_start();
                 let (diag_start, suggestion) = if let Some(node) = self.arena.get(element_type) {
                     (
                         node.pos,
@@ -1738,7 +1738,7 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_type_parameter(
             crate::parser::syntax_kind_ext::TYPE_PARAMETER,
