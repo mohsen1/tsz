@@ -1096,6 +1096,35 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn decorator_metadata_commonjs_named_import_qualified_type_keeps_substituted_chain() {
+        let source = "import { Foo } from \"./m\";\ndeclare function decorate(...args: any[]): any;\nclass MyClass {\n    method(@decorate value: Foo.Bar): void {}\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::CommonJS,
+                legacy_decorators: true,
+                emit_decorator_metadata: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("__metadata(\"design:paramtypes\", [m_1.Foo.Bar])"),
+            "Known CommonJS named-import metadata should emit the substituted chain directly.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("typeof (_a = typeof m_1"),
+            "Known CommonJS named-import metadata should not use the unresolved fallback.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn commonjs_top_level_using_direct_exported_legacy_class_stays_inline() {
         let source =
             "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";

@@ -686,6 +686,14 @@ impl<'a> Printer<'a> {
         root_name: &str,
         expr_parts: &[String],
     ) -> bool {
+        if !self.suppress_commonjs_named_import_substitution
+            && self
+                .commonjs_named_import_substitutions
+                .contains_key(root_name)
+        {
+            return false;
+        }
+
         expr_parts
             .first()
             .is_some_and(|root_expr| root_expr != root_name)
