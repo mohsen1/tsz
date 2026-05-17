@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const SCRIPT = path.join(ROOT, "scripts", "bench", "tsgo-winner-report.mjs");
+const BENCH_WORKFLOW = path.join(ROOT, ".github", "workflows", "bench.yml");
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-tsgo-winner-report-"));
@@ -141,3 +142,25 @@ withTempDir((dir) => {
     },
   ]);
 });
+
+const benchWorkflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");
+assert.match(
+  benchWorkflow,
+  /node scripts\/bench\/tsgo-winner-report\.mjs\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results\.json"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-tsgo-winners\.json"/,
+  "bench workflow should generate the green tsgo winner report from merged results",
+);
+assert.match(
+  benchWorkflow,
+  /bench-results\.json\s*\n\s+bench-results-tsgo-winners\.json/,
+  "merged benchmark artifact should upload the green tsgo winner report",
+);
+assert.match(
+  benchWorkflow,
+  /bench-runs\/\$\{TIMESTAMP\}\.tsgo-winners\.json/,
+  "benchmark publish step should write timestamped green tsgo winner reports",
+);
+assert.match(
+  benchWorkflow,
+  /bench-runs\/latest\.tsgo-winners\.json/,
+  "benchmark publish step should write latest green tsgo winner reports",
+);
