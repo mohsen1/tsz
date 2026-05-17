@@ -261,6 +261,61 @@ const rejected: CC1 = "anything";
 }
 
 #[test]
+fn adjacent_template_infer_allows_empty_end_capture() {
+    let source = r#"
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2) ? true : false;
+type Expect<T extends true> = T;
+
+type SplitFirst<S extends string> =
+  S extends `${infer Head}${infer Tail}` ? [Head, Tail] : never;
+
+type PercentageParser<A extends string> =
+  A extends `${infer Sign}${infer Rest}`
+    ? Sign extends "+" | "-"
+      ? Rest extends `${infer Num}%`
+        ? [Sign, Num, "%"]
+        : [Sign, Rest, ""]
+      : A extends `${infer Num}%`
+        ? ["", Num, "%"]
+        : ["", A, ""]
+    : never;
+
+type Renamed<A extends string> =
+  A extends `${infer Prefix}${infer Suffix}` ? [Prefix, Suffix] : never;
+
+type Cases = [
+  Expect<Equal<SplitFirst<"">, ["", ""]>>,
+  Expect<Equal<SplitFirst<"abc">, ["a", "bc"]>>,
+  Expect<Equal<Renamed<"">, ["", ""]>>,
+  Expect<Equal<PercentageParser<"">, ["", "", ""]>>,
+  Expect<Equal<PercentageParser<"+">, ["+", "", ""]>>,
+  Expect<Equal<PercentageParser<"+1">, ["+", "1", ""]>>,
+  Expect<Equal<PercentageParser<"-100%">, ["-", "100", "%"]>>,
+  Expect<Equal<PercentageParser<"100%">, ["", "100", "%"]>>,
+  Expect<Equal<PercentageParser<"100">, ["", "100", ""]>>
+];
+
+export {};
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    let errors: Vec<&Diagnostic> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2344)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "adjacent template infer spans should match tsc for empty and non-empty sources; diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn chained_infer_extends_preserves_numeric_literal() {
     let source = r#"
 type GetPromiseValue<T> = T extends Promise<infer V extends string>

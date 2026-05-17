@@ -2288,7 +2288,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .get(index + 1)
             .is_some_and(|s| matches!(s, TemplateSpan::Type(type_id) if matches!(self.interner().lookup(*type_id), Some(TypeData::Infer(_)))))
         {
-            return Self::next_char_end(source, pos).into_iter().collect();
+            let mut ends = Vec::with_capacity(2);
+            if pos == source.len() {
+                ends.push(pos);
+            }
+            if let Some(end) = Self::next_char_end(source, pos) {
+                ends.push(end);
+            }
+            return ends;
         }
 
         if let Some(next_text) = pattern[index + 1..].iter().find_map(|span| match span {
