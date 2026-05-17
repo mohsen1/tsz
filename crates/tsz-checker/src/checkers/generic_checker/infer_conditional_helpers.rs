@@ -267,12 +267,12 @@ impl<'a> CheckerState<'a> {
 
     /// Return the implicit constraint tsc would give an `infer NAME` binding
     /// inside `extends_type`. Used to populate `type_parameter_scope` with a
-    /// constrained provisional TypeParameter so that downstream scoped-substitution
+    /// constrained provisional `TypeParameter` so that downstream scoped-substitution
     /// based TS2344 checks behave like tsc instead of substituting `unknown`.
     ///
     /// Currently recognises:
     /// - Explicit `infer X extends C` → `C`.
-    /// - `` `${infer X}` `` in a TEMPLATE_LITERAL_TYPE span → `string`.
+    /// - `` `${infer X}` `` in a `TEMPLATE_LITERAL_TYPE` span → `string`.
     /// - Positional `F<infer X>` where `F`'s n-th parameter has constraint `C` → `C`.
     /// - Recurses through unions/intersections/parens/tuples/etc. and only
     ///   returns `Some` when all witnesses agree on the same constraint.
