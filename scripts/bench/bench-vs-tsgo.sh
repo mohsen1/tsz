@@ -101,6 +101,7 @@ TSZ_BENCH_INCLUDE_COMPILE_CANARIES="${TSZ_BENCH_INCLUDE_COMPILE_CANARIES:-0}"
 BENCH_NPM_INSTALL_TIMEOUT="${BENCH_NPM_INSTALL_TIMEOUT:-900}"
 BENCH_PGO_TSZ_TIMEOUT="${BENCH_PGO_TSZ_TIMEOUT:-900}"
 BENCH_CARGO_BUILD_TIMEOUT="${BENCH_CARGO_BUILD_TIMEOUT:-1200}"
+BENCH_PGO_MARKER="$TSZ_OUTPUT_DIR/.bench-pgo-optimized"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --quick) QUICK_MODE=true; shift ;;
@@ -138,6 +139,7 @@ while [[ $# -gt 0 ]]; do
             echo "  NEXTJS_REF=<sha>       Override pinned next.js commit"
             echo "  VITE_APP_BENCH_DIR=<path> Override generated Vite fixture directory"
             echo "  BENCH_PGO=0            Skip PGO training (default: 1 when llvm-profdata is available)"
+            echo "  BENCH_REQUIRE_PGO=1    Fail instead of falling back to a non-PGO build (default: 0)"
             echo "  BENCH_PGO_CACHE=0      Don't reuse the cached profdata across runs (default: 1)"
             echo "  BENCH_PGO_FETCH_UTILITY_TYPES=0  Don't fetch utility-types for PGO training (default: 1)"
             echo "  BENCH_PGO_TSZ_TIMEOUT=<seconds>  Timeout for each PGO training compiler invocation (default: 900)"
@@ -884,6 +886,9 @@ check_prerequisites() {
         if [ -n "$newest_src" ]; then
             echo -e "${YELLOW}Source changed since last build, rebuilding...${NC}"
             need_rebuild=true
+        elif [[ "${BENCH_REQUIRE_PGO:-0}" == "1" && ! -f "$BENCH_PGO_MARKER" ]]; then
+            echo -e "${YELLOW}Existing tsz binary is not marked PGO optimized, rebuilding...${NC}"
+            need_rebuild=true
         fi
     fi
     
@@ -904,6 +909,7 @@ check_prerequisites() {
         local pgo_cache_marker="$pgo_cache_dir/profile.fingerprint"
         local pgo_target_dir
         local optimized_target_dir
+        local pgo_optimized=false
         mkdir -p "$BENCH_TARGET_DIR"
         pgo_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/pgo-build.XXXXXX")"
         optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
@@ -1001,6 +1007,10 @@ check_prerequisites() {
                     CARGO_INCREMENTAL=0 \
                     RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
                     cargo build --profile dist -p tsz-cli --bin tsz; then
+                    if [[ "${BENCH_REQUIRE_PGO:-0}" == "1" ]]; then
+                        echo -e "${RED}✗ PGO dist build failed and BENCH_REQUIRE_PGO=1${NC}"
+                        exit 1
+                    fi
                     # LLVM PGO can fail when the profile-use link step encounters
                     # incompatible bitcode/ProfileSummary metadata in this toolchain.
                     echo -e "${YELLOW}PGO dist build failed; falling back to a clean standard dist build${NC}"
@@ -1012,8 +1022,14 @@ check_prerequisites() {
                         CARGO_INCREMENTAL=0 \
                         RUSTFLAGS="-Ctarget-cpu=native" \
                         cargo build --profile dist -p tsz-cli --bin tsz
+                else
+                    pgo_optimized=true
                 fi
             else
+                if [[ "${BENCH_REQUIRE_PGO:-0}" == "1" ]]; then
+                    echo -e "${RED}✗ PGO profile data unavailable and BENCH_REQUIRE_PGO=1${NC}"
+                    exit 1
+                fi
                 echo -e "${YELLOW}PGO Step 3/3: no profile data available; using standard dist build${NC}"
                 rm -rf "$optimized_target_dir"
                 optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
@@ -1026,6 +1042,11 @@ check_prerequisites() {
             fi
             mkdir -p "$TSZ_OUTPUT_DIR"
             install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"
+            if [[ "$pgo_optimized" == true ]]; then
+                printf 'profile-use=%s\nbuilt_at=%s\n' "$pgo_merged" "$(date -u +%FT%TZ)" > "$BENCH_PGO_MARKER"
+            else
+                rm -f "$BENCH_PGO_MARKER"
+            fi
             rm -rf "$optimized_target_dir"
             rm -rf "$pgo_target_dir"
         else
@@ -1033,6 +1054,10 @@ check_prerequisites() {
                 echo -e "${YELLOW}PGO skipped (quick mode or BENCH_PGO=0); using standard dist build${NC}"
             else
                 echo -e "${YELLOW}PGO unavailable (llvm-profdata not found), using standard build${NC}"
+            fi
+            if [[ "${BENCH_REQUIRE_PGO:-0}" == "1" ]]; then
+                echo -e "${RED}✗ PGO is required for this benchmark run${NC}"
+                exit 1
             fi
             run_cargo_build \
                 "Standard dist build" \
@@ -1042,6 +1067,7 @@ check_prerequisites() {
                 cargo build --profile dist -p tsz-cli --bin tsz
             mkdir -p "$TSZ_OUTPUT_DIR"
             install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"
+            rm -f "$BENCH_PGO_MARKER"
             rm -rf "$optimized_target_dir"
             rm -rf "$pgo_target_dir"
         fi
