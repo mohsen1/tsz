@@ -1368,37 +1368,8 @@ impl<'a> CheckerState<'a> {
                 // in `{ [K in keyof T]: { src: K } }` resolve correctly and don't
                 // produce false TS2304 errors.
                 if let Some(mapped) = self.ctx.arena.get_mapped_type(node) {
-                    let mut pushed_name: Option<(String, Option<TypeId>)> = None;
-                    if let Some(tp_node) = self.ctx.arena.get(mapped.type_parameter)
-                        && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
-                        && let Some(name_node) = self.ctx.arena.get(tp_data.name)
-                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    {
-                        let name = ident.escaped_text.clone();
-                        let atom = self.ctx.types.intern_string(&name);
-                        let mut constraint_type = TypeId::UNKNOWN;
-                        if tp_data.constraint != tsz_parser::parser::NodeIndex::NONE {
-                            let resolved = self.get_type_from_type_node(tp_data.constraint);
-                            if resolved != TypeId::ERROR {
-                                constraint_type = resolved;
-                            }
-                        }
-                        let provisional =
-                            self.ctx
-                                .types
-                                .factory()
-                                .type_param(tsz_solver::TypeParamInfo {
-                                    name: atom,
-                                    constraint: Some(constraint_type),
-                                    default: None,
-                                    is_const: false,
-                                });
-                        let previous = self
-                            .ctx
-                            .type_parameter_scope
-                            .insert(name.clone(), provisional);
-                        pushed_name = Some((name, previous));
-                    }
+                    let pushed_name =
+                        self.push_mapped_type_param_provisional(mapped.type_parameter);
                     if mapped.type_node != NodeIndex::NONE {
                         self.check_type_node(mapped.type_node);
                     }
@@ -1407,13 +1378,7 @@ impl<'a> CheckerState<'a> {
                     if mapped.name_type != NodeIndex::NONE {
                         self.check_type_node(mapped.name_type);
                     }
-                    if let Some((name, previous)) = pushed_name {
-                        if let Some(prev_type) = previous {
-                            self.ctx.type_parameter_scope.insert(name, prev_type);
-                        } else {
-                            self.ctx.type_parameter_scope.remove(&name);
-                        }
-                    }
+                    self.pop_mapped_type_param_provisional(pushed_name);
                 }
             }
             k if k == syntax_kind_ext::TUPLE_TYPE => {

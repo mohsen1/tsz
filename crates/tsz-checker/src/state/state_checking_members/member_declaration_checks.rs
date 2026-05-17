@@ -627,23 +627,8 @@ impl<'a> CheckerState<'a> {
                             7039,
                         );
                     }
-                    let mut param_binding: Option<(String, Option<TypeId>)> = None;
-                    if let Some(param_node) = self.ctx.arena.get(mapped.type_parameter)
-                        && let Some(param) = self.ctx.arena.get_type_parameter(param_node)
-                        && let Some(name_node) = self.ctx.arena.get(param.name)
-                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    {
-                        let name = ident.escaped_text.clone();
-                        let atom = self.ctx.types.intern_string(&name);
-                        let type_id = factory.type_param(tsz_solver::TypeParamInfo {
-                            name: atom,
-                            constraint: None,
-                            default: None,
-                            is_const: false,
-                        });
-                        let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
-                        param_binding = Some((name, previous));
-                    }
+                    let param_binding =
+                        self.push_mapped_type_param_provisional(mapped.type_parameter);
                     let is_direct_self_constraint = param_binding
                         .as_ref()
                         .and_then(|(name, _)| {
@@ -691,13 +676,7 @@ impl<'a> CheckerState<'a> {
                             self.check_type_member_for_missing_names(member_idx);
                         }
                     }
-                    if let Some((name, previous)) = param_binding {
-                        if let Some(prev_type) = previous {
-                            self.ctx.type_parameter_scope.insert(name, prev_type);
-                        } else {
-                            self.ctx.type_parameter_scope.remove(&name);
-                        }
-                    }
+                    self.pop_mapped_type_param_provisional(param_binding);
                 }
             }
             k if k == syntax_kind_ext::TYPE_PREDICATE => {
@@ -721,6 +700,62 @@ impl<'a> CheckerState<'a> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Push a mapped type's iteration variable (`K` in `[K in keyof T]`) into
+    /// `type_parameter_scope` as a provisional carrying the resolved constraint.
+    ///
+    /// The constraint is required, not optional: downstream indexed-access
+    /// well-formedness walks the constraint chain (`P → K → keyof T`) to
+    /// suppress false TS2536 in nested mapped types like `{ [P in K]: T[P] }`.
+    /// A bare placeholder drops the chain mid-walk and surfaces the false
+    /// positive. Mirror what `check_type_node`'s `MAPPED_TYPE` arm writes so
+    /// both checking passes observe a consistent binding.
+    pub(crate) fn push_mapped_type_param_provisional(
+        &mut self,
+        type_parameter: NodeIndex,
+    ) -> Option<(String, Option<TypeId>)> {
+        let param_node = self.ctx.arena.get(type_parameter)?;
+        let param = self.ctx.arena.get_type_parameter(param_node)?;
+        let name_node = self.ctx.arena.get(param.name)?;
+        let ident = self.ctx.arena.get_identifier(name_node)?;
+        let atom = self.ctx.types.intern_string(&ident.escaped_text);
+        let name = ident.escaped_text.clone();
+        let constraint_type = if param.constraint != NodeIndex::NONE {
+            match self.get_type_from_type_node(param.constraint) {
+                TypeId::ERROR => TypeId::UNKNOWN,
+                resolved => resolved,
+            }
+        } else {
+            TypeId::UNKNOWN
+        };
+        let type_id = self
+            .ctx
+            .types
+            .factory()
+            .type_param(tsz_solver::TypeParamInfo {
+                name: atom,
+                constraint: Some(constraint_type),
+                default: None,
+                is_const: false,
+            });
+        let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
+        Some((name, previous))
+    }
+
+    /// Restore the `type_parameter_scope` entry previously captured by
+    /// `push_mapped_type_param_provisional`.
+    pub(crate) fn pop_mapped_type_param_provisional(
+        &mut self,
+        pushed: Option<(String, Option<TypeId>)>,
+    ) {
+        if let Some((name, previous)) = pushed {
+            if let Some(prev_type) = previous {
+                self.ctx.type_parameter_scope.insert(name, prev_type);
+            } else {
+                self.ctx.type_parameter_scope.remove(&name);
+            }
         }
     }
 
