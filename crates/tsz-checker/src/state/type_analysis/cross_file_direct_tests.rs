@@ -539,6 +539,102 @@ fn direct_source_file_type_alias_lowers_scope_independent_alias_body() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_external_declaration_scope_independent_alias_body() {
+    let (target_arena, target_binder, types) = parse_bound_source_with_name(
+        "node_modules/react/tsz-benchmark.d.ts",
+        r#"
+                export type ReactNode = unknown;
+                export type Box<T> = T[];
+                type Local = string;
+                export type Wrapped = Local;
+            "#,
+    );
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import type { ReactNode } from 'react';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+
+    let react_node_sym = target_binder
+        .file_locals
+        .get("ReactNode")
+        .expect("ReactNode symbol");
+    let (react_node, react_node_params) = state
+        .direct_source_file_type_alias_result(react_node_sym, Some(1), false)
+        .expect("scope-independent external declaration alias should lower");
+    assert_eq!(react_node, TypeId::UNKNOWN);
+    assert_ne!(react_node, TypeId::ERROR);
+    assert!(react_node_params.is_empty());
+
+    let box_sym = target_binder.file_locals.get("Box").expect("Box symbol");
+    let (box_type, box_params) = state
+        .direct_source_file_type_alias_result(box_sym, Some(1), false)
+        .expect("generic external declaration alias should preserve params");
+    assert_ne!(box_type, TypeId::UNKNOWN);
+    assert_ne!(box_type, TypeId::ERROR);
+    assert_eq!(box_params.len(), 1);
+
+    let wrapped_sym = target_binder
+        .file_locals
+        .get("Wrapped")
+        .expect("Wrapped symbol");
+    assert!(
+        state
+            .direct_source_file_type_alias_result(wrapped_sym, Some(1), false)
+            .is_none(),
+        "aliases that depend on sibling declarations need normal cross-file resolution",
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_local_declaration_files() {
+    let (target_arena, target_binder, types) =
+        parse_bound_source_with_name("types/local.d.ts", "export type ReactNode = unknown;");
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import type { ReactNode } from './types/local';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+    let react_node_sym = target_binder
+        .file_locals
+        .get("ReactNode")
+        .expect("ReactNode symbol");
+
+    assert!(
+        state
+            .direct_source_file_type_alias_result(react_node_sym, Some(1), false)
+            .is_none(),
+        "local declaration files are not external package declaration files",
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_complex_generic_typeof_and_self_references() {
     let (generic_arena, generic_binder, types) = parse_bound_source(
         r#"

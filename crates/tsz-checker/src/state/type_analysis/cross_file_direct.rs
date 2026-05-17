@@ -1551,7 +1551,10 @@ impl<'a> CheckerState<'a> {
         };
         let symbol_arena = symbol_arena_arc.as_ref();
         let delegate_binder = delegate_binder_arc.as_ref();
-        if !allow_source_file_arena || !is_direct_lowering_source_file_arena(symbol_arena) {
+        let direct_source_file_arena =
+            allow_source_file_arena && is_direct_lowering_source_file_arena(symbol_arena);
+        let direct_external_declaration_arena = is_direct_lowering_declaration_arena(symbol_arena);
+        if !direct_source_file_arena && !direct_external_declaration_arena {
             return None;
         }
 
@@ -1615,7 +1618,7 @@ impl<'a> CheckerState<'a> {
             symbol_arena,
             type_alias,
         );
-        if matches!(alias_type, TypeId::UNKNOWN | TypeId::ERROR) {
+        if alias_type == TypeId::ERROR {
             return None;
         }
 
