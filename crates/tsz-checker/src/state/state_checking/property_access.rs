@@ -115,6 +115,35 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Resolve a heritage extends expression to a `SymbolId` using a specific arena/binder.
+    ///
+    /// Handles the simple `Identifier` case (the common F-bounded pattern) with a
+    /// cross-file fallback, and delegates complex qualified names to the primary-arena
+    /// resolver for the edge cases.
+    fn resolve_heritage_sym_in_arena(
+        &self,
+        arena: &tsz_parser::NodeArena,
+        binder: &tsz_binder::BinderState,
+        expr_idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        let node = arena.get(expr_idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            // Resolve via the foreign binder; fall back to cross-file global search.
+            binder.resolve_identifier(arena, expr_idx).or_else(|| {
+                let name = arena.get_identifier(node)?.escaped_text.as_str();
+                self.ctx.all_binders.as_ref()?.iter().find_map(|b| {
+                    if std::ptr::eq(b.as_ref() as *const _, binder as *const _) {
+                        return None;
+                    }
+                    b.file_locals.get(name)
+                })
+            })
+        } else {
+            // Qualified names and property accesses: delegate to the primary-arena helper.
+            self.resolve_heritage_symbol(expr_idx)
+        }
+    }
+
     fn find_named_member_in_iface_decl(
         arena: &tsz_parser::NodeArena,
         decl_idx: NodeIndex,
@@ -181,33 +210,90 @@ impl<'a> CheckerState<'a> {
         decl_idx: NodeIndex,
         prop_name: &str,
     ) -> Option<TypeId> {
-        let entries = Self::collect_extends_entries(self.ctx.arena, decl_idx);
-        let cross_entries: Vec<(NodeIndex, Vec<NodeIndex>)> = self
+        // Determine the file that owns this declaration so we use the right arena.
+        // `decl_idx` is valid only in the arena where the derived symbol was declared.
+        let derived_file_idx: u32 = {
+            self.get_cross_file_symbol(derived_sym_id)
+                .map(|s| s.decl_file_idx)
+                .unwrap_or(u32::MAX)
+        };
+
+        let entries: Vec<(NodeIndex, Vec<NodeIndex>)> = {
+            let arena = self.ctx.get_arena_for_file(derived_file_idx);
+            Self::collect_extends_entries(arena, decl_idx)
+        };
+        if let Some(found) = self.process_heritage_entries(&entries, derived_file_idx, prop_name) {
+            return Some(found);
+        }
+
+        // Also walk lib-cloned arenas (declaration_arenas is populated for lib declarations).
+        let cross_arenas = self
             .ctx
             .binder
             .declaration_arenas
             .get(&(derived_sym_id, decl_idx))
-            .map(|arenas| {
-                arenas
-                    .iter()
-                    .filter(|a| !std::ptr::eq(a.as_ref(), self.ctx.arena))
-                    .flat_map(|a| Self::collect_extends_entries(a.as_ref(), decl_idx))
-                    .collect()
-            })
+            .cloned()
             .unwrap_or_default();
+        for foreign_arc in cross_arenas {
+            let foreign_file_idx = self
+                .ctx
+                .get_file_idx_for_arena(foreign_arc.as_ref())
+                .map(|i| i as u32)
+                .unwrap_or(u32::MAX);
+            if foreign_file_idx == derived_file_idx {
+                continue;
+            }
+            let cross_entries: Vec<(NodeIndex, Vec<NodeIndex>)> =
+                Self::collect_extends_entries(foreign_arc.as_ref(), decl_idx);
+            if let Some(found) =
+                self.process_heritage_entries(&cross_entries, foreign_file_idx, prop_name)
+            {
+                return Some(found);
+            }
+        }
 
-        for (expr_idx, arg_idxs) in entries.into_iter().chain(cross_entries) {
-            let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) else {
+        None
+    }
+
+    /// Walk one set of heritage entries — all from the same arena identified by
+    /// `entry_file_idx` — and return the first resolved member type.
+    fn process_heritage_entries(
+        &mut self,
+        entries: &[(NodeIndex, Vec<NodeIndex>)],
+        entry_file_idx: u32,
+        prop_name: &str,
+    ) -> Option<TypeId> {
+        for (expr_idx, arg_idxs) in entries {
+            // Resolve the base symbol using arena/binder for the entry file.
+            // Scoped block releases the immutable borrows before mutable calls below.
+            let Some(base_sym_id) = ({
+                let arena = self.ctx.get_arena_for_file(entry_file_idx);
+                let binder = self
+                    .ctx
+                    .get_binder_for_file(entry_file_idx as usize)
+                    .unwrap_or(self.ctx.binder);
+                self.resolve_heritage_sym_in_arena(arena, binder, *expr_idx)
+            }) else {
                 continue;
             };
 
-            let type_args: Vec<TypeId> = arg_idxs
-                .iter()
-                .map(|&idx| {
-                    let raw = self.get_type_from_type_node(idx);
-                    self.resolve_lazy_type(raw)
-                })
-                .collect();
+            // Resolve type args from the correct arena.
+            let entry_is_primary =
+                std::ptr::eq(self.ctx.get_arena_for_file(entry_file_idx), self.ctx.arena);
+            let type_args: Vec<TypeId> = if entry_is_primary {
+                arg_idxs
+                    .iter()
+                    .map(|&idx| {
+                        let raw = self.get_type_from_type_node(idx);
+                        self.resolve_lazy_type(raw)
+                    })
+                    .collect()
+            } else {
+                arg_idxs
+                    .iter()
+                    .map(|&idx| self.resolve_cross_file_type_arg(idx, entry_file_idx))
+                    .collect()
+            };
 
             let base_type_params = self.get_type_params_for_symbol(base_sym_id);
             let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
@@ -216,52 +302,97 @@ impl<'a> CheckerState<'a> {
                 &type_args,
             );
 
-            let base_declarations = self
-                .get_cross_file_symbol(base_sym_id)
-                .map(|s| s.declarations.clone())
-                .unwrap_or_default();
+            let (base_file_idx, base_decl_list) = {
+                self.get_cross_file_symbol(base_sym_id)
+                    .map(|s| (s.decl_file_idx, s.declarations.clone()))
+                    .unwrap_or((u32::MAX, Vec::new()))
+            };
 
-            for &base_decl_idx in &base_declarations {
-                if let Some(member_idx) =
-                    Self::find_named_member_in_iface_decl(self.ctx.arena, base_decl_idx, prop_name)
-                {
-                    let raw = self.get_type_of_interface_member_simple(member_idx);
-                    return Some(crate::query_boundaries::common::instantiate_type(
-                        self.ctx.types,
-                        raw,
-                        &substitution,
-                    ));
+            for &base_decl_idx in &base_decl_list {
+                let member_idx = {
+                    let arena = self.ctx.get_arena_for_file(base_file_idx);
+                    Self::find_named_member_in_iface_decl(arena, base_decl_idx, prop_name)
+                };
+
+                if let Some(member_idx) = member_idx {
+                    let base_is_primary =
+                        std::ptr::eq(self.ctx.get_arena_for_file(base_file_idx), self.ctx.arena);
+                    if base_is_primary {
+                        let raw = self.get_type_of_interface_member_simple(member_idx);
+                        return Some(crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            raw,
+                            &substitution,
+                        ));
+                    }
+                    // Get the Arc so the borrow doesn't conflict with &mut self.
+                    let base_arc = self
+                        .ctx
+                        .all_arenas
+                        .as_ref()
+                        .and_then(|arenas| arenas.get(base_file_idx as usize).cloned());
+                    if let Some(arc) = base_arc {
+                        return self.delegate_cross_arena_interface_member_simple_type(
+                            base_decl_idx,
+                            member_idx,
+                            arc.as_ref(),
+                            (!type_args.is_empty()).then_some(type_args.as_slice()),
+                        );
+                    }
                 }
 
-                let cross_arenas = self
+                // Check lib-cloned arenas for the base declaration.
+                let lib_cross_arenas = self
                     .ctx
                     .binder
                     .declaration_arenas
                     .get(&(base_sym_id, base_decl_idx))
                     .cloned()
                     .unwrap_or_default();
-                for arena in cross_arenas {
+                for arena in lib_cross_arenas {
                     if let Some(member_idx) = Self::find_named_member_in_iface_decl(
                         arena.as_ref(),
                         base_decl_idx,
                         prop_name,
-                    ) {
-                        if let Some(member_type) = self
-                            .delegate_cross_arena_interface_member_simple_type(
-                                base_decl_idx,
-                                member_idx,
-                                arena.as_ref(),
-                                (!type_args.is_empty()).then_some(type_args.as_slice()),
-                            )
-                        {
-                            return Some(member_type);
-                        }
+                    ) && let Some(member_type) = self
+                        .delegate_cross_arena_interface_member_simple_type(
+                            base_decl_idx,
+                            member_idx,
+                            arena.as_ref(),
+                            (!type_args.is_empty()).then_some(type_args.as_slice()),
+                        )
+                    {
+                        return Some(member_type);
                     }
                 }
             }
         }
 
         None
+    }
+
+    /// Resolve a single type-argument node from a foreign file's arena.
+    ///
+    /// For simple type references (the common F-bounded case), resolves via the
+    /// foreign binder's identifier lookup. Falls back to `ANY` for unsupported shapes.
+    fn resolve_cross_file_type_arg(&mut self, arg_idx: NodeIndex, file_idx: u32) -> TypeId {
+        let sym_id = {
+            let arena = self.ctx.get_arena_for_file(file_idx);
+            let binder = self
+                .ctx
+                .get_binder_for_file(file_idx as usize)
+                .unwrap_or(self.ctx.binder);
+            arena
+                .get(arg_idx)
+                .and_then(|node| arena.get_type_ref(node))
+                .and_then(|tr| binder.resolve_identifier(arena, tr.type_name))
+        };
+        if let Some(sym_id) = sym_id {
+            let lazy = self.resolve_symbol_as_lazy_type(sym_id);
+            self.resolve_lazy_type(lazy)
+        } else {
+            TypeId::ANY
+        }
     }
 
     fn mapped_constraint_accepts_property_name(&self, constraint: TypeId, prop_name: &str) -> bool {

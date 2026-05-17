@@ -1324,6 +1324,7 @@ mod array_literal_context_tests {
     use crate::test_utils::{
         check_source, check_source_codes, check_source_with_libs, load_compiled_lib_files,
     };
+    use tsz_common::common::ModuleKind;
 
     fn check_strict_codes(source: &str) -> Vec<u32> {
         check_source(
@@ -1686,6 +1687,89 @@ const xs: (number | undefined)[] = [1, , 3];
         assert!(
             !errors.contains(&2322),
             "[1, , 3] should be assignable to (number | undefined)[], got: {errors:?}"
+        );
+    }
+
+    // Cross-file F-bounded interface tests: the interface declarations live in a
+    // separate file from the usage, exercising arena-identity-preserving heritage
+    // recovery in `recover_inherited_member_from_heritage`.
+
+    #[test]
+    fn f_bounded_cross_file_inherited_property_access() {
+        let diagnostics = crate::test_utils::check_multi_file(
+            &[
+                (
+                    "lib.ts",
+                    r#"
+export interface INode<T extends INode<T>> {
+    children: T[];
+    depth: number;
+}
+export interface FileNode extends INode<FileNode> {
+    name: string;
+}
+"#,
+                ),
+                (
+                    "main.ts",
+                    r#"
+import { FileNode } from "./lib";
+declare const root: FileNode;
+const kids: FileNode[] = root.children;
+const d: number = root.depth;
+"#,
+                ),
+            ],
+            "main.ts",
+            CheckerOptions {
+                module: ModuleKind::CommonJS,
+                strict: true,
+                strict_null_checks: true,
+                ..Default::default()
+            },
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "Cross-file F-bounded: inherited properties should resolve, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn f_bounded_cross_file_inherited_property_different_type_param_name() {
+        // The fix must not be keyed on the type-parameter name `T`; `K` is equally valid.
+        let diagnostics = crate::test_utils::check_multi_file(
+            &[
+                (
+                    "nodes.ts",
+                    r#"
+export interface IGraph<K extends IGraph<K>> {
+    edges: K[];
+}
+export interface GraphNode extends IGraph<GraphNode> {
+    label: string;
+}
+"#,
+                ),
+                (
+                    "app.ts",
+                    r#"
+import { GraphNode } from "./nodes";
+declare const g: GraphNode;
+const neighbors: GraphNode[] = g.edges;
+"#,
+                ),
+            ],
+            "app.ts",
+            CheckerOptions {
+                module: ModuleKind::CommonJS,
+                strict: true,
+                strict_null_checks: true,
+                ..Default::default()
+            },
+        );
+        assert!(
+            diagnostics.is_empty(),
+            "Cross-file F-bounded (param K): inherited edges should resolve, got: {diagnostics:?}"
         );
     }
 }
