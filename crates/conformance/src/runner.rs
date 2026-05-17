@@ -12,7 +12,7 @@ use crate::test_parser::{
     should_skip_test,
 };
 use crate::text_decode::{decode_source_text, DecodedSourceText};
-use crate::tsc_results::{DiagnosticFingerprint, ErrorFrequency, TestResult, TestStats, TscResult};
+use crate::tsc_results::{DiagnosticFingerprint, ErrorFrequency, TestResult, TestStats};
 use crate::tsz_wrapper;
 use anyhow::Context;
 use futures::stream::{self, StreamExt};
@@ -335,39 +335,6 @@ fn compare_diagnostics(
             known_failure: None,
         }
     }
-}
-
-const PRODUCTION_SUPPRESSION_DEBT_REASON: &str =
-    "known compiler debt previously hidden by production diagnostic suppression";
-
-// NOTE: Each entry suppresses TS2589/etc. regressions for *failing* tests in
-// the matched paths. When a matching test starts passing, the entry becomes
-// dead code (the `mark_known_conformance_debt` branch only fires on `Fail`).
-// Periodically prune patterns whose only matches now PASS — entries below
-// are the live set as of 2026-05-12.
-const PRODUCTION_SUPPRESSION_DEBT_PATTERNS: &[&str] = &[];
-
-fn known_conformance_debt_reason(test_key: &str) -> Option<&'static str> {
-    PRODUCTION_SUPPRESSION_DEBT_PATTERNS
-        .iter()
-        .any(|pattern| test_key.contains(pattern))
-        .then_some(PRODUCTION_SUPPRESSION_DEBT_REASON)
-}
-
-fn mark_known_conformance_debt(test_key: &str, mut result: TestResult) -> TestResult {
-    if let TestResult::Fail { known_failure, .. } = &mut result {
-        *known_failure = known_conformance_debt_reason(test_key);
-    }
-    result
-}
-
-fn crash_is_known_empty_diagnostic_conformance_debt(
-    test_key: &str,
-    tsc_result: &TscResult,
-) -> bool {
-    test_key.ends_with("compiler/declarationsWithRecursiveInternalTypesProduceUniqueTypeParams.ts")
-        && tsc_result.error_codes.is_empty()
-        && tsc_result.diagnostic_fingerprints.is_empty()
 }
 
 fn is_appledouble_file(path: &Path) -> bool {
@@ -1355,11 +1322,6 @@ impl Runner {
                                         variant,
                                     ),
                                     BatchOutcome::Crashed => {
-                                        if crash_is_known_empty_diagnostic_conformance_debt(
-                                            &key, tsc_result,
-                                        ) {
-                                            return Ok((TestResult::Pass, file_preview.take()));
-                                        }
                                         return Ok((TestResult::Crashed, file_preview.take()));
                                     }
                                     BatchOutcome::Timeout => {
@@ -1421,11 +1383,6 @@ impl Runner {
                                 )
                             };
                             if compile_result.crashed {
-                                if crash_is_known_empty_diagnostic_conformance_debt(
-                                    &key, tsc_result,
-                                ) {
-                                    return Ok((TestResult::Pass, file_preview.take()));
-                                }
                                 return Ok((TestResult::Crashed, file_preview.take()));
                             }
 
@@ -1597,14 +1554,11 @@ impl Runner {
                     );
 
                     let options_for_fail = compile_result.options.clone();
-                    let outcome = mark_known_conformance_debt(
-                        &key,
-                        compare_diagnostics(
-                            &compile_result,
-                            &tsc_error_codes,
-                            &tsc_fps,
-                            options_for_fail,
-                        ),
+                    let outcome = compare_diagnostics(
+                        &compile_result,
+                        &tsc_error_codes,
+                        &tsc_fps,
+                        options_for_fail,
                     );
                     Ok((outcome, file_preview.take()))
                 } else {
@@ -1675,11 +1629,6 @@ impl Runner {
                                 options,
                             ),
                             BatchOutcome::Crashed => {
-                                if crash_is_known_empty_diagnostic_conformance_debt(
-                                    &key, tsc_result,
-                                ) {
-                                    return Ok((TestResult::Pass, file_preview.take()));
-                                }
                                 return Ok((TestResult::Crashed, file_preview.take()));
                             }
                             BatchOutcome::Timeout => {
@@ -1728,9 +1677,6 @@ impl Runner {
                     };
 
                     if compile_result.crashed {
-                        if crash_is_known_empty_diagnostic_conformance_debt(&key, tsc_result) {
-                            return Ok((TestResult::Pass, file_preview.take()));
-                        }
                         return Ok((TestResult::Crashed, file_preview.take()));
                     }
 
@@ -1769,14 +1715,11 @@ impl Runner {
 
                     // UTF-16 path historically drops the resolved options from the
                     // failure record — preserve that behavior by passing an empty map.
-                    let outcome = mark_known_conformance_debt(
-                        &key,
-                        compare_diagnostics(
-                            &compile_result,
-                            &tsc_error_codes,
-                            &tsc_fps,
-                            HashMap::new(),
-                        ),
+                    let outcome = compare_diagnostics(
+                        &compile_result,
+                        &tsc_error_codes,
+                        &tsc_fps,
+                        HashMap::new(),
                     );
                     Ok((outcome, file_preview.take()))
                 } else {
@@ -1904,14 +1847,11 @@ impl Runner {
                     };
 
                     let options_for_fail = compile_result.options.clone();
-                    let outcome = mark_known_conformance_debt(
-                        &key,
-                        compare_diagnostics(
-                            &compile_result,
-                            &tsc_error_codes,
-                            &tsc_fps,
-                            options_for_fail,
-                        ),
+                    let outcome = compare_diagnostics(
+                        &compile_result,
+                        &tsc_error_codes,
+                        &tsc_fps,
+                        options_for_fail,
                     );
                     Ok((outcome, file_preview.take()))
                 } else {
