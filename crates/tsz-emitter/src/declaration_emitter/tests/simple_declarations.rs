@@ -3662,8 +3662,8 @@ declare namespace foo {
 }
 declare function bar(): void;
 declare namespace bar {
-    export let async: boolean;
-    export let normal: boolean;
+    let async: boolean;
+    let normal: boolean;
 }
 declare function baz(): void;
 declare namespace baz {
