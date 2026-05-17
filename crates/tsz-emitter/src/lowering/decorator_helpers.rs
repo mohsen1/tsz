@@ -46,4 +46,23 @@ impl<'a> LoweringPass<'a> {
             helpers.set_function_name = true;
         }
     }
+
+    pub(super) fn is_tc39_decorated_anonymous_class_expression(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return false;
+        }
+        let Some(class_data) = self.arena.get_class(node) else {
+            return false;
+        };
+        let target_supports_native_decorators = self.ctx.options.target
+            == tsz_common::ScriptTarget::ESNext
+            && self.ctx.options.use_define_for_class_fields;
+        class_data.name.is_none()
+            && !self.ctx.options.legacy_decorators
+            && !target_supports_native_decorators
+            && self.class_has_decorators(class_data)
+    }
 }

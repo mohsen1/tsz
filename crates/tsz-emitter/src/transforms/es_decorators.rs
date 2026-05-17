@@ -30,6 +30,9 @@ pub struct TC39DecoratorEmitter<'a> {
     expression_mode: bool,
     /// Function name for class expression named evaluation (__setFunctionName).
     function_name: Option<String>,
+    /// When true, `function_name` is emitted as a runtime expression instead of
+    /// a string literal.
+    function_name_is_expression: bool,
     /// Runtime temp used for anonymous decorated class expressions.
     anonymous_class_name: Option<String>,
     /// Function body text rendered by the main emitter before this transform
@@ -51,6 +54,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             tslib_import_binding: "tslib_1".to_string(),
             expression_mode: false,
             function_name: None,
+            function_name_is_expression: false,
             anonymous_class_name: None,
             function_body_texts: FxHashMap::default(),
             use_define_for_class_fields: false,
@@ -85,6 +89,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
     /// Used for `__setFunctionName(_classThis, name)` in ES2022 mode.
     pub fn set_function_name(&mut self, name: String) {
         self.function_name = Some(name);
+        self.function_name_is_expression = false;
+    }
+
+    pub fn set_function_name_expression(&mut self, expression: String) {
+        self.function_name = Some(expression);
+        self.function_name_is_expression = true;
     }
 
     pub fn set_anonymous_class_name(&mut self, name: String) {
@@ -105,6 +115,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
             format!("{}.{name}", self.tslib_import_binding)
         } else {
             name.to_string()
+        }
+    }
+
+    fn function_name_arg(&self, fallback: &str) -> String {
+        let name = self.function_name.as_deref().unwrap_or(fallback);
+        if self.function_name_is_expression {
+            name.to_string()
+        } else {
+            format!("\"{name}\"")
         }
     }
 
@@ -377,10 +396,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 // bare `var C = class { static { _classThis = this; } ... }`
                 // with no `__setFunctionName` static block).
                 if self.expression_mode && class_name_was_empty {
-                    let fn_name = self.function_name.clone().unwrap_or_default();
+                    let fn_name = self.function_name_arg("");
                     let set_fn = self.helper("__setFunctionName");
                     out.push_str(&format!(
-                        "{i2}static {{ {set_fn}({class_this_var}, \"{fn_name}\"); }}\n"
+                        "{i2}static {{ {set_fn}({class_this_var}, {fn_name}); }}\n"
                     ));
                 } else if !self.expression_mode
                     && !class_name.is_empty()
@@ -394,14 +413,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
             } else if self.expression_mode && self.function_name.is_some() {
                 // Member-only decorators on class expression with a context name:
                 // emit __setFunctionName(this, "name") in a static block
-                let fn_name = self
-                    .function_name
-                    .as_ref()
-                    .expect("guarded by function_name.is_some()");
+                let fn_name = self.function_name_arg("");
                 let set_fn = self.helper("__setFunctionName");
-                out.push_str(&format!(
-                    "{i2}static {{ {set_fn}(this, \"{fn_name}\"); }}\n"
-                ));
+                out.push_str(&format!("{i2}static {{ {set_fn}(this, {fn_name}); }}\n"));
             }
             for info in &class_decorator_static_private_methods {
                 out.push_str(&format!(
@@ -511,12 +525,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
             // __setFunctionName
             let set_fn_name = self.helper("__setFunctionName");
             let set_function_name = if self.expression_mode && class_name_was_empty {
-                self.function_name.as_deref().unwrap_or(&class_name)
+                self.function_name_arg(&class_name)
             } else {
-                &class_name
+                format!("\"{class_name}\"")
             };
             out.push_str(&format!(
-                "{i1}{set_fn_name}({class_this_var}, \"{set_function_name}\");\n"
+                "{i1}{set_fn_name}({class_this_var}, {set_function_name});\n"
             ));
 
             // Decorator application as separate IIFE

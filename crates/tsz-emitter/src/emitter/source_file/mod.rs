@@ -7,6 +7,8 @@ mod top_level_using;
 mod top_level_using_decorated;
 
 #[cfg(test)]
+mod class_expression_decorator_tests;
+#[cfg(test)]
 mod decorator_metadata_tests;
 
 #[cfg(test)]
