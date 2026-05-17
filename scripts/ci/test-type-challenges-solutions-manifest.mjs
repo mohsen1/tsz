@@ -57,7 +57,8 @@ withTempDir((dir) => {
     title: "Beta Challenge",
     level: "medium",
     fence: "typescript",
-    declaration: "interface Beta { value: number }",
+    declaration: `interface Beta { value: number }
+declare function beta(value: Beta): void;`,
   });
 
   const script = `
@@ -82,10 +83,15 @@ tsz_write_type_challenges_solutions_config ${shellQuote(sourceDir)} ${shellQuote
   assert.equal(manifest.expectedGenerated, 2);
   assert.equal(manifest.generated, 2);
   assert.deepEqual(
-    manifest.entries.map((entry) => [entry.output, entry.source, entry.challenge.id]),
+    manifest.entries.map((entry) => [
+      entry.output,
+      entry.source,
+      entry.challenge.id,
+      entry.declarations,
+    ]),
     [
-      ["solutions/alpha.ts", "en/alpha.md", "1"],
-      ["solutions/beta.ts", "en/beta.md", "2"],
+      ["solutions/alpha.ts", "en/alpha.md", "1", ["Alpha"]],
+      ["solutions/beta.ts", "en/beta.md", "2", ["Beta", "beta"]],
     ],
   );
 

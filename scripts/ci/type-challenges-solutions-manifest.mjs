@@ -33,6 +33,24 @@ if (header !== "output\tsource\tid\tlevel\ttitle") {
   process.exit(1);
 }
 
+function readDeclarationNames(outputPath) {
+  const text = fs.readFileSync(outputPath, "utf8");
+  const names = [];
+  const seen = new Set();
+  const declarationPattern =
+    /^\s*(?:export\s+)?(?:declare\s+)?(?:type|interface|namespace|class|enum)\s+([A-Za-z_$][A-Za-z0-9_$]*)|^\s*(?:export\s+)?declare\s+(?:function|const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)/gm;
+
+  for (const match of text.matchAll(declarationPattern)) {
+    const name = match[1] ?? match[2];
+    if (!seen.has(name)) {
+      seen.add(name);
+      names.push(name);
+    }
+  }
+
+  return names;
+}
+
 const entries = lines
   .filter((line) => line.length > 0)
   .map((line, index) => {
@@ -50,6 +68,12 @@ const entries = lines
       process.exit(1);
     }
 
+    const declarations = readDeclarationNames(outputPath);
+    if (declarations.length === 0) {
+      console.error(`error: manifest output has no declarations: ${output}`);
+      process.exit(1);
+    }
+
     return {
       output,
       source,
@@ -58,6 +82,7 @@ const entries = lines
         level,
         title,
       },
+      declarations,
     };
   });
 
