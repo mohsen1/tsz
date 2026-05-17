@@ -1454,3 +1454,202 @@ const sc: StringContainer = {
         "Non-F-bounded: 'items' is an inherited property and must not trigger TS2353; got: {ts2353:?}"
     );
 }
+
+// --- Recursive conditional schema types (regression: excess property suppression) ---
+
+/// A recursive conditional type that IS a conditional at the top level (not wrapped in an
+/// intersection). When instantiated with a concrete type argument, its check/extends condition
+/// is concrete even though the false branch contains a mapped type iteration variable `P`.
+/// The excess property check must fire for unknown keys.
+#[test]
+fn pure_conditional_recursive_schema_reports_excess_property() {
+    let source = r#"
+type Example<T> = { ex?: T | null };
+type Schema<T> = (T extends boolean
+  ? { type: 'boolean' }
+  : { props: { [P in keyof T]: Schema<T[P]> } }) & Example<T>;
+
+type Request = { l1: { l2: boolean } };
+
+export const obj: Schema<Request> = {
+  props: {
+    l1: {
+      props: {
+        l2: { type: 'boolean' },
+        invalid: false,
+      },
+    },
+  },
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected TS2353 for 'invalid' in Schema<Request> (intersection + conditional), got: {diags:?}"
+    );
+    assert!(
+        ts2353[0].1.contains("invalid"),
+        "Expected TS2353 to mention 'invalid', got: {ts2353:?}"
+    );
+}
+
+/// Same shape as above but the recursive conditional IS the top-level type body (not wrapped in
+/// an outer intersection). The evaluator may keep it as a `Conditional` node rather than
+/// collapsing it; the guard must not treat a concrete-condition conditional as unresolved.
+#[test]
+fn top_level_conditional_recursive_schema_reports_excess_property() {
+    let source = r#"
+type Example<T> = { ex?: T | null };
+type Schema<T> = (T extends boolean
+  ? { type: 'boolean' } & Example<T>
+  : { props: { [P in keyof T]: Schema<T[P]> } } & Example<T>);
+
+type Request = { l1: { l2: boolean } };
+
+export const obj: Schema<Request> = {
+  props: {
+    l1: {
+      props: {
+        l2: { type: 'boolean' },
+        invalid: false,
+      },
+    },
+  },
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected TS2353 for 'invalid' in top-level-conditional Schema<Request>, got: {diags:?}"
+    );
+    assert!(
+        ts2353[0].1.contains("invalid"),
+        "Expected TS2353 to mention 'invalid', got: {ts2353:?}"
+    );
+}
+
+/// Renamed type parameters (U / K instead of T / P) prove the fix is structural,
+/// not tied to any specific identifier.
+#[test]
+fn renamed_type_params_conditional_recursive_schema_reports_excess_property() {
+    let source = r#"
+type Opt<U> = { ex?: U | null };
+type Tree<U> = (U extends boolean
+  ? { kind: 'leaf' } & Opt<U>
+  : { children: { [K in keyof U]: Tree<U[K]> } } & Opt<U>);
+
+type Node = { left: { right: boolean } };
+
+export const obj: Tree<Node> = {
+  children: {
+    left: {
+      children: {
+        right: { kind: 'leaf' },
+        badProp: 42,
+      },
+    },
+  },
+};
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected TS2353 for 'badProp' in Tree<Node> (renamed params), got: {diags:?}"
+    );
+    assert!(
+        ts2353[0].1.contains("badProp"),
+        "Expected TS2353 to mention 'badProp', got: {ts2353:?}"
+    );
+}
+
+/// Simple recursive schema (FALSE BRANCH has a mapped type with Schema recursion).
+/// The excess property is one level inside `props`.
+#[test]
+fn shallow_recursive_schema_excess_property() {
+    let source = r#"
+type Schema<T> = T extends boolean ? { type: 'boolean' } : { props: { [P in keyof T]: Schema<T[P]> } };
+type Req = { a: boolean };
+const x: Schema<Req> = { props: { a: { type: 'boolean' }, extra: 1 } };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected TS2353 for 'extra' in Schema<Req>.props, got: {diags:?}"
+    );
+    assert!(
+        ts2353[0].1.contains("extra"),
+        "Expected TS2353 to mention 'extra', got: {ts2353:?}"
+    );
+}
+
+/// Simple non-recursive pure conditional type — establishes the baseline that
+/// a concrete conditional (non-Application target) correctly reports excess.
+#[test]
+fn simple_concrete_conditional_reports_excess_property() {
+    let source = r#"
+type S<T> = T extends string ? { a: number } : { b: boolean };
+const x: S<number> = { b: true, extra: 1 };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected TS2353 for 'extra' in S<number>, got: {diags:?}"
+    );
+    assert!(
+        ts2353[0].1.contains("extra"),
+        "Expected TS2353 to mention 'extra', got: {ts2353:?}"
+    );
+}
+
+/// Same as above but nested one level to isolate the nested-object path.
+#[test]
+fn nested_concrete_conditional_reports_excess_property() {
+    let source = r#"
+type Inner<T> = T extends string ? { a: number } : { b: boolean };
+type Outer = { val: Inner<number> };
+const x: Outer = { val: { b: true, extra: 1 } };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected TS2353 for 'extra' in nested Inner<number>, got: {diags:?}"
+    );
+    assert!(
+        ts2353[0].1.contains("extra"),
+        "Expected TS2353 to mention 'extra', got: {ts2353:?}"
+    );
+}
+
+/// When the conditional type IS still generic (T is a free type parameter),
+/// the guard must continue to suppress false-positive excess-property errors.
+#[test]
+fn generic_conditional_recursive_schema_allows_any_shape() {
+    let source = r#"
+type Example<T> = { ex?: T | null };
+type Schema<T> = (T extends boolean
+  ? { type: 'boolean' } & Example<T>
+  : { props: { [P in keyof T]: Schema<T[P]> } } & Example<T>);
+
+function check<T>(v: Schema<T>): void {}
+
+check({ props: { l1: { props: { l2: { type: 'boolean' } } } } });
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert!(
+        ts2353.is_empty(),
+        "Expected no TS2353 for Schema<T> with generic T (excess check should be suppressed), got: {ts2353:?}"
+    );
+}

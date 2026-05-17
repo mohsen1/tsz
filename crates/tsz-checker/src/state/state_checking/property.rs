@@ -261,7 +261,27 @@ impl<'a> CheckerState<'a> {
 
         let const_assertion_object_literal = self.const_assertion_object_literal_expression(idx);
         let object_literal_idx = const_assertion_object_literal.unwrap_or(idx);
-        let evaluated_target = self.evaluate_type_with_env(target);
+        let raw_evaluated = self.evaluate_type_with_env(target);
+        // When evaluate_type_with_env returns a conditional whose condition is fully
+        // concrete (no free type parameters in check_type / extends_type), the
+        // evaluator may have bailed due to recursion before simplifying it to the
+        // appropriate branch. Force one more evaluation pass via judge_evaluate so
+        // the downstream type handlers see the concrete branch type (an intersection
+        // or object) rather than the raw conditional.
+        let evaluated_target =
+            if crate::query_boundaries::common::conditional_type_has_concrete_condition(
+                self.ctx.types,
+                raw_evaluated,
+            ) {
+                let branch = self.judge_evaluate(raw_evaluated);
+                if branch != raw_evaluated {
+                    branch
+                } else {
+                    raw_evaluated
+                }
+            } else {
+                raw_evaluated
+            };
 
         if crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
             self.ctx.types,
@@ -743,7 +763,10 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.contextual_type_is_unresolved_for_argument_refresh(target)
-            || self.contextual_type_is_unresolved_for_argument_refresh(evaluated_target)
+            || crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
+                self.ctx.types,
+                evaluated_target,
+            )
         {
             return;
         }

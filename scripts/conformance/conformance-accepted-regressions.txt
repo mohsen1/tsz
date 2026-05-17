@@ -14,7 +14,6 @@ TypeScript/tests/cases/compiler/declarationEmitDestructuringObjectLiteralPattern
 TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
-TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
 TypeScript/tests/cases/compiler/excessivelyLargeTupleSpread.ts
 TypeScript/tests/cases/compiler/inferenceFromParameterlessLambda.ts
 TypeScript/tests/cases/compiler/instantiationExpressionErrorNoCrash.ts

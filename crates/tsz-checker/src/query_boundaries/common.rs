@@ -306,6 +306,10 @@ pub(crate) fn is_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_mapped_type(db, type_id)
 }
 
+pub(crate) use super::key_constraints::{
+    conditional_type_has_concrete_condition, type_has_free_type_parameters_for_key_space,
+};
+
 /// Check if a type is a generic application type with type parameters in its arguments.
 /// For example, `Options<State, Actions>` where `State` or `Actions` are type parameters.
 pub(crate) fn is_generic_application_with_type_params(
@@ -1205,30 +1209,30 @@ pub(crate) fn get_indexed_access_type(
 }
 
 /// Check if a type is the result of a conditional type with unresolved inference.
-/// This is used to suppress false-positive TS2339 errors when accessing properties
-/// on types that depend on unresolved conditional type inference.
+/// This is used to suppress false-positive TS2339/TS2353 errors when accessing
+/// properties on types that depend on unresolved conditional type inference.
 ///
 /// For example, in `FirstParameter<typeof h>['foo']` where `h` is a generic function,
 /// the conditional type `FirstParameter<T>` may not be resolved yet during inference,
 /// and we should suppress the property-not-found error.
+///
+/// A conditional `check_type extends extends_type ? A : B` is considered unresolved
+/// only when `check_type` or `extends_type` contains free type parameters. If both
+/// are concrete, the conditional is resolvable to a deterministic branch, even if
+/// that branch contains bound mapped-type iteration variables (e.g. `P` in
+/// `{ [P in keyof Request]: Schema<Request[P]> }`). Those are bound within the
+/// mapped type and do not represent unresolved inference.
 pub(crate) fn type_is_conditional_type_result_with_unresolved_inference(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> bool {
-    // If this is directly a conditional type, check if it's unresolved
+    // If this is directly a conditional type, it is unresolved iff the condition
+    // itself (check_type or extends_type) contains free type parameters. When both
+    // are concrete, the conditional evaluates to a specific branch deterministically
+    // and must not suppress excess-property or property-access diagnostics.
     if let Some(conditional) = tsz_solver::type_queries::get_conditional_type(db, type_id) {
-        // Check if the check type contains type parameters (unresolved)
-        if tsz_solver::type_queries::contains_type_parameters_db(db, conditional.check_type)
-            || tsz_solver::type_queries::contains_type_parameters_db(db, conditional.extends_type)
-        {
-            return true;
-        }
-        // Check if either branch contains type parameters
-        if tsz_solver::type_queries::contains_type_parameters_db(db, conditional.true_type)
-            || tsz_solver::type_queries::contains_type_parameters_db(db, conditional.false_type)
-        {
-            return true;
-        }
+        return tsz_solver::type_queries::contains_type_parameters_db(db, conditional.check_type)
+            || tsz_solver::type_queries::contains_type_parameters_db(db, conditional.extends_type);
     }
 
     // Check if this type contains conditional types that are unresolved
