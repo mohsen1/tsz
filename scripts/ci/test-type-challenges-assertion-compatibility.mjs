@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { REQUIRED_COMPATIBILITY_FIELDS } from "../bench/project-rows.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -37,6 +38,15 @@ function readRows(file) {
     .split(/\r?\n/)
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+}
+
+function assertRequiredCompatibilityFields(row) {
+  for (const field of REQUIRED_COMPATIBILITY_FIELDS) {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(row, field),
+      `assertion compatibility row is missing ${field}`,
+    );
+  }
 }
 
 function candidateCounts(generatedAssertions = 1) {
@@ -286,6 +296,7 @@ withTempDir((dir) => {
   });
 
   assert.equal(row.name, "type-challenges-assertion-candidates");
+  assertRequiredCompatibilityFields(row);
   assert.equal(row.state, "gray");
   assert.equal(row.exit_class, "fixture invalid");
   assert.equal(row.first_failure_class, "assertion corpus not tsc-clean");
@@ -412,6 +423,7 @@ withTempDir((dir) => {
     },
   });
 
+  assertRequiredCompatibilityFields(row);
   assert.equal(row.state, "red");
   assert.equal(row.exit_class, "nonzero exit");
   assert.equal(row.diagnostic_status, "tsz rejects tsc-accepted assertion candidates");
@@ -458,6 +470,7 @@ withTempDir((dir) => {
     },
   });
 
+  assertRequiredCompatibilityFields(row);
   assert.equal(row.state, "green");
   assert.equal(row.exit_class, "exit success");
   assert.equal(row.diagnostic_status, "none");
