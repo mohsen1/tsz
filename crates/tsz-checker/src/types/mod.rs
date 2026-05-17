@@ -24,6 +24,7 @@ mod type_node_merged_value_query;
 mod type_node_property_names;
 mod type_node_query_members;
 mod type_node_resolution;
+mod type_node_type_query_helpers;
 pub(crate) mod unique_symbol_arena;
 pub(crate) mod utilities;
 pub(crate) mod window_global_this_annotation;
