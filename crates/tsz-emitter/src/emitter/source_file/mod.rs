@@ -1190,6 +1190,45 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn default_tc39_decorated_private_method_body_uses_js_emitter() {
+        let source = "\
+declare var dec: any;
+export default @dec class {
+    @dec
+    #foo(value: number) {
+        const label: string = String(value);
+        return label;
+    }
+}
+";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2022,
+            import_helpers: true,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("const label = String(value);"),
+            "Default decorated private method body should be rendered through the JS emitter.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("value: number") && !output.contains("label: string"),
+            "Default decorated private method body must not copy TypeScript-only syntax.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn ambient_class_parenthesized_tail_emits_recovered_expression() {
         let source = "declare class foo();\nfunction foo() {}\n";
 
