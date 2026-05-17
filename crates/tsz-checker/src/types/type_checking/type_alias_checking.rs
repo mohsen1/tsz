@@ -1426,8 +1426,12 @@ impl<'a> CheckerState<'a> {
                 if let Some(func_type) = self.ctx.arena.get_function_type(node) {
                     let param_nodes = func_type.parameters.nodes.clone();
                     let return_type = func_type.type_annotation;
-                    let tp_updates =
-                        self.push_missing_name_type_parameters(&func_type.type_parameters);
+                    // Use push_type_parameters (constraint-preserving, two-pass) so that
+                    // inner generic function type parameters like `<K extends keyof T>` have
+                    // their constraints visible during the recursive check_type_node walk.
+                    // push_missing_name_type_parameters would lose constraints and produce
+                    // false-positive TS2536 for valid `<K extends keyof T>() => T[K]`.
+                    let (_, tp_updates) = self.push_type_parameters(&func_type.type_parameters);
                     self.check_rest_parameter_types(&param_nodes);
                     for &param_idx in &param_nodes {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)

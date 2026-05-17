@@ -1581,7 +1581,8 @@ mod function_type_nested_check_tests {
     }
 
     /// A valid indexed access in a function return type with `keyof` constraint
-    /// must not emit any diagnostic.
+    /// must not emit any diagnostic. This covers the OUTER alias type parameter path
+    /// (K is an outer-scope param of the alias itself).
     #[test]
     fn no_ts2536_for_valid_indexed_access_in_function_return() {
         let source = "type Getter<T, K extends keyof T> = () => T[K];";
@@ -1590,6 +1591,46 @@ mod function_type_nested_check_tests {
             diagnostic_count(&diags, 2536),
             0,
             "Expected no TS2536 for valid T[K] (K extends keyof T) in function return type"
+        );
+    }
+
+    /// An INNER generic function type with `K extends keyof T` must not emit TS2536.
+    /// This specifically tests that the constraint-preserving scope push is used:
+    /// with a constraint-dropping push, K would look unconstrained and `T[K]`
+    /// would incorrectly trigger TS2536.
+    #[test]
+    fn no_ts2536_for_inner_generic_function_with_keyof_constraint() {
+        let source = "type F<T> = <K extends keyof T>() => T[K];";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            0,
+            "Expected no TS2536 for inner generic <K extends keyof T>() => T[K]"
+        );
+    }
+
+    /// An INNER generic constructor type with `K extends keyof T` must not emit TS2536.
+    #[test]
+    fn no_ts2536_for_inner_generic_constructor_with_keyof_constraint() {
+        let source = "type C<T> = new <K extends keyof T>() => T[K];";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            0,
+            "Expected no TS2536 for inner generic constructor new <K extends keyof T>() => T[K]"
+        );
+    }
+
+    /// An inner generic function type with a defaulted `K extends keyof T = keyof T`
+    /// must not emit TS2536 for parameter or return type annotations.
+    #[test]
+    fn no_ts2536_for_inner_generic_function_with_defaulted_keyof_constraint() {
+        let source = "type F<T> = <K extends keyof T = keyof T>(x: T[K]) => T[K];";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            0,
+            "Expected no TS2536 for inner generic <K extends keyof T = keyof T>(x: T[K]) => T[K]"
         );
     }
 }
