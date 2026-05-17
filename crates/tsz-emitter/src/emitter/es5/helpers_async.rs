@@ -1368,9 +1368,7 @@ impl<'a> Printer<'a> {
         let use_static_comma = !static_elements.is_empty()
             && !self.ctx.options.use_define_for_class_fields
             && !defer_static_block_only_tail;
-        if use_static_comma {
-            es5_emitter.set_skip_static_members(true);
-        } else if defer_static_block_only_tail {
+        if use_static_comma || defer_static_block_only_tail {
             es5_emitter.set_skip_static_members(true);
         }
 
