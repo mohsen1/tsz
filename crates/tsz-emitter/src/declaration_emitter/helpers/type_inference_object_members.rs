@@ -353,16 +353,18 @@ impl<'a> DeclarationEmitter<'a> {
                 return None;
             }
             let Some(shorthand) = self.arena.get_shorthand_property(member_node) else {
-                continue;
+                return None;
             };
             if shorthand.object_assignment_initializer != NodeIndex::NONE {
-                continue;
+                return None;
             }
             if self
                 .reference_declared_source_type_annotation_text(shorthand.name)
                 .is_some()
             {
                 has_declared_shorthand = true;
+            } else {
+                return None;
             }
         }
 
