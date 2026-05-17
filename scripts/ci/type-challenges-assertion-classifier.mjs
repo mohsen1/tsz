@@ -133,6 +133,26 @@ function validateCandidateManifest(manifest) {
           counts.assertionsMissingSolutionDeclarationReference,
           "assertionsMissingSolutionDeclarationReference",
         );
+  const tscAcceptedReferenced =
+    manifest.fixture === "type-challenges-assertions-tsc-clean"
+      ? requiredCount(
+          counts.tscAcceptedAssertionsReferencingSolutionDeclaration,
+          "tscAcceptedAssertionsReferencingSolutionDeclaration",
+        )
+      : optionalCount(
+          counts.tscAcceptedAssertionsReferencingSolutionDeclaration,
+          "tscAcceptedAssertionsReferencingSolutionDeclaration",
+        );
+  const tscAcceptedMissing =
+    manifest.fixture === "type-challenges-assertions-tsc-clean"
+      ? requiredCount(
+          counts.tscAcceptedAssertionsMissingSolutionDeclarationReference,
+          "tscAcceptedAssertionsMissingSolutionDeclarationReference",
+        )
+      : optionalCount(
+          counts.tscAcceptedAssertionsMissingSolutionDeclarationReference,
+          "tscAcceptedAssertionsMissingSolutionDeclarationReference",
+        );
 
   if (pairedSolutions !== null && pairedSolutions !== manifest.entries.length) {
     fail(
@@ -152,6 +172,15 @@ function validateCandidateManifest(manifest) {
   if (referenced !== null && missing !== null && referenced + missing !== manifest.entries.length) {
     fail(
       "manifest declaration-reference counts do not account for every assertion candidate",
+    );
+  }
+  if (
+    tscAcceptedReferenced !== null &&
+    tscAcceptedMissing !== null &&
+    tscAcceptedReferenced + tscAcceptedMissing !== manifest.entries.length
+  ) {
+    fail(
+      "manifest tsc-accepted declaration-reference counts do not account for every assertion candidate",
     );
   }
 

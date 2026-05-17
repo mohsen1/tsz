@@ -51,6 +51,52 @@ function normalizeManifestPath(value, label) {
   return normalized;
 }
 
+function validateEvidencePath(value, label) {
+  if (typeof value !== "string" || value.trim() === "") {
+    fail(`${label} must be a non-empty relative path`);
+  }
+  const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
+  if (
+    path.isAbsolute(value) ||
+    normalized === "" ||
+    normalized === "." ||
+    normalized.split("/").includes("..")
+  ) {
+    fail(`${label} must be a relative source path: ${value}`);
+  }
+}
+
+function validateSelectedEntryEvidence(entry, index) {
+  validateEvidencePath(entry?.solution?.output, `selected entries[${index}].solution.output`);
+  validateEvidencePath(entry?.solution?.source, `selected entries[${index}].solution.source`);
+  validateEvidencePath(entry?.testCase?.output, `selected entries[${index}].testCase.output`);
+  validateEvidencePath(entry?.testCase?.source, `selected entries[${index}].testCase.source`);
+
+  const referencedDeclarations = entry?.assertion?.referencedSolutionDeclarations;
+  if (!Array.isArray(referencedDeclarations)) {
+    fail(`selected entries[${index}].assertion.referencedSolutionDeclarations must be an array`);
+  }
+  if (
+    referencedDeclarations.some(
+      (name) => typeof name !== "string" || name.trim() === "",
+    )
+  ) {
+    fail(
+      `selected entries[${index}].assertion.referencedSolutionDeclarations must contain only non-empty strings`,
+    );
+  }
+
+  const hasReferencedDeclaration = entry?.assertion?.hasReferencedSolutionDeclaration;
+  if (typeof hasReferencedDeclaration !== "boolean") {
+    fail(`selected entries[${index}].assertion.hasReferencedSolutionDeclaration must be a boolean`);
+  }
+  if (hasReferencedDeclaration !== (referencedDeclarations.length > 0)) {
+    fail(
+      `selected entries[${index}].assertion declaration-reference metadata is inconsistent`,
+    );
+  }
+}
+
 function validateInputs(candidateManifest, classification) {
   if (candidateManifest?.fixture !== "type-challenges-assertion-candidates") {
     fail(`unexpected assertion candidate manifest fixture: ${candidateManifest?.fixture || "<missing>"}`);
@@ -219,6 +265,13 @@ if (tsc.status === "pass" || tsc.status === "fail") {
 }
 
 const selectedEntries = originalEntries.filter((entry) => tscAcceptedFiles.has(entry.output));
+selectedEntries.forEach(validateSelectedEntryEvidence);
+const selectedEntriesReferencingSolutionDeclaration = selectedEntries.filter(
+  (entry) => entry.assertion?.hasReferencedSolutionDeclaration === true,
+);
+const selectedEntriesMissingSolutionDeclarationReference = selectedEntries.filter(
+  (entry) => entry.assertion?.hasReferencedSolutionDeclaration !== true,
+);
 
 fs.rmSync(outputDir, { recursive: true, force: true });
 fs.mkdirSync(path.join(outputDir, "assertions"), { recursive: true });
@@ -259,6 +312,10 @@ const manifest = {
   counts: {
     totalCandidates: originalEntries.length,
     tscAcceptedAssertions: selectedEntries.length,
+    tscAcceptedAssertionsReferencingSolutionDeclaration:
+      selectedEntriesReferencingSolutionDeclaration.length,
+    tscAcceptedAssertionsMissingSolutionDeclarationReference:
+      selectedEntriesMissingSolutionDeclarationReference.length,
     tscRejectedAssertions: Array.isArray(tscCandidateDiagnostics.filesWithDiagnostics)
       ? tscRejectedFileList.length
       : null,

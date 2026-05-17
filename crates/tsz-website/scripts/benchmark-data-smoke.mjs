@@ -99,6 +99,8 @@ await fs.writeFile(artifact, `${JSON.stringify({
           tsc_rejected_tsz_accepted: 2,
           tsc_clean_subset: {
             generated_assertions: 10,
+            assertions_referencing_solution_declaration: 9,
+            assertions_missing_solution_declaration_reference: 1,
             rejected_from_full_corpus: 68,
             tsc_status: "pass",
             tsz_status: "fail",
