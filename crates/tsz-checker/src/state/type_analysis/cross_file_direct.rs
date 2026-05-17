@@ -60,12 +60,12 @@ fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
     DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS.contains(&name)
 }
 
-pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
-    let basename = std::path::Path::new(file_name)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(file_name);
+fn file_basename(file_name: &str) -> &str {
+    file_name.rsplit(['/', '\\']).next().unwrap_or(file_name)
+}
 
+pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
+    let basename = file_basename(file_name);
     if basename.starts_with("lib.") && basename.ends_with(".d.ts") {
         return true;
     }
@@ -98,10 +98,7 @@ fn is_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
 }
 
 fn is_dom_like_builtin_lib_file_name(file_name: &str) -> bool {
-    let basename = std::path::Path::new(file_name)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(file_name);
+    let basename = file_basename(file_name);
     let stem = basename
         .strip_suffix(".generated.d.ts")
         .or_else(|| basename.strip_suffix(".d.ts"))
@@ -152,13 +149,17 @@ pub(crate) fn classify_declaration_file_for_cache(
     if !is_declaration_file {
         return DeclarationFileCacheClass::UserSource;
     }
-    if is_dom_like_builtin_lib_file_name(file_name)
-        || is_external_package_declaration_file_name(file_name)
-    {
-        DeclarationFileCacheClass::DomOrExternalPackage
-    } else {
-        DeclarationFileCacheClass::NonDomBuiltinLib
+    if is_builtin_lib_file_name(file_name) {
+        return if is_dom_like_builtin_lib_file_name(file_name) {
+            DeclarationFileCacheClass::DomOrExternalPackage
+        } else {
+            DeclarationFileCacheClass::NonDomBuiltinLib
+        };
     }
+    if is_external_package_declaration_file_name(file_name) {
+        return DeclarationFileCacheClass::DomOrExternalPackage;
+    }
+    DeclarationFileCacheClass::NonDomBuiltinLib
 }
 
 fn is_direct_lowering_declaration_arena(arena: &NodeArena) -> bool {
