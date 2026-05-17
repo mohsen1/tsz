@@ -1739,6 +1739,94 @@ declare const j: {
 }
 
 #[test]
+fn test_js_typedef_before_export_equals_function_declaration_stays_local() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | number} Value */
+/**
+ * @param {Value} value
+ * @returns {Value}
+ */
+function make(value) {
+    return value;
+}
+module.exports = make;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = make;")
+        .expect("Expected CommonJS export assignment");
+    let comment_pos = output
+        .find("/** @typedef {string | number} Value */")
+        .expect("Expected source typedef comment before function");
+    let function_pos = output
+        .find("declare function make(value: Value): Value;")
+        .expect("Expected function declaration to use the typedef alias");
+    let alias_pos = output
+        .find("type Value = string | number;")
+        .expect("Expected local typedef alias");
+
+    assert!(
+        comment_pos < export_pos && export_pos < function_pos && function_pos < alias_pos,
+        "Expected commented export= function declaration and local alias after it: {output}"
+    );
+    assert!(
+        !output.contains("export type Value"),
+        "CommonJS export= typedef alias should stay local: {output}"
+    );
+}
+
+#[test]
+fn test_js_typedef_before_export_equals_class_declaration_stays_local() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {string | number} Whatever
+ */
+class Conn {
+    constructor() {}
+    item = 3;
+    method() {}
+}
+module.exports = Conn;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = Conn;")
+        .expect("Expected CommonJS export assignment");
+    let comment_pos = output
+        .find("/**\n * @typedef {string | number} Whatever\n */")
+        .expect("Expected source typedef comment before class");
+    let class_pos = output
+        .find("declare class Conn")
+        .expect("Expected class declaration");
+    let namespace_pos = output
+        .find("declare namespace Conn")
+        .expect("Expected merged namespace declaration");
+    let alias_pos = output
+        .find("type Whatever = string | number;")
+        .expect("Expected local typedef alias");
+
+    assert!(
+        export_pos < comment_pos
+            && comment_pos < class_pos
+            && class_pos < namespace_pos
+            && namespace_pos < alias_pos,
+        "Expected export=, commented class, namespace, then local alias: {output}"
+    );
+    assert!(
+        output.contains("export { Whatever };"),
+        "Expected namespace to re-export the local typedef alias: {output}"
+    );
+    assert!(
+        !output.contains("export type Whatever"),
+        "CommonJS export= typedef alias should stay local: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_uses_jsdoc_signature_types() {
     let source = r#"
 /**

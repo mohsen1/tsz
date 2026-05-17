@@ -664,15 +664,24 @@ impl<'a> DeclarationEmitter<'a> {
                     .get_export_decl(stmt_node)
                     .and_then(|export| self.arena.get(export.export_clause))
                     .is_some_and(|clause| clause.kind == syntax_kind_ext::VARIABLE_STATEMENT));
-        if !is_variable_like_export {
-            self.emit_leading_jsdoc_type_aliases_for_pos(stmt_node.pos);
-        }
-
-        if kind == syntax_kind_ext::FUNCTION_DECLARATION
-            && let Some(func) = self.arena.get_function(stmt_node)
-            && self.is_js_export_equals_name(func.name)
-        {
-            self.emit_pending_js_export_equals_for_name(func.name);
+        let has_effective_export = self.statement_has_effective_export(stmt_idx);
+        let js_export_equals_declaration_name = match kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                .arena
+                .get_function(stmt_node)
+                .map(|func| func.name)
+                .filter(|&name| self.is_js_export_equals_name(name)),
+            k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                .arena
+                .get_class(stmt_node)
+                .map(|class| class.name)
+                .filter(|&name| self.is_js_export_equals_name(name)),
+            _ => None,
+        };
+        if let Some(name) = js_export_equals_declaration_name {
+            self.emit_pending_js_export_equals_for_name(name);
+        } else if !is_variable_like_export {
+            self.emit_leading_jsdoc_type_aliases_for_pos(stmt_node.pos, has_effective_export);
         }
 
         // Save position before JSDoc comments so we can undo them if the
@@ -718,7 +727,6 @@ impl<'a> DeclarationEmitter<'a> {
         self.queue_source_mapping(stmt_node);
         self.suppress_current_statement_jsdoc_comments = false;
 
-        let has_effective_export = self.statement_has_effective_export(stmt_idx);
         match kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 self.emit_function_declaration(stmt_idx);

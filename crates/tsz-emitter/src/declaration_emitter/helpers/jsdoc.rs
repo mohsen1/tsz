@@ -3040,13 +3040,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(crate) fn emit_leading_jsdoc_type_aliases_for_pos(&mut self, pos: u32) {
+    pub(crate) fn emit_leading_jsdoc_type_aliases_for_pos(&mut self, pos: u32, exported: bool) {
         if !self.source_is_js_file {
             return;
         }
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(pos) {
             if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
-                self.emit_rendered_jsdoc_type_alias(decl, true);
+                self.emit_rendered_jsdoc_type_alias(decl, exported);
             }
         }
     }
