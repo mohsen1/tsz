@@ -146,6 +146,13 @@ fn ts2322_messages(source: &str) -> Vec<String> {
         .collect()
 }
 
+fn ts2820_messages(source: &str) -> Vec<String> {
+    get_all_diagnostics(source)
+        .into_iter()
+        .filter_map(|(code, message)| (code == 2820).then_some(message))
+        .collect()
+}
+
 fn diagnostic_count<T: HasDiagnosticCode>(diagnostics: &[T], code: u32) -> usize {
     diagnostics
         .iter()
@@ -8053,5 +8060,111 @@ let expected: Wrapper<"first" | "second"> = got;
     assert!(
         message.contains("Wrapper<\"first\" | \"second\">"),
         "generic alias target surface should be preserved independent of parameter name, got: {message}"
+    );
+}
+
+#[test]
+fn ts2820_preserves_generic_alias_application_inside_union_target() {
+    let source = r#"
+type Values<T> = T[keyof T];
+type ExtractFields<Options> = Values<{
+  [K in keyof Options]: Options[K] extends object ? keyof Options[K] : never;
+}>;
+type SetType<Options> = {
+  [key: string]: any;
+  target?: ExtractFields<Options>;
+};
+declare function test<OptionsData extends SetType<OptionsData>>(options: OptionsData): void;
+
+test({
+  target: "$test6",
+  data1: { $test1: 111, $test2: null },
+  data2: { $test3: {}, $test4: () => {}, $test5() {} },
+});
+"#;
+    let msgs = ts2820_messages(source);
+    assert_eq!(
+        msgs.len(),
+        1,
+        "expected exactly one TS2820 diagnostic, got: {msgs:#?}"
+    );
+    let msg = &msgs[0];
+    assert!(
+        msg.contains("ExtractFields<"),
+        "ts2820 target should preserve the ExtractFields<...> alias form, got: {msg}"
+    );
+    assert!(
+        msg.contains("Did you mean"),
+        "ts2820 should include a spelling suggestion, got: {msg}"
+    );
+}
+
+#[test]
+fn ts2820_preserves_generic_alias_application_inside_union_target_renamed_param() {
+    // "alphx" is one character off from "alpha" to trigger the spelling suggestion.
+    let source = r#"
+type AllValues<U> = U[keyof U];
+type PickFields<Config> = AllValues<{
+  [K in keyof Config]: Config[K] extends object ? keyof Config[K] : never;
+}>;
+type Schema<Config> = {
+  [key: string]: any;
+  target?: PickFields<Config>;
+};
+declare function run<C extends Schema<C>>(opts: C): void;
+
+run({
+  target: "alphx",
+  group1: { alpha: 1, beta: null },
+  group2: { gamma: {}, delta: () => {} },
+});
+"#;
+    let msgs = ts2820_messages(source);
+    assert_eq!(
+        msgs.len(),
+        1,
+        "expected exactly one TS2820 diagnostic with renamed params, got: {msgs:#?}"
+    );
+    let msg = &msgs[0];
+    assert!(
+        msg.contains("PickFields<"),
+        "ts2820 target should preserve PickFields<...> alias form regardless of type param name, got: {msg}"
+    );
+}
+
+#[test]
+fn ts2820_preserves_application_union_with_null_instead_of_undefined() {
+    let source = r#"
+interface Container<T> { value: T; tag: 1 }
+declare let src: Container<"frist">;
+declare let dst: Container<"first" | "second"> | null;
+dst = src;
+"#;
+    let all = get_all_diagnostics(source);
+    let msg = all
+        .iter()
+        .find_map(|(code, msg)| (*code == 2322 || *code == 2820).then_some(msg))
+        .unwrap_or_else(|| panic!("expected a 2322/2820 diagnostic, got: {all:#?}"));
+    assert!(
+        msg.contains("Container<"),
+        "ts2820/ts2322 should preserve Container<...> alias when target is application | null, got: {msg}"
+    );
+}
+
+#[test]
+fn ts2820_union_of_plain_string_literals_uses_literal_union_form() {
+    let source = r#"
+type Colors = "red" | "green" | "blue";
+declare let c: "bleu";
+let x: Colors = c;
+"#;
+    let all = get_all_diagnostics(source);
+    let msg = all
+        .iter()
+        .find_map(|(code, msg)| (*code == 2322 || *code == 2820).then_some(msg))
+        .unwrap_or_else(|| panic!("expected a type mismatch diagnostic, got none"));
+    assert!(
+        msg.contains('"'),
+        "plain string literal union target should use literal form, got: {msg}"
     );
 }

@@ -1533,12 +1533,32 @@ impl<'a> CheckerState<'a> {
     }
 
     fn ts2820_target_contains_alias_surface(&self, target: TypeId) -> bool {
-        if self.ctx.types.get_display_alias(target).is_some()
-            || self.lookup_type_alias_name_for_display(target).is_some()
-        {
+        self.ts2820_any_in_members(target, &|s, t| {
+            s.ctx.types.get_display_alias(t).is_some()
+                || s.lookup_type_alias_name_for_display(t).is_some()
+        })
+    }
+
+    fn ts2820_target_contains_application_surface(&self, target: TypeId) -> bool {
+        self.ts2820_any_in_members(target, &|s, t| {
+            s.ts2820_is_named_application_surface(t)
+                || s.ctx
+                    .types
+                    .get_display_alias(t)
+                    .is_some_and(|alias| s.ts2820_is_named_application_surface(alias))
+        })
+    }
+
+    /// Walks union/intersection members recursively, returning `true` if `predicate`
+    /// holds for any reachable member (including the root).
+    fn ts2820_any_in_members(
+        &self,
+        target: TypeId,
+        predicate: &dyn Fn(&Self, TypeId) -> bool,
+    ) -> bool {
+        if predicate(self, target) {
             return true;
         }
-
         if let Some(members) =
             crate::query_boundaries::common::union_members(self.ctx.types, target).or_else(|| {
                 crate::query_boundaries::common::intersection_members(self.ctx.types, target)
@@ -1546,21 +1566,9 @@ impl<'a> CheckerState<'a> {
         {
             return members
                 .iter()
-                .any(|&member| self.ts2820_target_contains_alias_surface(member));
+                .any(|&member| self.ts2820_any_in_members(member, predicate));
         }
-
         false
-    }
-
-    fn ts2820_target_contains_application_surface(&self, target: TypeId) -> bool {
-        if self.ts2820_is_named_application_surface(target) {
-            return true;
-        }
-
-        self.ctx
-            .types
-            .get_display_alias(target)
-            .is_some_and(|alias| self.ts2820_is_named_application_surface(alias))
     }
 
     fn ts2820_is_named_application_surface(&self, target: TypeId) -> bool {

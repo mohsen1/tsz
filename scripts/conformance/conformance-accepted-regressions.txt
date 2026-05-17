@@ -29,7 +29,6 @@ TypeScript/tests/cases/compiler/strictOptionalProperties1.ts
 TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts
 TypeScript/tests/cases/compiler/symbolObserverMismatchingPolyfillsWorkTogether.ts
 TypeScript/tests/cases/compiler/temporal.ts
-TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive1.ts
 TypeScript/tests/cases/compiler/unionPropertyOfProtectedAndIntersectionProperty.ts
 TypeScript/tests/cases/compiler/unspecializedConstraints.ts
 TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInGenericClasses.ts
