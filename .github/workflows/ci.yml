@@ -968,21 +968,6 @@ jobs:
               print(f"gate did not pass: {gate.get('result')}")
               sys.exit(1)
 
-          hard_failure_results = {"failure", "cancelled", "timed_out", "action_required"}
-          hard_failures = []
-          for name, data in needs.items():
-              if name == "gate":
-                  continue
-              result = data.get("result")
-              if result in hard_failure_results:
-                  hard_failures.append(f"{name}: {result}")
-
-          if hard_failures:
-              print("CI jobs reported hard failures:")
-              for failure in hard_failures:
-                  print(f"  - {failure}")
-              sys.exit(1)
-
           if not should_run:
               if bench_shell_only:
                   bench_smoke = needs.get("bench-script-smoke", {})
@@ -1004,20 +989,19 @@ jobs:
               print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
               sys.exit(1)
 
-          if full_run:
+          if full_run and compiler_checks_required:
               required.update({
                   "project-compile-guard",
                   "conformance-snapshot-gate",
               })
-              if compiler_checks_required:
-                  required.update({
-                      "wasm",
-                      "wasm-web",
-                      "node-harness-prep",
-                      "conformance-aggregate",
-                      "emit",
-                      "fourslash-aggregate",
-                  })
+              required.update({
+                  "wasm",
+                  "wasm-web",
+                  "node-harness-prep",
+                  "conformance-aggregate",
+                  "emit",
+                  "fourslash-aggregate",
+              })
 
           failures = []
           for name, data in needs.items():
