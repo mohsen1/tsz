@@ -331,17 +331,6 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_js_commonjs_closure_export_assignment(root_initializer, secondary_members);
         }
 
-        // For JS source files, hoist `export default <Identifier>` statements that
-        // reference a top-level local declaration to the very top of the .d.ts.
-        // This mirrors tsc's `transformDeclarations` behaviour for JS inputs.
-        // The original ExportDeclaration statement is suppressed when the main loop
-        // reaches it because `emit_export_declaration` checks
-        // `emitted_js_export_default_names`.
-        if self.source_is_js_file && !self.js_export_default_names.is_empty() {
-            self.emit_jsdoc_default_typedef_aliases_for_hoisted_default_exports(source_file);
-            self.emit_hoisted_js_export_default_statements(source_file);
-        }
-
         if self.source_is_js_file {
             for &stmt_idx in &source_file.statements.nodes {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -624,6 +613,12 @@ impl<'a> DeclarationEmitter<'a> {
             .contains(&stmt_idx)
         {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+        if !self.emitting_js_default_export_declaration
+            && self.js_default_export_declaration_should_defer_until_export(stmt_idx)
+        {
+            self.skip_comments_before_raw(stmt_node.pos);
             return;
         }
 

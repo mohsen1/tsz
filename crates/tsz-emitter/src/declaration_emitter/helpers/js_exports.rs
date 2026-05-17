@@ -155,8 +155,9 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Collect identifiers used in `export default <Identifier>` statements when the
     /// source file is JS *and* the identifier resolves to a top-level local
-    /// declaration. tsc hoists these `export default` lines to the very top of the
-    /// emitted .d.ts (mirroring its `transformDeclarations` behaviour for JS files).
+    /// declaration. tsc emits these default exports at the export statement's
+    /// source position and moves the referenced local declaration after it when
+    /// the local declaration is otherwise unexported.
     pub(crate) fn collect_js_export_default_names(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
@@ -235,6 +236,110 @@ impl<'a> DeclarationEmitter<'a> {
             names.insert(ident.escaped_text.clone());
         }
 
+        names
+    }
+
+    pub(crate) fn js_default_export_declaration_should_defer_until_export(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file
+            || self.js_export_default_names.is_empty()
+            || self.statement_has_effective_export(stmt_idx)
+        {
+            return false;
+        }
+
+        self.js_default_export_declaration_names_for_statement(stmt_idx)
+            .into_iter()
+            .any(|name| self.js_export_default_names.contains(&name))
+    }
+
+    pub(crate) fn emit_js_default_export_deferred_declaration_for_name(&mut self, name: &str) {
+        let Some(root_idx) = self.current_source_file_idx else {
+            return;
+        };
+        let Some(root_node) = self.arena.get(root_idx) else {
+            return;
+        };
+        let Some(source_file) = self.arena.get_source_file(root_node) else {
+            return;
+        };
+        let stmt_idx = source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .find(|&stmt_idx| {
+                self.js_default_export_declaration_names_for_statement(stmt_idx)
+                    .iter()
+                    .any(|declared| declared == name)
+                    && self.js_default_export_declaration_should_defer_until_export(stmt_idx)
+            });
+
+        let Some(stmt_idx) = stmt_idx else {
+            return;
+        };
+
+        let deferred_jsdoc = self
+            .arena
+            .get(stmt_idx)
+            .map(|stmt_node| {
+                (
+                    stmt_node.pos,
+                    self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos),
+                )
+            })
+            .filter(|(_, chain)| !chain.is_empty());
+
+        if let Some((pos, chain)) = deferred_jsdoc
+            && !self.emit_jsdoc_comment_chain_preserving_source_for_pos(pos, &chain)
+        {
+            self.emit_jsdoc_comment_chain(&chain);
+        }
+
+        let previous = self.emitting_js_default_export_declaration;
+        self.emitting_js_default_export_declaration = true;
+        self.emit_statement(stmt_idx);
+        self.emitting_js_default_export_declaration = previous;
+    }
+
+    fn js_default_export_declaration_names_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Vec<String> {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return Vec::new();
+        };
+
+        if let Some(name) = self.extract_declaration_name(stmt_idx) {
+            return vec![name];
+        }
+
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return Vec::new();
+        };
+
+        let mut names = Vec::new();
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                if let Some(name) = self.get_identifier_text(decl.name) {
+                    names.push(name);
+                }
+            }
+        }
         names
     }
 
@@ -3050,59 +3155,6 @@ impl<'a> DeclarationEmitter<'a> {
                 self.js_deferred_namespace_alias_declaration_stmts
                     .insert(stmt_idx);
             }
-        }
-    }
-
-    /// Emit hoisted `export default <Identifier>;` statements at the top of a JS
-    /// declaration file, ahead of the actual declarations. The original
-    /// `EXPORT_DECLARATION` statement (with `is_default_export: true`) is
-    /// suppressed because `emit_export_declaration` also consults
-    /// `emitted_js_export_default_names`.
-    pub(crate) fn emit_hoisted_js_export_default_statements(
-        &mut self,
-        source_file: &tsz_parser::parser::node::SourceFileData,
-    ) {
-        if !self.source_is_js_file {
-            return;
-        }
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
-                continue;
-            }
-            let Some(export) = self.arena.get_export_decl(stmt_node) else {
-                continue;
-            };
-            if !export.is_default_export || export.export_clause.is_none() {
-                continue;
-            }
-            let Some(expr_node) = self.arena.get(export.export_clause) else {
-                continue;
-            };
-            if expr_node.kind != SyntaxKind::Identifier as u16 {
-                continue;
-            }
-            let Some(ident) = self.arena.get_identifier(expr_node) else {
-                continue;
-            };
-            if !self.js_export_default_names.contains(&ident.escaped_text) {
-                continue;
-            }
-            if !self
-                .emitted_js_export_default_names
-                .insert(ident.escaped_text.clone())
-            {
-                continue;
-            }
-            self.write_indent();
-            self.write("export default ");
-            self.write(&ident.escaped_text);
-            self.write(";");
-            self.write_line();
-            self.emitted_scope_marker = true;
-            self.emitted_module_indicator = true;
         }
     }
 

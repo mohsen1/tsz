@@ -6324,10 +6324,11 @@ fn test_export_default_identifier() {
 }
 
 #[test]
-fn test_js_export_default_identifier_is_hoisted() {
-    // For JS source files, tsc hoists `export default <Identifier>` to the very
-    // top of the .d.ts when the identifier resolves to a top-level local
-    // declaration. Repro for jsDeclarationEmitDoesNotRenameImport.
+fn test_js_export_default_identifier_emits_before_local_declaration() {
+    // For JS source files, tsc emits `export default <Identifier>` before the
+    // referenced local declaration when the identifier resolves to a top-level
+    // local declaration. With no earlier public declaration, the default export
+    // is the first output line. Repro for jsDeclarationEmitDoesNotRenameImport.
     let output = emit_js_dts(
         r#"
 function validate() {}
@@ -6338,7 +6339,7 @@ export default validate;
     let trimmed = output.trim();
     assert!(
         trimmed.starts_with("export default validate;"),
-        "Expected `export default validate;` to be hoisted to the top: {trimmed}"
+        "Expected `export default validate;` before the local declaration: {trimmed}"
     );
     let count = trimmed.matches("export default validate;").count();
     assert_eq!(
@@ -6386,8 +6387,8 @@ export class B extends Base2 {}
 }
 
 #[test]
-fn test_js_export_default_class_is_hoisted_above_class_body() {
-    // Same hoisting rule as above, but for class declarations. Uses the
+fn test_js_export_default_class_emits_before_local_declaration() {
+    // Same source-position scheduling rule as above, but for class declarations. Uses the
     // usage-analysis variant so the class isn't pruned from the .d.ts.
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -6399,7 +6400,7 @@ export default Test;
     let trimmed = output.trim();
     assert!(
         trimmed.starts_with("export default Test;"),
-        "Expected `export default Test;` to be hoisted to the top: {trimmed}"
+        "Expected `export default Test;` before the local class declaration: {trimmed}"
     );
     let count = trimmed.matches("export default Test;").count();
     assert_eq!(
@@ -6417,6 +6418,77 @@ export default Test;
 }
 
 #[test]
+fn test_js_default_identifier_preserves_preceding_exported_declarations() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @module A */
+class A {}
+
+export const x = 1;
+/**
+ * Target element
+ * @type {module:A}
+ */
+export let el = null;
+
+export default A;
+"#,
+    );
+
+    let expected = r#"export const x: 1;
+/**
+ * Target element
+ * @type {module:A}
+ */
+export let el: any;
+export default A;
+/** @module A */
+declare class A {
+}
+"#;
+
+    assert_eq!(
+        output, expected,
+        "Expected source-position default export scheduling with deferred local class: {output}"
+    );
+}
+
+#[test]
+fn test_js_default_identifier_keeps_exported_target_in_source_order() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export const A = 1;
+export default A;
+"#,
+    );
+
+    let expected = "export const A: 1;\nexport default A;\n";
+    assert_eq!(
+        output, expected,
+        "Expected exported default target to stay in source order without a duplicate declaration"
+    );
+}
+
+#[test]
+fn test_jsdoc_module_reference_variable_type_falls_back_to_any() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @type {module:pkg.Name} */
+export let pkg = null;
+"#,
+    );
+
+    assert!(
+        output.contains("/** @type {module:pkg.Name} */\nexport let pkg: any;"),
+        "Expected `module:` JSDoc references to emit as any: {output}"
+    );
+    assert!(
+        !output.contains("pkg: null"),
+        "JSDoc @type must take precedence over JS null inference: {output}"
+    );
+}
+
+#[test]
 fn test_js_default_typedef_after_default_identifier_export_uses_export_name() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -6430,7 +6502,7 @@ export default Cls;
     let trimmed = output.trim();
     assert!(
         trimmed.starts_with("export type Cls = string | number;\nexport default Cls;"),
-        "Expected default typedef to reuse the default-exported class name before the hoisted default export: {trimmed}"
+        "Expected default typedef to reuse the default-exported class name before the source-position default export: {trimmed}"
     );
     assert!(
         !trimmed.contains("export type Cls_1 = string | number;"),
