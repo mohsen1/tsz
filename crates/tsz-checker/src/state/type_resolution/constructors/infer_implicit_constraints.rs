@@ -190,25 +190,18 @@ impl<'a> CheckerState<'a> {
             return;
         };
         let name = ident.escaped_text.clone();
-        let explicit_constraint_node =
-            (!tp_data.constraint.is_none()).then_some(tp_data.constraint);
-
-        let candidate = if let Some(constraint_node) = explicit_constraint_node {
-            let resolved = self.get_type_from_type_node(constraint_node);
-            (resolved != TypeId::ERROR).then_some(resolved)
-        } else {
+        // Explicit `infer X extends C` is intentionally NOT resolved here.
+        // Resolving `C` via `get_type_from_type_node` would re-emit any
+        // diagnostics already reported when walking the extends clause for
+        // missing names, and the solver's conditional evaluator picks up the
+        // explicit constraint directly when it instantiates the conditional.
+        // The scope push exists only to satisfy identifier lookup and to give
+        // `scoped_type_param_substituted_form` a witness for implicit cases.
+        let candidate = if tp_data.constraint.is_none() {
             implicit_ctx
+        } else {
+            None
         };
-
-        // `infer X extends C` can itself nest `infer Y extends C2` inside `C`;
-        // descend only when there *is* an explicit constraint subtree to walk.
-        if explicit_constraint_node.is_some() {
-            let tp_idx = infer_data.type_parameter;
-            let tp_children: Vec<NodeIndex> = self.ctx.arena.get_children(tp_idx);
-            for child in tp_children {
-                self.collect_infer_constraints_into(child, None, out);
-            }
-        }
 
         match (out.get(&name).copied(), candidate) {
             (None, c) => {

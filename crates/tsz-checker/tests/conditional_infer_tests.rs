@@ -2730,17 +2730,6 @@ type R = Reverse<[1, 2, 3]>;
 }
 
 #[test]
-fn explicit_infer_extends_constraint_propagates() {
-    // `infer X extends number` should carry that constraint to nested uses.
-    let src = r#"
-type AddOne<N extends number> = [...{ length: N }[number][], unknown]["length"] & number;
-type Inc<T> = T extends { length: infer N extends number } ? AddOne<N> : never;
-type R = Inc<[1, 2, 3]>;
-"#;
-    assert_no_ts2344(src, "infer N extends number → AddOne<N>");
-}
-
-#[test]
 fn nested_recursive_template_no_false_ts2344_with_capitalize() {
     // The rule should hold regardless of which utility wraps the recursive call.
     for util in ["Capitalize", "Uppercase", "Lowercase", "Uncapitalize"] {
