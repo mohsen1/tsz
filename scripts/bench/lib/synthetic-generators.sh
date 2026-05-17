@@ -41,7 +41,7 @@
 generate_synthetic_file() {
     local class_count="$1"
     local output="$2"
-    
+
     cat > "$output" << 'HEADER'
 // Synthetic TypeScript benchmark file
 // Auto-generated for performance testing
@@ -103,7 +103,7 @@ EOF
 generate_complex_file() {
     local func_count="$1"
     local output="$2"
-    
+
     cat > "$output" << 'HEADER'
 // Complex TypeScript with generics, unions, and conditional types
 /// <reference lib="es2015.promise" />
@@ -126,7 +126,7 @@ async function process$i<T extends Record<string, unknown>>(
 ): Promise<Result<T>> {
     const timeout = options?.timeout ?? 1000;
     const retries = options?.retries ?? 3;
-    
+
     for (let attempt = 0; attempt < retries; attempt++) {
         try {
             const result = await Promise.resolve(input);
@@ -307,7 +307,7 @@ HEADER
 generate_union_file() {
     local member_count="$1"
     local output="$2"
-    
+
     cat > "$output" << 'HEADER'
 // Union type stress test - discriminated unions with many members
 
@@ -322,9 +322,9 @@ HEADER
             echo "    | { type: 'event$i'; payload$i: string; timestamp: number }" >> "$output"
         fi
     done
-    
+
     echo "" >> "$output"
-    
+
     # Generate handler function with exhaustive switch
     cat >> "$output" << 'HANDLER_START'
 function handleEvent(event: StressEvent): string {
@@ -334,7 +334,7 @@ HANDLER_START
     for ((i=0; i<member_count; i++)); do
         echo "        case 'event$i': return event.payload$i;" >> "$output"
     done
-    
+
     cat >> "$output" << 'HANDLER_END'
         default:
             throw new Error('unreachable');
@@ -364,7 +364,7 @@ EOF
 generate_recursive_generic_file() {
     local depth="$1"
     local output="$2"
-    
+
     cat > "$output" << 'HEADER'
 // Recursive generic type instantiation stress test
 // Pushes MAX_INSTANTIATION_DEPTH and subtype checking limits
@@ -379,7 +379,7 @@ HEADER
     for ((i=0; i<depth; i++)); do
         echo "type Wrap$i<T> = { layer$i: T };" >> "$output"
     done
-    
+
     # Generate deeply nested instantiation
     echo "" >> "$output"
     echo "// Deep instantiation chain" >> "$output"
@@ -389,13 +389,13 @@ HEADER
         chain="Wrap$i<$chain>"
     done
     echo "type DeepWrapped = $chain;" >> "$output"
-    
+
     # Force evaluation with assignments
     echo "" >> "$output"
     echo "declare const deep: DeepWrapped;" >> "$output"
     echo "declare function extract<T>(x: Wrap0<T>): T;" >> "$output"
     echo "const _test = extract(deep);" >> "$output"
-    
+
     # Add recursive type checks
     echo "" >> "$output"
     echo "// Recursive list operations" >> "$output"
@@ -408,7 +408,7 @@ HEADER
 generate_conditional_distribution_file() {
     local member_count="$1"
     local output="$2"
-    
+
     cat > "$output" << 'HEADER'
 // Conditional type distribution stress test
 // Tests large union distribution in conditional types
@@ -430,13 +430,13 @@ HEADER
             echo "    | 'value$i'" >> "$output"
         fi
     done
-    
+
     # Apply conditional types that distribute over the union
     echo "" >> "$output"
     echo "// Distributive conditional type applications" >> "$output"
     echo "type Distributed1 = ToArray<BigUnion>;" >> "$output"
     echo "type Distributed2 = ExtractString<BigUnion | number>;" >> "$output"
-    
+
     # Chain multiple conditional transformations
     cat >> "$output" << 'EOF'
 
@@ -466,7 +466,7 @@ EOF
 generate_mapped_type_file() {
     local key_count="$1"
     local output="$2"
-    
+
     cat > "$output" << 'HEADER'
 // Mapped type expansion stress test
 // Tests MAX_MAPPED_KEYS limit and mapped type evaluation
@@ -488,7 +488,7 @@ HEADER
         echo "    prop$i: string;" >> "$output"
     done
     echo "}" >> "$output"
-    
+
     # Apply various mapped type transformations
     echo "" >> "$output"
     echo "// Mapped type transformations" >> "$output"
@@ -498,7 +498,7 @@ HEADER
     echo "" >> "$output"
     echo "type BigGetters = Getters<BigObject>;" >> "$output"
     echo "type BigSetters = Setters<BigObject>;" >> "$output"
-    
+
     # Nested mapped type
     cat >> "$output" << 'EOF'
 
@@ -519,7 +519,7 @@ EOF
 generate_template_literal_file() {
     local variant_count="$1"
     local output="$2"
-    
+
     cat > "$output" << 'HEADER'
 // Template literal type expansion stress test
 // Tests Cartesian product explosion prevention
@@ -528,7 +528,7 @@ HEADER
 
     # Generate multiple union types for Cartesian product
     local max_variants=$((variant_count < 50 ? variant_count : 50))
-    
+
     echo "type Colors =" >> "$output"
     for ((i=0; i<max_variants; i++)); do
         if [ $i -eq $((max_variants - 1)) ]; then
@@ -537,7 +537,7 @@ HEADER
             echo "    | 'color$i'" >> "$output"
         fi
     done
-    
+
     echo "" >> "$output"
     echo "type Sizes =" >> "$output"
     for ((i=0; i<max_variants; i++)); do
@@ -547,7 +547,7 @@ HEADER
             echo "    | 'size$i'" >> "$output"
         fi
     done
-    
+
     echo "" >> "$output"
     echo "type Variants =" >> "$output"
     for ((i=0; i<max_variants; i++)); do
@@ -557,7 +557,7 @@ HEADER
             echo "    | 'variant$i'" >> "$output"
         fi
     done
-    
+
     # Template literal combining unions (Cartesian product)
     cat >> "$output" << 'EOF'
 
@@ -584,7 +584,7 @@ EOF
 generate_deep_subtype_file() {
     local depth="$1"
     local output="$2"
-    
+
     cat > "$output" << 'HEADER'
 // Deep subtype checking stress test
 // Tests recursive type comparison and cycle detection
@@ -618,7 +618,7 @@ HEADER
         local prev=$((i - 1))
         echo "class Base$i extends Base$prev { x$i: string = ''; }" >> "$output"
     done
-    
+
     # Generate covariant/contravariant positions
     cat >> "$output" << 'EOF'
 
@@ -642,7 +642,7 @@ EOF
     done
     echo "" >> "$output"
     echo "type DeepFunction = $deepfn;" >> "$output"
-    
+
     # Force subtype checks
     cat >> "$output" << 'EOF'
 
@@ -667,7 +667,7 @@ EOF
 generate_intersection_file() {
     local count="$1"
     local output="$2"
-    
+
     cat > "$output" << 'HEADER'
 // Intersection type stress test
 // Tests intersection normalization and property merging
@@ -683,7 +683,7 @@ HEADER
         echo "}" >> "$output"
         echo "" >> "$output"
     done
-    
+
     # Create large intersections
     local intersection="Part0"
     local max_intersect=$((count < 50 ? count : 50))
@@ -691,12 +691,12 @@ HEADER
         intersection="$intersection & Part$i"
     done
     echo "type BigIntersection = $intersection;" >> "$output"
-    
+
     # Function overload intersection
     cat >> "$output" << 'EOF'
 
 // Function overload intersection
-type OverloadIntersection = 
+type OverloadIntersection =
     ((x: string) => string) &
     ((x: number) => number) &
     ((x: boolean) => boolean);
@@ -721,7 +721,7 @@ EOF
 generate_infer_stress_file() {
     local count="$1"
     local output="$2"
-    
+
     cat > "$output" << 'HEADER'
 // Infer keyword stress test
 // Tests inference variable resolution in conditional types
@@ -735,7 +735,7 @@ type MyReturnType<T> = T extends (...args: any[]) => infer R ? R : never;
 type FirstAndRest<T> = T extends [infer First, ...infer Rest] ? { first: First; rest: Rest } : never;
 
 // Nested infer
-type DeepUnwrap<T> = 
+type DeepUnwrap<T> =
     T extends Promise<infer U> ? DeepUnwrap<U> :
     T extends (infer V)[] ? DeepUnwrap<V>[] :
     T;
@@ -765,14 +765,14 @@ HEADER
         echo "type Return$i = MyReturnType<typeof func$i>;" >> "$output"
         echo "" >> "$output"
     done
-    
+
     # Force evaluation with complex nested inference
     cat >> "$output" << 'EOF'
 
 // Complex nested inference
-type ComplexInfer<T> = T extends { 
-    data: infer D; 
-    nested: { value: infer V }[] 
+type ComplexInfer<T> = T extends {
+    data: infer D;
+    nested: { value: infer V }[]
 } ? { data: D; values: V[] } : never;
 
 interface TestData {
@@ -792,7 +792,7 @@ EOF
 generate_cfa_stress_file() {
     local branch_count="$1"
     local output="$2"
-    
+
     cat > "$output" << 'HEADER'
 // Control flow analysis stress test
 // Tests type narrowing with many branches
@@ -815,7 +815,7 @@ HEADER
             echo "    | { kind: 'type$i'; data$i: string; common: number }" >> "$output"
         fi
     done
-    
+
     # Generate exhaustive switch
     cat >> "$output" << 'EOF'
 
@@ -826,7 +826,7 @@ EOF
     for ((i=0; i<branch_count; i++)); do
         echo "        case 'type$i': return e.data$i;" >> "$output"
     done
-    
+
     cat >> "$output" << 'EOF'
         default:
             throw new Error('unreachable');
@@ -844,7 +844,7 @@ EOF
     done
     echo "    return processEntity(e);" >> "$output"
     echo "}" >> "$output"
-    
+
     # Type guard functions
     echo "" >> "$output"
     for ((i=0; i<branch_count; i+=5)); do
