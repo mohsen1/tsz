@@ -20,7 +20,9 @@ on:
 
 # Do not use workflow-level concurrency here. A queued workflow run would start
 # after the active benchmark finishes and benchmark an old "next" commit. The
-# gate below skips new runs while another Bench run is active instead.
+# gate below skips new non-release runs while another Bench run is active
+# instead. Release-only daily runs are allowed to publish the latest artifact
+# without waiting behind benchmark shards.
 
 permissions:
   contents: write
@@ -55,29 +57,42 @@ jobs:
           set -euo pipefail
           should_run=true
 
-          if [[ "${{ github.event.workflow_run.conclusion }}" != "success" ]]; then
-            echo "CI conclusion was '${{ github.event.workflow_run.conclusion }}'; skipping bench."
-            should_run=false
-          fi
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            if [[ "${{ github.event.workflow_run.conclusion }}" != "success" ]]; then
+              echo "CI conclusion was '${{ github.event.workflow_run.conclusion }}'; skipping bench."
+              should_run=false
+            fi
 
-          if [[ "${{ github.event.workflow_run.event }}" != "push" ]]; then
-            echo "CI event was '${{ github.event.workflow_run.event }}'; benchmarks only run for pushes to main."
-            should_run=false
-          fi
+            if [[ "${{ github.event.workflow_run.event }}" != "push" ]]; then
+              echo "CI event was '${{ github.event.workflow_run.event }}'; benchmarks only run for pushes to main."
+              should_run=false
+            fi
 
-          if [[ "${{ github.event.workflow_run.head_branch }}" != "main" ]]; then
-            echo "CI head branch was '${{ github.event.workflow_run.head_branch }}'; skipping non-main benchmark."
-            should_run=false
+            if [[ "${{ github.event.workflow_run.head_branch }}" != "main" ]]; then
+              echo "CI head branch was '${{ github.event.workflow_run.head_branch }}'; skipping non-main benchmark."
+              should_run=false
+            fi
           fi
 
           target_sha="${{ env.BENCH_TARGET_SHA }}"
-          main_sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
-          if [[ -n "$main_sha" && "$target_sha" != "$main_sha" ]]; then
-            echo "Benchmark target ${target_sha} is stale; current main is ${main_sha}. Skipping obsolete run."
-            should_run=false
+          release_only=false
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            case "${{ github.event.schedule }}" in
+              "0 3 * * *"|"0 5 * * *") release_only=true ;;
+            esac
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.publish_latest_pgo }}" == "true" ]]; then
+            release_only=true
           fi
 
-          if [[ "$should_run" == "true" ]]; then
+          if [[ "$release_only" != "true" ]]; then
+            main_sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
+            if [[ -n "$main_sha" && "$target_sha" != "$main_sha" ]]; then
+              echo "Benchmark target ${target_sha} is stale; current main is ${main_sha}. Skipping obsolete run."
+              should_run=false
+            fi
+          fi
+
+          if [[ "$should_run" == "true" && "$release_only" != "true" ]]; then
             active_runs="$(
               {
                 gh run list --repo "${{ github.repository }}" --workflow bench.yml --branch main --status in_progress --limit 20 \
@@ -100,7 +115,9 @@ jobs:
   bench-prepare:
     name: bench-prepare
     needs: bench-gate
-    if: needs.bench-gate.outputs.should_run == 'true'
+    if: >-
+      needs.bench-gate.outputs.should_run == 'true' &&
+      !(github.event_name == 'schedule' && github.event.schedule == '0 5 * * *')
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
     outputs:
@@ -143,12 +160,273 @@ jobs:
             --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}" \
             .
 
+  publish-latest-pgo:
+    name: publish-latest-pgo
+    needs: [bench-gate, bench-prepare]
+    if: >-
+      always() &&
+      needs.bench-gate.outputs.should_run == 'true' &&
+      ((github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 25
+    env:
+      LATEST_TAG: latest
+      LATEST_TARGET: x86_64-unknown-linux-gnu
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: cloudbuild-artifact
+        name: Download Cloud Build prep artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          wait_seconds=900
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            wait_seconds=360
+          fi
+
+          deadline=$((SECONDS + wait_seconds))
+          while true; do
+            rm -f latest-bench-prep.env bench-prep.env bench-prep.tar
+            if gcloud storage cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
+              latest-bench-prep.env >/dev/null 2>&1; then
+              # shellcheck disable=SC1091
+              source latest-bench-prep.env
+              latest_target_sha="${BENCH_TARGET_SHA:-}"
+              latest_build_date="${BENCH_BUILD_DATE:-}"
+              if [[ -z "${latest_target_sha}" ]]; then
+                echo "Cloud Build manifest did not include BENCH_TARGET_SHA."
+                exit 1
+              fi
+              if [[ "${{ github.event_name }}" == "workflow_dispatch" &&
+                    "${latest_target_sha}" != "${{ env.BENCH_TARGET_SHA }}" ]]; then
+                echo "Cloud Build artifact is for ${latest_target_sha}; waiting for ${{ env.BENCH_TARGET_SHA }}."
+              elif [[ "${{ github.event_name }}" == "schedule" &&
+                      "${latest_build_date}" != "$(date -u +%F)" ]]; then
+                echo "Cloud Build artifact is from ${latest_build_date:-unknown}; waiting for today's build."
+              elif gcloud storage cp \
+                "gs://tsz-ci_cloudbuild/bench-prep/${latest_target_sha}/bench-prep.env" \
+                bench-prep.env >/dev/null 2>&1 && \
+                gcloud storage cp \
+                  "gs://tsz-ci_cloudbuild/bench-prep/${latest_target_sha}/bench-prep.tar" \
+                  bench-prep.tar >/dev/null 2>&1; then
+                # shellcheck disable=SC1091
+                source bench-prep.env
+                if [[ "${BENCH_TARGET_SHA:-}" != "${latest_target_sha}" ]]; then
+                  echo "SHA-scoped Cloud Build manifest is for ${BENCH_TARGET_SHA:-unknown}; expected ${latest_target_sha}."
+                  exit 1
+                fi
+                if [[ "${BENCH_BUILD_DATE:-}" != "${latest_build_date}" ]]; then
+                  echo "SHA-scoped Cloud Build manifest date ${BENCH_BUILD_DATE:-unknown} did not match latest date ${latest_build_date:-unknown}."
+                  exit 1
+                fi
+                tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+                tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
+                echo "target_sha=${latest_target_sha}" >> "$GITHUB_OUTPUT"
+                echo "ready=true" >> "$GITHUB_OUTPUT"
+                exit 0
+              else
+                echo "SHA-scoped Cloud Build artifact for ${latest_target_sha} is not available yet."
+              fi
+            fi
+
+            if (( SECONDS >= deadline )); then
+              echo "No finished Cloud Build PGO artifact is available yet."
+              if [[ "${{ github.event_name }}" == "schedule" ]]; then
+                exit 1
+              fi
+              echo "ready=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            echo "Waiting for Cloud Build PGO artifact..."
+            sleep 30
+          done
+
+      - name: Stage latest PGO release asset
+        if: steps.cloudbuild-artifact.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tar -xf bench-prep.tar
+          test -x .target-bench/dist/tsz
+          test -f .target-bench/dist/.bench-pgo-optimized
+
+          staging="tsz-${LATEST_TAG}-${LATEST_TARGET}"
+          mkdir -p "dist/${staging}"
+          cp .target-bench/dist/tsz "dist/${staging}/"
+          cp README.md LICENSE 2>/dev/null "dist/${staging}/" || true
+          tar -C dist -czf "dist/${staging}.tar.gz" "${staging}"
+          sha256sum "dist/${staging}.tar.gz" | awk '{print $1}' > "dist/${staging}.tar.gz.sha256"
+          (
+            cd dist
+            printf "%s  %s\n" \
+              "$(cat "${staging}.tar.gz.sha256")" \
+              "${staging}.tar.gz" > SHA256SUMS
+          )
+          ls -la dist/
+
+      - name: Publish latest channel release
+        if: steps.cloudbuild-artifact.outputs.ready == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TARGET_SHA: ${{ steps.cloudbuild-artifact.outputs.target_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags --depth=1 origin "${RELEASE_TARGET_SHA}"
+
+          python3 <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          api = "https://api.github.com"
+          repo = os.environ["GITHUB_REPOSITORY"]
+          tag = os.environ["LATEST_TAG"]
+          token = os.environ["GITHUB_TOKEN"]
+
+          def github_json(method, path, body=None, allow_404=False, expect=None):
+              data = None
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {token}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              }
+              if body is not None:
+                  data = json.dumps(body).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(f"{api}{path}", data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      raw = resp.read()
+                      payload = json.loads(raw.decode("utf-8")) if raw else None
+                      if expect is not None and resp.status != expect:
+                          raise RuntimeError(f"{method} {path} returned {resp.status}, expected {expect}")
+                      return resp.status, payload
+              except urllib.error.HTTPError as exc:
+                  if allow_404 and exc.code == 404:
+                      return exc.code, None
+                  detail = exc.read().decode("utf-8", errors="replace")
+                  raise RuntimeError(f"{method} {path} failed with HTTP {exc.code}: {detail}") from exc
+
+          status, release = github_json(
+              "GET",
+              f"/repos/{repo}/releases/tags/{tag}",
+              allow_404=True,
+          )
+          if status == 200:
+              github_json("DELETE", f"/repos/{repo}/releases/{release['id']}", expect=204)
+          PY
+          git tag -f "${LATEST_TAG}" "${RELEASE_TARGET_SHA}"
+          git push origin "refs/tags/${LATEST_TAG}" --force
+
+          python3 <<'PY'
+          import json
+          import mimetypes
+          import os
+          import pathlib
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          api = "https://api.github.com"
+          repo = os.environ["GITHUB_REPOSITORY"]
+          tag = os.environ["LATEST_TAG"]
+          target = os.environ["LATEST_TARGET"]
+          sha = os.environ["RELEASE_TARGET_SHA"]
+          token = os.environ["GITHUB_TOKEN"]
+
+          def github_request(method, url_or_path, body=None, content_type="application/json", expect=None):
+              url = url_or_path if url_or_path.startswith("https://") else f"{api}{url_or_path}"
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {token}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              }
+              data = body
+              if content_type == "application/json":
+                  data = json.dumps(body).encode("utf-8") if body is not None else None
+              if content_type:
+                  headers["Content-Type"] = content_type
+              if data is not None:
+                  headers["Content-Length"] = str(len(data))
+              req = urllib.request.Request(url, data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      raw = resp.read()
+                      payload = json.loads(raw.decode("utf-8")) if raw else None
+                      if expect is not None and resp.status != expect:
+                          raise RuntimeError(f"{method} {url} returned {resp.status}, expected {expect}")
+                      return resp.status, payload
+              except urllib.error.HTTPError as exc:
+                  detail = exc.read().decode("utf-8", errors="replace")
+                  raise RuntimeError(f"{method} {url} failed with HTTP {exc.code}: {detail}") from exc
+
+          _, release = github_request(
+              "POST",
+              f"/repos/{repo}/releases",
+              {
+                  "tag_name": tag,
+                  "target_commitish": sha,
+                  "name": "latest",
+                  "body": f"Daily PGO optimized tsz build for {target}, built from {sha}.",
+                  "prerelease": True,
+                  "make_latest": "false",
+              },
+              expect=201,
+          )
+          upload_url = release["upload_url"].split("{", 1)[0]
+          assets = [
+              pathlib.Path(f"dist/tsz-{tag}-{target}.tar.gz"),
+              pathlib.Path(f"dist/tsz-{tag}-{target}.tar.gz.sha256"),
+              pathlib.Path("dist/SHA256SUMS"),
+          ]
+          for asset in assets:
+              name = asset.name
+              content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+              data = asset.read_bytes()
+              params = urllib.parse.urlencode({"name": name})
+              github_request(
+                  "POST",
+                  f"{upload_url}?{params}",
+                  data,
+                  content_type=content_type,
+                  expect=201,
+              )
+          PY
+
+      - name: Smoke test latest installer
+        if: steps.cloudbuild-artifact.outputs.ready == 'true'
+        shell: bash
+        env:
+          TSZ_REPO_OWNER: ${{ github.repository_owner }}
+          TSZ_REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          set -euo pipefail
+          install_dir="${RUNNER_TEMP}/tsz-latest-install"
+          bash scripts/install.sh --version latest --dir "${install_dir}"
+          "${install_dir}/tsz" --version
+
   bench-prep-artifact:
     name: bench-prep-artifact
     needs: bench-prepare
     if: >-
       always() &&
       needs.bench-prepare.outputs.should_run == 'true' &&
+      !(github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo) &&
+      !(github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') &&
+      !(github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') &&
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled')
     runs-on: [self-hosted, tsz-cloud-run]
