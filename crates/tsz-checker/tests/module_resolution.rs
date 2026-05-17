@@ -1016,3 +1016,177 @@ fn test_fast_resolver_matches_legacy_map_entries() {
         );
     }
 }
+
+// ===========================================================================
+// Arbitrary-extension declaration files (component.d.html.ts, styles.d.css.ts)
+// ===========================================================================
+
+#[test]
+fn test_arbitrary_ext_decl_specifier_html() {
+    assert_eq!(
+        arbitrary_ext_decl_specifier("component.d.html.ts"),
+        Some("component.html".to_string()),
+    );
+}
+
+#[test]
+fn test_arbitrary_ext_decl_specifier_css() {
+    assert_eq!(
+        arbitrary_ext_decl_specifier("styles.d.css.ts"),
+        Some("styles.css".to_string()),
+    );
+}
+
+#[test]
+fn test_arbitrary_ext_decl_specifier_svelte() {
+    assert_eq!(
+        arbitrary_ext_decl_specifier("Button.d.svelte.ts"),
+        Some("Button.svelte".to_string()),
+    );
+}
+
+#[test]
+fn test_arbitrary_ext_decl_specifier_nested_path() {
+    assert_eq!(
+        arbitrary_ext_decl_specifier("src/components/Button.d.svelte.ts"),
+        Some("src/components/Button.svelte".to_string()),
+    );
+}
+
+#[test]
+fn test_arbitrary_ext_decl_specifier_ts_ext_returns_none() {
+    // TS/JS/JSON arbitrary extensions are already handled by build_target_index
+    // skipping them; arbitrary_ext_decl_specifier must NOT claim them.
+    assert_eq!(arbitrary_ext_decl_specifier("foo.d.ts.ts"), None);
+    assert_eq!(arbitrary_ext_decl_specifier("foo.d.js.ts"), None);
+    assert_eq!(arbitrary_ext_decl_specifier("foo.d.json.ts"), None);
+}
+
+#[test]
+fn test_arbitrary_ext_decl_specifier_plain_files_return_none() {
+    assert_eq!(arbitrary_ext_decl_specifier("foo.ts"), None);
+    assert_eq!(arbitrary_ext_decl_specifier("foo.d.ts"), None);
+    assert_eq!(arbitrary_ext_decl_specifier("foo.js"), None);
+    assert_eq!(arbitrary_ext_decl_specifier("styles.css"), None);
+}
+
+#[test]
+fn test_html_decl_registered_under_html_specifier_not_d_html() {
+    // component.d.html.ts must be addressable via ./component.html, NOT
+    // ./component.d.html (which would be the naive strip-one-extension result).
+    let files = vec![
+        "/proj/main.ts".to_string(),
+        "/proj/component.d.html.ts".to_string(),
+    ];
+    let (paths, modules) = build_module_resolution_maps(&files);
+
+    // The user-facing specifier must be present.
+    assert_eq!(
+        paths.get(&(0, "./component.html".to_string())),
+        Some(&1),
+        "./component.html must resolve to component.d.html.ts",
+    );
+    assert!(modules.contains("./component.html"));
+
+    // The naive strip form must NOT be registered.
+    assert!(
+        !paths.contains_key(&(0, "./component.d.html".to_string())),
+        "./component.d.html must not be registered",
+    );
+}
+
+#[test]
+fn test_css_decl_registered_under_css_specifier() {
+    let files = vec![
+        "/proj/app.ts".to_string(),
+        "/proj/styles.d.css.ts".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(paths.get(&(0, "./styles.css".to_string())), Some(&1),);
+    assert!(!paths.contains_key(&(0, "./styles.d.css".to_string())));
+}
+
+#[test]
+fn test_svelte_decl_nested_path() {
+    let files = vec![
+        "/proj/src/app.ts".to_string(),
+        "/proj/src/components/Button.d.svelte.ts".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(
+        paths.get(&(0, "./components/Button.svelte".to_string())),
+        Some(&1),
+    );
+}
+
+#[test]
+fn test_explicit_d_html_ts_form_also_resolves() {
+    // The full file name form (./component.d.html.ts) should also resolve,
+    // consistent with how ./types.d.ts resolves to a .d.ts file.
+    let files = vec![
+        "/proj/main.ts".to_string(),
+        "/proj/component.d.html.ts".to_string(),
+    ];
+    let (paths, _) = build_module_resolution_maps(&files);
+    assert_eq!(
+        paths.get(&(0, "./component.d.html.ts".to_string())),
+        Some(&1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_resolves_html_specifier() {
+    let files = ["/proj/main.ts", "/proj/component.d.html.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/main.ts", "./component.html", &idx),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_resolves_css_specifier() {
+    let files = ["/proj/app.ts", "/proj/styles.d.css.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/app.ts", "./styles.css", &idx),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_resolves_svelte_specifier() {
+    let files = ["/proj/app.ts", "/proj/Button.d.svelte.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/app.ts", "./Button.svelte", &idx),
+        Some(1),
+    );
+}
+
+#[test]
+fn test_fast_resolver_arbitrary_ext_decl_matches_legacy_map() {
+    // Every specifier that build_module_resolution_maps registers for
+    // arbitrary-extension declaration files must also be found by the fast
+    // resolver, preserving the invariant checked by
+    // test_fast_resolver_matches_legacy_map_entries.
+    let files = vec![
+        "/proj/main.ts".to_string(),
+        "/proj/component.d.html.ts".to_string(),
+        "/proj/styles.d.css.ts".to_string(),
+        "/proj/Button.d.svelte.ts".to_string(),
+    ];
+    let (legacy, _) = build_module_resolution_maps(&files);
+    let idx = file_index_from(&files.iter().map(String::as_str).collect::<Vec<_>>());
+
+    for ((src_idx, specifier), &tgt) in legacy.iter() {
+        let got = resolve_specifier_via_file_index(&files[*src_idx], specifier, &idx);
+        assert_eq!(
+            got,
+            Some(tgt),
+            "fast resolver disagreed for src={} spec={}",
+            files[*src_idx],
+            specifier,
+        );
+    }
+}

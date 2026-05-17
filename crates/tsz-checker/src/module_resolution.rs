@@ -67,8 +67,8 @@ fn strip_ts_extension(path: &str) -> &str {
     path
 }
 
-/// Detect `<base>.d.<ext>.ts` files. These are treated specially (see the
-/// `ARBITRARY_EXT_TAILS` documentation).
+/// Detect `<base>.d.<ext>.ts` files where `<ext>` is a TS/JS/JSON extension.
+/// These are treated specially (see the `ARBITRARY_EXT_TAILS` documentation).
 fn is_arbitrary_extension_declaration_file(file_name: &str) -> bool {
     let Some(without_ts) = file_name.strip_suffix(".ts") else {
         return false;
@@ -76,6 +76,32 @@ fn is_arbitrary_extension_declaration_file(file_name: &str) -> bool {
     ARBITRARY_EXT_TAILS
         .iter()
         .any(|tail| without_ts.ends_with(tail))
+}
+
+/// If `rel_path` names a non-TS/JS/JSON arbitrary-extension declaration file
+/// (`<base>.d.<ext>.ts` where `<ext>` is a non-TS/JS/JSON extension such as
+/// `.html`, `.css`, or `.svelte`), return the import specifier the user writes:
+/// `<base>.<ext>` (e.g. `component.html` for `component.d.html.ts`).
+///
+/// Returns `None` for regular TS/JS/JSON extensions already handled by
+/// `is_arbitrary_extension_declaration_file`, and for paths that are not
+/// arbitrary-extension declarations at all.
+fn arbitrary_ext_decl_specifier(rel_path: &str) -> Option<String> {
+    let without_ts = rel_path.strip_suffix(".ts")?;
+    if is_arbitrary_extension_declaration_file(rel_path) {
+        return None;
+    }
+    let d_dot_idx = without_ts.rfind(".d.")?;
+    let base = &without_ts[..d_dot_idx];
+    if base.is_empty() {
+        return None;
+    }
+    // +2: skip the literal ".d" to land on the dot of the arbitrary extension.
+    let dot_ext = &without_ts[d_dot_idx + 2..];
+    if dot_ext.is_empty() || dot_ext.contains('/') {
+        return None;
+    }
+    Some(format!("{base}{dot_ext}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -273,27 +299,39 @@ pub fn build_target_index(file_names: &[String]) -> TargetIndex<'_> {
 ///
 /// The returned string:
 /// - always starts with `./` or `../`,
-/// - has its known TS/JS extension stripped,
+/// - has its known TS/JS extension stripped (or for arbitrary-extension
+///   declaration files like `component.d.html.ts`, uses the user-facing
+///   import specifier `component.html`),
 /// - uses `/` separators.
 fn relative_specifier_for_file(from_dir: &Path, to_file: &Path) -> Option<String> {
-    let (prefix, rel_str) = walk_relative(from_dir, to_file)?;
-    let stem = strip_ts_extension(&rel_str);
-    Some(format!("{prefix}{stem}"))
+    relative_file_specifier(from_dir, to_file).map(|r| r.stem)
 }
 
 /// Both canonical spellings of a relative file specifier: with and without the
 /// known TS/JS extension. Users legitimately write both (`./foo`,
 /// `./foo.js`) and both must resolve to the same target.
+///
+/// For arbitrary-extension declaration files (`component.d.html.ts`), `stem`
+/// holds the user-facing import specifier (`./component.html`) and
+/// `with_extension` holds the full file name form (`./component.d.html.ts`).
 struct RelativeFileSpecifier {
-    /// Always present. `./foo` — canonical form with extension stripped.
+    /// Always present. `./foo` — canonical form with extension stripped, or
+    /// `./component.html` for an arbitrary-extension declaration file.
     stem: String,
-    /// Present only when the file has a recognized extension: `./foo.js`.
+    /// Present when the file has a recognized TS/JS extension (`./foo.js`) or
+    /// is an arbitrary-extension declaration file (`./component.d.html.ts`).
     with_extension: Option<String>,
 }
 
 /// Compute both relative forms in a single walk of the directory path chain.
 fn relative_file_specifier(from_dir: &Path, to_file: &Path) -> Option<RelativeFileSpecifier> {
     let (prefix, rel_str) = walk_relative(from_dir, to_file)?;
+    if let Some(specifier) = arbitrary_ext_decl_specifier(&rel_str) {
+        return Some(RelativeFileSpecifier {
+            stem: format!("{prefix}{specifier}"),
+            with_extension: Some(format!("{prefix}{rel_str}")),
+        });
+    }
     let stripped = strip_ts_extension(&rel_str);
     let stem = format!("{prefix}{stripped}");
     let with_extension = if stripped.len() == rel_str.len() {
@@ -838,6 +876,27 @@ pub fn resolve_specifier_via_file_index(
             buf.push_str(stem);
             buf.push_str("/index");
             buf.push_str(ext);
+            if let Some(&idx) = filename_idx.get(&buf) {
+                return Some(idx);
+            }
+        }
+    }
+
+    // Arbitrary-extension declaration fallback: `./component.html` →
+    // `./component.d.html.ts`. When the specifier ends with a non-TS/JS/JSON
+    // extension, probe the `<base>.d<ext>.ts` declaration file form. This
+    // mirrors the file-probing done by the core module resolver (see
+    // `try_arbitrary_extension_declaration`).
+    if let Some(dot_pos) = stem.rfind('.') {
+        let base_part = &stem[..dot_pos];
+        let dot_ext = &stem[dot_pos..]; // ".html", ".css", etc.
+        // Reject if the dot belongs to a directory component, not the file name.
+        if !dot_ext.contains('/') && !TS_EXTENSIONS.contains(&dot_ext) {
+            buf.clear();
+            buf.push_str(base_part);
+            buf.push_str(".d");
+            buf.push_str(dot_ext);
+            buf.push_str(".ts");
             if let Some(&idx) = filename_idx.get(&buf) {
                 return Some(idx);
             }
