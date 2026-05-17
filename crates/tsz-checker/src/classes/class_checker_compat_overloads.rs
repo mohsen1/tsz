@@ -29,6 +29,7 @@ impl<'a> CheckerState<'a> {
         derived_member_names: &rustc_hash::FxHashSet<String>,
         derived_members: &[(String, TypeId, NodeIndex, u16, bool, bool)],
         substitution: &TypeSubstitution,
+        interface_self_type: Option<TypeId>,
     ) {
         let base_method_overloads: Vec<(String, Vec<TypeId>)>;
         {
@@ -54,10 +55,14 @@ impl<'a> CheckerState<'a> {
                         if !derived_member_names.contains(&name) {
                             continue;
                         }
-                        let base_type = instantiate_type(
+                        let base_type = crate::query_boundaries::common::maybe_substitute_this_type(
                             self.ctx.types,
-                            self.get_type_of_interface_member(base_member_idx),
-                            substitution,
+                            instantiate_type(
+                                self.ctx.types,
+                                self.get_type_of_interface_member(base_member_idx),
+                                substitution,
+                            ),
+                            interface_self_type,
                         );
                         by_name.entry(name).or_default().push(base_type);
                     }
@@ -187,10 +192,19 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::contains_error_type_in_args(self.ctx.types, signature)
         };
 
+        tracing::debug!(
+            derived = derived_name,
+            base = base_name,
+            n_base_overloaded = base_method_overloads.len(),
+            interface_self_type = interface_self_type.map(|t| t.0),
+            "overload coverage check"
+        );
+
         // For overloaded method inheritance, tsc compatibility hinges on the trailing
         // implementation signature.
         'overload_check: for (method_name, base_sigs) in &base_method_overloads {
             let Some(derived_sigs) = derived_method_overloads.get(method_name) else {
+                tracing::debug!(method = method_name, "no derived overloads found");
                 continue;
             };
             if base_sigs.iter().copied().any(signature_contains_error)
@@ -203,6 +217,10 @@ impl<'a> CheckerState<'a> {
             if has_non_specialized_signature(base_sigs)
                 && !has_non_specialized_signature_with_node(derived_sigs)
             {
+                tracing::debug!(
+                    method = method_name,
+                    "base has non-specialized but derived does not -> error"
+                );
                 self.error_at_node(
                     iface_name,
                     &format!(
@@ -232,7 +250,15 @@ impl<'a> CheckerState<'a> {
                     _ => (derived_trailing_sig, base_trailing_sig),
                 };
 
-            if !self.is_assignable_to_no_erase_generics(derived_compare_sig, base_compare_sig)
+            // When the no-erase check fails, fall back to standard assignability
+            // (which fresh-instantiates generic type params). This is needed for
+            // generic overloads like `concat<C>` where the locally-scoped `C` in
+            // the derived and base functions have different TypeIds but are
+            // structurally the same generic parameter.
+            let assignable = self
+                .is_assignable_to_no_erase_generics(derived_compare_sig, base_compare_sig)
+                || self.is_assignable_to(derived_compare_sig, base_compare_sig);
+            if !assignable
                 && !self.should_suppress_assignability_for_parse_recovery(
                     derived_trailing_idx,
                     derived_trailing_idx,

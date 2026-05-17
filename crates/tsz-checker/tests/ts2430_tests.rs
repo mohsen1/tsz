@@ -552,6 +552,85 @@ interface Derived<T> extends Base {
 }
 
 // =========================================================================
+// Generic overloaded method trailing signature: derived return narrows base
+// =========================================================================
+
+#[test]
+fn test_overloaded_generic_method_derived_return_subtype_no_false_ts2430() {
+    // When a base interface has overloaded generic methods, the overload coverage
+    // pass compares the trailing (non-specialized) signatures. The locally-scoped
+    // type param `C` in the derived and base functions gets different TypeIds, so
+    // the no-erase-generics comparison fails. Standard assignability (with fresh
+    // instantiation) must be used as a fallback to accept valid subtype returns.
+    //
+    // Specialized overload: second parameter is a literal type (string), making
+    // it the specialized overload. Non-specialized is the trailing one.
+    let source = r#"
+interface Base<K, V> {
+    concat<C>(collections: { key: string; value: C }): Base<K | string, V | C>;
+    concat<C>(collections: Base<K, C>): Base<K, V | C>;
+}
+interface Derived<K, V> extends Base<K, V> {
+    concat<C>(collections: { key: string; value: C }): Derived<K | string, V | C>;
+    concat<C>(collections: Derived<K, C>): Derived<K, V | C>;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
+    assert!(
+        ts2430.is_empty(),
+        "Should NOT emit TS2430 when derived overloaded generic method's trailing \
+         signature returns a subtype of the base trailing signature return. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_overloaded_non_generic_method_incompatible_return_still_errors() {
+    // Non-generic overloads with a return type mismatch in the trailing
+    // (non-specialized) signature must still produce TS2430. The fallback
+    // `is_assignable_to` call does not affect non-generic signatures, so
+    // genuine incompatibilities are preserved.
+    let source = r#"
+interface Base {
+    concat(x: "literal"): number;
+    concat(x: string): number;
+}
+interface Derived extends Base {
+    concat(x: "literal"): number;
+    concat(x: string): string;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|d| d.0 == 2430),
+        "Should emit TS2430 when non-generic overloaded method trailing signature has \
+         incompatible return type. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_overloaded_generic_method_alternative_names_no_false_ts2430() {
+    // The fix must not be name-dependent: use different type param names
+    // (X, Y, Z instead of K, V, C) to prove the rule is structural.
+    let source = r#"
+interface Base<X, Y> {
+    merge<Z>(src: { key: string; val: Z }): Base<X | string, Y | Z>;
+    merge<Z>(src: Base<X, Z>): Base<X, Y | Z>;
+}
+interface Derived<X, Y> extends Base<X, Y> {
+    merge<Z>(src: { key: string; val: Z }): Derived<X | string, Y | Z>;
+    merge<Z>(src: Derived<X, Z>): Derived<X, Y | Z>;
+}
+"#;
+    let diags = get_diagnostics(source);
+    let ts2430 = diags.iter().filter(|d| d.0 == 2430).collect::<Vec<_>>();
+    assert!(
+        ts2430.is_empty(),
+        "Should NOT emit TS2430 regardless of type parameter names used. Got: {diags:?}"
+    );
+}
+
+// =========================================================================
 // Regression: `this` type substitution in whole-type assignability check
 // =========================================================================
 
