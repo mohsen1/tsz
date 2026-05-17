@@ -593,6 +593,49 @@ mod tests {
     }
 
     #[test]
+    fn es5_class_expression_computed_instance_field_uses_outer_comma_temps() {
+        let source =
+            "let x = \"k\";\nconst C = class { [x] = 1 };\nfunction f(y = class { [x] = 2 }) {}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a, _b;"),
+            "Variable initializer should hoist the computed key temp before the class-result alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var C = (_b = /** @class */ (function () {")
+                && output.contains("this[_a] = 1;")
+                && output.contains("_a = x,\n    _b);"),
+            "Variable initializer class expression should use a comma expression with the computed key after the class IIFE.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("function f(y) {\n    var _a, _b;")
+                && output.contains("if (y === void 0) { y = (_b = /** @class */ (function () {")
+                && output.contains("this[_a] = 2;")
+                && output.contains("_a = x,\n        _b); }"),
+            "Parameter default class expression should hoist temps into the function prologue and avoid the wrapper IIFE.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("(function () {\n        var")
+                && !output.contains("__setFunctionName(_b, \"C\")")
+                && !output.contains("__setFunctionName(_b, \"y\")"),
+            "Computed instance-field class expressions should not use a wrapper IIFE around the class IIFE.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_static_class_expression_schedules_static_blocks_in_comma_initializer() {
         let source = "function foo() {\n    return class {\n        static foo = 1;\n        static {\n            const c = class {\n                static bar = 2;\n                static {\n                    // do\n                }\n            };\n        }\n    };\n}\n";
 

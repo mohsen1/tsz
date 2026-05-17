@@ -171,7 +171,7 @@ impl<'a> IRPrinter<'a> {
         self.write(" = {}));");
     }
 
-    fn emit_es5_class_expression(
+    pub fn emit_es5_class_expression_fragment(
         &mut self,
         name: &str,
         base_class: Option<&IRNode>,
@@ -1298,7 +1298,7 @@ impl<'a> IRPrinter<'a> {
                 self.write("var ");
                 self.write(class_binding_name);
                 self.write(" = ");
-                self.emit_es5_class_expression(
+                self.emit_es5_class_expression_fragment(
                     name,
                     base_class.as_deref(),
                     super_param.as_deref(),
@@ -1357,7 +1357,7 @@ impl<'a> IRPrinter<'a> {
 
                 self.write(name);
                 self.write(" = ");
-                self.emit_es5_class_expression(
+                self.emit_es5_class_expression_fragment(
                     name,
                     base_class.as_deref(),
                     super_param.as_deref(),

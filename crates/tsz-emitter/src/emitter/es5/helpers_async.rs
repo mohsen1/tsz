@@ -196,6 +196,52 @@ impl<'a> Printer<'a> {
         })
     }
 
+    fn es5_class_expression_has_computed_instance_field(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        class_data.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                return false;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                return false;
+            };
+            if self.has_effective_static_modifier_js(&prop.modifiers)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                || self
+                    .arena
+                    .get(prop.name)
+                    .is_some_and(|node| node.kind == SyntaxKind::PrivateIdentifier as u16)
+            {
+                return false;
+            }
+            let Some(name_node) = self.arena.get(prop.name) else {
+                return false;
+            };
+            if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                return false;
+            }
+            let Some(computed) = self.arena.get_computed_property(name_node) else {
+                return false;
+            };
+            let Some(expr_node) = self.arena.get(computed.expression) else {
+                return false;
+            };
+            !matches!(
+                expr_node.kind,
+                k if k == SyntaxKind::StringLiteral as u16
+                    || k == SyntaxKind::NumericLiteral as u16
+                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            )
+        })
+    }
+
     fn static_block_inner_comment_index(&self, member_node: &Node) -> usize {
         let brace_pos = if let Some(text) = self.source_text_for_map() {
             let bytes = text.as_bytes();
@@ -304,6 +350,7 @@ impl<'a> Printer<'a> {
         class_node: NodeIndex,
         class_name: &str,
         class_iife_expr: &str,
+        computed_prop_temp_inits: &[String],
         static_elements: &[Es5StaticClassExpressionElement],
         set_function_name: Option<&str>,
     ) {
@@ -329,6 +376,14 @@ impl<'a> Printer<'a> {
 
         if let Some(name) = set_function_name {
             self.emit_class_expr_set_function_name_comma_item(&temp, name);
+        }
+
+        for init in computed_prop_temp_inits {
+            self.write(",");
+            self.write_line();
+            self.increase_indent();
+            self.write(init);
+            self.decrease_indent();
         }
 
         for element in static_elements {
@@ -1372,7 +1427,39 @@ impl<'a> Printer<'a> {
             es5_emitter.set_skip_static_members(true);
         }
 
-        let (class_name, es5_output) = if class_data.name.is_some() {
+        let has_computed_instance_field =
+            self.es5_class_expression_has_computed_instance_field(class_data);
+        let class_name_for_computed_comma = if has_computed_instance_field {
+            if class_data.name.is_some() {
+                let candidate = emit_utils::identifier_text_or_empty(self.arena, class_data.name);
+                (!candidate.is_empty() && is_valid_identifier_name(&candidate)).then_some(candidate)
+            } else {
+                Some(self.make_unique_name_from_base("class"))
+            }
+        } else {
+            None
+        };
+        let computed_fragment = if let Some(name) = class_name_for_computed_comma.as_deref() {
+            es5_emitter.set_computed_prop_temps_outside_iife(true);
+            let fragment = es5_emitter
+                .emit_class_expression_fragment_with_name(class_node, name)
+                .filter(|fragment| !fragment.computed_prop_temp_inits.is_empty());
+            if fragment.is_none() {
+                es5_emitter.set_computed_prop_temps_outside_iife(false);
+            }
+            fragment
+        } else {
+            None
+        };
+
+        let (class_name, es5_output) = if let Some(fragment) = computed_fragment.as_ref() {
+            (
+                class_name_for_computed_comma
+                    .clone()
+                    .expect("computed class expression name was just resolved"),
+                fragment.expression.clone(),
+            )
+        } else if class_data.name.is_some() {
             let candidate = emit_utils::identifier_text_or_empty(self.arena, class_data.name);
             if candidate.is_empty() || !is_valid_identifier_name(&candidate) {
                 let temp_name = self
@@ -1397,6 +1484,31 @@ impl<'a> Printer<'a> {
         };
         self.sync_es5_class_emitter_state(&mut es5_emitter);
         let es5_mappings = es5_emitter.take_mappings();
+        if let Some(fragment) = computed_fragment.as_ref() {
+            for decl in &fragment.computed_prop_temp_decls {
+                if !self.hoisted_assignment_temps.contains(decl) {
+                    self.hoisted_assignment_temps.push(decl.clone());
+                }
+                self.generated_temp_names.insert(decl.clone());
+            }
+        }
+
+        if let Some(fragment) = computed_fragment.as_ref() {
+            let computed_set_function_name = if use_static_comma {
+                class_expr_set_function_name.as_deref()
+            } else {
+                None
+            };
+            self.emit_es5_static_class_expression_comma(
+                class_node,
+                &class_name,
+                &es5_output,
+                &fragment.computed_prop_temp_inits,
+                &static_elements,
+                computed_set_function_name,
+            );
+            return;
+        }
 
         if use_static_comma
             && let Some(class_iife_expr) =
@@ -1406,6 +1518,7 @@ impl<'a> Printer<'a> {
                 class_node,
                 &class_name,
                 &class_iife_expr,
+                &[],
                 &static_elements,
                 class_expr_set_function_name.as_deref(),
             );
