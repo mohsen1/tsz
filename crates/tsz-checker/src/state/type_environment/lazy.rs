@@ -1053,6 +1053,21 @@ impl<'a> CheckerState<'a> {
                     && resolved != type_id
                 {
                     drop(env);
+                    if let Some(def_info) = self.ctx.definition_store.get(def_id)
+                        && matches!(def_info.kind, tsz_solver::def::DefKind::Interface)
+                    {
+                        let name = self.ctx.types.resolve_atom(def_info.name);
+                        drop(def_info);
+                        if self.ctx.actual_lib_def_id_for_bare_name(&name) == Some(def_id)
+                            && let Some(lib_type) = self.resolve_lib_type_by_name(&name)
+                            && lib_type != type_id
+                            && lib_type != resolved
+                            && lib_type != TypeId::ERROR
+                            && lib_type != TypeId::ANY
+                        {
+                            return self.resolve_lazy_type_inner(lib_type, visited);
+                        }
+                    }
                     // Register resolved type → DefId so TypeFormatter can recover
                     // the named display (e.g., "Num" instead of structural expansion).
                     // Only register for interfaces and classes — NOT type aliases.

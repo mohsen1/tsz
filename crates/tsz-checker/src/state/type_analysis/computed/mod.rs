@@ -232,11 +232,11 @@ impl<'a> CheckerState<'a> {
         module_name: &str,
         export_sym_id: SymbolId,
     ) -> TypeId {
-        let symbol_flags_opt = self
+        let symbol_info = self
             .get_cross_file_symbol(export_sym_id)
             .or_else(|| self.get_symbol_globally(export_sym_id))
-            .map(|symbol| symbol.flags);
-        let is_pure_namespace = symbol_flags_opt.is_some_and(|flags| {
+            .map(|symbol| (symbol.flags, symbol.value_declaration));
+        let is_pure_namespace = symbol_info.is_some_and(|(flags, _)| {
             (flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
                 && (flags & (symbol_flags::CLASS | symbol_flags::FUNCTION)) == 0
         });
@@ -247,6 +247,20 @@ impl<'a> CheckerState<'a> {
                 self.imported_namespace_display_module_name(module_name),
             );
             return prop_type;
+        }
+        if let Some((flags, value_decl)) = symbol_info
+            && flags & symbol_flags::CLASS != 0
+            && value_decl.is_some()
+        {
+            let value_type = if self.ctx.arena.get(value_decl).is_some() {
+                self.type_of_value_declaration_for_symbol(export_sym_id, value_decl)
+            } else {
+                self.cross_file_value_declaration_type(export_sym_id, value_decl)
+                    .unwrap_or(TypeId::ERROR)
+            };
+            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                return value_type;
+            }
         }
 
         let should_delegate = self
@@ -266,7 +280,7 @@ impl<'a> CheckerState<'a> {
         } else {
             self.get_type_of_symbol(export_sym_id)
         };
-        if symbol_flags_opt.is_some_and(|flags| {
+        if symbol_info.is_some_and(|(flags, _)| {
             (flags & symbol_flags::ENUM) != 0 && (flags & symbol_flags::ENUM_MEMBER) == 0
         }) {
             prop_type = self.get_enum_namespace_type_for_value(prop_type);

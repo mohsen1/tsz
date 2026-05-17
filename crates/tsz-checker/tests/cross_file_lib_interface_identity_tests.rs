@@ -25,6 +25,13 @@ fn dom_libs() -> &'static Vec<Arc<LibFile>> {
     })
 }
 
+fn compiled_dom_libs() -> &'static Vec<Arc<LibFile>> {
+    static LIBS: OnceLock<Vec<Arc<LibFile>>> = OnceLock::new();
+    LIBS.get_or_init(|| {
+        tsz_checker::test_utils::load_compiled_lib_files(&["lib.es2020.d.ts", "lib.dom.d.ts"])
+    })
+}
+
 fn compile_codes(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
     tsz_checker::test_utils::check_multi_file_with_libs(
         files,
@@ -43,6 +50,48 @@ fn compile_codes(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
     .filter(|d| d.code != 2318)
     .map(|d| d.code)
     .collect()
+}
+
+fn compile_codes_with_compiled_dom_libs(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
+    tsz_checker::test_utils::check_multi_file_with_libs(
+        files,
+        entry,
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            strict: true,
+            strict_null_checks: true,
+            ..CheckerOptions::default()
+        },
+        compiled_dom_libs(),
+    )
+    .into_iter()
+    .filter(|d| d.code != 2318)
+    .map(|d| d.code)
+    .collect()
+}
+
+#[test]
+fn imported_dom_types_from_declaration_file_keep_compiled_lib_heritage() {
+    let exporter = r#"
+declare var doc: Document;
+export default doc;
+export const blogPost: Element;
+export class HTML5Element extends HTMLElement {
+    connectedCallback(): void;
+}
+"#;
+    let consumer = r#"
+import * as mod from "./component.html";
+const n: Node = mod.blogPost;
+window.customElements.define("my-html5-element", mod.HTML5Element);
+document.body.appendChild(mod.blogPost);
+"#;
+
+    let codes = compile_codes_with_compiled_dom_libs(
+        &[("component.d.html.ts", exporter), ("main.ts", consumer)],
+        "main.ts",
+    );
+    assert!(codes.is_empty(), "Diagnostics: {codes:?}");
 }
 
 #[test]

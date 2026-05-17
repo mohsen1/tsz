@@ -832,6 +832,42 @@ fn test_prepare_test_dir_implicit_include_matches_tsc_harness() {
 }
 
 #[test]
+fn test_prepare_test_dir_arbitrary_extension_declarations_are_explicit_roots() {
+    let filenames = vec![
+        (
+            "component.d.html.ts".to_string(),
+            "declare var doc: Document;\nexport default doc;".to_string(),
+        ),
+        (
+            "file.d.ts".to_string(),
+            "export * as mod from \"./component.html\";".to_string(),
+        ),
+        (
+            "main.ts".to_string(),
+            "import { mod } from \"./file.js\";\nmod.default;".to_string(),
+        ),
+    ];
+    let options = HashMap::from([("allowArbitraryExtensions".to_string(), "true".to_string())]);
+
+    let prepared = prepare_test_dir("", &filenames, &options, None, &[], None).unwrap();
+    let tsconfig_path = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_contents = std::fs::read_to_string(tsconfig_path).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
+    let files = parsed["files"]
+        .as_array()
+        .expect("files array for arbitrary-extension declaration fixtures");
+    let file_values: Vec<_> = files.iter().filter_map(|v| v.as_str()).collect();
+
+    assert!(file_values.contains(&"component.d.html.ts"));
+    assert!(file_values.contains(&"file.d.ts"));
+    assert!(file_values.contains(&"main.ts"));
+    assert!(
+        parsed.get("exclude").is_none(),
+        "explicit root-file tests should not exclude authored fixture inputs"
+    );
+}
+
+#[test]
 fn test_prepare_test_dir_ts2883_keeps_node_modules_declarations_resolution_only() {
     let filenames = vec![
         (

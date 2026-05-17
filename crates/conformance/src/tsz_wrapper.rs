@@ -309,6 +309,7 @@ pub fn prepare_test_dir_with_lib_dir(
     // "files" list over discovery-only include globs when the fixture shape
     // can't be represented by the harness defaults:
     // - .mts/.cts/.mjs/.cjs files are not matched by the narrow include globs
+    // - .d.<ext>.ts arbitrary-extension declarations are authored fixture inputs
     // - files under node_modules are intentionally authored fixture inputs
     //
     // tsc's harness passes the authored files directly to the compiler; using an
@@ -326,6 +327,7 @@ pub fn prepare_test_dir_with_lib_dir(
                 || lower.ends_with(".cts")
                 || lower.ends_with(".mjs")
                 || lower.ends_with(".cjs")
+                || is_arbitrary_extension_declaration_input(&lower)
                 || lower.contains("/node_modules/")
                 || lower.starts_with("node_modules/")
         });
@@ -1996,6 +1998,19 @@ fn is_windows_absolute_path(path: &str) -> bool {
         && bytes[0].is_ascii_alphabetic()
         && bytes[1] == b':'
         && (bytes[2] == b'/' || bytes[2] == b'\\')
+}
+
+fn is_arbitrary_extension_declaration_input(path: &str) -> bool {
+    let Some((before_ts, _)) = path.rsplit_once(".ts") else {
+        return false;
+    };
+    let Some((_, ext)) = before_ts.rsplit_once(".d.") else {
+        return false;
+    };
+    !matches!(
+        ext,
+        "ts" | "mts" | "cts" | "js" | "jsx" | "mjs" | "cjs" | "json"
+    )
 }
 
 #[cfg(test)]

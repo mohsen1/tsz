@@ -975,6 +975,21 @@ impl<'a> CheckerState<'a> {
             return Some(enum_obj);
         }
 
+        if flags & symbol_flags::CLASS != 0
+            && flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) == 0
+            && value_decl.is_some()
+        {
+            let value_type = if self.ctx.arena.get(value_decl).is_some() {
+                self.type_of_value_declaration_for_symbol(resolved_member_id, value_decl)
+            } else {
+                self.cross_file_value_declaration_type(resolved_member_id, value_decl)
+                    .unwrap_or(TypeId::ERROR)
+            };
+            if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
+                return Some(value_type);
+            }
+        }
+
         if flags != 0 {
             let is_merged_interface_variable = (flags & symbol_flags::INTERFACE) != 0
                 && (flags & symbol_flags::VARIABLE) != 0

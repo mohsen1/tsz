@@ -1235,7 +1235,12 @@ impl<'a> CheckerState<'a> {
                                         declaring_file_idx,
                                         name,
                                     )
-                                    .unwrap_or_else(|| self.get_type_of_symbol(export_sym_id));
+                                    .unwrap_or_else(|| {
+                                        self.namespace_import_export_property_type(
+                                            module_name,
+                                            export_sym_id,
+                                        )
+                                    });
 
                                 // Rule #44: Apply module augmentations to each exported type
                                 prop_type =
