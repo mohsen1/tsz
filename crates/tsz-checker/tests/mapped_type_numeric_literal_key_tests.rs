@@ -347,6 +347,34 @@ fn tuple_to_object_inline_static_unique_symbol_expected_type_standalone() {
 }
 
 #[test]
+fn tuple_to_object_typeof_static_unique_symbol_tuple_preserves_keys() {
+    assert_no_errors(
+        "TupleToObject<typeof tuple> preserves static unique-symbol tuple elements",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        class Keys {
+          static readonly one: unique symbol;
+          static readonly two: unique symbol;
+        }
+        const tupleSymbol = [Keys.one, Keys.two] as const;
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [Key in T[number]]: Key
+        };
+
+        type Case = Expect<Equal<
+          TupleToObject<typeof tupleSymbol>,
+          { [Keys.one]: typeof Keys.one; [Keys.two]: typeof Keys.two }
+        >>;
+        "#,
+    );
+}
+
+#[test]
 fn tuple_to_object_typeof_tuple_assigns_to_inline_unique_symbol_type() {
     assert_no_errors_with_symbol_lib(
         "TupleToObject<typeof tupleSymbol> assigns to inline unique-symbol computed type",

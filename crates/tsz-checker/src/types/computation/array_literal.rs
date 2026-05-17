@@ -952,6 +952,13 @@ impl<'a> CheckerState<'a> {
             {
                 elem_type = self.ctx.types.this_type();
             }
+            if !self.ctx.in_destructuring_target
+                && self.ctx.in_const_assertion
+                && let Some(unique_symbol_type) =
+                    self.computed_property_expression_unique_symbol_type(elem_idx)
+            {
+                elem_type = unique_symbol_type;
+            }
 
             if !self.ctx.in_destructuring_target
                 && (self.ctx.in_const_assertion || self.ctx.preserve_literal_types)
