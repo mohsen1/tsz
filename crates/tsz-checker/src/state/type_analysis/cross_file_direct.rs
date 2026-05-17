@@ -40,6 +40,8 @@ const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS: &[&str] = &[
     "NumberFormatOptionsSignDisplay",
     "NumberFormatOptionsStyle",
     "NumberFormatOptionsUseGrouping",
+    "NumberFormatPartTypes",
+    "NumberFormatRangePartTypes",
     "Omit",
     "Partial",
     "Pick",
@@ -185,6 +187,8 @@ fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
             | "NumberFormatOptionsSignDisplayRegistry"
             | "NumberFormatOptionsStyleRegistry"
             | "NumberFormatOptionsUseGroupingRegistry"
+            | "NumberFormatPartTypeRegistry"
+            | "NumberFormatRangePartTypeRegistry"
             | "Object"
             | "Promise"
             | "RegExp"
