@@ -93,6 +93,10 @@ if (cleanSubsetManifest) {
   }
   const cleanSubsetCounts = cleanSubsetManifest.counts;
   const acceptedAssertions = cleanSubsetCounts.tscAcceptedAssertions;
+  const acceptedReferencingSolutionDeclaration =
+    cleanSubsetCounts.tscAcceptedAssertionsReferencingSolutionDeclaration;
+  const acceptedMissingSolutionDeclarationReference =
+    cleanSubsetCounts.tscAcceptedAssertionsMissingSolutionDeclarationReference;
   const rejectedAssertions = cleanSubsetCounts.tscRejectedAssertions;
   const totalCandidates = cleanSubsetCounts.totalCandidates;
   if (
@@ -101,6 +105,16 @@ if (cleanSubsetManifest) {
   ) {
     fail(
       `tsc-clean assertion manifest counts.tscAcceptedAssertions (${acceptedAssertions}) does not match entries length (${cleanSubsetEntries.length})`,
+    );
+  }
+  if (
+    Number.isInteger(acceptedReferencingSolutionDeclaration) &&
+    Number.isInteger(acceptedMissingSolutionDeclarationReference) &&
+    acceptedReferencingSolutionDeclaration + acceptedMissingSolutionDeclarationReference !==
+      acceptedAssertions
+  ) {
+    fail(
+      `tsc-clean assertion manifest declaration-reference counts (${acceptedReferencingSolutionDeclaration} + ${acceptedMissingSolutionDeclarationReference}) do not match tscAcceptedAssertions (${acceptedAssertions})`,
     );
   }
   if (
@@ -371,6 +385,10 @@ const row = {
             ? rel(path.join(cleanSubsetDir, "tsconfig.tsz-guard.json"))
             : null,
           generated_assertions: cleanSubsetManifest.counts?.tscAcceptedAssertions ?? null,
+          assertions_referencing_solution_declaration:
+            cleanSubsetManifest.counts?.tscAcceptedAssertionsReferencingSolutionDeclaration ?? null,
+          assertions_missing_solution_declaration_reference:
+            cleanSubsetManifest.counts?.tscAcceptedAssertionsMissingSolutionDeclarationReference ?? null,
           rejected_from_full_corpus: cleanSubsetManifest.counts?.tscRejectedAssertions ?? null,
           tsc_status: cleanSubsetClassification?.compilers?.tsc?.status ?? null,
           tsz_status: cleanSubsetClassification?.compilers?.tsz?.status ?? null,
