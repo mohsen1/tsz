@@ -1674,16 +1674,16 @@ impl<'a> TypeInstantiator<'a> {
                 let new_template = instantiate_type_preserving(
                     self.interner,
                     mapped.template,
-                    &self.substitution,
+                    self.substitution,
                 );
                 let new_name_type = mapped.name_type.map(|t| {
-                    instantiate_type_preserving(self.interner, t, &self.substitution)
+                    instantiate_type_preserving(self.interner, t, self.substitution)
                 });
                 let new_param_constraint = mapped.type_param.constraint.map(|c| {
-                    instantiate_type_preserving(self.interner, c, &self.substitution)
+                    instantiate_type_preserving(self.interner, c, self.substitution)
                 });
                 let new_param_default = mapped.type_param.default.map(|d| {
-                    instantiate_type_preserving(self.interner, d, &self.substitution)
+                    instantiate_type_preserving(self.interner, d, self.substitution)
                 });
 
                 self.exit_shadowing_scope(shadowed_len, saved_visiting);
