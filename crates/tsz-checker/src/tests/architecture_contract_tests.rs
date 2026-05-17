@@ -1835,7 +1835,6 @@ fn test_solver_imports_go_through_query_boundaries() {
         "TypeId",
         "MappedTypeId",
         // Structural shape types (read-only data)
-        "CachedPropertyType",
         "CallSignature",
         "CallableShape",
         "FunctionShape",
@@ -2318,9 +2317,7 @@ fn test_emitter_source_text_recovery_surface_does_not_grow() {
         }
     }
 
-    // Bumped 828→855 for emitter source-text growth in helpers.rs (async decorator
-    // metadata promise emit fix and related transform recovery additions).
-    const SOURCE_TEXT_RECOVERY_LINE_CEILING: usize = 855;
+    const SOURCE_TEXT_RECOVERY_LINE_CEILING: usize = 828;
     assert!(
         source_text_lines.len() <= SOURCE_TEXT_RECOVERY_LINE_CEILING,
         "Emitter source-text recovery surface grew to {} lines (ceiling: {}). \
@@ -4288,10 +4285,9 @@ fn test_checker_file_size_ceiling() {
     // TS7053 emission fix and intersection-annotation TS2339 receiver display;
     // 3105→3130 for contextual implicit-any deferral and class recovery guards;
     // 3130→3145 for generic assertion predicate instantiation fix (issue #5790);
-    // 3145→3148 for the Kysely alias-identity included-alias assignability path;
-    // 3148→3160 for call/inner.rs growth from generic-call-marker perf fix.
+    // 3145→3148 for the Kysely alias-identity included-alias assignability path.
     // Track a future split as a follow-up.
-    const MAX_LOC_CEILING: usize = 3160;
+    const MAX_LOC_CEILING: usize = 3148;
     assert!(
         max_lines <= MAX_LOC_CEILING,
         "Largest checker source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \
