@@ -817,6 +817,15 @@ impl<'a> LoweringPass<'a> {
                         if self.ctx.needs_es2022_lowering && self.class_has_private_members(class) {
                             self.mark_class_helpers(export_decl.export_clause, heritage);
                         }
+                        let target_supports_native_decorators = self.ctx.options.target
+                            == ScriptTarget::ESNext
+                            && self.ctx.options.use_define_for_class_fields;
+                        if !self.ctx.options.legacy_decorators
+                            && !target_supports_native_decorators
+                            && self.class_has_decorators(class)
+                        {
+                            self.mark_tc39_decorator_helpers(class);
+                        }
                         TransformDirective::CommonJSExportDefaultExpr
                     };
                     self.transforms.insert(export_decl.export_clause, directive);
@@ -1052,28 +1061,7 @@ impl<'a> LoweringPass<'a> {
             self.transforms.helpers_mut().set_function_name = true;
         }
         if has_tc39_decorators {
-            let needs_prop_key = self.class_has_computed_decorated_member(class);
-            let needs_set_function_name = self.class_has_private_decorated_member(class);
-            // __setFunctionName is needed when there are class-level decorators
-            // AND we're in ES2015 mode (IIFE pattern with __setFunctionName call).
-            // In ES2022+ mode, it's not used for class decorators.
-            let needs_class_set_fn_name = (self.ctx.target_es5 || self.ctx.needs_es2022_lowering)
-                && class.modifiers.as_ref().is_some_and(|mods| {
-                    mods.nodes.iter().any(|&mod_idx| {
-                        self.arena
-                            .get(mod_idx)
-                            .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-                    })
-                });
-            let helpers = self.transforms.helpers_mut();
-            helpers.es_decorate = true;
-            helpers.run_initializers = true;
-            if needs_prop_key {
-                helpers.prop_key = true;
-            }
-            if needs_set_function_name || needs_class_set_fn_name {
-                helpers.set_function_name = true;
-            }
+            self.mark_tc39_decorator_helpers(class);
         }
 
         // Determine the base transform
