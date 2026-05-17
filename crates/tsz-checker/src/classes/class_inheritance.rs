@@ -286,7 +286,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
         self.resolve_heritage_symbol_with(self.ctx.arena, self.ctx.binder, expr_idx)
     }
 
-    fn resolve_heritage_symbol_with(
+    pub(crate) fn resolve_heritage_symbol_with(
         &self,
         arena: &tsz_parser::parser::node::NodeArena,
         binder: &tsz_binder::BinderState,
