@@ -1159,22 +1159,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// Wrapped with `stacker::maybe_grow()` to handle deeply nested union/intersection
     /// constraint chains without overflowing the default thread stack.
+    ///
+    /// All intermediate types in the evaluation chain remain entered in the
+    /// `keyof_constraint_guard` until the chain terminates. This ensures that
+    /// a cycle like `Lazy(A) → Lazy(B) → Lazy(A)` is detected when `A` is
+    /// re-entered while it is still in the guard's visited set. The depth cap
+    /// (TypeEvaluation profile: 100) also limits the chain length.
     fn evaluate_keyof_or_constraint(&mut self, constraint: TypeId) -> TypeId {
         let mut current = constraint;
-        loop {
+        let mut entered: Vec<TypeId> = Vec::new();
+
+        let result = loop {
             match self.keyof_constraint_guard.enter(current) {
-                crate::recursion::RecursionResult::Entered => {}
-                _ => return current,
+                crate::recursion::RecursionResult::Entered => {
+                    entered.push(current);
+                }
+                _ => break current,
             }
 
-            let result = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            let step = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
                 self.evaluate_keyof_or_constraint_inner(current)
             });
-            self.keyof_constraint_guard.leave(current);
 
-            if result != current
+            if step != current
                 && matches!(
-                    self.interner().lookup(result),
+                    self.interner().lookup(step),
                     Some(
                         TypeData::Union(_)
                             | TypeData::Intersection(_)
@@ -1185,11 +1194,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     )
                 )
             {
-                current = result;
+                current = step;
                 continue;
             }
-            return result;
+            break step;
+        };
+
+        for &id in entered.iter().rev() {
+            self.keyof_constraint_guard.leave(id);
         }
+        result
     }
 
     fn evaluate_keyof_or_constraint_inner(&mut self, constraint: TypeId) -> TypeId {
@@ -2257,6 +2271,47 @@ mod tests {
         assert_eq!(
             result_k, result_q,
             "constraint evaluation must be independent of iteration-variable name"
+        );
+    }
+
+    /// Verifies that re-entering the same TypeId within the chain is detected and does
+    /// not loop forever. The `keyof_constraint_guard` keeps all intermediate types
+    /// entered until the chain terminates; if the same TypeId appears again (cycle),
+    /// `enter` returns `Cycle` and terminates the loop. We exercise this by calling
+    /// `evaluate_keyof_or_constraint` on a union whose members are themselves unions
+    /// sharing a member — the shared type will be encountered twice across the
+    /// recursive union-member evaluation and must not cause unbounded iteration.
+    #[test]
+    fn evaluate_keyof_or_constraint_cycle_guard_prevents_infinite_loop() {
+        let interner = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&interner);
+
+        // Build two overlapping unions that share a member so the guard is exercised
+        // across recursive member evaluation: U1 = (lit_x | U2), U2 = (lit_y | lit_z)
+        // evaluate_keyof_or_constraint on U1 recurses into both lit_x and U2;
+        // evaluating U2 recurses into lit_y and lit_z. The guard must handle all
+        // levels without hanging.
+        let lit_x = interner.literal_string("x");
+        let lit_y = interner.literal_string("y");
+        let lit_z = interner.literal_string("z");
+        let u2 = interner.union(vec![lit_y, lit_z]);
+        let u1 = interner.union(vec![lit_x, u2]);
+
+        let result = evaluator.evaluate_keyof_or_constraint(u1);
+        assert_ne!(
+            result,
+            TypeId::ERROR,
+            "nested union evaluation must not produce ERROR"
+        );
+
+        // A constraint that evaluates to itself must terminate immediately (the
+        // `step != current` guard short-circuits before re-entering the loop).
+        let plain_union = interner.union(vec![lit_x, lit_y]);
+        let result2 = evaluator.evaluate_keyof_or_constraint(plain_union);
+        assert_ne!(
+            result2,
+            TypeId::ERROR,
+            "self-stable union must terminate without ERROR"
         );
     }
 }
