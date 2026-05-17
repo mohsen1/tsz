@@ -131,21 +131,15 @@ pub(crate) fn is_external_package_declaration_file_name(file_name: &str) -> bool
         || file_name.contains("\\node_modules\\")
 }
 
-/// Declaration-file classification used by the cross-arena symbol-type
-/// cache eligibility decision in `cross_file_cache.rs`. Lives here next
-/// to the other arena predicates so the file-name string-matching stays
-/// in one place.
+/// Classification of a delegated arena's first source file for the
+/// cross-arena symbol-type cache eligibility decision. All file-name
+/// string matching that the cache layer relies on lives in this module.
+/// See `cross_file_cache.rs` for the per-variant cache routing.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(crate) enum DeclarationFileCacheClass {
-    /// Not a declaration file (user `.ts` source). Falls through to the
-    /// existing source-file stability check.
     UserSource,
-    /// `lib.dom*.d.ts`, `lib.webworker*.d.ts`, or
-    /// `node_modules/**/*.d.ts`. Reuses the shared symbol-type cache once
-    /// the stability check passes.
     DomOrExternalPackage,
-    /// `lib.es5.d.ts`, `lib.es2015.d.ts`, etc. Excluded from the
-    /// symbol-id-keyed cache because the coarser, name-keyed
+    /// Excluded from the symbol-id-keyed cache because the name-keyed
     /// `shared_actual_lib_delegation_cache` already owns dedup for these
     /// symbols across virtual programs.
     NonDomBuiltinLib,

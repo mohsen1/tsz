@@ -70,14 +70,17 @@ impl<'a> CheckerState<'a> {
             return None;
         };
 
-        let declaration_file_class = classify_declaration_file_for_cache(
+        let cacheable_outcome = match classify_declaration_file_for_cache(
             &source_file.file_name,
             source_file.is_declaration_file,
-        );
-        if declaration_file_class == DeclarationFileCacheClass::NonDomBuiltinLib {
-            record(Outcome::TargetDeclarationFile);
-            return None;
-        }
+        ) {
+            DeclarationFileCacheClass::DomOrExternalPackage => Outcome::CacheableDeclarationFile,
+            DeclarationFileCacheClass::UserSource => Outcome::Cacheable,
+            DeclarationFileCacheClass::NonDomBuiltinLib => {
+                record(Outcome::TargetDeclarationFile);
+                return None;
+            }
+        };
 
         let outcome = self
             .ctx
@@ -92,15 +95,7 @@ impl<'a> CheckerState<'a> {
             return None;
         };
 
-        let recorded = match declaration_file_class {
-            DeclarationFileCacheClass::DomOrExternalPackage => Outcome::CacheableDeclarationFile,
-            DeclarationFileCacheClass::UserSource => Outcome::Cacheable,
-            // Short-circuited at the early guard above.
-            DeclarationFileCacheClass::NonDomBuiltinLib => {
-                unreachable!("non-DOM builtin lib was rejected by the early guard")
-            }
-        };
-        record(recorded);
+        record(cacheable_outcome);
         Some(file_idx)
     }
 }
@@ -144,9 +139,7 @@ mod tests {
 
     #[test]
     fn external_package_paths_with_separator_variants_route_through_cache() {
-        // Beyond the cases already covered by `detects_external_package_declaration_paths`
-        // in `cross_file_direct_tests.rs`, exercise pnpm-style nested layouts and
-        // mixed separator scenarios that the cache routing depends on.
+        // pnpm nested layouts and Windows separators.
         for file_name in [
             "node_modules/.pnpm/react@18.2.0/node_modules/react/index.d.ts",
             "/repo/node_modules/.pnpm/lodash@4.17.21/node_modules/lodash/index.d.ts",
