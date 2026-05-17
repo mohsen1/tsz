@@ -1347,12 +1347,12 @@ impl<'a> CheckerState<'a> {
                 target_evaluated_for_intersection,
             )
         {
-            let src_str = if depth == 0 {
+            let src_str = if depth == 0 && self.is_recursive_type_alias_application(source) {
                 self.format_assignability_type_for_message(source, target)
             } else {
                 self.format_type_diagnostic(source_type)
             };
-            let tgt_str = if depth == 0 {
+            let tgt_str = if depth == 0 && self.is_recursive_type_alias_application(target) {
                 self.format_assignability_type_for_message(target, source)
             } else if crate::query_boundaries::common::is_intersection_type(
                 self.ctx.types,
@@ -1389,12 +1389,7 @@ impl<'a> CheckerState<'a> {
             )
             || (depth == 0 && self.anchor_source_has_intersection_annotation(idx))
         {
-            // format_type_for_diagnostic_role expands alias names via get_type_of_node; use the
-            // alias-preserving path for Application sources so the alias name is kept.
-            let src_str = if depth == 0
-                && crate::query_boundaries::common::application_info(self.ctx.types, source)
-                    .is_some()
-            {
+            let src_str = if depth == 0 && self.is_recursive_type_alias_application(source) {
                 self.format_assignability_type_for_message(source, target)
             } else if depth == 0 {
                 self.format_type_for_diagnostic_role(
@@ -1407,7 +1402,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.format_type_diagnostic(source_type)
             };
-            let tgt_str = if depth == 0 {
+            let tgt_str = if depth == 0 && self.is_recursive_type_alias_application(target) {
                 self.format_assignability_type_for_message(target, source)
             } else {
                 self.format_type_diagnostic(target_type)
@@ -1425,10 +1420,11 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TSC emits TS2322 instead of TS2741 when the source is an Application alias
-        // whose base resolves to an intersection (e.g. recursive `LinkedList<T> = T & {...}`).
-        if let Some((base, _args)) =
-            crate::query_boundaries::common::application_info(self.ctx.types, source)
+        // TSC emits TS2322 instead of TS2741 when the source is a recursive Application
+        // alias (e.g. `LinkedList<T> = T & { next: LinkedList<T> }`).
+        if self.is_recursive_type_alias_application(source)
+            && let Some((base, _args)) =
+                crate::query_boundaries::common::application_info(self.ctx.types, source)
         {
             let base_eval = self.evaluate_type_with_env(base);
             let base_is_intersection =
@@ -2888,6 +2884,14 @@ impl<'a> CheckerState<'a> {
             }
             diag
         }
+    }
+
+    fn is_recursive_type_alias_application(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            type_id,
+        )
     }
 
     /// Locate the span of an excess property name within a source expression.

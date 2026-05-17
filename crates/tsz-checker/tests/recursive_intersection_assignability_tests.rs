@@ -127,43 +127,6 @@ decoratedChain = baseChain;
 }
 
 #[test]
-fn non_recursive_intersection_alias_uses_alias_name_in_ts2322() {
-    // A non-recursive intersection alias `type Merged<X, Y> = X & Y` should also
-    // display as the alias name when it appears as the target of an assignment,
-    // not as the expanded `X & Y` form.
-    let source = r#"
-type Merged<X, Y> = X & Y;
-
-interface A { a: number; }
-interface B { b: string; }
-interface C { a: number; b: string; extra: boolean; }
-
-declare let ab: Merged<A, B>;
-declare let c: C;
-ab = c;
-c = ab;
-"#;
-
-    let diags = diagnostics(source);
-    let reverse_assignment = source.find("c = ab").unwrap() as u32;
-    let ts2322 = diagnostics_with_code(&diags, 2322);
-    assert_eq!(
-        ts2322.len(),
-        1,
-        "only the reverse assignment should fail; got: {diags:?}"
-    );
-    assert_eq!(
-        ts2322[0].start, reverse_assignment,
-        "TS2322 must be on 'c = ab'; got: {diags:?}"
-    );
-    let msg = &ts2322[0].message_text;
-    assert!(
-        msg.contains("Merged<A, B>"),
-        "TS2322 message should use alias name 'Merged<A, B>' as target; got: {msg}"
-    );
-}
-
-#[test]
 fn intersection_alias_with_different_type_param_names_uses_alias_name() {
     // Verify the alias-name rule is not tied to a specific type-parameter spelling
     // (e.g. `T` vs `U` vs `Element`).
@@ -230,5 +193,31 @@ productList = entityList;
     assert!(
         msg.contains("LinkedList<Entity>") && msg.contains("LinkedList<Product>"),
         "message must use alias names; got: {msg}"
+    );
+}
+
+#[test]
+fn structural_intersection_index_signature_keeps_structural_display() {
+    let source = r#"
+let x: { [x: string]: { a: 0 } } & { [x: string]: { b: 0 } };
+
+x = { y: { a: 0 } };
+x = { y: { a: 0, b: 0 } };
+x = { y: { a: 0, b: 0, c: 0 } };
+"#;
+    let diags = diagnostics(source);
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    let ts2353 = diagnostics_with_code(&diags, 2353);
+    assert_eq!(ts2322.len(), 1, "expected one TS2322, got: {diags:?}");
+    assert_eq!(ts2353.len(), 1, "expected one TS2353, got: {diags:?}");
+    assert!(
+        ts2322[0].message_text.contains("'{ a: 0; } & { b: 0; }'"),
+        "plain structural intersections should keep structural display, got: {}",
+        ts2322[0].message_text
+    );
+    assert!(
+        ts2353[0].message_text.contains("'{ a: 0; } & { b: 0; }'"),
+        "excess-property diagnostic should keep structural display, got: {}",
+        ts2353[0].message_text
     );
 }
