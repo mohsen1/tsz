@@ -2080,6 +2080,9 @@ impl<'a> UsageAnalyzer<'a> {
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                     self.analyze_function_declaration(decl_idx)
                 }
+                k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                    self.analyze_module_declaration(decl_idx)
+                }
                 _ => {}
             }
         }
