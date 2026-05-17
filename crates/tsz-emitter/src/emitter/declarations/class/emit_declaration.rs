@@ -1,6 +1,5 @@
 use super::super::super::{Printer, ScriptTarget};
 use super::class_has_self_references;
-use super::is_ident_char;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
@@ -128,7 +127,7 @@ impl<'a> Printer<'a> {
                         &class_name,
                         &class.members.nodes,
                     );
-                let alias_name = needs_alias.then(|| format!("{class_name}_1"));
+                let alias_name = needs_alias.then(|| self.make_unique_name_from_base(&class_name));
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
                 es5_emitter.set_async_generator_inner_name_counts(
@@ -233,7 +232,7 @@ impl<'a> Printer<'a> {
                 );
 
             let alias_name = if needs_alias {
-                let alias = format!("{class_name}_1");
+                let alias = self.make_unique_name_from_base(&class_name);
                 self.hoisted_assignment_temps.push(alias.clone());
                 Some(alias)
             } else {
@@ -246,8 +245,6 @@ impl<'a> Printer<'a> {
             if needs_class_decorate {
                 if let Some(ref alias) = alias_name {
                     // Emit: `let Name = Name_1 = class Name { ... };`
-                    // First capture the class body, then replace self-refs
-                    let before_len = self.writer.len();
                     self.emit_class_es6_with_options(
                         node,
                         idx,
@@ -257,63 +254,6 @@ impl<'a> Printer<'a> {
                         Some(alias),
                         true,
                     );
-                    let after_len = self.writer.len();
-
-                    // Post-process: replace class name with alias in class body
-                    let full_output = self.writer.get_output().to_string();
-                    let emitted_str = &full_output[before_len..after_len];
-
-                    // The assignment alias is emitted structurally; only class-body
-                    // self-references need the body-scoped rewrite below.
-                    let mut replaced = emitted_str.to_string();
-
-                    // Replace self-references ONLY inside the class body (between { and };)
-                    // Static fields after the class close brace should keep the original name.
-                    if let Some(brace_pos) = replaced.find('{') {
-                        // Find the matching close of the class expression: `};\n` or `};`
-                        // The class body ends at `\n};` (the closing brace of the class expr)
-                        let close_pattern = "\n};";
-                        let body_end =
-                            if let Some(close_pos) = replaced[brace_pos..].find(close_pattern) {
-                                brace_pos + close_pos + close_pattern.len()
-                            } else {
-                                replaced.len()
-                            };
-
-                        let header = &replaced[..brace_pos];
-                        let class_body = &replaced[brace_pos..body_end];
-                        let after_class = &replaced[body_end..];
-
-                        // Only replace identifiers within the class body
-                        let mut new_body = String::with_capacity(class_body.len());
-                        let name_bytes = class_name.as_bytes();
-                        let body_bytes = class_body.as_bytes();
-                        let mut i = 0;
-                        while i < body_bytes.len() {
-                            if i + name_bytes.len() <= body_bytes.len()
-                                && &body_bytes[i..i + name_bytes.len()] == name_bytes
-                            {
-                                let before_ok = i == 0 || !is_ident_char(body_bytes[i - 1]);
-                                let after_ok = i + name_bytes.len() == body_bytes.len()
-                                    || !is_ident_char(body_bytes[i + name_bytes.len()]);
-                                if before_ok && after_ok {
-                                    new_body.push_str(alias);
-                                    i += name_bytes.len();
-                                    continue;
-                                }
-                            }
-                            new_body.push(body_bytes[i] as char);
-                            i += 1;
-                        }
-                        replaced = format!("{header}{new_body}{after_class}");
-                    }
-
-                    // Replace the emitted range with the modified text.
-                    // Trim trailing newline to avoid double blank line before __decorate.
-                    let replaced = replaced.trim_end_matches('\n');
-                    self.writer.truncate(before_len);
-                    self.write(replaced);
-                    self.write_line();
                 } else {
                     self.emit_class_es6_with_options(
                         node,
