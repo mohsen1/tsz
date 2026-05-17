@@ -11,21 +11,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    pub(crate) fn check_async_modifier_on_declaration(
-        &mut self,
-        modifiers: &Option<tsz_parser::parser::NodeList>,
-    ) {
-        use crate::diagnostics::diagnostic_codes;
-
-        if let Some(async_mod_idx) = self.find_async_modifier(modifiers) {
-            self.error_at_node(
-                async_mod_idx,
-                "'async' modifier cannot be used here.",
-                diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
-            );
-        }
-    }
-
     /// TS1277: `const` modifier can only appear on a type parameter of a
     /// function, method, or class. Interfaces and type aliases are rejected.
     pub(crate) fn check_const_type_parameter_on_non_function(
