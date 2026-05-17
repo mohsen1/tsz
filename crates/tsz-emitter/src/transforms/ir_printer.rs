@@ -1050,16 +1050,24 @@ impl<'a> IRPrinter<'a> {
                 if let Some(init) = initializer {
                     self.emit_node(init);
                 }
-                self.write("; ");
+                self.write(";");
                 if let Some(cond) = condition {
+                    self.write(" ");
                     self.emit_node(cond);
                 }
-                self.write("; ");
+                self.write(";");
                 if let Some(incr) = incrementor {
+                    self.write(" ");
                     self.emit_node(incr);
                 }
                 self.write(") ");
-                self.emit_node(body);
+                if let IRNode::Block(stmts) = body.as_ref()
+                    && stmts.is_empty()
+                {
+                    self.emit_empty_block_multiline();
+                } else {
+                    self.emit_node(body);
+                }
             }
             IRNode::ForInOfStatement {
                 kind,
