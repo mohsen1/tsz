@@ -31,7 +31,6 @@ function writeTemplate(root, rel) {
 withTempDir((dir) => {
   writeTemplate(dir, "questions/00013-warm-hello-world/template.ts");
   writeTemplate(dir, "questions/00189-easy-awaited/template.ts");
-  writeTemplate(dir, "questions/custom-shape/template.ts");
 
   const manifestPath = path.join(dir, "compile", "type-challenges-template-manifest.json");
   const result = spawnSync(
@@ -49,7 +48,7 @@ withTempDir((dir) => {
         ...process.env,
         TYPE_CHALLENGES_REPO: "https://example.invalid/type-challenges.git",
         TYPE_CHALLENGES_REF: "fixture-ref",
-        TYPE_CHALLENGES_EXPECTED_GENERATED: "3",
+        TYPE_CHALLENGES_EXPECTED_GENERATED: "2",
       },
     },
   );
@@ -59,8 +58,8 @@ withTempDir((dir) => {
   assert.equal(manifest.fixture, "type-challenges-project");
   assert.equal(manifest.source.repository, "https://example.invalid/type-challenges.git");
   assert.equal(manifest.source.ref, "fixture-ref");
-  assert.equal(manifest.expectedGenerated, 3);
-  assert.equal(manifest.generated, 3);
+  assert.equal(manifest.expectedGenerated, 2);
+  assert.equal(manifest.generated, 2);
   assert.deepEqual(
     manifest.entries.map((entry) => [
       entry.source,
@@ -71,7 +70,85 @@ withTempDir((dir) => {
     [
       ["questions/00013-warm-hello-world/template.ts", "13", "warm", "hello-world"],
       ["questions/00189-easy-awaited/template.ts", "189", "easy", "awaited"],
-      ["questions/custom-shape/template.ts", null, "unknown", "custom-shape"],
     ],
   );
+});
+
+withTempDir((dir) => {
+  writeTemplate(dir, "questions/custom-shape/template.ts");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      MANIFEST_SCRIPT,
+      path.join(dir, "source"),
+      path.join(dir, "compile"),
+      path.join(dir, "compile", "type-challenges-template-manifest.json"),
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        TYPE_CHALLENGES_REPO: "https://example.invalid/type-challenges.git",
+        TYPE_CHALLENGES_REF: "fixture-ref",
+        TYPE_CHALLENGES_EXPECTED_GENERATED: "1",
+      },
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unparseable challenge directory/);
+});
+
+withTempDir((dir) => {
+  writeTemplate(dir, "questions/00189-weird-awaited/template.ts");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      MANIFEST_SCRIPT,
+      path.join(dir, "source"),
+      path.join(dir, "compile"),
+      path.join(dir, "compile", "type-challenges-template-manifest.json"),
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        TYPE_CHALLENGES_REPO: "https://example.invalid/type-challenges.git",
+        TYPE_CHALLENGES_REF: "fixture-ref",
+        TYPE_CHALLENGES_EXPECTED_GENERATED: "1",
+      },
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unknown challenge level weird/);
+});
+
+withTempDir((dir) => {
+  writeTemplate(dir, "questions/00013-warm-hello-world/template.ts");
+  writeTemplate(dir, "questions/013-easy-duplicate-hello/template.ts");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      MANIFEST_SCRIPT,
+      path.join(dir, "source"),
+      path.join(dir, "compile"),
+      path.join(dir, "compile", "type-challenges-template-manifest.json"),
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        TYPE_CHALLENGES_REPO: "https://example.invalid/type-challenges.git",
+        TYPE_CHALLENGES_REF: "fixture-ref",
+        TYPE_CHALLENGES_EXPECTED_GENERATED: "2",
+      },
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /duplicate Type Challenges template challenge id 13/);
 });
