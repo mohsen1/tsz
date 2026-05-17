@@ -186,6 +186,46 @@ const value = 1;
 }
 
 #[test]
+fn system_es5_default_class_uses_class_iife_assignment() {
+    let source = r#"export default class A {
+    method() {
+        return 42;
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("A = /** @class */ (function () {"),
+        "System ES5 default class should assign an ES5 class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("A.prototype.method = function () {"),
+        "System ES5 default class methods should be lowered to prototype assignments.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"default\", A);"),
+        "System default export should still publish the class binding after assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("A = class A"),
+        "System ES5 output must not leave a native class expression.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_wrapper_keeps_used_namespace_import_dependency() {
     let source = r#"import * as a from "a";
 
@@ -216,6 +256,42 @@ a.run();
     assert!(
         output.contains("a.run();"),
         "Runtime namespace import usage should remain in execute body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_es5_named_exported_class_uses_class_iife_assignment() {
+    let source = r#"export class A {
+    method() {
+        return 42;
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("A = /** @class */ (function () {"),
+        "System ES5 named class export should assign an ES5 class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"A\", A);"),
+        "System named export should publish the class binding after assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("A = class A"),
+        "System ES5 output must not leave a native class expression.\nOutput:\n{output}"
     );
 }
 
