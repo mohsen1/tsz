@@ -504,12 +504,13 @@ function loadBenchmarks() {
   const ciLatest = [
     "bench-vs-tsgo-github-latest.json",
     "bench-vs-tsgo-gcs-latest.json",
+    "bench-results.json",
   ].map((file) => path.join(artifactsDir, file));
   const artifactFiles = (() => {
     try {
       const localArtifacts = fs.readdirSync(artifactsDir)
         .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
-        .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json"].includes(file))
+        .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json", "bench-results.json"].includes(file))
         .sort()
         .reverse()
         .map((file) => path.join(artifactsDir, file));
