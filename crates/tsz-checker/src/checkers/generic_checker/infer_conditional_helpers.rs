@@ -113,7 +113,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    pub(super) fn collect_infer_constraints_from_extends_type(
+    pub(crate) fn collect_infer_constraints_from_extends_type(
         &mut self,
         node_idx: tsz_parser::parser::NodeIndex,
         name: &str,
@@ -133,6 +133,37 @@ impl<'a> CheckerState<'a> {
             && tp_data.constraint != NodeIndex::NONE
         {
             constraints.push(self.get_type_from_type_node(tp_data.constraint));
+            return;
+        }
+
+        // Template literal pattern `${infer NAME}` implicitly constrains NAME to `string`.
+        // tsc derives this from `inferTypesFromTemplateLiteralType`: matching against a
+        // string template requires the inferred placeholder to be string-shaped.
+        if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE
+            && let Some(tlt) = self.ctx.arena.get_template_literal_type(node)
+        {
+            for &span_idx in &tlt.template_spans.nodes {
+                if let Some(span_node) = self.ctx.arena.get(span_idx)
+                    && let Some(span_data) = self.ctx.arena.get_template_span(span_node)
+                {
+                    let expr_node_idx = span_data.expression;
+                    if let Some(expr_node) = self.ctx.arena.get(expr_node_idx)
+                        && expr_node.kind == syntax_kind_ext::INFER_TYPE
+                        && let Some(infer_data) = self.ctx.arena.get_infer_type(expr_node)
+                        && self.infer_type_param_has_name_for_constraint_probe(infer_data, name)
+                    {
+                        constraints.push(TypeId::STRING);
+                    } else {
+                        // Recurse so nested `${F<infer N>}` patterns are still picked
+                        // up by the type-reference / wrapper branches below.
+                        self.collect_infer_constraints_from_extends_type(
+                            expr_node_idx,
+                            name,
+                            constraints,
+                        );
+                    }
+                }
+            }
             return;
         }
 
@@ -232,6 +263,34 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+    }
+
+    /// Return the implicit constraint tsc would give an `infer NAME` binding
+    /// inside `extends_type`. Used to populate `type_parameter_scope` with a
+    /// constrained provisional TypeParameter so that downstream scoped-substitution
+    /// based TS2344 checks behave like tsc instead of substituting `unknown`.
+    ///
+    /// Currently recognises:
+    /// - Explicit `infer X extends C` → `C`.
+    /// - `` `${infer X}` `` in a TEMPLATE_LITERAL_TYPE span → `string`.
+    /// - Positional `F<infer X>` where `F`'s n-th parameter has constraint `C` → `C`.
+    /// - Recurses through unions/intersections/parens/tuples/etc. and only
+    ///   returns `Some` when all witnesses agree on the same constraint.
+    pub(crate) fn effective_infer_constraint_from_extends_type(
+        &mut self,
+        extends_type: tsz_parser::parser::NodeIndex,
+        name: &str,
+    ) -> Option<TypeId> {
+        let mut constraints = Vec::new();
+        self.collect_infer_constraints_from_extends_type(extends_type, name, &mut constraints);
+        constraints.retain(|&c| {
+            c != TypeId::UNKNOWN
+                && c != TypeId::ANY
+                && c != TypeId::ERROR
+                && !query::contains_type_parameters(self.ctx.types, c)
+        });
+        let first = constraints.first().copied()?;
+        constraints.iter().all(|&c| c == first).then_some(first)
     }
 
     pub(super) fn type_node_contains_infer_named(
