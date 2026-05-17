@@ -26,6 +26,41 @@ struct VarianceState<'a> {
 }
 
 impl<'a> InferenceContext<'a> {
+    /// Returns `true` when `type_id` is a bare named `TypeParameter` with no
+    /// `extends` constraint — a name that carries no structural information
+    /// that a covariant inference result could violate.
+    fn is_unconstrained_type_parameter(&self, type_id: TypeId) -> bool {
+        crate::type_queries::named_type_param_info(self.interner, type_id)
+            .is_some_and(|info| info.constraint.is_none())
+    }
+
+    /// Apply the shared "prefer covariant" decision used by both
+    /// `compute_constraint_result` and `fix_current_variables_with`.
+    ///
+    /// The covariant inference wins when it is assignable to some
+    /// contra-candidate (tsc's normal `getInferredType` rule), or when every
+    /// contra-candidate is a bare unconstrained type parameter — such names
+    /// carry no shape requirement that the covariant could violate and are
+    /// typically stale leaks from union-contextual overload argument typing.
+    fn choose_covariant_or_contra(
+        &self,
+        covariant_result: TypeId,
+        concrete_contra: &[InferenceCandidate],
+        covariant_assignable_to_contra: bool,
+        covariant_is_uninformative: bool,
+    ) -> TypeId {
+        if covariant_assignable_to_contra
+            || (!covariant_is_uninformative
+                && concrete_contra
+                    .iter()
+                    .all(|c| self.is_unconstrained_type_parameter(c.type_id)))
+        {
+            covariant_result
+        } else {
+            self.resolve_from_contra_candidates(concrete_contra)
+        }
+    }
+
     fn resolve_from_contra_candidates(
         &self,
         contra_candidates: &[crate::inference::infer::InferenceCandidate],
@@ -480,11 +515,12 @@ impl<'a> InferenceContext<'a> {
                             self.is_subtype(covariant_result, c.type_id)
                         }
                     });
-                if covariant_assignable_to_contra {
-                    covariant_result
-                } else {
-                    self.resolve_from_contra_candidates(&concrete_contra_candidates)
-                }
+                self.choose_covariant_or_contra(
+                    covariant_result,
+                    &concrete_contra_candidates,
+                    covariant_assignable_to_contra,
+                    covariant_is_uninformative,
+                )
             } else {
                 covariant_result
             }
@@ -1785,11 +1821,12 @@ impl<'a> InferenceContext<'a> {
                                 self.is_subtype(covariant_result, c.type_id)
                             }
                         });
-                    if covariant_assignable_to_contra {
-                        covariant_result
-                    } else {
-                        self.resolve_from_contra_candidates(&concrete_contra_candidates)
-                    }
+                    self.choose_covariant_or_contra(
+                        covariant_result,
+                        &concrete_contra_candidates,
+                        covariant_assignable_to_contra,
+                        covariant_is_uninformative,
+                    )
                 } else {
                     covariant_result
                 }
