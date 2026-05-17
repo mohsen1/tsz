@@ -248,6 +248,67 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    pub(crate) fn same_base_application_pair(&self, source: TypeId, target: TypeId) -> bool {
+        let Some(((source_base, source_args), (target_base, target_args))) = self
+            .application_info_or_display_alias(source)
+            .zip(self.application_info_or_display_alias(target))
+        else {
+            return false;
+        };
+        if !self.application_bases_are_same_nominal_type(source_base, target_base)
+            || source_args.len() != target_args.len()
+        {
+            return false;
+        }
+
+        true
+    }
+
+    pub(crate) fn same_base_application_has_constrained_type_arg_pair(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let Some(((source_base, source_args), (target_base, target_args))) = self
+            .application_info_or_display_alias(source)
+            .zip(self.application_info_or_display_alias(target))
+        else {
+            return false;
+        };
+        if !self.application_bases_are_same_nominal_type(source_base, target_base)
+            || source_args.len() != target_args.len()
+        {
+            return false;
+        }
+
+        source_args
+            .iter()
+            .copied()
+            .zip(target_args.iter().copied())
+            .any(|(source_arg, target_arg)| {
+                self.type_param_constraint_matches(source_arg, target_arg)
+                    || self.type_param_constraint_matches(target_arg, source_arg)
+            })
+    }
+
+    fn type_param_constraint_matches(&mut self, constrained: TypeId, other: TypeId) -> bool {
+        crate::query_boundaries::common::type_param_info(self.ctx.types, constrained)
+            .and_then(|param| param.constraint)
+            .is_some_and(|constraint| {
+                constraint == other
+                    || (self.is_assignable_to(other, constraint)
+                        && self.is_assignable_to(constraint, other))
+                    || crate::query_boundaries::common::type_param_info(self.ctx.types, constraint)
+                        .zip(crate::query_boundaries::common::type_param_info(
+                            self.ctx.types,
+                            other,
+                        ))
+                        .is_some_and(|(constraint_param, other_param)| {
+                            constraint_param.name == other_param.name
+                        })
+            })
+    }
+
     pub(crate) fn keyof_interface_augmentation_literals_cover_source(
         &self,
         source: TypeId,

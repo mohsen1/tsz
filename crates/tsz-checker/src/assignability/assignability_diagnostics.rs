@@ -783,10 +783,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Canonical relation path: execute one RelationRequest and use both its
-        // boolean projection and structured failure info. This keeps diagnostic
-        // paths from doing a boolean relation pass and then repeating the same
-        // relation as failure analysis setup.
+        // Canonical relation path: keep the existing checker assignability
+        // predicate as the boolean authority, then execute one RelationRequest
+        // for structured diagnostic evidence. The raw predicate owns
+        // checker-only indexed-access and application guards that are not
+        // represented by the normalized relation boundary.
         self.ctx.relation_depth_exceeded.set(false);
         let request = {
             use crate::query_boundaries::assignability::RelationRequest;
@@ -820,7 +821,13 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         };
-        let assignable = outcome.related && !same_application_arg_mismatch;
+        let raw_assignable = self.is_assignable_to(source, target);
+        let structurally_related_unreliable_application = !raw_assignable
+            && outcome.related
+            && self.same_base_application_pair(source, target)
+            && !self.same_base_application_has_constrained_type_arg_pair(source, target);
+        let assignable = (raw_assignable || structurally_related_unreliable_application)
+            && !same_application_arg_mismatch;
         // TS2859: if the canonical relation check hit its recursion/complexity
         // limit before it could classify a concrete mismatch, emit "Excessive
         // complexity comparing types". Do not run a second boolean relation
