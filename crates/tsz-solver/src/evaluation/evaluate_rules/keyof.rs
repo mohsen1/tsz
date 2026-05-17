@@ -589,6 +589,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }?;
         let resolved = self.resolver().resolve_lazy(def_id, self.interner())?;
 
+        // Inspect the body kind first so non-Mapped, non-Conditional aliases
+        // (e.g. `Array<T>`, plain interface aliases) skip the cost of
+        // resolving/extracting type parameters.
+        let body = self.interner().lookup(resolved)?;
+        if !matches!(body, TypeData::Mapped(_) | TypeData::Conditional(_)) {
+            return None;
+        }
+
         let type_params = self
             .resolver()
             .get_lazy_type_params(def_id)
@@ -598,7 +606,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         }
 
-        match self.interner().lookup(resolved)? {
+        match body {
             TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner().get_mapped(mapped_id);
                 if mapped.name_type.is_some() {
@@ -610,33 +618,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     &type_params,
                     &app.args,
                 );
-                let evaluated = self.evaluate(instantiated);
-                Some(if evaluated == TypeId::ERROR {
-                    instantiated
-                } else {
-                    evaluated
-                })
+                Some(self.evaluate_or_keep(instantiated))
             }
             TypeData::Conditional(_) => {
-                // For recursive utility types like `DeepRequired<T>` whose body is a
-                // conditional (e.g., `T extends object ? { [P in keyof T]-?: ... } : T`),
-                // extract a consistent keyof if all branches share the same key space as
-                // one of the type arguments.  This lets `keyof DeepRequired<T>` = `keyof T`
-                // so that `DeepRequired<T>[K]` where `K in keyof T` is not rejected.
+                // Recursive utility types like `DeepRequired<T>` whose body is a
+                // conditional (`T extends C ? A : B`) need keyof reduction when
+                // every branch shares the source argument's key space; otherwise
+                // `DeepRequired<T>[K]` with `K in keyof T` would misfire TS2536.
                 self.try_keyof_from_conditional_application_body(resolved, &type_params, &app.args)
             }
             _ => None,
         }
     }
 
-    /// For a generic application whose body is a conditional type, determine whether
-    /// all branches reduce to the same key space as one of the type arguments.
-    ///
-    /// Structural rule: when every branch of the conditional is either
-    /// - the source type parameter itself (identity), or
-    /// - a non-remapped mapped type whose constraint is `keyof <source param>`,
-    ///
-    /// then `keyof F<T>` = `keyof T` and we return the instantiated `keyof T`.
+    /// Evaluate `ty`; if evaluation returns `ERROR`, keep the original.  Used to
+    /// avoid surfacing solver errors when a usable deferred form already exists.
+    fn evaluate_or_keep(&mut self, ty: TypeId) -> TypeId {
+        let evaluated = self.evaluate(ty);
+        if evaluated == TypeId::ERROR {
+            ty
+        } else {
+            evaluated
+        }
+    }
+
+    /// Structural rule: every branch of the conditional must be either the
+    /// source type parameter itself (identity) or a non-remapped mapped type
+    /// whose constraint is `keyof <source param>`. When so, `keyof F<T>` =
+    /// `keyof T` (returned as the instantiated keyof of the source arg).
     fn try_keyof_from_conditional_application_body(
         &mut self,
         conditional_type_id: TypeId,
@@ -647,72 +656,92 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             crate::type_queries::get_conditional_type_id(self.interner(), conditional_type_id)?;
         let cond = self.interner().conditional_type(cond_id);
 
-        // The check type of the conditional should be (or contain) one of our type params.
-        let source_param_idx =
-            type_params
-                .iter()
-                .position(|p| match self.interner().lookup(cond.check_type) {
-                    Some(TypeData::TypeParameter(info)) => info.name == p.name,
-                    _ => false,
-                })?;
+        // The check type must be one of the alias's type parameters.
+        let source_param_idx = type_params
+            .iter()
+            .position(|p| self.type_param_lookup_matches_name(cond.check_type, p.name))?;
         let source_arg = args[source_param_idx];
 
-        // Instantiate both branches with the actual type args.
-        let inst_true = instantiate_generic(self.interner(), cond.true_type, type_params, args);
-        let inst_false = instantiate_generic(self.interner(), cond.false_type, type_params, args);
-
-        // Both branches must share the key space of `source_arg`.
-        if self.branch_keyof_matches_source(inst_true, source_arg)
-            && self.branch_keyof_matches_source(inst_false, source_arg)
+        // Cheap structural pre-screen against the un-instantiated branches:
+        // if either branch is clearly not in the source's key space (under
+        // the alias's own param name), skip the expensive `instantiate_generic`.
+        let source_param = &type_params[source_param_idx];
+        if !self.raw_branch_keyof_matches_source_param(cond.true_type, source_param)
+            || !self.raw_branch_keyof_matches_source_param(cond.false_type, source_param)
         {
-            let keyof_source = self.interner().keyof(source_arg);
-            let evaluated = self.evaluate(keyof_source);
-            return Some(if evaluated == TypeId::ERROR {
-                keyof_source
-            } else {
-                evaluated
-            });
+            return None;
         }
-        None
+
+        // Instantiate true first; bail before instantiating false if it fails.
+        let inst_true = instantiate_generic(self.interner(), cond.true_type, type_params, args);
+        if !self.branch_keyof_matches_source(inst_true, source_arg) {
+            return None;
+        }
+        let inst_false = instantiate_generic(self.interner(), cond.false_type, type_params, args);
+        if !self.branch_keyof_matches_source(inst_false, source_arg) {
+            return None;
+        }
+
+        let keyof_source = self.interner().keyof(source_arg);
+        Some(self.evaluate_or_keep(keyof_source))
     }
 
-    /// Returns `true` when `branch_type` has the same key space as `source_arg`:
-    /// - `branch_type` is `source_arg` itself (identity), or
-    /// - `branch_type` is a non-remapped mapped type whose constraint reduces to `keyof source_arg`.
+    fn type_param_lookup_matches_name(&self, ty: TypeId, name: tsz_common::interner::Atom) -> bool {
+        matches!(
+            self.interner().lookup(ty),
+            Some(TypeData::TypeParameter(info)) if info.name == name
+        )
+    }
+
+    /// Cheap pre-instantiation predicate: does the (un-instantiated) branch
+    /// reference the alias's source type-parameter as the key space, either
+    /// directly or as a non-remapped homomorphic mapped type over `keyof <source>`?
+    fn raw_branch_keyof_matches_source_param(
+        &self,
+        branch_type: TypeId,
+        source_param: &crate::types::TypeParamInfo,
+    ) -> bool {
+        if self.type_param_lookup_matches_name(branch_type, source_param.name) {
+            return true;
+        }
+        let Some(TypeData::Mapped(mapped_id)) = self.interner().lookup(branch_type) else {
+            return false;
+        };
+        let mapped = self.interner().get_mapped(mapped_id);
+        if mapped.name_type.is_some() {
+            return false;
+        }
+        let Some(inner) = crate::keyof_inner_type(self.interner(), mapped.constraint) else {
+            return false;
+        };
+        self.type_param_lookup_matches_name(inner, source_param.name)
+    }
+
     fn branch_keyof_matches_source(&self, branch_type: TypeId, source_arg: TypeId) -> bool {
-        // Identity: branch IS the source type parameter.
         if branch_type == source_arg {
             return true;
         }
-        // Type-parameter name equivalence for deferred params.
-        if let (Some(TypeData::TypeParameter(b)), Some(TypeData::TypeParameter(s))) = (
-            self.interner().lookup(branch_type),
-            self.interner().lookup(source_arg),
-        ) {
-            if b.name == s.name {
-                return true;
-            }
+        let same_param_name = |a: TypeId, b: TypeId| {
+            matches!(
+                (self.interner().lookup(a), self.interner().lookup(b)),
+                (Some(TypeData::TypeParameter(x)), Some(TypeData::TypeParameter(y)))
+                    if x.name == y.name
+            )
+        };
+        if same_param_name(branch_type, source_arg) {
+            return true;
         }
-        // Non-remapped homomorphic mapped type: constraint = keyof <source_arg>.
-        if let Some(TypeData::Mapped(mapped_id)) = self.interner().lookup(branch_type) {
-            let mapped = self.interner().get_mapped(mapped_id);
-            if mapped.name_type.is_some() {
-                return false;
-            }
-            // The constraint must be `keyof X` where X is (or names) source_arg.
-            if let Some(inner) = crate::keyof_inner_type(self.interner(), mapped.constraint) {
-                if inner == source_arg {
-                    return true;
-                }
-                if let (Some(TypeData::TypeParameter(i)), Some(TypeData::TypeParameter(s))) = (
-                    self.interner().lookup(inner),
-                    self.interner().lookup(source_arg),
-                ) {
-                    return i.name == s.name;
-                }
-            }
+        let Some(TypeData::Mapped(mapped_id)) = self.interner().lookup(branch_type) else {
+            return false;
+        };
+        let mapped = self.interner().get_mapped(mapped_id);
+        if mapped.name_type.is_some() {
+            return false;
         }
-        false
+        let Some(inner) = crate::keyof_inner_type(self.interner(), mapped.constraint) else {
+            return false;
+        };
+        inner == source_arg || same_param_name(inner, source_arg)
     }
 
     /// Compute keyof for an intersection type: keyof (A & B) = keyof A | keyof B
