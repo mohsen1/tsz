@@ -670,22 +670,20 @@ impl<'a> Printer<'a> {
                                     self.write(";");
                                     return;
                                 }
-                            } else {
-                                if let Some(expr) = self.capture_tc39_decorated_class_expression(
-                                    export.export_clause,
-                                    &class_name,
-                                ) {
-                                    self.write("let ");
-                                    self.write(&class_name);
-                                    self.write(" = ");
-                                    self.write(&expr);
-                                    self.write(";");
-                                    self.write_line();
-                                    self.write("export default ");
-                                    self.write(&class_name);
-                                    self.write(";");
-                                    return;
-                                }
+                            } else if let Some(expr) = self.capture_tc39_decorated_class_expression(
+                                export.export_clause,
+                                &class_name,
+                            ) {
+                                self.write("let ");
+                                self.write(&class_name);
+                                self.write(" = ");
+                                self.write(&expr);
+                                self.write(";");
+                                self.write_line();
+                                self.write("export default ");
+                                self.write(&class_name);
+                                self.write(";");
+                                return;
                             }
                         }
                         if class.name.is_none() {
@@ -701,16 +699,14 @@ impl<'a> Printer<'a> {
                                     self.write("export default default_1;");
                                     return;
                                 }
-                            } else {
-                                if let Some(expr) = self.capture_tc39_decorated_class_expression(
-                                    export.export_clause,
-                                    "default",
-                                ) {
-                                    self.write("export default ");
-                                    self.write(&expr);
-                                    self.write(";");
-                                    return;
-                                }
+                            } else if let Some(expr) = self.capture_tc39_decorated_class_expression(
+                                export.export_clause,
+                                "default",
+                            ) {
+                                self.write("export default ");
+                                self.write(&expr);
+                                self.write(";");
+                                return;
                             }
                         }
 
