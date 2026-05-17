@@ -612,6 +612,12 @@ impl<'a> DeclarationEmitter<'a> {
                     .is_some()
             {
                 self.write(": any");
+            } else if has_initializer
+                && let Some(type_text) =
+                    self.object_literal_declared_shorthand_type_text(initializer, self.indent_level)
+            {
+                self.write(": ");
+                self.write(&type_text);
             } else if let Some(resolved_type) = self.resolve_declaration_type_text(
                 &[decl_idx, decl_name],
                 has_initializer.then_some(initializer),

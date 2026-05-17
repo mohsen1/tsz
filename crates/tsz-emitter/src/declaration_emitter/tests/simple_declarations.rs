@@ -2640,6 +2640,50 @@ module.exports = {
 }
 
 #[test]
+fn test_object_shorthand_preserves_declared_identifier_type_after_narrowing() {
+    let source = r#"
+class RoyalGuard {
+    isLeader(): this is LeadGuard {
+        return this instanceof LeadGuard;
+    }
+    isFollower(): this is FollowerGuard {
+        return this instanceof FollowerGuard;
+    }
+}
+
+class LeadGuard extends RoyalGuard {
+    lead(): void {}
+}
+
+class FollowerGuard extends RoyalGuard {
+    follow(): void {}
+}
+
+let guard: RoyalGuard = new FollowerGuard();
+
+if (guard.isLeader()) {
+    guard.lead();
+} else if (guard.isFollower()) {
+    guard.follow();
+}
+
+var holder = { guard };
+
+if (holder.guard.isLeader()) {
+    holder.guard;
+} else {
+    holder.guard;
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare var holder: {\n    guard: RoyalGuard;\n};"),
+        "Expected shorthand object member to use the declared annotation instead of a narrowed flow type: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_bracket_string_exports_emit_named_declarations() {
     let output = emit_js_dts_with_usage_analysis(
         r#"

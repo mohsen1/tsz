@@ -320,8 +320,55 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(enum_type_text) = self.enum_member_widened_type_text(initializer) {
             return Some(enum_type_text);
         }
+        if self
+            .arena
+            .get(initializer)
+            .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+            && let Some(type_text) =
+                self.reference_declared_source_type_annotation_text(initializer)
+        {
+            return Some(type_text);
+        }
         self.preferred_expression_type_text(initializer)
             .or_else(|| self.infer_fallback_type_text_at(initializer, depth))
+    }
+
+    pub(in crate::declaration_emitter) fn object_literal_declared_shorthand_type_text(
+        &self,
+        initializer: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.arena.get_literal_expr(init_node)?;
+        let mut has_declared_shorthand = false;
+
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
+                return None;
+            }
+            let Some(shorthand) = self.arena.get_shorthand_property(member_node) else {
+                continue;
+            };
+            if shorthand.object_assignment_initializer != NodeIndex::NONE {
+                continue;
+            }
+            if self
+                .reference_declared_source_type_annotation_text(shorthand.name)
+                .is_some()
+            {
+                has_declared_shorthand = true;
+            }
+        }
+
+        has_declared_shorthand
+            .then(|| self.infer_object_literal_type_text_at(initializer, depth))
+            .flatten()
     }
 
     pub(in crate::declaration_emitter) fn enum_member_widened_type_text(
