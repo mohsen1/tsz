@@ -1567,6 +1567,34 @@ mod tests {
         );
     }
 
+    #[test]
+    fn optional_chain_array_rest_assignment_keeps_recovery_shape() {
+        let source = "declare const obj: any;\n[...obj?.[\"a\"]] = [];\n[...obj?.a[\"b\"]] = [];\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("[...obj === null || obj === void 0 ? void 0 : obj[\"a\"]] = [];"),
+            "Invalid optional-chain rest targets should keep the array-spread recovery shape.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("[...obj === null || obj === void 0 ? void 0 : obj.a[\"b\"]] = [];"),
+            "Invalid optional-chain rest targets should keep non-optional tails inside the lowered branch.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains(".slice(0)"),
+            "Invalid optional-chain rest targets must not use valid rest-pattern lowering.\nOutput:\n{output}"
+        );
+    }
+
     // =====================================================================
     // write_dot_token: numeric literal double-dot disambiguation
     // =====================================================================
