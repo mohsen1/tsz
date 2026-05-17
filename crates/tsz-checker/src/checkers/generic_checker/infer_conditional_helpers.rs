@@ -136,6 +136,37 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if node.kind == syntax_kind_ext::INFER_TYPE
+            && let Some(infer_data) = self.ctx.arena.get_infer_type(node)
+        {
+            self.collect_infer_constraints_from_extends_type(
+                infer_data.type_parameter,
+                name,
+                constraints,
+            );
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_PARAMETER
+            && let Some(type_param) = self.ctx.arena.get_type_parameter(node)
+        {
+            if type_param.constraint != NodeIndex::NONE {
+                self.collect_infer_constraints_from_extends_type(
+                    type_param.constraint,
+                    name,
+                    constraints,
+                );
+            }
+            if type_param.default != NodeIndex::NONE {
+                self.collect_infer_constraints_from_extends_type(
+                    type_param.default,
+                    name,
+                    constraints,
+                );
+            }
+            return;
+        }
+
         // Template literal pattern `${infer NAME}` implicitly constrains NAME to `string`.
         // tsc derives this from `inferTypesFromTemplateLiteralType`: matching against a
         // string template requires the inferred placeholder to be string-shaped.
