@@ -5,6 +5,9 @@
 //! type environment and for resolving `DefIds` from qualified names.
 
 use crate::symbols_domain::name_text::{entity_name_text_in_arena, expression_name_text_in_arena};
+use crate::types_domain::unique_symbol_arena::{
+    has_declared_unique_symbol_owner, is_unique_symbol_type_annotation_unwrapped,
+};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_solver::TypeId;
@@ -495,34 +498,64 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 candidate_arenas.push(self.ctx.arena);
             }
 
-            candidate_arenas
-                .into_iter()
-                .any(|arena| self.declaration_is_unique_symbol_in_arena(arena, decl_idx))
+            candidate_arenas.into_iter().any(|arena| {
+                self.declaration_is_unique_symbol_in_arena(owner_binder, arena, decl_idx)
+            })
         })
     }
 
     fn declaration_is_unique_symbol_in_arena(
         &self,
+        owner_binder: &tsz_binder::BinderState,
         arena: &NodeArena,
-        decl_idx: NodeIndex,
+        mut decl_idx: NodeIndex,
     ) -> bool {
-        let Some(node) = arena.get(decl_idx) else {
+        let Some(mut node) = arena.get(decl_idx) else {
             return false;
         };
-        if node.kind != tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION {
-            return false;
+
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let Some(parent_idx) = arena.get_extended(decl_idx).map(|ext| ext.parent) else {
+                return false;
+            };
+            let Some(parent_node) = arena.get(parent_idx) else {
+                return false;
+            };
+            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                || parent_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_DECLARATION
+            {
+                decl_idx = parent_idx;
+                node = parent_node;
+            }
         }
 
-        let Some(var_decl) = arena.get_variable_declaration(node) else {
-            return false;
-        };
+        if node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION {
+            let Some(var_decl) = arena.get_variable_declaration(node) else {
+                return false;
+            };
+            if !arena.is_const_variable_declaration(decl_idx) {
+                return false;
+            }
 
-        (var_decl.type_annotation.is_some()
-            && self.is_unique_symbol_type_annotation_in_resolution_arena(
-                arena,
-                var_decl.type_annotation,
-            ))
-            || self.is_symbol_call_initializer_in_resolution_arena(arena, var_decl.initializer)
+            return (var_decl.type_annotation.is_some()
+                && is_unique_symbol_type_annotation_unwrapped(arena, var_decl.type_annotation))
+                || self.is_global_symbol_factory_call_initializer_in_resolution_arena(
+                    owner_binder,
+                    arena,
+                    var_decl.initializer,
+                );
+        }
+
+        if node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_DECLARATION {
+            let Some(prop) = arena.get_property_decl(node) else {
+                return false;
+            };
+            return prop.type_annotation.is_some()
+                && is_unique_symbol_type_annotation_unwrapped(arena, prop.type_annotation)
+                && has_declared_unique_symbol_owner(arena, prop.type_annotation);
+        }
+
+        false
     }
 
     fn is_unique_symbol_type_annotation_in_resolution_arena(
@@ -569,8 +602,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             .is_some_and(|ident| ident.escaped_text == "symbol")
     }
 
-    fn is_symbol_call_initializer_in_resolution_arena(
+    fn is_global_symbol_factory_call_initializer_in_resolution_arena(
         &self,
+        owner_binder: &tsz_binder::BinderState,
         arena: &NodeArena,
         init_idx: NodeIndex,
     ) -> bool {
@@ -584,13 +618,56 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(call) = arena.get_call_expr(node) else {
             return false;
         };
-        let Some(expr_node) = arena.get(call.expression) else {
+        self.is_global_symbol_factory_callee_in_resolution_arena(
+            owner_binder,
+            arena,
+            call.expression,
+        )
+    }
+
+    fn is_global_symbol_factory_callee_in_resolution_arena(
+        &self,
+        owner_binder: &tsz_binder::BinderState,
+        arena: &NodeArena,
+        callee_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(callee_idx) else {
             return false;
         };
 
+        if let Some(ident) = arena.get_identifier(node) {
+            if ident.escaped_text != "Symbol" {
+                return false;
+            }
+            return owner_binder
+                .resolve_identifier(arena, callee_idx)
+                .or_else(|| owner_binder.file_locals.get("Symbol"))
+                .or_else(|| {
+                    self.ctx
+                        .lib_contexts
+                        .iter()
+                        .find_map(|ctx| ctx.binder.file_locals.get("Symbol"))
+                })
+                .is_some_and(|sym_id| {
+                    self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                        || self.ctx.symbol_is_from_lib(sym_id)
+                });
+        }
+
+        if node.kind != tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = arena.get_access_expr(node) else {
+            return false;
+        };
         arena
-            .get_identifier(expr_node)
-            .is_some_and(|ident| ident.escaped_text == "Symbol")
+            .get_identifier_text(access.name_or_argument)
+            .is_some_and(|name| name == "for")
+            && self.is_global_symbol_factory_callee_in_resolution_arena(
+                owner_binder,
+                arena,
+                access.expression,
+            )
     }
 
     pub(crate) fn get_symbol_from_any_context(
