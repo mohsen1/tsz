@@ -5,8 +5,7 @@ use crate::state::{CheckerState, MemberAccessLevel, MemberLookup};
 use crate::types_domain::unique_symbol_arena::{
     is_unique_symbol_type_annotation_unwrapped, unwrap_parenthesized_type,
 };
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -26,8 +25,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1277: `const` modifier can only appear on a type parameter of a
-    /// function, method, or class. Interfaces and type aliases are rejected.
+    /// TS1277: `const` modifier can only appear on a type parameter of a function, method, or class.
     pub(crate) fn check_const_type_parameter_on_non_function(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
