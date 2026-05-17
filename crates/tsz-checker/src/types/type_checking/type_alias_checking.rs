@@ -1177,6 +1177,14 @@ impl<'a> CheckerState<'a> {
                     self.check_type_node(arr.element_type);
                 }
             }
+            k if k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE
+                || k == syntax_kind_ext::PARENTHESIZED_TYPE =>
+            {
+                if let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) {
+                    self.check_type_node(wrapped.type_node);
+                }
+            }
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
                     && let Some(type_arguments) = &type_ref.type_arguments
@@ -1428,9 +1436,27 @@ impl<'a> CheckerState<'a> {
                 // the time we reach this sibling check the scope no longer contains
                 // the inner signature's type parameters.
                 if let Some(func_type) = self.ctx.arena.get_function_type(node) {
-                    let tp_updates =
-                        self.push_missing_name_type_parameters(&func_type.type_parameters);
-                    self.check_rest_parameter_types(&func_type.parameters.nodes);
+                    let type_parameters = func_type.type_parameters.clone();
+                    let parameters = func_type.parameters.nodes.clone();
+                    let type_annotation = func_type.type_annotation;
+                    let tp_updates = self.push_missing_name_type_parameters(&type_parameters);
+                    for &param_idx in &parameters {
+                        let param_type_annotation = (|| {
+                            let param_node = self.ctx.arena.get(param_idx)?;
+                            let param = self.ctx.arena.get_parameter(param_node)?;
+                            param
+                                .type_annotation
+                                .is_some()
+                                .then_some(param.type_annotation)
+                        })();
+                        if let Some(param_type_annotation) = param_type_annotation {
+                            self.check_type_node(param_type_annotation);
+                        }
+                    }
+                    if type_annotation.is_some() {
+                        self.check_type_node(type_annotation);
+                    }
+                    self.check_rest_parameter_types(&parameters);
                     self.pop_type_parameters(tp_updates);
                 }
             }

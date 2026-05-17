@@ -135,6 +135,9 @@ mod enum_recursion_tests;
 #[path = "../tests/environment_capabilities_tests.rs"]
 mod environment_capabilities_tests;
 #[cfg(test)]
+#[path = "tests/function_type_return_node_tests.rs"]
+mod function_type_return_node_tests;
+#[cfg(test)]
 #[path = "../tests/generator_union_return_type_tests.rs"]
 mod generator_union_return_type_tests;
 #[cfg(test)]
