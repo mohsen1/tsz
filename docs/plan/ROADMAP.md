@@ -304,7 +304,7 @@ subjective "cleanup" language.
    identity queries.
 7. Emitter/DTS direct solver imports, direct type evaluation during printing,
    and `TypeData`/`lookup()` guardrail exceptions. The current direct
-   `tsz_solver` import guard outside solver/checker is pinned at `39`; reduce
+   `tsz_solver` import guard outside solver/checker is pinned at `36`; reduce
    it through focused compiler-service/front-door PRs instead of broad cleanup,
    or justify any cap bump in the same PR.
 8. `Printer` and `DeclarationEmitter` ambient state fields, especially fields
