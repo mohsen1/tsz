@@ -621,7 +621,11 @@ jobs:
         run: |
           set -euo pipefail
           install_dir="${RUNNER_TEMP}/tsz-latest-install"
-          bash scripts/install.sh --version latest --dir "${install_dir}"
+          bash scripts/install.sh --version latest --dir "${install_dir}" \
+            2>&1 | tee "${RUNNER_TEMP}/tsz-latest-install.log"
+          grep -F "releases/download/latest/tsz-latest-${LATEST_TARGET}.tar.gz" \
+            "${RUNNER_TEMP}/tsz-latest-install.log"
+          cmp -s "${install_dir}/tsz" .target-bench/dist/tsz
           "${install_dir}/tsz" --version
 
   bench-prep-artifact:
