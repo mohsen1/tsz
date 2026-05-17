@@ -522,6 +522,15 @@ fn function_type_span_varies_return_type_name() {
 }
 
 #[test]
+fn generic_function_type_span_excludes_trailing_semicolon() {
+    assert_span(
+        "type A = <T>(x: T) => T;",
+        syntax_kind_ext::FUNCTION_TYPE,
+        "<T>(x: T) => T",
+    );
+}
+
+#[test]
 fn constructor_type_span_excludes_trailing_semicolon() {
     assert_span(
         "type A = new () => X;",
@@ -586,6 +595,65 @@ fn parenthesized_type_span_varies_names() {
 }
 
 #[test]
+fn literal_type_span_excludes_trailing_semicolon() {
+    assert_span(
+        "type A = \"literal\";",
+        syntax_kind_ext::LITERAL_TYPE,
+        "\"literal\"",
+    );
+}
+
+#[test]
+fn prefix_literal_type_span_excludes_trailing_semicolon() {
+    assert_span("type A = -42;", syntax_kind_ext::LITERAL_TYPE, "-42");
+}
+
+#[test]
+fn template_literal_type_span_excludes_trailing_semicolon() {
+    assert_span(
+        "type A = `prefix${T}suffix`;",
+        syntax_kind_ext::TEMPLATE_LITERAL_TYPE,
+        "`prefix${T}suffix`",
+    );
+}
+
+#[test]
+fn template_literal_no_substitution_span_excludes_trailing_semicolon() {
+    assert_span(
+        "type A = `plain`;",
+        syntax_kind_ext::TEMPLATE_LITERAL_TYPE,
+        "`plain`",
+    );
+}
+
+#[test]
+fn keyof_type_operator_span_excludes_trailing_semicolon() {
+    assert_span(
+        "type A = keyof T;",
+        syntax_kind_ext::TYPE_OPERATOR,
+        "keyof T",
+    );
+}
+
+#[test]
+fn unique_type_operator_span_excludes_trailing_semicolon() {
+    assert_span(
+        "type A = unique symbol;",
+        syntax_kind_ext::TYPE_OPERATOR,
+        "unique symbol",
+    );
+}
+
+#[test]
+fn readonly_type_operator_span_excludes_trailing_semicolon() {
+    assert_span(
+        "type A = readonly T[];",
+        syntax_kind_ext::TYPE_OPERATOR,
+        "readonly T[]",
+    );
+}
+
+#[test]
 fn infer_type_span_excludes_trailing_token() {
     // infer only appears inside conditional types
     assert_span(
@@ -616,6 +684,38 @@ fn rest_tuple_element_span_varies_names() {
         "type A = [...Items];",
         syntax_kind_ext::REST_TYPE,
         "...Items",
+    );
+}
+
+#[test]
+fn optional_tuple_element_span_excludes_trailing_bracket() {
+    assert_span("type A = [T?];", syntax_kind_ext::OPTIONAL_TYPE, "T?");
+}
+
+#[test]
+fn named_tuple_member_span_excludes_trailing_bracket() {
+    assert_span(
+        "type A = [label: T];",
+        syntax_kind_ext::NAMED_TUPLE_MEMBER,
+        "label: T",
+    );
+}
+
+#[test]
+fn named_tuple_optional_type_span_excludes_trailing_bracket() {
+    assert_span(
+        "type A = [label: T?];",
+        syntax_kind_ext::OPTIONAL_TYPE,
+        "T?",
+    );
+}
+
+#[test]
+fn mapped_type_member_span_excludes_trailing_brace() {
+    assert_span(
+        "interface I { [K in Keys]: Value; }",
+        syntax_kind_ext::MAPPED_TYPE,
+        "[K in Keys]: Value;",
     );
 }
 

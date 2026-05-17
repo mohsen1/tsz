@@ -676,7 +676,7 @@ impl ParserState {
             NodeIndex::NONE
         };
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         let kind = if is_constructor {
             syntax_kind_ext::CONSTRUCTOR_TYPE
@@ -1391,7 +1391,7 @@ impl ParserState {
             }
         };
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_literal_type(
             syntax_kind_ext::LITERAL_TYPE,
@@ -1418,7 +1418,7 @@ impl ParserState {
             self.parse_numeric_literal()
         };
 
-        let prefix_end = self.token_end();
+        let prefix_end = self.token_full_start();
 
         // Create prefix unary expression node
         let prefix_expr = self.arena.add_unary_expr(
@@ -1761,7 +1761,7 @@ impl ParserState {
         if self.is_token(SyntaxKind::NoSubstitutionTemplateLiteral) {
             // Simple template literal type with no substitutions: `hello`
             let head = self.parse_template_literal_head();
-            let end_pos = self.token_end();
+            let end_pos = self.token_full_start();
 
             return self.arena.add_template_literal_type(
                 syntax_kind_ext::TEMPLATE_LITERAL_TYPE,
@@ -1793,7 +1793,7 @@ impl ParserState {
 
             // Parse the template middle/tail literal
             let literal = self.parse_template_literal_span();
-            let span_end = self.token_end();
+            let span_end = self.token_full_start();
 
             // Create a template span node
             // Note: We reuse TemplateSpanData, using 'expression' field for the type node
@@ -1813,7 +1813,7 @@ impl ParserState {
             }
         }
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_template_literal_type(
             syntax_kind_ext::TEMPLATE_LITERAL_TYPE,
@@ -1835,7 +1835,7 @@ impl ParserState {
         let literal_end = self.token_end();
         self.report_invalid_string_or_template_escape_errors();
         self.next_token();
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
         if is_unterminated {
             self.error_unterminated_template_literal_at(start_pos, literal_end);
         }
