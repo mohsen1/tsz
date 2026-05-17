@@ -113,7 +113,10 @@ jobs:
           target_sha="${{ env.BENCH_TARGET_SHA }}"
           manifest_value() {
             local key="$1"
-            grep -E "^${key}=" bench-prep.env | tail -n1 | cut -d= -f2-
+            awk -v key="$key" '
+              index($0, key "=") == 1 { value = substr($0, length(key) + 2) }
+              END { print value }
+            ' bench-prep.env
           }
 
           rm -f bench-prep.env bench-prep.tar
@@ -171,7 +174,10 @@ jobs:
           target_sha="${{ env.BENCH_TARGET_SHA }}"
           manifest_value() {
             local key="$1"
-            grep -E "^${key}=" bench-prep.env | tail -n1 | cut -d= -f2-
+            awk -v key="$key" '
+              index($0, key "=") == 1 { value = substr($0, length(key) + 2) }
+              END { print value }
+            ' bench-prep.env
           }
 
           deadline=$((SECONDS + 7200))
