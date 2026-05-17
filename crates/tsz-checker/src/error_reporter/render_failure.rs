@@ -1338,7 +1338,7 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TSC emits TS2322 instead of TS2741 when the target type is an intersection type.
+        // TSC emits TS2322 instead of TS2741 when the target type is an intersection.
         let target_evaluated_for_intersection = self.evaluate_type_with_env(target);
         if crate::query_boundaries::common::is_intersection_type(self.ctx.types, target_type)
             || crate::query_boundaries::common::is_intersection_type(self.ctx.types, target)
@@ -1347,8 +1347,14 @@ impl<'a> CheckerState<'a> {
                 target_evaluated_for_intersection,
             )
         {
-            let src_str = self.format_type_diagnostic(source_type);
-            let tgt_str = if crate::query_boundaries::common::is_intersection_type(
+            let src_str = if depth == 0 {
+                self.format_assignability_type_for_message(source, target)
+            } else {
+                self.format_type_diagnostic(source_type)
+            };
+            let tgt_str = if depth == 0 {
+                self.format_assignability_type_for_message(target, source)
+            } else if crate::query_boundaries::common::is_intersection_type(
                 self.ctx.types,
                 target_evaluated_for_intersection,
             ) {
@@ -1373,8 +1379,6 @@ impl<'a> CheckerState<'a> {
         }
 
         // TSC emits TS2322 instead of TS2741 when the *source* type is an intersection.
-        // This covers type aliases like `LinkedList<T> = T & { next: ... }` that may have
-        // been evaluated to an intersection by the time we reach diagnostic rendering.
         // Check both the type data and the source's declaration annotation, since
         // intersections may be flattened into Object types by the solver.
         let source_evaluated_for_intersection = self.evaluate_type_with_env(source);
@@ -1385,7 +1389,14 @@ impl<'a> CheckerState<'a> {
             )
             || (depth == 0 && self.anchor_source_has_intersection_annotation(idx))
         {
-            let src_str = if depth == 0 {
+            // format_type_for_diagnostic_role expands alias names via get_type_of_node; use the
+            // alias-preserving path for Application sources so the alias name is kept.
+            let src_str = if depth == 0
+                && crate::query_boundaries::common::application_info(self.ctx.types, source)
+                    .is_some()
+            {
+                self.format_assignability_type_for_message(source, target)
+            } else if depth == 0 {
                 self.format_type_for_diagnostic_role(
                     source,
                     DiagnosticTypeDisplayRole::AssignmentSource {
@@ -1414,11 +1425,8 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // TSC emits TS2322 instead of TS2741 when the source is a type application
-        // (generic type alias) whose base type resolves to an intersection. For example,
-        // `LinkedList<Entity>` where `type LinkedList<T> = T & { next: LinkedList<T> }`.
-        // Named type aliases expanding to intersections are reported as general
-        // assignability failures, not property-level "missing" errors.
+        // TSC emits TS2322 instead of TS2741 when the source is an Application alias
+        // whose base resolves to an intersection (e.g. recursive `LinkedList<T> = T & {...}`).
         if let Some((base, _args)) =
             crate::query_boundaries::common::application_info(self.ctx.types, source)
         {
@@ -1431,13 +1439,7 @@ impl<'a> CheckerState<'a> {
                     );
             if base_is_intersection {
                 let src_str = if depth == 0 {
-                    self.format_type_for_diagnostic_role(
-                        source,
-                        DiagnosticTypeDisplayRole::AssignmentSource {
-                            target,
-                            anchor_idx: idx,
-                        },
-                    )
+                    self.format_assignability_type_for_message(source, target)
                 } else {
                     self.format_type_diagnostic(source_type)
                 };
