@@ -1827,6 +1827,56 @@ module.exports = Conn;
 }
 
 #[test]
+fn test_js_typedef_before_private_function_in_es_module_stays_exported() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | number} Value */
+function local(value) { return value; }
+export const x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected sibling ES export to stay exported: {output}"
+    );
+    assert!(
+        output.contains("export type Value = string | number;"),
+        "Expected top-level typedef before a private JS function to follow ES module export policy: {output}"
+    );
+    assert!(
+        !output.contains("\ntype Value = string | number;"),
+        "Did not expect ES module typedef to be consumed early as a local alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_typedef_before_private_class_in_es_module_stays_exported() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | number} Value */
+class Local {
+    method() {}
+}
+export const x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected sibling ES export to stay exported: {output}"
+    );
+    assert!(
+        output.contains("export type Value = string | number;"),
+        "Expected top-level typedef before a private JS class to follow ES module export policy: {output}"
+    );
+    assert!(
+        !output.contains("\ntype Value = string | number;"),
+        "Did not expect ES module typedef to be consumed early as a local alias: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_uses_jsdoc_signature_types() {
     let source = r#"
 /**

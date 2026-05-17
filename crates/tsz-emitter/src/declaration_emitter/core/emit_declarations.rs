@@ -680,7 +680,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
         if let Some(name) = js_export_equals_declaration_name {
             self.emit_pending_js_export_equals_for_name(name);
-        } else if !is_variable_like_export {
+        } else if has_effective_export && !is_variable_like_export {
             self.emit_leading_jsdoc_type_aliases_for_pos(stmt_node.pos, has_effective_export);
         }
 
