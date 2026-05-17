@@ -139,15 +139,14 @@ impl<'a> CheckerState<'a> {
                                 if let Some(outer_type_op) =
                                     self.ctx.arena.get_type_operator(outer_c_node)
                                     && outer_type_op.operator == SyntaxKind::KeyOfKeyword as u16
-                                {
-                                    if self.mapped_keyof_target_matches_object(
+                                    && self.mapped_keyof_target_matches_object(
                                         outer_type_op.type_node,
                                         object_node_idx,
                                         object_type,
                                         object_type_for_check,
-                                    ) {
-                                        return true;
-                                    }
+                                    )
+                                {
+                                    return true;
                                 }
                                 // Semantic fallback for expression/alias outer constraints.
                                 let outer_c_type =
