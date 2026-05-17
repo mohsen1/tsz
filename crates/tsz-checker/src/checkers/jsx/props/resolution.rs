@@ -1183,22 +1183,25 @@ impl<'a> CheckerState<'a> {
                 } else {
                     None
                 };
+                let concrete_spread_assignable = if !spread_has_type_parameters && !skip_prop_checks
+                {
+                    Some(self.is_assignable_to(spread_type, props_type))
+                } else {
+                    None
+                };
                 if spread_has_type_parameters {
                     spread_covers_all = true;
-                } else if concrete_spread_outcome
-                    .as_ref()
-                    .is_some_and(|outcome| outcome.related)
-                {
-                    // The solver reports the spread is structurally assignable to the
-                    // whole props type, so all required members are satisfied — including
-                    // ones inherited from Object.prototype (toString, valueOf, …) that
-                    // wouldn't appear in the spread's declared property shape. The
-                    // property-by-property missing check (TS2741) only walks declared
-                    // shapes, so it would otherwise emit a false positive when a spread
-                    // like `{...{}}` is fed into a target that requires only inherited
-                    // members. Defer to the solver here. Per-property type-mismatch
-                    // checking still runs via the deferred `check_spread_property_types`
-                    // below.
+                } else if concrete_spread_assignable == Some(true) {
+                    // The canonical checker assignability path accepts the spread for
+                    // the whole props type, so all required members are satisfied —
+                    // including ones inherited from Object.prototype (toString,
+                    // valueOf, …) that wouldn't appear in the spread's declared
+                    // property shape. The property-by-property missing check (TS2741)
+                    // only walks declared shapes, so it would otherwise emit a false
+                    // positive when a spread like `{...{}}` is fed into a target that
+                    // requires only inherited members. Per-property type-mismatch
+                    // checking still runs via the deferred
+                    // `check_spread_property_types` below.
                     spread_covers_all = true;
                 }
 

@@ -88,6 +88,11 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 spread_source_type,
             );
+        let concrete_spread_assignable = if !spread_has_type_params {
+            Some(self.is_assignable_to(spread_type, props_type))
+        } else {
+            None
+        };
 
         let built_concrete_spread_outcome;
         let concrete_spread_outcome = if let Some(outcome) = concrete_spread_outcome {
@@ -108,7 +113,7 @@ impl<'a> CheckerState<'a> {
         // For generic spreads, the relation can be too optimistic; keep them on the
         // normalized JSX spread path below so we can classify TS2322 vs TS2741 from
         // the apparent/object shape first.
-        if concrete_spread_outcome.is_some_and(|outcome| outcome.related) {
+        if concrete_spread_assignable == Some(true) {
             return false;
         }
 

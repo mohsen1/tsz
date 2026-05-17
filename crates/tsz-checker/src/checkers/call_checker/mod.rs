@@ -100,7 +100,7 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         )
         .with_property_classification();
         let outcome = self.state.execute_relation_request(&request);
-        let related = outcome.related;
+        let related = self.state.is_assignable_to(source, target);
         if related {
             self.relation_evidence.push(CallRelationEvidence {
                 source: prepared_source,
