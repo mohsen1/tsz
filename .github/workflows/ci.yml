@@ -983,7 +983,12 @@ jobs:
               print(f"gate did not pass: {gate.get('result')}")
               sys.exit(1)
 
-          hard_failure_results = {"failure", "cancelled", "timed_out", "action_required"}
+          # "cancelled" is intentionally excluded: when a newer push supersedes this
+          # run via concurrency cancel-in-progress, jobs show as "cancelled" even
+          # though nothing is actually broken. The required-jobs check below handles
+          # cancelled required jobs; the superseded-run guard further down exits 0
+          # when every required failure is a cancellation (not a real failure).
+          hard_failure_results = {"failure", "timed_out", "action_required"}
           # Jobs that are informational/best-effort: infrastructure failures in these
           # do not block the PR. Per-shard baseline checks in the conformance shard
           # jobs enforce the regression gate independently.
@@ -1038,13 +1043,28 @@ jobs:
                   })
 
           failures = []
+          cancelled_required = []
           for name, data in needs.items():
               if name == "gate" or name not in required:
                   continue
-              if data.get("result") != "success":
-                  failures.append(f"{name}: {data.get('result')}")
+              result = data.get("result")
+              if result != "success":
+                  failures.append(f"{name}: {result}")
+                  if result == "cancelled":
+                      cancelled_required.append(name)
 
           if failures:
+              # If every required-job non-success is "cancelled" and there are no
+              # actual failures or timeouts, this run was superseded by a newer push
+              # (concurrency cancel-in-progress). Exit 0 so the superseding run can
+              # provide the authoritative result without this stale run blocking merge.
+              if len(cancelled_required) == len(failures):
+                  print(
+                      f"CI run superseded by a newer push: "
+                      f"{len(cancelled_required)} required job(s) cancelled, none failed. "
+                      "Treating as neutral — the superseding run provides the final status."
+                  )
+                  sys.exit(0)
               print("Required CI jobs did not pass:")
               for failure in failures:
                   print(f"  - {failure}")
