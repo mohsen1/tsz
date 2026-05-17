@@ -144,6 +144,8 @@ mod tests {
             "lib.esnext.d.ts",
             "lib.decorators.d.ts",
             "lib.scripthost.d.ts",
+            "/repo/node_modules/typescript/lib/lib.es5.d.ts",
+            r"C:\repo\node_modules\typescript\lib\lib.es2020.symbol.wellknown.d.ts",
         ] {
             assert_eq!(
                 classify_declaration_file_for_cache(file_name, true),
