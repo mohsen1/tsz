@@ -89,6 +89,22 @@ await fs.writeFile(artifact, `${JSON.stringify({
           both_rejected: 60,
           tsc_accepted_tsz_rejected: 3,
           tsc_rejected_tsz_accepted: 2,
+          file_comparison: {
+            counts: {
+              bothAccepted: 5,
+              bothRejected: 60,
+              tscAcceptedTszRejected: 3,
+              tscRejectedTszAccepted: 2,
+            },
+          },
+          diagnostic_candidate_examples: [
+            {
+              compiler: "tsz",
+              file: "type-challenges-assertions/assertions/two.ts",
+              candidate_id: "00002-medium-recursive",
+              codes: ["TS2589"],
+            },
+          ],
         },
       },
     },
@@ -164,10 +180,17 @@ try {
 
   const compatibilityDashboard = getProjectCompatibilityDashboard();
   assert.match(compatibilityDashboard, /type-challenges assertions/);
-  assert.match(compatibilityDashboard, /generated: 78/);
-  assert.match(compatibilityDashboard, /tsc-clean: 10/);
+  assert.match(compatibilityDashboard, /assertions generated: 78/);
+  assert.match(compatibilityDashboard, /tsc clean: 10/);
+  assert.match(compatibilityDashboard, /tsz clean: 7/);
   assert.match(compatibilityDashboard, /both accepted: 5/);
+  assert.match(compatibilityDashboard, /both rejected: 60/);
   assert.match(compatibilityDashboard, /tsc accepted\/tsz rejected: 3/);
+  assert.match(compatibilityDashboard, /tsc rejected\/tsz accepted: 2/);
+  assert.match(
+    compatibilityDashboard,
+    /tsz: TS2589 type-challenges-assertions\/assertions\/two\.ts/,
+  );
 
   process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = failedOnlyArtifact;
   const failedOnlyCharts = getBenchmarkCharts();
