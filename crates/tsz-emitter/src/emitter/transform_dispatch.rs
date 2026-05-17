@@ -1145,7 +1145,13 @@ impl<'a> Printer<'a> {
         if node.kind == syntax_kind_ext::CLASS_EXPRESSION {
             emitter.set_expression_mode(true);
             // Use function name from the directive (determined during lowering)
-            if let Some(name) = function_name {
+            if let Some((name, is_expression)) = self.pending_tc39_class_expression_name.clone() {
+                if is_expression {
+                    emitter.set_function_name_expression(name);
+                } else {
+                    emitter.set_function_name(name);
+                }
+            } else if let Some(name) = function_name {
                 emitter.set_function_name(name.to_string());
             } else if let Some(ref name) = self.anonymous_default_export_name {
                 emitter.set_function_name(name.clone());

@@ -169,8 +169,23 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                 if let Some(prop) = self.arena.get_property_assignment(node) {
+                    if self.is_tc39_decorated_anonymous_class_expression(prop.initializer)
+                        && self.arena.get(prop.name).is_some_and(|name_node| {
+                            name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        })
+                    {
+                        self.transforms.helpers_mut().prop_key = true;
+                    }
                     self.visit(prop.name);
                     self.visit(prop.initializer);
+                }
+            }
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                if let Some(prop) = self.arena.get_shorthand_property(node) {
+                    self.visit(prop.name);
+                    if prop.object_assignment_initializer.is_some() {
+                        self.visit(prop.object_assignment_initializer);
+                    }
                 }
             }
             k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
@@ -187,6 +202,14 @@ impl<'a> LoweringPass<'a> {
                         })
                     {
                         self.transforms.helpers_mut().metadata = true;
+                    }
+                    if prop.initializer.is_some()
+                        && self.is_tc39_decorated_anonymous_class_expression(prop.initializer)
+                        && self.arena.get(prop.name).is_some_and(|name_node| {
+                            name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        })
+                    {
+                        self.transforms.helpers_mut().prop_key = true;
                     }
                     if let Some(mods) = &prop.modifiers {
                         for &mod_idx in &mods.nodes {

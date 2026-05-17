@@ -734,6 +734,40 @@ impl<'a> Printer<'a> {
         // Emit modifiers (static and accessor for JavaScript)
         self.emit_class_member_modifiers_js(&prop.modifiers);
 
+        if prop.initializer.is_some()
+            && self.is_tc39_decorated_anonymous_class_expression(prop.initializer)
+        {
+            let name_node = self.arena.get(prop.name);
+            if name_node.is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME) {
+                if let Some(computed) = name_node.and_then(|n| self.arena.get_computed_property(n))
+                {
+                    self.write("[");
+                    let name_expr =
+                        self.emit_tc39_named_class_computed_property_name(computed.expression);
+                    self.write("]");
+                    self.write(" = ");
+                    self.with_scoped_static_initializer_context_cleared(|this| {
+                        this.emit_with_tc39_class_expression_name(
+                            prop.initializer,
+                            name_expr,
+                            true,
+                        );
+                    });
+                    self.write_semicolon();
+                    return;
+                }
+            } else if let Some(name) = self.tc39_class_expression_name_from_property_name(prop.name)
+            {
+                self.emit_class_member_name_preserving_class_expression_name(prop.name);
+                self.write(" = ");
+                self.with_scoped_static_initializer_context_cleared(|this| {
+                    this.emit_with_tc39_class_expression_name(prop.initializer, name, false);
+                });
+                self.write_semicolon();
+                return;
+            }
+        }
+
         self.emit_class_member_name_preserving_class_expression_name(prop.name);
 
         // Skip type annotations for JavaScript emit
