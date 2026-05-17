@@ -296,19 +296,23 @@ type Result = Test<Obj>;"#,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Deferred conditional types — tsc defers TS2536 to instantiation time
-// when the object type is a generic conditional (e.g. `T extends C ? A : B`
-// with A's keyof not provably equal to `keyof T`).
+// Negative cases: conditional bodies whose branches do NOT share keyof T
+// must still emit TS2536 — tsc reports these at the generic definition
+// level because the solver cannot prove keyof F<T> = keyof T.
 // ──────────────────────────────────────────────────────────────────────────
 
+/// Verified against `tsc 6.0.3 --noEmit`: this exact shape emits
+/// `TS2536: Type 'K' cannot be used to index type 'Fixed<T>'.`
+/// The solver-side branch proof must reject this (true-branch is `{ x: number }`,
+/// whose keyof is `"x"`, not `keyof T`), and the checker must not defer it.
 #[test]
-fn conditional_deferred_unrelated_branch_no_ts2536_at_generic_level() {
+fn conditional_unrelated_true_branch_emits_ts2536() {
     let diags = check_es5(
         "type Fixed<T> = T extends object ? { x: number } : T;\n\
          type Test<T> = { [K in keyof T]: Fixed<T>[K] };",
     );
     assert!(
-        ts2536(&diags).is_empty(),
-        "Fixed<T>[K] with generic T must not emit TS2536 at the generic level (tsc defers): {diags:?}"
+        !ts2536(&diags).is_empty(),
+        "Fixed<T>[K] with unrelated true-branch must emit TS2536 (parity with tsc): {diags:?}"
     );
 }

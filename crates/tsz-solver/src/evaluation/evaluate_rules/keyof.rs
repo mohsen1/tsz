@@ -567,6 +567,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().keyof(operand)
                     }
                 }
+                // Conditional types: if the check type is a type parameter and every
+                // branch shares its key space (identity, or a non-remapped mapped type
+                // whose constraint is `keyof <check_param>`), keyof of the conditional
+                // reduces to keyof of the check parameter.  This catches expanded
+                // utility-type aliases like `DeepRequired<T>` whose application has
+                // already been substituted to its body before reaching `evaluate_keyof`.
+                TypeData::Conditional(_) => self
+                    .try_keyof_from_conditional_branches(evaluated_operand)
+                    .unwrap_or_else(|| self.interner().keyof(operand)),
                 // For other types (type parameters, etc.), keep as KeyOf (deferred)
                 _ => self.interner().keyof(operand),
             }
@@ -690,6 +699,33 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let keyof_source = self.interner().keyof(source_arg);
+        Some(self.evaluate_or_keep(keyof_source))
+    }
+
+    /// Direct-conditional form of the branch-keyof reduction, for cases where
+    /// `evaluate_keyof` reaches a Conditional that's already been substituted
+    /// (e.g. `T extends C ? { [P in keyof T]?: ... } : T` arrived here without
+    /// the surrounding Application).  Treats the conditional's check type as
+    /// the "source": every branch must either *be* the check type or be a
+    /// non-remapped mapped type whose constraint is `keyof <check>`.
+    fn try_keyof_from_conditional_branches(&mut self, conditional: TypeId) -> Option<TypeId> {
+        let cond_id = crate::type_queries::get_conditional_type_id(self.interner(), conditional)?;
+        let cond = self.interner().conditional_type(cond_id);
+        // Check type must already be a type parameter for the rule to apply.
+        if crate::type_param_info(self.interner(), cond.check_type).is_none() {
+            return None;
+        }
+        let source = cond.check_type;
+        let source_name = crate::type_param_info(self.interner(), source).map(|info| info.name);
+        let is_source = |ty: TypeId| {
+            ty == source || source_name.is_some_and(|n| self.is_type_param_named(ty, n))
+        };
+        if !self.branch_matches_keyof_source(cond.true_type, &is_source)
+            || !self.branch_matches_keyof_source(cond.false_type, &is_source)
+        {
+            return None;
+        }
+        let keyof_source = self.interner().keyof(source);
         Some(self.evaluate_or_keep(keyof_source))
     }
 
