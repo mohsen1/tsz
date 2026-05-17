@@ -11,37 +11,6 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
-    pub(in crate::declaration_emitter) fn expression_is_always_truthy_for_decl_emit(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> bool {
-        let Some(expr_idx) = self.skip_parenthesized_expression(expr_idx) else {
-            return false;
-        };
-        let Some(expr_node) = self.arena.get(expr_idx) else {
-            return false;
-        };
-
-        match expr_node.kind {
-            k if k == syntax_kind_ext::NEW_EXPRESSION
-                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                || k == syntax_kind_ext::ARROW_FUNCTION
-                || k == syntax_kind_ext::CLASS_EXPRESSION =>
-            {
-                true
-            }
-            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                self.arena.get_binary_expr(expr_node).is_some_and(|binary| {
-                    binary.operator_token == SyntaxKind::BarBarToken as u16
-                        && self.expression_is_always_truthy_for_decl_emit(binary.left)
-                })
-            }
-            _ => false,
-        }
-    }
-
     pub(in crate::declaration_emitter) fn function_body_preferred_return_type_text(
         &self,
         body_idx: NodeIndex,

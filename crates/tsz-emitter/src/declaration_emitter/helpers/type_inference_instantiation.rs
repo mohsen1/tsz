@@ -5,49 +5,189 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+#[derive(Clone)]
+struct ShortCircuitTypePart {
+    text: String,
+    source_order: Option<u32>,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(super) fn short_circuit_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        self.short_circuit_expression_type_parts(expr_idx, 0)
+            .map(Self::format_short_circuit_type_parts)
+    }
+
+    fn short_circuit_expression_type_parts(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<Vec<ShortCircuitTypePart>> {
+        if depth > 8 {
+            return None;
+        }
         let expr_node = self.arena.get(expr_idx)?;
         let binary = self.arena.get_binary_expr(expr_node)?;
-
-        if binary.operator_token == SyntaxKind::BarBarToken as u16
-            || binary.operator_token == SyntaxKind::QuestionQuestionToken as u16
+        let operator = binary.operator_token;
+        if operator != SyntaxKind::BarBarToken as u16
+            && operator != SyntaxKind::QuestionQuestionToken as u16
         {
-            if let (Some(left_text), Some(right_text)) = (
-                self.short_circuit_operand_type_text(binary.left),
-                self.short_circuit_operand_type_text(binary.right),
-            ) {
-                if Self::remove_undefined_from_union_text(&left_text)
-                    .as_deref()
-                    .is_some_and(|left_without_undefined| {
-                        Self::type_texts_match_ignoring_redundant_parens(
-                            left_without_undefined,
-                            &right_text,
-                        )
-                    })
-                {
-                    return Some(right_text);
-                }
-            }
+            return None;
         }
 
-        if binary.operator_token == SyntaxKind::BarBarToken as u16 {
-            if !self.expression_is_always_truthy_for_decl_emit(binary.left) {
-                return None;
-            }
+        let mut left_parts = self.short_circuit_operand_type_parts(binary.left, depth + 1)?;
+        let right_parts = self.short_circuit_operand_type_parts(binary.right, depth + 1)?;
 
-            return self
-                .preferred_expression_type_text(binary.left)
-                .or_else(|| {
-                    self.get_node_type_or_names(&[binary.left])
-                        .map(|type_id| self.print_type_id(type_id))
-                });
+        if operator == SyntaxKind::BarBarToken as u16 {
+            left_parts.retain(|part| !Self::short_circuit_or_excludes_left_type(&part.text));
+        } else {
+            left_parts.retain(|part| !Self::short_circuit_nullish_excludes_left_type(&part.text));
         }
 
+        let mut parts = left_parts;
+        parts.extend(right_parts);
+        Self::dedupe_and_sort_short_circuit_type_parts(&mut parts);
+        if parts.is_empty() {
+            return None;
+        }
+        Some(parts)
+    }
+
+    fn short_circuit_operand_type_parts(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<Vec<ShortCircuitTypePart>> {
+        if depth > 8 {
+            return None;
+        }
+        let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(parts) = self.short_circuit_expression_type_parts(expr_idx, depth + 1)
+        {
+            return Some(parts);
+        }
+        if expr_node.kind == SyntaxKind::Identifier as u16
+            && let Some(initializer) = self.short_circuit_reference_initializer(expr_idx)
+            && let Some(parts) = self.short_circuit_expression_type_parts(initializer, depth + 1)
+        {
+            return Some(parts);
+        }
+
+        let text = self.short_circuit_operand_type_text(expr_idx)?;
+        let mut parts = Self::split_top_level_union_type_parts(&text)
+            .into_iter()
+            .map(|text| ShortCircuitTypePart {
+                text,
+                source_order: self.short_circuit_source_order(expr_idx),
+            })
+            .collect::<Vec<_>>();
+        Self::dedupe_and_sort_short_circuit_type_parts(&mut parts);
+        Some(parts)
+    }
+
+    fn short_circuit_reference_initializer(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let decl_node = self.arena.get(decl_idx)?;
+            let var_decl = self.arena.get_variable_declaration(decl_node)?;
+            if var_decl.initializer.is_some()
+                && self
+                    .arena
+                    .get(var_decl.initializer)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION)
+            {
+                return Some(var_decl.initializer);
+            }
+        }
         None
     }
 
+    fn short_circuit_source_order(&self, expr_idx: NodeIndex) -> Option<u32> {
+        if self
+            .arena
+            .get(expr_idx)
+            .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+            && let Some(sym_id) = self.value_reference_symbol(expr_idx)
+            && let Some(symbol) = self.binder.and_then(|binder| binder.symbols.get(sym_id))
+            && let Some(decl_idx) = symbol.declarations.first().copied()
+            && let Some(decl_node) = self.arena.get(decl_idx)
+        {
+            return Some(decl_node.pos);
+        }
+        self.arena.get(expr_idx).map(|node| node.pos)
+    }
+
+    fn short_circuit_or_excludes_left_type(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        Self::short_circuit_nullish_excludes_left_type(trimmed)
+            || trimmed == "false"
+            || trimmed == "0"
+            || trimmed == "-0"
+            || trimmed == "0n"
+            || trimmed == "\"\""
+            || trimmed == "''"
+    }
+
+    fn short_circuit_nullish_excludes_left_type(type_text: &str) -> bool {
+        matches!(type_text.trim(), "null" | "undefined" | "void")
+    }
+
+    fn dedupe_and_sort_short_circuit_type_parts(parts: &mut Vec<ShortCircuitTypePart>) {
+        let mut deduped: Vec<ShortCircuitTypePart> = Vec::new();
+        for part in parts.drain(..) {
+            if let Some(existing) = deduped
+                .iter_mut()
+                .find(|existing| existing.text == part.text)
+            {
+                if existing.source_order.is_none()
+                    || part
+                        .source_order
+                        .is_some_and(|order| existing.source_order.is_none_or(|old| order < old))
+                {
+                    existing.source_order = part.source_order;
+                }
+            } else {
+                deduped.push(part);
+            }
+        }
+        deduped.sort_by(
+            |left, right| match (left.source_order, right.source_order) {
+                (Some(left_order), Some(right_order)) => left_order.cmp(&right_order),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            },
+        );
+        *parts = deduped;
+    }
+
+    fn format_short_circuit_type_parts(parts: Vec<ShortCircuitTypePart>) -> String {
+        if parts.len() == 1 {
+            return parts[0].text.clone();
+        }
+        parts
+            .into_iter()
+            .map(|part| Self::parenthesize_type_text_in_union_position(&part.text))
+            .collect::<Vec<_>>()
+            .join(" | ")
+    }
+
     fn short_circuit_operand_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        self.short_circuit_operand_type_text_at(expr_idx, 0)
+    }
+
+    fn short_circuit_operand_type_text_at(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        if depth > 8 {
+            return None;
+        }
+        let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
         self.preferred_expression_type_text(expr_idx)
             .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
             .or_else(|| {
@@ -170,35 +310,5 @@ impl<'a> DeclarationEmitter<'a> {
             &[(type_param.to_string(), type_arg.to_string())],
         );
         Some(format!("{prefix}{instantiated}{suffix}"))
-    }
-
-    fn remove_undefined_from_union_text(type_text: &str) -> Option<String> {
-        let parts = Self::split_top_level_union_type_parts(type_text);
-        if parts.len() <= 1 || !parts.iter().any(|part| part == "undefined") {
-            return None;
-        }
-        let remaining: Vec<String> = parts
-            .into_iter()
-            .filter(|part| part != "undefined")
-            .map(|part| Self::parenthesize_type_text_in_union_position(&part))
-            .collect();
-        if let [single] = remaining.as_slice() {
-            return Some(Self::strip_redundant_function_wrapper_parens(single).to_string());
-        }
-        Some(remaining.join(" | "))
-    }
-
-    fn type_texts_match_ignoring_redundant_parens(left: &str, right: &str) -> bool {
-        Self::strip_redundant_function_wrapper_parens(left)
-            == Self::strip_redundant_function_wrapper_parens(right)
-    }
-
-    fn strip_redundant_function_wrapper_parens(type_text: &str) -> &str {
-        let trimmed = type_text.trim();
-        if trimmed.starts_with("((") && trimmed.ends_with(')') && trimmed.contains("=>") {
-            &trimmed[1..trimmed.len() - 1]
-        } else {
-            trimmed
-        }
     }
 }
