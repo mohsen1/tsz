@@ -4,6 +4,7 @@
 //! For ES2015 targets, outputs an IIFE with comma-separated decorator application.
 //! For ES2022+ targets, uses static initializer blocks.
 
+use rustc_hash::FxHashMap;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -31,6 +32,9 @@ pub struct TC39DecoratorEmitter<'a> {
     function_name: Option<String>,
     /// Runtime temp used for anonymous decorated class expressions.
     anonymous_class_name: Option<String>,
+    /// Function body text rendered by the main emitter before this transform
+    /// assembles descriptor/externalized function expressions.
+    function_body_texts: FxHashMap<NodeIndex, String>,
     /// When true, decorated fields stay as class field declarations (ES2022+).
     /// When false, decorated fields move to constructor assignments.
     use_define_for_class_fields: bool,
@@ -48,6 +52,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             expression_mode: false,
             function_name: None,
             anonymous_class_name: None,
+            function_body_texts: FxHashMap::default(),
             use_define_for_class_fields: false,
         }
     }
@@ -84,6 +89,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     pub fn set_anonymous_class_name(&mut self, name: String) {
         self.anonymous_class_name = Some(name);
+    }
+
+    pub fn set_function_body_text(&mut self, body_idx: NodeIndex, text: String) {
+        self.function_body_texts.insert(body_idx, text);
     }
 
     pub const fn set_use_define_for_class_fields(&mut self, use_define: bool) {
@@ -2493,87 +2502,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
         if body_idx == NodeIndex::NONE {
             return "{ }".to_string();
         }
-        let mut body = self
-            .block_text_from_source(body_idx)
-            .unwrap_or_else(|| self.node_text(body_idx));
-        if body.is_empty() {
-            return "{ }".to_string();
-        }
-        if body.ends_with('}') {
-            let before_trailing_brace = &body[..body.len() - 1];
-            let trimmed = before_trailing_brace.trim_end();
-            if trimmed.ends_with('}') && before_trailing_brace.contains('\n') {
-                body = trimmed.to_string();
-            }
-        }
-        if let Some(prefix) = body.strip_suffix("{}") {
-            format!("{prefix}{{ }}")
+        if let Some(body) = self.function_body_texts.get(&body_idx) {
+            body.clone()
         } else {
-            body
+            "{ }".to_string()
         }
-    }
-
-    fn block_text_from_source(&self, body_idx: NodeIndex) -> Option<String> {
-        let body_node = self.arena.get(body_idx)?;
-        let source = self.source_text?;
-        let bytes = source.as_bytes();
-        let mut pos = (body_node.pos as usize).min(bytes.len());
-        while pos < bytes.len() && bytes[pos] != b'{' {
-            pos += 1;
-        }
-        if pos >= bytes.len() {
-            return None;
-        }
-
-        let block_start = pos;
-        let mut depth = 0u32;
-        let mut in_string = false;
-        let mut string_char = 0u8;
-        let mut in_template = false;
-        let mut template_depth = 0u32;
-
-        while pos < bytes.len() {
-            let ch = bytes[pos];
-            if in_string {
-                if ch == b'\\' {
-                    pos += 1;
-                } else if ch == string_char {
-                    in_string = false;
-                }
-            } else if in_template {
-                if ch == b'\\' {
-                    pos += 1;
-                } else if ch == b'`' {
-                    in_template = false;
-                } else if ch == b'$' && pos + 1 < bytes.len() && bytes[pos + 1] == b'{' {
-                    template_depth += 1;
-                    pos += 1;
-                }
-            } else {
-                match ch {
-                    b'\'' | b'"' => {
-                        in_string = true;
-                        string_char = ch;
-                    }
-                    b'`' => in_template = true,
-                    b'{' => depth += 1,
-                    b'}' => {
-                        if template_depth > 0 {
-                            template_depth -= 1;
-                        } else {
-                            depth = depth.saturating_sub(1);
-                            if depth == 0 {
-                                return Some(source[block_start..=pos].trim().to_string());
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            pos += 1;
-        }
-
-        None
     }
 
     fn private_member_name(&self, member: &DecoratedMember) -> Option<String> {
