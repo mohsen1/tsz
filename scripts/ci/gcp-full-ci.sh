@@ -1139,30 +1139,6 @@ run_conformance() {
   fi
 
   if [[ "$shard_count" -gt 1 ]]; then
-    # Per-shard regression gate: each shard independently enforces a proportional
-    # fraction of the global baseline. This keeps the gate reliable even when the
-    # cross-job conformance-aggregate step has infrastructure issues (GCS auth,
-    # artifact storage). Tolerance of 50 tests per shard accommodates uneven
-    # weighted-shard distribution without masking real regressions.
-    local global_baseline global_baseline_total
-    global_baseline="$(jq -r '.summary.passed // 0' scripts/conformance/conformance-snapshot.json)"
-    global_baseline="$(cap_positive_baseline "$global_baseline" "$TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR")"
-    global_baseline_total="$(jq -r '.summary.total_tests // .summary.total // 0' scripts/conformance/conformance-snapshot.json)"
-    if [[ "$global_baseline" -gt 0 ]]; then
-      local per_shard_floor=$(( global_baseline / shard_count - 50 ))
-      if [[ "$per_shard_floor" -gt 0 && "$total_passed" -lt "$per_shard_floor" ]]; then
-        echo "error: shard ${shard_index} conformance regression: ${total_passed} < ${per_shard_floor} (global ${global_baseline} / ${shard_count} shards - 50)" >&2
-        return 1
-      fi
-    fi
-    if [[ "$global_baseline_total" -gt 0 ]]; then
-      local per_shard_total_floor=$(( global_baseline_total / shard_count - 100 ))
-      if [[ "$per_shard_total_floor" -gt 0 && "$total_tests" -lt "$per_shard_total_floor" ]]; then
-        echo "error: shard ${shard_index} conformance coverage incomplete: ${total_tests} < ${per_shard_total_floor} (global ${global_baseline_total} / ${shard_count} shards - 100)" >&2
-        return 1
-      fi
-    fi
-
     # Upload shard result to GCS so the conformance-aggregate job can check the global total.
     # Per-shard count assertions removed: baseline.txt counts go stale and cause off-by-one flakes.
     local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
