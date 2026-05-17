@@ -822,8 +822,21 @@ impl<'a> TypeInstantiator<'a> {
             TypeData::Application(app_id) => {
                 let app = self.interner.type_application(*app_id);
                 let base = self.instantiate(app.base);
-                let args: Vec<TypeId> = app.args.iter().map(|&arg| self.instantiate(arg)).collect();
-                self.interner.application(base, args)
+                let mut changed = base != app.base;
+                let args: Vec<TypeId> = app
+                    .args
+                    .iter()
+                    .map(|&arg| {
+                        let instantiated = self.instantiate(arg);
+                        changed |= instantiated != arg;
+                        instantiated
+                    })
+                    .collect();
+                if changed {
+                    self.interner.application(base, args)
+                } else {
+                    type_id
+                }
             }
 
             // This type: substitute with concrete this_type if provided
