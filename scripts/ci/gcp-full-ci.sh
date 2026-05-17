@@ -509,6 +509,7 @@ run_lint() {
   scripts/check-crate-root-files.sh || return $?
   node scripts/bench/test-merge-results.mjs || return $?
   node scripts/bench/test-perf-hotspots.mjs || return $?
+  node scripts/ci/test-project-compile-guard-readiness-artifacts.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-candidates.mjs || return $?
   node scripts/ci/test-type-challenges-pairing-report.mjs || return $?
   node scripts/ci/test-type-challenges-template-manifest.mjs || return $?
