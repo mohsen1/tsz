@@ -1674,6 +1674,71 @@ module.exports = send;
 }
 
 #[test]
+fn test_js_require_json_export_equals_infers_json_shape() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let dir =
+        std::env::temp_dir().join(format!("tsz-json-require-{}-{unique}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create temp json fixture dir");
+    std::fs::write(
+        dir.join("package.json"),
+        r#"{
+  "name": "pkg",
+  "bin": {
+    "cli": "./bin/cli.js",
+  },
+  "devDependencies": {
+    "@ns/dep": "0.1.2"
+  },
+  "keywords": ["kw"],
+  "config": {
+    "o": ["a"]
+  }
+}"#,
+    )
+    .expect("write json fixture");
+
+    let source = r#"
+const j = require("./package.json");
+module.exports = j;
+"#;
+    let index_path = dir.join("index.js");
+    let mut parser = ParserState::new(
+        index_path.to_string_lossy().into_owned(),
+        source.to_string(),
+    );
+    let root = parser.parse_source_file();
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    emitter.set_current_arena(current_arena, index_path.to_string_lossy().into_owned());
+
+    let output = emitter.emit(root);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let expected = r#"export = j;
+declare const j: {
+    name: string;
+    bin: {
+        cli: string;
+    };
+    devDependencies: {
+        "@ns/dep": string;
+    };
+    keywords: string[];
+    config: {
+        o: string[];
+    };
+};
+"#;
+    assert_eq!(
+        output, expected,
+        "Expected CommonJS JSON require exports to infer the JSON data shape"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_uses_jsdoc_signature_types() {
     let source = r#"
 /**
