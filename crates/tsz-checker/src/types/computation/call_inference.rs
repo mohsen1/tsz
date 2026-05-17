@@ -2782,24 +2782,6 @@ impl<'a> CheckerState<'a> {
             self.check_object_literal_excess_properties(arg_type, expected, arg_idx);
         }
 
-        if let Some(expected) = expected_type
-            && expected != TypeId::ANY
-            && expected != TypeId::UNKNOWN
-            && let Some(arg_node) = self.ctx.arena.get(arg_idx)
-            && arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-            && !is_type_parameter_type(self.ctx.types, expected)
-            && !self
-                .ctx
-                .generic_excess_skip
-                .as_ref()
-                .is_some_and(|skip| effective_index < skip.len() && skip[effective_index])
-            && !raw_context_requires_generic_epc_skip
-            && !expected_is_unresolved
-            && self.has_exact_optional_property_mismatch(arg_type, expected)
-        {
-            self.diagnose_assignment_failure_with_anchor(arg_type, expected, arg_idx);
-        }
-
         let arg_node = self.ctx.arena.get(arg_idx);
         let provisional_context_arg_span = arg_node.and_then(|node| {
             let is_context_sensitive_arg = self.is_callback_like_argument(arg_idx)

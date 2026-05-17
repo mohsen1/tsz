@@ -808,11 +808,6 @@ impl<'a> CheckerState<'a> {
                         &final_arg_types,
                         |i, arg_count| matched_sig_helper.get_parameter_type_for_call(i, arg_count),
                     );
-                    self.check_call_argument_exact_optional_properties(
-                        args,
-                        &final_arg_types,
-                        |i, arg_count| matched_sig_helper.get_parameter_type_for_call(i, arg_count),
-                    );
 
                     // Some expression-bodied callbacks emit their body diagnostics
                     // only while later validating the selected candidate. Re-check
@@ -1609,11 +1604,6 @@ impl<'a> CheckerState<'a> {
                             &sig_arg_types,
                             |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),
                         );
-                        self.check_call_argument_exact_optional_properties(
-                            args,
-                            &sig_arg_types,
-                            |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),
-                        );
 
                         return Some(OverloadResolution {
                             arg_types: sig_arg_types,
@@ -1647,11 +1637,6 @@ impl<'a> CheckerState<'a> {
                     self.validate_non_tuple_spreads_for_signature(args, func_type);
 
                     self.check_call_argument_excess_properties(
-                        args,
-                        &sig_arg_types,
-                        |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),
-                    );
-                    self.check_call_argument_exact_optional_properties(
                         args,
                         &sig_arg_types,
                         |i, arg_count| sig_helper.get_parameter_type_for_call(i, arg_count),

@@ -2256,7 +2256,7 @@ fn test_emitter_source_text_recovery_surface_does_not_grow() {
         }
     }
 
-    const SOURCE_TEXT_RECOVERY_LINE_CEILING: usize = 849;
+    const SOURCE_TEXT_RECOVERY_LINE_CEILING: usize = 828;
     assert!(
         source_text_lines.len() <= SOURCE_TEXT_RECOVERY_LINE_CEILING,
         "Emitter source-text recovery surface grew to {} lines (ceiling: {}). \
@@ -4207,8 +4207,7 @@ fn test_checker_file_size_ceiling() {
     //   jsdoc/params.rs, jsdoc/resolution/mod.rs, symbols/scope_finder.rs,
     //   assignability/assignment_checker/mod.rs, error_reporter/core/mod.rs,
     //   error_reporter/call_errors/mod.rs, flow/control_flow/core.rs
-    // 35→36: checkers/call_checker/overload_resolution.rs crossed 2000 for TS2375 argument-position fix.
-    const FILE_COUNT_CEILING: usize = 36;
+    const FILE_COUNT_CEILING: usize = 35;
     assert!(
         oversized.len() <= FILE_COUNT_CEILING,
         "Number of checker source files over 2000 LOC has grown to {} (ceiling: {FILE_COUNT_CEILING}). \
@@ -4225,10 +4224,9 @@ fn test_checker_file_size_ceiling() {
     // TS7053 emission fix and intersection-annotation TS2339 receiver display;
     // 3105→3130 for contextual implicit-any deferral and class recovery guards;
     // 3130→3145 for generic assertion predicate instantiation fix (issue #5790);
-    // 3145→3148 for the Kysely alias-identity included-alias assignability path;
-    // 3148→3160 for inner.rs (pre-existing breach) + TS2375 argument-position fix.
+    // 3145→3148 for the Kysely alias-identity included-alias assignability path.
     // Track a future split as a follow-up.
-    const MAX_LOC_CEILING: usize = 3160;
+    const MAX_LOC_CEILING: usize = 3148;
     assert!(
         max_lines <= MAX_LOC_CEILING,
         "Largest checker source file has grown to {max_lines} lines (ceiling: {MAX_LOC_CEILING}). \

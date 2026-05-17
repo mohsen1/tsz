@@ -11,9 +11,14 @@
 //! `with_exact_optional_property_types(bool)` on `TypeFormatter`.
 
 use tsz_checker::context::CheckerOptions;
+use tsz_checker::diagnostics::Diagnostic;
+
+fn diagnostics_with_options(source: &str, options: CheckerOptions) -> Vec<Diagnostic> {
+    tsz_checker::test_utils::check_with_options(source, options)
+}
 
 fn check_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
-    tsz_checker::test_utils::check_with_options(source, options)
+    diagnostics_with_options(source, options)
         .into_iter()
         .map(|d| (d.code, d.message_text))
         .collect()
@@ -57,6 +62,44 @@ fn check_strict_exact_optional_no_unchecked(source: &str) -> Vec<(u32, String)> 
             ..Default::default()
         },
     )
+}
+
+fn check_strict_exact_optional_diagnostics(source: &str) -> Vec<Diagnostic> {
+    diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            exact_optional_property_types: true,
+            ..Default::default()
+        },
+    )
+}
+
+fn assert_single_argument_ts2375(source: &str, argument_text: &str, diags: &[Diagnostic]) {
+    let ts2375: Vec<_> = diags.iter().filter(|diag| diag.code == 2375).collect();
+    assert_eq!(
+        ts2375.len(),
+        1,
+        "expected exactly one TS2375 at argument site; got: {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|diag| diag.code != 2345),
+        "must not emit TS2345 when TS2375 applies at argument site; got: {diags:#?}"
+    );
+
+    let start = source
+        .find(argument_text)
+        .unwrap_or_else(|| panic!("test source must contain argument text {argument_text:?}"))
+        as u32;
+    let end = start + argument_text.len() as u32;
+    let span = ts2375[0].span();
+    assert_eq!(
+        (span.start, span.end),
+        (start, end),
+        "TS2375 should be anchored to the object-literal argument; got: {diags:#?}"
+    );
 }
 
 /// With `exactOptionalPropertyTypes: true`, assigning `{ foo: undefined }` to
@@ -245,15 +288,8 @@ fn ts2375_at_argument_structural_target() {
 function f(x: { foo?: number }): void {}
 f({ foo: undefined });
 "#;
-    let diags = check_strict_exact_optional(source);
-    assert!(
-        diags.iter().any(|(code, _)| *code == 2375),
-        "expected TS2375 at argument with structural exact-optional target; got: {diags:#?}"
-    );
-    assert!(
-        diags.iter().all(|(code, _)| *code != 2345),
-        "must not emit TS2345 when TS2375 applies at argument site; got: {diags:#?}"
-    );
+    let diags = check_strict_exact_optional_diagnostics(source);
+    assert_single_argument_ts2375(source, "{ foo: undefined }", &diags);
 }
 
 /// Named interface parameter target.
@@ -267,15 +303,20 @@ interface Options {
 function g(opts: Options): void {}
 g({ timeout: undefined });
 "#;
-    let diags = check_strict_exact_optional(source);
-    assert!(
-        diags.iter().any(|(code, _)| *code == 2375),
-        "expected TS2375 at argument with named-interface exact-optional target; got: {diags:#?}"
-    );
-    assert!(
-        diags.iter().all(|(code, _)| *code != 2345),
-        "must not emit TS2345 when TS2375 applies at argument site; got: {diags:#?}"
-    );
+    let diags = check_strict_exact_optional_diagnostics(source);
+    assert_single_argument_ts2375(source, "{ timeout: undefined }", &diags);
+}
+
+/// Generic parameter target after explicit type-argument substitution.
+/// Ensures generic calls also report one TS2375 at the object-literal argument.
+#[test]
+fn ts2375_at_argument_generic_target() {
+    let source = r#"
+function generic<T>(opts: { value?: T }): void {}
+generic<number>({ value: undefined });
+"#;
+    let diags = check_strict_exact_optional_diagnostics(source);
+    assert_single_argument_ts2375(source, "{ value: undefined }", &diags);
 }
 
 /// Different property name (`bar`) to prove the fix is not hardcoded to `foo`.
@@ -285,15 +326,8 @@ fn ts2375_at_argument_different_property_name() {
 function h(x: { bar?: string }): void {}
 h({ bar: undefined });
 "#;
-    let diags = check_strict_exact_optional(source);
-    assert!(
-        diags.iter().any(|(code, _)| *code == 2375),
-        "expected TS2375 for property 'bar'; fix must not be hardcoded to any property name; got: {diags:#?}"
-    );
-    assert!(
-        diags.iter().all(|(code, _)| *code != 2345),
-        "must not emit TS2345 when TS2375 applies; got: {diags:#?}"
-    );
+    let diags = check_strict_exact_optional_diagnostics(source);
+    assert_single_argument_ts2375(source, "{ bar: undefined }", &diags);
 }
 
 /// When the parameter type explicitly includes `undefined` (`foo?: T | undefined`),
