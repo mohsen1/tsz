@@ -39,6 +39,13 @@ function readRows(file) {
     .map((line) => JSON.parse(line));
 }
 
+function candidateCounts(generatedAssertions = 1) {
+  return {
+    pairedSolutions: generatedAssertions,
+    generatedAssertions,
+  };
+}
+
 function runCompatibility({ dir, classification, cleanSubsetManifest = null, cleanSubsetClassification = null }) {
   const candidateDir = path.join(dir, "type-challenges-assertions");
   const classificationPath = path.join(candidateDir, "classification.json");
@@ -75,17 +82,40 @@ function runCompatibility({ dir, classification, cleanSubsetManifest = null, cle
   return readRows(outFile)[0];
 }
 
-function runCompatibilityRaw({ dir, classification }) {
+function runCompatibilityRaw({
+  dir,
+  classification,
+  cleanSubsetManifest = null,
+  cleanSubsetClassification = null,
+}) {
   const candidateDir = path.join(dir, "type-challenges-assertions");
   const classificationPath = path.join(candidateDir, "classification.json");
+  const cleanSubsetDir = path.join(dir, "type-challenges-assertions-tsc-clean");
+  const cleanSubsetManifestPath = path.join(cleanSubsetDir, "manifest.json");
+  const cleanSubsetClassificationPath = path.join(cleanSubsetDir, "classification.json");
   const outFile = path.join(dir, "project-compatibility.jsonl");
   writeJson(classificationPath, classification);
+  if (cleanSubsetManifest) {
+    writeJson(cleanSubsetManifestPath, cleanSubsetManifest);
+  }
+  if (cleanSubsetClassification) {
+    writeJson(cleanSubsetClassificationPath, cleanSubsetClassification);
+  }
 
   return {
     outFile,
     result: spawnSync(
       process.execPath,
-      [SCRIPT, classificationPath, candidateDir, outFile, dir],
+      [
+        SCRIPT,
+        classificationPath,
+        candidateDir,
+        outFile,
+        dir,
+        cleanSubsetManifest ? cleanSubsetManifestPath : "",
+        cleanSubsetClassification ? cleanSubsetClassificationPath : "",
+        cleanSubsetDir,
+      ],
       {
         cwd: ROOT,
         encoding: "utf8",
@@ -100,6 +130,11 @@ withTempDir((dir) => {
     classification: {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: {
+        sources: {
+          templates: { repository: "type", ref: "type-ref" },
+          testCases: { repository: "type", ref: "type-ref" },
+          solutions: { repository: "solutions", ref: "solutions-ref" },
+        },
         counts: {
           pairedSolutions: 2,
           generatedAssertions: 2,
@@ -229,6 +264,11 @@ withTempDir((dir) => {
   );
   assert.deepEqual(row.exit_codes, { tsc: [1], tsz: [0], tsgo: [] });
   assert.deepEqual(row.assertion_candidates, {
+    sources: {
+      templates: { repository: "type", ref: "type-ref" },
+      testCases: { repository: "type", ref: "type-ref" },
+      solutions: { repository: "solutions", ref: "solutions-ref" },
+    },
     paired_solutions: 2,
     generated_assertions: 2,
     assertions_referencing_solution_declaration: 1,
@@ -289,7 +329,7 @@ withTempDir((dir) => {
     dir,
     classification: {
       fixture: "type-challenges-assertion-classification",
-      candidateManifest: { counts: { generatedAssertions: 1 } },
+      candidateManifest: { counts: candidateCounts(1) },
       compilers: {
         tsc: {
           status: "pass",
@@ -342,7 +382,7 @@ withTempDir((dir) => {
     dir,
     classification: {
       fixture: "type-challenges-assertion-classification",
-      candidateManifest: { counts: { generatedAssertions: 1 } },
+      candidateManifest: { counts: candidateCounts(1) },
       compilers: {
         tsc: {
           status: "pass",
@@ -383,7 +423,7 @@ withTempDir((dir) => {
     dir,
     classification: {
       fixture: "stale-classification",
-      candidateManifest: { counts: { generatedAssertions: 1 } },
+      candidateManifest: { counts: candidateCounts(1) },
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
       comparison: { status: "both-pass" },
     },
@@ -399,7 +439,7 @@ withTempDir((dir) => {
     dir,
     classification: {
       fixture: "type-challenges-assertion-classification",
-      candidateManifest: { counts: { generatedAssertions: 1 } },
+      candidateManifest: { counts: candidateCounts(1) },
       compilers: { tsc: { status: "pass" } },
       comparison: { status: "both-pass" },
     },
@@ -411,11 +451,249 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
-  const row = runCompatibility({
+  const { result, outFile } = runCompatibilityRaw({
     dir,
     classification: {
       fixture: "type-challenges-assertion-classification",
-      candidateManifest: { counts: { generatedAssertions: 0 } },
+      candidateManifest: { counts: { generatedAssertions: 1 } },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /counts\.pairedSolutions must be an integer/);
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: {
+        counts: {
+          pairedSolutions: 2,
+          generatedAssertions: 1,
+        },
+      },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /pairedSolutions \(2\) does not match generatedAssertions \(1\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: candidateCounts(1) },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+    cleanSubsetManifest: {
+      fixture: "stale-clean-subset",
+      counts: { tscAcceptedAssertions: 1 },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unexpected tsc-clean assertion manifest fixture/);
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: candidateCounts(1) },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      counts: {
+        totalCandidates: 1,
+        tscAcceptedAssertions: 1,
+        tscRejectedAssertions: 0,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+    cleanSubsetClassification: {
+      fixture: "stale-classification",
+      candidateManifest: { counts: candidateCounts(1) },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unexpected assertion classification fixture/);
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: candidateCounts(1) },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      counts: {
+        totalCandidates: 2,
+        tscAcceptedAssertions: 2,
+        tscRejectedAssertions: 0,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /counts\.tscAcceptedAssertions \(2\) does not match entries length \(1\)/);
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: candidateCounts(1) },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      counts: {
+        totalCandidates: 3,
+        tscAcceptedAssertions: 1,
+        tscRejectedAssertions: 1,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /accepted\/rejected counts \(1 \+ 1\) do not match totalCandidates \(3\)/);
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: candidateCounts(1) },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      counts: {
+        totalCandidates: 2,
+        tscAcceptedAssertions: 1,
+        tscRejectedAssertions: 1,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /manifest has 1 accepted assertions but classification is missing/);
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: candidateCounts(1) },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      counts: {
+        totalCandidates: 2,
+        tscAcceptedAssertions: 1,
+        tscRejectedAssertions: 1,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+    cleanSubsetClassification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: { generatedAssertions: 2 } },
+      compilers: {
+        tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 2 } },
+        tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 2 } },
+      },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /classification generatedAssertions \(2\) does not match manifest tscAcceptedAssertions \(1\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: candidateCounts(1) },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      counts: {
+        totalCandidates: 2,
+        tscAcceptedAssertions: 1,
+        tscRejectedAssertions: 1,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+    cleanSubsetClassification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: candidateCounts(1) },
+      compilers: {
+        tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 1 } },
+        tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 2 } },
+      },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /classification tsz totalCandidates \(2\) does not match manifest tscAcceptedAssertions \(1\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: candidateCounts(0) },
       compilers: {
         tsc: {
           status: "unavailable",
@@ -453,16 +731,35 @@ withTempDir((dir) => {
     },
   });
 
-  assert.equal(row.state, "gray");
-  assert.deepEqual(row.assertion_candidates.tsc_clean_subset, {
-    manifest_path: "type-challenges-assertions-tsc-clean/manifest.json",
-    classification_path: null,
-    tsconfig_path: "type-challenges-assertions-tsc-clean/tsconfig.tsz-guard.json",
-    generated_assertions: 0,
-    rejected_from_full_corpus: null,
-    tsc_status: null,
-    tsz_status: null,
-    tsc_diagnostic_free: null,
-    tsz_diagnostic_free: null,
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /generatedAssertions must be greater than zero/);
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: candidateCounts(1) },
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: { totalCandidates: 1 },
+        },
+        tsz: {
+          status: "pass",
+          candidateDiagnostics: { totalCandidates: 2 },
+        },
+      },
+      comparison: { status: "match" },
+    },
   });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /classification tsz totalCandidates \(2\) does not match generatedAssertions \(1\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
 });

@@ -32,7 +32,7 @@ function fail(message) {
   process.exit(1);
 }
 
-function validateReport(report) {
+function validateClassificationCompilerReport(report) {
   if (report?.fixture !== "type-challenges-assertion-classification") {
     fail(`unexpected assertion classification fixture: ${report?.fixture || "<missing>"}`);
   }
@@ -42,6 +42,10 @@ function validateReport(report) {
   if (!report.compilers.tsc || !report.compilers.tsz) {
     fail("assertion classification report must include both tsc and tsz compiler results");
   }
+}
+
+function validateReport(report) {
+  validateClassificationCompilerReport(report);
   if (!report.comparison || typeof report.comparison !== "object") {
     fail("assertion classification report is missing comparison");
   }
@@ -52,20 +56,129 @@ function validateReport(report) {
 
 validateReport(report);
 
-const cleanSubsetManifest =
-  cleanSubsetManifestPath && fs.existsSync(cleanSubsetManifestPath)
-    ? JSON.parse(fs.readFileSync(cleanSubsetManifestPath, "utf8"))
-    : null;
-const cleanSubsetClassification =
-  cleanSubsetClassificationPath && fs.existsSync(cleanSubsetClassificationPath)
-    ? JSON.parse(fs.readFileSync(cleanSubsetClassificationPath, "utf8"))
-    : null;
+const hasCleanSubsetManifest = cleanSubsetManifestPath && fs.existsSync(cleanSubsetManifestPath);
+const hasCleanSubsetClassification =
+  cleanSubsetClassificationPath && fs.existsSync(cleanSubsetClassificationPath);
+const cleanSubsetManifest = hasCleanSubsetManifest
+  ? JSON.parse(fs.readFileSync(cleanSubsetManifestPath, "utf8"))
+  : null;
+const cleanSubsetClassification = hasCleanSubsetClassification
+  ? JSON.parse(fs.readFileSync(cleanSubsetClassificationPath, "utf8"))
+  : null;
+
+if (!cleanSubsetManifest && cleanSubsetClassification) {
+  fail("tsc-clean assertion classification was provided without a manifest");
+}
+
+if (
+  cleanSubsetManifest &&
+  cleanSubsetManifest.fixture !== "type-challenges-assertions-tsc-clean"
+) {
+  fail(
+    `unexpected tsc-clean assertion manifest fixture: ${
+      cleanSubsetManifest.fixture || "<missing>"
+    }`,
+  );
+}
+if (
+  cleanSubsetManifest &&
+  (!cleanSubsetManifest.counts || typeof cleanSubsetManifest.counts !== "object")
+) {
+  fail("tsc-clean assertion manifest is missing counts");
+}
+if (cleanSubsetManifest) {
+  const cleanSubsetEntries = cleanSubsetManifest.entries;
+  if (!Array.isArray(cleanSubsetEntries)) {
+    fail("tsc-clean assertion manifest entries must be an array");
+  }
+  const cleanSubsetCounts = cleanSubsetManifest.counts;
+  const acceptedAssertions = cleanSubsetCounts.tscAcceptedAssertions;
+  const rejectedAssertions = cleanSubsetCounts.tscRejectedAssertions;
+  const totalCandidates = cleanSubsetCounts.totalCandidates;
+  if (
+    !Number.isInteger(acceptedAssertions) ||
+    acceptedAssertions !== cleanSubsetEntries.length
+  ) {
+    fail(
+      `tsc-clean assertion manifest counts.tscAcceptedAssertions (${acceptedAssertions}) does not match entries length (${cleanSubsetEntries.length})`,
+    );
+  }
+  if (
+    Number.isInteger(rejectedAssertions) &&
+    Number.isInteger(totalCandidates) &&
+    acceptedAssertions + rejectedAssertions !== totalCandidates
+  ) {
+    fail(
+      `tsc-clean assertion manifest accepted/rejected counts (${acceptedAssertions} + ${rejectedAssertions}) do not match totalCandidates (${totalCandidates})`,
+    );
+  }
+  if (acceptedAssertions > 0 && !cleanSubsetClassification) {
+    fail(
+      `tsc-clean assertion manifest has ${acceptedAssertions} accepted assertions but classification is missing`,
+    );
+  }
+}
+if (cleanSubsetClassification) {
+  validateClassificationCompilerReport(cleanSubsetClassification);
+}
+if (cleanSubsetManifest && cleanSubsetClassification) {
+  const acceptedAssertions = cleanSubsetManifest.counts.tscAcceptedAssertions;
+  const generatedAssertions =
+    cleanSubsetClassification.candidateManifest?.counts?.generatedAssertions;
+  if (
+    Number.isInteger(generatedAssertions) &&
+    generatedAssertions !== acceptedAssertions
+  ) {
+    fail(
+      `tsc-clean assertion classification generatedAssertions (${generatedAssertions}) does not match manifest tscAcceptedAssertions (${acceptedAssertions})`,
+    );
+  }
+  for (const compiler of ["tsc", "tsz"]) {
+    const totalCandidates =
+      cleanSubsetClassification.compilers?.[compiler]?.candidateDiagnostics?.totalCandidates;
+    if (
+      Number.isInteger(totalCandidates) &&
+      totalCandidates !== acceptedAssertions
+    ) {
+      fail(
+        `tsc-clean assertion classification ${compiler} totalCandidates (${totalCandidates}) does not match manifest tscAcceptedAssertions (${acceptedAssertions})`,
+      );
+    }
+  }
+}
 const tsc = report.compilers?.tsc || {};
 const tsz = report.compilers?.tsz || {};
 const comparison = report.comparison || {};
 const counts = report.candidateManifest?.counts || {};
+if (!Number.isInteger(counts.pairedSolutions)) {
+  fail("assertion classification candidateManifest.counts.pairedSolutions must be an integer");
+}
+if (!Number.isInteger(counts.generatedAssertions)) {
+  fail("assertion classification candidateManifest.counts.generatedAssertions must be an integer");
+}
+if (counts.pairedSolutions !== counts.generatedAssertions) {
+  fail(
+    `assertion classification pairedSolutions (${counts.pairedSolutions}) does not match generatedAssertions (${counts.generatedAssertions})`,
+  );
+}
+if (counts.generatedAssertions === 0) {
+  fail("assertion classification generatedAssertions must be greater than zero");
+}
 const tscCandidateDiagnostics = tsc.candidateDiagnostics || {};
 const tszCandidateDiagnostics = tsz.candidateDiagnostics || {};
+for (const [compiler, diagnostics] of [
+  ["tsc", tscCandidateDiagnostics],
+  ["tsz", tszCandidateDiagnostics],
+]) {
+  if (
+    Number.isInteger(diagnostics.totalCandidates) &&
+    diagnostics.totalCandidates !== counts.generatedAssertions
+  ) {
+    fail(
+      `assertion classification ${compiler} totalCandidates (${diagnostics.totalCandidates}) does not match generatedAssertions (${counts.generatedAssertions})`,
+    );
+  }
+}
 const candidateFileComparisonCounts = comparison.candidateFileComparison?.counts || {};
 const tscFilesWithDiagnostics = Array.isArray(tscCandidateDiagnostics.filesWithDiagnostics)
   ? tscCandidateDiagnostics.filesWithDiagnostics
@@ -231,6 +344,7 @@ const row = {
   ),
   peak_memory_bytes: null,
   assertion_candidates: {
+    sources: report.candidateManifest?.sources ?? null,
     paired_solutions: counts.pairedSolutions ?? null,
     generated_assertions: counts.generatedAssertions ?? null,
     assertions_referencing_solution_declaration:
