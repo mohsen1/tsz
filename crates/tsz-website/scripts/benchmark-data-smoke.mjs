@@ -80,6 +80,12 @@ await fs.writeFile(artifact, `${JSON.stringify({
         emit_status: "not in scope (noEmit assertion check)",
         dts_status: "not in scope (noEmit assertion check)",
         assertion_candidates: {
+          sources: {
+            templates: { repository: "type", ref: "type-ref" },
+            testCases: { repository: "type", ref: "type-ref" },
+            solutions: { repository: "solutions", ref: "solutions-ref" },
+          },
+          paired_solutions: 78,
           generated_assertions: 78,
           tsc_diagnostic_free: 10,
           tsc_with_diagnostics: 68,
@@ -89,6 +95,12 @@ await fs.writeFile(artifact, `${JSON.stringify({
           both_rejected: 60,
           tsc_accepted_tsz_rejected: 3,
           tsc_rejected_tsz_accepted: 2,
+          tsc_clean_subset: {
+            generated_assertions: 10,
+            rejected_from_full_corpus: 68,
+            tsc_status: "pass",
+            tsz_status: "fail",
+          },
           file_comparison: {
             counts: {
               bothAccepted: 5,
@@ -195,6 +207,15 @@ try {
   assert.equal(typeChallengesSolutionsPage.failed, true);
   assert.match(typeChallengesSolutionsPage.status_label, /compile canary/i);
 
+  const typeChallengesAssertionPage = pages.find((page) => page.name === "type-challenges-assertion-candidates");
+  assert.ok(typeChallengesAssertionPage, "expected type-challenges assertion candidates page");
+  assert.equal(
+    typeChallengesAssertionPage.display_name,
+    "type-challenges assertion candidates",
+  );
+  assert.equal(typeChallengesAssertionPage.failed, true);
+  assert.match(typeChallengesAssertionPage.status_label, /diagnostic mismatch/i);
+
   const typeChallengesCleanPage = pages.find((page) => page.name === "type-challenges-assertions-tsc-clean");
   assert.ok(typeChallengesCleanPage, "expected compile-canary type-challenges tsc-clean assertions page");
   assert.equal(
@@ -209,13 +230,22 @@ try {
   assert.match(charts, /Compile canaries and incomplete project timings/);
   assert.match(charts, /type-challenges project/);
   assert.match(charts, /type-challenges solutions project/);
+  assert.match(charts, /type-challenges assertion candidates/);
   assert.match(charts, /type-challenges tsc-clean assertions/);
 
   const compatibilityDashboard = getProjectCompatibilityDashboard();
   assert.match(compatibilityDashboard, /type-challenges assertions/);
+  assert.match(compatibilityDashboard, /paired solutions: 78/);
   assert.match(compatibilityDashboard, /assertions generated: 78/);
+  assert.match(compatibilityDashboard, /templates ref: type-ref/);
+  assert.match(compatibilityDashboard, /test cases ref: type-ref/);
+  assert.match(compatibilityDashboard, /solutions ref: solutions-ref/);
   assert.match(compatibilityDashboard, /tsc clean: 10/);
   assert.match(compatibilityDashboard, /tsz clean: 7/);
+  assert.match(compatibilityDashboard, /tsc-clean subset: 10/);
+  assert.match(compatibilityDashboard, /tsc-clean rejected: 68/);
+  assert.match(compatibilityDashboard, /tsc-clean tsc: pass/);
+  assert.match(compatibilityDashboard, /tsc-clean tsz: fail/);
   assert.match(compatibilityDashboard, /both accepted: 5/);
   assert.match(compatibilityDashboard, /both rejected: 60/);
   assert.match(compatibilityDashboard, /tsc accepted\/tsz rejected: 3/);
