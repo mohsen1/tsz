@@ -85,6 +85,19 @@ function parseDiagnostic(line) {
   };
 }
 
+function normalizeDiagnosticLine(line) {
+  const diagnostic = parseDiagnostic(line);
+  if (!diagnostic.file || !diagnostic.code) {
+    return line;
+  }
+
+  const location =
+    diagnostic.line === null || diagnostic.column === null
+      ? ""
+      : `(${diagnostic.line},${diagnostic.column})`;
+  return `${diagnostic.file}${location}: error ${diagnostic.code}: ${diagnostic.message}`;
+}
+
 function increment(map, key, amount = 1) {
   map.set(key, (map.get(key) ?? 0) + amount);
 }
@@ -270,7 +283,7 @@ function runCompiler(label, bin, tsconfig, timeoutMs) {
     signal: result.signal,
     diagnostics: {
       errorCount: errors.length,
-      firstErrors: errors.slice(0, 20),
+      firstErrors: errors.slice(0, 20).map(normalizeDiagnosticLine),
       ...summary,
     },
     error: result.error
