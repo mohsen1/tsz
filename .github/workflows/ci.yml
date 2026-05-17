@@ -533,6 +533,7 @@ jobs:
             .target/project-compile-guard/type-challenges-readiness-pairing.json
             .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-classification.json
             .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-manifest.json
+            .target/project-compile-guard/type-challenges-assertions-tsc-clean/**
             .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-template-manifest.json
             .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-test-cases-manifest.json
             .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
@@ -577,6 +578,7 @@ jobs:
             .target/project-compile-guard/type-challenges-readiness-pairing.json
             .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-classification.json
             .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-manifest.json
+            .target/project-compile-guard/type-challenges-assertions-tsc-clean/**
             .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-template-manifest.json
             .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-test-cases-manifest.json
             .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
