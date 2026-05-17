@@ -279,13 +279,18 @@ function normalizedLastSuccessfulPhase(compatibility) {
 }
 
 const COMPATIBILITY_METADATA_FIELDS = [
+  ["state", "state"],
   ["exit_class", "exit class"],
+  ["first_failure_class", "first failure class"],
+  ["owner_track", "owner track"],
   ["phase", "phase"],
   ["last_successful_phase", "last successful phase"],
   ["diagnostic_status", "diagnostic status"],
   ["diagnostic_deltas", "diagnostic deltas"],
   ["diagnostic_subsystems", "diagnostic subsystems"],
   ["known_blockers", "known blockers"],
+  ["reduced_repro_path", "reduced repro path"],
+  ["repro", "repro metadata"],
   ["exit_codes", "exit codes"],
   ["files_reached", "files reached"],
   ["peak_memory_bytes", "peak memory"],
@@ -410,6 +415,9 @@ function compatibilityRowFor(definition, allResults) {
     row,
     lines: row?.lines || 0,
     filesReached: compatibility.files_reached ?? null,
+    firstFailureClass: compatibility.first_failure_class || null,
+    ownerTrack: compatibility.owner_track || null,
+    reducedReproPath: compatibility.reduced_repro_path || null,
     lastSuccessfulPhase: normalizedLastSuccessfulPhase(compatibility),
     peakMemoryBytes: compatibility.peak_memory_bytes ?? null,
     emitStatus: compatibility.emit_status || "not in scope (noEmit project check)",
@@ -1923,6 +1931,9 @@ export function getProjectCompatibilityDashboard() {
             row.missingMetadata.slice(0, 4).join(", ")
           }${row.missingMetadata.length > 4 ? "..." : ""}`
         : "artifact: complete",
+      row.firstFailureClass ? `failure: ${row.firstFailureClass}` : "",
+      row.ownerTrack ? `owner track: ${row.ownerTrack}` : "",
+      row.reducedReproPath ? `repro: ${row.reducedReproPath}` : "",
       `owner: ${row.family || "not classified"}`,
       row.primarySubsystem ? `subsystem: ${row.primarySubsystem}` : "",
       row.emitStatus ? `emit: ${row.emitStatus}` : "",

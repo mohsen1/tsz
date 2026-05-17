@@ -70,10 +70,36 @@ await fs.writeFile(failedOnlyArtifact, `${JSON.stringify({
       winner: "error",
       status: "diagnostic mismatch",
       compatibility: {
+        state: "yellow",
         exit_class: "diagnostic mismatch",
+        first_failure_class: "relations-assignability",
+        owner_track: "Track 4 relation diagnostics/compatibility",
         phase: "check",
+        last_successful_phase: "parse",
         diagnostic_status: "diagnostic mismatch",
         diagnostic_deltas: ["TS2322 example"],
+        diagnostic_subsystems: [{ subsystem: "relations-assignability", count: 1, codes: ["TS2322"] }],
+        known_blockers: ["relations-assignability"],
+        reduced_repro_path: "src/operators/map.ts",
+        repro: {
+          tsconfig_path: "tsconfig.json",
+          source_root: "src",
+          first_failure_path: "src/operators/map.ts",
+          first_failure_line: 42,
+          first_failure_column: 7,
+          first_failure_code: "TS2322",
+          reduced_repro_path: "src/operators/map.ts",
+          command: "$TSZ_BIN --noEmit -p tsconfig.json",
+        },
+        exit_codes: {
+          tsc: [0],
+          tsz: [1],
+          tsgo: [0],
+        },
+        files_reached: 12,
+        peak_memory_bytes: 104857600,
+        emit_status: "not in scope (noEmit project check)",
+        dts_status: "not in scope (noEmit project check)",
       },
     },
   ],
@@ -82,7 +108,7 @@ await fs.writeFile(failedOnlyArtifact, `${JSON.stringify({
 process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = artifact;
 
 try {
-  const { getBenchmarkCharts, getBenchmarkPages } = await import("../src/_data/benchmark_data.js");
+  const { getBenchmarkCharts, getBenchmarkPages, getProjectCompatibilityDashboard } = await import("../src/_data/benchmark_data.js");
   const pages = getBenchmarkPages();
   const fixturePage = pages.find((page) => page.name === "conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts");
   assert.ok(fixturePage, "expected TypeScript fixture benchmark page");
@@ -122,6 +148,11 @@ try {
   assert.doesNotMatch(failedOnlyCharts, /No benchmark data/i);
   assert.match(failedOnlyCharts, /Compile canaries and incomplete project timings/);
   assert.match(failedOnlyCharts, /RxJS project/);
+  const failedOnlyCompatibility = getProjectCompatibilityDashboard();
+  assert.match(failedOnlyCompatibility, /artifact: complete/);
+  assert.match(failedOnlyCompatibility, /failure: relations-assignability/);
+  assert.match(failedOnlyCompatibility, /owner track: Track 4 relation diagnostics\/compatibility/);
+  assert.match(failedOnlyCompatibility, /repro: src\/operators\/map\.ts/);
 
   const slugs = new Map();
   for (const page of pages) {
