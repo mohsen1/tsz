@@ -74,3 +74,64 @@ type cases = [
         "tuple indexed access should preserve unique-symbol mapped keys; got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn replace_keys_distributes_mapped_union_for_type_challenge_equality() {
+    let diagnostics = strict_diagnostics_for(
+        r#"
+type Same<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2)
+    ? true
+    : false;
+type Must<T extends true> = T;
+
+type ReplaceKeys<U, T, Y> = {
+  [P in keyof U]: P extends T
+    ? P extends keyof Y
+      ? Y[P]
+      : never
+    : U[P]
+};
+
+type NodeA = { type: 'A'; name: string; flag: number };
+type NodeB = { type: 'B'; id: number; flag: number };
+type NodeC = { type: 'C'; name: string; flag: number };
+type Nodes = NodeA | NodeB | NodeC;
+
+type Replaced = ReplaceKeys<Nodes, 'name' | 'flag', { name: number; flag: string }>;
+type ReplaceKeysRenamed<Union, Keys, Replacements> = {
+  [Field in keyof Union]: Field extends Keys
+    ? Field extends keyof Replacements
+      ? Replacements[Field]
+      : never
+    : Union[Field]
+};
+type Renamed = ReplaceKeysRenamed<Nodes, 'name', { name: boolean }>;
+
+type cases = [
+  Must<Same<ReplaceKeys<NodeB, 'name', { other: boolean }>, NodeB>>,
+  Must<Same<ReplaceKeys<Nodes, 'name', { other: boolean }>,
+    | { type: 'A'; name: never; flag: number }
+    | { type: 'B'; id: number; flag: number }
+    | { type: 'C'; name: never; flag: number }
+  >>,
+  Must<Same<Replaced,
+    | { type: 'A'; name: number; flag: string }
+    | { type: 'B'; id: number; flag: string }
+    | { type: 'C'; name: number; flag: string }
+  >>,
+  Must<Same<Renamed,
+    | { type: 'A'; name: boolean; flag: number }
+    | { type: 'B'; id: number; flag: number }
+    | { type: 'C'; name: boolean; flag: number }
+  >>,
+];
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "ReplaceKeys-style mapped unions should satisfy type-challenge equality; got: {diagnostics:?}"
+    );
+}

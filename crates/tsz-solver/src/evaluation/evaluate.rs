@@ -1008,10 +1008,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     } else {
                         self.evaluate(instantiated)
                     };
-                    let evaluated = crate::type_queries::prune_impossible_object_union_members(
-                        self.interner,
-                        evaluated,
-                    );
                     if prefer_application_display_alias {
                         self.store_intermediate_application_display_alias(
                             instantiated,
@@ -1127,7 +1123,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // so the formatter can display `Dictionary<string>` instead of the
             // expanded `{ [index: string]: string; }`.
             //
-            // For concrete args: always store (safe, no conflation risk).
+            // For concrete args: store unless the application is an identity
+            // wrapper around one of its own structural arguments. Repainting
+            // that argument globally makes unrelated uses of the same object
+            // look like the helper application.
             // For generic args: only store when the result is a Conditional or
             // IndexAccess type, plus still-deferred mapped aliases. Deferred mapped
             // aliases retain the as-written relationship needed for diagnostics like
@@ -1181,21 +1180,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         Some(TypeData::Intersection(_)) => true,
                         _ => false,
                     };
-                    let skip_type_alias_repaint = is_type_alias_def
-                        && matches!(
-                            self.interner.lookup(display_origin),
-                            Some(TypeData::Application(_))
-                        )
-                        && match (
-                            self.interner.lookup_alloc_order(result),
-                            self.interner.lookup_alloc_order(display_origin),
-                        ) {
-                            (Some(result_order), Some(display_order)) => {
-                                result_order <= display_order
-                            }
-                            _ => result.0 <= display_origin.0,
-                        }
-                        && result_is_non_empty_structural;
+                    let result_is_application_arg = app
+                        .args
+                        .iter()
+                        .any(|&arg| arg == result || self.evaluate(arg) == result);
+                    let skip_type_alias_repaint = matches!(
+                        self.interner.lookup(display_origin),
+                        Some(TypeData::Application(_))
+                    ) && result_is_non_empty_structural
+                        && (result_is_application_arg
+                            || (is_type_alias_def
+                                && match (
+                                    self.interner.lookup_alloc_order(result),
+                                    self.interner.lookup_alloc_order(display_origin),
+                                ) {
+                                    (Some(result_order), Some(display_order)) => {
+                                        result_order <= display_order
+                                    }
+                                    _ => result.0 <= display_origin.0,
+                                }));
                     let keep_existing_conditional_branch_alias = is_type_alias_def
                         && !prefer_application_display_alias
                         && matches!(
@@ -1303,7 +1306,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// applies its own safety gates (alloc-order, intrinsic-skip, generic-
     /// args) that prevent overriding aliases for pre-existing types.
     fn store_parametric_structural_back_reference(
-        &self,
+        &mut self,
         evaluated: TypeId,
         original_type_id: TypeId,
     ) {
@@ -1331,11 +1334,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             _ => None,
         };
+        let Some((_, app_kind)) = app_def else {
+            return;
+        };
         // This back-reference is for nominal parametric shapes. Type-alias
         // applications still need their evaluated structural form for displays
-        // such as TS2339 on conditional helper aliases.
-        let is_type_alias = matches!(app_def, Some((_, crate::def::DefKind::TypeAlias)));
-        if is_type_alias {
+        // such as TS2339 on conditional helper aliases. If the resolver cannot
+        // prove a nominal interface/class origin, do not repaint a structural
+        // result as an arbitrary application.
+        if !matches!(
+            app_kind,
+            crate::def::DefKind::Interface | crate::def::DefKind::Class
+        ) {
+            return;
+        }
+        if app
+            .args
+            .iter()
+            .any(|&arg| arg == evaluated || self.evaluate(arg) == evaluated)
+        {
             return;
         }
         // Fast path: all-intrinsic args trivially have no free type
