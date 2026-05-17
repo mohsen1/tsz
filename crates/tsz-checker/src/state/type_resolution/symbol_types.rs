@@ -1186,17 +1186,11 @@ impl<'a> CheckerState<'a> {
                 let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
                     continue;
                 };
-                // Set checking_computed_property_name so that TS2467 (type parameter
-                // reference in computed property name) is properly emitted.
                 let prev = self.ctx.checking_computed_property_name;
                 self.ctx.checking_computed_property_name = Some(name_idx);
-                // Preserve literal types so that string literal expressions like
-                // ["computed"] resolve to the literal type "computed" rather than
-                // widening to `string`. Without this, get_literal_property_name
-                // cannot extract the property name from the widened type.
+                // Preserve literal property names before computed-name lowering.
                 let prev_preserve = self.ctx.preserve_literal_types;
                 self.ctx.preserve_literal_types = true;
-                // Evaluate the expression type and get the property name
                 let expr_type = self.get_type_of_node(computed.expression);
                 self.ctx.preserve_literal_types = prev_preserve;
                 self.ctx.checking_computed_property_name = prev;

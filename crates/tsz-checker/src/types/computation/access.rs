@@ -1495,10 +1495,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Handle `symbol`-typed const bindings used as computed property names.
-        // A declaration like `interface T { [sym]: number }` stores the member
-        // under the binding's stable internal key, so `obj[sym]` must use that
-        // same key rather than falling through to `undefined`.
+        // Match const `symbol` computed members stored under stable binding keys.
         if result_type.is_none()
             && index_type == TypeId::SYMBOL
             && !crate::query_boundaries::common::is_type_parameter(
@@ -1521,11 +1518,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Handle `symbol` (primitive) index on types with late-bound (computed) members.
-        // When a class declares `[expr]()` where `expr` has type `symbol`, the member
-        // is late-bound and not stored as a named property. tsc resolves `obj[expr]` to
-        // the computed member's type; we conservatively return `any` to avoid false
-        // positives like TS2722 ("Cannot invoke possibly undefined").
+        // Late-bound symbol members are not stored as named properties.
         if result_type.is_none()
             && index_type == TypeId::SYMBOL
             && crate::query_boundaries::common::has_late_bound_members(
@@ -1537,11 +1530,7 @@ impl<'a> CheckerState<'a> {
             use_index_signature_check = false;
         }
 
-        // Value-level element access whose index expression has type `any`.
-        // Under noUncheckedIndexedAccess, tsc routes value-level access with
-        // an `any` index through the receiver's applicable index signature, so
-        // reads still widen to `T | undefined` and writes reject `undefined`.
-        // With NUIA disabled, keep the type-level `T[any] = any` behavior.
+        // Under NUIA, value-level `any` indexes use the receiver index signature.
         if result_type.is_none()
             && index_type == TypeId::ANY
             && self.ctx.compiler_options.no_unchecked_indexed_access
@@ -1559,14 +1548,7 @@ impl<'a> CheckerState<'a> {
             use_index_signature_check = false;
         }
 
-        // MAPPED TYPE GENERIC INDEXED ACCESS
-        // When the pre-resolution object type is (or resolves to) a mapped type and the
-        // index is a generic type parameter, produce an IndexAccess(Mapped, T) and let
-        // the solver's evaluator handle template substitution via
-        // try_mapped_type_param_substitution. This avoids the eager mapped-type expansion
-        // in resolve_type_for_property_access which destroys the template relationship
-        // needed for generic indexed access (e.g., `handlers[key]` where `handlers` has
-        // type `{ [T in keyof M]?: (p: T) => void }` and `key: K extends keyof M`).
+        // Preserve mapped-type/generic-index relationships for solver evaluation.
         if result_type.is_none()
             && crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
         {
