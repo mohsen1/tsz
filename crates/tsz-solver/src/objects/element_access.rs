@@ -1,4 +1,5 @@
 use crate::evaluation::evaluate::{evaluate_index_access_with_options, evaluate_type};
+use crate::type_queries::unwrap_readonly_deep;
 use crate::{LiteralValue, TypeData, TypeDatabase, TypeId};
 
 #[derive(Debug, Clone)]
@@ -59,6 +60,15 @@ impl<'a> ElementAccessEvaluator<'a> {
             return ElementAccessResult::Success(TypeId::ANY);
         }
 
+        // `readonly` is a modifier, not a separate kind: indexability, tuple bounds,
+        // union dispatching, and index-signature reporting all behave identically
+        // on `T` and `readonly T` (only writes differ, which is enforced by the
+        // checker's readonly path). Strip the wrapper here so every downstream
+        // step sees the underlying shape. `evaluate_type` deliberately keeps
+        // `ReadonlyType` intact for callers that need it (e.g., `Object.freeze`
+        // return inference and assignability variance).
+        let inspect_object = unwrap_readonly_deep(self.interner, evaluated_object);
+
         // Use the existing index access evaluator to get the type
         let result_type = evaluate_index_access_with_options(
             self.interner,
@@ -68,17 +78,14 @@ impl<'a> ElementAccessEvaluator<'a> {
         );
 
         // 1. Check if object is indexable
-        if !self.is_indexable(evaluated_object) {
+        if !self.is_indexable(inspect_object) {
             return ElementAccessResult::NotIndexable {
                 type_id: evaluated_object,
             };
         }
 
-        // 2. Check for Tuple out of bounds.
-        // Also handle ReadonlyType(Tuple) — readonly tuples have the same positional
-        // bounds as their inner tuple; the wrapper only restricts writes.
-        let tuple_inner = self.unwrap_readonly_tuple(evaluated_object);
-        if let Some(TypeData::Tuple(elements)) = self.interner.lookup(tuple_inner)
+        // 2. Check for Tuple out of bounds
+        if let Some(TypeData::Tuple(elements)) = self.interner.lookup(inspect_object)
             && let Some(index) = literal_index
         {
             let tuple_elements = self.interner.tuple_list(elements);
@@ -97,16 +104,15 @@ impl<'a> ElementAccessEvaluator<'a> {
         // 2b. Check for union-of-tuples out of bounds.
         // When all tuple members of a union are out of bounds for a literal index,
         // tsc emits TS2339 "Property 'N' does not exist on type 'X'".
-        // Union members may be ReadonlyType(Tuple) — unwrap those too.
-        if let Some(TypeData::Union(members_id)) = self.interner.lookup(evaluated_object)
+        if let Some(TypeData::Union(members_id)) = self.interner.lookup(inspect_object)
             && let Some(index) = literal_index
         {
             let members = self.interner.type_list(members_id);
             let mut all_out_of_bounds = true;
             let mut has_any_tuple = false;
             for &member in members.iter() {
-                let member_inner = self.unwrap_readonly_tuple(member);
-                if let Some(TypeData::Tuple(elems)) = self.interner.lookup(member_inner) {
+                let unwrapped = unwrap_readonly_deep(self.interner, member);
+                if let Some(TypeData::Tuple(elems)) = self.interner.lookup(unwrapped) {
                     has_any_tuple = true;
                     let tuple_elements = self.interner.tuple_list(elems);
                     let has_rest = tuple_elements.iter().any(|e| e.rest);
@@ -129,7 +135,7 @@ impl<'a> ElementAccessEvaluator<'a> {
 
         // 3. Check for index signature (if not a specific property access)
         if result_type == TypeId::UNDEFINED
-            && self.should_report_no_index_signature(evaluated_object, index_type)
+            && self.should_report_no_index_signature(inspect_object, index_type)
         {
             return ElementAccessResult::NoIndexSignature {
                 type_id: evaluated_object,
@@ -137,17 +143,6 @@ impl<'a> ElementAccessEvaluator<'a> {
         }
 
         ElementAccessResult::Success(result_type)
-    }
-
-    /// Strip a `ReadonlyType` wrapper when the inner type is a `Tuple`,
-    /// returning the original `type_id` unchanged for all other shapes.
-    fn unwrap_readonly_tuple(&self, type_id: TypeId) -> TypeId {
-        let inner = crate::type_queries::unwrap_readonly(self.interner, type_id);
-        if matches!(self.interner.lookup(inner), Some(TypeData::Tuple(_))) {
-            inner
-        } else {
-            type_id
-        }
     }
 
     fn is_indexable(&self, type_id: TypeId) -> bool {
@@ -161,6 +156,10 @@ impl<'a> ElementAccessEvaluator<'a> {
         if type_id.is_intrinsic() {
             return false;
         }
+        // `readonly` is a modifier; indexability is the same as the inner type.
+        // The recursive case (union members) re-enters here so each member is
+        // unwrapped on its own.
+        let type_id = unwrap_readonly_deep(self.interner, type_id);
         match self.interner.lookup(type_id) {
             Some(
                 TypeData::Array(_)
