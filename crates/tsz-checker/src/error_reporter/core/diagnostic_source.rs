@@ -1653,6 +1653,12 @@ impl<'a> CheckerState<'a> {
         {
             return Some(display);
         }
+        if prefer_declared_display
+            && let Some(display) =
+                self.recursive_alias_application_source_display(expr_idx, declared_type)
+        {
+            return Some(display);
+        }
         if let Some(display) = self.narrowed_string_literal_residual_union_display(
             declared_type,
             expr_display_type,
@@ -1789,6 +1795,22 @@ impl<'a> CheckerState<'a> {
         let annotation_text = self.declared_type_annotation_text_for_expression(expr_idx)?;
         Self::annotation_text_is_plain_type_reference(&annotation_text)
             .then(|| self.format_declared_annotation_for_diagnostic(&annotation_text))
+    }
+
+    fn recursive_alias_application_source_display(
+        &mut self,
+        expr_idx: NodeIndex,
+        declared_type: TypeId,
+    ) -> Option<String> {
+        if !crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            declared_type,
+        ) {
+            return None;
+        }
+        let annotation = self.declared_diagnostic_source_annotation_text(expr_idx)?;
+        Some(self.format_annotation_like_type(&annotation))
     }
 
     fn annotation_text_is_plain_type_reference(annotation_text: &str) -> bool {

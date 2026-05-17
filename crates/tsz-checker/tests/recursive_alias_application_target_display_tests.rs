@@ -135,17 +135,16 @@ interface Product extends Entity { name: string; }
 
 type LinkedList<T> = T & { next: LinkedList<T> };
 
-let entityList: LinkedList<Entity>;
-let productList: LinkedList<Product>;
-
-entityList = productList;
+function assign(entityList: LinkedList<Entity>, productList: LinkedList<Product>) {
+    productList = entityList;
+}
 "#;
     let diags = check_strict(source);
     let ts2322: Vec<&(u32, String)> = diags.iter().filter(|(c, _)| *c == 2322).collect();
     assert_eq!(
         ts2322.len(),
         1,
-        "expected exactly one TS2322 for `entityList = productList`; got: {diags:?}"
+        "expected exactly one TS2322 for `productList = entityList`; got: {diags:?}"
     );
     let msg = &ts2322[0].1;
     assert!(
@@ -171,17 +170,16 @@ interface LeafNode extends BaseNode { value: number; }
 
 type Chain<T> = T & { rest: Chain<T> };
 
-let base: Chain<BaseNode>;
-let leaf: Chain<LeafNode>;
-
-base = leaf;
+function assign(base: Chain<BaseNode>, leaf: Chain<LeafNode>) {
+    leaf = base;
+}
 "#;
     let diags = check_strict(source);
     let ts2322: Vec<&(u32, String)> = diags.iter().filter(|(c, _)| *c == 2322).collect();
     assert_eq!(
         ts2322.len(),
         1,
-        "expected exactly one TS2322 for `base = leaf`; got: {diags:?}"
+        "expected exactly one TS2322 for `leaf = base`; got: {diags:?}"
     );
     let msg = &ts2322[0].1;
     assert!(

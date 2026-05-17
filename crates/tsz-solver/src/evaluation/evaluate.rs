@@ -1295,7 +1295,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // the alias name instead of the expanded structural form.
             if Self::is_structural_display_alias_result(self.interner, evaluated) {
                 self.interner
-                    .store_display_alias(evaluated, original_type_id);
+                    .store_display_alias_preferring_application(evaluated, original_type_id);
             }
             return;
         }
