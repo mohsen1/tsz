@@ -261,16 +261,19 @@ impl<'a> DeclarationEmitter<'a> {
             let is_abstract = self
                 .arena
                 .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
-            let prefix = if is_abstract { "abstract new " } else { "new " };
+            let prefix = if is_abstract { "abstract new" } else { "new" };
+            let construct_head = self.class_expression_construct_head(prefix, class, &params_text);
             if members.is_empty() {
-                format!("{prefix}({params_text}) => {{}}")
+                format!("{construct_head} => {{}}")
             } else {
-                format!("{prefix}({params_text}) => {{\n{members}\n}}")
+                format!("{construct_head} => {{\n{members}\n}}")
             }
         } else if members.is_empty() {
-            format!("{{\n    new ({params_text}): {{}};\n}}")
+            let construct_head = self.class_expression_construct_head("new", class, &params_text);
+            format!("{{\n    {construct_head}: {{}};\n}}")
         } else {
-            format!("{{\n    new ({params_text}): {{\n{members}\n    }};\n}}")
+            let construct_head = self.class_expression_construct_head("new", class, &params_text);
+            format!("{{\n    {construct_head}: {{\n{members}\n    }};\n}}")
         };
         if force_object_form {
             constructor_type =
@@ -397,10 +400,11 @@ impl<'a> DeclarationEmitter<'a> {
             );
         }
 
+        let construct_head = self.class_expression_construct_head("new", class, &params_text);
         let mut constructor_type = if instance_members.is_empty() {
-            format!("{{\n    new ({params_text}): {{}};\n}}")
+            format!("{{\n    {construct_head}: {{}};\n}}")
         } else {
-            format!("{{\n    new ({params_text}): {{\n{instance_members}\n    }};\n}}")
+            format!("{{\n    {construct_head}: {{\n{instance_members}\n    }};\n}}")
         };
         if !static_members.is_empty() {
             constructor_type =
@@ -422,6 +426,28 @@ impl<'a> DeclarationEmitter<'a> {
             .get(member_idx)
             .and_then(|member_node| self.arena.get_index_signature(member_node))
             .is_some_and(|index| self.arena.is_static(&index.modifiers))
+    }
+
+    fn class_expression_construct_head(
+        &self,
+        prefix: &str,
+        class: &tsz_parser::parser::node::ClassData,
+        params_text: &str,
+    ) -> String {
+        let type_params = class
+            .type_parameters
+            .as_ref()
+            .map(|type_params| {
+                let mut scratch = self.scratch_declaration_emitter();
+                scratch.emit_type_parameters(type_params);
+                scratch.writer.take_output()
+            })
+            .unwrap_or_default();
+        if type_params.is_empty() {
+            format!("{prefix} ({params_text})")
+        } else {
+            format!("{prefix} {type_params}({params_text})")
+        }
     }
 
     fn strip_static_prefix_from_class_expression_static_members(members: &str) -> String {
