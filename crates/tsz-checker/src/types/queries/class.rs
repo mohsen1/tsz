@@ -1715,9 +1715,6 @@ impl<'a> CheckerState<'a> {
         type_ref_name == class_name
     }
 
-    /// Get the type annotation of an explicit `this` parameter if present.
-    /// Returns `Some(type_annotation_idx)` if the first parameter is named "this" with a type annotation.
-    /// Returns None otherwise.
     pub(crate) fn get_explicit_this_type_annotation(
         &self,
         params: &[NodeIndex],

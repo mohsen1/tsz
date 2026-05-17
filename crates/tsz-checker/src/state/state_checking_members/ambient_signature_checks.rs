@@ -683,7 +683,6 @@ impl<'a> CheckerState<'a> {
             );
             ctx_helper.get_this_type()
         });
-        // Explicit `this: T` annotation takes priority over prototype/contextual inference.
         let explicit_this_type = self
             .get_explicit_this_type_annotation(&method.parameters.nodes)
             .map(|ann_idx| self.get_type_from_type_node(ann_idx));
