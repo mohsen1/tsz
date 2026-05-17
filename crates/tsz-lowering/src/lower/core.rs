@@ -2370,7 +2370,7 @@ impl<'a> TypeLowering<'a> {
             {
                 return Some(
                     self.interner
-                        .intern_string(&format!("__unique_{}", symbol_id)),
+                        .intern_string(&format!("__unique_{symbol_id}")),
                 );
             }
         }
