@@ -541,9 +541,29 @@ process.stdout.write(Number.isFinite(count) ? String(count) : "0");
 ' "$manifest"
 }
 
+type_challenges_assertion_clean_tsc_status() {
+  local classification="$1"
+  node -e '
+const fs = require("fs");
+const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+process.stdout.write(String(report?.compilers?.tsc?.status ?? ""));
+' "$classification"
+}
+
+type_challenges_assertion_clean_tsc_exit_code() {
+  local classification="$1"
+  node -e '
+const fs = require("fs");
+const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const code = report?.compilers?.tsc?.exitCode;
+if (Number.isInteger(code)) process.stdout.write(String(code));
+' "$classification"
+}
+
 check_type_challenges_assertions_tsc_clean() {
   local subset_dir="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean"
   local manifest="$subset_dir/type-challenges-assertions-tsc-clean-manifest.json"
+  local classification="$subset_dir/type-challenges-assertions-tsc-clean-classification.json"
   local tsconfig="$subset_dir/tsconfig.tsz-guard.json"
 
   if [[ ! -f "$manifest" || ! -f "$tsconfig" ]]; then
@@ -557,10 +577,35 @@ check_type_challenges_assertions_tsc_clean() {
     return 0
   fi
 
+  local tsc_status=""
+  local tsc_exit_codes=""
+  if [[ -f "$classification" ]]; then
+    tsc_status="$(type_challenges_assertion_clean_tsc_status "$classification")"
+    tsc_exit_codes="$(type_challenges_assertion_clean_tsc_exit_code "$classification")"
+  fi
+  if [[ "$tsc_status" != "pass" ]]; then
+    FAILURES=$((FAILURES + 1))
+    record_project_compatibility \
+      "type-challenges-assertions-tsc-clean" \
+      "fixture invalid" \
+      "fixture setup" \
+      "tsc clean subset failed" \
+      "tsc: Type Challenges clean assertion subset did not pass the tsc project oracle" \
+      "$accepted_count" \
+      "" \
+      "" \
+      "$tsconfig" \
+      "$subset_dir/assertions" \
+      "$tsc_exit_codes"
+    echo "error: type-challenges-assertions-tsc-clean failed the tsc oracle check" >&2
+    return 0
+  fi
+
   check_project \
     "type-challenges-assertions-tsc-clean" \
     "$tsconfig" \
-    "$subset_dir/assertions"
+    "$subset_dir/assertions" \
+    "$tsc_exit_codes"
 }
 
 check_project() {

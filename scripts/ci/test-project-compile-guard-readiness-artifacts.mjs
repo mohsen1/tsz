@@ -255,7 +255,7 @@ withTempDir((dir) => {
     TSZ_PROJECT_COMPILE_FIXTURE_ROOT: fixtureRoot,
     TSZ_PROJECT_COMPILE_SET: "canary",
     TSZ_PROJECT_COMPILE_FILTER:
-      "type-challenges-project|type-challenges-solutions-project|type-challenges-assertion-candidates",
+      "type-challenges-project|type-challenges-solutions-project|type-challenges-assertion-candidates|type-challenges-assertions-tsc-clean",
     TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS: "0",
     TYPE_CHALLENGES_REPO: typeChallengesRepo,
     TYPE_CHALLENGES_REF: typeChallengesRef,
@@ -293,6 +293,106 @@ withTempDir((dir) => {
 
   const log = fs.readFileSync(fakeTszLog, "utf8");
   assert.match(log, /type-challenges-assertions/);
+
+  const rows = readJsonl(path.join(fixtureRoot, "project-compatibility.jsonl"));
+  const cleanRow = rows.find((row) => row.name === "type-challenges-assertions-tsc-clean");
+  assert.ok(cleanRow, "expected tsc-clean assertion project row");
+  assert.equal(cleanRow.state, "green");
+  assert.equal(cleanRow.exit_class, "exit success");
+  assert.deepEqual(cleanRow.exit_codes.tsc, [0]);
+  assert.deepEqual(cleanRow.exit_codes.tsz, [0]);
+});
+
+withTempDir((dir) => {
+  const fixtureRoot = path.join(dir, "fixture-root");
+  const targetDir = path.join(dir, "target");
+  const fakeTsz = path.join(targetDir, "dist-fast", "tsz");
+  const fakeTsc = path.join(dir, "fake-tsc");
+  const typeChallengesRepo = path.join(dir, "type-challenges-repo");
+  const solutionsRepo = path.join(dir, "type-challenges-solutions-repo");
+
+  writeExecutable(
+    fakeTsz,
+    [
+      "#!/usr/bin/env bash",
+      "exit 0",
+      "",
+    ].join("\n"),
+  );
+  writeExecutable(
+    fakeTsc,
+    [
+      "#!/usr/bin/env bash",
+      'case "$PWD" in',
+      '  *type-challenges-assertions-tsc-clean*)',
+      "    echo 'assertions/00013-warm-hello-world.ts(1,1): error TS2344: clean subset failed' >&2",
+      "    exit 1",
+      "    ;;",
+      "esac",
+      "exit 0",
+      "",
+    ].join("\n"),
+  );
+
+  const typeChallengesRef = createGitRepo(typeChallengesRepo, {
+    "questions/00013-warm-hello-world/template.ts": "type HelloWorld = string;\n",
+    "questions/00013-warm-hello-world/test-cases.ts":
+      "import type { Equal, Expect } from '@type-challenges/utils'\ntype cases = [Expect<Equal<HelloWorld, string>>]\n",
+    "utils/index.d.ts":
+      "export type Expect<T extends true> = T;\nexport type Equal<X, Y> = true;\n",
+  });
+  const solutionsRef = createGitRepo(solutionsRepo, {
+    "en/hello-world.md": [
+      "id: 13",
+      "title: Hello World",
+      "level: warm",
+      "",
+      "## Solution",
+      "```ts",
+      "type HelloWorld = string",
+      "```",
+      "",
+    ].join("\n"),
+  });
+
+  const env = {
+    ...process.env,
+    CARGO_TARGET_DIR: targetDir,
+    TSZ_PROJECT_COMPILE_FIXTURE_ROOT: fixtureRoot,
+    TSZ_PROJECT_COMPILE_SET: "canary",
+    TSZ_PROJECT_COMPILE_FILTER:
+      "type-challenges-assertion-candidates|type-challenges-assertions-tsc-clean",
+    TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS: "0",
+    TYPE_CHALLENGES_REPO: typeChallengesRepo,
+    TYPE_CHALLENGES_REF: typeChallengesRef,
+    TYPE_CHALLENGES_EXPECTED_GENERATED: "1",
+    TYPE_CHALLENGES_EXPECTED_TEST_CASES: "1",
+    TYPE_CHALLENGES_SOLUTIONS_REPO: solutionsRepo,
+    TYPE_CHALLENGES_SOLUTIONS_REF: solutionsRef,
+    TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED: "1",
+    TYPE_CHALLENGES_ASSERTION_TSC_BIN: fakeTsc,
+    TYPE_CHALLENGES_ASSERTION_CLASSIFIER_TIMEOUT_MS: "5000",
+  };
+  delete env.TSZ_BIN;
+
+  const result = spawnSync("bash", [GUARD_SCRIPT], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env,
+  });
+
+  assert.equal(result.status, 1, result.stdout || result.stderr);
+  assert.match(result.stderr, /type-challenges-assertions-tsc-clean failed the tsc oracle check/);
+
+  const rows = readJsonl(path.join(fixtureRoot, "project-compatibility.jsonl"));
+  const cleanRow = rows.find((row) => row.name === "type-challenges-assertions-tsc-clean");
+  assert.ok(cleanRow, "expected tsc-clean assertion project row");
+  assert.equal(cleanRow.state, "yellow");
+  assert.equal(cleanRow.exit_class, "fixture invalid");
+  assert.equal(cleanRow.phase, "fixture setup");
+  assert.equal(cleanRow.diagnostic_status, "tsc clean subset failed");
+  assert.deepEqual(cleanRow.exit_codes.tsc, [1]);
+  assert.deepEqual(cleanRow.exit_codes.tsz, []);
 });
 
 withTempDir((dir) => {
