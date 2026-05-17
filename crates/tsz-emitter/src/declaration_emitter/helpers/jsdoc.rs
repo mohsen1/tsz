@@ -103,7 +103,9 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(in crate::declaration_emitter) fn jsdoc_attaches_through_var_prefix(between: &str) -> bool {
-        let trimmed = between.trim();
+        let Some(trimmed) = Self::trim_jsdoc_attach_trivia(between) else {
+            return false;
+        };
         if trimmed.is_empty() {
             return true;
         }
@@ -129,6 +131,25 @@ impl<'a> DeclarationEmitter<'a> {
                     | "async"
             )
         })
+    }
+
+    fn trim_jsdoc_attach_trivia(mut text: &str) -> Option<&str> {
+        loop {
+            let trimmed = text.trim_start_matches(char::is_whitespace);
+            if let Some(rest) = trimmed.strip_prefix("//") {
+                let Some(line_end) = rest.find('\n') else {
+                    return Some("");
+                };
+                text = &rest[line_end + 1..];
+                continue;
+            }
+            if let Some(rest) = trimmed.strip_prefix("/*") {
+                let comment_end = rest.find("*/")?;
+                text = &rest[comment_end + 2..];
+                continue;
+            }
+            return Some(trimmed.trim_end());
+        }
     }
 
     pub(in crate::declaration_emitter) fn extract_jsdoc_type_expression(
@@ -2378,16 +2399,19 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
-            let mut rest = Self::trim_jsdoc_same_line_following_tags(rest.trim());
+            let mut rest = Self::trim_jsdoc_template_description(
+                Self::trim_jsdoc_same_line_following_tags(rest.trim()),
+            );
             if let Some((constraint, name_rest)) = Self::parse_jsdoc_braced_type_and_name(rest)
                 && let Some((name, remaining)) = Self::take_jsdoc_template_name(name_rest)
             {
                 let constraint = Self::normalize_jsdoc_type_text(constraint, false);
-                let name_key = name.to_string();
+                let name_str = Self::format_constrained_jsdoc_template_param(name, &constraint);
+                let name_key = Self::jsdoc_template_param_name_key(&name_str).to_string();
                 if seen.insert(name_key) {
-                    params.push(format!("{name} extends {constraint}"));
+                    params.push(name_str);
                 }
-                rest = remaining;
+                rest = Self::trim_jsdoc_template_description(remaining);
             }
 
             for name in rest
@@ -2418,6 +2442,26 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or(text)
     }
 
+    fn trim_jsdoc_template_description(text: &str) -> &str {
+        for (idx, ch) in text.char_indices() {
+            if ch != '-' {
+                continue;
+            }
+            let before_is_boundary = text[..idx]
+                .chars()
+                .next_back()
+                .is_none_or(char::is_whitespace);
+            let after_is_boundary = text[idx + ch.len_utf8()..]
+                .chars()
+                .next()
+                .is_none_or(char::is_whitespace);
+            if before_is_boundary && after_is_boundary {
+                return text[..idx].trim_end();
+            }
+        }
+        text
+    }
+
     /// Strip `[…]` from a `@template` segment and rewrite `T=default` as
     /// `T = default` so the result is valid TypeScript type-parameter
     /// syntax. Non-bracket segments are returned unchanged.
@@ -2432,6 +2476,25 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             std::borrow::Cow::Owned(inner.trim().to_string())
         }
+    }
+
+    fn format_constrained_jsdoc_template_param(name: &str, constraint: &str) -> String {
+        let trimmed = name.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            let inner = &trimmed[1..trimmed.len() - 1];
+            let (name, default) = inner
+                .split_once('=')
+                .map(|(name, default)| {
+                    let default = default.trim();
+                    (
+                        name.trim(),
+                        if default.is_empty() { "any" } else { default },
+                    )
+                })
+                .unwrap_or_else(|| (inner.trim(), "any"));
+            return format!("{name} extends {constraint} = {default}");
+        }
+        format!("{trimmed} extends {constraint}")
     }
 
     fn jsdoc_template_param_name_key(text: &str) -> &str {
@@ -3284,3 +3347,7 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 }
+
+#[cfg(test)]
+#[path = "jsdoc_tests.rs"]
+mod jsdoc_tests;
