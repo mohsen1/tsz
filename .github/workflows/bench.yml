@@ -96,6 +96,7 @@ jobs:
     needs: bench-gate
     if: >-
       needs.bench-gate.outputs.should_run == 'true' &&
+      github.event_name != 'workflow_dispatch' &&
       !((github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
         (github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') ||
         (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
@@ -288,14 +289,23 @@ jobs:
     if: >-
       needs.bench-gate.outputs.should_run == 'true' &&
       ((github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
-       (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
+       github.event_name == 'workflow_dispatch')
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 120
+    outputs:
+      should_run: ${{ steps.prepare-gate.outputs.should_run }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.BENCH_TARGET_SHA }}
           fetch-depth: 1
+
+      - id: prepare-gate
+        name: Confirm benchmark should proceed
+        shell: bash
+        run: |
+          # Concurrency group handles supersession - just proceed
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
 
       - name: Submit benchmark prep to Cloud Build pool
         shell: bash
@@ -457,8 +467,13 @@ jobs:
 
   bench:
     name: bench-${{ matrix.label }}
-    needs: bench-prepare
-    if: needs.bench-prepare.outputs.should_run == 'true'
+    needs: [bench-prepare, bench-prepare-cloudbuild]
+    if: >-
+      always() &&
+      (needs.bench-prepare.outputs.should_run == 'true' ||
+       needs.bench-prepare-cloudbuild.outputs.should_run == 'true') &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
