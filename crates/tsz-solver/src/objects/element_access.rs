@@ -158,6 +158,9 @@ impl<'a> ElementAccessEvaluator<'a> {
                 | TypeData::Intersection(_)
                 | TypeData::Mapped(_),
             ) => true,
+            // `readonly T[]` and `readonly [A, B]` are transparent wrappers:
+            // the readonly modifier does not affect indexability.
+            Some(TypeData::ReadonlyType(inner)) => self.is_indexable(inner),
             Some(TypeData::Union(members)) => {
                 let members = self.interner.type_list(members);
                 members.iter().all(|&m| self.is_indexable(m))
@@ -310,6 +313,63 @@ mod tests {
             evaluator.is_indexable(mapped_no_as),
             "Mapped type without as-clause should be indexable"
         );
+    }
+
+    #[test]
+    fn readonly_array_element_access_returns_element_type() {
+        let interner = TypeInterner::new();
+        let array = interner.array(TypeId::STRING);
+        let readonly_array = interner.readonly_type(array);
+
+        let evaluator = ElementAccessEvaluator::new(&interner);
+        let result = evaluator.resolve_element_access(readonly_array, TypeId::NUMBER, None);
+        match result {
+            ElementAccessResult::Success(type_id) => {
+                assert_eq!(
+                    type_id,
+                    TypeId::STRING,
+                    "readonly T[] index should return T"
+                );
+            }
+            other => panic!("Expected Success for readonly array index, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn readonly_tuple_element_access_returns_element_type() {
+        use crate::types::TupleElement;
+
+        let interner = TypeInterner::new();
+        let elements = vec![
+            TupleElement {
+                type_id: TypeId::STRING,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: TypeId::NUMBER,
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ];
+        let tuple = interner.tuple(elements);
+        let readonly_tuple = interner.readonly_type(tuple);
+        let index_type = interner.literal_number(0.0);
+
+        let evaluator = ElementAccessEvaluator::new(&interner);
+        let result = evaluator.resolve_element_access(readonly_tuple, index_type, Some(0));
+        match result {
+            ElementAccessResult::Success(type_id) => {
+                assert_eq!(
+                    type_id,
+                    TypeId::STRING,
+                    "readonly [string, number][0] should return string"
+                );
+            }
+            other => panic!("Expected Success for readonly tuple index, got {:?}", other),
+        }
     }
 
     #[test]

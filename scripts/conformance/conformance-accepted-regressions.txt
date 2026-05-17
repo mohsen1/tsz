@@ -31,7 +31,6 @@ TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive1.ts
 TypeScript/tests/cases/compiler/unionPropertyOfProtectedAndIntersectionProperty.ts
 TypeScript/tests/cases/compiler/unspecializedConstraints.ts
 TypeScript/tests/cases/conformance/classes/members/privateNames/privateNamesInGenericClasses.ts
-TypeScript/tests/cases/conformance/controlFlow/controlFlowAliasing.ts
 TypeScript/tests/cases/conformance/es2019/globalThisAmbientModules.ts
 TypeScript/tests/cases/conformance/es2020/intlNumberFormatES2020.ts
 TypeScript/tests/cases/conformance/es2023/intlNumberFormatES2023.ts
