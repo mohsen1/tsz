@@ -35,25 +35,34 @@ function withTempDir(fn) {
   }
 }
 
-function writePayload(dir, results) {
-  const input = path.join(dir, "input.json");
+function writePayload(file, results, extraPayload = {}) {
   fs.writeFileSync(
-    input,
+    file,
     `${JSON.stringify({
       quick_mode: false,
       validation: { hyperfine_exit_codes_required: true },
       totals: { benchmarks_run: results.length },
       results,
+      ...extraPayload,
     })}\n`,
     "utf8",
   );
+}
+
+function writeInput(dir, name, results, extraPayload = {}) {
+  const input = path.join(dir, name);
+  writePayload(input, results, extraPayload);
   return input;
 }
 
-function runMerge(dir, results) {
-  const input = writePayload(dir, results);
+function runMerge(dir, results, extraPayload = {}) {
+  const input = writeInput(dir, "input.json", results, extraPayload);
+  return runMergeInputs(dir, [input]);
+}
+
+function runMergeInputs(dir, inputs) {
   const output = path.join(dir, "merged.json");
-  const result = spawnSync(process.execPath, [MERGE_SCRIPT, output, input], {
+  const result = spawnSync(process.execPath, [MERGE_SCRIPT, output, ...inputs], {
     cwd: ROOT,
     encoding: "utf8",
   });
@@ -97,4 +106,85 @@ withTempDir((dir) => {
   const result = runMerge(dir, rows);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /rxjs-project: missing compatibility\.peak_memory_bytes/);
+});
+
+withTempDir((dir) => {
+  const runner_environment = {
+    platform: "linux",
+    arch: "x64",
+    release: "6.8.0",
+    cpu_count: 32,
+    cpu_model: "Intel Xeon",
+    total_memory_bytes: 137438953472,
+    ci: true,
+    github_actions: {
+      runner_os: "Linux",
+      runner_arch: "X64",
+    },
+    cloud_build: {
+      machine_type: "e2-highcpu-32",
+    },
+  };
+  const result = runMerge(dir, [projectRow("standalone")], { runner_environment });
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.deepEqual(merged.runner_environment, runner_environment);
+  assert.deepEqual(merged.validation.runner_environment_warnings, []);
+});
+
+withTempDir((dir) => {
+  const first = writeInput(
+    dir,
+    "bench-results-a.json",
+    [projectRow("first")],
+    {
+      runner_environment: {
+        platform: "linux",
+        arch: "x64",
+        release: "6.8.0",
+        cpu_count: 32,
+        cpu_model: "Intel Xeon",
+        total_memory_bytes: 137438953472,
+        github_actions: {
+          runner_os: "Linux",
+          runner_arch: "X64",
+        },
+        cloud_build: {
+          machine_type: "e2-highcpu-32",
+        },
+      },
+    },
+  );
+  const second = writeInput(
+    dir,
+    "bench-results-b.json",
+    [projectRow("second")],
+    {
+      runner_environment: {
+        platform: "linux",
+        arch: "x64",
+        release: "6.8.0",
+        cpu_count: 16,
+        cpu_model: "Intel Xeon",
+        total_memory_bytes: 68719476736,
+        github_actions: {
+          runner_os: "Linux",
+          runner_arch: "X64",
+        },
+        cloud_build: {
+          machine_type: "e2-highcpu-16",
+        },
+      },
+    },
+  );
+  const result = runMergeInputs(dir, [first, second]);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.equal(merged.runner_environment.cpu_count, 32);
+  assert.equal(merged.validation.runner_environment_warnings.length, 1);
+  assert.equal(merged.validation.runner_environment_warnings[0].file, "bench-results-b.json");
+  assert.deepEqual(
+    merged.validation.runner_environment_warnings[0].mismatched_fields,
+    ["cpu_count", "total_memory_bytes", "cloud_build_machine_type"],
+  );
 });

@@ -7,6 +7,10 @@ declare namespace Intl {
     interface NumberFormatOptionsSignDisplayRegistry {
         negative: never;
     }
+    interface NumberFormatRangePartTypeRegistry extends NumberFormatPartTypeRegistry {
+        approximatelySign: never;
+    }
+    type NumberFormatRangePartTypes = keyof NumberFormatRangePartTypeRegistry;
     interface NumberFormatOptions {
         roundingPriority?: "auto" | "morePrecision" | "lessPrecision" | undefined;
         roundingIncrement?: 1 | 2 | 5 | 10 | 20 | 25 | 50 | 100 | 200 | 250 | 500 | 1000 | 2000 | 2500 | 5000 | undefined;
@@ -19,7 +23,9 @@ declare namespace Intl {
         roundingIncrement: 1 | 2 | 5 | 10 | 20 | 25 | 50 | 100 | 200 | 250 | 500 | 1000 | 2000 | 2500 | 5000;
         trailingZeroDisplay: "auto" | "stripIfInteger";
     }
-    interface NumberRangeFormatPart extends NumberFormatPart {
+    interface NumberRangeFormatPart {
+        type: NumberFormatRangePartTypes;
+        value: string;
         source: "startRange" | "endRange" | "shared";
     }
     type StringNumericLiteral = `${number}` | "Infinity" | "-Infinity" | "+Infinity";

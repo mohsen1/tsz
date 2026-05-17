@@ -20,5 +20,5 @@ solver_oversized    18
 binder_max_loc        2890
 binder_oversized      1
 
-emitter_max_loc     4926
+emitter_max_loc     5207
 emitter_oversized   23

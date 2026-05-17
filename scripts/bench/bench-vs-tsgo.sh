@@ -1903,6 +1903,7 @@ export_results_json() {
     BENCHMARK_SOURCES_JSONL_VALUE="${BENCHMARK_SOURCES_JSONL:-}" \
     node - "$out_file" <<'NODE'
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const outFile = process.argv[2];
 
@@ -2224,9 +2225,53 @@ const tszWins = rows.filter((row) => row.winner === "tsz").length;
 const tsgoWins = rows.filter((row) => row.winner === "tsgo").length;
 const errorCases = rows.filter((row) => row.status).length;
 
+function runnerEnvironment() {
+  const cpus = os.cpus();
+  const firstCpu = cpus[0] || {};
+  const cpuModels = [...new Set(cpus.map((cpu) => cpu.model).filter(Boolean))];
+  const totalMemoryBytes = os.totalmem();
+  const githubActions = process.env.GITHUB_ACTIONS === "true"
+    ? {
+        run_id: process.env.GITHUB_RUN_ID || null,
+        run_attempt: process.env.GITHUB_RUN_ATTEMPT || null,
+        runner_os: process.env.RUNNER_OS || null,
+        runner_arch: process.env.RUNNER_ARCH || null,
+        workflow: process.env.GITHUB_WORKFLOW || null,
+        job: process.env.GITHUB_JOB || null,
+        ref: process.env.GITHUB_REF || null,
+        sha: process.env.GITHUB_SHA || null,
+      }
+    : null;
+  const cloudBuild = process.env.BUILD_ID ||
+    process.env.PROJECT_ID ||
+    process.env.TSZ_BENCH_MACHINE_TYPE
+    ? {
+        build_id: process.env.BUILD_ID || null,
+        project_id: process.env.PROJECT_ID || null,
+        region: process.env.LOCATION || process.env.CLOUDSDK_COMPUTE_REGION || null,
+        machine_type: process.env.TSZ_BENCH_MACHINE_TYPE || null,
+      }
+    : null;
+
+  return {
+    platform: os.platform(),
+    arch: os.arch(),
+    release: os.release(),
+    cpu_count: cpus.length || null,
+    cpu_model: cpuModels[0] || null,
+    cpu_models: cpuModels.length > 1 ? cpuModels.slice(0, 4) : undefined,
+    cpu_speed_mhz: Number.isFinite(firstCpu.speed) ? firstCpu.speed : null,
+    total_memory_bytes: Number.isFinite(totalMemoryBytes) ? totalMemoryBytes : null,
+    ci: process.env.CI === "true",
+    github_actions: githubActions,
+    cloud_build: cloudBuild,
+  };
+}
+
 const payload = {
   generated_at: new Date().toISOString(),
   benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
+  runner_environment: runnerEnvironment(),
   validation: {
     hyperfine_exit_codes_required: true,
   },
@@ -2259,6 +2304,31 @@ is_benchmark_selected() {
         return 0
     fi
     echo "$name" | grep -qE "$FILTER"
+}
+
+filter_matches_any() {
+    if [ -z "$FILTER" ]; then
+        return 0
+    fi
+
+    local name
+    for name in "$@"; do
+        if echo "$name" | grep -qE "$FILTER"; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+use_quick_subset_for() {
+    if [ "$QUICK_MODE" != true ]; then
+        return 1
+    fi
+
+    # If an explicit filter does not match the quick representative, keep the
+    # quick run counts but scan the full candidate list so exact filters work.
+    filter_matches_any "$@"
 }
 
 should_run_compile_canary_project() {
@@ -2443,7 +2513,7 @@ run_utility_types_benchmarks() {
     local lib_args="--lib dom,es2017"
 
     local files
-    if [ "$QUICK_MODE" = true ]; then
+    if use_quick_subset_for "utility-types/index.ts"; then
         files=("src/index.ts")
     else
         files=(
@@ -2494,7 +2564,7 @@ run_ts_toolbelt_benchmarks() {
     local lib_args="--lib esnext,dom"
 
     local files
-    if [ "$QUICK_MODE" = true ]; then
+    if use_quick_subset_for "ts-toolbelt/Iteration/Iteration.ts"; then
         files=("sources/Iteration/Iteration.ts")
     else
         files=(
@@ -2544,7 +2614,7 @@ run_ts_essentials_benchmarks() {
     local lib_args="--lib es2018"
 
     local files
-    if [ "$QUICK_MODE" = true ]; then
+    if use_quick_subset_for "ts-essentials/paths.ts"; then
         files=("lib/paths/index.ts")
     else
         files=(
@@ -3105,6 +3175,177 @@ EOF
     return score;
 }
 
+EOF
+    done
+}
+
+generate_indexed_access_hotspot_file() {
+    local key_count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Indexed-access hotspot benchmark.
+// Mirrors project-code patterns that repeatedly read through mapped helpers.
+
+HEADER
+
+    echo "interface IndexedModel {" >> "$output"
+    for ((i=0; i<key_count; i++)); do
+        echo "    prop$i: { value: number; tag: 'prop$i'; nested: { flag: boolean } };" >> "$output"
+    done
+    echo "}" >> "$output"
+    cat >> "$output" << 'EOF'
+
+type IndexedReaders<T> = { [K in keyof T]: (value: T[K]) => T[K] };
+type IndexedValues<T> = { [K in keyof T]: T[K] }[keyof T];
+
+declare const model: IndexedModel;
+declare const readers: IndexedReaders<IndexedModel>;
+
+function readIndexed<K extends keyof IndexedModel>(key: K): IndexedModel[K] {
+    return readers[key](model[key]);
+}
+
+type AllIndexedValues = IndexedValues<IndexedModel>;
+EOF
+
+    for ((i=0; i<key_count; i++)); do
+        cat >> "$output" << EOF
+const indexedValue$i = readIndexed('prop$i').nested.flag ? readIndexed('prop$i').value : 0;
+EOF
+    done
+}
+
+generate_remapped_accessor_hotspot_file() {
+    local key_count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Remapped mapped-type accessor hotspot benchmark.
+// Exercises template-literal key remapping plus indexed access values.
+
+HEADER
+
+    echo "interface AccessorModel {" >> "$output"
+    for ((i=0; i<key_count; i++)); do
+        echo "    prop$i: { id: number; label: 'prop$i' };" >> "$output"
+    done
+    echo "}" >> "$output"
+    cat >> "$output" << 'EOF'
+
+type AccessorPair<T> = {
+    [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K]
+} & {
+    [K in keyof T as `set${Capitalize<string & K>}`]: (value: T[K]) => void
+};
+
+declare const accessors: AccessorPair<AccessorModel>;
+EOF
+
+    for ((i=0; i<key_count; i++)); do
+        cat >> "$output" << EOF
+const accessorValue$i = accessors.getProp$i().id;
+accessors.setProp$i({ id: accessorValue$i, label: 'prop$i' });
+EOF
+    done
+}
+
+generate_conditional_infer_hotspot_file() {
+    local case_count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Conditional infer hotspot benchmark.
+// Exercises nested conditional extraction seen in utility-heavy projects.
+
+type AsyncBox<T> = Promise<{ payload: T[]; meta: { created: string } }>;
+type ExtractPayload<T> = T extends Promise<{ payload: (infer U)[] }> ? U : never;
+type DeepUnwrap<T> =
+    T extends Promise<infer U> ? DeepUnwrap<U> :
+    T extends { payload: infer P } ? DeepUnwrap<P> :
+    T extends (infer E)[] ? DeepUnwrap<E> :
+    T;
+
+HEADER
+
+    for ((i=0; i<case_count; i++)); do
+        cat >> "$output" << EOF
+type ConditionalInput$i = AsyncBox<{ id: $i; nested: Promise<{ value: string; index: $i }> }>;
+type ConditionalPayload$i = ExtractPayload<ConditionalInput$i>;
+type ConditionalDeep$i = DeepUnwrap<ConditionalInput$i>;
+declare const conditionalPayload$i: ConditionalPayload$i;
+declare const conditionalDeep$i: ConditionalDeep$i;
+const conditionalValue$i = conditionalPayload$i.id + conditionalDeep$i.id;
+
+EOF
+    done
+}
+
+generate_object_spread_hotspot_file() {
+    local case_count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Object spread hotspot benchmark.
+// Exercises repeated object-literal spread inference and property merging.
+
+interface SpreadBase {
+    common: string;
+    enabled: boolean;
+}
+
+HEADER
+
+    for ((i=0; i<case_count; i++)); do
+        cat >> "$output" << EOF
+interface SpreadInput$i extends SpreadBase {
+    value$i: number;
+    nested$i: { readonly id: number; name: string };
+}
+
+declare const spreadInput$i: SpreadInput$i;
+const spreadMerged$i = {
+    ...spreadInput$i,
+    extra$i: spreadInput$i.value$i,
+    nested$i: { ...spreadInput$i.nested$i, name: spreadInput$i.common },
+};
+type SpreadResult$i = typeof spreadMerged$i;
+const spreadCheck$i: SpreadResult$i = spreadMerged$i;
+
+EOF
+    done
+}
+
+generate_contextual_callback_hotspot_file() {
+    local case_count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Contextual callback hotspot benchmark.
+// Exercises mapped callback tables and indexed dispatch return preservation.
+
+HEADER
+
+    echo "interface EventMap {" >> "$output"
+    for ((i=0; i<case_count; i++)); do
+        echo "    event$i: { type: 'event$i'; value: number; payload: { id: number } };" >> "$output"
+    done
+    echo "}" >> "$output"
+    cat >> "$output" << 'EOF'
+
+type HandlerMap<T> = { [K in keyof T]: (event: T[K]) => T[K] };
+declare const handlers: HandlerMap<EventMap>;
+
+function dispatchEvent<K extends keyof EventMap>(kind: K, event: EventMap[K]): EventMap[K] {
+    return handlers[kind](event);
+}
+
+EOF
+
+    for ((i=0; i<case_count; i++)); do
+        cat >> "$output" << EOF
+const dispatched$i = dispatchEvent('event$i', { type: 'event$i', value: $i, payload: { id: $i } });
+const dispatchedValue$i = dispatched$i.payload.id + dispatched$i.value;
 EOF
     done
 }
@@ -4119,6 +4360,31 @@ main() {
         generate_shallow_optional_chain_file 50 "$file"
         run_benchmark "Shallow optional-chain N=50" "$file"
         echo
+
+        file="$TEMP_DIR/indexed_access_hotspot_25.ts"
+        generate_indexed_access_hotspot_file 25 "$file"
+        run_benchmark "Indexed access hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/remapped_accessor_hotspot_25.ts"
+        generate_remapped_accessor_hotspot_file 25 "$file"
+        run_benchmark "Remapped accessor hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/conditional_infer_hotspot_25.ts"
+        generate_conditional_infer_hotspot_file 25 "$file"
+        run_benchmark "Conditional infer hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/object_spread_hotspot_25.ts"
+        generate_object_spread_hotspot_file 25 "$file"
+        run_benchmark "Object spread hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/contextual_callback_hotspot_25.ts"
+        generate_contextual_callback_hotspot_file 25 "$file"
+        run_benchmark "Contextual callback hotspot N=25" "$file"
+        echo
     else
         # Generate synthetic files of increasing size
         print_subheader "Class-heavy files (interfaces + classes)"
@@ -4150,6 +4416,43 @@ main() {
         generate_shallow_optional_chain_file 400 "$file"
         run_benchmark "Shallow optional-chain N=400" "$file"
         echo
+
+        print_subheader "Project hotspot microbenchmarks"
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/indexed_access_hotspot_${count}.ts"
+            generate_indexed_access_hotspot_file "$count" "$file"
+            run_benchmark "Indexed access hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/remapped_accessor_hotspot_${count}.ts"
+            generate_remapped_accessor_hotspot_file "$count" "$file"
+            run_benchmark "Remapped accessor hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/conditional_infer_hotspot_${count}.ts"
+            generate_conditional_infer_hotspot_file "$count" "$file"
+            run_benchmark "Conditional infer hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/object_spread_hotspot_${count}.ts"
+            generate_object_spread_hotspot_file "$count" "$file"
+            run_benchmark "Object spread hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/contextual_callback_hotspot_${count}.ts"
+            generate_contextual_callback_hotspot_file "$count" "$file"
+            run_benchmark "Contextual callback hotspot N=$count" "$file"
+            echo
+        done
         
         print_subheader "Union type stress test"
         
