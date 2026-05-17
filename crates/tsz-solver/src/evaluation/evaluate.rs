@@ -1274,15 +1274,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }) {
             return;
         }
-        if !matches!(
+        let instantiated_is_application = matches!(
             self.interner.lookup(instantiated),
             Some(TypeData::Application(_))
-        ) || !matches!(
+        );
+        let original_is_application = matches!(
             self.interner.lookup(original_type_id),
             Some(TypeData::Application(_))
-        ) {
+        );
+
+        if !original_is_application {
             return;
         }
+
+        if !instantiated_is_application {
+            // Structural-body path: the type alias body resolved to a structural
+            // type rather than another Application (e.g.
+            // `type LinkedList<T> = T & { next: LinkedList<T> }` evaluates to an
+            // Intersection). Map `evaluated → original_type_id` so diagnostics show
+            // the alias name instead of the expanded structural form.
+            if Self::is_structural_display_alias_result(self.interner, evaluated) {
+                self.interner
+                    .store_display_alias(evaluated, original_type_id);
+            }
+            return;
+        }
+
         if !Self::is_structural_display_alias_result(self.interner, evaluated) {
             return;
         }
