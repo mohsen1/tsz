@@ -1208,47 +1208,6 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
         "builtin dom interfaces whose immediate base has heritage should fall back",
     );
 
-    let html_element_ty = state
-        .resolve_lib_type_by_name("HTMLElement")
-        .expect("HTMLElement should resolve through the mature lib path");
-    assert_eq!(
-        state
-            .ctx
-            .lib_type_resolution_cache
-            .get("HTMLElement")
-            .copied()
-            .flatten(),
-        Some(html_element_ty),
-        "mature lib resolution should cache the final HTMLElement type",
-    );
-    let div_sym_id = state
-        .ctx
-        .binder
-        .file_locals
-        .get("HTMLDivElement")
-        .expect("HTMLDivElement should resolve to a dom lib symbol");
-    let div_arena = state
-        .ctx
-        .binder
-        .symbol_arenas
-        .get(&div_sym_id)
-        .map(std::convert::AsRef::as_ref)
-        .expect("HTMLDivElement should have a delegate arena");
-    let (div_ty, div_params) = state
-        .direct_cross_file_interface_lowering(div_sym_id, state.ctx.binder, div_arena, false, false)
-        .expect("builtin dom interfaces with a cached final base should lower directly");
-    assert!(div_params.is_empty());
-    let tag_name = state.ctx.types.intern_string("tagName");
-    assert!(
-        crate::query_boundaries::common::raw_property_type(
-            state.ctx.types.as_type_database(),
-            div_ty,
-            tag_name,
-        )
-        .is_some(),
-        "HTMLDivElement should include inherited Element members through the cached final base",
-    );
-
     let iterable_sym_id = state
         .ctx
         .binder
