@@ -20,6 +20,71 @@ function readManifest(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+function fail(message) {
+  console.error(`error: ${message}`);
+  process.exit(1);
+}
+
+function validateManifest(manifest, label, expected) {
+  if (manifest?.fixture !== expected.fixture) {
+    fail(
+      `unexpected ${label} manifest fixture: ${manifest?.fixture || "<missing>"}`,
+    );
+  }
+
+  const source = manifest.source;
+  if (
+    !source ||
+    typeof source.repository !== "string" ||
+    source.repository.length === 0 ||
+    typeof source.ref !== "string" ||
+    source.ref.length === 0 ||
+    typeof source.path !== "string" ||
+    source.path.length === 0
+  ) {
+    fail(`${label} manifest is missing source repository/ref/path metadata`);
+  }
+
+  if (source.path !== expected.path) {
+    fail(
+      `${label} manifest source path mismatch: expected ${expected.path}, got ${source.path}`,
+    );
+  }
+
+  if (!Array.isArray(manifest.entries)) {
+    fail(`${label} manifest entries must be an array`);
+  }
+
+  if (!Number.isInteger(manifest.generated)) {
+    fail(`${label} manifest is missing generated count metadata`);
+  }
+
+  if (manifest.generated !== manifest.entries.length) {
+    fail(
+      `${label} manifest generated count ${manifest.generated} does not match entries length ${manifest.entries.length}`,
+    );
+  }
+}
+
+function ensureSameOfficialSnapshot(templateManifest, testCasesManifest) {
+  const templateSource = templateManifest.source;
+  const testCasesSource = testCasesManifest.source;
+  if (
+    templateSource.repository === testCasesSource.repository &&
+    templateSource.ref === testCasesSource.ref
+  ) {
+    return;
+  }
+
+  fail(
+    [
+      "Type Challenges template and test-case manifests must come from the same official snapshot",
+      `templates: ${templateSource.repository} @ ${templateSource.ref}`,
+      `test cases: ${testCasesSource.repository} @ ${testCasesSource.ref}`,
+    ].join("\n"),
+  );
+}
+
 function challengeId(entry) {
   const id = entry?.challenge?.id;
   return id == null ? null : String(id);
@@ -59,6 +124,20 @@ function summarizeEntry(entry) {
 const templateManifest = readManifest(templateManifestPath);
 const testCasesManifest = readManifest(testCasesManifestPath);
 const solutionsManifest = readManifest(solutionsManifestPath);
+
+validateManifest(templateManifest, "template", {
+  fixture: "type-challenges-project",
+  path: "questions/**/template.ts",
+});
+validateManifest(testCasesManifest, "test-case", {
+  fixture: "type-challenges-project",
+  path: "questions/**/test-cases.ts",
+});
+validateManifest(solutionsManifest, "solution", {
+  fixture: "type-challenges-solutions-project",
+  path: "en/*.md",
+});
+ensureSameOfficialSnapshot(templateManifest, testCasesManifest);
 
 const templatesById = indexByChallengeId(templateManifest, "template");
 const testCasesById = indexByChallengeId(testCasesManifest, "test-case");
