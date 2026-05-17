@@ -400,6 +400,68 @@ mod tests {
     }
 
     #[test]
+    fn derived_constructor_with_explicit_branch_returns_omits_tail_this_return() {
+        let source = "declare const flag: boolean;\nclass A {}\nclass B extends A {\n    prop = () => this;\n    constructor() {\n        super();\n        if (flag) {\n            return {\n                prop: () => this,\n                value: 1\n            };\n        }\n        else\n            return null;\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains(
+                "return {\n                prop: function () { return _this; },\n                value: 1\n            };"
+            ),
+            "Returned multiline object literals in lowered constructors should stay multiline.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("else\n            return null;\n    }"),
+            "Non-block else returns should print on the following indented line.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("return null;\n        return _this;"),
+            "A derived constructor whose remaining post-super statements cannot fall through should not append return _this.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn derived_constructor_bare_returns_return_captured_this() {
+        let source = "declare const flag: boolean;\nclass A {}\nclass B extends A {\n    prop = () => this;\n    constructor() {\n        super();\n        if (flag) {\n            return;\n        }\n        return;\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains(
+                "if (flag) {\n            return _this;\n        }\n        return _this;"
+            ),
+            "Bare returns in the derived constructor body should return the captured instance.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("return;\n"),
+            "Derived constructor bare returns should not survive after ES5 `_this` capture.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_async_method_with_multiply_default_stays_async_function() {
         let source = "declare var a: number, b: number;\ndeclare function g(): Promise<void>;\nvar o = { async m(x = a * b) { await g(); } };\n";
 
