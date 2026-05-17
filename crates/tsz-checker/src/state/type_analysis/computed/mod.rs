@@ -1075,7 +1075,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Create the structural type (union of member types, or NUMBER/STRING for homogeneous enums)
+            // Create the structural type as a finite union of member values.
             let structural_type = if member_types.is_empty() {
                 // Empty enum - default to NUMBER
                 TypeId::NUMBER
