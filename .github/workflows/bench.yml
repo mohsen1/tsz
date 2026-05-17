@@ -370,29 +370,46 @@ jobs:
 
           deadline=$((SECONDS + wait_seconds))
           while true; do
+            rm -f latest-bench-prep.env bench-prep.env bench-prep.tar
             if gcloud storage cp \
               "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
-              bench-prep.env >/dev/null 2>&1 && \
-              gcloud storage cp \
-                "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.tar" \
-                bench-prep.tar >/dev/null 2>&1; then
-              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+              latest-bench-prep.env >/dev/null 2>&1; then
               # shellcheck disable=SC1091
-              source bench-prep.env
-              if [[ -z "${BENCH_TARGET_SHA:-}" ]]; then
+              source latest-bench-prep.env
+              latest_target_sha="${BENCH_TARGET_SHA:-}"
+              latest_build_date="${BENCH_BUILD_DATE:-}"
+              if [[ -z "${latest_target_sha}" ]]; then
                 echo "Cloud Build manifest did not include BENCH_TARGET_SHA."
                 exit 1
               fi
               if [[ "${{ github.event_name }}" == "workflow_dispatch" &&
-                    "${BENCH_TARGET_SHA}" != "${{ env.BENCH_TARGET_SHA }}" ]]; then
-                echo "Cloud Build artifact is for ${BENCH_TARGET_SHA}; waiting for ${{ env.BENCH_TARGET_SHA }}."
+                    "${latest_target_sha}" != "${{ env.BENCH_TARGET_SHA }}" ]]; then
+                echo "Cloud Build artifact is for ${latest_target_sha}; waiting for ${{ env.BENCH_TARGET_SHA }}."
               elif [[ "${{ github.event_name }}" == "schedule" &&
-                      "${BENCH_BUILD_DATE:-}" != "$(date -u +%F)" ]]; then
-                echo "Cloud Build artifact is from ${BENCH_BUILD_DATE:-unknown}; waiting for today's build."
-              else
-                echo "target_sha=${BENCH_TARGET_SHA}" >> "$GITHUB_OUTPUT"
+                      "${latest_build_date}" != "$(date -u +%F)" ]]; then
+                echo "Cloud Build artifact is from ${latest_build_date:-unknown}; waiting for today's build."
+              elif gcloud storage cp \
+                "gs://tsz-ci_cloudbuild/bench-prep/${latest_target_sha}/bench-prep.env" \
+                bench-prep.env >/dev/null 2>&1 && \
+                gcloud storage cp \
+                  "gs://tsz-ci_cloudbuild/bench-prep/${latest_target_sha}/bench-prep.tar" \
+                  bench-prep.tar >/dev/null 2>&1; then
+                # shellcheck disable=SC1091
+                source bench-prep.env
+                if [[ "${BENCH_TARGET_SHA:-}" != "${latest_target_sha}" ]]; then
+                  echo "SHA-scoped Cloud Build manifest is for ${BENCH_TARGET_SHA:-unknown}; expected ${latest_target_sha}."
+                  exit 1
+                fi
+                if [[ "${BENCH_BUILD_DATE:-}" != "${latest_build_date}" ]]; then
+                  echo "SHA-scoped Cloud Build manifest date ${BENCH_BUILD_DATE:-unknown} did not match latest date ${latest_build_date:-unknown}."
+                  exit 1
+                fi
+                tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+                echo "target_sha=${latest_target_sha}" >> "$GITHUB_OUTPUT"
                 echo "ready=true" >> "$GITHUB_OUTPUT"
                 exit 0
+              else
+                echo "SHA-scoped Cloud Build artifact for ${latest_target_sha} is not available yet."
               fi
             fi
 
