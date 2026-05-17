@@ -233,6 +233,10 @@ const row = {
   assertion_candidates: {
     paired_solutions: counts.pairedSolutions ?? null,
     generated_assertions: counts.generatedAssertions ?? null,
+    assertions_referencing_solution_declaration:
+      counts.assertionsReferencingSolutionDeclaration ?? null,
+    assertions_missing_solution_declaration_reference:
+      counts.assertionsMissingSolutionDeclarationReference ?? null,
     tsc_diagnostic_free: tscCandidateDiagnostics.candidatesWithoutDiagnostics ?? null,
     tsc_with_diagnostics: tscCandidateDiagnostics.candidatesWithDiagnostics ?? null,
     tsz_diagnostic_free: tszCandidateDiagnostics.candidatesWithoutDiagnostics ?? null,
