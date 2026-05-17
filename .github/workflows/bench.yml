@@ -68,10 +68,10 @@ jobs:
           if [[ "$should_run" == "true" ]]; then
             active_runs="$(
               {
-                gh run list --workflow bench.yml --branch main --status in_progress --limit 20 \
+                gh run list --repo "${{ github.repository }}" --workflow bench.yml --branch main --status in_progress --limit 20 \
                   --json databaseId,headSha,url \
                   --jq '.[] | select(.databaseId != ${{ github.run_id }}) | [.databaseId, .headSha, .url] | @tsv'
-                gh run list --workflow bench.yml --branch main --status queued --limit 20 \
+                gh run list --repo "${{ github.repository }}" --workflow bench.yml --branch main --status queued --limit 20 \
                   --json databaseId,headSha,url \
                   --jq '.[] | select(.databaseId != ${{ github.run_id }}) | [.databaseId, .headSha, .url] | @tsv'
               } | sort -u
