@@ -860,14 +860,15 @@ fn collect_simple_import_request(
             let mut i = import_idx + 1;
             while i < tokens.len() {
                 match tokens[i].kind {
-                    SyntaxKind::SemicolonToken => return None,
-                    SyntaxKind::EqualsToken | SyntaxKind::RequireKeyword => return None,
+                    SyntaxKind::SemicolonToken
+                    | SyntaxKind::EqualsToken
+                    | SyntaxKind::RequireKeyword
+                    | SyntaxKind::CloseBraceToken => return None,
                     SyntaxKind::OpenBraceToken => {
                         let close = matching_brace(tokens, i)?;
                         i = close + 1;
                         continue;
                     }
-                    SyntaxKind::CloseBraceToken => return None,
                     SyntaxKind::FromKeyword
                         if tokens
                             .get(i + 1)

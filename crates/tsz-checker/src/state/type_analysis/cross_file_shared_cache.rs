@@ -110,10 +110,10 @@ impl<'a> CheckerState<'a> {
                 .lib_type_resolution_cache
                 .insert(shared_name.to_string(), Some(result));
         }
-        if let Some(shared) = self.ctx.shared_lib_type_cache.as_ref() {
-            if shared.get(shared_name).is_none_or(|entry| entry.is_none()) {
-                shared.insert(shared_name.to_string(), Some(result));
-            }
+        if let Some(shared) = self.ctx.shared_lib_type_cache.as_ref()
+            && shared.get(shared_name).is_none_or(|entry| entry.is_none())
+        {
+            shared.insert(shared_name.to_string(), Some(result));
         }
     }
 }
