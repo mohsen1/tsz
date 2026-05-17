@@ -9,6 +9,12 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const PROJECT_FIXTURES = path.join(ROOT, "scripts", "bench", "project-fixtures.sh");
+const MANIFEST_SCRIPT = path.join(
+  ROOT,
+  "scripts",
+  "ci",
+  "type-challenges-solutions-manifest.mjs",
+);
 
 function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
@@ -38,6 +44,20 @@ ${declaration}
 `,
     "utf8",
   );
+}
+
+function runManifest(tsvPath, manifestPath) {
+  return spawnSync(process.execPath, [MANIFEST_SCRIPT, tsvPath, manifestPath], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TYPE_CHALLENGES_SOLUTIONS_REPO:
+        "https://example.invalid/type-challenges-solutions.git",
+      TYPE_CHALLENGES_SOLUTIONS_REF: "fixture-ref",
+      TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED: "1",
+    },
+  });
 }
 
 withTempDir((dir) => {
@@ -169,4 +189,32 @@ tsz_write_type_challenges_solutions_config ${shellQuote(sourceDir)} ${shellQuote
   });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /duplicate Type Challenges solution challenge id 1/);
+});
+
+withTempDir((dir) => {
+  const compileDir = path.join(dir, "compile");
+  const manifestPath = path.join(compileDir, "type-challenges-solutions-manifest.json");
+  fs.mkdirSync(path.join(compileDir, "solutions"), { recursive: true });
+  fs.writeFileSync(path.join(compileDir, "solutions", "alpha.ts"), "type Alpha = string;\n");
+  fs.writeFileSync(path.join(dir, "outside.ts"), "type Outside = string;\n");
+
+  const outputTraversal = path.join(dir, "output-traversal.tsv");
+  fs.writeFileSync(
+    outputTraversal,
+    "output\tsource\tid\tlevel\ttitle\n../outside.ts\ten/alpha.md\t1\teasy\tAlpha\n",
+    "utf8",
+  );
+  const outputResult = runManifest(outputTraversal, manifestPath);
+  assert.notEqual(outputResult.status, 0);
+  assert.match(outputResult.stderr, /unsafe manifest output path: \.\.\/outside\.ts/);
+
+  const sourceTraversal = path.join(dir, "source-traversal.tsv");
+  fs.writeFileSync(
+    sourceTraversal,
+    "output\tsource\tid\tlevel\ttitle\nsolutions/alpha.ts\t../alpha.md\t1\teasy\tAlpha\n",
+    "utf8",
+  );
+  const sourceResult = runManifest(sourceTraversal, manifestPath);
+  assert.notEqual(sourceResult.status, 0);
+  assert.match(sourceResult.stderr, /unsafe manifest source path: \.\.\/alpha\.md/);
 });

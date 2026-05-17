@@ -75,6 +75,20 @@ function validateUniqueChallengeIds(entries) {
   }
 }
 
+function validateManifestPath(value, label, requiredPrefix) {
+  if (
+    path.isAbsolute(value) ||
+    value.includes("\\") ||
+    !value.startsWith(requiredPrefix) ||
+    value
+      .split("/")
+      .some((segment) => segment.length === 0 || segment === "." || segment === "..")
+  ) {
+    console.error(`error: unsafe manifest ${label} path: ${value}`);
+    process.exit(1);
+  }
+}
+
 const entries = lines
   .filter((line) => line.length > 0)
   .map((line, index) => {
@@ -85,6 +99,9 @@ const entries = lines
       console.error(`error: incomplete manifest row ${index + 2}: ${line}`);
       process.exit(1);
     }
+
+    validateManifestPath(output, "output", "solutions/");
+    validateManifestPath(source, "source", "en/");
 
     const outputPath = path.join(manifestDir, output);
     if (!fs.existsSync(outputPath)) {
