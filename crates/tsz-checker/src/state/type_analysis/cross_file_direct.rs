@@ -1630,13 +1630,10 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
         }
-        let shareable_builtin_lib_type = (builtin_lib_declaration_arena
-            && !self.lib_name_locally_augmented(&symbol.escaped_name))
-        .then(|| symbol.escaped_name.clone());
-        if let Some(name) = shareable_builtin_lib_type.as_ref() {
+        if builtin_lib_declaration_arena && !self.lib_name_locally_augmented(&symbol.escaped_name) {
             self.ctx
                 .lib_type_resolution_cache
-                .insert(name.clone(), Some(interface_type));
+                .insert(symbol.escaped_name.clone(), Some(interface_type));
         }
         record(DirectCrossFileInterfaceLoweringOutcome::Success);
 
@@ -1645,12 +1642,6 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .definition_store
             .register_type_to_def(interface_type, def_id);
-        if let Some(name) = shareable_builtin_lib_type.as_ref()
-            && self.cached_lib_type_is_usable(name, Some(interface_type))
-            && let Some(shared) = self.ctx.shared_lib_type_cache.as_ref()
-        {
-            shared.insert(name.clone(), Some(interface_type));
-        }
         Some((interface_type, params))
     }
 

@@ -65,7 +65,7 @@ fn cached_final_builtin_base_allows_deep_dom_leaf_direct_lowering() {
         .expect("HTMLElement should resolve through the mature lib path");
     let shared_cache = Arc::new(dashmap::DashMap::new());
     shared_cache.insert("HTMLElement".to_string(), Some(html_ty));
-    state.ctx.shared_lib_type_cache = Some(Arc::clone(&shared_cache));
+    state.ctx.shared_lib_type_cache = Some(shared_cache);
     state.ctx.lib_type_resolution_cache.remove("HTMLElement");
     assert_eq!(
         state
@@ -105,10 +105,5 @@ fn cached_final_builtin_base_allows_deep_dom_leaf_direct_lowering() {
         )
         .is_some(),
         "HTMLDivElement should include inherited Element members through the cached final base",
-    );
-    assert_eq!(
-        shared_cache.get("HTMLDivElement").map(|entry| *entry),
-        Some(Some(div_ty)),
-        "direct-lowered builtin interfaces should publish final usable types to the shared lib cache",
     );
 }
