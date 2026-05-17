@@ -307,7 +307,11 @@ impl<'a> CheckerState<'a> {
             let raw = symbol.escaped_name.as_str();
             let is_class_constructor = symbol.has_flags(tsz_binder::symbol_flags::CLASS)
                 && !shape.construct_signatures.is_empty();
-            Some((raw.to_owned(), is_class_constructor))
+            Some((
+                raw.to_owned(),
+                is_class_constructor,
+                !shape.construct_signatures.is_empty(),
+            ))
         } else {
             None
         };
@@ -327,19 +331,7 @@ impl<'a> CheckerState<'a> {
         let display = formatter.format(type_id).into_owned();
         let direct_application =
             crate::query_boundaries::common::application_info(self.ctx.types, type_id).is_some();
-        // Named non-application callables (lib interfaces like `ArrayConstructor`) must show their
-        // symbol name in TS2635 messages; failed-instantiation display aliases set by
-        // `typeof Ctor<A, B>` would otherwise steer the formatter into the structural branch.
-        // Real generic callable applications still use the normal formatter so `Box<number>` keeps
-        // its type arguments.
-        if !direct_application && let Some((raw, is_class_constructor)) = &named_callable {
-            if *is_class_constructor {
-                return format!("typeof {raw}");
-            }
-            if display == *raw || display.starts_with(&format!("{raw}<")) {
-                return raw.clone();
-            }
-        }
+        let has_display_alias = self.ctx.types.get_display_alias(type_id).is_some();
         let application_base = if direct_application {
             crate::query_boundaries::common::application_info(self.ctx.types, type_id)
                 .map(|(base, _)| base)
@@ -349,7 +341,33 @@ impl<'a> CheckerState<'a> {
                     .map(|(base, _)| base)
             })
         };
-        if display.contains('<') {
+        // Named non-application callables (lib interfaces like `ArrayConstructor`) must show their
+        // symbol name in TS2635 messages; failed-instantiation display aliases set by
+        // `typeof Ctor<A, B>` would otherwise steer the formatter into the structural branch.
+        // Real generic callable applications still use the normal formatter so `Box<number>` keeps
+        // its type arguments.
+        if !direct_application
+            && let Some((raw, is_class_constructor, has_construct_signatures)) = &named_callable
+        {
+            if *is_class_constructor {
+                return format!("typeof {raw}");
+            }
+            if *has_construct_signatures
+                && (application_base.is_some()
+                    || display == *raw
+                    || display.starts_with(&format!("{raw}<")))
+            {
+                return raw.clone();
+            }
+        }
+        let display_is_simple_identifier = display
+            .chars()
+            .all(|ch| ch == '_' || ch.is_ascii_alphanumeric());
+        if display.contains('<')
+            || application_base.is_some()
+            || has_display_alias
+            || display_is_simple_identifier
+        {
             if let Some(name) = display.split('<').next()
                 && let Some(overloads) =
                     self.format_function_overloads_for_instantiation_expression(name)

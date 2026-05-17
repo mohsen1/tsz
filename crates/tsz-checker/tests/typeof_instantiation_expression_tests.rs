@@ -423,13 +423,11 @@ type T22 = typeof Array<string, number>;
     for msg in &messages {
         assert!(
             msg.contains("'ArrayConstructor'"),
-            "Every TS2635 for Array<T...> must say 'ArrayConstructor' even when typeof Array<T...> appears in the same file, got: {}",
-            msg
+            "Every TS2635 for Array<T...> must say 'ArrayConstructor' even when typeof Array<T...> appears in the same file, got: {msg}"
         );
         assert!(
             !msg.contains("new (length?: number) =>"),
-            "TS2635 must not emit the structural callable form, got: {}",
-            msg
+            "TS2635 must not emit the structural callable form, got: {msg}"
         );
     }
 }
@@ -451,13 +449,11 @@ type Trigger = typeof Map<string, number, boolean>;
     for msg in &messages {
         assert!(
             msg.contains("'MapConstructor'"),
-            "TS2635 for Map<T, U, V> must say 'MapConstructor', got: {}",
-            msg
+            "TS2635 for Map<T, U, V> must say 'MapConstructor', got: {msg}"
         );
         assert!(
             !msg.contains("new <K, V>"),
-            "TS2635 must not emit the structural callable form for MapConstructor, got: {}",
-            msg
+            "TS2635 must not emit the structural callable form for MapConstructor, got: {msg}"
         );
     }
 }
@@ -480,6 +476,30 @@ const x = box<string, number>;
         messages[0].contains("'Box<number>'"),
         "TS2635 for instantiated generic callable must keep type arguments, got: {}",
         messages[0]
+    );
+}
+
+#[test]
+fn ts2635_typeof_function_alias_uses_structural_display() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function fx<T>(x: T): T;
+declare function fx<T>(x: T, n: number): T;
+declare function fx<T, U>(t: [T, U]): [T, U];
+
+type T10 = typeof fx<string, number, boolean>;
+"#,
+    );
+    let messages = diagnostic_messages_with_code(&diags, 2635);
+    assert_eq!(messages.len(), 1, "Expected one TS2635, got: {diags:?}");
+    let msg = messages[0];
+    assert!(
+        msg.contains("{ <T>(x: T): T;"),
+        "TS2635 for typeof function instantiation must use structural function display, got: {msg}"
+    );
+    assert!(
+        !msg.contains("'T10'"),
+        "TS2635 must not use the containing type alias name for failed typeof instantiation, got: {msg}"
     );
 }
 
