@@ -671,3 +671,118 @@ obj.a.b.c = 5;
         "Should NOT emit TS2540 for mutable nested properties"
     );
 }
+
+// =========================================================================
+// as const deep readonly tests
+// =========================================================================
+
+#[test]
+fn test_as_const_nested_property_readonly_after_parent_write() {
+    let source = r#"
+const obj = { nested: { b: 2 } } as const;
+obj.nested = { b: 3 };
+obj.nested.b = 4;
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    assert_eq!(
+        ts2540_count, 2,
+        "Expected TS2540 for both outer and nested property writes on as-const object, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_as_const_multiple_levels_all_readonly() {
+    let source = r#"
+const config = { db: { host: { ip: "localhost" } } } as const;
+config.db = { host: { ip: "x" } };
+config.db.host = { ip: "x" };
+config.db.host.ip = "x";
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    assert_eq!(
+        ts2540_count, 3,
+        "Expected TS2540 for all three levels of nested as-const writes, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_intersection_readonly_property_emits_ts2540() {
+    let source = r#"
+interface WithReadonly { readonly x: number; }
+interface WithMutable { y: string; }
+declare const inter: WithReadonly & WithMutable;
+inter.x = 5;
+inter.y = "ok";
+"#;
+    let diags = get_diagnostics(source);
+    let ts2540_count = diags.iter().filter(|d| d.0 == 2540).count();
+    assert_eq!(ts2540_count, 1, "Expected TS2540 only for readonly x");
+    let ts2322_count = diags.iter().filter(|d| d.0 == 2322).count();
+    assert_eq!(ts2322_count, 0, "Expected no TS2322 for mutable y write");
+}
+
+#[test]
+fn test_readonly_function_return_type_property_emits_ts2540() {
+    let source = r#"
+function getReadonly(): { readonly x: number } {
+    return { x: 42 };
+}
+const result = getReadonly();
+result.x = 1;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 for assignment to readonly property from function return type"
+    );
+}
+
+// =========================================================================
+// Union type readonly edge cases
+// =========================================================================
+
+#[test]
+fn test_union_all_readonly_emits_ts2540() {
+    let source = r#"
+type A = { readonly x: number };
+type B = { readonly x: string };
+declare const ab: A | B;
+ab.x = 5;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 when all union members have readonly x"
+    );
+}
+
+#[test]
+fn test_union_any_readonly_emits_ts2540() {
+    // At runtime we can't know which branch of the union we're on, so writing
+    // to a property that is readonly in any member is unsafe.
+    let source = r#"
+type A = { readonly x: number };
+type B = { x: string };
+declare const ab: A | B;
+ab.x = 5;
+"#;
+    assert!(
+        has_error_with_code(source, 2540),
+        "Should emit TS2540 when any union member has readonly x (conservative union write semantics)"
+    );
+}
+
+#[test]
+fn test_union_no_readonly_no_ts2540() {
+    let source = r#"
+type C = { x: number };
+type D = { x: string };
+declare const cd: C | D;
+cd.x = 5;
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().all(|d| d.0 != 2540),
+        "Should NOT emit TS2540 when no union member has readonly x, got: {diags:?}"
+    );
+}
