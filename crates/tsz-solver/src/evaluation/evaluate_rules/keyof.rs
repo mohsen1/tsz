@@ -656,29 +656,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             crate::type_queries::get_conditional_type_id(self.interner(), conditional_type_id)?;
         let cond = self.interner().conditional_type(cond_id);
 
-        // The check type must be one of the alias's type parameters.
         let source_param_idx = type_params
             .iter()
-            .position(|p| self.type_param_lookup_matches_name(cond.check_type, p.name))?;
+            .position(|p| self.is_type_param_named(cond.check_type, p.name))?;
         let source_arg = args[source_param_idx];
+        let source_name = type_params[source_param_idx].name;
 
-        // Cheap structural pre-screen against the un-instantiated branches:
-        // if either branch is clearly not in the source's key space (under
-        // the alias's own param name), skip the expensive `instantiate_generic`.
-        let source_param = &type_params[source_param_idx];
-        if !self.raw_branch_keyof_matches_source_param(cond.true_type, source_param)
-            || !self.raw_branch_keyof_matches_source_param(cond.false_type, source_param)
+        // Pre-instantiation screen against the alias's own param name; bail
+        // before the (expensive) `instantiate_generic` when either branch
+        // clearly isn't in the source's key space.
+        let matches_by_name = |ty: TypeId| self.is_type_param_named(ty, source_name);
+        if !self.branch_matches_keyof_source(cond.true_type, &matches_by_name)
+            || !self.branch_matches_keyof_source(cond.false_type, &matches_by_name)
         {
             return None;
         }
 
-        // Instantiate true first; bail before instantiating false if it fails.
+        // Post-instantiation check uses the source ARG identity: same TypeId,
+        // or — defensively, in case substitution produced a distinct TypeParameter
+        // node with the same name — same param name as the arg.
+        let source_arg_name =
+            crate::type_param_info(self.interner(), source_arg).map(|info| info.name);
+        let matches_by_arg = |ty: TypeId| {
+            ty == source_arg || source_arg_name.is_some_and(|n| self.is_type_param_named(ty, n))
+        };
         let inst_true = instantiate_generic(self.interner(), cond.true_type, type_params, args);
-        if !self.branch_keyof_matches_source(inst_true, source_arg) {
+        if !self.branch_matches_keyof_source(inst_true, &matches_by_arg) {
             return None;
         }
         let inst_false = instantiate_generic(self.interner(), cond.false_type, type_params, args);
-        if !self.branch_keyof_matches_source(inst_false, source_arg) {
+        if !self.branch_matches_keyof_source(inst_false, &matches_by_arg) {
             return None;
         }
 
@@ -686,22 +693,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Some(self.evaluate_or_keep(keyof_source))
     }
 
-    fn type_param_lookup_matches_name(&self, ty: TypeId, name: tsz_common::interner::Atom) -> bool {
-        matches!(
-            self.interner().lookup(ty),
-            Some(TypeData::TypeParameter(info)) if info.name == name
-        )
+    fn is_type_param_named(&self, ty: TypeId, name: tsz_common::interner::Atom) -> bool {
+        crate::type_param_info(self.interner(), ty).is_some_and(|info| info.name == name)
     }
 
-    /// Cheap pre-instantiation predicate: does the (un-instantiated) branch
-    /// reference the alias's source type-parameter as the key space, either
-    /// directly or as a non-remapped homomorphic mapped type over `keyof <source>`?
-    fn raw_branch_keyof_matches_source_param(
-        &self,
-        branch_type: TypeId,
-        source_param: &crate::types::TypeParamInfo,
-    ) -> bool {
-        if self.type_param_lookup_matches_name(branch_type, source_param.name) {
+    /// Does `branch_type` have the same key space as the source, where
+    /// "the source" is identified by `is_source`?  True when:
+    /// - `is_source(branch_type)` (identity / name match), or
+    /// - `branch_type` is a non-remapped mapped type whose constraint is
+    ///   `keyof X` and `is_source(X)`.
+    fn branch_matches_keyof_source<F>(&self, branch_type: TypeId, is_source: &F) -> bool
+    where
+        F: Fn(TypeId) -> bool,
+    {
+        if is_source(branch_type) {
             return true;
         }
         let Some(TypeData::Mapped(mapped_id)) = self.interner().lookup(branch_type) else {
@@ -711,37 +716,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if mapped.name_type.is_some() {
             return false;
         }
-        let Some(inner) = crate::keyof_inner_type(self.interner(), mapped.constraint) else {
-            return false;
-        };
-        self.type_param_lookup_matches_name(inner, source_param.name)
-    }
-
-    fn branch_keyof_matches_source(&self, branch_type: TypeId, source_arg: TypeId) -> bool {
-        if branch_type == source_arg {
-            return true;
-        }
-        let same_param_name = |a: TypeId, b: TypeId| {
-            matches!(
-                (self.interner().lookup(a), self.interner().lookup(b)),
-                (Some(TypeData::TypeParameter(x)), Some(TypeData::TypeParameter(y)))
-                    if x.name == y.name
-            )
-        };
-        if same_param_name(branch_type, source_arg) {
-            return true;
-        }
-        let Some(TypeData::Mapped(mapped_id)) = self.interner().lookup(branch_type) else {
-            return false;
-        };
-        let mapped = self.interner().get_mapped(mapped_id);
-        if mapped.name_type.is_some() {
-            return false;
-        }
-        let Some(inner) = crate::keyof_inner_type(self.interner(), mapped.constraint) else {
-            return false;
-        };
-        inner == source_arg || same_param_name(inner, source_arg)
+        crate::keyof_inner_type(self.interner(), mapped.constraint).is_some_and(is_source)
     }
 
     /// Compute keyof for an intersection type: keyof (A & B) = keyof A | keyof B
