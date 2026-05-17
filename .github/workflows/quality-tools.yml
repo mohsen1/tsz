@@ -45,7 +45,7 @@ jobs:
       - name: Install nightly Miri
         run: |
           rustup toolchain install nightly --component miri
-          cargo +nightly miri setup
+          rustup run nightly cargo miri setup
       - name: Run focused Miri suite
         run: scripts/quality/run-miri.sh
 
