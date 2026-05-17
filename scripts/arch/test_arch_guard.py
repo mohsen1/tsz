@@ -813,7 +813,7 @@ class ArchGuardIndependentPipelineTests(unittest.TestCase):
 class ArchGuardSolverImportCountTests(unittest.TestCase):
     """Cover `SOLVER_IMPORT_COUNT_CHECKS` + `scan_solver_import_count`.
 
-    Architecture health metric 3 anchor — workstream 3 ("Compiler Service
+    Architecture health metric 7 anchor — workstream 3 ("Compiler Service
     Front Door") wants frontends and emitter/lowering crates to converge
     through one compiler service. These tests pin the detection semantics
     so future contributors who refactor `scan_solver_import_count` keep
@@ -937,7 +937,7 @@ class ArchGuardSolverImportCountTests(unittest.TestCase):
     def test_check_is_registered(self):
         names = [entry[0] for entry in self.arch_guard.SOLVER_IMPORT_COUNT_CHECKS]
         self.assertTrue(
-            any("metric 3" in name for name in names),
+            any("metric 7" in name for name in names),
             "Solver-import-count guard is missing from SOLVER_IMPORT_COUNT_CHECKS",
         )
 
