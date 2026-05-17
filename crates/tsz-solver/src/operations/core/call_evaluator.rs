@@ -1278,32 +1278,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             fn visit_application(&mut self, app_id: u32) -> Self::Output {
                 use crate::types::TypeApplicationId;
 
-                // 1. Retrieve the application data (Base<Args>)
                 let app = self.db.type_application(TypeApplicationId(app_id));
 
-                // 2. Resolve the base type to get the generic function signature
-                // e.g., for Handler<string>, this gets the shape of Handler<T>
+                // Resolve base to its generic function signature, e.g. Handler<T> for Handler<string>.
                 let base_shape = self.visit_guarded(app.base)?;
 
-                // 3. Build the substitution map
-                // Maps generic parameters (e.g., T) to arguments (e.g., string)
-                // This handles default type parameters automatically
                 let subst =
                     TypeSubstitution::from_args(self.db, &base_shape.type_params, &app.args);
 
-                // If no substitution is needed, return base as-is — but only when
-                // there are no application args to substitute. When the Application
-                // has args but the base shape has no type_params, the substitution
-                // is empty because the type parameters live at the interface/alias
-                // declaration level (not the call-signature level). In that case we
-                // cannot produce a correctly-instantiated shape, so return None and
-                // let callers (e.g. `contextual_round1_arg_types`) fall back to the
-                // constraint-walker path that uses `expand_type_alias_application`.
+                // When subst is empty but app.args is not, the type parameters live at the
+                // interface/alias declaration level (not the call-signature level), so we
+                // can't produce a correctly-instantiated shape here. Returning None lets
+                // callers fall back to the constraint-walker path that uses
+                // `expand_type_alias_application`.
                 if subst.is_empty() {
-                    if app.args.is_empty() {
-                        return Some(base_shape);
-                    }
-                    return None;
+                    return app.args.is_empty().then_some(base_shape);
                 }
 
                 // 4. Instantiate the components of the function shape
