@@ -712,14 +712,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let cond_id = crate::type_queries::get_conditional_type_id(self.interner(), conditional)?;
         let cond = self.interner().conditional_type(cond_id);
         // Check type must already be a type parameter for the rule to apply.
-        if crate::type_param_info(self.interner(), cond.check_type).is_none() {
-            return None;
-        }
+        let source_info = crate::type_param_info(self.interner(), cond.check_type)?;
         let source = cond.check_type;
-        let source_name = crate::type_param_info(self.interner(), source).map(|info| info.name);
-        let is_source = |ty: TypeId| {
-            ty == source || source_name.is_some_and(|n| self.is_type_param_named(ty, n))
-        };
+        let source_name = source_info.name;
+        let is_source = |ty: TypeId| ty == source || self.is_type_param_named(ty, source_name);
         if !self.branch_matches_keyof_source(cond.true_type, &is_source)
             || !self.branch_matches_keyof_source(cond.false_type, &is_source)
         {
