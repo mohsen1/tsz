@@ -865,6 +865,12 @@ impl<'a> IRPrinter<'a> {
                             self.write("; }");
                             true
                         }
+                        IRNode::AwaiterCall { .. } => {
+                            self.write("{ ");
+                            self.emit_node(&body[0]);
+                            self.write(" }");
+                            true
+                        }
                         _ => false,
                     }
                 {

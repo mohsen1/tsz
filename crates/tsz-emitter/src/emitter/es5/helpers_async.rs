@@ -1259,6 +1259,9 @@ impl<'a> Printer<'a> {
 
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+        es5_emitter
+            .set_async_generator_inner_name_counts(self.async_generator_inner_name_counts.clone());
+        self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
         es5_emitter.set_indent_level(0);
         // Pass transform directives to the ClassES5Emitter
         es5_emitter.set_transforms(self.transforms.clone());
@@ -1315,7 +1318,7 @@ impl<'a> Printer<'a> {
             let output = es5_emitter.emit_class_with_name(class_node, &temp_name);
             (temp_name, output)
         };
-        self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+        self.sync_es5_class_emitter_state(&mut es5_emitter);
         let es5_mappings = es5_emitter.take_mappings();
 
         if use_static_comma

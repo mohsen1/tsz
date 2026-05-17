@@ -123,6 +123,18 @@ impl<'a> ClassES5Emitter<'a> {
         self.transformer.set_module_kind(module_kind);
     }
 
+    pub fn set_async_generator_inner_name_counts(
+        &mut self,
+        counts: rustc_hash::FxHashMap<String, u32>,
+    ) {
+        self.transformer
+            .set_async_generator_inner_name_counts(counts);
+    }
+
+    pub fn take_async_generator_inner_name_counts(&mut self) -> rustc_hash::FxHashMap<String, u32> {
+        self.transformer.take_async_generator_inner_name_counts()
+    }
+
     pub fn set_commonjs_import_substitutions(
         &mut self,
         subs: rustc_hash::FxHashMap<String, String>,

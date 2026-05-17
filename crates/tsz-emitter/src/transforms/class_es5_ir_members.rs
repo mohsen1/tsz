@@ -82,7 +82,8 @@ impl<'a> ES5ClassTransformer<'a> {
         let move_params_to_generator = self.async_generator_params_need_forwarding(params);
         let method_name =
             crate::transforms::emit_utils::identifier_text_or_empty(self.arena, method_name_idx);
-        let inner_name = (!method_name.is_empty()).then(|| format!("{method_name}_1"));
+        let inner_name =
+            (!method_name.is_empty()).then(|| self.next_async_generator_inner_name(&method_name));
         let mut transformer = AsyncES5Transformer::new(self.arena);
         if let Some(source_text) = self.source_text {
             transformer.set_source_text(source_text);
@@ -1248,7 +1249,10 @@ impl<'a> ES5ClassTransformer<'a> {
             .any(|child_idx| self.contains_static_value_this_reference(child_idx))
     }
 
-    fn async_method_promise_constructor(&self, type_annotation: NodeIndex) -> Option<String> {
+    pub(super) fn async_method_promise_constructor(
+        &self,
+        type_annotation: NodeIndex,
+    ) -> Option<String> {
         let type_node = self.arena.get(type_annotation)?;
         if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
             return None;

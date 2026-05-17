@@ -241,6 +241,7 @@ pub(crate) struct TempScopeState {
     pub(crate) reserved_nested_temp_names: FxHashSet<String>,
     pub(crate) first_for_of_emitted: bool,
     pub(crate) preallocated_temp_names: VecDeque<String>,
+    pub(crate) preallocated_hoisted_temp_names: VecDeque<String>,
     pub(crate) preallocated_assignment_temps: VecDeque<String>,
     pub(crate) preallocated_logical_assignment_value_temps: VecDeque<String>,
     pub(crate) hoisted_assignment_value_temps: Vec<String>,
@@ -600,6 +601,10 @@ pub struct Printer<'a> {
 
     /// Temp names reserved ahead-of-time and consumed before generating new names.
     pub(crate) preallocated_temp_names: VecDeque<String>,
+
+    /// Hoisted temp names reserved ahead-of-time and consumed only by
+    /// `make_unique_name_hoisted`.
+    pub(crate) preallocated_hoisted_temp_names: VecDeque<String>,
 
     /// Temp names that must not be reused by nested temp scopes.
     pub(crate) reserved_nested_temp_names: FxHashSet<String>,
@@ -1059,6 +1064,7 @@ impl<'a> Printer<'a> {
             cjs_destr_hoist_byte_offset: 0,
             cjs_destr_hoist_line: 0_u32,
             preallocated_temp_names: VecDeque::new(),
+            preallocated_hoisted_temp_names: VecDeque::new(),
             reserved_nested_temp_names: FxHashSet::default(),
             file_level_class_temp_reservation_plan: Vec::new(),
             file_level_class_temp_reservations: FxHashMap::default(),

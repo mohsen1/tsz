@@ -40,9 +40,103 @@ fn script_with_using_declaration_emits_use_strict() {
     );
 }
 
-// (Nested `await using` inside a function body is out of scope for the
-// issue's repro and is left to a follow-up — `block_has_using_declarations`
-// only inspects top-level statements.)
+#[test]
+fn es5_top_level_await_using_reserves_resource_temps_before_catch_binding() {
+    let source = r#"
+await using a = { async [Symbol.asyncDispose]() {} };
+try {
+}
+catch {
+    await using b = { async [Symbol.asyncDispose]() {} };
+}
+finally {
+    await using c = { async [Symbol.asyncDispose]() {} };
+}
+for (const x in {}) {
+}
+for (const x of []) {
+    await using d = { async [Symbol.asyncDispose]() {} };
+}
+export {};
+"#;
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: ModuleKind::ESNext,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        output.contains("var _a, _b, _c, _d;"),
+        "Resource initializer temps should be the only file-level hoisted temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("catch (_e)"),
+        "The ES2019 synthetic catch binding should be allocated after reserved resource temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var b = __addDisposableResource(env_2, (_b = {},"),
+        "The catch resource initializer should consume the second reserved hoisted temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var c = __addDisposableResource(env_3, (_c = {},"),
+        "The finally resource initializer should consume the third reserved hoisted temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var d = __addDisposableResource(env_4, (_d = {},"),
+        "The for-of body resource initializer should consume the last reserved hoisted temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("for (var _i = 0, _f = [];"),
+        "The for-of array temp should be allocated after the catch binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var x = _f[_i];"),
+        "A sibling for-in block binding should not force the for-of binding to be renamed.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_for_of_await_using_missing_binding_uses_disposable_region() {
+    let source = r#"
+declare const x: any[];
+for (await using of x);
+export async function test() {
+    for (await using of x);
+}
+"#;
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: ModuleKind::ESNext,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        output.contains("for (var _i = 0, x_1 = x; _i < x_1.length; _i++)"),
+        "The top-level malformed await using for-of should still use ES5 array indexing.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _a_1 = x_1[_i];"),
+        "The top-level loop should synthesize the per-iteration resource value temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _a = __addDisposableResource(env_1, _a_1, true);"),
+        "The recovered missing binding should be emitted through addDisposableResource.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _i, x_2, _a_2, env_2, _a, e_2, result_2;"),
+        "The async function loop should hoist planned for-of disposable region locals.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a_2 = x_2[_i];"),
+        "The async function loop should stage the per-iteration value before registering it.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = __addDisposableResource(env_2, _a_2, true);"),
+        "The async function loop should register the recovered resource binding inside the state machine.\nOutput:\n{output}"
+    );
+}
 
 // Sanity: a regular script without using must NOT spontaneously add
 // "use strict" — that would be a regression from the existing default.

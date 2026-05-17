@@ -384,6 +384,9 @@ impl<'a> Printer<'a> {
 
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+        es5_emitter
+            .set_async_generator_inner_name_counts(self.async_generator_inner_name_counts.clone());
+        self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
         es5_emitter.set_indent_level(self.writer.indent_level());
         // Pass transform directives to the ClassES5Emitter
         es5_emitter.set_transforms(self.transforms.clone());
@@ -419,7 +422,7 @@ impl<'a> Printer<'a> {
             }
         }
         let es5_output = es5_emitter.emit_class_with_name(class_node, &temp_name);
-        self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+        self.sync_es5_class_emitter_state(&mut es5_emitter);
         let mappings = es5_emitter.take_mappings();
         if !mappings.is_empty() && self.writer.has_source_map() {
             self.writer.write("");
@@ -567,6 +570,10 @@ impl<'a> Printer<'a> {
                 {
                     let mut es5_emitter = ClassES5Emitter::new(self.arena);
                     es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+                    es5_emitter.set_async_generator_inner_name_counts(
+                        self.async_generator_inner_name_counts.clone(),
+                    );
+                    self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
                     es5_emitter.set_indent_level(self.writer.indent_level());
                     es5_emitter.set_transforms(self.transforms.clone());
                     es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
@@ -595,7 +602,7 @@ impl<'a> Printer<'a> {
                     });
                     let output =
                         es5_emitter.emit_class_with_name(export.export_clause, &class_name);
-                    self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+                    self.sync_es5_class_emitter_state(&mut es5_emitter);
                     self.write(&output);
                     if !self.writer.is_at_line_start() {
                         self.write_line();

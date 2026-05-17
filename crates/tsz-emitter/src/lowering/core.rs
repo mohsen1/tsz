@@ -275,6 +275,14 @@ impl<'a> LoweringPass<'a> {
                 self.transforms.helpers_mut().mark_values();
             }
         }
+        if !for_in_of.await_modifier
+            && !self.ctx.options.target.supports_es2025()
+            && crate::transforms::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
+                .is_some()
+        {
+            self.transforms.helpers_mut().add_disposable_resource = true;
+            self.transforms.helpers_mut().dispose_resources = true;
+        }
 
         // Check if initializer contains destructuring pattern
         // For-of initializer can be VARIABLE_DECLARATION_LIST with binding patterns

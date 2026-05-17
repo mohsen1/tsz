@@ -924,7 +924,11 @@ impl<'a> Printer<'a> {
                     self.write(&env_name);
                     self.write(", ");
                     if decl.initializer.is_some() {
-                        self.emit(decl.initializer);
+                        if !self.try_emit_object_literal_es5_inline_computed_expression(
+                            decl.initializer,
+                        ) {
+                            self.emit(decl.initializer);
+                        }
                     } else {
                         self.write("void 0");
                     }

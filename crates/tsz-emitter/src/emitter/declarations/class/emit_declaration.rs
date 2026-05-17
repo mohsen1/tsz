@@ -131,6 +131,9 @@ impl<'a> Printer<'a> {
                 let alias_name = needs_alias.then(|| format!("{class_name}_1"));
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+                es5_emitter.set_async_generator_inner_name_counts(
+                    self.async_generator_inner_name_counts.clone(),
+                );
                 let blocked_disposable_names = self
                     .file_identifiers
                     .iter()
@@ -186,11 +189,7 @@ impl<'a> Printer<'a> {
                     es5_emitter.set_class_self_reference_alias(alias);
                 }
                 let output = es5_emitter.emit_class_with_name(idx, &class_name);
-                self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
-                self.next_disposable_env_id = es5_emitter.disposable_env_counter();
-                for generated_name in es5_emitter.take_generated_disposable_env_names() {
-                    self.generated_temp_names.insert(generated_name);
-                }
+                self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let mappings = es5_emitter.take_mappings();
                 if !mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
@@ -401,6 +400,9 @@ impl<'a> Printer<'a> {
         if self.ctx.target_es5 {
             let mut es5_emitter = ClassES5Emitter::new(self.arena);
             es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+            es5_emitter.set_async_generator_inner_name_counts(
+                self.async_generator_inner_name_counts.clone(),
+            );
             let blocked_disposable_names = self
                 .file_identifiers
                 .iter()
@@ -433,11 +435,7 @@ impl<'a> Printer<'a> {
             es5_emitter
                 .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
             let output = es5_emitter.emit_class(idx);
-            self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
-            self.next_disposable_env_id = es5_emitter.disposable_env_counter();
-            for generated_name in es5_emitter.take_generated_disposable_env_names() {
-                self.generated_temp_names.insert(generated_name);
-            }
+            self.sync_es5_class_emitter_state(&mut es5_emitter);
             let mappings = es5_emitter.take_mappings();
             if !mappings.is_empty() && self.writer.has_source_map() {
                 self.writer.write("");
@@ -527,6 +525,8 @@ impl<'a> Printer<'a> {
 
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+        es5_emitter
+            .set_async_generator_inner_name_counts(self.async_generator_inner_name_counts.clone());
         let blocked_disposable_names = self
             .file_identifiers
             .iter()
@@ -553,11 +553,7 @@ impl<'a> Printer<'a> {
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         let mut inner_output = es5_emitter.emit_class_with_name(idx, &inner_name);
-        self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
-        self.next_disposable_env_id = es5_emitter.disposable_env_counter();
-        for generated_name in es5_emitter.take_generated_disposable_env_names() {
-            self.generated_temp_names.insert(generated_name);
-        }
+        self.sync_es5_class_emitter_state(&mut es5_emitter);
         inner_output = inner_output.trim_end_matches('\n').to_string();
 
         let base_indent = "    ".repeat(self.writer.indent_level() as usize);

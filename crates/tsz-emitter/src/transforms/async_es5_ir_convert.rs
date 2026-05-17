@@ -755,6 +755,8 @@ impl<'a> AsyncES5Transformer<'a> {
         };
 
         match node.kind {
+            k if k == syntax_kind_ext::EMPTY_STATEMENT => IRNode::EmptyStatement,
+
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
                 if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
                     let expr = self.expression_to_ir(expr_stmt.expression);

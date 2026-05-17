@@ -272,7 +272,7 @@ impl<'a> Printer<'a> {
                     es5_emitter.set_leading_comment(comment);
                 }
                 let es5_output = es5_emitter.emit_class(class_node);
-                self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+                self.sync_es5_class_emitter_state(&mut es5_emitter);
                 debug!(
                     "Printer ES5Class end (idx={}, class_node={}, output_len={})",
                     idx.0,
@@ -864,6 +864,33 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn configure_es5_class_emitter_disposable_context(
+        &mut self,
+        es5_emitter: &mut ClassES5Emitter<'a>,
+    ) {
+        let blocked_disposable_names = self
+            .file_identifiers
+            .iter()
+            .chain(self.generated_temp_names.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        es5_emitter
+            .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
+    }
+
+    pub(in crate::emitter) fn sync_es5_class_emitter_state(
+        &mut self,
+        es5_emitter: &mut ClassES5Emitter<'a>,
+    ) {
+        self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+        self.async_generator_inner_name_counts =
+            es5_emitter.take_async_generator_inner_name_counts();
+        self.next_disposable_env_id = es5_emitter.disposable_env_counter();
+        for generated_name in es5_emitter.take_generated_disposable_env_names() {
+            self.generated_temp_names.insert(generated_name);
+        }
+    }
+
     /// Create an ES5 class emitter pre-configured with decorator info for the given class.
     fn create_es5_class_emitter_with_decorators(
         &mut self,
@@ -871,6 +898,9 @@ impl<'a> Printer<'a> {
     ) -> ClassES5Emitter<'a> {
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+        es5_emitter
+            .set_async_generator_inner_name_counts(self.async_generator_inner_name_counts.clone());
+        self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
         if let Some(class_node_ref) = self.arena.get(class_node)
             && let Some(class_data) = self.arena.get_class(class_node_ref)
         {
@@ -1158,7 +1188,7 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Class { class_node } => {
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(*class_node);
                 let es5_output = es5_emitter.emit_class(*class_node);
-                self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+                self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
@@ -1343,7 +1373,7 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Class { class_node } => {
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(*class_node);
                 let es5_output = es5_emitter.emit_class(*class_node);
-                self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+                self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");

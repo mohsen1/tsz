@@ -1463,6 +1463,7 @@ impl<'a> Printer<'a> {
         self.hoisted_assignment_value_temps.clear();
         self.preallocated_logical_assignment_value_temps.clear();
         self.preallocated_assignment_temps.clear();
+        self.preallocated_hoisted_temp_names.clear();
         self.hoisted_for_of_temps.clear();
         self.preallocated_temp_names.clear();
         self.reserved_iterator_return_temps.clear();

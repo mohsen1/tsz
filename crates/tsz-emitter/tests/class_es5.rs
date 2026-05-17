@@ -33,6 +33,81 @@ fn emit_class_with(
 }
 
 #[test]
+fn test_async_resource_methods_use_disposable_context() {
+    let source = r#"
+class C {
+    a = async () => {
+        await using d = { async [Symbol.asyncDispose]() {} };
+    };
+
+    async am() {
+        await using d = { async [Symbol.asyncDispose]() {} };
+        await null;
+    }
+
+    async *ag() {
+        await using d = { async [Symbol.asyncDispose]() {} };
+        yield;
+        await null;
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let source_file = parser
+        .arena
+        .get_source_file(parser.arena.get(root).expect("root node"))
+        .expect("source file");
+    let class_idx = source_file.statements.nodes[0];
+
+    let mut emitter = ClassES5Emitter::new(&parser.arena);
+    emitter.set_source_text(source);
+    emitter.set_disposable_env_context(21, Vec::<String>::new());
+    let mut inner_name_counts = rustc_hash::FxHashMap::default();
+    inner_name_counts.insert("ag".to_string(), 1);
+    emitter.set_async_generator_inner_name_counts(inner_name_counts);
+    let output = emitter.emit_class(class_idx);
+
+    assert!(
+        output.contains("var env_21, d, e_21, result_21;"),
+        "Async resource field initializer should consume env_21.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _this = this;"),
+        "Async arrow field initializers should capture lexical `this` once in the constructor.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__awaiter(_this, void 0, void 0"),
+        "Async arrow field initializers should pass the captured class instance to __awaiter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var env_22, d, e_22, result_22;"),
+        "First async resource method should consume env_22.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var env_23, d, e_23, result_23;"),
+        "Second async resource method should consume env_23.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function ag_2()"),
+        "Class async generator inner names should continue the outer printer's suffix sequence.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        emitter.disposable_env_counter(),
+        24,
+        "Class emitter should publish the next disposable env id"
+    );
+    assert_eq!(
+        emitter
+            .take_async_generator_inner_name_counts()
+            .get("ag")
+            .copied(),
+        Some(2),
+        "Class emitter should publish async generator inner-name counters"
+    );
+}
+
+#[test]
 fn test_simple_class() {
     let output = emit_class("class Point { }");
     assert!(

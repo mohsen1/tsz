@@ -663,6 +663,51 @@ impl<'a> Printer<'a> {
         true
     }
 
+    pub(in crate::emitter) fn try_emit_object_literal_es5_inline_computed_expression(
+        &mut self,
+        expression: NodeIndex,
+    ) -> bool {
+        if !self.ctx.target_es5 {
+            return false;
+        }
+
+        let Some(node) = self.arena.get(expression) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+
+        let Some(literal) = self.arena.get_literal_expr(node) else {
+            return false;
+        };
+        if literal
+            .elements
+            .nodes
+            .iter()
+            .any(|&idx| emit_utils::is_spread_element(self.arena, idx))
+        {
+            return false;
+        }
+        if !literal
+            .elements
+            .nodes
+            .iter()
+            .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx))
+        {
+            return false;
+        }
+
+        self.emit_object_literal_without_spread_es5_with_layout(
+            &literal.elements.nodes,
+            Some((node.pos, node.end)),
+            self.has_trailing_comma_in_source(node, &literal.elements.nodes),
+            true,
+            false,
+        );
+        true
+    }
+
     fn emit_object_literal_without_spread_es5_with_layout(
         &mut self,
         elements: &[NodeIndex],

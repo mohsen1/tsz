@@ -132,7 +132,11 @@ impl<'a> Printer<'a> {
                         self.write("(");
                         self.write(env_name);
                         self.write(", ");
-                        self.emit(decl.initializer);
+                        if !self.try_emit_object_literal_es5_inline_computed_expression(
+                            decl.initializer,
+                        ) {
+                            self.emit(decl.initializer);
+                        }
                         self.write(", ");
                         self.write(if async_flag { "true" } else { "false" });
                         self.write(")");
@@ -217,7 +221,11 @@ impl<'a> Printer<'a> {
                     self.write("(");
                     self.write(&env_name);
                     self.write(", ");
-                    self.emit(decl.initializer);
+                    if !self
+                        .try_emit_object_literal_es5_inline_computed_expression(decl.initializer)
+                    {
+                        self.emit(decl.initializer);
+                    }
                     self.write(", ");
                     self.write(if using_async { "true" } else { "false" });
                     self.write(");");

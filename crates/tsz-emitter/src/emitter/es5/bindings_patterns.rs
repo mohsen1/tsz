@@ -2200,17 +2200,22 @@ impl<'a> Printer<'a> {
 
         // Check if the initializer is a `using` declaration that needs dispose lowering.
         let using_info = if !self.ctx.options.target.supports_es2025() {
-            self.for_of_initializer_using_info(for_in_of.initializer)
+            crate::transforms::emit_utils::for_of_using_declaration_info(
+                self.arena,
+                for_in_of.initializer,
+            )
         } else {
             None
         };
 
-        if let Some((var_name, using_async)) = using_info {
+        if let Some(using_info) = using_info {
             // For `using` in for-await-of with async iterator lowering:
             // Emit: _c = _f.value;
             // Then: _d = false;
             // Then: const d1_1 = _c;
             // Then: const env = ...; try { const d1 = __addDisposable(env, d1_1, ...); body } catch/finally
+            let var_name = using_info.binding_name;
+            let using_async = using_info.using_async;
             let value_temp = loop_result_name.clone();
 
             // Emit value assignment to the temp already reserved with the loop temps.
