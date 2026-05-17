@@ -450,27 +450,31 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         initializer: NodeIndex,
     ) -> bool {
-        let Some(init_node) = self.arena.get(initializer) else {
-            return false;
-        };
+        self.bare_require_call_module_specifier(initializer)
+            .is_some()
+    }
+
+    pub(in crate::declaration_emitter) fn bare_require_call_module_specifier(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
         if init_node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return false;
+            return None;
         }
-        let Some(call) = self.arena.get_call_expr(init_node) else {
-            return false;
-        };
+        let call = self.arena.get_call_expr(init_node)?;
         if self.get_identifier_text(call.expression).as_deref() != Some("require") {
-            return false;
+            return None;
         }
-        let Some(args) = call.arguments.as_ref() else {
-            return false;
-        };
+        let args = call.arguments.as_ref()?;
         let [arg_idx] = args.nodes.as_slice() else {
-            return false;
+            return None;
         };
-        self.arena
-            .get(*arg_idx)
-            .is_some_and(|arg_node| arg_node.kind == SyntaxKind::StringLiteral as u16)
+        let arg_node = self.arena.get(*arg_idx)?;
+        if arg_node.kind != SyntaxKind::StringLiteral as u16 {
+            return None;
+        }
+        self.arena.get_literal(arg_node).map(|lit| lit.text.clone())
     }
 
     pub(crate) fn source_file_is_js(
