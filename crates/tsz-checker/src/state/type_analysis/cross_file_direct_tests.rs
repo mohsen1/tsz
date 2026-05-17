@@ -1141,17 +1141,35 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
         .get(&heritage_sym_id)
         .map(std::convert::AsRef::as_ref)
         .expect("AddEventListenerOptions should have a delegate arena");
+    let (heritage_ty, heritage_params) = state
+        .direct_cross_file_interface_lowering(
+            heritage_sym_id,
+            state.ctx.binder,
+            heritage_arena,
+            false,
+            false,
+        )
+        .expect("builtin dom interfaces with simple one-level heritage should lower directly");
+    assert!(heritage_params.is_empty());
+    let once = state.ctx.types.intern_string("once");
     assert!(
-        state
-            .direct_cross_file_interface_lowering(
-                heritage_sym_id,
-                state.ctx.binder,
-                heritage_arena,
-                false,
-                false,
-            )
-            .is_none(),
-        "builtin dom interfaces with heritage should fall back to the mature merged path",
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            heritage_ty,
+            once,
+        )
+        .is_some(),
+        "AddEventListenerOptions should include its own members",
+    );
+    let capture = state.ctx.types.intern_string("capture");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            heritage_ty,
+            capture,
+        )
+        .is_some(),
+        "AddEventListenerOptions should include inherited EventListenerOptions members",
     );
     assert_eq!(
         state
@@ -1160,8 +1178,34 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
             .get("AddEventListenerOptions")
             .copied()
             .flatten(),
-        None,
-        "heritage fallback should not publish a direct builtin interface cache entry",
+        Some(heritage_ty),
+        "direct simple builtin heritage lowering should publish the heritage-merged lib type",
+    );
+
+    let deep_heritage_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("HTMLElement")
+        .expect("HTMLElement should resolve to a dom lib symbol");
+    let deep_heritage_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&deep_heritage_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("HTMLElement should have a delegate arena");
+    assert!(
+        state
+            .direct_cross_file_interface_lowering(
+                deep_heritage_sym_id,
+                state.ctx.binder,
+                deep_heritage_arena,
+                false,
+                false,
+            )
+            .is_none(),
+        "builtin dom interfaces whose immediate base has heritage should fall back",
     );
 
     let iterable_sym_id = state

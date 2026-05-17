@@ -731,7 +731,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn interface_declarations_have_in_progress_builtin_heritage_base(
+    fn interface_declarations_have_unsafe_builtin_heritage_base(
         &self,
         declarations: &[(NodeIndex, &NodeArena)],
         self_name: &str,
@@ -784,9 +784,38 @@ impl<'a> CheckerState<'a> {
                             .lib_type_resolution_cache
                             .get(&base_name)
                             .is_some_and(Option::is_none)
+                        || self.builtin_heritage_base_has_heritage(&base_name)
                 })
             })
         })
+    }
+
+    fn builtin_heritage_base_has_heritage(&self, base_name: &str) -> bool {
+        let normalized = base_name.strip_prefix("globalThis.").unwrap_or(base_name);
+        if normalized.contains('.') {
+            return true;
+        }
+        let Some(sym_id) = self.resolve_lib_symbol_by_name(normalized) else {
+            return true;
+        };
+        let Some(arena) = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref)
+        else {
+            return true;
+        };
+        if !is_builtin_lib_declaration_arena(arena) {
+            return true;
+        }
+        let Some(declarations) =
+            self.cross_file_interface_declarations(sym_id, self.ctx.binder, arena)
+        else {
+            return true;
+        };
+        Self::interface_declarations_have_heritage(&declarations)
     }
 
     fn computed_property_name_is_well_known_symbol(arena: &NodeArena, name_idx: NodeIndex) -> bool {
@@ -1763,10 +1792,14 @@ impl<'a> CheckerState<'a> {
                 record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
                 return None;
             }
-        } else if (builtin_lib_declaration_arena && has_heritage)
-            || (!allow_complex_declarations
-                && (has_unsupported_computed_names
-                    || (has_heritage && !builtin_lib_declaration_arena)))
+        } else if (!allow_complex_declarations
+            && (has_unsupported_computed_names || (has_heritage && !builtin_lib_declaration_arena)))
+            || (builtin_lib_declaration_arena
+                && has_heritage
+                && self.interface_declarations_have_unsafe_builtin_heritage_base(
+                    &declarations,
+                    &symbol.escaped_name,
+                ))
         {
             record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
             return None;
