@@ -8,7 +8,7 @@ impl<'a> CheckerState<'a> {
         Self::add_undefined_to_optional_object_property_display(&quoted)
     }
 
-    fn normalize_single_quoted_string_literal_types(text: &str) -> String {
+    pub(crate) fn normalize_single_quoted_string_literal_types(text: &str) -> String {
         if !text.contains('\'') {
             return text.to_string();
         }
@@ -56,7 +56,7 @@ impl<'a> CheckerState<'a> {
         out
     }
 
-    fn add_undefined_to_optional_object_property_display(text: &str) -> String {
+    pub(crate) fn add_undefined_to_optional_object_property_display(text: &str) -> String {
         if !text.contains("?:") {
             return text.to_string();
         }
@@ -132,6 +132,56 @@ impl<'a> CheckerState<'a> {
                     i += 1;
                 }
             }
+        }
+
+        out
+    }
+
+    pub(crate) fn normalize_inline_object_type_literal_spacing(text: &str) -> String {
+        if !text.contains('{') || text.contains("`${") {
+            return text.to_string();
+        }
+
+        let chars: Vec<char> = text.chars().collect();
+        let mut out = String::with_capacity(text.len());
+        let mut object_stack: Vec<bool> = Vec::new();
+        let mut i = 0usize;
+        while i < chars.len() {
+            match chars[i] {
+                '{' => {
+                    object_stack.push(false);
+                    out.push('{');
+                    if chars
+                        .get(i + 1)
+                        .is_some_and(|next| !next.is_whitespace() && *next != '}')
+                    {
+                        out.push(' ');
+                    }
+                }
+                ':' if !object_stack.is_empty() => {
+                    if let Some(has_colon) = object_stack.last_mut() {
+                        *has_colon = true;
+                    }
+                    out.push(':');
+                }
+                '}' => {
+                    let object_has_property = object_stack.pop().unwrap_or(false);
+                    if object_has_property {
+                        while out.ends_with(char::is_whitespace) {
+                            out.pop();
+                        }
+                        if !out.ends_with(';') && !out.ends_with('{') {
+                            out.push(';');
+                        }
+                        if !out.ends_with(' ') {
+                            out.push(' ');
+                        }
+                    }
+                    out.push('}');
+                }
+                ch => out.push(ch),
+            }
+            i += 1;
         }
 
         out

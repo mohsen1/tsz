@@ -11,6 +11,7 @@
 
 use crate::query_boundaries::common::is_template_literal_type;
 use crate::state::CheckerState;
+use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
@@ -327,12 +328,26 @@ impl<'a> CheckerState<'a> {
                         } else {
                             TypeId::ANY
                         };
+                        let write_type = if self.ctx.compiler_options.exact_optional_property_types
+                            && sig.question_token
+                            && sig.type_annotation.is_some()
+                            && !type_node_includes_explicit_undefined(
+                                &self.ctx.arena,
+                                sig.type_annotation,
+                            ) {
+                            crate::query_boundaries::common::remove_undefined(
+                                self.ctx.types.as_type_database(),
+                                type_id,
+                            )
+                        } else {
+                            type_id
+                        };
 
                         member_order += 1;
                         properties.push(PropertyInfo {
                             name: name_atom,
                             type_id,
-                            write_type: type_id,
+                            write_type,
                             optional: sig.question_token,
                             readonly: self.has_readonly_modifier(&sig.modifiers),
                             is_method: false,

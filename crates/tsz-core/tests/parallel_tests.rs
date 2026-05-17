@@ -1818,7 +1818,7 @@ b;
 }
 
 #[test]
-fn test_check_files_parallel_generic_indexed_access_variance_preserves_structural_pick_parity() {
+fn test_check_files_parallel_generic_indexed_access_variance_preserves_ts2322() {
     let files = vec![(
         "test.ts".to_string(),
         r#"
@@ -1977,8 +1977,8 @@ c = d;
     };
 
     assert!(
-        file_result.diagnostics.iter().all(|diag| diag.code != 2322),
-        "Expected no TS2322 in parallel result for structurally equivalent Pick aliases. Diagnostics: {:#?}\nRecreated source: {}\nRecreated target: {}\nRecreated assignable: {}\nVariances: {}\nType params: {}\nResolved body: {}\nCtx params: {}\nCtx body: {}\nSolver variance: {}",
+        file_result.diagnostics.iter().any(|diag| diag.code == 2322),
+        "Expected TS2322 in parallel result. Diagnostics: {:#?}\nRecreated source: {}\nRecreated target: {}\nRecreated assignable: {}\nVariances: {}\nType params: {}\nResolved body: {}\nCtx params: {}\nCtx body: {}\nSolver variance: {}",
         file_result.diagnostics,
         checker.format_type(source_type),
         checker.format_type(target_type),

@@ -622,7 +622,13 @@ impl<'a> CheckerState<'a> {
         annotation_text: &str,
     ) -> String {
         let mut formatted = annotation_text.trim().to_string();
-        formatted = Self::normalize_annotation_literal_property_display_text(&formatted);
+        formatted = Self::normalize_single_quoted_string_literal_types(&formatted);
+        if !self.ctx.compiler_options.exact_optional_property_types {
+            formatted = Self::add_undefined_to_optional_object_property_display(&formatted);
+        }
+        if self.ctx.compiler_options.exact_optional_property_types && formatted.contains("?:") {
+            formatted = Self::normalize_inline_object_type_literal_spacing(&formatted);
+        }
         if formatted.contains(':') {
             formatted = formatted.replace(" }", "; }");
             while formatted.contains(";; }") {
@@ -1700,10 +1706,29 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let declared_display_type =
+        let mut declared_display_type =
             self.widen_function_like_display_type(self.widen_type_for_display(declared_type));
         let expr_display_type =
             self.widen_function_like_display_type(self.widen_type_for_display(expr_display_type));
+        if self.ctx.compiler_options.exact_optional_property_types
+            && (crate::query_boundaries::common::callable_shape_for_type(
+                self.ctx.types,
+                declared_type,
+            )
+            .is_some_and(|shape| {
+                shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                    .any(|sig| !sig.type_params.is_empty())
+            }) || crate::query_boundaries::common::function_shape_for_type(
+                self.ctx.types,
+                declared_type,
+            )
+            .is_some_and(|shape| !shape.type_params.is_empty()))
+        {
+            declared_display_type = declared_type;
+        }
         let declared_is_generic_callable = crate::query_boundaries::common::callable_shape_for_type(
             self.ctx.types,
             declared_display_type,
@@ -1723,6 +1748,12 @@ impl<'a> CheckerState<'a> {
         if declared_is_generic_callable
             && let Some(annotation_text) = self.declared_diagnostic_source_annotation_text(expr_idx)
         {
+            if self.ctx.compiler_options.exact_optional_property_types
+                && prefer_declared_display
+                && annotation_text.contains("?:")
+            {
+                return Some(self.format_declared_annotation_for_diagnostic(&annotation_text));
+            }
             // Check if this is a single-call-signature OR single-construct-signature
             // callable that tsc displays in arrow syntax (e.g., `<S>() => S[]` or
             // `new <T>(x: T) => T`). For these, skip annotation text and use the
@@ -1761,7 +1792,10 @@ impl<'a> CheckerState<'a> {
                 tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
                     .with_def_store(&self.ctx.definition_store)
                     .with_diagnostic_mode()
-                    .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks);
+                    .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
+                    .with_exact_optional_property_types(
+                        self.ctx.compiler_options.exact_optional_property_types,
+                    );
             formatter.format(declared_display_type).into_owned()
         } else {
             self.format_assignability_type_for_message(declared_display_type, target)

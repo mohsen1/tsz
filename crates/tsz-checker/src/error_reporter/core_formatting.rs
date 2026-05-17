@@ -12,7 +12,10 @@ impl<'a> CheckerState<'a> {
             .create_diagnostic_type_formatter()
             .with_display_properties()
             .with_expand_scalar_mapped_alias_applications()
-            .with_preserve_optional_parameter_surface_syntax(true);
+            .with_preserve_optional_parameter_surface_syntax(true)
+            .with_exact_optional_property_types(
+                self.ctx.compiler_options.exact_optional_property_types,
+            );
         formatter.format(type_id).into_owned()
     }
     fn format_type_diagnostic_widened_for_assignability_display(

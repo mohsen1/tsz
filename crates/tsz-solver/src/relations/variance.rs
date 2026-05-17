@@ -940,7 +940,11 @@ impl<'a, 'b> TypeVisitor for VarianceVisitor<'a, 'b> {
                 self.computer.db.lookup(key_type),
                 Some(TypeData::Literal(_))
             );
-            if !is_literal_key {
+            let is_bound_mapped_key = matches!(
+                self.computer.db.lookup(key_type),
+                Some(TypeData::TypeParameter(tp)) if self.bound_type_params.contains(&tp.name)
+            );
+            if !is_literal_key && !is_bound_mapped_key {
                 self.result |= Variance::NEEDS_STRUCTURAL_FALLBACK;
             }
         }
