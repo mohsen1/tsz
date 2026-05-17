@@ -134,15 +134,18 @@ impl<'a> CheckerState<'a> {
                             .lib_type_resolution_cache
                             .get(&base_name)
                             .is_some_and(Option::is_none)
-                        || self.builtin_heritage_base_has_heritage(&base_name)
+                        || self.builtin_heritage_base_requires_fallback(&base_name)
                 })
             })
         })
     }
 
-    fn builtin_heritage_base_has_heritage(&self, base_name: &str) -> bool {
+    fn builtin_heritage_base_requires_fallback(&self, base_name: &str) -> bool {
         let normalized = base_name.strip_prefix("globalThis.").unwrap_or(base_name);
         if normalized.contains('.') {
+            return true;
+        }
+        if self.lib_name_locally_augmented(normalized) {
             return true;
         }
         let Some(sym_id) = self.resolve_lib_symbol_by_name(normalized) else {
@@ -185,7 +188,7 @@ impl<'a> CheckerState<'a> {
         {
             return false;
         }
-        true
+        false
     }
 
     fn computed_property_name_is_well_known_symbol(arena: &NodeArena, name_idx: NodeIndex) -> bool {

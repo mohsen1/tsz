@@ -1199,17 +1199,25 @@ fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() 
         .get(&deep_heritage_sym_id)
         .map(std::convert::AsRef::as_ref)
         .expect("HTMLElement should have a delegate arena");
+    let (deep_heritage_ty, deep_heritage_params) = state
+        .direct_cross_file_interface_lowering(
+            deep_heritage_sym_id,
+            state.ctx.binder,
+            deep_heritage_arena,
+            false,
+            false,
+        )
+        .expect("builtin dom interfaces with same-lib deep heritage should lower directly");
+    assert!(deep_heritage_params.is_empty());
+    let tag_name = state.ctx.types.intern_string("tagName");
     assert!(
-        state
-            .direct_cross_file_interface_lowering(
-                deep_heritage_sym_id,
-                state.ctx.binder,
-                deep_heritage_arena,
-                false,
-                false,
-            )
-            .is_none(),
-        "builtin dom interfaces whose immediate base has heritage should fall back",
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            deep_heritage_ty,
+            tag_name,
+        )
+        .is_some(),
+        "HTMLElement should include inherited Element members",
     );
 
     let iterable_sym_id = state
