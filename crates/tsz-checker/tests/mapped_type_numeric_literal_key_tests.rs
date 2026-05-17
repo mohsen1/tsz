@@ -14,7 +14,7 @@
 //! constraint shapes so the fix expresses the structural rule rather than the
 //! original reproduction's exact identifiers.
 
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::test_utils::{check_source_diagnostics, check_source_with_libs, load_lib_files};
 
 fn assert_no_errors(label: &str, source: &str) {
     let diags = check_source_diagnostics(source);
@@ -29,6 +29,20 @@ fn assert_no_error_code(label: &str, source: &str, forbidden: u32) {
     assert!(
         diags.iter().all(|d| d.code != forbidden),
         "{label}: did not expect TS{forbidden}, got {diags:#?}"
+    );
+}
+
+fn assert_no_errors_with_symbol_lib(label: &str, source: &str) {
+    let libs = load_lib_files(&["es5.d.ts", "es2015.symbol.d.ts"]);
+    let diags = check_source_with_libs(
+        source,
+        "test.ts",
+        tsz_checker::context::CheckerOptions::default(),
+        &libs,
+    );
+    assert!(
+        diags.is_empty(),
+        "{label}: expected no diagnostics, got {diags:#?}"
     );
 }
 
@@ -202,6 +216,58 @@ fn renamed_mapped_variable_preserves_multiple_unique_symbol_keys() {
         const firstValue: typeof first = r[first];
         const secondValue: typeof second = r[second];
         const stringValue: "foo" = r.foo;
+        "#,
+    );
+}
+
+#[test]
+fn unannotated_const_symbol_initializers_preserve_tuple_mapped_key_identity() {
+    assert_no_errors_with_symbol_lib(
+        "unannotated const Symbol() tuple elements",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        const sym1 = Symbol(1);
+        const sym2 = Symbol(2);
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [Key in T[number]]: Key
+        };
+        type Result = TupleToObject<readonly [typeof sym1, typeof sym2]>;
+        type Expected = { [sym1]: typeof sym1; [sym2]: typeof sym2 };
+        type Case = Expect<Equal<Result, Expected>>;
+
+        declare const r: Result;
+        const firstValue: typeof sym1 = r[sym1];
+        const secondValue: typeof sym2 = r[sym2];
+        "#,
+    );
+}
+
+#[test]
+fn shadowed_symbol_initializer_keeps_local_return_type_in_tuple_mapped_keys() {
+    assert_no_errors(
+        "shadowed Symbol() tuple element stays string-literal key",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        function Symbol(_desc?: unknown): "local" {
+          return "local";
+        }
+        const sym = Symbol(1);
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [Key in T[number]]: Key
+        };
+        type Result = TupleToObject<readonly [typeof sym]>;
+        type Expected = { local: "local" };
+        type Case = Expect<Equal<Result, Expected>>;
         "#,
     );
 }
