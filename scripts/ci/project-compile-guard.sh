@@ -414,6 +414,9 @@ write_type_challenges_assertion_classification() {
   local candidate_dir="$FIXTURE_ROOT/type-challenges-assertions"
   local manifest="$candidate_dir/type-challenges-assertions-manifest.json"
   local output="$candidate_dir/type-challenges-assertions-classification.json"
+  local clean_dir="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean"
+  local clean_manifest="$clean_dir/type-challenges-assertions-tsc-clean-manifest.json"
+  local clean_output="$clean_dir/type-challenges-assertions-tsc-clean-classification.json"
 
   if [[ -f "$manifest" ]]; then
     ensure_type_challenges_assertion_tsc
@@ -421,11 +424,27 @@ write_type_challenges_assertion_classification() {
       "$candidate_dir" \
       "$manifest" \
       "$output"
+    node scripts/ci/type-challenges-assertion-clean-subset.mjs \
+      "$candidate_dir" \
+      "$manifest" \
+      "$output" \
+      "$clean_dir" \
+      "$clean_manifest"
+    if [[ -f "$clean_manifest" ]] \
+      && node -e 'const fs = require("fs"); const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.exit(Number(manifest.counts?.tscAcceptedAssertions || 0) > 0 ? 0 : 1)' "$clean_manifest"; then
+      node scripts/ci/type-challenges-assertion-classifier.mjs \
+        "$clean_dir" \
+        "$clean_manifest" \
+        "$clean_output"
+    fi
     node scripts/ci/type-challenges-assertion-compatibility.mjs \
       "$output" \
       "$candidate_dir" \
       "$PROJECT_COMPATIBILITY_JSONL" \
-      "$FIXTURE_ROOT"
+      "$FIXTURE_ROOT" \
+      "$clean_manifest" \
+      "$clean_output" \
+      "$clean_dir"
   fi
 }
 
