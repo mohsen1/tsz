@@ -602,7 +602,6 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
     // These must be detected before clap sees them (clap treats `--` as
     // end-of-options and `-` as a positional arg).
     // Also check for --boolFlag=value which tsc treats as an unknown option.
-    let boolean_flags = build_boolean_flag_set();
     for arg in expanded.iter().skip(1) {
         let s = arg.to_string_lossy();
         if s == "--" || s == "-" {
@@ -612,7 +611,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
         // tsc treats --boolFlag=value as an unknown option (the whole --flag=value string)
         if let Some(eq_pos) = s.find('=') {
             let flag_part = &s[..eq_pos];
-            if boolean_flags.contains(flag_part) {
+            if is_boolean_flag(flag_part) {
                 println!("error TS5023: Unknown compiler option '{s}'.");
                 std::process::exit(1);
             }
@@ -664,9 +663,6 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
 
     // Fourth pass: handle boolean flag values ("true"/"false") and deduplicate flags.
     // tsc treats `--strict false` as setting strict=false, and accepts duplicate flags silently.
-    let boolean_flags = build_boolean_flag_set();
-    let valued_flags = build_valued_flag_set();
-    let option_bool_flags = build_option_bool_flag_set();
     let mut final_result = Vec::with_capacity(result.len());
     let mut flag_positions: FxHashMap<String, usize> = FxHashMap::default();
     let mut skip_positions: Vec<bool> = Vec::new();
@@ -688,8 +684,8 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 arg_str.clone()
             };
 
-            let is_boolean = boolean_flags.contains(flag_name.as_str());
-            let takes_value = valued_flags.contains(flag_name.as_str());
+            let is_boolean = is_boolean_flag(flag_name.as_str());
+            let takes_value = is_valued_flag(flag_name.as_str());
 
             // Check if next arg is "true" or "false" for boolean flags
             if is_boolean
@@ -699,7 +695,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 let next_str = next.to_string_lossy();
                 let next_lower = next_str.to_lowercase();
                 if next_lower == "false" {
-                    if option_bool_flags.contains(flag_name.as_str()) {
+                    if is_option_bool_flag(flag_name.as_str()) {
                         push_option_bool_arg(
                             &mut final_result,
                             &mut skip_positions,
@@ -727,7 +723,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                     i += 2;
                     continue;
                 } else if next_lower == "true" {
-                    if option_bool_flags.contains(flag_name.as_str()) {
+                    if is_option_bool_flag(flag_name.as_str()) {
                         push_option_bool_arg(
                             &mut final_result,
                             &mut skip_positions,
@@ -743,10 +739,7 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
                 }
             }
 
-            if is_boolean
-                && !arg_str.contains('=')
-                && option_bool_flags.contains(flag_name.as_str())
-            {
+            if is_boolean && !arg_str.contains('=') && is_option_bool_flag(flag_name.as_str()) {
                 push_option_bool_arg(
                     &mut final_result,
                     &mut skip_positions,
@@ -851,187 +844,187 @@ fn normalized_flag_key(flag: &str) -> String {
         .collect()
 }
 
-/// Set of known boolean flags (flags that accept no value or optional true/false).
-fn build_boolean_flag_set() -> rustc_hash::FxHashSet<&'static str> {
-    [
-        "--all",
-        "--build",
-        "--init",
-        "--listFilesOnly",
-        "--showConfig",
-        "--ignoreConfig",
-        "--libReplacement",
-        "--watch",
-        "--noLib",
-        "--useDefineForClassFields",
-        "--experimentalDecorators",
-        "--emitDecoratorMetadata",
-        "--resolveJsonModule",
-        "--resolvePackageJsonExports",
-        "--resolvePackageJsonImports",
-        "--allowArbitraryExtensions",
-        "--allowImportingTsExtensions",
-        "--rewriteRelativeImportExtensions",
-        "--noResolve",
-        "--allowUmdGlobalAccess",
-        "--noUncheckedSideEffectImports",
-        "--allowJs",
-        "--checkJs",
-        "--declaration",
-        "--declarationMap",
-        "--emitDeclarationOnly",
-        "--sourceMap",
-        "--inlineSourceMap",
-        "--inlineSources",
-        "--noEmit",
-        "--noEmitOnError",
-        "--noEmitHelpers",
-        "--importHelpers",
-        "--downlevelIteration",
-        "--removeComments",
-        "--preserveConstEnums",
-        "--stripInternal",
-        "--emitBOM",
-        "--esModuleInterop",
-        "--allowSyntheticDefaultImports",
-        "--isolatedModules",
-        "--isolatedDeclarations",
-        "--verbatimModuleSyntax",
-        "--forceConsistentCasingInFileNames",
-        "--preserveSymlinks",
-        "--erasableSyntaxOnly",
-        "--strict",
-        "--noImplicitAny",
-        "--strictNullChecks",
-        "--strictFunctionTypes",
-        "--strictBindCallApply",
-        "--strictPropertyInitialization",
-        "--strictBuiltinIteratorReturn",
-        "--noImplicitThis",
-        "--useUnknownInCatchVariables",
-        "--alwaysStrict",
-        "--noUnusedLocals",
-        "--noUnusedParameters",
-        "--exactOptionalPropertyTypes",
-        "--noImplicitReturns",
-        "--noFallthroughCasesInSwitch",
-        "--sound",
-        "--noUncheckedIndexedAccess",
-        "--noImplicitOverride",
-        "--noPropertyAccessFromIndexSignature",
-        "--allowUnreachableCode",
-        "--allowUnusedLabels",
-        "--skipDefaultLibCheck",
-        "--skipLibCheck",
-        "--composite",
-        "--incremental",
-        "--disableReferencedProjectLoad",
-        "--disableSolutionSearching",
-        "--disableSourceOfProjectReferenceRedirect",
-        "--diagnostics",
-        "--extendedDiagnostics",
-        "--explainFiles",
-        "--listFiles",
-        "--listEmittedFiles",
-        "--traceResolution",
-        "--traceDependencies",
-        "--noCheck",
-        "--pretty",
-        "--noErrorTruncation",
-        "--preserveWatchOutput",
-        "--synchronousWatchDirectory",
-        "--build-verbose",
-        "--dry",
-        "--force",
-        "--clean",
-        "--stopBuildOnErrors",
-        "--assumeChangesOnlyAffectDirectDependencies",
-        "--keyofStringsOnly",
-        "--noImplicitUseStrict",
-        "--noStrictGenericChecks",
-        "--preserveValueImports",
-        "--suppressExcessPropertyErrors",
-        "--suppressImplicitAnyIndexErrors",
-        "--disableSizeLimit",
-        "--batch",
-    ]
-    .into_iter()
-    .collect()
+/// Known boolean flags (flags that accept no value or optional true/false).
+const BOOLEAN_FLAGS: &[&str] = &[
+    "--all",
+    "--build",
+    "--init",
+    "--listFilesOnly",
+    "--showConfig",
+    "--ignoreConfig",
+    "--libReplacement",
+    "--watch",
+    "--noLib",
+    "--useDefineForClassFields",
+    "--experimentalDecorators",
+    "--emitDecoratorMetadata",
+    "--resolveJsonModule",
+    "--resolvePackageJsonExports",
+    "--resolvePackageJsonImports",
+    "--allowArbitraryExtensions",
+    "--allowImportingTsExtensions",
+    "--rewriteRelativeImportExtensions",
+    "--noResolve",
+    "--allowUmdGlobalAccess",
+    "--noUncheckedSideEffectImports",
+    "--allowJs",
+    "--checkJs",
+    "--declaration",
+    "--declarationMap",
+    "--emitDeclarationOnly",
+    "--sourceMap",
+    "--inlineSourceMap",
+    "--inlineSources",
+    "--noEmit",
+    "--noEmitOnError",
+    "--noEmitHelpers",
+    "--importHelpers",
+    "--downlevelIteration",
+    "--removeComments",
+    "--preserveConstEnums",
+    "--stripInternal",
+    "--emitBOM",
+    "--esModuleInterop",
+    "--allowSyntheticDefaultImports",
+    "--isolatedModules",
+    "--isolatedDeclarations",
+    "--verbatimModuleSyntax",
+    "--forceConsistentCasingInFileNames",
+    "--preserveSymlinks",
+    "--erasableSyntaxOnly",
+    "--strict",
+    "--noImplicitAny",
+    "--strictNullChecks",
+    "--strictFunctionTypes",
+    "--strictBindCallApply",
+    "--strictPropertyInitialization",
+    "--strictBuiltinIteratorReturn",
+    "--noImplicitThis",
+    "--useUnknownInCatchVariables",
+    "--alwaysStrict",
+    "--noUnusedLocals",
+    "--noUnusedParameters",
+    "--exactOptionalPropertyTypes",
+    "--noImplicitReturns",
+    "--noFallthroughCasesInSwitch",
+    "--sound",
+    "--noUncheckedIndexedAccess",
+    "--noImplicitOverride",
+    "--noPropertyAccessFromIndexSignature",
+    "--allowUnreachableCode",
+    "--allowUnusedLabels",
+    "--skipDefaultLibCheck",
+    "--skipLibCheck",
+    "--composite",
+    "--incremental",
+    "--disableReferencedProjectLoad",
+    "--disableSolutionSearching",
+    "--disableSourceOfProjectReferenceRedirect",
+    "--diagnostics",
+    "--extendedDiagnostics",
+    "--explainFiles",
+    "--listFiles",
+    "--listEmittedFiles",
+    "--traceResolution",
+    "--traceDependencies",
+    "--noCheck",
+    "--pretty",
+    "--noErrorTruncation",
+    "--preserveWatchOutput",
+    "--synchronousWatchDirectory",
+    "--build-verbose",
+    "--dry",
+    "--force",
+    "--clean",
+    "--stopBuildOnErrors",
+    "--assumeChangesOnlyAffectDirectDependencies",
+    "--keyofStringsOnly",
+    "--noImplicitUseStrict",
+    "--noStrictGenericChecks",
+    "--preserveValueImports",
+    "--suppressExcessPropertyErrors",
+    "--suppressImplicitAnyIndexErrors",
+    "--disableSizeLimit",
+    "--batch",
+];
+
+fn is_boolean_flag(flag: &str) -> bool {
+    BOOLEAN_FLAGS.contains(&flag)
 }
 
-/// Set of flags that take a mandatory value argument (not boolean flags).
-fn build_valued_flag_set() -> rustc_hash::FxHashSet<&'static str> {
-    [
-        "--locale",
-        "--project",
-        "--target",
-        "--module",
-        "--lib",
-        "--jsx",
-        "--jsxFactory",
-        "--jsxFragmentFactory",
-        "--jsxImportSource",
-        "--moduleDetection",
-        "--moduleResolution",
-        "--baseUrl",
-        "--typeRoots",
-        "--types",
-        "--rootDirs",
-        "--paths",
-        "--plugins",
-        "--moduleSuffixes",
-        "--customConditions",
-        "--maxNodeModuleJsDepth",
-        "--declarationDir",
-        "--outDir",
-        "--rootDir",
-        "--outFile",
-        "--mapRoot",
-        "--sourceRoot",
-        "--newLine",
-        "--tsBuildInfoFile",
-        "--generateTrace",
-        "--generateCpuProfile",
-        "--ignoreDeprecations",
-        "--watchFile",
-        "--watchDirectory",
-        "--fallbackPolling",
-        "--excludeDirectories",
-        "--excludeFiles",
-        "--reactNamespace",
-        "--charset",
-        "--importsNotUsedAsValues",
-        "--out",
-        "--typesVersions",
-    ]
-    .into_iter()
-    .collect()
+/// Flags that take a mandatory value argument (not boolean flags).
+const VALUED_FLAGS: &[&str] = &[
+    "--locale",
+    "--project",
+    "--target",
+    "--module",
+    "--lib",
+    "--jsx",
+    "--jsxFactory",
+    "--jsxFragmentFactory",
+    "--jsxImportSource",
+    "--moduleDetection",
+    "--moduleResolution",
+    "--baseUrl",
+    "--typeRoots",
+    "--types",
+    "--rootDirs",
+    "--paths",
+    "--plugins",
+    "--moduleSuffixes",
+    "--customConditions",
+    "--maxNodeModuleJsDepth",
+    "--declarationDir",
+    "--outDir",
+    "--rootDir",
+    "--outFile",
+    "--mapRoot",
+    "--sourceRoot",
+    "--newLine",
+    "--tsBuildInfoFile",
+    "--generateTrace",
+    "--generateCpuProfile",
+    "--ignoreDeprecations",
+    "--watchFile",
+    "--watchDirectory",
+    "--fallbackPolling",
+    "--excludeDirectories",
+    "--excludeFiles",
+    "--reactNamespace",
+    "--charset",
+    "--importsNotUsedAsValues",
+    "--out",
+    "--typesVersions",
+];
+
+fn is_valued_flag(flag: &str) -> bool {
+    VALUED_FLAGS.contains(&flag)
 }
 
-/// Set of flags that are Option<bool> (tri-state: None, Some(true), Some(false)).
+/// Flags that are Option<bool> (tri-state: None, Some(true), Some(false)).
 /// These need --flag=true or --flag=false rather than flag removal.
-fn build_option_bool_flag_set() -> rustc_hash::FxHashSet<&'static str> {
-    [
-        "--useDefineForClassFields",
-        "--resolvePackageJsonExports",
-        "--resolvePackageJsonImports",
-        "--allowSyntheticDefaultImports",
-        "--forceConsistentCasingInFileNames",
-        "--noImplicitAny",
-        "--strictNullChecks",
-        "--strictFunctionTypes",
-        "--strictBindCallApply",
-        "--strictPropertyInitialization",
-        "--strictBuiltinIteratorReturn",
-        "--noImplicitThis",
-        "--useUnknownInCatchVariables",
-        "--alwaysStrict",
-        "--allowUnreachableCode",
-        "--allowUnusedLabels",
-        "--pretty",
-    ]
-    .into_iter()
-    .collect()
+const OPTION_BOOL_FLAGS: &[&str] = &[
+    "--useDefineForClassFields",
+    "--resolvePackageJsonExports",
+    "--resolvePackageJsonImports",
+    "--allowSyntheticDefaultImports",
+    "--forceConsistentCasingInFileNames",
+    "--noImplicitAny",
+    "--strictNullChecks",
+    "--strictFunctionTypes",
+    "--strictBindCallApply",
+    "--strictPropertyInitialization",
+    "--strictBuiltinIteratorReturn",
+    "--noImplicitThis",
+    "--useUnknownInCatchVariables",
+    "--alwaysStrict",
+    "--allowUnreachableCode",
+    "--allowUnusedLabels",
+    "--pretty",
+];
+
+fn is_option_bool_flag(flag: &str) -> bool {
+    OPTION_BOOL_FLAGS.contains(&flag)
 }
 
 /// Split a response file line into arguments, respecting quoted strings.
