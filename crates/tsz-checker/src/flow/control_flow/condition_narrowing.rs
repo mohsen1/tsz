@@ -16,7 +16,7 @@ impl<'a> FlowAnalyzer<'a> {
         &self,
         flow_id: FlowNodeId,
         target: NodeIndex,
-        visited: &mut Vec<FlowNodeId>,
+        visited: &mut smallvec::SmallVec<[FlowNodeId; 8]>,
     ) -> bool {
         if flow_id.is_none() || visited.contains(&flow_id) {
             return false;
@@ -845,7 +845,7 @@ impl<'a> FlowAnalyzer<'a> {
                                 && self.antecedent_chain_excludes_null_for_target(
                                     antecedent_id,
                                     target,
-                                    &mut Vec::new(),
+                                    &mut smallvec::SmallVec::new(),
                                 )
                             {
                                 return narrowing.narrow_excluding_type(result, TypeId::NULL);
@@ -1350,7 +1350,7 @@ impl<'a> FlowAnalyzer<'a> {
                     && self.antecedent_chain_excludes_null_for_target(
                         antecedent_id,
                         target,
-                        &mut Vec::new(),
+                        &mut smallvec::SmallVec::new(),
                     )
                 {
                     return narrowing.narrow_excluding_type(narrowed, TypeId::NULL);
