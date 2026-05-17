@@ -1568,8 +1568,8 @@ mod tests {
     }
 
     #[test]
-    fn optional_chain_array_rest_assignment_keeps_recovery_shape() {
-        let source = "declare const obj: any;\n[...obj?.[\"a\"]] = [];\n[...obj?.a[\"b\"]] = [];\n";
+    fn optional_chain_array_rest_assignment_uses_rest_lowering() {
+        let source = "declare const obj: any;\ndeclare const foo: any;\n[...obj?.[\"a\"]] = [];\n[...obj?.a[\"b\"]] = [];\n[...obj[foo?.bar]] = [];\n";
 
         let (parser, root) = parse_test_source(source);
 
@@ -1582,16 +1582,18 @@ mod tests {
         let output = printer.finish().code;
 
         assert!(
-            output.contains("[...obj === null || obj === void 0 ? void 0 : obj[\"a\"]] = [];"),
-            "Invalid optional-chain rest targets should keep the array-spread recovery shape.\nOutput:\n{output}"
+            output.contains("obj === null || obj === void 0 ? void 0 : obj[\"a\"] = [].slice(0);"),
+            "Optional element rest targets should still use ES5 rest-assignment lowering.\nOutput:\n{output}"
         );
         assert!(
-            output.contains("[...obj === null || obj === void 0 ? void 0 : obj.a[\"b\"]] = [];"),
-            "Invalid optional-chain rest targets should keep non-optional tails inside the lowered branch.\nOutput:\n{output}"
+            output
+                .contains("obj === null || obj === void 0 ? void 0 : obj.a[\"b\"] = [].slice(0);"),
+            "Optional-chain rest targets should keep non-optional tails inside the lowered assignment target.\nOutput:\n{output}"
         );
         assert!(
-            !output.contains(".slice(0)"),
-            "Invalid optional-chain rest targets must not use valid rest-pattern lowering.\nOutput:\n{output}"
+            output
+                .contains("obj[foo === null || foo === void 0 ? void 0 : foo.bar] = [].slice(0);"),
+            "Optional chains inside computed keys are valid element targets and must stay on the normal rest-lowering path.\nOutput:\n{output}"
         );
     }
 

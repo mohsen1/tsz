@@ -153,11 +153,6 @@ impl<'a> Printer<'a> {
         left_node: &Node,
         right_idx: NodeIndex,
     ) {
-        if self.array_assignment_has_optional_chain_rest_target(left_node) {
-            self.emit_array_assignment_recovery(left_node, right_idx);
-            return;
-        }
-
         // For empty patterns ({} = a, [] = a), just emit the right-hand side
         // so it's evaluated for side effects. This must be checked BEFORE creating
         // any temp variables, since the temp creation emits to the output buffer.
@@ -311,70 +306,6 @@ impl<'a> Printer<'a> {
                 self.emit_node_default(left_node, right_idx);
             }
         }
-    }
-
-    fn array_assignment_has_optional_chain_rest_target(&self, left_node: &Node) -> bool {
-        if left_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            return false;
-        }
-        let Some(lit) = self.arena.get_literal_expr(left_node) else {
-            return false;
-        };
-        lit.elements.nodes.iter().any(|&elem_idx| {
-            let Some(elem_node) = self.arena.get(elem_idx) else {
-                return false;
-            };
-            elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                && self.arena.get_spread(elem_node).is_some_and(|spread| {
-                    self.assignment_target_contains_optional_chain(spread.expression)
-                })
-        })
-    }
-
-    fn assignment_target_contains_optional_chain(&self, target_idx: NodeIndex) -> bool {
-        let Some(target_node) = self.arena.get(target_idx) else {
-            return false;
-        };
-        if target_node.is_optional_chain() {
-            return true;
-        }
-        if let Some(paren) = self.arena.get_parenthesized(target_node) {
-            return self.assignment_target_contains_optional_chain(paren.expression);
-        }
-        if let Some(access) = self.arena.get_access_expr(target_node) {
-            return access.question_dot_token
-                || self.assignment_target_contains_optional_chain(access.expression)
-                || self.assignment_target_contains_optional_chain(access.name_or_argument);
-        }
-        false
-    }
-
-    fn emit_array_assignment_recovery(&mut self, left_node: &Node, right_idx: NodeIndex) {
-        let Some(lit) = self.arena.get_literal_expr(left_node) else {
-            return;
-        };
-        self.write("[");
-        for (index, &elem_idx) in lit.elements.nodes.iter().enumerate() {
-            if index > 0 {
-                self.write(", ");
-            }
-            if elem_idx.is_none() {
-                continue;
-            }
-            let Some(elem_node) = self.arena.get(elem_idx) else {
-                continue;
-            };
-            if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                && let Some(spread) = self.arena.get_spread(elem_node)
-            {
-                self.write("...");
-                self.emit(spread.expression);
-            } else {
-                self.emit(elem_idx);
-            }
-        }
-        self.write("] = ");
-        self.emit(right_idx);
     }
 
     /// Walk the LHS of a destructuring assignment and return true if any
