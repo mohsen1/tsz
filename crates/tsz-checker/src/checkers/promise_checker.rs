@@ -142,7 +142,7 @@ impl<'a> CheckerState<'a> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         (Self::is_builtin_promise_like_name(symbol.escaped_name.as_str())
             && self.symbol_has_standard_lib_origin(sym_id))
-        .then(|| args.first().copied().unwrap_or(TypeId::UNKNOWN))
+        .then_some(args.first().copied().unwrap_or(TypeId::UNKNOWN))
     }
 
     pub(crate) fn promise_branch_alias_body_from_application(
@@ -546,9 +546,7 @@ impl<'a> CheckerState<'a> {
                 return Some(first_arg);
             }
 
-            // Fast path: direct Promise/PromiseLike application from lib symbols.
-            // This is a hot path for `await Promise.resolve(...)` and avoids
-            // heavier alias/class resolution when the base already names Promise.
+            // Fast path for direct lib Promise/PromiseLike applications.
             if let query::PromiseTypeKind::Lazy(def_id) =
                 query::classify_promise_type(self.ctx.types, base)
                 && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
@@ -659,17 +657,15 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(inner) = self.standard_lib_promise_like_application_arg(type_id) {
-            if self.is_awaited_application(inner) {
-                return None;
-            }
-            return self.await_operand_invalid_thenable_this_type_with_depth(inner, depth + 1);
+            return (!self.is_awaited_application(inner))
+                .then(|| self.await_operand_invalid_thenable_this_type_with_depth(inner, depth + 1))
+                .flatten();
         }
 
         let info = self.extract_awaited_type_from_valid_thenable(type_id, true);
-        if info.has_callable_then && info.awaited_type.is_none() {
-            return info.rejected_this_type;
-        }
-        None
+        (info.has_callable_then && info.awaited_type.is_none())
+            .then_some(info.rejected_this_type)
+            .flatten()
     }
 
     fn extract_awaited_type_from_valid_thenable(
@@ -1837,22 +1833,9 @@ impl<'a> CheckerState<'a> {
         self.promise_like_return_type_argument(type_id)
     }
 
-    /// Unwrap Promise from an async function's return type for body checking.
-    ///
-    /// For contextually-typed async functions (no explicit annotation), the inferred
-    /// return type may be `Promise<T>` or a union like `Promise<T> | StateMachine<T>`.
-    /// This method unwraps each Promise member to produce the effective body return type:
-    /// - `Promise<T>` → `T`
-    /// - `Promise<T> | StateMachine<T>` → `T | StateMachine<T>`
-    /// - Non-Promise types pass through unchanged.
-    ///
-    /// The unwrapped inner type is then evaluated via `evaluate_application_type`
-    /// so that alias applications like `Awaited<X>` (which appears in the lib
-    /// signature `Promise.resolve<T>(value: T): Promise<Awaited<T>>`) fold to
-    /// their conditional-type result. This mirrors tsc's `getAwaitedType`,
-    /// which always resolves Awaited<X> for non-thenable X. Without this step
-    /// the assignability gateway sees a raw `Awaited<X>` Application and fails
-    /// to relate it against the structural form.
+    /// Unwrap Promise members from an async function's return type for body checking.
+    /// `Awaited<X>` payloads are evaluated so the body sees the same awaited
+    /// structural type tsc uses instead of the raw alias application.
     pub fn unwrap_async_return_type_for_body(&mut self, return_type: TypeId) -> TypeId {
         // Try simple unwrap first
         if let Some(unwrapped) = self.unwrap_promise_type(return_type) {
