@@ -554,10 +554,10 @@ impl<'a> FlowAnalyzer<'a> {
         // Check for literal comparison: x === "foo", x === 42
         // Loose equality (==) does not narrow non-nullish literals; x == null is already
         // handled above as NullishEquality.
-        if !is_loose_equality {
-            if let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target) {
-                return Some((TypeGuard::LiteralEquality(literal_type), target, false));
-            }
+        if !is_loose_equality
+            && let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target)
+        {
+            return Some((TypeGuard::LiteralEquality(literal_type), target, false));
         }
 
         None
