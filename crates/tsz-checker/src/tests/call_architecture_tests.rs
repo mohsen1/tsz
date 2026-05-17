@@ -1670,6 +1670,34 @@ const r: boolean = choose(true);
     );
 }
 
+/// Regression: literal-only overload calls can be resolved without contextual
+/// argument rechecks while still preserving literal-specific overload selection.
+#[test]
+fn literal_only_overload_call_preserves_literal_specific_selection() {
+    let diags = check_source_diagnostics(
+        r#"
+declare function pick(x: "a"): 1;
+declare function pick(x: "b"): 2;
+declare function pick(x: string): 3;
+
+const one: 1 = pick("a");
+const two: 2 = pick("b");
+const fallback: 3 = pick("c");
+"#,
+    );
+
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2345 || d.code == 2769)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        0,
+        "Expected literal overload selection to preserve exact return types, got: {:?}",
+        diagnostic_messages(&errors)
+    );
+}
+
 /// Regression: generic call with contextual callback where param type contains
 /// intersection with type parameter exercises `contains_type_parameters` and
 /// `intersection_members` boundary queries.

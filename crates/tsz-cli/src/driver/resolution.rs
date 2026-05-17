@@ -5,18 +5,16 @@ use std::path::{Component, Path, PathBuf};
 use crate::config::{ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
 use crate::fs::{is_valid_module_file, is_valid_module_or_js_file};
 use tsz::emitter::ModuleKind;
-use tsz::module_resolver::{PackageType, is_path_relative};
+use tsz::module_resolver::{ImportKind, ImportingModuleKind, PackageType, is_path_relative};
 use tsz::parser::NodeIndex;
 use tsz::parser::ParserState;
 use tsz::parser::node::{NodeAccess, NodeArena};
 use tsz::scanner::SyntaxKind;
+use tsz::scanner::scanner_impl::ScannerState;
 
-type CollectedModuleSpecifier = (
-    String,
-    NodeIndex,
-    tsz::module_resolver::ImportKind,
-    Option<tsz::module_resolver::ImportingModuleKind>,
-);
+type CollectedModuleSpecifier = (String, NodeIndex, ImportKind, Option<ImportingModuleKind>);
+
+type SourceDiscoveryModuleRequest = (String, ImportKind, Option<ImportingModuleKind>, bool);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Counting filesystem probes (`PERFORMANCE_PLAN.md` §4.T0.3 follow-up)
@@ -670,16 +668,14 @@ pub(crate) fn collect_module_specifiers_from_text(path: &Path, text: &str) -> Ve
 pub(crate) fn collect_module_requests_from_text(
     path: &Path,
     text: &str,
-) -> Vec<(
-    String,
-    tsz::module_resolver::ImportKind,
-    Option<tsz::module_resolver::ImportingModuleKind>,
-    bool,
-)> {
+) -> Vec<SourceDiscoveryModuleRequest> {
     // Fast path: skip the full parse if the text cannot contain any module specifiers.
     // This avoids a redundant parse for files that will be parsed again in build_program.
     if !text_may_contain_module_specifiers(text) {
         return Vec::new();
+    }
+    if let Some(requests) = collect_simple_module_requests_from_text(text) {
+        return requests;
     }
     let file_name = path.to_string_lossy().into_owned();
     let mut parser = ParserState::new(file_name, text.to_string());
@@ -721,6 +717,242 @@ fn text_may_contain_module_specifiers(text: &str) -> bool {
         || text.contains("from '")
         || text.contains("from \"")
         || text.contains("declare module")
+}
+
+#[derive(Debug)]
+struct DiscoveryToken {
+    kind: SyntaxKind,
+    text: Option<String>,
+}
+
+fn collect_simple_module_requests_from_text(
+    text: &str,
+) -> Option<Vec<SourceDiscoveryModuleRequest>> {
+    if text.contains("@import") {
+        return None;
+    }
+
+    let mut scanner = ScannerState::new(text.to_string(), true);
+    let mut tokens = Vec::new();
+    loop {
+        let kind = scanner.scan();
+        if kind == SyntaxKind::EndOfFileToken {
+            break;
+        }
+        let token_text = (kind == SyntaxKind::StringLiteral)
+            .then(|| strip_scanned_string_literal(scanner.get_token_text_ref()));
+        tokens.push(DiscoveryToken {
+            kind,
+            text: token_text,
+        });
+    }
+
+    let mut requests = Vec::new();
+    let mut brace_depth = 0usize;
+    let mut i = 0usize;
+    while i < tokens.len() {
+        match tokens[i].kind {
+            SyntaxKind::OpenBraceToken => {
+                brace_depth += 1;
+                i += 1;
+            }
+            SyntaxKind::CloseBraceToken => {
+                brace_depth = brace_depth.saturating_sub(1);
+                i += 1;
+            }
+            SyntaxKind::DeclareKeyword if brace_depth == 0 => {
+                if tokens
+                    .get(i + 1)
+                    .is_some_and(|t| t.kind == SyntaxKind::ModuleKeyword)
+                {
+                    let module_name = tokens.get(i + 2).and_then(|t| t.text.as_ref())?;
+                    if is_path_relative(module_name) {
+                        requests.push((module_name.clone(), ImportKind::EsmImport, None, false));
+                    }
+                    if tokens
+                        .get(i + 3)
+                        .is_some_and(|t| t.kind == SyntaxKind::OpenBraceToken)
+                    {
+                        i = skip_ambient_module_body_without_dependencies(&tokens, i + 3)?;
+                        continue;
+                    }
+                    i += 3;
+                    continue;
+                }
+                i += 1;
+            }
+            SyntaxKind::ModuleKeyword if brace_depth == 0 => return None,
+            SyntaxKind::ImportKeyword => {
+                if brace_depth != 0 {
+                    return None;
+                }
+                let (request, next_i) = collect_simple_import_request(&tokens, i)?;
+                requests.push((request, ImportKind::EsmImport, None, false));
+                i = next_i;
+            }
+            SyntaxKind::ExportKeyword => {
+                if brace_depth != 0 {
+                    return None;
+                }
+                if let Some((request, next_i)) = collect_simple_export_request(&tokens, i)? {
+                    requests.push((request, ImportKind::EsmReExport, None, false));
+                    i = next_i;
+                } else {
+                    i += 1;
+                }
+            }
+            SyntaxKind::RequireKeyword => return None,
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    Some(requests)
+}
+
+fn strip_scanned_string_literal(text: &str) -> String {
+    text.trim_matches(|ch| ch == '"' || ch == '\'').to_string()
+}
+
+fn skip_ambient_module_body_without_dependencies(
+    tokens: &[DiscoveryToken],
+    open_brace: usize,
+) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut i = open_brace + 1;
+    while i < tokens.len() {
+        match tokens[i].kind {
+            SyntaxKind::OpenBraceToken => depth += 1,
+            SyntaxKind::CloseBraceToken => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(i + 1);
+                }
+            }
+            SyntaxKind::ImportKeyword | SyntaxKind::RequireKeyword => return None,
+            SyntaxKind::FromKeyword
+                if tokens
+                    .get(i + 1)
+                    .is_some_and(|token| token.kind == SyntaxKind::StringLiteral) =>
+            {
+                return None;
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+fn collect_simple_import_request(
+    tokens: &[DiscoveryToken],
+    import_idx: usize,
+) -> Option<(String, usize)> {
+    let next = tokens.get(import_idx + 1)?;
+    match next.kind {
+        SyntaxKind::StringLiteral => {
+            reject_import_attributes_after_string(tokens, import_idx + 2)?;
+            Some((next.text.clone()?, import_idx + 2))
+        }
+        SyntaxKind::OpenParenToken | SyntaxKind::DotToken => None,
+        _ => {
+            let mut i = import_idx + 1;
+            while i < tokens.len() {
+                match tokens[i].kind {
+                    SyntaxKind::SemicolonToken => return None,
+                    SyntaxKind::EqualsToken | SyntaxKind::RequireKeyword => return None,
+                    SyntaxKind::OpenBraceToken => {
+                        let close = matching_brace(tokens, i)?;
+                        i = close + 1;
+                        continue;
+                    }
+                    SyntaxKind::CloseBraceToken => return None,
+                    SyntaxKind::FromKeyword
+                        if tokens
+                            .get(i + 1)
+                            .is_some_and(|token| token.kind == SyntaxKind::StringLiteral) =>
+                    {
+                        reject_import_attributes_after_string(tokens, i + 2)?;
+                        return Some((tokens[i + 1].text.clone()?, i + 2));
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            None
+        }
+    }
+}
+
+fn collect_simple_export_request(
+    tokens: &[DiscoveryToken],
+    export_idx: usize,
+) -> Option<Option<(String, usize)>> {
+    let mut i = export_idx + 1;
+    if tokens
+        .get(i)
+        .is_some_and(|token| token.kind == SyntaxKind::TypeKeyword)
+    {
+        i += 1;
+    }
+
+    match tokens.get(i).map(|token| token.kind) {
+        Some(SyntaxKind::AsteriskToken | SyntaxKind::OpenBraceToken) => {}
+        _ => return Some(None),
+    }
+
+    while i < tokens.len() {
+        match tokens[i].kind {
+            SyntaxKind::SemicolonToken => return Some(None),
+            SyntaxKind::OpenBraceToken => {
+                let close = matching_brace(tokens, i)?;
+                i = close + 1;
+                continue;
+            }
+            SyntaxKind::FromKeyword
+                if tokens
+                    .get(i + 1)
+                    .is_some_and(|token| token.kind == SyntaxKind::StringLiteral) =>
+            {
+                reject_import_attributes_after_string(tokens, i + 2)?;
+                return Some(Some((tokens[i + 1].text.clone()?, i + 2)));
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    Some(None)
+}
+
+fn matching_brace(tokens: &[DiscoveryToken], open_brace: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut i = open_brace + 1;
+    while i < tokens.len() {
+        match tokens[i].kind {
+            SyntaxKind::OpenBraceToken => depth += 1,
+            SyntaxKind::CloseBraceToken => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+fn reject_import_attributes_after_string(
+    tokens: &[DiscoveryToken],
+    after_string: usize,
+) -> Option<()> {
+    match tokens.get(after_string).map(|token| token.kind) {
+        Some(SyntaxKind::WithKeyword | SyntaxKind::AssertKeyword) => None,
+        _ => Some(()),
+    }
 }
 
 fn collect_jsdoc_import_requests(

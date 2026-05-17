@@ -191,12 +191,17 @@ pub(super) fn sources_have_no_default_lib(sources: &[SourceEntry]) -> bool {
 
 pub(super) fn source_has_no_default_lib(source: &SourceEntry) -> bool {
     if let Some(text) = source.text.as_deref() {
-        return has_no_default_lib_directive(text);
+        return text_may_contain_no_default_lib_directive(text)
+            && has_no_default_lib_directive(text);
     }
     let Ok(text) = std::fs::read_to_string(&source.path) else {
         return false;
     };
-    has_no_default_lib_directive(&text)
+    text_may_contain_no_default_lib_directive(&text) && has_no_default_lib_directive(&text)
+}
+
+fn text_may_contain_no_default_lib_directive(text: &str) -> bool {
+    text.contains("///") && text.contains("reference") && text.contains("no-default-lib")
 }
 
 pub(super) fn has_no_default_lib_directive(source: &str) -> bool {
@@ -556,13 +561,13 @@ fn parse_source_for_bfs(path: &Path, no_resolve: bool) -> ParsedSource {
         _ => Vec::new(),
     };
     let type_refs = match text {
-        Some(text) if !is_binary => {
+        Some(text) if !is_binary && text_may_contain_reference_directives(text) => {
             tsz::checker::triple_slash_validator::extract_reference_types(text)
         }
         _ => Vec::new(),
     };
     let reference_paths = match text {
-        Some(text) if !is_binary && !no_resolve => {
+        Some(text) if !is_binary && !no_resolve && text_may_contain_reference_directives(text) => {
             tsz::checker::triple_slash_validator::extract_reference_paths(text)
         }
         _ => Vec::new(),
@@ -573,6 +578,10 @@ fn parse_source_for_bfs(path: &Path, no_resolve: bool) -> ParsedSource {
         type_refs,
         reference_paths,
     }
+}
+
+fn text_may_contain_reference_directives(text: &str) -> bool {
+    text.contains("///") && text.contains("reference")
 }
 
 pub(super) fn read_source_files(

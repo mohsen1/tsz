@@ -292,7 +292,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn call_signature_has_obvious_literal_arg_mismatch(
+    pub(crate) fn call_signature_has_obvious_literal_arg_mismatch(
         &self,
         sig: &tsz_solver::CallSignature,
         args: &[NodeIndex],
@@ -306,14 +306,14 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn argument_is_string_literal_syntax(&self, arg_idx: NodeIndex) -> bool {
+    pub(crate) fn argument_is_string_literal_syntax(&self, arg_idx: NodeIndex) -> bool {
         self.ctx.arena.get(arg_idx).is_some_and(|node| {
             node.kind == SyntaxKind::StringLiteral as u16
                 || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
         })
     }
 
-    fn type_allows_string_literal_argument(&self, type_id: TypeId) -> bool {
+    pub(crate) fn type_allows_string_literal_argument(&self, type_id: TypeId) -> bool {
         if matches!(
             type_id,
             TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::STRING

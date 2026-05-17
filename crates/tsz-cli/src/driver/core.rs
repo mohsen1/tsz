@@ -2605,15 +2605,29 @@ fn collect_source_reference_libs(sources: &[SourceEntry]) -> Vec<String> {
     let mut lib_names = Vec::new();
     for source in sources {
         let refs = if let Some(text) = source.text.as_deref() {
-            tsz::config::extract_lib_references(text)
+            if source_may_contain_reference_lib_directives(text) {
+                tsz::config::extract_lib_references(text)
+            } else {
+                Vec::new()
+            }
         } else {
             std::fs::read_to_string(&source.path)
-                .map(|text| tsz::config::extract_lib_references(&text))
+                .map(|text| {
+                    if source_may_contain_reference_lib_directives(&text) {
+                        tsz::config::extract_lib_references(&text)
+                    } else {
+                        Vec::new()
+                    }
+                })
                 .unwrap_or_default()
         };
         append_unique_lib_names(&mut lib_names, refs);
     }
     lib_names
+}
+
+fn source_may_contain_reference_lib_directives(text: &str) -> bool {
+    text.contains("///") && text.contains("reference") && text.contains("lib")
 }
 
 /// Emit `TS2726` for user-authored source-file `/// <reference lib="..." />`
@@ -2637,10 +2651,20 @@ fn collect_source_reference_lib_diagnostics(
     let mut diagnostics = Vec::new();
     for source in sources {
         let positioned = if let Some(text) = source.text.as_deref() {
-            tsz::config::extract_lib_references_with_positions(text)
+            if source_may_contain_reference_lib_directives(text) {
+                tsz::config::extract_lib_references_with_positions(text)
+            } else {
+                Vec::new()
+            }
         } else {
             std::fs::read_to_string(&source.path)
-                .map(|text| tsz::config::extract_lib_references_with_positions(&text))
+                .map(|text| {
+                    if source_may_contain_reference_lib_directives(&text) {
+                        tsz::config::extract_lib_references_with_positions(&text)
+                    } else {
+                        Vec::new()
+                    }
+                })
                 .unwrap_or_default()
         };
         for reference in positioned {

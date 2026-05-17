@@ -959,6 +959,95 @@ declare module "pkg" {
 }
 
 #[test]
+fn simple_module_request_scanner_collects_static_imports_and_reexports() {
+    let requests = collect_simple_module_requests_from_text(
+        r#"
+import "./setup";
+import type { Widget } from "./types";
+import view from "./view";
+export { Widget } from "./types";
+export * from "./shared";
+export interface LocalOnly {}
+"#,
+    )
+    .expect("simple static module syntax should not need the source-discovery parser");
+
+    let actual: Vec<_> = requests
+        .iter()
+        .map(|(specifier, kind, _, has_type_json)| (specifier.as_str(), *kind, *has_type_json))
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            (
+                "./setup",
+                tsz::module_resolver::ImportKind::EsmImport,
+                false
+            ),
+            (
+                "./types",
+                tsz::module_resolver::ImportKind::EsmImport,
+                false
+            ),
+            ("./view", tsz::module_resolver::ImportKind::EsmImport, false),
+            (
+                "./types",
+                tsz::module_resolver::ImportKind::EsmReExport,
+                false
+            ),
+            (
+                "./shared",
+                tsz::module_resolver::ImportKind::EsmReExport,
+                false
+            ),
+        ]
+    );
+}
+
+#[test]
+fn simple_module_request_scanner_handles_ambient_modules_conservatively() {
+    let simple = collect_simple_module_requests_from_text(
+        r#"
+declare module "*.css" {}
+declare module "virtual:asset" {}
+declare module "./augment" {}
+"#,
+    )
+    .expect("ambient declarations without body imports can stay on the scanner path");
+    let specifiers: Vec<_> = simple
+        .iter()
+        .map(|(specifier, _, _, _)| specifier.as_str())
+        .collect();
+    assert_eq!(specifiers, vec!["./augment"]);
+
+    assert!(
+        collect_simple_module_requests_from_text(
+            r#"
+declare module "pkg" {
+  export { T } from "dep";
+}
+"#
+        )
+        .is_none(),
+        "real dependencies inside ambient module bodies fall back to the parser path"
+    );
+}
+
+#[test]
+fn simple_module_request_scanner_falls_back_for_mode_sensitive_forms() {
+    assert!(
+        collect_simple_module_requests_from_text(
+            r#"import data from "./data.json" with { type: "json" };"#
+        )
+        .is_none()
+    );
+    assert!(
+        collect_simple_module_requests_from_text(r#"const loader = import("./lazy");"#).is_none()
+    );
+    assert!(collect_simple_module_requests_from_text(r#"require("./cjs");"#).is_none());
+}
+
+#[test]
 fn test_collect_module_specifiers_mixed_import_kinds() {
     use tsz::module_resolver::ImportKind;
     let text = r#"
