@@ -2032,10 +2032,11 @@ pub(super) fn collect_diagnostics(
             // tsc suppresses all diagnostics on the line following such directives
             // and emits TS2578 for unused @ts-expect-error directives.
             if let Some(source) = file.arena.get_source_file_at(file.source_file) {
-                apply_ts_directive_suppression(
+                apply_ts_directive_suppression_with_unused_reporting(
                     &file.file_name,
                     source.text.as_ref(),
                     &mut file_diagnostics,
+                    !options.no_check,
                     options.emit_declarations && options.check_js && is_js,
                 );
             }
@@ -2450,10 +2451,11 @@ fn run_check_on_existing_checker<'a>(
 
     // Apply @ts-expect-error / @ts-ignore directive suppression.
     if let Some(source) = file.arena.get_source_file_at(file.source_file) {
-        apply_ts_directive_suppression(
+        apply_ts_directive_suppression_with_unused_reporting(
             &file.file_name,
             source.text.as_ref(),
             &mut file_diagnostics,
+            !no_check,
             compiler_options.emit_declarations && check_js && is_js,
         );
     }

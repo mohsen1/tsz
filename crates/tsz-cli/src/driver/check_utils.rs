@@ -1395,10 +1395,11 @@ pub(super) fn collect_no_check_parse_diagnostics_for_file(
     }
 
     if let Some(source) = arena.get_source_file_at(source_file) {
-        apply_ts_directive_suppression(
+        apply_ts_directive_suppression_with_unused_reporting(
             file_name,
             source.text.as_ref(),
             &mut file_diagnostics,
+            false,
             options.checker.emit_declarations && options.check_js && is_js,
         );
     }
@@ -2210,10 +2211,27 @@ fn find_ts_directives(text: &str) -> Vec<TsDirective> {
 /// 1. Finds all directive comments in the source text
 /// 2. Suppresses diagnostics on the line following each directive
 /// 3. Emits TS2578 for unused `@ts-expect-error` directives
+#[cfg(test)]
 pub(super) fn apply_ts_directive_suppression(
     file_name: &str,
     source_text: &str,
     diagnostics: &mut Vec<Diagnostic>,
+    preserve_declaration_jsdoc_name_diagnostics: bool,
+) {
+    apply_ts_directive_suppression_with_unused_reporting(
+        file_name,
+        source_text,
+        diagnostics,
+        true,
+        preserve_declaration_jsdoc_name_diagnostics,
+    );
+}
+
+pub(super) fn apply_ts_directive_suppression_with_unused_reporting(
+    file_name: &str,
+    source_text: &str,
+    diagnostics: &mut Vec<Diagnostic>,
+    report_unused_expect_error: bool,
     preserve_declaration_jsdoc_name_diagnostics: bool,
 ) {
     let directives = find_ts_directives(source_text);
@@ -2257,7 +2275,7 @@ pub(super) fn apply_ts_directive_suppression(
     // enclosing line start. Same-line directives start at the `//` or `/*`
     // opener, while directives inside multiline block comments start at the
     // line containing the directive text.
-    if !has_ts_nocheck {
+    if report_unused_expect_error && !has_ts_nocheck {
         for (idx, directive) in directives.iter().enumerate() {
             if directive.is_expect_error && !directive_used[idx] {
                 diagnostics.push(Diagnostic::error(
