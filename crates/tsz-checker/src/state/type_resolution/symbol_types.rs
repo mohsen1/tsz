@@ -1207,6 +1207,10 @@ impl<'a> CheckerState<'a> {
                     )
                 {
                     map.insert(computed.expression, name);
+                } else if let Some(name) =
+                    self.symbol_valued_binding_property_name(computed.expression, expr_type)
+                {
+                    map.insert(computed.expression, self.ctx.types.intern_string(&name));
                 } else if let Some(sym_ref) =
                     crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
                 {
@@ -1263,6 +1267,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx.checking_computed_property_name = prev;
                 if crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
                     .is_some()
+                    || self
+                        .symbol_valued_binding_property_name(computed.expression, expr_type)
+                        .is_some()
                 {
                     set.insert(computed.expression);
                 }

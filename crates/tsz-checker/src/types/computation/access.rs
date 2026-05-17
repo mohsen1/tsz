@@ -1495,6 +1495,32 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Handle `symbol`-typed const bindings used as computed property names.
+        // A declaration like `interface T { [sym]: number }` stores the member
+        // under the binding's stable internal key, so `obj[sym]` must use that
+        // same key rather than falling through to `undefined`.
+        if result_type.is_none()
+            && index_type == TypeId::SYMBOL
+            && !crate::query_boundaries::common::is_type_parameter(
+                self.ctx.types,
+                pre_resolution_object_type,
+            )
+            && let Some(property_name) =
+                self.symbol_valued_binding_property_name(access.name_or_argument, index_type)
+        {
+            let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+            let result = self.resolve_property_access_with_env(resolved_type, &property_name);
+            if let PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                ..
+            } = result
+            {
+                use_index_signature_check = false;
+                result_type = Some(effective_write_result(type_id, write_type));
+            }
+        }
+
         // Handle `symbol` (primitive) index on types with late-bound (computed) members.
         // When a class declares `[expr]()` where `expr` has type `symbol`, the member
         // is late-bound and not stored as a named property. tsc resolves `obj[expr]` to
