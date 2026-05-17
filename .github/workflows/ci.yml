@@ -354,15 +354,22 @@ jobs:
             if [[ "$page" -gt 30 ]]; then break; fi
           done
 
+          body=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
+          if ! grep -Eq '^[[:space:]]*AgentName:[[:space:]]*[^[:space:]]+' <<<"$body"; then
+            echo "Ready PRs must include a plain AgentName signature in the PR body."
+            echo "Missing field:"
+            echo "  AgentName: <stable agent name>"
+            exit 1
+          fi
+
           semantic_paths=$(printf '%s\n' "$changed_paths" \
             | grep -E '^(crates/(tsz-(binder|checker|cli|core|emitter|lsp|parser|scanner|solver|transforms)|tsz-website)/|scripts/(bench|ci|conformance|emit|fourslash)/|\.github/workflows/bench\.yml|\.github/workflows/ci\.yml)' \
             || true)
           if [[ -z "$semantic_paths" ]]; then
-            echo "No semantic, benchmark, or dashboard paths changed; project corpus fields are optional."
+            echo "Agent metadata is present. No semantic, benchmark, or dashboard paths changed; project corpus fields are optional."
             exit 0
           fi
 
-          body=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
           missing=()
           if ! grep -Eq '^##[[:space:]]+Project Corpus Impact[[:space:]]*$' <<<"$body"; then
             missing+=("## Project Corpus Impact")
@@ -383,7 +390,7 @@ jobs:
             exit 1
           fi
 
-          echo "Project corpus impact metadata is present."
+          echo "Agent and project corpus impact metadata are present."
 
   bench-script-smoke:
     name: bench-script-smoke
@@ -790,7 +797,7 @@ jobs:
   conformance-aggregate:
     name: conformance-aggregate
     needs: [gate, conformance]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled()
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled'
     continue-on-error: true
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
@@ -928,7 +935,7 @@ jobs:
   fourslash-aggregate:
     name: fourslash-aggregate
     needs: [gate, fourslash]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled()
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.fourslash.result != 'skipped' && needs.fourslash.result != 'cancelled'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:

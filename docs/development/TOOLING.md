@@ -76,9 +76,16 @@ Miri is useful for undefined-behavior checks in pure Rust library tests. Keep it
 focused; do not run conformance, emit, fourslash, CLI process harnesses, or the
 whole workspace under Miri.
 
+The default target set covers a small substrate slice plus the `tsz-core`
+snapshot cache round trip, which exercises the unsafe environment mutation used
+by that cache test. The script runs with strict provenance and disables Miri's
+host isolation by default so that the snapshot target can create a temporary
+directory. Keep `TSZ_MIRI_TARGETS` pinned to known-safe unit tests when adding
+new cases.
+
 ```bash
 rustup toolchain install nightly --component miri
-cargo +nightly miri setup
+rustup run nightly cargo miri setup
 scripts/quality/run-miri.sh
 ```
 
@@ -164,8 +171,10 @@ samply record --save-only -o /tmp/tsz-profile.json -- .target/flame/tsz check be
 
 Lower-priority overlaps are deliberately kept out of the default quality
 workflow: `cargo-audit` is covered by `cargo-deny` advisories, broad formal
-verification is too expensive without a specific proof target, and extra
-binary-size/profiling tools should stay tied to a measured performance question.
+verification is too expensive without a specific proof target, `cargo-fuzz` and
+Loom need dedicated parser/checker or concurrency harnesses before they are
+useful, and extra binary-size/profiling tools should stay tied to a measured
+performance question.
 
 ## Conformance Testing
 
