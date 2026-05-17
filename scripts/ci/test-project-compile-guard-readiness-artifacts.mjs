@@ -9,6 +9,12 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const GUARD_SCRIPT = path.join(ROOT, "scripts", "ci", "project-compile-guard.sh");
+const PROJECT_COMPATIBILITY_SCRIPT = path.join(
+  ROOT,
+  "scripts",
+  "ci",
+  "project-compatibility.mjs",
+);
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(
@@ -92,6 +98,74 @@ function readJsonl(file) {
     .filter(Boolean)
     .map((line) => JSON.parse(line));
 }
+
+withTempDir((dir) => {
+  const fixtureRoot = path.join(dir, "fixture-root");
+  const sourceRoot = path.join(
+    fixtureRoot,
+    "type-challenges-solutions",
+    ".tsz-compile",
+    "solutions",
+  );
+  const source = path.join(sourceRoot, "00001-medium-remap.ts");
+  const jsonl = path.join(fixtureRoot, "project-compatibility.jsonl");
+
+  writeFile(
+    source,
+    [
+      "type Remap<T> = {",
+      "  [K in keyof T as K]: T[K];",
+      "};",
+      "",
+    ].join("\n"),
+  );
+
+  run("node", [PROJECT_COMPATIBILITY_SCRIPT, "record"], {
+    env: {
+      ...process.env,
+      COMPAT_JSONL_FILE: jsonl,
+      COMPAT_NAME: "type-challenges-solutions-project",
+      COMPAT_EXIT_CLASS: "nonzero exit",
+      COMPAT_PHASE: "check",
+      COMPAT_DIAGNOSTIC_STATUS: "diagnostic mismatch or compiler error",
+      COMPAT_DIAGNOSTIC_DELTA: `tsz: ${source}(2,3): error TS2344: mapped failure`,
+      COMPAT_TSCONFIG_PATH: path.join(
+        fixtureRoot,
+        "type-challenges-solutions",
+        ".tsz-compile",
+        "tsconfig.tsz-guard.json",
+      ),
+      COMPAT_SOURCE_ROOT: sourceRoot,
+      COMPAT_FIXTURE_ROOT: fixtureRoot,
+      COMPAT_TSZ_EXIT_CODES: "1",
+      COMPAT_TSC_EXIT_CODES: "0",
+    },
+  });
+
+  const rows = readJsonl(jsonl);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, "type-challenges-solutions-project");
+  assert.equal(
+    rows[0].primary_subsystem,
+    "type-challenges mapped/key-remapped types",
+  );
+  assert.equal(
+    rows[0].first_failure_class,
+    "type-challenges mapped/key-remapped types",
+  );
+  assert.equal(
+    rows[0].owner_track,
+    "Track 2/3 Type Challenges type-level semantics",
+  );
+  assert.deepEqual(
+    rows[0].diagnostic_subsystems.map((group) => group.subsystem),
+    [
+      "type-challenges mapped/key-remapped types",
+      "type-challenges indexed access",
+    ],
+  );
+  assert.deepEqual(rows[0].diagnostic_subsystems[0].codes, ["TS2344"]);
+});
 
 function manifest(entry) {
   return {

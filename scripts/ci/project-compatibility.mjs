@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import {
+  normalizePath,
+  semanticFamiliesForFile,
+} from "./type-challenges-semantic-families.mjs";
 
 const DIAGNOSTIC_SUBSYSTEM_RULES = [
   ["project-config", new Set(["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"])],
@@ -27,6 +31,22 @@ const OWNER_TRACK_BY_SUBSYSTEM = new Map([
   ["uncoded diagnostic", "Track 1 triage"],
   ["unclassified diagnostic", "Track 1 triage"],
 ]);
+
+const TYPE_CHALLENGES_PROJECT_ROWS = new Set([
+  "type-challenges-project",
+  "type-challenges-solutions-project",
+  "type-challenges-assertions-tsc-clean",
+]);
+
+function ownerTrackForSubsystem(subsystem) {
+  if (subsystem?.startsWith("type-challenges ")) {
+    if (subsystem.includes("indexed access")) {
+      return "Track 5 Type Challenges keyspace/indexed access";
+    }
+    return "Track 2/3 Type Challenges type-level semantics";
+  }
+  return OWNER_TRACK_BY_SUBSYSTEM.get(subsystem);
+}
 
 function toNumber(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -75,6 +95,112 @@ function diagnosticSubsystemsFrom(deltas) {
     }
   }
   return [...groups.values()];
+}
+
+function parseDiagnosticDelta(line) {
+  const withoutLabel = String(line || "").replace(/^[a-z][\w-]*:\s+/, "");
+  const parenMatch = withoutLabel.match(
+    /^(.+?)\((\d+),(\d+)\):\s+(?:error\s+)?(TS\d{4,5})/,
+  );
+  if (parenMatch) {
+    return {
+      path: parenMatch[1],
+      code: parenMatch[4],
+    };
+  }
+
+  const colonMatch = withoutLabel.match(
+    /^(.+?):(\d+):(\d+)(?:\s+-)?\s+(?:error\s+)?(TS\d{4,5})/,
+  );
+  if (colonMatch) {
+    return {
+      path: colonMatch[1],
+      code: colonMatch[4],
+    };
+  }
+  return {
+    path: null,
+    code: null,
+  };
+}
+
+function sourceRootsForTypeChallenges() {
+  const roots = [];
+  const add = (value) => {
+    if (!value) return;
+    const resolved = path.resolve(value);
+    if (!roots.includes(resolved)) roots.push(resolved);
+  };
+  add(process.env.COMPAT_SOURCE_ROOT);
+  add(process.env.COMPAT_FIXTURE_ROOT);
+  return roots;
+}
+
+function typeChallengesFamiliesForFile(file, sourceRoots, sourceCache) {
+  if (!file) return ["unknown"];
+  const normalized = normalizePath(file).replace(/^\.\//, "");
+
+  for (const root of sourceRoots) {
+    const families = semanticFamiliesForFile(normalized, root, sourceCache);
+    if (!(families.length === 1 && families[0] === "unknown")) {
+      return families;
+    }
+  }
+
+  if (path.isAbsolute(file)) {
+    for (const root of sourceRoots) {
+      const families = semanticFamiliesForFile(file, root, sourceCache);
+      if (!(families.length === 1 && families[0] === "unknown")) {
+        return families;
+      }
+    }
+  }
+
+  return ["unknown"];
+}
+
+function typeChallengesDiagnosticSubsystemsFrom(projectName, deltas) {
+  if (!TYPE_CHALLENGES_PROJECT_ROWS.has(projectName)) {
+    return [];
+  }
+
+  const groups = new Map();
+  const sourceRoots = sourceRootsForTypeChallenges();
+  const sourceCache = new Map();
+  for (const line of deltas) {
+    const diagnostic = parseDiagnosticDelta(line);
+    const codes = diagnostic.code
+      ? [diagnostic.code]
+      : [...line.matchAll(/\bTS\d{4,5}\b/g)].map((match) => match[0]);
+    const lineCodes = codes.length ? codes : ["uncoded"];
+    const families = typeChallengesFamiliesForFile(diagnostic.path, sourceRoots, sourceCache);
+    if (families.length === 1 && families[0] === "unknown") {
+      continue;
+    }
+
+    for (const family of families) {
+      const subsystem = `type-challenges ${family}`;
+      if (!groups.has(subsystem)) {
+        groups.set(subsystem, { subsystem, codes: [], count: 0, examples: [] });
+      }
+      const group = groups.get(subsystem);
+      group.count += 1;
+      for (const code of lineCodes) {
+        if (code !== "uncoded" && !group.codes.includes(code) && group.codes.length < 8) {
+          group.codes.push(code);
+        }
+      }
+      if (group.examples.length < 3) {
+        group.examples.push(line);
+      }
+    }
+  }
+  return [...groups.values()];
+}
+
+function diagnosticSubsystemsForProject(projectName, deltas) {
+  const typeChallengesSubsystems = typeChallengesDiagnosticSubsystemsFrom(projectName, deltas);
+  return typeChallengesSubsystems.length ? typeChallengesSubsystems : diagnosticSubsystemsFrom(deltas);
 }
 
 function diagnosticCodesFrom(deltas) {
@@ -131,7 +257,7 @@ function ownerTrackFrom({ exitClass, diagnosticSubsystems }) {
   if (exitClass === "crash") return "Track 1 crash triage";
 
   const primary = diagnosticSubsystems[0]?.subsystem;
-  return OWNER_TRACK_BY_SUBSYSTEM.get(primary) || "Track 1 triage";
+  return ownerTrackForSubsystem(primary) || "Track 1 triage";
 }
 
 function relativeToFixture(value) {
@@ -225,7 +351,8 @@ function record() {
     .filter(Boolean)
     .slice(0, 20);
 
-  const diagnosticSubsystems = diagnosticSubsystemsFrom(diagnosticDeltas);
+  const projectName = process.env.COMPAT_NAME || "";
+  const diagnosticSubsystems = diagnosticSubsystemsForProject(projectName, diagnosticDeltas);
   const diagnosticCodes = diagnosticCodesFrom(diagnosticDeltas);
   const exitClass = process.env.COMPAT_EXIT_CLASS || "unknown";
   const diagnosticStatus = process.env.COMPAT_DIAGNOSTIC_STATUS || "unknown";
@@ -238,7 +365,7 @@ function record() {
     diagnosticCodes,
   });
   const row = {
-    name: process.env.COMPAT_NAME || "",
+    name: projectName,
     state,
     exit_class: exitClass,
     first_failure_class: state === "green" ? null : knownBlockers[0] || exitClass,
