@@ -389,6 +389,19 @@ write_type_challenges_assertion_candidates() {
   fi
 }
 
+write_type_challenges_assertion_classification() {
+  local candidate_dir="$FIXTURE_ROOT/type-challenges-assertions"
+  local manifest="$candidate_dir/type-challenges-assertions-manifest.json"
+  local output="$candidate_dir/type-challenges-assertions-classification.json"
+
+  if [[ -f "$manifest" ]]; then
+    node scripts/ci/type-challenges-assertion-classifier.mjs \
+      "$candidate_dir" \
+      "$manifest" \
+      "$output"
+  fi
+}
+
 check_project() {
   local name="$1"
   local tsconfig="$2"
@@ -541,6 +554,7 @@ esac
 
 write_type_challenges_pairing_report
 write_type_challenges_assertion_candidates
+write_type_challenges_assertion_classification
 
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "Project compile failures: $FAILURES"
