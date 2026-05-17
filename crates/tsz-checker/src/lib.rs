@@ -600,6 +600,9 @@ mod property_alias_display_tests;
 #[path = "../tests/recursive_alias_application_target_display_tests.rs"]
 mod recursive_alias_application_target_display_tests;
 #[cfg(test)]
+#[path = "tests/recursive_path_default_type_param_tests.rs"]
+mod recursive_path_default_type_param_tests;
+#[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
 #[cfg(test)]
