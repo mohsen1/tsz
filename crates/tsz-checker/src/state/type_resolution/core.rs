@@ -306,16 +306,12 @@ impl<'a> CheckerState<'a> {
                         }
 
                         self.ctx.depth_exceeded.set(false);
-                        // Use the regular cached evaluator for ordinary
-                        // type-reference probes. The TS2589-specific evaluator
-                        // treats any repeated Application cycle as overflow,
-                        // which is too aggressive for bounded recursive
-                        // conditional aliases. The environment cache preserves
-                        // the depth-exceeded bit for later probes, so repeated
-                        // concrete alias applications do not have to re-expand
-                        // the same intermediate Application/Conditional graph.
+                        // Use the regular evaluator for ordinary type-reference
+                        // probes. The TS2589-specific evaluator treats any repeated
+                        // Application cycle as overflow, which is too aggressive for
+                        // bounded recursive conditional aliases.
                         let exceeded = {
-                            let _ = self.evaluate_type_with_env(type_id);
+                            let _ = self.evaluate_type_with_env_uncached(type_id);
                             self.ctx.depth_exceeded.get()
                         };
 
@@ -1091,16 +1087,12 @@ impl<'a> CheckerState<'a> {
                         if !args_have_type_params {
                             // Reset depth_exceeded before evaluation so we detect fresh depth exceedance
                             self.ctx.depth_exceeded.set(false);
-                            // Use the regular cached evaluator for ordinary
-                            // type-reference probes. The TS2589-specific evaluator
-                            // treats any repeated Application cycle as overflow,
-                            // which is too aggressive for bounded recursive
-                            // conditional aliases. The environment cache preserves
-                            // the depth-exceeded bit for later probes, so repeated
-                            // concrete alias applications do not have to re-expand
-                            // the same intermediate Application/Conditional graph.
+                            // Use the regular evaluator for ordinary type-reference
+                            // probes. The TS2589-specific evaluator treats any repeated
+                            // Application cycle as overflow, which is too aggressive for
+                            // bounded recursive conditional aliases.
                             let exceeded = {
-                                let _ = self.evaluate_type_with_env(result);
+                                let _ = self.evaluate_type_with_env_uncached(result);
                                 self.ctx.depth_exceeded.get()
                             };
 
