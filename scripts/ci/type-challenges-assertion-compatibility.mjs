@@ -215,10 +215,12 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
   for (const compiler of ["tsc", "tsz"]) {
     const totalCandidates =
       cleanSubsetClassification.compilers?.[compiler]?.candidateDiagnostics?.totalCandidates;
-    if (
-      Number.isInteger(totalCandidates) &&
-      totalCandidates !== acceptedAssertions
-    ) {
+    if (!Number.isInteger(totalCandidates)) {
+      fail(
+        `tsc-clean assertion classification ${compiler} candidateDiagnostics.totalCandidates must be an integer`,
+      );
+    }
+    if (totalCandidates !== acceptedAssertions) {
       fail(
         `tsc-clean assertion classification ${compiler} totalCandidates (${totalCandidates}) does not match manifest tscAcceptedAssertions (${acceptedAssertions})`,
       );
