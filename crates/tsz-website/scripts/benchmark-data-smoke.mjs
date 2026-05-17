@@ -108,6 +108,29 @@ await fs.writeFile(artifact, `${JSON.stringify({
         },
       },
     },
+    {
+      name: "type-challenges-assertions-tsc-clean",
+      lines: 10,
+      kb: 2,
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+      status: "compile canary tracked in CI; not timed by vs-tsgo benchmarks",
+      compatibility: {
+        exit_class: "exit success",
+        phase: "check",
+        last_successful_phase: "check",
+        diagnostic_status: "none",
+        diagnostic_deltas: [],
+        diagnostic_subsystems: [],
+        known_blockers: [],
+        exit_codes: { tsc: [0], tsz: [0], tsgo: [] },
+        files_reached: 10,
+        peak_memory_bytes: null,
+        emit_status: "not in scope (noEmit assertion check)",
+        dts_status: "not in scope (noEmit assertion check)",
+      },
+    },
   ],
 }, null, 2)}\n`, "utf8");
 
@@ -172,11 +195,21 @@ try {
   assert.equal(typeChallengesSolutionsPage.failed, true);
   assert.match(typeChallengesSolutionsPage.status_label, /compile canary/i);
 
+  const typeChallengesCleanPage = pages.find((page) => page.name === "type-challenges-assertions-tsc-clean");
+  assert.ok(typeChallengesCleanPage, "expected compile-canary type-challenges tsc-clean assertions page");
+  assert.equal(
+    typeChallengesCleanPage.display_name,
+    "type-challenges tsc-clean assertions",
+  );
+  assert.equal(typeChallengesCleanPage.failed, true);
+  assert.match(typeChallengesCleanPage.status_label, /compile canary/i);
+
   const charts = getBenchmarkCharts();
   assert.match(charts, /External libraries/);
   assert.match(charts, /Compile canaries and incomplete project timings/);
   assert.match(charts, /type-challenges project/);
   assert.match(charts, /type-challenges solutions project/);
+  assert.match(charts, /type-challenges tsc-clean assertions/);
 
   const compatibilityDashboard = getProjectCompatibilityDashboard();
   assert.match(compatibilityDashboard, /type-challenges assertions/);
