@@ -729,10 +729,6 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         let source_text = sf.text.as_ref();
-        // Cheap text scan first — most files have no JSDoc `import(` at all.
-        if !source_text.contains("import(") {
-            return false;
-        }
 
         for comment in &sf.comments {
             if !is_jsdoc_comment(comment, source_text) {

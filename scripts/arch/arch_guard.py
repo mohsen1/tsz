@@ -589,7 +589,7 @@ REGEX_LINE_COUNT_CHECKS = [
         "Checker diagnostic boundary: source_text.contains decisions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
-        37,
+        36,
     ),
     (
         "Checker diagnostic boundary: file-name/path substring decisions (Track 10)",
