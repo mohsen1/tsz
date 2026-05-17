@@ -473,26 +473,20 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("export { ");
         let mut first = true;
-        for export_idx in aliases {
-            let Some(export_node) = self.arena.get(export_idx) else {
+        for spec_idx in aliases {
+            if self
+                .arena
+                .get(spec_idx)
+                .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                .is_none()
+            {
                 continue;
-            };
-            let Some(export) = self.arena.get_export_decl(export_node) else {
-                continue;
-            };
-            let Some(clause_node) = self.arena.get(export.export_clause) else {
-                continue;
-            };
-            let Some(named) = self.arena.get_named_imports(clause_node) else {
-                continue;
-            };
-            for &spec_idx in &named.elements.nodes {
-                if !first {
-                    self.write(", ");
-                }
-                first = false;
-                self.emit_specifier(spec_idx, true);
             }
+            if !first {
+                self.write(", ");
+            }
+            first = false;
+            self.emit_specifier(spec_idx, true);
         }
         self.write(" };");
         self.write_line();

@@ -155,7 +155,7 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_deferred_local_export_interface_statements: FxHashSet<NodeIndex>,
     /// Local `export { ... }` clauses consumed by deferred JS interface emit.
     pub(super) js_skipped_local_export_interface_exports: FxHashSet<NodeIndex>,
-    /// JS local renamed export declarations emitted as one trailing alias group.
+    /// JS local renamed export specifiers emitted as one trailing alias group.
     pub(super) js_local_export_aliases: Vec<NodeIndex>,
     /// JS local renamed export declarations skipped at their source position.
     pub(super) js_skipped_local_export_aliases: FxHashSet<NodeIndex>,

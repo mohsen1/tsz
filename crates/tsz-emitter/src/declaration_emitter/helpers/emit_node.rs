@@ -504,6 +504,8 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let export_targets = self.collect_js_named_export_targets(source_file);
+        let enum_targets = self.js_local_enum_targets_by_name(source_file);
+        let interface_targets = self.js_local_interface_targets_by_name(source_file);
 
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -534,58 +536,32 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            let mut foldable_names = Vec::new();
-            let mut target_statements = Vec::new();
-            let mut seen_target_statements = FxHashSet::default();
-
-            for &spec_idx in &named.elements.nodes {
-                let Some(spec_node) = self.arena.get(spec_idx) else {
-                    foldable_names.clear();
-                    target_statements.clear();
-                    break;
-                };
-                let Some(spec) = self.arena.get_specifier(spec_node) else {
-                    foldable_names.clear();
-                    target_statements.clear();
-                    break;
-                };
-                if spec.property_name.is_some() {
-                    foldable_names.clear();
-                    target_statements.clear();
-                    break;
-                }
-                let Some(name_node) = self.arena.get(spec.name) else {
-                    foldable_names.clear();
-                    target_statements.clear();
-                    break;
-                };
-                let Some(name_ident) = self.arena.get_identifier(name_node) else {
-                    foldable_names.clear();
-                    target_statements.clear();
-                    break;
-                };
-                let name = name_ident.escaped_text.clone();
-                let Some(&target_stmt_idx) = export_targets.get(&name) else {
-                    foldable_names.clear();
-                    target_statements.clear();
-                    break;
-                };
-                foldable_names.push(name);
-                if seen_target_statements.insert(target_stmt_idx) {
-                    target_statements.push(target_stmt_idx);
-                }
-            }
-
-            if foldable_names.is_empty() {
+            let Some(plan) = self.js_local_named_export_plan(
+                named,
+                &export_targets,
+                &enum_targets,
+                &interface_targets,
+            ) else {
+                continue;
+            };
+            if plan.folded_names.is_empty() {
                 continue;
             }
 
-            for name in foldable_names {
+            for name in plan.folded_names {
+                names.insert(name);
+            }
+            for name in plan.plain_interface_names {
                 names.insert(name);
             }
 
             let mut deferred_targets = Vec::new();
-            for target_stmt_idx in target_statements {
+            for interface_stmt_idx in plan.interface_statements {
+                if deferred_statements.insert(interface_stmt_idx) {
+                    deferred_targets.push(interface_stmt_idx);
+                }
+            }
+            for target_stmt_idx in plan.folded_target_statements {
                 let Some(target_stmt_node) = self.arena.get(target_stmt_idx) else {
                     continue;
                 };

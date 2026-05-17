@@ -2294,6 +2294,39 @@ export { HH as H };
 }
 
 #[test]
+fn test_js_mixed_named_export_partitions_interface_and_value_specifiers() {
+    let source = r#"
+interface G {}
+interface H {}
+const x = 1;
+export { G, H as HH, x };
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let g_pos = output
+        .find("export interface G")
+        .expect("expected same-name interface export to fold into declaration");
+    let h_pos = output
+        .find("interface H")
+        .expect("expected renamed interface to keep a local declaration");
+    let x_pos = output
+        .find("export const x: 1;")
+        .expect("expected same-name value export to fold into declaration");
+    let alias_pos = output
+        .find("export { H as HH };")
+        .expect("expected renamed interface alias to remain in trailing export aliases");
+
+    assert!(
+        g_pos < h_pos && h_pos < x_pos && x_pos < alias_pos,
+        "Expected mixed export specifiers to be partitioned in tsc order: {output}"
+    );
+    assert!(
+        !output.contains("export { G, H as HH, x };"),
+        "Did not expect the original mixed export clause to be emitted: {output}"
+    );
+}
+
+#[test]
 fn test_js_interface_recovery_orders_construct_call_then_members() {
     let source = r#"
 export interface C<T, U> {

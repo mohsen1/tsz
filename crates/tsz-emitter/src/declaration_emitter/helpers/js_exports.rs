@@ -44,6 +44,15 @@ pub(in crate::declaration_emitter) struct JsCjsExportAliasCollection {
     pub skipped_statements: FxHashSet<NodeIndex>,
 }
 
+#[derive(Default)]
+pub(in crate::declaration_emitter) struct JsLocalNamedExportPlan {
+    pub(in crate::declaration_emitter) folded_names: Vec<String>,
+    pub(in crate::declaration_emitter) plain_interface_names: Vec<String>,
+    pub(in crate::declaration_emitter) folded_target_statements: Vec<NodeIndex>,
+    pub(in crate::declaration_emitter) interface_statements: Vec<NodeIndex>,
+    pub(in crate::declaration_emitter) alias_specifiers: Vec<NodeIndex>,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     fn is_js_commonjs_export_identifier_text(text: &str) -> bool {
         let mut chars = text.chars();
@@ -1066,7 +1075,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.source_file_is_js(source_file) {
             return (aliases, skipped);
         }
+        let export_targets = self.collect_js_named_export_targets(source_file);
         let enum_targets = self.js_local_enum_targets_by_name(source_file);
+        let interface_targets = self.js_local_interface_targets_by_name(source_file);
 
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -1094,19 +1105,17 @@ impl<'a> DeclarationEmitter<'a> {
             if named.name.is_some() || named.elements.nodes.is_empty() {
                 continue;
             }
-            let all_renamed_value_aliases = named.elements.nodes.iter().copied().all(|spec_idx| {
-                self.arena
-                    .get(spec_idx)
-                    .and_then(|spec_node| self.arena.get_specifier(spec_node))
-                    .is_some_and(|spec| spec.property_name.is_some() && !spec.is_type_only)
-            });
-            if !all_renamed_value_aliases {
-                continue;
+            if let Some(plan) = self.js_local_named_export_plan(
+                named,
+                &export_targets,
+                &enum_targets,
+                &interface_targets,
+            ) {
+                aliases.extend(plan.alias_specifiers.iter().copied());
+                if !plan.alias_specifiers.is_empty() && plan.folded_names.is_empty() {
+                    skipped.insert(stmt_idx);
+                }
             }
-
-            aliases.push(stmt_idx);
-            skipped.insert(stmt_idx);
-            continue;
         }
 
         for &stmt_idx in &source_file.statements.nodes {
@@ -1232,6 +1241,8 @@ impl<'a> DeclarationEmitter<'a> {
         if interface_targets.is_empty() {
             return (deferred, skipped_exports);
         }
+        let export_targets = self.collect_js_named_export_targets(source_file);
+        let enum_targets = self.js_local_enum_targets_by_name(source_file);
 
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -1256,38 +1267,22 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(named) = self.arena.get_named_imports(clause_node) else {
                 continue;
             };
-            let mut interface_statements = Vec::new();
-            let mut all_specs_are_interfaces = !named.elements.nodes.is_empty();
-            for &spec_idx in &named.elements.nodes {
-                let Some(spec) = self
-                    .arena
-                    .get(spec_idx)
-                    .and_then(|spec_node| self.arena.get_specifier(spec_node))
-                else {
-                    all_specs_are_interfaces = false;
-                    continue;
-                };
-                if spec.is_type_only {
-                    all_specs_are_interfaces = false;
-                    continue;
-                }
-                let local_name_idx = if spec.property_name.is_some() {
-                    spec.property_name
-                } else {
-                    spec.name
-                };
-                let Some(local_name) = self.get_identifier_text(local_name_idx) else {
-                    all_specs_are_interfaces = false;
-                    continue;
-                };
-                if let Some(&interface_stmt) = interface_targets.get(&local_name) {
-                    interface_statements.push(interface_stmt);
-                } else {
-                    all_specs_are_interfaces = false;
-                }
+            let Some(plan) = self.js_local_named_export_plan(
+                named,
+                &export_targets,
+                &enum_targets,
+                &interface_targets,
+            ) else {
+                continue;
+            };
+            if plan.interface_statements.is_empty() {
+                continue;
             }
-            if all_specs_are_interfaces {
-                deferred.extend(interface_statements);
+            if !plan.folded_names.is_empty() {
+                continue;
+            }
+            deferred.extend(plan.interface_statements.iter().copied());
+            if plan.folded_names.is_empty() && plan.alias_specifiers.is_empty() {
                 skipped_exports.insert(stmt_idx);
             }
         }
@@ -1344,7 +1339,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn js_local_enum_targets_by_name(
+    pub(in crate::declaration_emitter) fn js_local_enum_targets_by_name(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) -> FxHashMap<String, NodeIndex> {
@@ -1372,7 +1367,7 @@ impl<'a> DeclarationEmitter<'a> {
         targets
     }
 
-    fn js_local_interface_targets_by_name(
+    pub(in crate::declaration_emitter) fn js_local_interface_targets_by_name(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) -> FxHashMap<String, NodeIndex> {
@@ -1510,6 +1505,72 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         false
+    }
+
+    pub(in crate::declaration_emitter) fn js_local_named_export_plan(
+        &self,
+        named: &tsz_parser::parser::node::NamedImportsData,
+        export_targets: &FxHashMap<String, NodeIndex>,
+        enum_targets: &FxHashMap<String, NodeIndex>,
+        interface_targets: &FxHashMap<String, NodeIndex>,
+    ) -> Option<JsLocalNamedExportPlan> {
+        if named.name.is_some() || named.elements.nodes.is_empty() {
+            return None;
+        }
+
+        let mut plan = JsLocalNamedExportPlan::default();
+        let mut seen_folded_targets = FxHashSet::default();
+        let mut seen_interface_targets = FxHashSet::default();
+
+        for &spec_idx in &named.elements.nodes {
+            let spec = self
+                .arena
+                .get(spec_idx)
+                .and_then(|spec_node| self.arena.get_specifier(spec_node))?;
+            if spec.is_type_only {
+                return None;
+            }
+
+            let local_name_idx = if spec.property_name.is_some() {
+                spec.property_name
+            } else {
+                spec.name
+            };
+            let local_name = self.get_identifier_text(local_name_idx)?;
+
+            if let Some(&interface_stmt) = interface_targets.get(&local_name) {
+                if seen_interface_targets.insert(interface_stmt) {
+                    plan.interface_statements.push(interface_stmt);
+                }
+                if spec.property_name.is_some() {
+                    plan.alias_specifiers.push(spec_idx);
+                } else {
+                    plan.plain_interface_names.push(local_name);
+                }
+                continue;
+            }
+
+            if spec.property_name.is_some() {
+                plan.alias_specifiers.push(spec_idx);
+                continue;
+            }
+
+            if let Some(&target_stmt_idx) = export_targets.get(&local_name) {
+                plan.folded_names.push(local_name);
+                if seen_folded_targets.insert(target_stmt_idx) {
+                    plan.folded_target_statements.push(target_stmt_idx);
+                }
+                continue;
+            }
+
+            if enum_targets.contains_key(&local_name) {
+                continue;
+            }
+
+            return None;
+        }
+
+        Some(plan)
     }
 
     /// Parse `module.exports.X = Y` and return `(export_name, local_name, stmt_idx)`.
