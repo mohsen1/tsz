@@ -1146,8 +1146,7 @@ if (obj instanceof SubClass) { obj; }
     let error_codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
     assert!(
         error_codes.is_empty(),
-        "Expected no diagnostics for valid instanceof with [Symbol.hasInstance], got: {:?}",
-        error_codes
+        "Expected no diagnostics for valid instanceof with [Symbol.hasInstance], got: {error_codes:?}"
     );
 }
 
@@ -1204,7 +1203,6 @@ if (val instanceof DerivedClass) { val; }
     let error_codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
     assert!(
         error_codes.is_empty(),
-        "Expected no diagnostics for valid instanceof with [Symbol.hasInstance] (renamed vars), got: {:?}",
-        error_codes
+        "Expected no diagnostics for valid instanceof with [Symbol.hasInstance] (renamed vars), got: {error_codes:?}"
     );
 }
