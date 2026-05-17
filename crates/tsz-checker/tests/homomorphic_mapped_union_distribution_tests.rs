@@ -413,7 +413,7 @@ const t: "X" = a.type
 }
 
 /// Exact repro from issue #6813: interfaces, named union alias `Nodes`, and
-/// Extract on the result of a homomorphic ReplaceKeys mapped type.
+/// Extract on the result of a homomorphic `ReplaceKeys` mapped type.
 #[test]
 fn issue_6813_exact_repro_extract_from_replace_keys_named_union() {
     no_errors(
@@ -445,7 +445,7 @@ const aName: number = a.name;
 // ---------------------------------------------------------------------------
 
 /// `Partial<Nodes>` must distribute over the named union alias.
-/// `Extract<Partial<Nodes>, {type:"A"}>` must give the partial NodeA shape.
+/// `Extract<Partial<Nodes>, {type:"A"}>` must give the partial `NodeA` shape.
 #[test]
 fn extract_on_builtin_partial_named_union_alias() {
     no_errors(
@@ -545,7 +545,7 @@ const aName: number = a.name
     );
 }
 
-/// Partial result: Extract on Partial<ReplaceKeys<Nodes>>.
+/// Partial result: Extract on `Partial<ReplaceKeys<Nodes>>`.
 #[test]
 fn extract_on_partial_of_replace_keys_named_alias() {
     no_errors(
