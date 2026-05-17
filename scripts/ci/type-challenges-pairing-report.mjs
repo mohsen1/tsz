@@ -155,6 +155,24 @@ function ensureManifestEntries(label, manifest) {
   }
 }
 
+function ensureSolutionDeclarations(manifest) {
+  for (const entry of manifest.entries ?? []) {
+    const declarations = Array.isArray(entry?.declarations)
+      ? entry.declarations.map(String).filter(Boolean)
+      : [];
+    if (declarations.length > 0) continue;
+
+    console.error(
+      [
+        "error: Type Challenges solution manifest entry has no declarations",
+        `source: ${entry?.source || "<missing source>"}`,
+        `challenge id: ${challengeId(entry) || "<missing id>"}`,
+      ].join("\n"),
+    );
+    process.exit(1);
+  }
+}
+
 function ensureSourcesAreCompatible(templateManifest, testCasesManifest, solutionsManifest) {
   ensureManifestShape(
     "template",
@@ -178,6 +196,7 @@ function ensureSourcesAreCompatible(templateManifest, testCasesManifest, solutio
   ensureManifestEntries("template", templateManifest);
   ensureManifestEntries("test-case", testCasesManifest);
   ensureManifestEntries("solution", solutionsManifest);
+  ensureSolutionDeclarations(solutionsManifest);
 
   ensurePinnedSource("template", templateManifest);
   ensurePinnedSource("test-case", testCasesManifest);
