@@ -7,8 +7,7 @@ use tracing::trace;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::PropertyInfo;
-use tsz_solver::TypeId;
+use tsz_solver::{PropertyInfo, SymbolRef, TypeId};
 
 type ImportQuerySegments = Vec<(NodeIndex, String)>;
 
@@ -717,37 +716,70 @@ impl<'a> CheckerState<'a> {
             decl = symbol.primary_declaration()?;
         }
         let decl_node = self.ctx.arena.get(decl)?;
-        let type_annotation = if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
-            decl.type_annotation
-                .is_some()
-                .then_some(decl.type_annotation)
-        } else if decl_node.kind == syntax_kind_ext::PARAMETER {
-            let param = self.ctx.arena.get_parameter(decl_node)?;
-            param
-                .type_annotation
-                .is_some()
-                .then_some(param.type_annotation)
-        } else if decl_node.kind == SyntaxKind::Identifier as u16 {
-            let parent = self.ctx.arena.get_extended(decl)?.parent;
-            let parent_node = self.ctx.arena.get(parent)?;
-            if parent_node.kind == syntax_kind_ext::PARAMETER {
-                let param = self.ctx.arena.get_parameter(parent_node)?;
-                (param.name == decl && param.type_annotation.is_some())
-                    .then_some(param.type_annotation)
-            } else if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
-                (var_decl.name == decl && var_decl.type_annotation.is_some())
-                    .then_some(var_decl.type_annotation)
+        let (type_annotation, can_own_unique_symbol) =
+            if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+                var_decl.type_annotation.is_some().then_some((
+                    var_decl.type_annotation,
+                    self.ctx.arena.is_const_variable_declaration(decl),
+                ))
+            } else if decl_node.kind == syntax_kind_ext::PARAMETER {
+                let param = self.ctx.arena.get_parameter(decl_node)?;
+                param
+                    .type_annotation
+                    .is_some()
+                    .then_some((param.type_annotation, false))
+            } else if decl_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                let prop = self.ctx.arena.get_property_decl(decl_node)?;
+                prop.type_annotation.is_some().then_some((
+                    prop.type_annotation,
+                    crate::types_domain::unique_symbol_arena::has_declared_unique_symbol_owner(
+                        self.ctx.arena,
+                        prop.type_annotation,
+                    ),
+                ))
+            } else if decl_node.kind == SyntaxKind::Identifier as u16 {
+                let parent = self.ctx.arena.get_extended(decl)?.parent;
+                let parent_node = self.ctx.arena.get(parent)?;
+                if parent_node.kind == syntax_kind_ext::PARAMETER {
+                    let param = self.ctx.arena.get_parameter(parent_node)?;
+                    (param.name == decl && param.type_annotation.is_some())
+                        .then_some((param.type_annotation, false))
+                } else if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                    let var_decl = self.ctx.arena.get_variable_declaration(parent_node)?;
+                    (var_decl.name == decl && var_decl.type_annotation.is_some()).then_some((
+                        var_decl.type_annotation,
+                        self.ctx.arena.is_const_variable_declaration(parent),
+                    ))
+                } else if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                    let prop = self.ctx.arena.get_property_decl(parent_node)?;
+                    (prop.name == decl && prop.type_annotation.is_some()).then_some((
+                        prop.type_annotation,
+                        crate::types_domain::unique_symbol_arena::has_declared_unique_symbol_owner(
+                            self.ctx.arena,
+                            prop.type_annotation,
+                        ),
+                    ))
+                } else {
+                    None
+                }
             } else {
                 None
-            }
-        } else {
-            None
-        }?;
+            }?;
 
         if self.is_direct_typeof_query_for_symbol(type_annotation, sym_id) {
             return None;
+        }
+
+        if crate::types_domain::unique_symbol_arena::is_unique_symbol_type_annotation_unwrapped(
+            self.ctx.arena,
+            type_annotation,
+        ) {
+            return Some(if can_own_unique_symbol {
+                self.ctx.types.unique_symbol(SymbolRef(sym_id.0))
+            } else {
+                TypeId::SYMBOL
+            });
         }
 
         Some(self.get_type_from_type_node(type_annotation))
