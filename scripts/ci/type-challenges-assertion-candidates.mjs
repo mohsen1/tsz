@@ -51,6 +51,46 @@ function safeSegment(text) {
     .slice(0, 120);
 }
 
+function ensurePairingReportShape(report) {
+  if (report?.fixture !== "type-challenges-readiness-pairing") {
+    console.error(
+      `error: unexpected Type Challenges pairing report fixture: ${report?.fixture || "<missing>"}`,
+    );
+    process.exit(1);
+  }
+
+  const pairs = report.pairedSolutions;
+  if (!Array.isArray(pairs)) {
+    console.error("error: Type Challenges pairing report has no pairedSolutions array");
+    process.exit(1);
+  }
+
+  const expectedPairs = Number(report?.counts?.pairedSolutions);
+  if (!Number.isInteger(expectedPairs) || expectedPairs !== pairs.length) {
+    console.error(
+      [
+        "error: Type Challenges pairing report count metadata is inconsistent",
+        `pairedSolutions: ${pairs.length}`,
+        `counts.pairedSolutions: ${Number.isInteger(expectedPairs) ? expectedPairs : "<missing>"}`,
+      ].join("\n"),
+    );
+    process.exit(1);
+  }
+
+  for (const label of ["templates", "testCases", "solutions"]) {
+    const source = report?.sources?.[label];
+    if (source?.repository && source?.ref) continue;
+
+    console.error(
+      [
+        `error: Type Challenges pairing report is missing ${label} source metadata`,
+        `${source?.repository || "<missing repository>"} @ ${source?.ref || "<missing ref>"}`,
+      ].join("\n"),
+    );
+    process.exit(1);
+  }
+}
+
 function candidateFileName(pair) {
   const sourceBase = path
     .basename(pair.solution.source ?? pair.solution.output, path.extname(pair.solution.source ?? ""))
@@ -61,6 +101,7 @@ function candidateFileName(pair) {
 }
 
 const report = readJson(pairingReportPath);
+ensurePairingReportShape(report);
 const pairs = report.pairedSolutions ?? [];
 fs.rmSync(outputDir, { recursive: true, force: true });
 fs.mkdirSync(path.join(outputDir, "assertions"), { recursive: true });
