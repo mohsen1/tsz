@@ -1633,6 +1633,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 None
             }
+            TypeData::TypeQuery(_) => {
+                // `typeof sym` in a generic mapped constraint can survive inside
+                // `T[number]` until the outer evaluator has a resolver. Resolve it
+                // here so unique-symbol value queries become concrete mapped keys.
+                let resolved = self.evaluate(type_id);
+                if resolved != type_id {
+                    self.extract_mapped_keys(resolved)
+                } else {
+                    None
+                }
+            }
             // Can't extract literals from other types
             _ => None,
         }

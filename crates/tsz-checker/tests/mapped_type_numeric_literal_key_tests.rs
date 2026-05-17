@@ -140,6 +140,85 @@ fn numeric_keys_through_indexed_access() {
 }
 
 #[test]
+fn generic_tuple_to_object_preserves_unique_symbol_keys() {
+    assert_no_errors(
+        "TupleToObject<readonly [typeof sym, \"foo\"]>",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        declare const sym: unique symbol;
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [K in T[number]]: K
+        };
+        type Result = TupleToObject<readonly [typeof sym, "foo"]>;
+        type Expected = { [sym]: typeof sym; foo: "foo" };
+        type Case = Expect<Equal<Result, Expected>>;
+
+        declare const r: Result;
+        const symbolValue: typeof sym = r[sym];
+        const stringValue: "foo" = r.foo;
+        const literal: Result = { [sym]: sym, foo: "foo" };
+        "#,
+    );
+}
+
+#[test]
+fn renamed_mapped_variable_preserves_multiple_unique_symbol_keys() {
+    assert_no_errors(
+        "renamed mapped variable over two unique-symbol tuple elements",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        declare const first: unique symbol;
+        declare const second: unique symbol;
+
+        type TupleToObject<U extends readonly (string | number | symbol)[]> = {
+          [P in U[number]]: P
+        };
+        type Result = TupleToObject<readonly [typeof first, typeof second, "foo"]>;
+        type Expected = {
+          [first]: typeof first;
+          [second]: typeof second;
+          foo: "foo";
+        };
+        type Case = Expect<Equal<Result, Expected>>;
+
+        declare const r: Result;
+        const firstValue: typeof first = r[first];
+        const secondValue: typeof second = r[second];
+        const stringValue: "foo" = r.foo;
+        "#,
+    );
+}
+
+#[test]
+fn unique_symbol_tuple_mapped_type_rejects_unrelated_symbol_key() {
+    let diags = check_source_diagnostics(
+        r#"
+        declare const sym: unique symbol;
+        declare const other: unique symbol;
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [K in T[number]]: K
+        };
+        declare const r: TupleToObject<readonly [typeof sym, "foo"]>;
+        const missing = r[other];
+        "#,
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 7053),
+        "expected TS7053 for unrelated unique-symbol key, got: {diags:#?}"
+    );
+}
+
+#[test]
 fn homomorphic_over_numeric_named_properties_preserves_numeric_keys() {
     // `[K in keyof T]: T[K]` over `{ 1: ...; 2: ... }` exercises the
     // collect-properties path of `extract_mapped_keys`. The property's

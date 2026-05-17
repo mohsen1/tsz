@@ -8,13 +8,16 @@
 
 mod enum_indexed_access;
 mod indexed_access_fast_path;
+mod type_query_declared_type;
 
 use super::type_node::TypeNodeChecker;
 use super::type_node_helpers::{
     get_string_literal_from_type_index, is_type_query_in_non_flow_sensitive_signature_parameter,
     is_typeof_global_this_type_node,
 };
-use super::unique_symbol_arena::has_declared_unique_symbol_owner;
+use super::unique_symbol_arena::{
+    has_declared_unique_symbol_owner, is_unique_symbol_type_annotation_unwrapped,
+};
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -1161,9 +1164,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     None
                 });
                 if let Some(ann_idx) = type_ann_idx {
-                    let resolved = self.check(ann_idx);
-                    if resolved != TypeId::ANY && resolved != TypeId::ERROR {
-                        declared_type = Some(resolved);
+                    if is_unique_symbol_type_annotation_unwrapped(self.ctx.arena, ann_idx) {
+                        declared_type = Some(self.ctx.types.unique_symbol(SymbolRef(sym_id.0)));
+                    } else {
+                        let resolved = self.check(ann_idx);
+                        if resolved != TypeId::ANY && resolved != TypeId::ERROR {
+                            declared_type = Some(resolved);
+                        }
                     }
                 }
             }
@@ -1172,6 +1179,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 && declared_type != TypeId::ANY
                 && declared_type != TypeId::ERROR
             {
+                if crate::query_boundaries::common::is_unique_symbol_type(
+                    self.ctx.types,
+                    declared_type,
+                ) {
+                    if let Some(type_arguments) = &type_arguments {
+                        return self.apply_instantiation_expression_type_arguments(
+                            declared_type,
+                            type_arguments,
+                        );
+                    }
+                    return declared_type;
+                }
+
                 if !use_flow_sensitive_query {
                     if let Some(type_arguments) = &type_arguments {
                         return self.apply_instantiation_expression_type_arguments(
@@ -1756,54 +1776,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         arena
             .get_identifier_at(mapped.type_node)
             .is_some_and(|name| name.escaped_text == param_name.escaped_text)
-    }
-
-    fn declared_type_for_type_query_symbol(
-        &mut self,
-        sym_id: tsz_binder::SymbolId,
-    ) -> Option<TypeId> {
-        if let Some(type_id) = self
-            .ctx
-            .symbol_types
-            .get(&sym_id)
-            .copied()
-            .filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
-        {
-            return Some(type_id);
-        }
-
-        let decl = self.ctx.binder.get_symbol(sym_id)?.value_declaration;
-        if decl.is_none() {
-            return None;
-        }
-        let decl_node = self.ctx.arena.get(decl)?;
-        let type_ann = if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
-            var_decl
-                .type_annotation
-                .is_some()
-                .then_some(var_decl.type_annotation)
-        } else if decl_node.kind == syntax_kind_ext::PARAMETER {
-            let param = self.ctx.arena.get_parameter(decl_node)?;
-            param
-                .type_annotation
-                .is_some()
-                .then_some(param.type_annotation)
-        } else if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-            let parent = self.ctx.arena.get_extended(decl)?.parent;
-            let parent_node = self.ctx.arena.get(parent)?;
-            if parent_node.kind == syntax_kind_ext::PARAMETER {
-                let param = self.ctx.arena.get_parameter(parent_node)?;
-                (param.name == decl && param.type_annotation.is_some())
-                    .then_some(param.type_annotation)
-            } else {
-                None
-            }
-        } else {
-            None
-        }?;
-
-        Some(self.check(type_ann)).filter(|&t| t != TypeId::ANY && t != TypeId::ERROR)
     }
 
     fn get_global_this_type(&mut self, _error_node: NodeIndex) -> TypeId {
