@@ -2344,27 +2344,25 @@ impl<'a> Printer<'a> {
                         decl.name,
                         &mut wrote_any,
                     );
+                } else if let Some(binding) = self.simple_namespace_binding_export(decl.name)
+                    && self.can_inline_simple_namespace_binding_initializer(decl.initializer)
+                {
+                    self.emit_simple_namespace_binding_export(
+                        ns_name,
+                        decl.initializer,
+                        &binding,
+                        &mut wrote_any,
+                    );
                 } else {
-                    if let Some(binding) = self.simple_namespace_binding_export(decl.name)
-                        && self.can_inline_simple_namespace_binding_initializer(decl.initializer)
-                    {
-                        self.emit_simple_namespace_binding_export(
-                            ns_name,
-                            decl.initializer,
-                            &binding,
-                            &mut wrote_any,
-                        );
-                    } else {
-                        let mut names = Vec::new();
-                        self.collect_binding_names(decl.name, &mut names);
-                        for name in names {
-                            self.write_namespace_export_separator(&mut wrote_any);
-                            self.write(ns_name);
-                            self.write(".");
-                            self.write(&name);
-                            self.write(" = ");
-                            self.emit_expression(decl.initializer);
-                        }
+                    let mut names = Vec::new();
+                    self.collect_binding_names(decl.name, &mut names);
+                    for name in names {
+                        self.write_namespace_export_separator(&mut wrote_any);
+                        self.write(ns_name);
+                        self.write(".");
+                        self.write(&name);
+                        self.write(" = ");
+                        self.emit_expression(decl.initializer);
                     }
                 }
             }
