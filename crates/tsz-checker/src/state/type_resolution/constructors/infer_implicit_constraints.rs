@@ -190,6 +190,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
         let name = ident.escaped_text.clone();
+        let explicit_constraint = tp_data.constraint;
         // Explicit `infer X extends C` is intentionally NOT resolved here.
         // Resolving `C` via `get_type_from_type_node` would re-emit any
         // diagnostics already reported when walking the extends clause for
@@ -212,6 +213,10 @@ impl<'a> CheckerState<'a> {
                 let merged = Self::merge_infer_constraint(existing, candidate);
                 out.insert(name, merged);
             }
+        }
+
+        if !explicit_constraint.is_none() {
+            self.collect_infer_constraints_into(explicit_constraint, None, out);
         }
     }
 
