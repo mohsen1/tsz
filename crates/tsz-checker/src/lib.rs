@@ -450,6 +450,9 @@ mod enum_indexed_access_tests;
 #[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
 #[cfg(test)]
+#[path = "tests/enum_truthiness_tests.rs"]
+mod enum_truthiness_tests;
+#[cfg(test)]
 #[path = "tests/excess_prop_object_union_display_tests.rs"]
 mod excess_prop_object_union_display_tests;
 #[cfg(test)]
