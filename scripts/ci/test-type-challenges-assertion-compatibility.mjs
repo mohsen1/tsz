@@ -675,7 +675,7 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
-  const row = runCompatibility({
+  const { result, outFile } = runCompatibilityRaw({
     dir,
     classification: {
       fixture: "type-challenges-assertion-classification",
@@ -717,16 +717,35 @@ withTempDir((dir) => {
     },
   });
 
-  assert.equal(row.state, "gray");
-  assert.deepEqual(row.assertion_candidates.tsc_clean_subset, {
-    manifest_path: "type-challenges-assertions-tsc-clean/manifest.json",
-    classification_path: null,
-    tsconfig_path: "type-challenges-assertions-tsc-clean/tsconfig.tsz-guard.json",
-    generated_assertions: 0,
-    rejected_from_full_corpus: null,
-    tsc_status: null,
-    tsz_status: null,
-    tsc_diagnostic_free: null,
-    tsz_diagnostic_free: null,
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /generatedAssertions must be greater than zero/);
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: candidateCounts(1) },
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: { totalCandidates: 1 },
+        },
+        tsz: {
+          status: "pass",
+          candidateDiagnostics: { totalCandidates: 2 },
+        },
+      },
+      comparison: { status: "match" },
+    },
   });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /classification tsz totalCandidates \(2\) does not match generatedAssertions \(1\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
 });

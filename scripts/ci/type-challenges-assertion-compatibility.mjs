@@ -161,8 +161,24 @@ if (counts.pairedSolutions !== counts.generatedAssertions) {
     `assertion classification pairedSolutions (${counts.pairedSolutions}) does not match generatedAssertions (${counts.generatedAssertions})`,
   );
 }
+if (counts.generatedAssertions === 0) {
+  fail("assertion classification generatedAssertions must be greater than zero");
+}
 const tscCandidateDiagnostics = tsc.candidateDiagnostics || {};
 const tszCandidateDiagnostics = tsz.candidateDiagnostics || {};
+for (const [compiler, diagnostics] of [
+  ["tsc", tscCandidateDiagnostics],
+  ["tsz", tszCandidateDiagnostics],
+]) {
+  if (
+    Number.isInteger(diagnostics.totalCandidates) &&
+    diagnostics.totalCandidates !== counts.generatedAssertions
+  ) {
+    fail(
+      `assertion classification ${compiler} totalCandidates (${diagnostics.totalCandidates}) does not match generatedAssertions (${counts.generatedAssertions})`,
+    );
+  }
+}
 const candidateFileComparisonCounts = comparison.candidateFileComparison?.counts || {};
 const tscFilesWithDiagnostics = Array.isArray(tscCandidateDiagnostics.filesWithDiagnostics)
   ? tscCandidateDiagnostics.filesWithDiagnostics
