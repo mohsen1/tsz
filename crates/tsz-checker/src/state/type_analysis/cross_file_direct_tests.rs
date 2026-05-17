@@ -654,7 +654,7 @@ fn direct_source_file_type_alias_lowers_resolved_alias_dependencies() {
         state
             .ctx
             .cached_stable_source_file_symbol_arena_type(box_sym, 1, source_cache_scope),
-        Some((box_ty, box_params.clone())),
+        Some((box_ty, box_params)),
         "direct source alias lowering should populate the stable source-file cache",
     );
 
