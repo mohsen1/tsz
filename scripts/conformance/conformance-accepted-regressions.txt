@@ -31,7 +31,6 @@ TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx
 TypeScript/tests/cases/compiler/relationComplexityError.ts
 TypeScript/tests/cases/compiler/strictOptionalProperties1.ts
 TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts
-TypeScript/tests/cases/compiler/superInLambdas.ts
 TypeScript/tests/cases/compiler/symbolObserverMismatchingPolyfillsWorkTogether.ts
 TypeScript/tests/cases/compiler/temporal.ts
 TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive1.ts

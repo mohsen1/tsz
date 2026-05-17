@@ -223,13 +223,27 @@ impl<'a> Printer<'a> {
     }
 
     fn class_expression_static_comma_needs_parens(&self, class_node: NodeIndex) -> bool {
-        self.arena
-            .get_extended(class_node)
-            .and_then(|ext| self.arena.get(ext.parent))
-            .is_none_or(|parent| {
-                parent.kind != syntax_kind_ext::RETURN_STATEMENT
-                    && parent.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION
-            })
+        let mut current = class_node;
+        loop {
+            let Some(ext) = self.arena.get_extended(current) else {
+                return true;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return true;
+            }
+            let Some(parent) = self.arena.get(parent_idx) else {
+                return true;
+            };
+
+            match parent.kind {
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    current = parent_idx;
+                }
+                syntax_kind_ext::RETURN_STATEMENT => return false,
+                _ => return true,
+            }
+        }
     }
 
     fn emit_es5_static_class_expression_comma(

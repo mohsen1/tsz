@@ -1119,10 +1119,16 @@ impl<'a> ES5ClassTransformer<'a> {
             return self.expression_contains_static_class_expression(paren.expression);
         }
         if (node.kind == syntax_kind_ext::AS_EXPRESSION
-            || node.kind == syntax_kind_ext::TYPE_ASSERTION)
+            || node.kind == syntax_kind_ext::TYPE_ASSERTION
+            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
             && let Some(assertion) = self.arena.get_type_assertion(node)
         {
             return self.expression_contains_static_class_expression(assertion.expression);
+        }
+        if node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+            && let Some(expr_type_args) = self.arena.get_expr_type_args(node)
+        {
+            return self.expression_contains_static_class_expression(expr_type_args.expression);
         }
         if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
             && let Some(unary) = self.arena.get_unary_expr_ex(node)
