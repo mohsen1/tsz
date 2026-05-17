@@ -530,6 +530,7 @@ jobs:
             .target/project-compile-guard/*.log
             .target/project-compile-guard/project-compatibility.jsonl
             .target/project-compile-guard/project-compatibility-summary.json
+            .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-template-manifest.json
             .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
           retention-days: 7
           if-no-files-found: warn
@@ -569,6 +570,7 @@ jobs:
             .target/project-compile-guard/*.log
             .target/project-compile-guard/project-compatibility.jsonl
             .target/project-compile-guard/project-compatibility-summary.json
+            .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-template-manifest.json
             .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
           retention-days: 7
           if-no-files-found: warn
@@ -958,6 +960,21 @@ jobs:
 
           if gate.get("result") != "success":
               print(f"gate did not pass: {gate.get('result')}")
+              sys.exit(1)
+
+          hard_failure_results = {"failure", "cancelled", "timed_out", "action_required"}
+          hard_failures = []
+          for name, data in needs.items():
+              if name == "gate":
+                  continue
+              result = data.get("result")
+              if result in hard_failure_results:
+                  hard_failures.append(f"{name}: {result}")
+
+          if hard_failures:
+              print("CI jobs reported hard failures:")
+              for failure in hard_failures:
+                  print(f"  - {failure}")
               sys.exit(1)
 
           if not should_run:

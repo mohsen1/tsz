@@ -2628,6 +2628,38 @@ fn legacy_member_decorator_private_name_uses_native_static_block_scope() {
 }
 
 #[test]
+fn legacy_async_generator_decorator_metadata_without_annotation_stays_void() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare const dec: MethodDecorator;\nclass A {\n    @dec async inferred() {}\n    @dec async *stream() { yield 1; }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2018,
+        legacy_decorators: true,
+        emit_decorator_metadata: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("__metadata(\"design:returntype\", Promise)"),
+        "Unannotated async non-generator method metadata should use Promise.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__metadata(\"design:returntype\", void 0)"),
+        "Unannotated async generator method metadata should stay void 0.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn legacy_member_decorator_private_name_uses_lowered_private_scope() {
     use crate::context::emit::EmitContext;
     use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};

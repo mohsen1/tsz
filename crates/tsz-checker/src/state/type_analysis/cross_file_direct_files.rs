@@ -21,6 +21,8 @@ pub(super) const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS: &[&str] = &[
     "NumberFormatOptionsSignDisplay",
     "NumberFormatOptionsStyle",
     "NumberFormatOptionsUseGrouping",
+    "NumberFormatPartTypes",
+    "NumberFormatRangePartTypes",
     "Omit",
     "Partial",
     "Pick",

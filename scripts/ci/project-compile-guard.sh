@@ -271,6 +271,7 @@ write_kysely_config() {
 write_type_challenges_config() {
   local source_dir="$FIXTURE_ROOT/type-challenges"
   local compile_dir="$source_dir/.tsz-compile"
+  local manifest_json="$compile_dir/type-challenges-template-manifest.json"
 
   rm -rf "$compile_dir"
   mkdir -p "$compile_dir/questions" "$compile_dir/utils"
@@ -282,6 +283,14 @@ write_type_challenges_config() {
     cp "$template" "$compile_dir/$rel"
     printf '\nexport {};\n' >> "$compile_dir/$rel"
   done < <(find "$source_dir/questions" -maxdepth 2 -name template.ts | sort)
+
+  TYPE_CHALLENGES_REPO="$TYPE_CHALLENGES_REPO" \
+  TYPE_CHALLENGES_REF="$TYPE_CHALLENGES_REF" \
+  TYPE_CHALLENGES_EXPECTED_GENERATED="$TYPE_CHALLENGES_EXPECTED_GENERATED" \
+  node scripts/ci/type-challenges-template-manifest.mjs \
+    "$source_dir" \
+    "$compile_dir" \
+    "$manifest_json"
 
   cp "$source_dir/utils/index.d.ts" "$compile_dir/utils/index.d.ts"
   cat > "$compile_dir/tsconfig.tsz-guard.json" <<'JSON'
