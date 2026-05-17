@@ -1547,6 +1547,11 @@ impl<'a> CheckerState<'a> {
             evaluated = distributed;
         }
 
+        let pruned = self.prune_impossible_object_union_members_with_env(evaluated);
+        if pruned != TypeId::ERROR && pruned != TypeId::ANY {
+            evaluated = pruned;
+        }
+
         if crate::query_boundaries::assignability::remapped_mapped_type_has_no_outer_type_params(
             self.ctx.types,
             evaluated,
