@@ -118,7 +118,7 @@ jobs:
                   || true)
                 if [[ -z "$compiler_paths" ]]; then
                   compiler_checks_required=false
-                  echo "PR diff has no compiler/runtime paths; unit and conformance remain visible but are not required by CI Summary."
+                  echo "PR diff has no compiler/runtime paths; compiler suites are skipped and not required by CI Summary."
                 fi
               fi
             fi
@@ -502,7 +502,7 @@ jobs:
   project-compile-guard:
     name: project-compile-guard
     needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     env:
@@ -541,7 +541,7 @@ jobs:
   project-compile-canary:
     name: project-compile-canary
     needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     continue-on-error: true
@@ -585,7 +585,7 @@ jobs:
   wasm:
     name: wasm
     needs: gate
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     env:
@@ -609,7 +609,7 @@ jobs:
   wasm-web:
     name: wasm-web
     needs: [gate, wasm]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -624,7 +624,7 @@ jobs:
   node-harness-prep:
     name: node-harness-prep
     needs: gate
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
     env:
@@ -680,7 +680,7 @@ jobs:
     # compiling its oversized lib-test artifact.
     name: unit
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     env:
@@ -713,7 +713,7 @@ jobs:
     # Not in the required-status set, so failure here is informational only.
     name: unit-cloudbuild
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     continue-on-error: true
@@ -748,7 +748,7 @@ jobs:
     # does not compete with the unit-archive compile for rustc capacity.
     name: conformance-${{ matrix.shard }}
     needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 75
     strategy:
@@ -781,7 +781,7 @@ jobs:
   conformance-aggregate:
     name: conformance-aggregate
     needs: [gate, conformance]
-    if: needs.gate.outputs.full_run == 'true' && !cancelled()
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled()
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -799,7 +799,7 @@ jobs:
   conformance-snapshot-gate:
     name: conformance-snapshot-gate
     needs: gate
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -820,7 +820,7 @@ jobs:
   emit:
     name: emit
     needs: [gate, dist-binaries, node-harness-prep]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
     env:
@@ -864,7 +864,7 @@ jobs:
     # the expected max shard work from ~328s at 4 shards to ~219s at 6 shards.
     name: fourslash-${{ matrix.shard }}
     needs: [gate, dist-binaries, node-harness-prep]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
     strategy:
@@ -911,7 +911,7 @@ jobs:
   fourslash-aggregate:
     name: fourslash-aggregate
     needs: [gate, fourslash]
-    if: needs.gate.outputs.full_run == 'true' && !cancelled()
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled()
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
