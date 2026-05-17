@@ -1,6 +1,6 @@
 # TSZ Roadmap
 
-Date: 2026-05-15
+Date: 2026-05-17
 
 Status: single living roadmap. Keep durable architecture contracts in
 `docs/architecture/`, behavior specs in `docs/specs/`, product docs in
@@ -25,11 +25,12 @@ as campaigns instead of isolated conformance picks.
 
 ## Current Public Metrics
 
-Sources: `README.md` and local snapshots on 2026-05-15.
+Sources: `README.md`, local snapshots on 2026-05-15, and current conformance
+artifacts on 2026-05-17.
 
 | Surface | Current |
 | --- | ---: |
-| Diagnostic conformance | `100.0%` rounded (`12,581 / 12,582`) |
+| Diagnostic conformance | `100.0%` exact (`12,582 / 12,582`) |
 | JavaScript emit | `94.8%` (`12,820 / 13,530` in `README.md`; `12,828 / 13,530` in local snapshot) |
 | Declaration emit | `91.7%` (`1,531 / 1,669` in `README.md`; `1,527 / 1,669` in local snapshot) |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
@@ -83,9 +84,9 @@ changes the picture.
    discovery during printing toward a precomputed declaration/public-API
    summary.
 8. Conformance is no longer the dominant progress signal but it remains a hard
-   regression gate. The current diagnostic gap is one test; broad checker/solver
-   changes must preserve that floor while moving project rows from red/yellow to
-   green.
+   regression gate. The current diagnostic gap is zero tests; broad
+   checker/solver changes must preserve that floor while moving project rows
+   from red/yellow to green.
 9. The design response is **not** an architecture-first pause. Purpose-specific
    normalization, inference sessions, key-space algebra, diagnostic-capable
    relation results, solver-owned flow predicates, identity/provenance queries,
