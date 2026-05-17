@@ -788,7 +788,7 @@ jobs:
   conformance-aggregate:
     name: conformance-aggregate
     needs: [gate, conformance]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled()
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -918,7 +918,7 @@ jobs:
   fourslash-aggregate:
     name: fourslash-aggregate
     needs: [gate, fourslash]
-    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled()
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.fourslash.result != 'skipped' && needs.fourslash.result != 'cancelled'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
