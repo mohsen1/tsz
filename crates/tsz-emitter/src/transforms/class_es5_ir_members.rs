@@ -126,6 +126,9 @@ impl<'a> ES5ClassTransformer<'a> {
         let params = self.extract_parameters(&accessor_data.parameters);
 
         let body_source_range = self.arena.pos_end_at(accessor_data.body);
+        let has_accessor_trailing_comment = self
+            .extract_trailing_comment_for_method(accessor_data.body)
+            .is_some();
 
         let body = if accessor_data.body.is_none() {
             vec![]
@@ -145,6 +148,9 @@ impl<'a> ES5ClassTransformer<'a> {
 
             if let Some(alias) = this_capture_alias {
                 body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
+            }
+            if has_accessor_trailing_comment {
+                Self::strip_trailing_comment_from_body_tail(&mut body);
             }
 
             body
@@ -187,6 +193,9 @@ impl<'a> ES5ClassTransformer<'a> {
         } else {
             None // Force multi-line when destructuring prologue exists
         };
+        let has_accessor_trailing_comment = self
+            .extract_trailing_comment_for_method(accessor_data.body)
+            .is_some();
 
         let mut body = if accessor_data.body.is_none() {
             vec![]
@@ -208,6 +217,9 @@ impl<'a> ES5ClassTransformer<'a> {
             if let Some(alias) = this_capture_alias {
                 body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
             }
+            if has_accessor_trailing_comment {
+                Self::strip_trailing_comment_from_body_tail(&mut body);
+            }
 
             // Prepend destructuring prologue
             if !accessor_destructuring.is_empty() {
@@ -228,6 +240,23 @@ impl<'a> ES5ClassTransformer<'a> {
             is_expression_body: false,
             body_source_range,
         })
+    }
+
+    fn strip_trailing_comment_from_body_tail(body: &mut [IRNode]) {
+        let Some(last) = body.last_mut() else {
+            return;
+        };
+        let IRNode::Sequence(nodes) = last else {
+            return;
+        };
+        while matches!(nodes.last(), Some(IRNode::TrailingComment(_))) {
+            nodes.pop();
+        }
+        if nodes.len() == 1
+            && let Some(only) = nodes.pop()
+        {
+            *last = only;
+        }
     }
 
     /// Lower a rest parameter into ES5 `arguments` collection statements.

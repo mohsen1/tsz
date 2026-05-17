@@ -242,6 +242,13 @@ impl<'a> AstToIr<'a> {
             return statement;
         };
         for comment in crate::emitter::get_trailing_comment_ranges(source_text, node.end as usize) {
+            let gap_start = (node.end as usize).min(source_text.len());
+            let gap_end = (comment.pos as usize).min(source_text.len());
+            if gap_start > gap_end
+                || !Self::can_attach_trailing_comment_gap(&source_text[gap_start..gap_end])
+            {
+                continue;
+            }
             let comment_text = &source_text[comment.pos as usize..comment.end as usize];
             let trimmed = comment_text.trim_start();
             if trimmed.starts_with("//") || trimmed.starts_with("/*") {
@@ -254,23 +261,12 @@ impl<'a> AstToIr<'a> {
         if node.kind == syntax_kind_ext::RETURN_STATEMENT {
             return statement;
         }
-        let line_start = (node.pos as usize).min(source_text.len());
+        let line_start = (node.end as usize).min(source_text.len());
         let line_end = source_text[line_start..]
             .find(['\n', '\r'])
             .map_or(source_text.len(), |offset| line_start + offset);
         let line = &source_text[line_start..line_end];
-        if let Some(comment_start) = Self::line_comment_start(line) {
-            let comment_abs = line_start + comment_start;
-            let gap_start = (node.end as usize).min(comment_abs);
-            let gap = &source_text[gap_start..comment_abs];
-            let gap_belongs_to_statement = if node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
-                Self::expression_statement_trailing_comment_gap(gap)
-            } else {
-                gap.bytes().all(|byte| matches!(byte, b' ' | b'\t' | b';'))
-            };
-            if !gap_belongs_to_statement {
-                return statement;
-            }
+        if let Some(comment_start) = Self::attached_line_comment_start(node.kind, line) {
             let comment_text = &line[comment_start..];
             return IRNode::Sequence(vec![
                 statement,
@@ -280,9 +276,24 @@ impl<'a> AstToIr<'a> {
         statement
     }
 
+    fn attached_line_comment_start(node_kind: u16, line_suffix: &str) -> Option<usize> {
+        let comment_start = Self::line_comment_start(line_suffix)?;
+        let gap = &line_suffix[..comment_start];
+        let gap_belongs_to_statement = if node_kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+            Self::expression_statement_trailing_comment_gap(gap)
+        } else {
+            Self::can_attach_trailing_comment_gap(gap)
+        };
+        gap_belongs_to_statement.then_some(comment_start)
+    }
+
     fn expression_statement_trailing_comment_gap(gap: &str) -> bool {
         gap.bytes()
             .all(|byte| matches!(byte, b' ' | b'\t' | b';' | b')' | b']' | b'}'))
+    }
+
+    fn can_attach_trailing_comment_gap(gap: &str) -> bool {
+        gap.chars().all(|ch| ch.is_whitespace() || ch == ';')
     }
 
     fn line_comment_start(line: &str) -> Option<usize> {
@@ -2183,5 +2194,35 @@ impl<'a> AstToIr<'a> {
             left.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || left.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AstToIr;
+
+    #[test]
+    fn attached_line_comment_start_allows_statement_trailing_comments() {
+        assert_eq!(AstToIr::attached_line_comment_start(" // ok"), Some(1));
+        assert_eq!(AstToIr::attached_line_comment_start("; // ok"), Some(2));
+    }
+
+    #[test]
+    fn attached_line_comment_start_rejects_comments_after_parent_delimiters() {
+        assert_eq!(
+            AstToIr::attached_line_comment_start(" } // not inner"),
+            None
+        );
+        assert_eq!(
+            AstToIr::attached_line_comment_start(" }) // not inner"),
+            None
+        );
+    }
+
+    #[test]
+    fn can_attach_trailing_comment_gap_rejects_parent_delimiters() {
+        assert!(AstToIr::can_attach_trailing_comment_gap(" ; "));
+        assert!(!AstToIr::can_attach_trailing_comment_gap(" } "));
+        assert!(!AstToIr::can_attach_trailing_comment_gap(" }) "));
     }
 }
