@@ -92,6 +92,48 @@ const normalizeDiagnosticLine = (line) => {
   }
   return text;
 };
+const relCandidateFile = (file) => rel(path.join(candidateDir, file));
+const relCandidateFiles = (files) => Array.isArray(files) ? files.map(relCandidateFile) : [];
+const candidateFileComparison = comparison.candidateFileComparison
+  ? {
+      total_candidates: comparison.candidateFileComparison.totalCandidates ?? null,
+      counts: comparison.candidateFileComparison.counts ?? {},
+      both_accepted: relCandidateFiles(comparison.candidateFileComparison.bothAccepted),
+      both_rejected: relCandidateFiles(comparison.candidateFileComparison.bothRejected),
+      tsc_accepted_tsz_rejected: relCandidateFiles(
+        comparison.candidateFileComparison.tscAcceptedTszRejected,
+      ),
+      tsc_rejected_tsz_accepted: relCandidateFiles(
+        comparison.candidateFileComparison.tscRejectedTszAccepted,
+      ),
+    }
+  : null;
+const candidateExamplesFor = (compiler, result) => {
+  const candidates = result.candidateDiagnostics?.byCandidate;
+  if (!Array.isArray(candidates)) {
+    return [];
+  }
+  return candidates.slice(0, 5).map((entry) => ({
+    compiler,
+    file: entry.file ? relCandidateFile(entry.file) : null,
+    candidate_id: entry.candidate?.id ?? null,
+    error_count: entry.errorCount ?? null,
+    codes: (entry.codes || []).map((code) => code.key).filter(Boolean).slice(0, 5),
+    semantic_families: entry.semanticFamilies || [],
+    first_error: entry.firstErrors?.[0]
+      ? {
+          line: entry.firstErrors[0].line ?? null,
+          column: entry.firstErrors[0].column ?? null,
+          code: entry.firstErrors[0].code ?? null,
+          message: entry.firstErrors[0].message ?? null,
+        }
+      : null,
+  }));
+};
+const diagnosticCandidateExamples = [
+  ...candidateExamplesFor("tsc", tsc),
+  ...candidateExamplesFor("tsz", tsz),
+].slice(0, 10);
 const diagnosticDeltas = [
   ...(tsc.diagnostics?.firstErrors || []).map((line) => `tsc: ${line}`),
   ...(tsz.diagnostics?.firstErrors || []).map((line) => `tsz: ${line}`),
@@ -220,6 +262,8 @@ const row = {
             cleanSubsetClassification?.compilers?.tsz?.candidateDiagnostics?.candidatesWithoutDiagnostics ?? null,
         }
       : null,
+    file_comparison: candidateFileComparison,
+    diagnostic_candidate_examples: diagnosticCandidateExamples,
   },
 };
 
