@@ -3044,6 +3044,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.source_is_js_file {
             return;
         }
+        if !self.js_export_equals_names.is_empty() {
+            return;
+        }
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(pos) {
             if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
                 self.emit_rendered_jsdoc_type_alias(decl, true);

@@ -674,6 +674,16 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.emit_pending_js_export_equals_for_name(func.name);
         }
+        if kind == syntax_kind_ext::CLASS_DECLARATION
+            && let Some(class) = self.arena.get_class(stmt_node)
+            && self.is_js_export_equals_name(class.name)
+            && self
+                .get_identifier_text(class.name)
+                .and_then(|name| self.js_shadowed_export_equals_local_alias(&name))
+                .is_none()
+        {
+            self.emit_pending_js_export_equals_for_name(class.name);
+        }
 
         // Save position before JSDoc comments so we can undo them if the
         // declaration turns out to be invisible (non-exported in namespace, etc.)

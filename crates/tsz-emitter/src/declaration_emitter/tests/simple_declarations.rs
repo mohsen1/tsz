@@ -2649,6 +2649,34 @@ module.exports = Timer;
 }
 
 #[test]
+fn test_js_export_equals_class_keeps_typedef_local_and_after_surface() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @typedef {string | number} Whatever
+ */
+class Conn {
+    constructor() {}
+}
+module.exports = Conn;
+"#,
+    );
+
+    assert!(
+        output.starts_with("export = Conn;\n/**"),
+        "Expected class export= to precede leading typedef JSDoc: {output}"
+    );
+    assert!(
+        output.contains("\ntype Whatever = string | number;"),
+        "Expected CommonJS typedef alias to remain local and trailing: {output}"
+    );
+    assert!(
+        !output.contains("export type Whatever"),
+        "Did not expect CommonJS typedef alias to emit as exported top-level type: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_function_with_typedef_members() {
     let output = emit_js_dts(
         r#"
