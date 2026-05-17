@@ -637,6 +637,158 @@ fn direct_source_file_type_alias_rejects_complex_generic_typeof_and_self_referen
     );
 }
 
+fn with_two_file_state<F, R>(target_source: &str, requester_source: &str, test: F) -> R
+where
+    F: FnOnce(&mut CheckerState<'_>, &Arc<BinderState>) -> R,
+{
+    let (target_arena, target_binder, types) = parse_bound_source(target_source);
+    let (requester_arena, requester_binder, _) = parse_bound_source(requester_source);
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+    test(&mut state, &target_binder)
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_single_hop_local_alias_chain() {
+    with_two_file_state(
+        "type Leaf = string | number;\nexport type Alias = Leaf;",
+        "import { Alias } from './target';",
+        |state, target_binder| {
+            let alias_sym = target_binder.file_locals.get("Alias").expect("Alias");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(alias_sym, Some(1), true)
+                .expect("single-hop alias chain must lower without a child checker");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert!(params.is_empty(), "Alias should be non-generic");
+            let def_id = state
+                .ctx
+                .get_existing_def_id(alias_sym)
+                .expect("DefId must be registered");
+            assert!(
+                state.ctx.definition_store.get_body(def_id).is_some(),
+                "alias body must be registered for lazy resolution",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_single_hop_chain() {
+    with_two_file_state(
+        "type Inner = boolean;\nexport type Outer = Inner;",
+        "import { Outer } from './target';",
+        |state, target_binder| {
+            let outer_sym = target_binder.file_locals.get("Outer").expect("Outer");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(outer_sym, Some(1), true)
+                .expect("renamed single-hop alias chain must lower without a child checker");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert!(params.is_empty(), "Outer should be non-generic");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_multi_hop_chain() {
+    with_two_file_state(
+        "type C = string | null;\ntype B = C;\nexport type A = B;",
+        "import { A } from './target';",
+        |state, target_binder| {
+            let a_sym = target_binder.file_locals.get("A").expect("A");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(a_sym, Some(1), true)
+                .expect("multi-hop alias chain must lower without a child checker");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert!(params.is_empty(), "A should be non-generic");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_chain_with_union_of_local_refs() {
+    with_two_file_state(
+        "type Str = string;\ntype Num = number;\nexport type Both = Str | Num;",
+        "import { Both } from './target';",
+        |state, target_binder| {
+            let both_sym = target_binder.file_locals.get("Both").expect("Both");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(both_sym, Some(1), true)
+                .expect("union of local alias refs must lower without a child checker");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert!(params.is_empty(), "Both should be non-generic");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_chain_with_type_args() {
+    with_two_file_state(
+        "type Wrap<T> = T | null;\nexport type Concrete = Wrap<string>;",
+        "import { Concrete } from './target';",
+        |state, target_binder| {
+            let concrete_sym = target_binder.file_locals.get("Concrete").expect("Concrete");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(concrete_sym, Some(1), true)
+                    .is_none(),
+                "chain with type arguments must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_mutual_recursion_in_chain() {
+    with_two_file_state(
+        "type Ping = Pong | string;\nexport type Pong = Ping | number;",
+        "import { Pong } from './target';",
+        |state, target_binder| {
+            let pong_sym = target_binder.file_locals.get("Pong").expect("Pong");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(pong_sym, Some(1), true)
+                    .is_none(),
+                "mutual-recursion in chain must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_chain_containing_typeof() {
+    with_two_file_state(
+        "const v = 1;\ntype Base = typeof v;\nexport type Alias = Base;",
+        "import { Alias } from './target';",
+        |state, target_binder| {
+            let alias_sym = target_binder.file_locals.get("Alias").expect("Alias");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(alias_sym, Some(1), true)
+                    .is_none(),
+                "chain with typeof in a referenced alias must stay on the child-checker path",
+            );
+        },
+    );
+}
+
 #[test]
 fn direct_interface_member_simple_type_substitutes_source_type_params() {
     let (target_arena, target_binder, types) = parse_bound_source(
