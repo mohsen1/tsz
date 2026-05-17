@@ -58,6 +58,9 @@ function validateInputs(candidateManifest, classification) {
   if (!Array.isArray(candidateManifest.entries)) {
     fail("assertion candidate manifest entries must be an array");
   }
+  if (candidateManifest.entries.length === 0) {
+    fail("assertion candidate manifest entries must include at least one assertion candidate");
+  }
   if (classification?.fixture !== "type-challenges-assertion-classification") {
     fail(`unexpected assertion classification fixture: ${classification?.fixture || "<missing>"}`);
   }
@@ -69,19 +72,11 @@ function validateInputs(candidateManifest, classification) {
     ...entry,
     output: normalizeManifestPath(entry?.output, `candidate manifest entries[${index}].output`),
   }));
-  const seenOutputs = new Set();
-  const duplicateOutputs = [];
-  for (const entry of entries) {
-    if (seenOutputs.has(entry.output)) {
-      duplicateOutputs.push(entry.output);
-    }
-    seenOutputs.add(entry.output);
-  }
+  const duplicateOutputs = duplicates(entries.map((entry) => entry.output));
   if (duplicateOutputs.length > 0) {
-    fail(
-      `assertion candidate manifest entries must have unique output paths: ${[
-        ...new Set(duplicateOutputs),
-      ].sort().join(", ")}`,
+    reportFileSetError(
+      "assertion candidate manifest reported duplicate candidate outputs",
+      duplicateOutputs,
     );
   }
   const generatedAssertions = candidateManifest.counts?.generatedAssertions;
