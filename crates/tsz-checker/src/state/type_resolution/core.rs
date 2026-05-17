@@ -11,6 +11,26 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Keep the lowered generic base/defaults, but replace explicit type
+    /// arguments with checker-resolved forms so inline type literals preserve
+    /// computed property names and other checker-owned facts.
+    fn rebuild_application_with_checker_type_args(
+        &mut self,
+        application: TypeId,
+        type_args: &NodeList,
+    ) -> TypeId {
+        let Some((base, mut app_args)) = query::get_application_info(self.ctx.types, application)
+        else {
+            return application;
+        };
+
+        for (slot, &arg_idx) in app_args.iter_mut().zip(type_args.nodes.iter()) {
+            *slot = self.get_type_from_type_node(arg_idx);
+        }
+
+        self.ctx.types.application(base, app_args)
+    }
+
     fn same_file_type_alias_parts_for_name(
         &self,
         name: &str,
@@ -246,6 +266,9 @@ impl<'a> CheckerState<'a> {
                 .with_name_def_id_resolver(&name_resolver)
                 .with_type_query_override(&type_query_override);
                 let mut type_id = lowering.lower_type(idx);
+                if let Some(args) = &type_ref.type_arguments {
+                    type_id = self.rebuild_application_with_checker_type_args(type_id, args);
+                }
                 if query::get_application_info(self.ctx.types, type_id).is_none()
                     && let Some(args) = &type_ref.type_arguments
                 {
@@ -1010,6 +1033,9 @@ impl<'a> CheckerState<'a> {
                 .with_name_def_id_resolver(&name_resolver)
                 .with_type_query_override(&type_query_override);
                 let mut result = lowering.lower_type(idx);
+                if let Some(args) = &type_ref.type_arguments {
+                    result = self.rebuild_application_with_checker_type_args(result, args);
+                }
                 if let Some((base, app_args)) = query::get_application_info(self.ctx.types, result)
                     && !is_builtin_array
                     && query::get_lazy_def_id(self.ctx.types, base).is_none()
