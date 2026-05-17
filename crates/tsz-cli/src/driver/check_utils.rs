@@ -1394,14 +1394,8 @@ pub(super) fn collect_no_check_parse_diagnostics_for_file(
         file_diagnostics.retain(|d| !is_checker_grammar_code_suppressed_in_js(d.code));
     }
 
-    if let Some(source) = arena.get_source_file_at(source_file) {
-        apply_ts_directive_suppression(
-            file_name,
-            source.text.as_ref(),
-            &mut file_diagnostics,
-            options.checker.emit_declarations && options.check_js && is_js,
-        );
-    }
+    // `@ts-expect-error` suppression applies only to semantic diagnostics; all
+    // diagnostics here are syntactic, so directive suppression must not run.
 
     file_diagnostics
 }
@@ -2240,7 +2234,11 @@ pub(super) fn apply_ts_directive_suppression(
     // here; callers still pass it so the public signature stays stable while
     // any deeper revisit of declaration-emit fingerprints lands.
     let _ = preserve_declaration_jsdoc_name_diagnostics;
+    // tsc's `getSyntacticDiagnostics` path bypasses directive suppression entirely.
     diagnostics.retain(|diag| {
+        if is_real_syntax_error(diag.code) {
+            return true;
+        }
         let diag_line = line_of_offset(&line_starts, diag.start);
         for (idx, directive) in directives.iter().enumerate() {
             if diag_line == directive.suppressed_line {
@@ -3784,5 +3782,149 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
             !diagnostics.iter().any(|d| d.code == 8010),
             "TS8010 must not fire on TypeScript files, got: {diagnostics:#?}"
         );
+    }
+
+    #[test]
+    fn no_check_ts_expect_error_does_not_suppress_parse_error() {
+        // Under `--noCheck`, `@ts-expect-error` must not suppress parse errors
+        // (TS1109 "Expression expected"). tsc reports parse diagnostics from
+        // `getSyntacticDiagnostics` which bypasses directive suppression.
+        let source = "// @ts-expect-error\nconst broken = ;\n";
+        let diagnostics = collect_no_check_diags("a.ts", source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == 1109),
+            "TS1109 must not be suppressed by @ts-expect-error in --noCheck, got: {diagnostics:#?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 2578),
+            "TS2578 must not be emitted under --noCheck, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn no_check_ts_ignore_does_not_suppress_parse_error() {
+        // `@ts-ignore` must also not suppress parse errors under `--noCheck`.
+        let source = "// @ts-ignore\nconst broken = ;\n";
+        let diagnostics = collect_no_check_diags("a.ts", source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == 1109),
+            "TS1109 must survive @ts-ignore in --noCheck, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn no_check_ts_expect_error_does_not_suppress_js_grammar_error() {
+        // Under `--noCheck`, `@ts-expect-error` must not suppress JS grammar
+        // errors (TS8010 "Type annotations can only be used in TypeScript files").
+        let source = "// @ts-expect-error\nlet x: number;\n";
+        let diagnostics = collect_no_check_diags("a.js", source);
+        assert!(
+            diagnostics.iter().any(|d| d.code == 8010),
+            "TS8010 must not be suppressed by @ts-expect-error in --noCheck JS, got: {diagnostics:#?}"
+        );
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 2578),
+            "TS2578 must not be emitted under --noCheck, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn no_check_ts_expect_error_on_clean_line_does_not_emit_ts2578() {
+        // Under `--noCheck`, an @ts-expect-error directive above a line with
+        // no diagnostics must not produce TS2578 ("Unused '@ts-expect-error'").
+        // tsc does not run type-checking in --noCheck mode so every directive
+        // is effectively unreachable; none should be penalized.
+        let source = "// @ts-expect-error\nconst x = 5;\n";
+        let diagnostics = collect_no_check_diags("a.ts", source);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 2578),
+            "TS2578 must not be emitted under --noCheck for unused directive, got: {diagnostics:#?}"
+        );
+    }
+
+    #[test]
+    fn no_check_multiple_expect_error_directives_do_not_emit_ts2578() {
+        // Multiple @ts-expect-error directives under --noCheck must all be
+        // silently ignored rather than producing a wave of TS2578 reports.
+        let source = concat!(
+            "// @ts-expect-error\nconst a = 1;\n",
+            "// @ts-expect-error\nconst b = 2;\n",
+        );
+        let diagnostics = collect_no_check_diags("a.ts", source);
+        assert!(
+            !diagnostics.iter().any(|d| d.code == 2578),
+            "TS2578 must not fire for multiple unused directives under --noCheck, got: {diagnostics:#?}"
+        );
+    }
+
+    fn check_directive_suppression(source: &str, codes_in: &[u32]) -> Vec<Diagnostic> {
+        let line_starts = build_line_starts(source);
+        let line1_start = line_starts.get(1).copied().unwrap_or(0);
+        let mut diagnostics: Vec<Diagnostic> = codes_in
+            .iter()
+            .map(|&code| {
+                Diagnostic::error(
+                    "test.ts".to_string(),
+                    line1_start,
+                    1,
+                    format!("diag {code}"),
+                    code,
+                )
+            })
+            .collect();
+        apply_ts_directive_suppression("test.ts", source, &mut diagnostics, false);
+        diagnostics
+    }
+
+    #[test]
+    fn apply_suppression_never_suppresses_real_syntax_errors() {
+        // TS1109 (Expression expected) is a real syntax error and must survive
+        // directive suppression even in the full-check path.
+        let source = "// @ts-expect-error\nconst broken = ;\n";
+        let remaining = check_directive_suppression(source, &[1109]);
+        assert!(
+            remaining.iter().any(|d| d.code == 1109),
+            "TS1109 must not be suppressed, got: {remaining:#?}"
+        );
+        // The directive did not suppress anything → TS2578 is emitted.
+        assert!(
+            remaining.iter().any(|d| d.code == 2578),
+            "TS2578 should be emitted when directive only targets a parse error, got: {remaining:#?}"
+        );
+    }
+
+    #[test]
+    fn apply_suppression_suppresses_semantic_error_but_not_parse_error_on_same_line() {
+        // When a parse error (TS1109) and a semantic error (TS2322) both exist
+        // on the target line, the semantic error is suppressed and the parse
+        // error survives. The directive is marked as used, so no TS2578.
+        let source = "// @ts-expect-error\nconst x: string = ;\n";
+        let remaining = check_directive_suppression(source, &[1109, 2322]);
+        assert!(
+            remaining.iter().any(|d| d.code == 1109),
+            "TS1109 must survive directive suppression, got: {remaining:#?}"
+        );
+        assert!(
+            !remaining.iter().any(|d| d.code == 2322),
+            "TS2322 must be suppressed by @ts-expect-error, got: {remaining:#?}"
+        );
+        assert!(
+            !remaining.iter().any(|d| d.code == 2578),
+            "TS2578 must not fire when directive suppressed a semantic error, got: {remaining:#?}"
+        );
+    }
+
+    #[test]
+    fn apply_suppression_real_syntax_error_codes_are_never_suppressed() {
+        // Verify several codes from is_real_syntax_error are all immune.
+        let real_syntax_codes: &[u32] = &[1002, 1003, 1005, 1006, 1007, 1109, 1110, 1126, 1127];
+        let source = "// @ts-expect-error\ncode_on_line_2;\n";
+        for &code in real_syntax_codes {
+            let remaining = check_directive_suppression(source, &[code]);
+            assert!(
+                remaining.iter().any(|d| d.code == code),
+                "TS{code} must not be suppressed by @ts-expect-error, got: {remaining:#?}"
+            );
+        }
     }
 }

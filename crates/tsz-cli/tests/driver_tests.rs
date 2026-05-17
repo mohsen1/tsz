@@ -4073,6 +4073,88 @@ fn compile_explicit_files_no_emit_without_tsconfig_still_checks_semantics() {
     assert!(result.emitted_files.is_empty());
 }
 
+/// Returns args for a `--noCheck --noEmit` run with no config file loaded.
+fn no_check_args(files: Vec<PathBuf>) -> CliArgs {
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.no_check = true;
+    args.no_emit = true;
+    args.files = files;
+    args
+}
+
+#[test]
+fn compile_no_check_expect_error_does_not_suppress_parse_diagnostics() {
+    // TS2578 must not be emitted because --noCheck skips type-checking entirely.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        "// @ts-expect-error\nconst broken = ;\n// @ts-expect-error\nconst fine = 1;\n",
+    );
+
+    let args = no_check_args(vec![PathBuf::from("main.ts")]);
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&1109),
+        "TS1109 must be reported under --noCheck even with @ts-expect-error, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2578),
+        "TS2578 must not be emitted under --noCheck, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_no_check_ts_ignore_does_not_suppress_parse_diagnostics() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(&base.join("main.ts"), "// @ts-ignore\nconst broken = ;\n");
+
+    let args = no_check_args(vec![PathBuf::from("main.ts")]);
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&1109),
+        "TS1109 must survive @ts-ignore under --noCheck, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_no_check_expect_error_does_not_suppress_js_grammar_diagnostics() {
+    // TS2578 must not be emitted because --noCheck skips type-checking entirely.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.js"),
+        "// @ts-expect-error\nlet x: number;\n",
+    );
+
+    let args = no_check_args(vec![PathBuf::from("main.js")]);
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&8010),
+        "TS8010 must be reported under --noCheck even with @ts-expect-error, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2578),
+        "TS2578 must not be emitted under --noCheck, got: {:?}",
+        result.diagnostics
+    );
+}
+
 #[test]
 fn compile_no_check_no_emit_is_parse_only() {
     let temp = TempDir::new().expect("temp dir");
