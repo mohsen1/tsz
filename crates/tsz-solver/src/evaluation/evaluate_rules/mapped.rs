@@ -1652,6 +1652,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 None
             }
+            TypeData::TypeQuery(_) => {
+                // `typeof sym` can be a concrete unique-symbol key. Resolve the
+                // value-space query before deciding whether mapped iteration has
+                // a concrete property key; otherwise tuple element unions like
+                // `typeof tuple[number]` drop symbol elements as if they were
+                // unconstrained `symbol`.
+                let resolved = self.evaluate(type_id);
+                if resolved != type_id {
+                    return self.extract_mapped_keys(resolved);
+                }
+                None
+            }
             // Can't extract literals from other types
             _ => None,
         }
