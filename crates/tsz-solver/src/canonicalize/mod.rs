@@ -140,21 +140,34 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 // Recurse into composite types
                 TypeData::Array(elem) => {
                     let c_elem = self.canonicalize(elem);
-                    self.interner.array(c_elem)
+                    if c_elem == elem {
+                        type_id
+                    } else {
+                        self.interner.array(c_elem)
+                    }
                 }
 
                 TypeData::Tuple(list_id) => {
                     let elements = self.interner.tuple_list(list_id);
+                    let mut changed = false;
                     let c_elements: Vec<TupleElement> = elements
                         .iter()
-                        .map(|e| TupleElement {
-                            type_id: self.canonicalize(e.type_id),
-                            name: e.name,
-                            optional: e.optional,
-                            rest: e.rest,
+                        .map(|e| {
+                            let type_id = self.canonicalize(e.type_id);
+                            changed |= type_id != e.type_id;
+                            TupleElement {
+                                type_id,
+                                name: e.name,
+                                optional: e.optional,
+                                rest: e.rest,
+                            }
                         })
                         .collect();
-                    self.interner.tuple(c_elements)
+                    if changed {
+                        self.interner.tuple(c_elements)
+                    } else {
+                        type_id
+                    }
                 }
 
                 TypeData::Union(members_id) => {
@@ -166,7 +179,11 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     let mut sorted = c_members;
                     sorted.sort_by_key(|t| t.0);
                     sorted.dedup();
-                    self.interner.union(sorted)
+                    if sorted.as_slice() == members.as_ref() {
+                        type_id
+                    } else {
+                        self.interner.union(sorted)
+                    }
                 }
 
                 TypeData::Intersection(members_id) => {
@@ -193,7 +210,11 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     // 4. Combine: structural first (sorted), then callables (preserved order)
                     let mut final_members = structural;
                     final_members.extend(callables);
-                    self.interner.intersection(final_members)
+                    if final_members.as_slice() == members.as_ref() {
+                        type_id
+                    } else {
+                        self.interner.intersection(final_members)
+                    }
                 }
 
                 // Generic type application (e.g., Box<string>)
@@ -382,40 +403,65 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 // Uppercase<T> and Uppercase<U> should be identical when T and U are identical
                 TypeData::TemplateLiteral(id) => {
                     let spans = self.interner.template_list(id);
+                    let mut changed = false;
                     let c_spans: Vec<TemplateSpan> = spans
                         .iter()
                         .map(|span| match span {
                             TemplateSpan::Text(atom) => TemplateSpan::Text(*atom),
-                            TemplateSpan::Type(t) => TemplateSpan::Type(self.canonicalize(*t)),
+                            TemplateSpan::Type(t) => {
+                                let canonical = self.canonicalize(*t);
+                                changed |= canonical != *t;
+                                TemplateSpan::Type(canonical)
+                            }
                         })
                         .collect();
-                    self.interner.template_literal(c_spans)
+                    if changed {
+                        self.interner.template_literal(c_spans)
+                    } else {
+                        type_id
+                    }
                 }
 
                 // Task #47: String Intrinsic canonicalization for alpha-equivalence
                 // Uppercase<T>, Lowercase<T>, etc. should canonicalize nested type parameters
                 TypeData::StringIntrinsic { kind, type_arg } => {
                     let c_arg = self.canonicalize(type_arg);
-                    self.interner.string_intrinsic(kind, c_arg)
+                    if c_arg == type_arg {
+                        type_id
+                    } else {
+                        self.interner.string_intrinsic(kind, c_arg)
+                    }
                 }
 
                 // Index access type (T[K]) - canonicalize both object and key
                 TypeData::IndexAccess(object_type, key_type) => {
                     let c_obj = self.canonicalize(object_type);
                     let c_key = self.canonicalize(key_type);
-                    self.interner.index_access(c_obj, c_key)
+                    if c_obj == object_type && c_key == key_type {
+                        type_id
+                    } else {
+                        self.interner.index_access(c_obj, c_key)
+                    }
                 }
 
                 // KeyOf type (keyof T) - canonicalize the inner type
                 TypeData::KeyOf(inner) => {
                     let c_inner = self.canonicalize(inner);
-                    self.interner.keyof(c_inner)
+                    if c_inner == inner {
+                        type_id
+                    } else {
+                        self.interner.keyof(c_inner)
+                    }
                 }
 
                 // Readonly type (readonly T[]) - canonicalize the inner type
                 TypeData::ReadonlyType(inner) => {
                     let c_inner = self.canonicalize(inner);
-                    self.interner.readonly_type(c_inner)
+                    if c_inner == inner {
+                        type_id
+                    } else {
+                        self.interner.readonly_type(c_inner)
+                    }
                 }
 
                 // Conditional type (T extends U ? X : Y)
@@ -425,13 +471,21 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     let c_extends = self.canonicalize(cond.extends_type);
                     let c_true = self.canonicalize(cond.true_type);
                     let c_false = self.canonicalize(cond.false_type);
-                    self.interner.conditional(ConditionalType {
-                        check_type: c_check,
-                        extends_type: c_extends,
-                        true_type: c_true,
-                        false_type: c_false,
-                        is_distributive: cond.is_distributive,
-                    })
+                    if c_check == cond.check_type
+                        && c_extends == cond.extends_type
+                        && c_true == cond.true_type
+                        && c_false == cond.false_type
+                    {
+                        type_id
+                    } else {
+                        self.interner.conditional(ConditionalType {
+                            check_type: c_check,
+                            extends_type: c_extends,
+                            true_type: c_true,
+                            false_type: c_false,
+                            is_distributive: cond.is_distributive,
+                        })
+                    }
                 }
 
                 // Other types: preserve as-is (will be handled as needed)
