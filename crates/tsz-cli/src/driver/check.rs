@@ -2037,6 +2037,7 @@ pub(super) fn collect_diagnostics(
                     source.text.as_ref(),
                     &mut file_diagnostics,
                     options.emit_declarations && options.check_js && is_js,
+                    options.no_check,
                 );
             }
 
@@ -2455,6 +2456,7 @@ fn run_check_on_existing_checker<'a>(
             source.text.as_ref(),
             &mut file_diagnostics,
             compiler_options.emit_declarations && check_js && is_js,
+            no_check,
         );
     }
 
@@ -4467,6 +4469,26 @@ export function freeze<T>(value: T): Readonly<T> {
         assert!(
             !codes.contains(&2322),
             "expected --noCheck diagnostics to skip TS2322 type error, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn no_check_suppresses_unused_expect_error() {
+        let options = ResolvedCompilerOptions {
+            no_check: true,
+            ..ResolvedCompilerOptions::default()
+        };
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[("file.ts", "// @ts-expect-error\nconst value = 1;\n")],
+            &options,
+            std::path::Path::new("/"),
+        );
+        let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
+
+        assert!(
+            !codes.contains(&2578),
+            "expected --noCheck to suppress TS2578 unused @ts-expect-error, got: {diagnostics:?}"
         );
     }
 

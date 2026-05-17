@@ -3610,6 +3610,22 @@ fn load_tsconfig_inner_with_diagnostics(
         }
     }
 
+    if parsed
+        .config
+        .compiler_options
+        .as_ref()
+        .and_then(|opts| opts.ignore_deprecations.as_deref())
+        == Some("6.0")
+    {
+        parsed.diagnostics.retain(|diag| {
+            !matches!(
+                diag.code,
+                diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT
+                    | diagnostic_codes::OPTION_IS_DEPRECATED_AND_WILL_STOP_FUNCTIONING_IN_TYPESCRIPT_SPECIFY_COMPILEROPT_2
+            )
+        });
+    }
+
     visited.remove(&canonical);
     Ok(parsed)
 }
@@ -6374,6 +6390,40 @@ mod tests {
                 "Inherited TS5102 must anchor at child's `\"compilerOptions\"` key (start={expected_start}), got: {diag:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_child_ignore_deprecations_suppresses_inherited_ts5107() {
+        let temp = tempdir().expect("create temp dir");
+        let base_path = temp.path().join("tsconfig.base.json");
+        let child_path = temp.path().join("tsconfig.json");
+        std::fs::write(
+            &base_path,
+            r#"{
+    "compilerOptions": {
+        "moduleResolution": "node"
+    }
+}"#,
+        )
+        .expect("write base");
+        std::fs::write(
+            &child_path,
+            r#"{
+    "extends": "./tsconfig.base.json",
+    "compilerOptions": {
+        "ignoreDeprecations": "6.0"
+    }
+}"#,
+        )
+        .expect("write child");
+
+        let parsed = load_tsconfig_with_diagnostics(&child_path).expect("load");
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5107),
+            "Child ignoreDeprecations should suppress inherited TS5107, got: {:?}",
+            parsed.diagnostics
+        );
     }
 
     #[test]

@@ -38,6 +38,27 @@ interface I {
 }
 
 #[test]
+fn computed_type_member_after_array_type_without_semicolon_starts_new_member() {
+    let source = r#"
+const IGNORE_LIST = "ignoreList";
+
+interface SourceMap {
+  sources: string[]
+  [IGNORE_LIST]: number[]
+}
+"#;
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED),
+        "computed member after line break must not be parsed as an indexed-access suffix: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn parameter_array_binding_reserved_words_match_tsc_recovery_fingerprints() {
     let source = "function a4([while, for, public]){ }\nfunction a5(...while) { }\n";
     let (parser, _root) = parse_source(source);
@@ -755,6 +776,20 @@ fn test_regex_hyphen_after_range_is_literal() {
             .iter()
             .all(|d| d.code != diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS),
         "Hyphen after an already-consumed range should be literal: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_regex_hex_escape_range_uses_decoded_character_value() {
+    let source = r#"const fileNamePattern = /[\x2D-9A-Z\\_a-z\xC0-\xD6]/;"#;
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS),
+        "Hex escapes used as character-class range endpoints should compare by decoded value: {diagnostics:?}"
     );
 }
 

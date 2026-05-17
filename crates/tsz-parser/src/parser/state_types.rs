@@ -2614,6 +2614,9 @@ impl ParserState {
         let mut current = element_type;
 
         while self.is_token(SyntaxKind::OpenBracketToken) {
+            if self.type_member_container_depth > 0 && self.scanner.has_preceding_line_break() {
+                break;
+            }
             if self.look_ahead_is_index_signature() {
                 break;
             }

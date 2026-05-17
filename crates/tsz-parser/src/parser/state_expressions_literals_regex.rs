@@ -143,6 +143,14 @@ impl ParserState {
                             }
                             return Some((vec![(value, u32::try_from(start).ok()?)], next_index));
                         }
+                    } else if next == 'x' {
+                        let hex_start = next_start + next.len_utf8();
+                        if let Some(value) = parse_hex_u32(raw_text, hex_start, 2) {
+                            return Some((
+                                vec![(value, u32::try_from(start).ok()?)],
+                                hex_start + 2,
+                            ));
+                        }
                     }
 
                     let escaped_start = next_start;
@@ -340,6 +348,51 @@ impl ParserState {
                 if *pos < end {
                     *pos += 1;
                 }
+            }
+
+            const fn hex_value(byte: u8) -> Option<u32> {
+                match byte {
+                    b'0'..=b'9' => Some((byte - b'0') as u32),
+                    b'a'..=b'f' => Some((byte - b'a' + 10) as u32),
+                    b'A'..=b'F' => Some((byte - b'A' + 10) as u32),
+                    _ => None,
+                }
+            }
+
+            fn parse_fixed_hex_escape(body: &[u8], start: usize, len: usize) -> Option<u32> {
+                let mut value = 0u32;
+                for offset in 0..len {
+                    value = (value << 4) | hex_value(*body.get(start + offset)?)?;
+                }
+                Some(value)
+            }
+
+            fn class_character_escape_atom(
+                body: &[u8],
+                end: usize,
+                escape_start: usize,
+            ) -> Option<ClassAtomKind> {
+                let escaped = *body.get(escape_start)?;
+                let value = match escaped {
+                    b'x' => parse_fixed_hex_escape(body, escape_start + 1, 2)?,
+                    b'u' if body.get(escape_start + 1).copied() == Some(b'{') => {
+                        let hex_start = escape_start + 2;
+                        let mut hex_end = hex_start;
+                        while hex_end < end && body[hex_end] != b'}' {
+                            hex_end += 1;
+                        }
+                        if hex_end >= end || hex_end == hex_start {
+                            return None;
+                        }
+                        parse_fixed_hex_escape(body, hex_start, hex_end - hex_start)?
+                    }
+                    b'u' => parse_fixed_hex_escape(body, escape_start + 1, 4)?,
+                    _ => u32::from(escaped),
+                };
+                Some(ClassAtomKind::Character {
+                    value,
+                    utf16_len: if value > 0xFFFF { 2 } else { 1 },
+                })
             }
 
             fn is_identifier_part_for_regex_flags(ch: char) -> bool {
@@ -676,10 +729,19 @@ impl ParserState {
                                 ctx.start_pos,
                             );
                             if *pos > current_pos {
-                                range.push(ClassAtomKind::Character {
-                                    value: u32::from(ctx.body[class_escape_start]),
-                                    utf16_len: 1,
-                                });
+                                range.push(
+                                    class_character_escape_atom(
+                                        ctx.body,
+                                        ctx.body_end,
+                                        class_escape_start,
+                                    )
+                                    .unwrap_or(
+                                        ClassAtomKind::Character {
+                                            value: u32::from(ctx.body[class_escape_start]),
+                                            utf16_len: 1,
+                                        },
+                                    ),
+                                );
                             }
                         }
                     }

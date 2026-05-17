@@ -1788,6 +1788,78 @@ fn test_types_entry_with_explicit_type_roots_still_emits_ts2688() {
     );
 }
 
+#[test]
+fn test_no_check_suppresses_missing_reference_types_ts2688() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noCheck": true,
+            "noEmit": true,
+            "types": []
+          },
+          "files": ["index.ts"]
+        }"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        base.join("index.ts"),
+        "/// <reference types=\"missing-package\" />\nconst value = 1;\n",
+    )
+    .expect("write index.ts");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        ts2688_diags.is_empty(),
+        "Expected noCheck to suppress missing reference types TS2688, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_no_check_keeps_missing_config_types_ts2688() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noCheck": true,
+            "noEmit": true,
+            "types": ["missing-package"]
+          },
+          "files": ["index.ts"]
+        }"#,
+    )
+    .expect("write tsconfig");
+    fs::write(base.join("index.ts"), "const value = 1;\n").expect("write index.ts");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2688_diags: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR)
+        .collect();
+    assert!(
+        !ts2688_diags.is_empty(),
+        "Expected noCheck to keep missing compilerOptions.types TS2688, got: {:?}",
+        result.diagnostics
+    );
+}
+
 /// When a JavaScript source file contains TypeScript-only syntax (e.g.,
 /// `import x = require(...)`), tsc emits TS8002 from
 /// `getJSSyntacticDiagnosticsForFile`. Because that diagnostic flows through

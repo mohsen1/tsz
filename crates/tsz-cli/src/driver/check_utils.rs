@@ -1400,6 +1400,7 @@ pub(super) fn collect_no_check_parse_diagnostics_for_file(
             source.text.as_ref(),
             &mut file_diagnostics,
             options.checker.emit_declarations && options.check_js && is_js,
+            options.no_check,
         );
     }
 
@@ -2215,6 +2216,7 @@ pub(super) fn apply_ts_directive_suppression(
     source_text: &str,
     diagnostics: &mut Vec<Diagnostic>,
     preserve_declaration_jsdoc_name_diagnostics: bool,
+    suppress_unused_expect_error: bool,
 ) {
     let directives = find_ts_directives(source_text);
     if directives.is_empty() {
@@ -2257,7 +2259,7 @@ pub(super) fn apply_ts_directive_suppression(
     // enclosing line start. Same-line directives start at the `//` or `/*`
     // opener, while directives inside multiline block comments start at the
     // line containing the directive text.
-    if !has_ts_nocheck {
+    if !has_ts_nocheck && !suppress_unused_expect_error {
         for (idx, directive) in directives.iter().enumerate() {
             if directive.is_expect_error && !directive_used[idx] {
                 diagnostics.push(Diagnostic::error(
@@ -2695,7 +2697,7 @@ const value = 1;
             2322,
         )];
 
-        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false, false);
 
         assert!(
             diagnostics.is_empty(),
@@ -2730,7 +2732,7 @@ const value = 1;
             2322,
         )];
 
-        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false, false);
 
         assert!(
             diagnostics.is_empty(),
@@ -2773,7 +2775,7 @@ const value = 1;
             "Cannot find name 'Missing'.".to_string(),
             2304,
         )];
-        apply_ts_directive_suppression("repro.js", source, &mut diagnostics, true);
+        apply_ts_directive_suppression("repro.js", source, &mut diagnostics, true, false);
         assert!(
             diagnostics.is_empty(),
             "Expected @ts-ignore to suppress JSDoc @type TS2304 even during declaration emit, got: {diagnostics:?}"
@@ -2791,7 +2793,7 @@ const value = 1;
             2322,
         )];
 
-        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false, false);
 
         assert!(
             diagnostics.is_empty(),
@@ -2810,7 +2812,7 @@ const value = 1;
             2322,
         )];
 
-        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false, false);
 
         assert!(
             diagnostics.is_empty(),
@@ -2831,7 +2833,7 @@ const value = 1;
     fn unused_expect_error_anchors_at_indented_comment_start() {
         let source = "const a = 1;\n  // @ts-expect-error\nconst x = 1;\n";
         let mut diagnostics = Vec::new();
-        apply_ts_directive_suppression("anchor.ts", source, &mut diagnostics, false);
+        apply_ts_directive_suppression("anchor.ts", source, &mut diagnostics, false, false);
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, 2578);
@@ -2851,7 +2853,7 @@ const value = 1;
     fn unused_expect_error_anchors_at_indented_block_comment_start() {
         let source = "    /* @ts-expect-error */\nconst y = 1;\n";
         let mut diagnostics = Vec::new();
-        apply_ts_directive_suppression("anchor-block.ts", source, &mut diagnostics, false);
+        apply_ts_directive_suppression("anchor-block.ts", source, &mut diagnostics, false, false);
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, 2578);
@@ -2868,6 +2870,7 @@ const value = 1;
             "anchor-multiline-block.ts",
             source,
             &mut diagnostics,
+            false,
             false,
         );
 
@@ -2889,7 +2892,7 @@ stringValue;
 "#;
         let mut diagnostics = Vec::new();
 
-        apply_ts_directive_suppression("string.ts", source, &mut diagnostics, false);
+        apply_ts_directive_suppression("string.ts", source, &mut diagnostics, false, false);
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, 2578);
@@ -2908,7 +2911,7 @@ lateValue;
 "#;
         let mut diagnostics = Vec::new();
 
-        apply_ts_directive_suppression("late-comment.ts", source, &mut diagnostics, false);
+        apply_ts_directive_suppression("late-comment.ts", source, &mut diagnostics, false, false);
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].code, 2578);
@@ -2930,6 +2933,34 @@ unchecked;
             source,
             &mut diagnostics,
             false,
+            false,
+        );
+
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn compiler_no_check_suppresses_unused_expect_error() {
+        let source = r#"// @ts-expect-error
+const unchecked = 1;
+
+// @ts-ignore
+const stillSuppressed: string = 1;
+"#;
+        let mut diagnostics = vec![Diagnostic::error(
+            "compiler-nocheck.ts".to_string(),
+            source.rfind('1').unwrap() as u32,
+            1,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            2322,
+        )];
+
+        apply_ts_directive_suppression(
+            "compiler-nocheck.ts",
+            source,
+            &mut diagnostics,
+            false,
+            true,
         );
 
         assert!(diagnostics.is_empty());
@@ -3001,7 +3032,7 @@ unchecked;
             "Type 'number' is not assignable to type 'string'.".to_string(),
             2322,
         )];
-        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false);
+        apply_ts_directive_suppression("repro.ts", source, &mut diagnostics, false, false);
         assert!(
             diagnostics.is_empty(),
             "@ts-ignore must suppress the next-line diagnostic with CR-only endings: {diagnostics:?}"
