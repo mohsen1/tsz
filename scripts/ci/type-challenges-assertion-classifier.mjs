@@ -270,6 +270,58 @@ function runCompiler(label, bin, tsconfig, timeoutMs) {
   };
 }
 
+function countsByKey(counts) {
+  return new Map((counts ?? []).map((entry) => [entry.key, entry.count]));
+}
+
+function deltaCounts(left, right) {
+  const leftCounts = countsByKey(left);
+  const rightCounts = countsByKey(right);
+  const keys = new Set([...leftCounts.keys(), ...rightCounts.keys()]);
+
+  return [...keys]
+    .map((key) => ({
+      key,
+      tsc: leftCounts.get(key) ?? 0,
+      tsz: rightCounts.get(key) ?? 0,
+      delta: (rightCounts.get(key) ?? 0) - (leftCounts.get(key) ?? 0),
+    }))
+    .filter((entry) => entry.delta !== 0)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || a.key.localeCompare(b.key));
+}
+
+function compareCompilers(tsc, tsz) {
+  if (!tsc.available || !tsz.available) {
+    return {
+      status: "unavailable",
+      tscStatus: tsc.status,
+      tszStatus: tsz.status,
+      errorCountDelta: null,
+      byCodeDelta: [],
+    };
+  }
+
+  const tscErrorCount = tsc.diagnostics.errorCount;
+  const tszErrorCount = tsz.diagnostics.errorCount;
+  let status = "both-nonpassing";
+  if (tsc.status === "pass" && tsz.status === "pass") {
+    status = "both-pass";
+  } else if (tsc.status === "pass") {
+    status = "tsz-rejects-tsc-accepted";
+  } else if (tsz.status === "pass") {
+    status = "tsz-accepts-tsc-rejected";
+  }
+
+  return {
+    status,
+    tscStatus: tsc.status,
+    tszStatus: tsz.status,
+    errorCountDelta:
+      tscErrorCount === null || tszErrorCount === null ? null : tszErrorCount - tscErrorCount,
+    byCodeDelta: deltaCounts(tsc.diagnostics.byCode, tsz.diagnostics.byCode),
+  };
+}
+
 const manifest = readJson(candidateManifestPath);
 const tsconfig = path.join(candidateDir, "tsconfig.tsz-guard.json");
 if (!fs.existsSync(tsconfig)) {
@@ -287,6 +339,8 @@ if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
 
 const tszBin = executableOrNull(process.env.TSZ_BIN);
 const tscBin = discoverTscBin();
+const tscResult = runCompiler("tsc", tscBin, tsconfig, timeoutMs);
+const tszResult = runCompiler("tsz", tszBin, tsconfig, timeoutMs);
 
 const report = {
   fixture: "type-challenges-assertion-classification",
@@ -298,9 +352,10 @@ const report = {
   tsconfig: path.relative(candidateDir, tsconfig).split(path.sep).join("/"),
   timeoutMs,
   compilers: {
-    tsc: runCompiler("tsc", tscBin, tsconfig, timeoutMs),
-    tsz: runCompiler("tsz", tszBin, tsconfig, timeoutMs),
+    tsc: tscResult,
+    tsz: tszResult,
   },
+  comparison: compareCompilers(tscResult, tszResult),
 };
 
 fs.writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`);
