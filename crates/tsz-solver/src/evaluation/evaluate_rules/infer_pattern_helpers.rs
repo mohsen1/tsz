@@ -1201,6 +1201,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> bool {
         let pattern_shape = self.interner().callable_shape(pattern_shape_id);
 
+        if pattern_shape
+            .properties
+            .iter()
+            .any(|prop| self.type_contains_infer(prop.type_id))
+            && self.match_infer_callable_pattern_properties(
+                source,
+                pattern_shape_id,
+                bindings,
+                checker,
+            )
+        {
+            return true;
+        }
+
         // Determine which signature to use: call or construct.
         // Pattern `new (...) => infer P` has construct_signatures, not call_signatures.
         let is_construct_pattern = pattern_shape.call_signatures.is_empty()
@@ -1603,6 +1617,82 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker.is_subtype_of(source, pattern)
     }
 
+    fn match_infer_callable_pattern_properties(
+        &self,
+        source: TypeId,
+        pattern_shape_id: CallableShapeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        let pattern_shape = self.interner().callable_shape(pattern_shape_id);
+        let Some(source_shape_id) = self.source_callable_shape_id(source) else {
+            return false;
+        };
+        let source_shape = self.interner().callable_shape(source_shape_id);
+        if pattern_shape.call_signatures.len() > source_shape.call_signatures.len()
+            || pattern_shape.construct_signatures.len() > source_shape.construct_signatures.len()
+        {
+            return false;
+        }
+
+        for pattern_prop in &pattern_shape.properties {
+            let source_prop = source_shape
+                .properties
+                .iter()
+                .find(|prop| prop.name == pattern_prop.name);
+            let Some(source_prop) = source_prop else {
+                if pattern_prop.optional {
+                    if self.type_contains_infer(pattern_prop.type_id) {
+                        let mut visited = FxHashSet::default();
+                        if !self.match_infer_pattern(
+                            TypeId::UNDEFINED,
+                            pattern_prop.type_id,
+                            bindings,
+                            &mut visited,
+                            checker,
+                        ) {
+                            return false;
+                        }
+                    }
+                    continue;
+                }
+                return false;
+            };
+
+            if self.type_contains_infer(pattern_prop.type_id) {
+                let mut visited = FxHashSet::default();
+                if !self.match_infer_pattern(
+                    source_prop.type_id,
+                    pattern_prop.type_id,
+                    bindings,
+                    &mut visited,
+                    checker,
+                ) {
+                    return false;
+                }
+            } else if !checker.is_subtype_of(
+                self.optional_property_type(source_prop),
+                self.optional_property_type(pattern_prop),
+            ) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn source_callable_shape_id(&self, source: TypeId) -> Option<CallableShapeId> {
+        match self.interner().lookup(source) {
+            Some(TypeData::Callable(shape_id)) => Some(shape_id),
+            Some(TypeData::ReadonlyType(inner)) => self.source_callable_shape_id(inner),
+            Some(TypeData::Intersection(members)) => self
+                .interner()
+                .type_list(members)
+                .iter()
+                .find_map(|&member| self.source_callable_shape_id(member)),
+            _ => None,
+        }
+    }
+
     /// Helper for matching object type patterns.
     pub(crate) fn match_infer_object_pattern(
         &self,
@@ -1617,6 +1707,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(
                 TypeData::Object(source_shape_id) | TypeData::ObjectWithIndex(source_shape_id),
             ) => {
+                let initial_binding_len = bindings.len();
                 let source_shape = self.interner().object_shape(source_shape_id);
                 let pattern_shape = self.interner().object_shape(pattern_shape_id);
                 for pattern_prop in &pattern_shape.properties {
@@ -1641,7 +1732,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         }
                         return false;
                     };
-                    let source_type = self.optional_property_type(source_prop);
+                    let source_type = if self.type_contains_infer(pattern_prop.type_id) {
+                        source_prop.type_id
+                    } else {
+                        self.optional_property_type(source_prop)
+                    };
                     if !self.match_infer_pattern(
                         source_type,
                         pattern_prop.type_id,
@@ -1652,7 +1747,44 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return false;
                     }
                 }
+                if bindings.len() == initial_binding_len
+                    && self.type_contains_infer(pattern)
+                    && let Some(alias) = self.interner().get_display_alias(source)
+                    && alias != source
+                {
+                    let mut alias_bindings = bindings.clone();
+                    let mut alias_visited = visited.clone();
+                    if self.match_infer_pattern(
+                        alias,
+                        pattern,
+                        &mut alias_bindings,
+                        &mut alias_visited,
+                        checker,
+                    ) && alias_bindings.len() > initial_binding_len
+                    {
+                        *bindings = alias_bindings;
+                    }
+                }
                 true
+            }
+            Some(TypeData::Application(_)) => {
+                let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
+                evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
+                if let Some(query_db) = self.query_db() {
+                    evaluator = evaluator.with_query_db(query_db);
+                }
+                let evaluated = evaluator.evaluate(source);
+                if evaluated == source {
+                    return false;
+                }
+                self.match_infer_object_pattern(
+                    evaluated,
+                    pattern_shape_id,
+                    pattern,
+                    bindings,
+                    visited,
+                    checker,
+                )
             }
             Some(TypeData::Callable(callable_shape_id)) => {
                 // Callable types (class constructors) have properties (static members)
@@ -1683,7 +1815,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         }
                         return false;
                     };
-                    let source_type = self.optional_property_type(source_prop);
+                    let source_type = if self.type_contains_infer(pattern_prop.type_id) {
+                        source_prop.type_id
+                    } else {
+                        self.optional_property_type(source_prop)
+                    };
                     if !self.match_infer_pattern(
                         source_type,
                         pattern_prop.type_id,
@@ -1702,8 +1838,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 for pattern_prop in &pattern_shape.properties {
                     let mut merged_type = None;
                     for &member in members.iter() {
-                        let found_type =
-                            self.find_property_type_in_structural(member, pattern_prop.name);
+                        let found_type = self.find_property_type_in_structural(
+                            member,
+                            pattern_prop.name,
+                            self.type_contains_infer(pattern_prop.type_id),
+                        );
                         if found_type.is_none() && !pattern_prop.optional {
                             // Non-optional pattern prop not found in this intersection
                             // member — if the member isn't Object/Callable, fail.
@@ -1831,16 +1970,43 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Find a named property's type in a structural type (`Object`, `ObjectWithIndex`, or `Callable`).
-    /// Returns `Some(type_id)` if the property is found, respecting optional property unwrapping.
-    fn find_property_type_in_structural(&self, type_id: TypeId, prop_name: Atom) -> Option<TypeId> {
-        match self.interner().lookup(type_id) {
+    fn find_property_type_in_structural(
+        &self,
+        type_id: TypeId,
+        prop_name: Atom,
+        raw_if_infer: bool,
+    ) -> Option<TypeId> {
+        let evaluated = match self.interner().lookup(type_id) {
+            Some(TypeData::Application(_)) | Some(TypeData::Mapped(_)) => {
+                let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
+                evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
+                if let Some(query_db) = self.query_db() {
+                    evaluator = evaluator.with_query_db(query_db);
+                }
+                let evaluated = evaluator.evaluate(type_id);
+                if evaluated == type_id {
+                    type_id
+                } else {
+                    evaluated
+                }
+            }
+            _ => type_id,
+        };
+
+        match self.interner().lookup(evaluated) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner().object_shape(shape_id);
                 shape
                     .properties
                     .iter()
                     .find(|p| p.name == prop_name)
-                    .map(|p| self.optional_property_type(p))
+                    .map(|p| {
+                        if raw_if_infer {
+                            p.type_id
+                        } else {
+                            self.optional_property_type(p)
+                        }
+                    })
             }
             Some(TypeData::Callable(callable_id)) => {
                 let shape = self.interner().callable_shape(callable_id);
@@ -1848,7 +2014,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     .properties
                     .iter()
                     .find(|p| p.name == prop_name)
-                    .map(|p| self.optional_property_type(p))
+                    .map(|p| {
+                        if raw_if_infer {
+                            p.type_id
+                        } else {
+                            self.optional_property_type(p)
+                        }
+                    })
             }
             _ => None,
         }
@@ -1916,7 +2088,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         }
                         return false;
                     };
-                    let source_type = self.optional_property_type(source_prop);
+                    let source_type = if self.type_contains_infer(pattern_prop.type_id) {
+                        source_prop.type_id
+                    } else {
+                        self.optional_property_type(source_prop)
+                    };
                     if !self.match_infer_pattern(
                         source_type,
                         pattern_prop.type_id,
@@ -2044,6 +2220,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
 
                 true
+            }
+            Some(TypeData::Application(_)) => {
+                let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
+                evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
+                if let Some(query_db) = self.query_db() {
+                    evaluator = evaluator.with_query_db(query_db);
+                }
+                let evaluated = evaluator.evaluate(source);
+                if evaluated == source {
+                    return false;
+                }
+                self.match_infer_object_with_index_pattern(
+                    evaluated,
+                    pattern_shape_id,
+                    pattern,
+                    bindings,
+                    visited,
+                    checker,
+                )
             }
             Some(TypeData::Union(members)) => {
                 let members = self.interner().type_list(members);

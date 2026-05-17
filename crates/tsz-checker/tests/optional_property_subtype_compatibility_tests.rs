@@ -2,56 +2,33 @@
 //!
 //! Rule under test:
 //!
-//! > In standard mode (no `exactOptionalPropertyTypes`), an optional source property
-//! > `{a?: T}` IS a subtype of a required target `{a: T | undefined}`, because
-//! > `optional_property_type()` widens the source type to `T | undefined`, making
-//! > the type comparison `T | undefined <: T | undefined` = true.
-//! >
-//! > In `exactOptionalPropertyTypes` mode, an optional source property cannot
-//! > satisfy a required target property at all (absence is disallowed).
-//!
-//! These tests prove the fix is structural (not name-specific): they vary
-//! property names, type parameter names, and shapes.
+//! Optional source properties do not satisfy required target properties, even
+//! when the required property type explicitly includes `undefined`. In standard
+//! mode, `optional_property_type()` widens the read type to `T | undefined`;
+//! it does not make an absent property count as present.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::{check_source_codes, check_with_options, has_diagnostic_code};
 
 // ── Standard mode ────────────────────────────────────────────────────────────
 
-/// `{a?: string}` is a subtype of `{a: string | undefined}` in standard mode.
-/// tsc evaluates the conditional as `true`.
 #[test]
-fn optional_source_is_subtype_of_required_with_undefined_standard_mode() {
+fn optional_source_is_not_subtype_of_required_with_undefined_standard_mode() {
     let source = r#"
 type A = { a?: string };
 type B = { a: string | undefined };
 type C = A extends B ? true : false;
-const c: true = (null as any as C);
+const c: false = (null as any as C);
+declare const a: A;
+const b: B = a;
 "#;
+    let diagnostics = check_source_codes(source);
     assert!(
-        check_source_codes(source).is_empty(),
-        "expected no errors: {{a?: string}} should be subtype of {{a: string | undefined}} in standard mode"
+        diagnostics.contains(&2322),
+        "expected TS2322 for assigning optional source to required-with-undefined target. Got: {diagnostics:#?}"
     );
 }
 
-/// `{flag?: number}` is a subtype of `{flag: number | undefined}` — same rule
-/// with different property name, verifying the fix is not name-hardcoded.
-#[test]
-fn optional_source_subtype_of_required_undefined_alt_property_name() {
-    let source = r#"
-type X = { flag?: number };
-type Y = { flag: number | undefined };
-type R = X extends Y ? true : false;
-const r: true = (null as any as R);
-"#;
-    assert!(
-        check_source_codes(source).is_empty(),
-        "expected no errors: {{flag?: number}} should be subtype of {{flag: number | undefined}} in standard mode"
-    );
-}
-
-/// `{a?: string}` is NOT a subtype of `{a: string}` in standard mode.
-/// The widened source type is `string | undefined`, which is not `<: string`.
 #[test]
 fn optional_source_is_not_subtype_of_required_without_undefined() {
     let source = r#"
@@ -66,51 +43,32 @@ const c: false = (null as any as C);
     );
 }
 
-/// Generic optional property: `{prop?: T}` is a subtype of `{prop: T | undefined}`
-/// for any `T`, confirming the rule applies to type-parameterized shapes.
 #[test]
-fn generic_optional_source_subtype_of_required_with_undefined() {
+fn generic_optional_source_is_not_subtype_of_required_with_undefined() {
     let source = r#"
 type WithOptional<T> = { prop?: T };
 type WithRequired<T> = { prop: T | undefined };
 type Check<T> = WithOptional<T> extends WithRequired<T> ? true : false;
 type Result = Check<string>;
-const r: true = (null as any as Result);
+const r: false = (null as any as Result);
 "#;
     assert!(
         check_source_codes(source).is_empty(),
-        "expected no errors: generic optional property should be subtype of required with undefined"
+        "expected no errors: generic optional property should not be subtype of required with undefined"
     );
 }
 
-/// Multiple optional properties: all must satisfy widened required targets.
 #[test]
-fn multiple_optional_properties_subtype_of_required_with_undefined() {
+fn multiple_optional_properties_are_not_subtype_of_required_with_undefined() {
     let source = r#"
 type Src = { x?: string; y?: number };
 type Tgt = { x: string | undefined; y: number | undefined };
 type R = Src extends Tgt ? true : false;
-const r: true = (null as any as R);
+const r: false = (null as any as R);
 "#;
     assert!(
         check_source_codes(source).is_empty(),
-        "expected no errors: multiple optional properties should be subtypes of required-with-undefined"
-    );
-}
-
-/// Assignment: a value with optional properties should be assignable to a
-/// variable type with required-but-possibly-undefined properties.
-#[test]
-fn assignment_optional_to_required_with_undefined_standard_mode() {
-    let source = r#"
-type Src = { a?: string };
-type Tgt = { a: string | undefined };
-declare const src: Src;
-const tgt: Tgt = src;
-"#;
-    assert!(
-        check_source_codes(source).is_empty(),
-        "expected no errors: assignment of optional-property type to required-undefined-property type"
+        "expected no errors: multiple optional properties should not satisfy required-with-undefined targets"
     );
 }
 
@@ -156,10 +114,8 @@ const q: Q = (null as any as P);
     );
 }
 
-/// Standard mode: no error for conditional extends (canonical `propTypeValidatorInference` pattern).
-/// Optional-property mapped types from `@types/prop-types` use
-/// `{[K in keyof V]?: ...} extends {[K in keyof V]: ...}` conditional patterns
-/// that require optional-to-required-with-undefined subtyping.
+/// Standard mode: no error for conditional required-key detection used by
+/// `propTypeValidatorInference`-style helpers.
 #[test]
 fn prop_types_style_optional_required_conditional_pattern() {
     let source = r#"
@@ -179,5 +135,52 @@ const _b: false = (null as any as BIsRequired);
     assert!(
         check_source_codes(source).is_empty(),
         "expected no errors for prop-types-style optional/required detection pattern"
+    );
+}
+
+#[test]
+fn infer_type_extracts_marker_from_inherited_validator_interface() {
+    let source = r#"
+declare const nominalTypeHack: unique symbol;
+interface Validator<T> { [nominalTypeHack]?: T; }
+interface Requireable<T> extends Validator<T> {
+    isRequired: Validator<NonNullable<T>>;
+}
+type InferType<V> = V extends Validator<infer T> ? T : any;
+type B = InferType<Requireable<boolean>>;
+const b: boolean = null as any as B;
+"#;
+    assert!(
+        check_source_codes(source).is_empty(),
+        "expected infer to extract T through Requireable<T> extends Validator<T>"
+    );
+}
+
+#[test]
+fn prop_types_shape_inference_matches_expected_props() {
+    let source = r#"
+declare const nominalTypeHack: unique symbol;
+type IsOptional<T> = undefined | null extends T ? true : undefined extends T ? true : null extends T ? true : false;
+type RequiredKeys<V> = { [K in keyof V]-?: Exclude<V[K], undefined> extends Validator<infer T> ? IsOptional<T> extends true ? never : K : never }[keyof V];
+type OptionalKeys<V> = Exclude<keyof V, RequiredKeys<V>>;
+type InferPropsInner<V> = { [K in keyof V]-?: InferType<V[K]>; };
+interface Validator<T> { [nominalTypeHack]?: T; }
+interface Requireable<T> extends Validator<T> {
+    isRequired: Validator<NonNullable<T>>;
+}
+type ValidationMap<T> = { [K in keyof T]?: Validator<T[K]> };
+type InferType<V> = V extends Validator<infer T> ? T : any;
+type InferProps<V> = InferPropsInner<Pick<V, RequiredKeys<V>>> & Partial<InferPropsInner<Pick<V, OptionalKeys<V>>>>;
+declare const any: Requireable<any>;
+declare const bool: Requireable<boolean>;
+declare const string: Requireable<string>;
+declare function shape<P extends ValidationMap<any>>(type: P): Requireable<InferProps<P>>;
+type Expected = { foo: string; bar?: boolean; baz?: any };
+const innerProps = { foo: string.isRequired, bar: bool, baz: any };
+const assign: Validator<Expected> = shape(innerProps).isRequired;
+"#;
+    assert!(
+        check_source_codes(source).is_empty(),
+        "expected prop-types shape inference to match the declared props shape"
     );
 }

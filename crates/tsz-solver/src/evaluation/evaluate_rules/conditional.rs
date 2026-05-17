@@ -615,13 +615,65 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // PERF: Only allocate SubtypeChecker when infer matching is needed.
                 let mut checker = self.conditional_subtype_checker();
                 checker.allow_bivariant_rest = true;
+                if cond.extends_type != extends_type
+                    && self.type_contains_infer(cond.extends_type)
+                    && self.match_infer_pattern(
+                        check_type,
+                        cond.extends_type,
+                        &mut loop_bindings,
+                        &mut loop_visited,
+                        &mut checker,
+                    )
+                    && !loop_bindings.is_empty()
+                {
+                    let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
+                    return self.evaluate(substituted_true);
+                }
+                loop_bindings.clear();
+                loop_visited.clear();
+                if cond.extends_type != extends_type
+                    && self.type_contains_infer(cond.extends_type)
+                    && let Some(alias) = self.interner().get_display_alias(check_type)
+                    && alias != check_type
+                    && self.match_infer_pattern(
+                        alias,
+                        cond.extends_type,
+                        &mut loop_bindings,
+                        &mut loop_visited,
+                        &mut checker,
+                    )
+                    && !loop_bindings.is_empty()
+                {
+                    let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
+                    return self.evaluate(substituted_true);
+                }
+                loop_bindings.clear();
+                loop_visited.clear();
+                if self.type_contains_infer(cond.extends_type)
+                    && let Some(alias) = self.interner().get_display_alias(check_type)
+                    && alias != check_type
+                    && self.match_infer_pattern(
+                        alias,
+                        cond.extends_type,
+                        &mut loop_bindings,
+                        &mut loop_visited,
+                        &mut checker,
+                    )
+                    && !loop_bindings.is_empty()
+                {
+                    let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
+                    return self.evaluate(substituted_true);
+                }
+                loop_bindings.clear();
+                loop_visited.clear();
                 if self.match_infer_pattern(
                     check_type,
                     extends_type,
                     &mut loop_bindings,
                     &mut loop_visited,
                     &mut checker,
-                ) {
+                ) && !loop_bindings.is_empty()
+                {
                     let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
                     // Check for tail-recursive true branch (e.g., Trim<T> recurses on match):
                     // type Trim<S> = S extends ` ${infer T}` ? Trim<T> : S;
@@ -670,6 +722,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         );
                     }
                     return self.evaluate(substituted_true);
+                }
+
+                let re_evaluated_check = self.evaluate(check_type);
+                if re_evaluated_check != check_type {
+                    loop_bindings.clear();
+                    loop_visited.clear();
+                    let mut checker = self.conditional_subtype_checker();
+                    checker.allow_bivariant_rest = true;
+                    if self.match_infer_pattern(
+                        re_evaluated_check,
+                        extends_type,
+                        &mut loop_bindings,
+                        &mut loop_visited,
+                        &mut checker,
+                    ) && !loop_bindings.is_empty()
+                    {
+                        let substituted_true =
+                            self.substitute_infer(cond.true_type, &loop_bindings);
+                        return self.evaluate(substituted_true);
+                    }
                 }
 
                 if self.infer_pattern_has_unresolved_application(cond.extends_type)
@@ -2421,6 +2493,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let substituted_true = self.substitute_infer(cond.true_type, &bindings);
                     return Some(self.evaluate(substituted_true));
                 }
+            }
+        }
+
+        if let Some(alias) = self.try_recover_application_from_display_alias(check_type)
+            && alias != check_type
+        {
+            let mut checker = self.conditional_subtype_checker();
+            checker.allow_bivariant_rest = true;
+            let mut bindings = FxHashMap::default();
+            let mut visited = FxHashSet::default();
+            let matched = self.match_infer_pattern(
+                alias,
+                cond.extends_type,
+                &mut bindings,
+                &mut visited,
+                &mut checker,
+            );
+            if matched && !bindings.is_empty() {
+                let substituted_true = self.substitute_infer(cond.true_type, &bindings);
+                return Some(self.evaluate(substituted_true));
             }
         }
 
