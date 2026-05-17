@@ -215,12 +215,13 @@ impl<'a> DeclarationEmitter<'a> {
             params_text = "...args: any[]".to_string();
         }
 
-        let force_object_form = class
-            .members
-            .nodes
-            .iter()
-            .copied()
-            .any(|member_idx| self.class_member_is_static(member_idx));
+        let force_object_form = base_type_text.is_some()
+            || class
+                .members
+                .nodes
+                .iter()
+                .copied()
+                .any(|member_idx| self.class_member_is_static(member_idx));
         let instance_indent = if arrow_form && !force_object_form {
             self.indent_level + 1
         } else {
@@ -240,7 +241,7 @@ impl<'a> DeclarationEmitter<'a> {
             if self.class_member_is_static(member_idx) {
                 static_scratch.emit_class_member(member_idx);
             } else {
-                instance_scratch.emit_class_member(member_idx);
+                instance_scratch.emit_class_member_for_constructor_instance_type(member_idx);
             }
         }
         if let Some(base_name) = base_instance_name
@@ -272,7 +273,7 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             format!("{{\n    new ({params_text}): {{\n{members}\n    }};\n}}")
         };
-        if force_object_form {
+        if force_object_form && !static_members.is_empty() {
             constructor_type =
                 constructor_type.replacen("\n}", &format!("\n{static_members}\n}}"), 1);
         }
@@ -286,6 +287,72 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             Some(constructor_type)
         }
+    }
+
+    fn emit_class_member_for_constructor_instance_type(&mut self, member_idx: NodeIndex) {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return;
+        };
+        let Some(prop) = self.arena.get_property_decl(member_node) else {
+            self.emit_class_member(member_idx);
+            return;
+        };
+        if !self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+        {
+            self.emit_class_member(member_idx);
+            return;
+        }
+        if self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+            || self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::PrivateKeyword)
+            || self.member_has_private_identifier_name(member_idx)
+            || self.member_has_non_emittable_computed_name(member_idx)
+        {
+            self.emit_class_member(member_idx);
+            return;
+        }
+
+        let type_text = self
+            .constructor_instance_auto_accessor_type_text(member_idx, prop)
+            .unwrap_or_else(|| "unknown".to_string());
+        self.write_indent();
+        self.write("get ");
+        self.emit_node(prop.name);
+        self.write("(): ");
+        self.write(&type_text);
+        self.write(";");
+        self.write_line();
+        self.write_indent();
+        self.write("set ");
+        self.emit_node(prop.name);
+        self.write("(arg: ");
+        self.write(&type_text);
+        self.write(");");
+        self.write_line();
+    }
+
+    fn constructor_instance_auto_accessor_type_text(
+        &self,
+        prop_idx: NodeIndex,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+    ) -> Option<String> {
+        if prop.type_annotation.is_some() {
+            let mut scratch = self.scratch_declaration_emitter();
+            scratch.emit_type(prop.type_annotation);
+            return Some(scratch.writer.take_output());
+        }
+        if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
+            return Some(self.print_type_id(type_id));
+        }
+        if prop.initializer.is_some() {
+            return self.allowlisted_initializer_type_text(prop.initializer);
+        }
+        None
     }
 
     fn strip_abstract_member_modifiers(members: &str) -> String {
@@ -368,7 +435,7 @@ impl<'a> DeclarationEmitter<'a> {
             if self.class_member_is_static(member_idx) {
                 static_scratch.emit_class_member(member_idx);
             } else {
-                instance_scratch.emit_class_member(member_idx);
+                instance_scratch.emit_class_member_for_constructor_instance_type(member_idx);
             }
         }
         if let Some(base_instance_members) =

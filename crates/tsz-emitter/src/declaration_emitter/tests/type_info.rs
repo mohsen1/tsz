@@ -604,12 +604,46 @@ export const Mixed = mixin(Unmixed);
     );
 
     assert!(
-        output.contains("} & typeof Unmixed;"),
-        "Expected mixin constructor type to preserve base static side: {output}"
+        output.contains(
+            "export declare const Mixed: {\n    new (...args: any[]): {\n        bar: number;\n    };\n} & typeof Unmixed;"
+        ),
+        "Expected mixin constructor object type to preserve base static side: {output}"
     );
     assert!(
         !output.contains("foo: number;\n        bar: number;"),
         "Inherited base instance fields should stay behind typeof base intersection: {output}"
+    );
+}
+
+#[test]
+fn test_returned_local_class_mixin_auto_accessor_uses_get_set_in_constructor_object() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function mixin<T extends { new (...args: any[]): {} }>(Base: T) {
+    return class extends Base {
+        accessor name = "";
+    };
+}
+
+class BaseClass {
+    accessor name = "";
+}
+
+class MyClass extends mixin(BaseClass) {
+    accessor name = "";
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function mixin<T extends {\n    new (...args: any[]): {};\n}>(Base: T): {\n    new (...args: any[]): {\n        get name(): string;\n        set name(arg: string);\n    };\n} & T;"
+        ),
+        "Expected returned auto-accessor class function type to use get/set members: {output}"
+    );
+    assert!(
+        output.contains("declare class BaseClass {\n    accessor name: string;\n}"),
+        "Declared classes should keep source auto-accessor syntax: {output}"
     );
 }
 
