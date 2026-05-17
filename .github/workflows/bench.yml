@@ -312,14 +312,20 @@ jobs:
         run: |
           set -euo pipefail
 
+          prep_prefix="latest"
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" &&
+                "${{ inputs.publish_latest_pgo }}" != "true" ]]; then
+            prep_prefix="${BENCH_TARGET_SHA}"
+          fi
+
           if gcloud storage cp \
-            "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
+            "gs://tsz-ci_cloudbuild/bench-prep/${prep_prefix}/bench-prep.env" \
             bench-prep.env >/dev/null 2>&1; then
             # shellcheck disable=SC1091
             source bench-prep.env
             if [[ "${BENCH_TARGET_SHA:-}" == "${{ env.BENCH_TARGET_SHA }}" &&
                   "${BENCH_BUILD_DATE:-}" == "$(date -u +%F)" ]]; then
-              echo "Latest Cloud Build prep artifact already exists for ${BENCH_TARGET_SHA}; skipping submit."
+              echo "Cloud Build prep artifact already exists for ${BENCH_TARGET_SHA}; skipping submit."
               exit 0
             fi
           fi
@@ -609,10 +615,10 @@ jobs:
           deadline=$((SECONDS + 7200))
           while true; do
             if gcloud storage cp \
-              "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
+              "gs://tsz-ci_cloudbuild/bench-prep/${BENCH_TARGET_SHA}/bench-prep.env" \
               bench-prep.env >/dev/null 2>&1 && \
               gcloud storage cp \
-                "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.tar" \
+                "gs://tsz-ci_cloudbuild/bench-prep/${BENCH_TARGET_SHA}/bench-prep.tar" \
                 bench-prep.tar >/dev/null 2>&1; then
               tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
               # shellcheck disable=SC1091

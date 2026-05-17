@@ -79,13 +79,18 @@ steps:
         printf 'BENCH_TARGET_SHA=%s\n' "${_BENCH_TARGET_SHA}"
         printf 'BENCH_BUILD_DATE=%s\n' "$(date -u +%F)"
       } > bench-prep.env
+      mkdir -p "bench-prep/${_BENCH_TARGET_SHA}" bench-prep/latest
+      cp bench-prep.tar bench-prep.env "bench-prep/${_BENCH_TARGET_SHA}/"
+      cp bench-prep.tar bench-prep.env bench-prep/latest/
 
 artifacts:
   objects:
-    location: gs://tsz-ci_cloudbuild/bench-prep/latest/
+    location: gs://tsz-ci_cloudbuild/
     paths:
-      - bench-prep.tar
-      - bench-prep.env
+      - bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar
+      - bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env
+      - bench-prep/latest/bench-prep.tar
+      - bench-prep/latest/bench-prep.env
 
 substitutions:
   _BENCH_TARGET_SHA: unknown
