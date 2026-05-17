@@ -150,6 +150,17 @@ const tsc = report.compilers?.tsc || {};
 const tsz = report.compilers?.tsz || {};
 const comparison = report.comparison || {};
 const counts = report.candidateManifest?.counts || {};
+if (!Number.isInteger(counts.pairedSolutions)) {
+  fail("assertion classification candidateManifest.counts.pairedSolutions must be an integer");
+}
+if (!Number.isInteger(counts.generatedAssertions)) {
+  fail("assertion classification candidateManifest.counts.generatedAssertions must be an integer");
+}
+if (counts.pairedSolutions !== counts.generatedAssertions) {
+  fail(
+    `assertion classification pairedSolutions (${counts.pairedSolutions}) does not match generatedAssertions (${counts.generatedAssertions})`,
+  );
+}
 const tscCandidateDiagnostics = tsc.candidateDiagnostics || {};
 const tszCandidateDiagnostics = tsz.candidateDiagnostics || {};
 const candidateFileComparisonCounts = comparison.candidateFileComparison?.counts || {};
