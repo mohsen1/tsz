@@ -93,7 +93,9 @@ impl<'a> DeclarationEmitter<'a> {
         for decl_idx in symbol.declarations.iter().copied() {
             let decl_node = self.arena.get(decl_idx)?;
             let var_decl = self.arena.get_variable_declaration(decl_node)?;
-            if var_decl.initializer.is_some()
+            if self.arena.is_const_variable_declaration(decl_idx)
+                && !var_decl.type_annotation.is_some()
+                && var_decl.initializer.is_some()
                 && self
                     .arena
                     .get(var_decl.initializer)
@@ -161,7 +163,50 @@ impl<'a> DeclarationEmitter<'a> {
                 (None, None) => std::cmp::Ordering::Equal,
             },
         );
+        Self::remove_short_circuit_literal_parts_covered_by_primitives(&mut deduped);
         *parts = deduped;
+    }
+
+    fn remove_short_circuit_literal_parts_covered_by_primitives(
+        parts: &mut Vec<ShortCircuitTypePart>,
+    ) {
+        let has_string = parts.iter().any(|part| part.text.trim() == "string");
+        let has_number = parts.iter().any(|part| part.text.trim() == "number");
+        let has_boolean = parts.iter().any(|part| part.text.trim() == "boolean");
+        let has_bigint = parts.iter().any(|part| part.text.trim() == "bigint");
+        if !has_string && !has_number && !has_boolean && !has_bigint {
+            return;
+        }
+
+        parts.retain(|part| {
+            let text = part.text.trim();
+            !(has_string && Self::is_short_circuit_string_literal_type(text)
+                || has_number && Self::is_short_circuit_number_literal_type(text)
+                || has_boolean && matches!(text, "true" | "false")
+                || has_bigint && Self::is_short_circuit_bigint_literal_type(text))
+        });
+    }
+
+    fn is_short_circuit_string_literal_type(type_text: &str) -> bool {
+        let mut chars = type_text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '"' || first == '\'') && type_text.len() >= 2 && type_text.ends_with(first)
+    }
+
+    fn is_short_circuit_number_literal_type(type_text: &str) -> bool {
+        let number_text = type_text.strip_prefix('-').unwrap_or(type_text);
+        !number_text.is_empty() && number_text.parse::<f64>().is_ok()
+    }
+
+    fn is_short_circuit_bigint_literal_type(type_text: &str) -> bool {
+        let bigint_text = type_text
+            .strip_prefix('-')
+            .unwrap_or(type_text)
+            .strip_suffix('n')
+            .unwrap_or("");
+        !bigint_text.is_empty() && bigint_text.chars().all(|ch| ch.is_ascii_digit())
     }
 
     fn format_short_circuit_type_parts(parts: Vec<ShortCircuitTypePart>) -> String {
