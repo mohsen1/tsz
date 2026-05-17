@@ -818,6 +818,14 @@ impl<'a> ES5ClassTransformer<'a> {
         result
     }
 
+    /// Convert an AST expression to IR with `this` captured as `_this`.
+    fn convert_expression_this_captured(&self, idx: NodeIndex) -> IRNode {
+        let converter = self.make_converter().with_this_captured(true);
+        let result = converter.convert_expression(idx);
+        self.collect_from_converter(&converter);
+        result
+    }
+
     /// Convert an AST statement to IR in static context (super uses `_super.X` not `_super.prototype.X`)
     fn convert_statement_static(&self, idx: NodeIndex) -> IRNode {
         let converter = self
@@ -2083,8 +2091,11 @@ impl<'a> ES5ClassTransformer<'a> {
             } else {
                 None
             };
-        // Each entry: (Option<temp_name>, expr_idx, member_idx) for the comma expression.
-        let mut computed_prop_entries: Vec<(Option<String>, NodeIndex, NodeIndex)> = Vec::new();
+        // Each entry: (Option<temp_name>, expr_idx, member_idx, outside_iife) for the
+        // comma expression. Instance field keys can be initialized after the class
+        // IIFE because constructors observe them only when instances are created.
+        let mut computed_prop_entries: Vec<(Option<String>, NodeIndex, NodeIndex, bool)> =
+            Vec::new();
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -2149,13 +2160,20 @@ impl<'a> ES5ClassTransformer<'a> {
                 let is_side_effect_free =
                     Self::is_expr_side_effect_free(self.arena, computed.expression);
                 if !is_side_effect_free {
-                    computed_prop_entries.push((None, computed.expression, member_idx));
+                    computed_prop_entries.push((None, computed.expression, member_idx, false));
                 }
             } else {
                 let temp = self.generate_temp_name();
                 self.computed_prop_temp_map
                     .insert(computed.expression, temp.clone());
-                computed_prop_entries.push((Some(temp), computed.expression, member_idx));
+                let outside_iife =
+                    self.computed_instance_field_key_can_initialize_after_iife(member_idx);
+                computed_prop_entries.push((
+                    Some(temp),
+                    computed.expression,
+                    member_idx,
+                    outside_iife,
+                ));
             }
         }
         let consumed_computed_auto_accessor_entries: Vec<usize> =
@@ -2163,7 +2181,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 computed_prop_entries
                     .iter()
                     .enumerate()
-                    .filter_map(|(entry_idx, (_, _, member_idx))| {
+                    .filter_map(|(entry_idx, (_, _, member_idx, _))| {
                         (*member_idx == first_accessor.member_idx).then_some(entry_idx)
                     })
                     .collect()
@@ -2179,24 +2197,42 @@ impl<'a> ES5ClassTransformer<'a> {
         let computed_prop_temp_decls: Vec<String> = computed_prop_entries
             .iter()
             .enumerate()
-            .filter_map(|(entry_idx, (temp, _, _))| {
-                (!consumed_computed_auto_accessor_entries.contains(&entry_idx))
+            .filter_map(|(entry_idx, (temp, _, _, outside_iife))| {
+                (!*outside_iife && !consumed_computed_auto_accessor_entries.contains(&entry_idx))
+                    .then(|| temp.clone())
+                    .flatten()
+            })
+            .collect();
+        let external_computed_prop_temp_decls: Vec<String> = computed_prop_entries
+            .iter()
+            .enumerate()
+            .filter_map(|(entry_idx, (temp, _, _, outside_iife))| {
+                (*outside_iife && !consumed_computed_auto_accessor_entries.contains(&entry_idx))
                     .then(|| temp.clone())
                     .flatten()
             })
             .collect();
         let mut computed_prop_init_entries = Vec::new();
+        let mut external_computed_prop_init_entries = Vec::new();
         if !computed_prop_entries.is_empty() {
             let mut comma_parts: Vec<IRNode> = Vec::new();
-            for (entry_idx, (temp_name, expr_idx, _)) in computed_prop_entries.iter().enumerate() {
+            let mut external_comma_parts: Vec<IRNode> = Vec::new();
+            for (entry_idx, (temp_name, expr_idx, _, outside_iife)) in
+                computed_prop_entries.iter().enumerate()
+            {
                 if consumed_computed_auto_accessor_entries.contains(&entry_idx) {
                     continue;
                 }
                 let expr_ir = self.convert_expression(*expr_idx);
-                if let Some(temp) = temp_name {
-                    comma_parts.push(IRNode::assign(IRNode::id(temp.clone()), expr_ir));
+                let target_parts = if *outside_iife {
+                    &mut external_comma_parts
                 } else {
-                    comma_parts.push(expr_ir);
+                    &mut comma_parts
+                };
+                if let Some(temp) = temp_name {
+                    target_parts.push(IRNode::assign(IRNode::id(temp.clone()), expr_ir));
+                } else {
+                    target_parts.push(expr_ir);
                 }
             }
             if !comma_parts.is_empty() {
@@ -2209,6 +2245,18 @@ impl<'a> ES5ClassTransformer<'a> {
                     })
                     .unwrap();
                 computed_prop_init_entries.push(IRNode::ExpressionStatement(Box::new(result)));
+            }
+            if !external_comma_parts.is_empty() {
+                let result = external_comma_parts
+                    .into_iter()
+                    .reduce(|left, right| IRNode::BinaryExpr {
+                        left: Box::new(left),
+                        operator: std::borrow::Cow::Borrowed(","),
+                        right: Box::new(right),
+                    })
+                    .unwrap();
+                external_computed_prop_init_entries
+                    .push(IRNode::ExpressionStatement(Box::new(result)));
             }
         }
 
@@ -2374,8 +2422,8 @@ impl<'a> ES5ClassTransformer<'a> {
             super_param: self.has_extends.then(|| self.super_name.clone().into()),
             body,
             weakmap_decls,
-            computed_prop_temp_decls: Vec::new(),
-            computed_prop_temp_inits: Vec::new(),
+            computed_prop_temp_decls: external_computed_prop_temp_decls,
+            computed_prop_temp_inits: external_computed_prop_init_entries,
             weakmap_inits,
             leading_comment,
             deferred_static_blocks,
@@ -2428,8 +2476,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 {
                     return None;
                 }
-                self.property_initializer_has_equals(member_node, prop_data)
-                    .then_some(member_idx)
+                (self.use_define_for_class_fields
+                    || self.property_initializer_has_equals(member_node, prop_data))
+                .then_some(member_idx)
             })
             .collect();
 
@@ -3381,15 +3430,44 @@ impl<'a> ES5ClassTransformer<'a> {
         printer.emit(expr).to_string()
     }
 
+    fn get_define_property_name_ir(&self, name_idx: NodeIndex) -> IRMethodName {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return self.get_method_name_ir(name_idx);
+        };
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.arena.get_computed_property(name_node)
+            && let Some(temp) = self.computed_prop_temp_map.get(&computed.expression)
+        {
+            return IRMethodName::Computed(Box::new(IRNode::id(temp.clone())));
+        }
+        self.get_method_name_ir(name_idx)
+    }
+
+    fn computed_instance_field_key_can_initialize_after_iife(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+        if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+            return false;
+        }
+        let Some(prop) = self.arena.get_property_decl(member_node) else {
+            return false;
+        };
+        !self.arena.is_static(&prop.modifiers)
+            && !self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+            && !is_private_identifier(self.arena, prop.name)
+    }
+
     /// Emit a property initializer as an assignment or defineProperty.
     fn emit_property_initializer_ir(&self, prop_idx: NodeIndex, use_this: bool) -> Option<IRNode> {
         let prop_node = self.arena.get(prop_idx)?;
         let prop_data = self.arena.get_property_decl(prop_node)?;
 
-        if prop_data.initializer.is_none() {
-            return None;
-        }
-        if !self.property_initializer_has_equals(prop_node, prop_data) {
+        let has_initializer = prop_data.initializer.is_some()
+            && self.property_initializer_has_equals(prop_node, prop_data);
+        if !has_initializer && !self.use_define_for_class_fields {
             return None;
         }
 
@@ -3401,14 +3479,23 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let prop_name = self.get_property_name_ir(prop_data.name)?;
 
-        let value = self
-            .convert_async_arrow_property_initializer(prop_data.initializer)
-            .unwrap_or_else(|| self.convert_expression(prop_data.initializer));
+        let value = if has_initializer {
+            self.convert_async_arrow_property_initializer(prop_data.initializer)
+                .unwrap_or_else(|| {
+                    if use_this {
+                        self.convert_expression_this_captured(prop_data.initializer)
+                    } else {
+                        self.convert_expression(prop_data.initializer)
+                    }
+                })
+        } else {
+            IRNode::Undefined
+        };
 
         if self.use_define_for_class_fields {
             Some(IRNode::DefineProperty {
                 target: Box::new(receiver),
-                property_name: self.get_method_name_ir(prop_data.name),
+                property_name: self.get_define_property_name_ir(prop_data.name),
                 descriptor: IRPropertyDescriptor {
                     get: None,
                     set: None,

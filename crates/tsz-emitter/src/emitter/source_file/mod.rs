@@ -469,6 +469,42 @@ mod tests {
     }
 
     #[test]
+    fn es5_define_property_fields_plan_undefined_computed_and_captured_this() {
+        let source = "var x = \"p\";\nclass A {\n    b;\n    [x] = 1;\n    constructor(public readonly y: number) {}\n    z = this.y;\n}\nclass B {}\nclass C extends B {\n    constructor(public ka: number) { super(); }\n    z = this.ka;\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a;\nvar x = \"p\";"),
+            "Computed instance-field temp declarations should hoist before source statements.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("Object.defineProperty(this, \"b\", {\n            enumerable: true,\n            configurable: true,\n            writable: true,\n            value: void 0\n        });"),
+            "Uninitialized public fields should emit defineProperty with void 0 under useDefineForClassFields.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("Object.defineProperty(this, _a,") && output.contains("}());\n_a = x;"),
+            "Computed instance-field names should use the hoisted temp and initialize it after the class IIFE.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("value: _this.ka"),
+            "Derived instance field initializers after super() should capture this as _this.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_async_method_with_multiply_default_stays_async_function() {
         let source = "declare var a: number, b: number;\ndeclare function g(): Promise<void>;\nvar o = { async m(x = a * b) { await g(); } };\n";
 

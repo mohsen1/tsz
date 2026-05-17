@@ -83,6 +83,8 @@ pub struct ClassES5Emitter<'a> {
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
     printer_options: Option<crate::emitter::PrinterOptions>,
     externally_hoisted_decls: rustc_hash::FxHashSet<String>,
+    hoist_computed_prop_temp_decls: bool,
+    hoisted_computed_prop_temp_decls: Vec<String>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -103,6 +105,8 @@ impl<'a> ClassES5Emitter<'a> {
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             printer_options: None,
             externally_hoisted_decls: rustc_hash::FxHashSet::default(),
+            hoist_computed_prop_temp_decls: false,
+            hoisted_computed_prop_temp_decls: Vec::new(),
         }
     }
 
@@ -247,6 +251,14 @@ impl<'a> ClassES5Emitter<'a> {
         std::mem::take(&mut self.mappings)
     }
 
+    pub const fn set_hoist_computed_prop_temp_decls(&mut self, hoist: bool) {
+        self.hoist_computed_prop_temp_decls = hoist;
+    }
+
+    pub fn take_hoisted_computed_prop_temp_decls(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.hoisted_computed_prop_temp_decls)
+    }
+
     /// Set decorator information for legacy decorator lowering inside the IIFE
     pub fn set_decorator_info(&mut self, info: ClassDecoratorInfo) {
         self.transformer.set_class_decorators(info.class_decorators);
@@ -380,6 +392,16 @@ impl<'a> ClassES5Emitter<'a> {
             } = ir
         {
             weakmap_decls.retain(|decl| !self.externally_hoisted_decls.contains(decl));
+        }
+
+        if self.hoist_computed_prop_temp_decls
+            && let IRNode::ES5ClassIIFE {
+                ref mut computed_prop_temp_decls,
+                ..
+            } = ir
+        {
+            self.hoisted_computed_prop_temp_decls
+                .extend(std::mem::take(computed_prop_temp_decls));
         }
 
         // Inject leading comment from the main emitter's comment system.

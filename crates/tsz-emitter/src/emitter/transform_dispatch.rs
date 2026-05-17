@@ -277,6 +277,7 @@ impl<'a> Printer<'a> {
                     class_node,
                     class_binding_name.as_deref(),
                 );
+                self.hoist_es5_class_computed_prop_temp_decls(&mut es5_emitter);
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 debug!(
                     "Printer ES5Class end (idx={}, class_node={}, output_len={})",
@@ -930,6 +931,14 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn hoist_es5_class_computed_prop_temp_decls(&mut self, es5_emitter: &mut ClassES5Emitter<'a>) {
+        for decl in es5_emitter.take_hoisted_computed_prop_temp_decls() {
+            if !self.hoisted_assignment_temps.contains(&decl) {
+                self.hoisted_assignment_temps.push(decl);
+            }
+        }
+    }
+
     /// Create an ES5 class emitter pre-configured with decorator info for the given class.
     fn create_es5_class_emitter_with_decorators(
         &mut self,
@@ -937,6 +946,7 @@ impl<'a> Printer<'a> {
     ) -> ClassES5Emitter<'a> {
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+        es5_emitter.set_hoist_computed_prop_temp_decls(true);
         es5_emitter
             .set_async_generator_inner_name_counts(self.async_generator_inner_name_counts.clone());
         self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
@@ -1312,6 +1322,7 @@ impl<'a> Printer<'a> {
                     *class_node,
                     class_binding_name.as_deref(),
                 );
+                self.hoist_es5_class_computed_prop_temp_decls(&mut es5_emitter);
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {
@@ -1530,6 +1541,7 @@ impl<'a> Printer<'a> {
                     *class_node,
                     class_binding_name.as_deref(),
                 );
+                self.hoist_es5_class_computed_prop_temp_decls(&mut es5_emitter);
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {
