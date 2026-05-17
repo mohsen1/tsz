@@ -2698,12 +2698,12 @@ export {};
 #[test]
 fn constructor_infer_non_constructable_yields_never() {
     // A plain call-only function type must not match a construct pattern → `never`.
-    // `never` is assignable to `string` so `"ok" as never` should be fine.
     assert_no_ts2322(
         r#"
 type InstanceOf<T> = T extends new (...args: any[]) => infer I ? I : never;
 type R = InstanceOf<() => string>;
-const r: R = "ok" as never;
+type IsNever = [R] extends [never] ? true : false;
+const check: IsNever = true;
 export {};
 "#,
         "InstanceOf<() => string> = never",
