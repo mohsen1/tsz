@@ -42,8 +42,10 @@ impl TupleLengthEstimate {
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn type_node_produces_too_large_tuple(&self, type_node: NodeIndex) -> bool {
-        self.estimate_tuple_type_node_length(type_node, &mut FxHashSet::default(), 0)
-            .is_too_large()
+        self.type_node_contains_tuple_spread(type_node, 0)
+            && self
+                .estimate_tuple_type_node_length(type_node, &mut FxHashSet::default(), 0)
+                .is_too_large()
     }
 
     pub(crate) fn array_literal_produces_too_large_tuple(&self, expr: NodeIndex) -> bool {

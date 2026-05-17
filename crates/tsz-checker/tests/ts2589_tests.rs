@@ -362,9 +362,12 @@ type X11 = [...X10, ...X10];
 type X12 = [...X11, ...X11];
 type X13 = [...X12, ...X12];
 type X14 = [...X13, ...X13];
+type Ref = X14;
+type Wrapped = [X14];
 "#;
     let diagnostics = check_source_diagnostics(source);
-    // Only X14 should get TS2799; none of X0..X13 should (they're under the limit).
+    // Only X14 should get TS2799; none of X0..X13 should (they're under the
+    // limit), and Ref/Wrapped must not inherit it through non-spread bodies.
     assert_eq!(
         diagnostics.iter().filter(|d| d.code == 2799).count(),
         1,
