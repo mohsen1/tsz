@@ -219,6 +219,7 @@ pub enum IRNode {
         initializer: Box<Self>,
         expression: Box<Self>,
         body: Box<Self>,
+        multiline_body: bool,
     },
 
     /// While statement: `while (cond) { body }`
