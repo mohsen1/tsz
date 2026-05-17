@@ -121,6 +121,28 @@ pub(crate) fn get_literal_or_well_known_property_name(
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn symbol_valued_binding_property_name(
+        &self,
+        expr_idx: NodeIndex,
+        expr_type: TypeId,
+    ) -> Option<String> {
+        if expr_type != TypeId::SYMBOL {
+            return None;
+        }
+
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        self.ctx.arena.get_identifier(expr_node)?;
+
+        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let value_decl = symbol.value_declaration;
+        if value_decl.is_none() || !self.ctx.arena.is_const_variable_declaration(value_decl) {
+            return None;
+        }
+
+        Some(format!("__symbol_{}", sym_id.0))
+    }
+
     // =========================================================================
     // Section 27: Modifier and Member Access Utilities
     // =========================================================================
@@ -1151,6 +1173,11 @@ impl<'a> CheckerState<'a> {
                     self.register_well_known_symbol_name_mapping(&well_known, symbol_ref);
                 }
                 return Some(well_known);
+            }
+            if let Some(symbol_name) =
+                self.symbol_valued_binding_property_name(computed.expression, prop_name_type)
+            {
+                return Some(symbol_name);
             }
             // When the computed property type resolves to a unique symbol (e.g.
             // `typeof Symbol.obs`), map it to the canonical `[Symbol.xxx]` format

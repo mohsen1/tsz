@@ -123,6 +123,70 @@ const _symi: boolean = symi[sym];
 }
 
 #[test]
+fn symbol_typed_computed_interface_member_access_uses_declared_type() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const Symbol: { (description?: string): symbol };
+const sym: symbol = Symbol("test");
+
+interface WithSymbol {
+    [sym]: number;
+}
+
+declare const ws: WithSymbol;
+const value: number = ws[sym];
+"#,
+    );
+
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "symbol-valued computed key access should not resolve to undefined, got {codes:?}",
+    );
+}
+
+#[test]
+fn symbol_typed_computed_members_match_same_const_binding_across_shapes() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const Symbol: { (description?: string): symbol };
+const fieldKey: symbol = Symbol("field");
+const aliasKey: symbol = Symbol("alias");
+const methodKey: symbol = Symbol("method");
+
+interface InterfaceShape {
+    [fieldKey]: number;
+}
+
+type LiteralShape = {
+    [aliasKey]: string;
+};
+
+interface MethodShape {
+    [methodKey](): boolean;
+}
+
+declare const interfaceValue: InterfaceShape;
+declare const literalValue: LiteralShape;
+declare const methodValue: MethodShape;
+
+const field: number = interfaceValue[fieldKey];
+const literal: string = literalValue[aliasKey];
+const method: () => boolean = methodValue[methodKey];
+const called: boolean = methodValue[methodKey]();
+"#,
+    );
+
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "same const symbol binding should preserve declared member types, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::CANNOT_INVOKE_AN_OBJECT_WHICH_IS_POSSIBLY_UNDEFINED),
+        "symbol method access should not resolve to possibly undefined, got {codes:?}",
+    );
+}
+
+#[test]
 fn jsdoc_symbol_index_signature_reports_computed_property_value_mismatch() {
     let codes = diagnostic_codes_for_js(
         r#"
