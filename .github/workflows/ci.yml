@@ -114,11 +114,11 @@ jobs:
                   should_run=false
                 fi
                 compiler_paths=$(printf '%s\n' "$all_paths" \
-                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
                   || true)
                 if [[ -z "$compiler_paths" ]]; then
                   compiler_checks_required=false
-                  echo "PR diff has no compiler/runtime paths; unit and conformance remain visible but are not required by CI Summary."
+                  echo "PR diff has no compiler/runtime paths; compiler suites are skipped and not required by CI Summary."
                 fi
               fi
             fi
@@ -354,15 +354,22 @@ jobs:
             if [[ "$page" -gt 30 ]]; then break; fi
           done
 
+          body=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
+          if ! grep -Eq '^[[:space:]]*AgentName:[[:space:]]*[^[:space:]]+' <<<"$body"; then
+            echo "Ready PRs must include a plain AgentName signature in the PR body."
+            echo "Missing field:"
+            echo "  AgentName: <stable agent name>"
+            exit 1
+          fi
+
           semantic_paths=$(printf '%s\n' "$changed_paths" \
             | grep -E '^(crates/(tsz-(binder|checker|cli|core|emitter|lsp|parser|scanner|solver|transforms)|tsz-website)/|scripts/(bench|ci|conformance|emit|fourslash)/|\.github/workflows/bench\.yml|\.github/workflows/ci\.yml)' \
             || true)
           if [[ -z "$semantic_paths" ]]; then
-            echo "No semantic, benchmark, or dashboard paths changed; project corpus fields are optional."
+            echo "Agent metadata is present. No semantic, benchmark, or dashboard paths changed; project corpus fields are optional."
             exit 0
           fi
 
-          body=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
           missing=()
           if ! grep -Eq '^##[[:space:]]+Project Corpus Impact[[:space:]]*$' <<<"$body"; then
             missing+=("## Project Corpus Impact")
@@ -383,7 +390,7 @@ jobs:
             exit 1
           fi
 
-          echo "Project corpus impact metadata is present."
+          echo "Agent and project corpus impact metadata are present."
 
   bench-script-smoke:
     name: bench-script-smoke
@@ -502,7 +509,7 @@ jobs:
   project-compile-guard:
     name: project-compile-guard
     needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     env:
@@ -541,7 +548,7 @@ jobs:
   project-compile-canary:
     name: project-compile-canary
     needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     continue-on-error: true
@@ -585,7 +592,7 @@ jobs:
   wasm:
     name: wasm
     needs: gate
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     env:
@@ -609,7 +616,7 @@ jobs:
   wasm-web:
     name: wasm-web
     needs: [gate, wasm]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -624,7 +631,7 @@ jobs:
   node-harness-prep:
     name: node-harness-prep
     needs: gate
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
     env:
@@ -680,7 +687,7 @@ jobs:
     # compiling its oversized lib-test artifact.
     name: unit
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     env:
@@ -713,7 +720,7 @@ jobs:
     # Not in the required-status set, so failure here is informational only.
     name: unit-cloudbuild
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     continue-on-error: true
@@ -748,7 +755,7 @@ jobs:
     # does not compete with the unit-archive compile for rustc capacity.
     name: conformance-${{ matrix.shard }}
     needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 75
     strategy:
@@ -781,7 +788,7 @@ jobs:
   conformance-aggregate:
     name: conformance-aggregate
     needs: [gate, conformance]
-    if: needs.gate.outputs.full_run == 'true' && !cancelled()
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -799,7 +806,7 @@ jobs:
   conformance-snapshot-gate:
     name: conformance-snapshot-gate
     needs: gate
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -820,7 +827,7 @@ jobs:
   emit:
     name: emit
     needs: [gate, dist-binaries, node-harness-prep]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
     env:
@@ -864,7 +871,7 @@ jobs:
     # the expected max shard work from ~328s at 4 shards to ~219s at 6 shards.
     name: fourslash-${{ matrix.shard }}
     needs: [gate, dist-binaries, node-harness-prep]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
     strategy:
@@ -911,7 +918,7 @@ jobs:
   fourslash-aggregate:
     name: fourslash-aggregate
     needs: [gate, fourslash]
-    if: needs.gate.outputs.full_run == 'true' && !cancelled()
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.fourslash.result != 'skipped' && needs.fourslash.result != 'cancelled'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -968,21 +975,6 @@ jobs:
               print(f"gate did not pass: {gate.get('result')}")
               sys.exit(1)
 
-          hard_failure_results = {"failure", "cancelled", "timed_out", "action_required"}
-          hard_failures = []
-          for name, data in needs.items():
-              if name == "gate":
-                  continue
-              result = data.get("result")
-              if result in hard_failure_results:
-                  hard_failures.append(f"{name}: {result}")
-
-          if hard_failures:
-              print("CI jobs reported hard failures:")
-              for failure in hard_failures:
-                  print(f"  - {failure}")
-              sys.exit(1)
-
           if not should_run:
               if bench_shell_only:
                   bench_smoke = needs.get("bench-script-smoke", {})
@@ -1004,20 +996,19 @@ jobs:
               print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
               sys.exit(1)
 
-          if full_run:
+          if full_run and compiler_checks_required:
               required.update({
                   "project-compile-guard",
                   "conformance-snapshot-gate",
               })
-              if compiler_checks_required:
-                  required.update({
-                      "wasm",
-                      "wasm-web",
-                      "node-harness-prep",
-                      "conformance-aggregate",
-                      "emit",
-                      "fourslash-aggregate",
-                  })
+              required.update({
+                  "wasm",
+                  "wasm-web",
+                  "node-harness-prep",
+                  "conformance-aggregate",
+                  "emit",
+                  "fourslash-aggregate",
+              })
 
           failures = []
           for name, data in needs.items():

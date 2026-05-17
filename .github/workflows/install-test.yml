@@ -159,6 +159,41 @@ jobs:
           # past target/version detection and into the actual download path.
           if [ "$rc" -eq 0 ]; then echo "expected non-zero exit when release missing"; exit 1; fi
 
+      - name: install.sh latest channel no-fallback guard
+        if: matrix.shell == 'bash'
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          cat > "$tmp/curl" <<'SH'
+          #!/usr/bin/env bash
+          printf '%s\n' "$*" >> "$TSZ_FAKE_CURL_LOG"
+          exit 22
+          SH
+          chmod +x "$tmp/curl"
+          export TSZ_FAKE_CURL_LOG="$tmp/curl.log"
+          set +e
+          out="$(
+            TSZ_INSTALL_REQUIRE_LATEST_CHANNEL=1 \
+            PATH="$tmp:$PATH" \
+            bash scripts/install.sh --version latest --dir "$tmp/install" --owner example --repo repo 2>&1
+          )"
+          rc=$?
+          set -e
+          echo "$out"
+          cat "$TSZ_FAKE_CURL_LOG"
+          if [ "$rc" -eq 0 ]; then
+            echo "expected latest-channel install to fail when the explicit latest asset is missing"
+            exit 1
+          fi
+          grep -q 'releases/download/latest/tsz-latest-' "$TSZ_FAKE_CURL_LOG"
+          if grep -q 'api.github.com/repos/example/repo/releases/latest' "$TSZ_FAKE_CURL_LOG"; then
+            echo "installer fell back to the versioned latest release despite TSZ_INSTALL_REQUIRE_LATEST_CHANNEL=1"
+            exit 1
+          fi
+          echo "$out" | grep -q 'latest channel asset is not available'
+
       - name: install.ps1 dry-run
         if: matrix.shell == 'pwsh'
         shell: pwsh
