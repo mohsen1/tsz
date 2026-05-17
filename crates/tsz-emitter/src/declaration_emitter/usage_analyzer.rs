@@ -308,10 +308,30 @@ impl<'a> UsageAnalyzer<'a> {
                 self.analyze_commonjs_assignment_public_surface(stmt_idx)
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                self.analyze_module_declaration(stmt_idx);
+                if self.module_declaration_contributes_public_surface(stmt_idx) {
+                    self.analyze_module_declaration(stmt_idx);
+                }
             }
             _ => {}
         }
+    }
+
+    fn module_declaration_contributes_public_surface(&self, module_idx: NodeIndex) -> bool {
+        let Some(module_node) = self.arena.get(module_idx) else {
+            return false;
+        };
+        let Some(module) = self.arena.get_module(module_node) else {
+            return false;
+        };
+
+        if self.source_is_declaration_file || !self.binder.is_external_module() {
+            return true;
+        }
+        if self.is_ambient_module_body_name(module.name) {
+            return true;
+        }
+
+        self.statement_has_export_modifier(module_node)
     }
 
     fn analyze_module_declaration(&mut self, module_idx: NodeIndex) {

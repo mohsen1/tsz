@@ -109,6 +109,59 @@ export namespace Outer {
 }
 
 #[test]
+fn test_internal_namespace_does_not_retain_private_module_interface() {
+    let source = r#"
+export var x = 1;
+interface Iterator<T> {
+    value: T;
+}
+
+namespace Query {
+    export function fromDoWhile<T>(doWhile: (test: Iterator<T>) => boolean): Iterator<T> {
+        return null;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert_eq!(
+        "export declare var x: number;",
+        output.trim(),
+        "Expected private namespace dependencies to stay out of module DTS: {output}"
+    );
+}
+
+#[test]
+fn test_exported_namespace_retains_private_module_interface_dependency() {
+    let source = r#"
+export var x = 1;
+interface Iterator<T> {
+    value: T;
+}
+
+export namespace Query {
+    export function fromDoWhile<T>(doWhile: (test: Iterator<T>) => boolean): Iterator<T> {
+        return null;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("interface Iterator<T>"),
+        "Expected private interface to remain when exported namespace references it: {output}"
+    );
+    assert!(
+        output.contains("export declare namespace Query"),
+        "Expected exported namespace to remain public: {output}"
+    );
+    assert!(
+        output.contains("test: Iterator<T>"),
+        "Expected exported namespace member to keep its private dependency reference: {output}"
+    );
+}
+
+#[test]
 fn test_throw_only_unannotated_returns_void() {
     let source = r#"
 export function f() {
