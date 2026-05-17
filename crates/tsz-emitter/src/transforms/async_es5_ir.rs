@@ -83,6 +83,14 @@ enum SuspendedAssignmentTarget {
     Element(Box<IRNode>),
 }
 
+enum ForInAssignmentTarget {
+    Direct(IRNode),
+    Suspended {
+        suspension: NodeIndex,
+        target_after_suspension: IRNode,
+    },
+}
+
 impl AsyncTransformState {
     pub fn new() -> Self {
         Self::default()
@@ -2682,7 +2690,7 @@ impl<'a> AsyncES5Transformer<'a> {
             }
 
             k if k == syntax_kind_ext::FOR_IN_STATEMENT => {
-                if !self.process_for_in_statement_in_generator(
+                if !self.process_for_in_statement_in_async(
                     idx,
                     cases,
                     current_statements,
@@ -4093,16 +4101,13 @@ impl<'a> AsyncES5Transformer<'a> {
         true
     }
 
-    fn process_for_in_statement_in_generator(
+    fn process_for_in_statement_in_async(
         &mut self,
         idx: NodeIndex,
         cases: &mut Vec<IRGeneratorCase>,
         current_statements: &mut Vec<IRNode>,
         current_label: &mut u32,
     ) -> bool {
-        if !self.generator_mode {
-            return false;
-        }
         let Some(node) = self.arena.get(idx) else {
             return false;
         };
@@ -4112,23 +4117,26 @@ impl<'a> AsyncES5Transformer<'a> {
         let Some(for_in) = self.arena.get_for_in_of(node) else {
             return false;
         };
-        if !self.contains_await_recursive(for_in.statement)
-            || self.contains_await_recursive(for_in.initializer)
-            || self.contains_await_recursive(for_in.expression)
-            || self.for_in_body_has_unsupported_control_flow(for_in.statement)
-        {
+
+        let initializer_has_suspension = self.contains_await_recursive(for_in.initializer);
+        let expression_has_suspension = self.contains_await_recursive(for_in.expression);
+        let body_has_suspension = self.contains_await_recursive(for_in.statement);
+        if !initializer_has_suspension && !expression_has_suspension && !body_has_suspension {
+            return self.process_simple_for_in_statement(for_in, current_statements);
+        }
+        if self.for_in_body_has_unsupported_control_flow(for_in.statement) {
             return false;
         }
-        let Some((iteration_name, declares_iteration_name)) =
-            self.for_in_iteration_binding(for_in.initializer)
-        else {
-            return false;
-        };
 
         let object_temp = self.generate_hoisted_temp();
         let keys_temp = self.generate_hoisted_temp();
         let key_temp = self.generate_hoisted_temp();
         let index_temp = self.fresh_reserved_name("_i");
+        let Some((assignment_target, declared_iteration_name)) =
+            self.for_in_assignment_target(for_in.initializer)
+        else {
+            return false;
+        };
 
         for name in [&object_temp, &keys_temp, &key_temp, &index_temp] {
             current_statements.push(IRNode::VarDecl {
@@ -4136,16 +4144,30 @@ impl<'a> AsyncES5Transformer<'a> {
                 initializer: None,
             });
         }
-        if declares_iteration_name {
+        if let Some(iteration_name) = declared_iteration_name {
             current_statements.push(IRNode::VarDecl {
-                name: iteration_name.clone().into(),
+                name: iteration_name.into(),
                 initializer: None,
             });
         }
 
+        let object_value = if self.is_suspension_expression(for_in.expression) {
+            self.process_await_expression(
+                for_in.expression,
+                cases,
+                current_statements,
+                current_label,
+            );
+            IRNode::GeneratorSent
+        } else if expression_has_suspension {
+            return false;
+        } else {
+            self.expression_to_ir(for_in.expression)
+        };
+
         current_statements.push(Self::expression_statement(IRNode::assign(
             IRNode::id(object_temp.clone()),
-            self.expression_to_ir(for_in.expression),
+            object_value,
         )));
         current_statements.push(Self::expression_statement(IRNode::assign(
             IRNode::id(keys_temp.clone()),
@@ -4202,10 +4224,24 @@ impl<'a> AsyncES5Transformer<'a> {
             }),
             target_label: increment_placeholder,
         });
-        current_statements.push(Self::expression_statement(IRNode::assign(
-            IRNode::id(iteration_name),
-            IRNode::id(key_temp),
-        )));
+        match assignment_target {
+            ForInAssignmentTarget::Direct(target) => {
+                current_statements.push(Self::expression_statement(IRNode::assign(
+                    target,
+                    IRNode::id(key_temp),
+                )));
+            }
+            ForInAssignmentTarget::Suspended {
+                suspension,
+                target_after_suspension,
+            } => {
+                self.process_await_expression(suspension, cases, current_statements, current_label);
+                current_statements.push(Self::expression_statement(IRNode::assign(
+                    target_after_suspension,
+                    IRNode::id(key_temp),
+                )));
+            }
+        }
 
         self.process_block_or_statement_in_async(
             for_in.statement,
@@ -4238,7 +4274,49 @@ impl<'a> AsyncES5Transformer<'a> {
         true
     }
 
-    fn for_in_iteration_binding(&self, initializer: NodeIndex) -> Option<(String, bool)> {
+    fn process_simple_for_in_statement(
+        &self,
+        for_in: &tsz_parser::parser::node::ForInOfData,
+        current_statements: &mut Vec<IRNode>,
+    ) -> bool {
+        let Some((target, declared_iteration_name)) =
+            self.for_in_direct_assignment_target(for_in.initializer)
+        else {
+            return false;
+        };
+        if let Some(iteration_name) = declared_iteration_name {
+            current_statements.push(IRNode::VarDecl {
+                name: iteration_name.into(),
+                initializer: None,
+            });
+        }
+        current_statements.push(IRNode::ForInOfStatement {
+            kind: "in".into(),
+            initializer: Box::new(target),
+            expression: Box::new(self.expression_to_ir(for_in.expression)),
+            body: Box::new(self.statement_to_ir(for_in.statement)),
+            multiline_body: false,
+        });
+        true
+    }
+
+    fn for_in_assignment_target(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<(ForInAssignmentTarget, Option<String>)> {
+        if self.contains_await_recursive(initializer) {
+            return self
+                .for_in_suspended_assignment_target(initializer)
+                .map(|target| (target, None));
+        }
+        self.for_in_direct_assignment_target(initializer)
+            .map(|(target, declared_name)| (ForInAssignmentTarget::Direct(target), declared_name))
+    }
+
+    fn for_in_direct_assignment_target(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<(IRNode, Option<String>)> {
         let init_node = self.arena.get(initializer)?;
         if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
             let decl_list = self.arena.get_variable(init_node)?;
@@ -4252,11 +4330,75 @@ impl<'a> AsyncES5Transformer<'a> {
                 return None;
             }
             let name = super::emit_utils::identifier_text(self.arena, decl.name)?;
-            return Some((name, true));
+            return Some((IRNode::id(name.clone()), Some(name)));
         }
         if init_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
             let name = super::emit_utils::identifier_text(self.arena, initializer)?;
-            return Some((name, false));
+            return Some((IRNode::id(name), None));
+        }
+        if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || init_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return Some((self.expression_to_ir(initializer), None));
+        }
+        None
+    }
+
+    fn for_in_suspended_assignment_target(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<ForInAssignmentTarget> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(init_node)?;
+            let (suspension, object_after_suspension) =
+                self.for_in_target_object_after_suspension(access.expression)?;
+            let property = crate::transforms::emit_utils::identifier_text_or_empty(
+                self.arena,
+                access.name_or_argument,
+            );
+            return Some(ForInAssignmentTarget::Suspended {
+                suspension,
+                target_after_suspension: IRNode::prop(object_after_suspension, property),
+            });
+        }
+        if init_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(init_node)?;
+            if self.contains_await_recursive(access.name_or_argument) {
+                return None;
+            }
+            let (suspension, object_after_suspension) =
+                self.for_in_target_object_after_suspension(access.expression)?;
+            return Some(ForInAssignmentTarget::Suspended {
+                suspension,
+                target_after_suspension: IRNode::elem(
+                    object_after_suspension,
+                    self.expression_to_ir(access.name_or_argument),
+                ),
+            });
+        }
+        None
+    }
+
+    fn for_in_target_object_after_suspension(
+        &self,
+        expression: NodeIndex,
+    ) -> Option<(NodeIndex, IRNode)> {
+        if self.is_suspension_expression(expression) {
+            return Some((
+                expression,
+                IRNode::Parenthesized(Box::new(IRNode::GeneratorSent)),
+            ));
+        }
+        let node = self.arena.get(expression)?;
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            let paren = self.arena.get_parenthesized(node)?;
+            if self.is_suspension_expression(paren.expression) {
+                return Some((
+                    paren.expression,
+                    IRNode::Parenthesized(Box::new(IRNode::GeneratorSent)),
+                ));
+            }
         }
         None
     }
