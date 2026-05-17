@@ -66,6 +66,317 @@ const a14 = [...a13, ...a13] as const;
     );
 }
 
+/// Two *independent* type-alias chains that both exceed the 10 000-element
+/// limit must each emit their own TS2799.  This mirrors the structure of the
+/// `excessivelyLargeTupleSpread` tsc conformance fixture, which has exactly
+/// two type-alias chains and one const-array chain.
+///
+/// Structural rule: TS2799 is emitted independently for every alias whose body
+/// directly produces a tuple exceeding the limit, regardless of how many other
+/// aliases in the file already exceeded it.
+#[test]
+fn two_independent_tuple_spread_chains_each_emit_ts2799() {
+    // First chain: spread 5 copies per step, reaches 5^5 = 3125 at T4,
+    // 5^6 = 15625 at T5 → TS2799.
+    // Second chain: double each step, reaches 2^14 = 16384 at U14 → TS2799.
+    // (Two-char alias names for the first chain, four-char for the second.)
+    let source = r#"
+type T0 = [any, any, any, any, any];
+type T1 = [...T0, ...T0, ...T0, ...T0, ...T0];
+type T2 = [...T1, ...T1, ...T1, ...T1, ...T1];
+type T3 = [...T2, ...T2, ...T2, ...T2, ...T2];
+type T4 = [...T3, ...T3, ...T3, ...T3, ...T3];
+type T5 = [...T4, ...T4, ...T4, ...T4, ...T4];
+
+type U000 = [any];
+type U001 = [...U000, ...U000];
+type U002 = [...U001, ...U001];
+type U003 = [...U002, ...U002];
+type U004 = [...U003, ...U003];
+type U005 = [...U004, ...U004];
+type U006 = [...U005, ...U005];
+type U007 = [...U006, ...U006];
+type U008 = [...U007, ...U007];
+type U009 = [...U008, ...U008];
+type U010 = [...U009, ...U009];
+type U011 = [...U010, ...U010];
+type U012 = [...U011, ...U011];
+type U013 = [...U012, ...U012];
+type U014 = [...U013, ...U013];
+
+const c0 = [0] as const;
+const c1 = [...c0, ...c0] as const;
+const c2 = [...c1, ...c1] as const;
+const c3 = [...c2, ...c2] as const;
+const c4 = [...c3, ...c3] as const;
+const c5 = [...c4, ...c4] as const;
+const c6 = [...c5, ...c5] as const;
+const c7 = [...c6, ...c6] as const;
+const c8 = [...c7, ...c7] as const;
+const c9 = [...c8, ...c8] as const;
+const c10 = [...c9, ...c9] as const;
+const c11 = [...c10, ...c10] as const;
+const c12 = [...c11, ...c11] as const;
+const c13 = [...c12, ...c12] as const;
+const c14 = [...c13, ...c13] as const;
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let ts2799_count = diagnostics.iter().filter(|d| d.code == 2799).count();
+    let ts2800_count = diagnostics.iter().filter(|d| d.code == 2800).count();
+    assert_eq!(
+        ts2799_count, 2,
+        "expected two TS2799 diagnostics (one per chain), got {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2800_count, 1,
+        "expected one TS2800 diagnostic for the const-array chain, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2589),
+        "tuple size overflow must not surface as TS2589: {diagnostics:?}"
+    );
+}
+
+/// A chain that spreads many copies per step reaches the limit in far fewer
+/// alias levels than a doubling chain.  Both paths must emit TS2799 (not
+/// TS2589) because the size overflow is always unconditional.
+///
+/// Structural rule: the diagnostic code depends on the *kind* of overflow
+/// (unconditional size vs. recursive depth), not on how fast the size grows.
+#[test]
+fn fast_spread_factor_reaches_tuple_limit_with_ts2799() {
+    // 10 copies per step with a 2-element base: 2, 20, 200, 2000, 20000.
+    // V4 = 20 000 > 10 000 → TS2799 at V4.  (V0=[any,any] so each step
+    // multiplies by 10 starting from 2, ensuring strict overflow at V4.)
+    let source_v = r#"
+type V0 = [any, any];
+type V1 = [...V0, ...V0, ...V0, ...V0, ...V0, ...V0, ...V0, ...V0, ...V0, ...V0];
+type V2 = [...V1, ...V1, ...V1, ...V1, ...V1, ...V1, ...V1, ...V1, ...V1, ...V1];
+type V3 = [...V2, ...V2, ...V2, ...V2, ...V2, ...V2, ...V2, ...V2, ...V2, ...V2];
+type V4 = [...V3, ...V3, ...V3, ...V3, ...V3, ...V3, ...V3, ...V3, ...V3, ...V3];
+"#;
+    let diags_v = check_source_diagnostics(source_v);
+    let ts2799 = diags_v.iter().filter(|d| d.code == 2799).count();
+    assert_eq!(
+        ts2799, 1,
+        "10-spread chain: expected exactly one TS2799, got {diags_v:?}"
+    );
+    assert!(
+        diags_v.iter().all(|d| d.code != 2589),
+        "10-spread overflow must not surface as TS2589: {diags_v:?}"
+    );
+
+    // 3 copies per step — same rule, different spread factor.
+    let source_w = r#"
+type W0 = [any, any];
+type W1 = [...W0, ...W0, ...W0];
+type W2 = [...W1, ...W1, ...W1];
+type W3 = [...W2, ...W2, ...W2];
+type W4 = [...W3, ...W3, ...W3];
+type W5 = [...W4, ...W4, ...W4];
+type W6 = [...W5, ...W5, ...W5];
+type W7 = [...W6, ...W6, ...W6];
+type W8 = [...W7, ...W7, ...W7];
+"#;
+    let diags_w = check_source_diagnostics(source_w);
+    let ts2799_w = diags_w.iter().filter(|d| d.code == 2799).count();
+    assert_eq!(
+        ts2799_w, 1,
+        "3-spread chain: expected exactly one TS2799, got {diags_w:?}"
+    );
+    assert!(
+        diags_w.iter().all(|d| d.code != 2589),
+        "3-spread overflow must not surface as TS2589: {diags_w:?}"
+    );
+}
+
+/// Named rest-element spreads (`[...name: T]`) are syntactically different from
+/// anonymous spreads (`[...T]`) but semantically identical — both spread the
+/// elements of another tuple type into a new tuple.  The limit check must apply
+/// equally to both forms.
+///
+/// Structural rule: when a tuple element carries `...name:` instead of a bare
+/// `...`, the element is still a spread; `NAMED_TUPLE_MEMBER` with
+/// `dot_dot_dot_token` must be treated the same as `REST_TYPE` throughout the
+/// large-tuple detection code.
+#[test]
+fn named_rest_member_spread_chain_reports_ts2799_not_ts2589() {
+    // Anonymous rest spread — baseline.
+    let source_anon = r#"
+type A0 = [any];
+type A1 = [...A0, ...A0];
+type A2 = [...A1, ...A1];
+type A3 = [...A2, ...A2];
+type A4 = [...A3, ...A3];
+type A5 = [...A4, ...A4];
+type A6 = [...A5, ...A5];
+type A7 = [...A6, ...A6];
+type A8 = [...A7, ...A7];
+type A9 = [...A8, ...A8];
+type A10 = [...A9, ...A9];
+type A11 = [...A10, ...A10];
+type A12 = [...A11, ...A11];
+type A13 = [...A12, ...A12];
+type A14 = [...A13, ...A13];
+"#;
+    let diags_anon = check_source_diagnostics(source_anon);
+    assert_eq!(
+        diags_anon.iter().filter(|d| d.code == 2799).count(),
+        1,
+        "anonymous rest: expected one TS2799, got {diags_anon:?}"
+    );
+    assert!(
+        diags_anon.iter().all(|d| d.code != 2589),
+        "anonymous rest: must not emit TS2589: {diags_anon:?}"
+    );
+
+    // Named rest spreads — must behave identically.
+    let source_named = r#"
+type N0 = [any];
+type N1 = [...a: N0, ...b: N0];
+type N2 = [...c: N1, ...d: N1];
+type N3 = [...e: N2, ...f: N2];
+type N4 = [...g: N3, ...h: N3];
+type N5 = [...i: N4, ...j: N4];
+type N6 = [...k: N5, ...l: N5];
+type N7 = [...m: N6, ...n: N6];
+type N8 = [...o: N7, ...p: N7];
+type N9 = [...q: N8, ...r: N8];
+type N10 = [...s: N9, ...t: N9];
+type N11 = [...u: N10, ...v: N10];
+type N12 = [...w: N11, ...x: N11];
+type N13 = [...y: N12, ...z: N12];
+type N14 = [...aa: N13, ...bb: N13];
+"#;
+    let diags_named = check_source_diagnostics(source_named);
+    assert_eq!(
+        diags_named.iter().filter(|d| d.code == 2799).count(),
+        1,
+        "named rest: expected one TS2799, got {diags_named:?}"
+    );
+    assert!(
+        diags_named.iter().all(|d| d.code != 2589),
+        "named rest: must not emit TS2589: {diags_named:?}"
+    );
+}
+
+/// A chain that mixes anonymous and named rest spreads within the same alias
+/// body must still be detected as an unconditional tuple-spread chain and
+/// produce TS2799 when the element count exceeds the limit.
+#[test]
+fn mixed_anonymous_and_named_rest_spreads_report_ts2799() {
+    let source = r#"
+type M0 = [any];
+type M1 = [...M0, ...x: M0];
+type M2 = [...M1, ...y: M1];
+type M3 = [...M2, ...z: M2];
+type M4 = [...M3, ...w: M3];
+type M5 = [...M4, ...v: M4];
+type M6 = [...M5, ...u: M5];
+type M7 = [...M6, ...t: M6];
+type M8 = [...M7, ...s: M7];
+type M9 = [...M8, ...r: M8];
+type M10 = [...M9, ...q: M9];
+type M11 = [...M10, ...p: M10];
+type M12 = [...M11, ...o: M11];
+type M13 = [...M12, ...n: M12];
+type M14 = [...M13, ...m: M13];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.code == 2799).count(),
+        1,
+        "mixed rest: expected one TS2799, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2589),
+        "mixed rest: must not emit TS2589: {diagnostics:?}"
+    );
+}
+
+/// A chain where each alias spreads a starting tuple with multiple elements
+/// (not just one) reaches the limit more quickly.  The count of elements in the
+/// starting tuple is irrelevant to the diagnostic — what matters is whether the
+/// final count exceeds `MAX_REPRESENTABLE_TUPLE_LENGTH`.
+#[test]
+fn multi_element_base_tuple_spread_reports_ts2799() {
+    // Base tuple has 100 elements.  After 3 doublings: 800.  After 4: 1600.
+    // After 7 doublings: 100 * 2^7 = 12800 > 10000 → TS2799.
+    let source = r#"
+type B0 = [
+    any, any, any, any, any, any, any, any, any, any,
+    any, any, any, any, any, any, any, any, any, any,
+    any, any, any, any, any, any, any, any, any, any,
+    any, any, any, any, any, any, any, any, any, any,
+    any, any, any, any, any, any, any, any, any, any,
+    any, any, any, any, any, any, any, any, any, any,
+    any, any, any, any, any, any, any, any, any, any,
+    any, any, any, any, any, any, any, any, any, any,
+    any, any, any, any, any, any, any, any, any, any,
+    any, any, any, any, any, any, any, any, any, any
+];
+type B1 = [...B0, ...B0];
+type B2 = [...B1, ...B1];
+type B3 = [...B2, ...B2];
+type B4 = [...B3, ...B3];
+type B5 = [...B4, ...B4];
+type B6 = [...B5, ...B5];
+type B7 = [...B6, ...B6];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.code == 2799).count(),
+        1,
+        "multi-element base: expected one TS2799, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2589),
+        "multi-element base: must not emit TS2589: {diagnostics:?}"
+    );
+}
+
+/// Aliases whose body is not a tuple spread (e.g. a type reference to a
+/// too-large alias, or a non-tuple type) must NOT inherit TS2799.
+///
+/// Structural rule: TS2799 fires only at the alias that *directly constructs*
+/// the over-limit tuple through spread syntax; downstream aliases that merely
+/// name or wrap it are not flagged.
+#[test]
+fn non_spread_aliases_referencing_large_tuple_do_not_inherit_ts2799() {
+    // Indirect reference: type Ref = T14.  Ref's body is a type-reference node,
+    // not a tuple-spread — tsc does not emit TS2799 here.
+    let source = r#"
+type X0 = [any];
+type X1 = [...X0, ...X0];
+type X2 = [...X1, ...X1];
+type X3 = [...X2, ...X2];
+type X4 = [...X3, ...X3];
+type X5 = [...X4, ...X4];
+type X6 = [...X5, ...X5];
+type X7 = [...X6, ...X6];
+type X8 = [...X7, ...X7];
+type X9 = [...X8, ...X8];
+type X10 = [...X9, ...X9];
+type X11 = [...X10, ...X10];
+type X12 = [...X11, ...X11];
+type X13 = [...X12, ...X12];
+type X14 = [...X13, ...X13];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    // Only X14 should get TS2799; none of X0..X13 should (they're under the limit).
+    assert_eq!(
+        diagnostics.iter().filter(|d| d.code == 2799).count(),
+        1,
+        "only the first over-limit alias should emit TS2799; got {diagnostics:?}"
+    );
+    // X0..X13 must be clean.
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2589),
+        "no TS2589 should appear: {diagnostics:?}"
+    );
+}
+
 #[test]
 fn property_access_ts2589_recovers_variable_symbol_type_to_any() {
     let source = r#"
