@@ -71,14 +71,18 @@ function requiredRelativeManifestPath(value, label) {
   return normalized;
 }
 
-function optionalCount(value, label) {
-  if (value === undefined) {
-    return null;
-  }
+function requiredCount(value, label) {
   if (!Number.isInteger(value) || value < 0) {
     fail(`manifest counts.${label} must be a non-negative integer`);
   }
   return value;
+}
+
+function optionalCount(value, label) {
+  if (value === undefined) {
+    return null;
+  }
+  return requiredCount(value, label);
 }
 
 function validateCandidateManifest(manifest) {
@@ -94,19 +98,43 @@ function validateCandidateManifest(manifest) {
   }
 
   const counts = manifest.counts ?? {};
-  const generatedAssertions = optionalCount(counts.generatedAssertions, "generatedAssertions");
-  const referenced = optionalCount(
-    counts.assertionsReferencingSolutionDeclaration,
-    "assertionsReferencingSolutionDeclaration",
-  );
-  const missing = optionalCount(
-    counts.assertionsMissingSolutionDeclarationReference,
-    "assertionsMissingSolutionDeclarationReference",
-  );
+  const generatedAssertions =
+    manifest.fixture === "type-challenges-assertion-candidates"
+      ? requiredCount(counts.generatedAssertions, "generatedAssertions")
+      : optionalCount(counts.generatedAssertions, "generatedAssertions");
+  const tscAcceptedAssertions =
+    manifest.fixture === "type-challenges-assertions-tsc-clean"
+      ? requiredCount(counts.tscAcceptedAssertions, "tscAcceptedAssertions")
+      : optionalCount(counts.tscAcceptedAssertions, "tscAcceptedAssertions");
+  const referenced =
+    manifest.fixture === "type-challenges-assertion-candidates"
+      ? requiredCount(
+          counts.assertionsReferencingSolutionDeclaration,
+          "assertionsReferencingSolutionDeclaration",
+        )
+      : optionalCount(
+          counts.assertionsReferencingSolutionDeclaration,
+          "assertionsReferencingSolutionDeclaration",
+        );
+  const missing =
+    manifest.fixture === "type-challenges-assertion-candidates"
+      ? requiredCount(
+          counts.assertionsMissingSolutionDeclarationReference,
+          "assertionsMissingSolutionDeclarationReference",
+        )
+      : optionalCount(
+          counts.assertionsMissingSolutionDeclarationReference,
+          "assertionsMissingSolutionDeclarationReference",
+        );
 
   if (generatedAssertions !== null && generatedAssertions !== manifest.entries.length) {
     fail(
       `manifest counts.generatedAssertions (${generatedAssertions}) does not match entries length (${manifest.entries.length})`,
+    );
+  }
+  if (tscAcceptedAssertions !== null && tscAcceptedAssertions !== manifest.entries.length) {
+    fail(
+      `manifest counts.tscAcceptedAssertions (${tscAcceptedAssertions}) does not match entries length (${manifest.entries.length})`,
     );
   }
   if (referenced !== null && missing !== null && referenced + missing !== manifest.entries.length) {
