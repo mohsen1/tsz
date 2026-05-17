@@ -195,6 +195,15 @@ try {
   assert.equal(typeChallengesSolutionsPage.failed, true);
   assert.match(typeChallengesSolutionsPage.status_label, /compile canary/i);
 
+  const typeChallengesAssertionPage = pages.find((page) => page.name === "type-challenges-assertion-candidates");
+  assert.ok(typeChallengesAssertionPage, "expected type-challenges assertion candidates page");
+  assert.equal(
+    typeChallengesAssertionPage.display_name,
+    "type-challenges assertion candidates",
+  );
+  assert.equal(typeChallengesAssertionPage.failed, true);
+  assert.match(typeChallengesAssertionPage.status_label, /diagnostic mismatch/i);
+
   const typeChallengesCleanPage = pages.find((page) => page.name === "type-challenges-assertions-tsc-clean");
   assert.ok(typeChallengesCleanPage, "expected compile-canary type-challenges tsc-clean assertions page");
   assert.equal(
@@ -209,6 +218,7 @@ try {
   assert.match(charts, /Compile canaries and incomplete project timings/);
   assert.match(charts, /type-challenges project/);
   assert.match(charts, /type-challenges solutions project/);
+  assert.match(charts, /type-challenges assertion candidates/);
   assert.match(charts, /type-challenges tsc-clean assertions/);
 
   const compatibilityDashboard = getProjectCompatibilityDashboard();
