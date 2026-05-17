@@ -494,8 +494,6 @@ fn run_batch_mode() -> Result<()> {
 /// - Optional boolean flags: `--strictNullChecks file.ts` → `--strictNullChecks=true file.ts`
 /// - Duplicate flags: `--strict --strict` → deduplicated (tsc v6 compat)
 fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
-    let flag_lookup = build_flag_lookup();
-
     // First pass: expand response files and collect normalized arg strings
     let mut expanded = Vec::with_capacity(args.len());
 
@@ -538,15 +536,13 @@ fn preprocess_args(args: Vec<OsString>) -> Vec<OsString> {
             if let Some(eq_pos) = s.find('=') {
                 let flag_part = &s[2..eq_pos];
                 let value_part = &s[eq_pos..];
-                let lower = flag_part.to_lowercase();
-                if let Some(canonical) = flag_lookup.get(lower.as_str()) {
+                if let Some(canonical) = canonicalize_long_flag(flag_part) {
                     *arg = OsString::from(format!("{canonical}{value_part}"));
                 }
             } else {
                 let flag_part = &s[2..];
-                let lower = flag_part.to_lowercase();
-                if let Some(canonical) = flag_lookup.get(lower.as_str()) {
-                    *arg = OsString::from(canonical.to_string());
+                if let Some(canonical) = canonicalize_long_flag(flag_part) {
+                    *arg = OsString::from(canonical);
                 }
             }
         }
@@ -817,28 +813,42 @@ fn push_option_bool_arg(
     skip_positions.push(false);
 }
 
-/// Build a lookup table from lowercase flag names (without `--`) to their canonical
-/// `--flagName` forms. Used for case-insensitive flag normalization (tsc v6 compat).
-fn build_flag_lookup() -> FxHashMap<String, String> {
-    let cmd = CliArgs::command();
-    let mut map = FxHashMap::default();
-    for a in cmd.get_arguments() {
-        if let Some(long) = a.get_long() {
-            let canonical = format!("--{long}");
-            map.insert(long.to_lowercase(), canonical.clone());
-            if let Some(aliases) = a.get_all_aliases() {
-                for alias in aliases {
-                    map.insert(alias.to_lowercase(), canonical.clone());
-                }
-            }
+/// Return the canonical long flag spelling for tsc-compatible case-insensitive
+/// input, accepting both camelCase and kebab-case spellings.
+fn canonicalize_long_flag(flag: &str) -> Option<&'static str> {
+    for &known in KNOWN_TSC_OPTIONS {
+        if flag_key_matches(&known[2..], flag) {
+            return Some(known);
         }
     }
-    for opt in KNOWN_TSC_OPTIONS {
-        let name = &opt[2..];
-        map.entry(name.to_lowercase())
-            .or_insert_with(|| opt.to_string());
+
+    match normalized_flag_key(flag).as_str() {
+        "buildverbose" | "verbose" => Some("--build-verbose"),
+        "batch" => Some("--batch"),
+        "diagnosticsjson" => Some("--diagnostics-json"),
+        "perfcountersjson" => Some("--perf-counters-json"),
+        "tracedependencies" => Some("--traceDependencies"),
+        "__explicitlydisabledboolflag" => Some("--__explicitly-disabled-bool-flag"),
+        _ => None,
     }
-    map
+}
+
+fn flag_key_matches(canonical: &str, input: &str) -> bool {
+    canonical
+        .bytes()
+        .filter(|&b| b != b'-')
+        .map(|b| b.to_ascii_lowercase())
+        .eq(input
+            .bytes()
+            .filter(|&b| b != b'-')
+            .map(|b| b.to_ascii_lowercase()))
+}
+
+fn normalized_flag_key(flag: &str) -> String {
+    flag.bytes()
+        .filter(|&b| b != b'-')
+        .map(|b| b.to_ascii_lowercase() as char)
+        .collect()
 }
 
 /// Set of known boolean flags (flags that accept no value or optional true/false).
@@ -1408,6 +1418,7 @@ const KNOWN_TSC_OPTIONS: &[&str] = &[
     "--showConfig",
     "--skipDefaultLibCheck",
     "--skipLibCheck",
+    "--sound",
     "--sourceMap",
     "--sourceRoot",
     "--stopBuildOnErrors",
@@ -1427,6 +1438,7 @@ const KNOWN_TSC_OPTIONS: &[&str] = &[
     "--tsBuildInfoFile",
     "--typeRoots",
     "--types",
+    "--typesVersions",
     "--useDefineForClassFields",
     "--useUnknownInCatchVariables",
     "--verbatimModuleSyntax",

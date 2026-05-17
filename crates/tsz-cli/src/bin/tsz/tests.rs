@@ -143,6 +143,36 @@ fn preprocess_case_insensitive_equals_form() {
 }
 
 #[test]
+fn preprocess_canonicalizes_kebab_case_aliases() {
+    let args = vec![
+        OsString::from("tsz"),
+        OsString::from("--no-emit"),
+        OsString::from("--types-versions"),
+        OsString::from("5.7"),
+        OsString::from("file.ts"),
+    ];
+    let result = preprocess_args(args);
+    assert!(result.iter().any(|a| a == "--noEmit"));
+    assert!(result.iter().any(|a| a == "--typesVersions"));
+}
+
+#[test]
+fn preprocess_canonicalizes_cli_only_aliases() {
+    let args = vec![
+        OsString::from("tsz"),
+        OsString::from("--Build"),
+        OsString::from("--verbose"),
+        OsString::from("--trace-dependencies"),
+        OsString::from("--batch"),
+    ];
+    let result = preprocess_args(args);
+    assert!(result.iter().any(|a| a == "--build"));
+    assert!(result.iter().any(|a| a == "--build-verbose"));
+    assert!(result.iter().any(|a| a == "--traceDependencies"));
+    assert!(result.iter().any(|a| a == "--batch"));
+}
+
+#[test]
 fn preprocess_file_paths_not_lowercased() {
     let args = vec![
         OsString::from("tsz"),
