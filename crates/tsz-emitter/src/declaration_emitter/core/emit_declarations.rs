@@ -364,14 +364,20 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 let should_hoist = if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
                     let jsdoc_chain = self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
-                    let is_exported_or_named_export =
-                        self.arena.get_function(stmt_node).is_some_and(|func| {
-                            self.arena
-                                .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
-                                || self.get_identifier_text(func.name).is_some_and(|name| {
-                                    js_hoistable_function_export_names.contains(&name)
-                                })
-                        });
+                    let Some(func) = self.arena.get_function(stmt_node) else {
+                        continue;
+                    };
+                    if self.get_identifier_text(func.name).is_some_and(|name| {
+                        self.js_define_property_export_local_names.contains(&name)
+                    }) {
+                        continue;
+                    }
+                    let is_exported_or_named_export = self
+                        .arena
+                        .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                        || self
+                            .get_identifier_text(func.name)
+                            .is_some_and(|name| js_hoistable_function_export_names.contains(&name));
                     if is_exported_or_named_export {
                         true
                     } else {

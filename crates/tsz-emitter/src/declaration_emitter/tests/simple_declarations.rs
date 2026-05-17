@@ -3039,6 +3039,34 @@ Object.defineProperty(module.exports.fn, "self", { value: module.exports.fn });
 }
 
 #[test]
+fn test_js_commonjs_define_property_function_export_keeps_jsdoc_at_export_site() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+Object.defineProperty(module.exports, "a", { value: function a() {} });
+
+/**
+ * @param {number} value
+ * @return {string}
+ */
+function d(value) { return ""; }
+Object.defineProperty(module.exports, "d", { value: d });
+"#,
+    );
+
+    let expected = r#"export function a(): void;
+/**
+ * @param {number} value
+ * @return {string}
+ */
+export function d(value: number): string;"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected defineProperty-exported local function JSDoc to stay with the synthetic export: {output}"
+    );
+}
+
+#[test]
 fn test_js_esm_syntax_ignores_commonjs_named_exports() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
