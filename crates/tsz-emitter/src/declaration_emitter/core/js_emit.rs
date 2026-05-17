@@ -489,6 +489,9 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
                 continue;
             };
+            if self.is_js_export_equals_name(decl.name) {
+                continue;
+            }
             if self.is_js_object_literal_namespace_candidate(decl.name, decl.initializer) {
                 return true;
             }
@@ -503,6 +506,9 @@ impl<'a> DeclarationEmitter<'a> {
         initializer: NodeIndex,
         is_exported: bool,
     ) -> bool {
+        if self.is_js_export_equals_name(decl_name) {
+            return false;
+        }
         if !self.is_js_object_literal_namespace_candidate(decl_name, initializer) {
             return false;
         }
