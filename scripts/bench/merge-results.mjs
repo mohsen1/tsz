@@ -97,6 +97,19 @@ function validateProjectCompatibilityRows(rows) {
 
   const byName = new Map(projectRows.map((row) => [row.name, row]));
   const failures = [];
+  const seenNames = new Set();
+  const duplicateNames = new Set();
+
+  for (const row of projectRows) {
+    if (seenNames.has(row.name)) {
+      duplicateNames.add(row.name);
+    } else {
+      seenNames.add(row.name);
+    }
+  }
+  for (const name of [...duplicateNames].sort()) {
+    failures.push(`${name}: duplicate project row`);
+  }
 
   if (projectRows.some((row) => REQUIRED_PROJECT_ROW_SET.has(row.name))) {
     for (const name of REQUIRED_PROJECT_ROWS) {
