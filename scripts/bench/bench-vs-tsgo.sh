@@ -1903,6 +1903,7 @@ export_results_json() {
     BENCHMARK_SOURCES_JSONL_VALUE="${BENCHMARK_SOURCES_JSONL:-}" \
     node - "$out_file" <<'NODE'
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const outFile = process.argv[2];
 
@@ -2224,9 +2225,53 @@ const tszWins = rows.filter((row) => row.winner === "tsz").length;
 const tsgoWins = rows.filter((row) => row.winner === "tsgo").length;
 const errorCases = rows.filter((row) => row.status).length;
 
+function runnerEnvironment() {
+  const cpus = os.cpus();
+  const firstCpu = cpus[0] || {};
+  const cpuModels = [...new Set(cpus.map((cpu) => cpu.model).filter(Boolean))];
+  const totalMemoryBytes = os.totalmem();
+  const githubActions = process.env.GITHUB_ACTIONS === "true"
+    ? {
+        run_id: process.env.GITHUB_RUN_ID || null,
+        run_attempt: process.env.GITHUB_RUN_ATTEMPT || null,
+        runner_os: process.env.RUNNER_OS || null,
+        runner_arch: process.env.RUNNER_ARCH || null,
+        workflow: process.env.GITHUB_WORKFLOW || null,
+        job: process.env.GITHUB_JOB || null,
+        ref: process.env.GITHUB_REF || null,
+        sha: process.env.GITHUB_SHA || null,
+      }
+    : null;
+  const cloudBuild = process.env.BUILD_ID ||
+    process.env.PROJECT_ID ||
+    process.env.TSZ_BENCH_MACHINE_TYPE
+    ? {
+        build_id: process.env.BUILD_ID || null,
+        project_id: process.env.PROJECT_ID || null,
+        region: process.env.LOCATION || process.env.CLOUDSDK_COMPUTE_REGION || null,
+        machine_type: process.env.TSZ_BENCH_MACHINE_TYPE || null,
+      }
+    : null;
+
+  return {
+    platform: os.platform(),
+    arch: os.arch(),
+    release: os.release(),
+    cpu_count: cpus.length || null,
+    cpu_model: cpuModels[0] || null,
+    cpu_models: cpuModels.length > 1 ? cpuModels.slice(0, 4) : undefined,
+    cpu_speed_mhz: Number.isFinite(firstCpu.speed) ? firstCpu.speed : null,
+    total_memory_bytes: Number.isFinite(totalMemoryBytes) ? totalMemoryBytes : null,
+    ci: process.env.CI === "true",
+    github_actions: githubActions,
+    cloud_build: cloudBuild,
+  };
+}
+
 const payload = {
   generated_at: new Date().toISOString(),
   benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
+  runner_environment: runnerEnvironment(),
   validation: {
     hyperfine_exit_codes_required: true,
   },
