@@ -15,6 +15,7 @@ export const COMPILE_CANARY_PROJECT_ROWS = [
   "kysely-project",
   "type-challenges-project",
   "type-challenges-solutions-project",
+  "type-challenges-assertion-candidates",
 ];
 
 export const REQUIRED_COMPATIBILITY_FIELDS = [
@@ -104,6 +105,12 @@ export const COMPATIBILITY_CORPUS_ROWS = [
     label: "type-challenges solutions",
     owner: "Tracks 2, 3, 5",
     family: "advanced type-level solved challenge programs",
+  },
+  {
+    name: "type-challenges-assertion-candidates",
+    label: "type-challenges assertions",
+    owner: "Tracks 2, 3, 5",
+    family: "assertion-level Type Challenges readiness comparison",
   },
   {
     name: "nextjs",
