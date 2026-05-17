@@ -113,6 +113,32 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
+  writeTestCases(dir, "questions/00189-weird-awaited/test-cases.ts");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      MANIFEST_SCRIPT,
+      path.join(dir, "source"),
+      path.join(dir, "compile"),
+      path.join(dir, "compile", "type-challenges-test-cases-manifest.json"),
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        TYPE_CHALLENGES_REPO: "https://example.invalid/type-challenges.git",
+        TYPE_CHALLENGES_REF: "fixture-ref",
+        TYPE_CHALLENGES_EXPECTED_TEST_CASES: "1",
+      },
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unknown challenge level weird/);
+});
+
+withTempDir((dir) => {
   writeTestCases(dir, "questions/00013-warm-hello-world/test-cases.ts");
   writeTestCases(dir, "questions/013-easy-duplicate-hello/test-cases.ts");
 

@@ -14,6 +14,7 @@ if (!sourceDir || !compileDir || !manifestPath) {
 const repository = process.env.TYPE_CHALLENGES_REPO;
 const ref = process.env.TYPE_CHALLENGES_REF;
 const expectedGenerated = Number(process.env.TYPE_CHALLENGES_EXPECTED_TEST_CASES);
+const CHALLENGE_LEVELS = new Set(["warm", "easy", "medium", "hard", "extreme"]);
 
 if (!repository || !ref || !Number.isInteger(expectedGenerated)) {
   console.error(
@@ -56,6 +57,12 @@ function parseRequiredChallenge(segment, source) {
   if (challenge.id == null) {
     console.error(
       `error: Type Challenges test-case source has an unparseable challenge directory: ${source}`,
+    );
+    process.exit(1);
+  }
+  if (!CHALLENGE_LEVELS.has(challenge.level)) {
+    console.error(
+      `error: Type Challenges test-case source has an unknown challenge level ${challenge.level}: ${source}`,
     );
     process.exit(1);
   }

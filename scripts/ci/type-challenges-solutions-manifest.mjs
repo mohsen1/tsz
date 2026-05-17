@@ -16,6 +16,7 @@ const ref = process.env.TYPE_CHALLENGES_SOLUTIONS_REF;
 const expectedGenerated = Number(
   process.env.TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED,
 );
+const CHALLENGE_LEVELS = new Set(["warm", "easy", "medium", "hard", "extreme"]);
 
 if (!repository || !ref || !Number.isInteger(expectedGenerated)) {
   console.error(
@@ -90,6 +91,15 @@ function validateUniqueEntryField(entries, field, label) {
   }
 }
 
+function validateChallengeLevel(level, source) {
+  if (!CHALLENGE_LEVELS.has(level)) {
+    console.error(
+      `error: Type Challenges solution source has an unknown challenge level ${level}: ${source}`,
+    );
+    process.exit(1);
+  }
+}
+
 function validateManifestPath(value, label, requiredPrefix) {
   if (
     path.isAbsolute(value) ||
@@ -117,6 +127,7 @@ const entries = lines
 
     validateManifestPath(output, "output", "solutions/");
     validateManifestPath(source, "source", "en/");
+    validateChallengeLevel(level, source);
 
     const outputPath = path.join(manifestDir, output);
     if (!fs.existsSync(outputPath)) {
