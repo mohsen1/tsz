@@ -1429,6 +1429,43 @@ fn inline_cjs_export_skips_initializerless_vars() {
 }
 
 #[test]
+fn plain_class_expression_var_export_uses_split_assignment() {
+    let source = "export var simpleExample = class {\n    static getTags() { }\n    tags() { }\n};\nexport var circularReference = class C {\n    static getTags(c) { return c; }\n    tags(c) { return c; }\n};\n";
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var simpleExample = class {"),
+        "Plain exported class expressions should keep a local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.simpleExample = simpleExample;"),
+        "Plain exported class expressions should assign the local binding to exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var circularReference = class C {"),
+        "Named class expressions should also keep the exported local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.circularReference = circularReference;"),
+        "Named class expression exports should assign after the declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.simpleExample = class"),
+        "Plain class expressions should not be emitted as direct exports assignments.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn transformed_class_expression_var_export_emits_inline_assignment() {
     let source = "export var noPrivates = class {\n    static getTags() { }\n    tags() { }\n    private static ps = -1;\n    private p = 12;\n};\n";
     let (parser, root) = parse_test_source(source);

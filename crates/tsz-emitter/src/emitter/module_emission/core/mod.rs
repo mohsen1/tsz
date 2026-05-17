@@ -4,6 +4,7 @@ mod export_default_parens;
 use super::super::{JsxEmit, ModuleKind, Printer, ScriptTarget};
 use crate::context::transform::IdentifierId;
 use crate::transforms::emit_utils;
+use crate::transforms::private_fields_es5::is_private_identifier;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
@@ -1154,7 +1155,7 @@ impl<'a> Printer<'a> {
     /// `emit_name` preserves unicode escapes from the source to match tsc output.
     pub(in crate::emitter) fn try_collect_inline_cjs_exports(
         &self,
-        node_idx: NodeIndex,
+        _node_idx: NodeIndex,
         node: &Node,
     ) -> Option<Vec<(String, String, NodeIndex)>> {
         let var_stmt = self.arena.get_variable(node)?;
@@ -1190,16 +1191,16 @@ impl<'a> Printer<'a> {
 
                 // tsc uses split form (const x = val; exports.x = x;) for
                 // arrow functions, function expressions, and plain class
-                // expressions. Transformed class expressions can lower to a
-                // comma expression, and tsc emits that directly into
-                // `exports.x = (...)`.
+                // expressions. Class expressions that really lower to a comma
+                // expression can be emitted directly as `exports.x = (...)`.
                 if let Some(init_node) = self.arena.get(decl.initializer) {
                     let k = init_node.kind;
+                    let is_class_initializer = self.arena.get_class(init_node).is_some();
                     if k == syntax_kind_ext::ARROW_FUNCTION
                         || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                        || (k == syntax_kind_ext::CLASS_EXPRESSION
-                            && !self.transforms.has_transform(decl.initializer)
-                            && !self.transforms.has_transform(node_idx))
+                        || (is_class_initializer
+                            && !self
+                                .class_expression_export_initializer_can_inline(decl.initializer))
                     {
                         return None;
                     }
@@ -1213,6 +1214,128 @@ impl<'a> Printer<'a> {
             return None;
         }
         Some(result)
+    }
+
+    fn class_expression_export_initializer_can_inline(&self, class_idx: NodeIndex) -> bool {
+        let Some(class_node) = self.arena.get(class_idx) else {
+            return false;
+        };
+        let Some(class) = self.arena.get_class(class_node) else {
+            return false;
+        };
+
+        let needs_private_lowering = !self.ctx.options.target.supports_es2022();
+        let target_needs_field_lowering = (self.ctx.options.target as u32)
+            < (ScriptTarget::ES2022 as u32)
+            || !self.ctx.options.use_define_for_class_fields;
+        let target_needs_static_block_lowering =
+            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+
+        let has_private_lowering = needs_private_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena
+                    .get(member_idx)
+                    .is_some_and(|member| match member.kind {
+                        k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                            .arena
+                            .get_property_decl(member)
+                            .is_some_and(|prop| is_private_identifier(self.arena, prop.name)),
+                        k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                            .arena
+                            .get_method_decl(member)
+                            .is_some_and(|method| is_private_identifier(self.arena, method.name)),
+                        k if k == syntax_kind_ext::GET_ACCESSOR
+                            || k == syntax_kind_ext::SET_ACCESSOR =>
+                        {
+                            self.arena.get_accessor(member).is_some_and(|accessor| {
+                                is_private_identifier(self.arena, accessor.name)
+                            })
+                        }
+                        _ => false,
+                    })
+            });
+
+        let has_static_field_comma_expr = target_needs_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member| {
+                    member.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self.arena.get_property_decl(member).is_some_and(|prop| {
+                            self.arena.is_static(&prop.modifiers)
+                                && !self
+                                    .arena
+                                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                                && !self
+                                    .arena
+                                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                                && self.class_property_initializer_has_runtime_equals(member, prop)
+                                && !(needs_private_lowering
+                                    && is_private_identifier(self.arena, prop.name))
+                        })
+                })
+            });
+
+        let has_static_block_comma_expr = target_needs_static_block_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member| {
+                    member.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+                })
+            });
+
+        let has_static_computed_method_or_accessor =
+            class.members.nodes.iter().any(|&member_idx| {
+                self.arena
+                    .get(member_idx)
+                    .is_some_and(|member| match member.kind {
+                        k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                            self.arena.get_method_decl(member).is_some_and(|method| {
+                                self.arena.is_static(&method.modifiers)
+                                    && self.arena.get(method.name).is_some_and(|name| {
+                                        name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                                    })
+                            })
+                        }
+                        k if k == syntax_kind_ext::GET_ACCESSOR
+                            || k == syntax_kind_ext::SET_ACCESSOR =>
+                        {
+                            self.arena.get_accessor(member).is_some_and(|accessor| {
+                                self.arena.is_static(&accessor.modifiers)
+                                    && self.arena.get(accessor.name).is_some_and(|name| {
+                                        name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                                    })
+                            })
+                        }
+                        _ => false,
+                    })
+            });
+
+        has_private_lowering
+            || has_static_field_comma_expr
+            || has_static_block_comma_expr
+            || has_static_computed_method_or_accessor
+    }
+
+    fn class_property_initializer_has_runtime_equals(
+        &self,
+        member_node: &Node,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(prop.initializer) else {
+            return false;
+        };
+        let Some(text) = self.source_text else {
+            return true;
+        };
+        let start = member_node.pos as usize;
+        let end = (init_node.pos as usize).min(text.len());
+        if start >= end {
+            return false;
+        }
+        let segment = &text.as_bytes()[start..end];
+        let search_from = segment
+            .iter()
+            .rposition(|&byte| byte == b':')
+            .map_or(0, |idx| idx + 1);
+        segment[search_from..].contains(&b'=')
     }
 
     /// Get identifier text from optional node index

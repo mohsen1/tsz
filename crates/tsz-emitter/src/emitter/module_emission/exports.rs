@@ -935,10 +935,13 @@ impl<'a> Printer<'a> {
                                     self.write_line();
                                 }
                             }
-                        } else {
-                            // Complex case (destructuring): transform into comma
-                            // expression that directly assigns to exports, matching tsc.
+                        } else if self.variable_stmt_has_binding_pattern(clause_node) {
+                            // Destructuring exports lower into assignments that write
+                            // directly to exports.
                             self.emit_cjs_destructuring_export(clause_node);
+                        } else {
+                            self.emit_variable_statement(clause_node);
+                            self.write_line();
                         }
                     } else {
                         self.emit_variable_statement(clause_node);
