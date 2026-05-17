@@ -203,7 +203,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_deferred_namespace_alias_declarations = self
             .collect_js_namespace_alias_declaration_statements(
                 source_file,
-                &self.js_namespace_export_aliases,
+                &self.js_export_equals_names,
             );
         self.js_deferred_namespace_alias_declaration_stmts = self
             .js_deferred_namespace_alias_declarations
@@ -354,6 +354,12 @@ impl<'a> DeclarationEmitter<'a> {
                 // exported declarations (`export const __esModule = false`)
                 // and produce an order that disagrees with tsc.
                 if self.js_deferred_named_export_statements.contains(&stmt_idx) {
+                    continue;
+                }
+                if self
+                    .js_deferred_namespace_alias_declaration_stmts
+                    .contains(&stmt_idx)
+                {
                     continue;
                 }
                 let should_hoist = if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {

@@ -772,27 +772,20 @@ impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn collect_js_namespace_alias_declaration_statements(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
-        aliases: &JsNamespaceExportAliases,
+        js_export_equals_names: &FxHashSet<String>,
     ) -> FxHashMap<String, Vec<NodeIndex>> {
-        let mut roots_by_local_name: FxHashMap<String, Vec<String>> = FxHashMap::default();
-        for (root_name, root_aliases) in aliases {
-            for alias in root_aliases {
-                if alias.local_name == *root_name {
-                    continue;
-                }
-                let roots = roots_by_local_name
-                    .entry(alias.local_name.clone())
-                    .or_default();
-                if !roots.contains(root_name) {
-                    roots.push(root_name.clone());
-                }
-            }
-        }
-        if roots_by_local_name.is_empty() {
+        if !self.source_file_is_js(source_file) {
             return FxHashMap::default();
         }
 
-        let mut declarations: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
+        let commonjs_root = if js_export_equals_names.len() == 1 {
+            js_export_equals_names.iter().next().map(String::as_str)
+        } else {
+            None
+        };
+
+        let mut declarations_by_local_name: FxHashMap<String, Vec<NodeIndex>> =
+            FxHashMap::default();
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -811,14 +804,34 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(local_name) = local_name else {
                 continue;
             };
-            let Some(roots) = roots_by_local_name.get(&local_name) else {
+            declarations_by_local_name
+                .entry(local_name)
+                .or_default()
+                .push(stmt_idx);
+        }
+        if declarations_by_local_name.is_empty() {
+            return FxHashMap::default();
+        }
+
+        let mut declarations: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((root_name, _export_name, local_name, _use_import_alias)) =
+                self.js_namespace_export_alias_for_statement(stmt_idx, commonjs_root)
+            else {
                 continue;
             };
-            for root_name in roots {
-                declarations
-                    .entry(root_name.clone())
-                    .or_default()
-                    .push(stmt_idx);
+            if local_name == root_name {
+                continue;
+            }
+            let Some(local_declaration_stmts) = declarations_by_local_name.get(&local_name) else {
+                continue;
+            };
+
+            let root_declarations = declarations.entry(root_name).or_default();
+            for &local_declaration_stmt in local_declaration_stmts {
+                if !root_declarations.contains(&local_declaration_stmt) {
+                    root_declarations.push(local_declaration_stmt);
+                }
             }
         }
 
@@ -3034,6 +3047,8 @@ impl<'a> DeclarationEmitter<'a> {
                 .remove(&stmt_idx)
             {
                 self.emit_statement(stmt_idx);
+                self.js_deferred_namespace_alias_declaration_stmts
+                    .insert(stmt_idx);
             }
         }
     }
