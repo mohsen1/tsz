@@ -221,6 +221,8 @@ withTempDir((dir) => {
       counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
         tscRejectedAssertions: 1,
       },
       entries: [{ id: "two", output: "assertions/two.ts" }],
@@ -286,6 +288,8 @@ withTempDir((dir) => {
       classification_path: "type-challenges-assertions-tsc-clean/classification.json",
       tsconfig_path: "type-challenges-assertions-tsc-clean/tsconfig.tsz-guard.json",
       generated_assertions: 1,
+      assertions_referencing_solution_declaration: 1,
+      assertions_missing_solution_declaration_reference: 0,
       rejected_from_full_corpus: 1,
       tsc_status: "pass",
       tsz_status: "pass",
@@ -563,6 +567,39 @@ withTempDir((dir) => {
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /counts\.tscAcceptedAssertions \(2\) does not match entries length \(1\)/);
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: candidateCounts(1) },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      counts: {
+        totalCandidates: 2,
+        tscAcceptedAssertions: 2,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 2,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 1,
+        tscRejectedAssertions: 0,
+      },
+      entries: [
+        { output: "assertions/00001-easy-pick.ts" },
+        { output: "assertions/00002-medium-return-type.ts" },
+      ],
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /declaration-reference counts \(2 \+ 1\) do not match tscAcceptedAssertions \(2\)/,
+  );
   assert.equal(fs.existsSync(outFile), false);
 });
 

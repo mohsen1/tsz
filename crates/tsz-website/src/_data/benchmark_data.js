@@ -1939,6 +1939,14 @@ export function getProjectCompatibilityDashboard() {
       : null;
     if (cleanSubset) {
       addCount("tsc-clean subset", cleanSubset.generated_assertions);
+      addCount(
+        "tsc-clean references solutions",
+        cleanSubset.assertions_referencing_solution_declaration,
+      );
+      addCount(
+        "tsc-clean missing solution references",
+        cleanSubset.assertions_missing_solution_declaration_reference,
+      );
       addCount("tsc-clean rejected", cleanSubset.rejected_from_full_corpus);
       if (cleanSubset.tsc_status) {
         parts.push(`tsc-clean tsc: ${cleanSubset.tsc_status}`);
