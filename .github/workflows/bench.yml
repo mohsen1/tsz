@@ -316,7 +316,10 @@ jobs:
     needs: bench-gate
     if: >-
       needs.bench-gate.outputs.should_run == 'true' &&
-      !(github.event_name == 'schedule' && github.event.schedule == '0 5 * * *')
+      !(github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') &&
+      (vars.TSZ_BENCH_SELF_HOSTED_PREP != '1' ||
+       (github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo))
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 120
     outputs:
@@ -618,6 +621,7 @@ jobs:
         env:
           TSZ_REPO_OWNER: ${{ github.repository_owner }}
           TSZ_REPO_NAME: ${{ github.event.repository.name }}
+          TSZ_INSTALL_REQUIRE_LATEST_CHANNEL: "1"
         run: |
           set -euo pipefail
           install_dir="${RUNNER_TEMP}/tsz-latest-install"
@@ -654,7 +658,9 @@ jobs:
           path: .
 
       - name: Download Cloud Build prep artifact
-        if: needs.bench-prepare-cloudbuild.outputs.should_run == 'true'
+        if: >-
+          needs.bench-prepare.outputs.should_run != 'true' &&
+          needs.bench-prepare-cloudbuild.outputs.should_run == 'true'
         shell: bash
         run: |
           set -euo pipefail
