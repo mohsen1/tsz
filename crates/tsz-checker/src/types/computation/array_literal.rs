@@ -1321,7 +1321,9 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 mod array_literal_context_tests {
     use crate::context::CheckerOptions;
-    use crate::test_utils::{check_source, check_source_codes};
+    use crate::test_utils::{
+        check_source, check_source_codes, check_source_with_libs, load_compiled_lib_files,
+    };
 
     fn check_strict_codes(source: &str) -> Vec<u32> {
         check_source(
@@ -1521,6 +1523,153 @@ t4 = [, , true];
         assert!(
             !errors.contains(&2322),
             "elided array literal slots should produce undefined-typed Required tuple slots, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn f_bounded_interface_empty_array_contextual_type() {
+        // F-bounded interface: `FileNode extends INode<FileNode>` where `children: T[]`.
+        // Empty array `[]` in object literal should adopt `FileNode[]` contextual type, not `never[]`.
+        let source = r#"
+interface INode<T> {
+    parent: T | null;
+    children: T[];
+}
+interface FileNode extends INode<FileNode> {
+    name: string;
+}
+const root: FileNode = {
+    name: "root",
+    parent: null,
+    children: [],
+};
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "F-bounded interface empty array should not produce TS2322, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn f_bounded_interface_all_members_in_base() {
+        // Variant: name is declared on base interface, FileNode adds no extra members.
+        let source = r#"
+interface TreeNode<T> {
+    name: string;
+    parent: T | null;
+    children: T[];
+}
+interface FileNode extends TreeNode<FileNode> {}
+const root: FileNode = {
+    name: "root",
+    parent: null,
+    children: [],
+};
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "F-bounded (all-in-base) empty array should not produce TS2322, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn f_bounded_interface_non_self_reference_adopts_element_type() {
+        // Non-F-bounded baseline: `Wrapper<string>` should type `items: []` as `string[]`.
+        let source = r#"
+interface Wrapper<T> {
+    items: T[];
+}
+interface StringWrapper extends Wrapper<string> {}
+const w: StringWrapper = { items: [] };
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "Non-F-bounded Wrapper<string> empty array should not produce TS2322, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn f_bounded_direct_self_ref_property_empty_array_contextual_type() {
+        // F-bounded with a *direct* self-referential property (`value: T`, not wrapped in
+        // union/array). This creates a deeper cycle during type construction. The other
+        // property `items: T[]` must still adopt contextual type `DirectNode[]`, not `never[]`.
+        // The bug only manifests with the full compiled Array<T> lib (stripped lib is
+        // simpler and doesn't trigger the cycle). Test with both.
+        let source = r#"
+interface DirectRef<T> { value: T; items: T[]; }
+interface DirectNode extends DirectRef<DirectNode> { name: string; }
+const d: DirectNode = { name: "a", value: {} as DirectNode, items: [] };
+"#;
+        // Test with stripped lib (baseline)
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "F-bounded direct-self-ref (stripped lib): items:[] should be DirectNode[], not never[]; got: {errors:?}"
+        );
+        // Test with full compiled lib (where the cycle actually triggers)
+        let full_libs = load_compiled_lib_files(&["lib.es5.d.ts"]);
+        if !full_libs.is_empty() {
+            let errors: Vec<u32> =
+                check_source_with_libs(source, "test.ts", CheckerOptions::default(), &full_libs)
+                    .into_iter()
+                    .map(|d| d.code)
+                    .collect();
+            assert!(
+                !errors.contains(&2322),
+                "F-bounded direct-self-ref (full lib): items:[] should be DirectNode[], not never[]; got: {errors:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn f_bounded_multi_level_heritage_empty_array() {
+        // Multi-level heritage: `Concrete extends Level1<Concrete>` where `Level1<T>` extends
+        // `Level2<T>`. The `list: T[]` property is on Level2. Empty array must adopt
+        // `Concrete[]` contextual type.
+        let source = r#"
+interface Level2<T> { data: T; list: T[]; }
+interface Level1<T> extends Level2<T> { extra: string; }
+interface Concrete extends Level1<Concrete> {}
+const c: Concrete = { extra: "x", data: {} as Concrete, list: [] };
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "Multi-level F-bounded: list:[] should be Concrete[], not never[]; got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn f_bounded_multiple_arrays_same_type_param() {
+        // Multiple array properties with the same type parameter. Both should adopt the
+        // concrete contextual type, not never[].
+        let source = r#"
+interface MultiArray<T> { first: T[]; second: T[]; ref: T; }
+interface MultiConcrete extends MultiArray<MultiConcrete> {}
+const m: MultiConcrete = { first: [], second: [], ref: {} as MultiConcrete };
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "Multi-array F-bounded: both arrays should be MultiConcrete[], got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn f_bounded_readonly_array_property() {
+        // Readonly array property in F-bounded interface should also adopt contextual type.
+        let source = r#"
+interface RNode<T> { parent: T | null; readonly children: readonly T[]; }
+interface RFile extends RNode<RFile> { name: string; }
+const rf: RFile = { name: "r", parent: null, children: [] };
+"#;
+        let errors = check_source_codes(source);
+        assert!(
+            !errors.contains(&2322),
+            "F-bounded readonly array: children:[] should not produce TS2322, got: {errors:?}"
         );
     }
 
