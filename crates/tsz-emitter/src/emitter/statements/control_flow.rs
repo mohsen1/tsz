@@ -362,6 +362,14 @@ impl<'a> Printer<'a> {
         };
         let initializer_exports = self
             .deferred_exported_var_iteration_bindings(for_in_of.initializer, for_in_of.statement);
+        let scoped_initializer = self.ctx.target_es5
+            && self.arena.get(for_in_of.initializer).is_some_and(|init| {
+                init.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                    && node_flags::is_let_or_const(init.flags as u32)
+            });
+        if scoped_initializer {
+            self.ctx.block_scope_state.enter_scope();
+        }
 
         self.write("for (");
         // In System modules, `var` declarations are hoisted to the module scope,
@@ -389,6 +397,9 @@ impl<'a> Printer<'a> {
             self.emit_loop_body(for_in_of.statement);
         } else {
             self.emit_loop_body_with_deferred_exports(for_in_of.statement, &initializer_exports);
+        }
+        if scoped_initializer {
+            self.ctx.block_scope_state.exit_scope();
         }
     }
 
@@ -453,7 +464,8 @@ impl<'a> Printer<'a> {
         // Check if the for-of initializer has `using` that needs lowering.
         if !self.ctx.target_es5
             && !self.ctx.options.target.supports_es2025()
-            && let Some(using_info) = self.for_of_initializer_using_info(for_in_of.initializer)
+            && let Some(using_info) =
+                crate::transforms::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
         {
             self.emit_for_of_with_using_lowering(node, for_in_of, using_info);
             return;
@@ -1454,35 +1466,6 @@ impl<'a> Printer<'a> {
         (init_node.flags as u32 & node_flags::USING) != 0
     }
 
-    /// Get info about a for-of initializer that has `using`: returns the variable
-    /// name and whether it's `await using`.
-    /// For `for (using d of items)`, the initializer is a `VariableDeclarationList`
-    /// with one declaration `d` (no initializer in for-of context).
-    pub(in crate::emitter) fn for_of_initializer_using_info(
-        &self,
-        initializer: NodeIndex,
-    ) -> Option<(String, bool)> {
-        let init_node = self.arena.get(initializer)?;
-        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            return None;
-        }
-        let flags = init_node.flags as u32;
-        if (flags & node_flags::USING) == 0 {
-            return None;
-        }
-        let using_async = node_flags::is_await_using(flags);
-        let decl_list = self.arena.get_variable(init_node)?;
-        if decl_list.declarations.nodes.len() != 1 {
-            return None;
-        }
-        let decl_idx = decl_list.declarations.nodes[0];
-        let decl_node = self.arena.get(decl_idx)?;
-        let decl = self.arena.get_variable_declaration(decl_node)?;
-        let name_node = self.arena.get(decl.name)?;
-        let ident = self.arena.get_identifier(name_node)?;
-        Some((ident.escaped_text.clone(), using_async))
-    }
-
     /// Emit `for (using d of items) { body }` with dispose lowering.
     /// Transforms to:
     /// ```js
@@ -1500,9 +1483,10 @@ impl<'a> Printer<'a> {
         &mut self,
         node: &Node,
         for_in_of: &tsz_parser::parser::node::ForInOfData,
-        using_info: (String, bool),
+        using_info: crate::transforms::emit_utils::ForOfUsingInfo,
     ) {
-        let (var_name, using_async) = using_info;
+        let var_name = using_info.binding_name;
+        let using_async = using_info.using_async;
         let (env_name, error_name, result_name) = self.next_disposable_env_names();
         // Generate a temp name based on original: d1 -> d1_1 (uses the env counter)
         let temp_name = format!("{}_{}", var_name, self.next_disposable_env_id - 1);
@@ -1702,7 +1686,11 @@ impl<'a> Printer<'a> {
                     self.write("(");
                     self.write(&env_name);
                     self.write(", ");
-                    self.emit(decl.initializer);
+                    if !self
+                        .try_emit_object_literal_es5_inline_computed_expression(decl.initializer)
+                    {
+                        self.emit(decl.initializer);
+                    }
                     self.write(", ");
                     self.write(if using_async { "true" } else { "false" });
                     self.write(")");
@@ -1887,7 +1875,11 @@ impl<'a> Printer<'a> {
                     self.write("(");
                     self.write(env_name);
                     self.write(", ");
-                    self.emit(decl.initializer);
+                    if !self
+                        .try_emit_object_literal_es5_inline_computed_expression(decl.initializer)
+                    {
+                        self.emit(decl.initializer);
+                    }
                     self.write(", ");
                     self.write(if using_async { "true" } else { "false" });
                     self.write(")");

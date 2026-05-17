@@ -567,6 +567,14 @@ impl<'a> Printer<'a> {
                 async_emitter.set_tslib_prefix(true);
                 async_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
             }
+            let blocked_disposable_names = self
+                .file_identifiers
+                .iter()
+                .chain(self.generated_temp_names.iter())
+                .cloned()
+                .collect::<Vec<_>>();
+            async_emitter
+                .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
 
             let body_has_await = async_emitter.body_contains_await(body);
             let body_is_single_line = self.arena.get(body).is_some_and(|n| self.is_single_line(n));
@@ -639,6 +647,10 @@ impl<'a> Printer<'a> {
                 (generator_body, hoisted_var_groups, Vec::new())
             };
             let generator_mappings = async_emitter.take_mappings();
+            self.next_disposable_env_id = async_emitter.disposable_env_counter();
+            for generated_name in async_emitter.take_generated_disposable_env_names() {
+                self.generated_temp_names.insert(generated_name);
+            }
 
             // Write with surrounding __awaiter wrapper
             self.write("return ");
@@ -1261,6 +1273,9 @@ impl<'a> Printer<'a> {
 
         let mut es5_emitter = ClassES5Emitter::new(self.arena);
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+        es5_emitter
+            .set_async_generator_inner_name_counts(self.async_generator_inner_name_counts.clone());
+        self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
         es5_emitter.set_indent_level(0);
         // Pass transform directives to the ClassES5Emitter
         es5_emitter.set_transforms(self.transforms.clone());
@@ -1317,7 +1332,7 @@ impl<'a> Printer<'a> {
             let output = es5_emitter.emit_class_with_name(class_node, &temp_name);
             (temp_name, output)
         };
-        self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+        self.sync_es5_class_emitter_state(&mut es5_emitter);
         let es5_mappings = es5_emitter.take_mappings();
 
         if use_static_comma

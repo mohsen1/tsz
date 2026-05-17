@@ -1055,6 +1055,12 @@ impl<'a> Printer<'a> {
                                 es5_emitter.set_temp_var_counter(
                                     self.ctx.destructuring_state.temp_var_counter,
                                 );
+                                es5_emitter.set_async_generator_inner_name_counts(
+                                    self.async_generator_inner_name_counts.clone(),
+                                );
+                                self.configure_es5_class_emitter_disposable_context(
+                                    &mut es5_emitter,
+                                );
                                 es5_emitter.set_indent_level(self.writer.indent_level());
                                 es5_emitter.set_transforms(self.transforms.clone());
                                 es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
@@ -1095,8 +1101,7 @@ impl<'a> Printer<'a> {
                                         .emit_decorator_metadata,
                                 });
                                 let output = es5_emitter.emit_class(export.export_clause);
-                                self.ctx.destructuring_state.temp_var_counter =
-                                    es5_emitter.temp_var_counter();
+                                self.sync_es5_class_emitter_state(&mut es5_emitter);
                                 let mappings = es5_emitter.take_mappings();
                                 if !mappings.is_empty() && self.writer.has_source_map() {
                                     self.writer.write("");

@@ -123,6 +123,18 @@ impl<'a> ClassES5Emitter<'a> {
         self.transformer.set_module_kind(module_kind);
     }
 
+    pub fn set_async_generator_inner_name_counts(
+        &mut self,
+        counts: rustc_hash::FxHashMap<String, u32>,
+    ) {
+        self.transformer
+            .set_async_generator_inner_name_counts(counts);
+    }
+
+    pub fn take_async_generator_inner_name_counts(&mut self) -> rustc_hash::FxHashMap<String, u32> {
+        self.transformer.take_async_generator_inner_name_counts()
+    }
+
     pub fn set_commonjs_import_substitutions(
         &mut self,
         subs: rustc_hash::FxHashMap<String, String>,
@@ -159,6 +171,22 @@ impl<'a> ClassES5Emitter<'a> {
 
     pub const fn temp_var_counter(&self) -> u32 {
         self.transformer.temp_var_counter()
+    }
+
+    pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.transformer
+            .set_disposable_env_context(next_id, blocked_names);
+    }
+
+    pub const fn disposable_env_counter(&self) -> u32 {
+        self.transformer.disposable_env_counter()
+    }
+
+    pub fn take_generated_disposable_env_names(&mut self) -> Vec<String> {
+        self.transformer.take_generated_disposable_env_names()
     }
 
     /// Set transform directives for `ASTRef` nodes

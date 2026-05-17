@@ -1,8 +1,9 @@
 //! Object-literal helpers for the async ES5 IR converter.
 
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
-use crate::transforms::ir::{IRNode, IRProperty, IRPropertyKey, IRPropertyKind};
+use crate::transforms::ir::{IRNode, IRParam, IRProperty, IRPropertyKey, IRPropertyKind};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::MethodDeclData;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -47,6 +48,15 @@ impl AsyncES5Transformer<'_> {
                             value: IRNode::SpreadElement(Box::new(
                                 self.expression_to_ir(spread.expression),
                             )),
+                            kind: IRPropertyKind::Init,
+                        });
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    if let Some(method) = self.arena.get_method_decl(prop_node) {
+                        props.push(IRProperty {
+                            key: self.convert_property_key(method.name),
+                            value: self.method_function_ir(method),
                             kind: IRPropertyKind::Init,
                         });
                     }
@@ -144,6 +154,12 @@ impl AsyncES5Transformer<'_> {
                 .get_property_assignment(node)
                 .is_some_and(|prop| self.object_property_name_is_computed(prop.name));
         }
+        if node.kind == syntax_kind_ext::METHOD_DECLARATION {
+            return self
+                .arena
+                .get_method_decl(node)
+                .is_some_and(|method| self.object_property_name_is_computed(method.name));
+        }
         false
     }
 
@@ -184,6 +200,11 @@ impl AsyncES5Transformer<'_> {
                     IRNode::prop(IRNode::id(temp.to_string()), name.clone()),
                     IRNode::id(name),
                 ))
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let method = self.arena.get_method_decl(node)?;
+                let key = self.convert_property_key_to_element_access(method.name, temp)?;
+                Some(IRNode::assign(key, self.method_function_ir(method)))
             }
             _ => None,
         }
@@ -253,6 +274,74 @@ impl AsyncES5Transformer<'_> {
                 }
             }
             _ => IRPropertyKey::Identifier(String::new().into()),
+        }
+    }
+
+    fn method_function_ir(&self, method: &MethodDeclData) -> IRNode {
+        let parameters = method
+            .parameters
+            .nodes
+            .iter()
+            .filter_map(|&param_idx| {
+                let param_node = self.arena.get(param_idx)?;
+                let param = self.arena.get_parameter(param_node)?;
+                let name =
+                    crate::transforms::emit_utils::identifier_text_or_empty(self.arena, param.name);
+                Some(if param.dot_dot_dot_token {
+                    IRParam::rest(name)
+                } else {
+                    IRParam::new(name)
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let is_async = self
+            .arena
+            .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword)
+            && !method.asterisk_token;
+        if is_async {
+            let mut nested = AsyncES5Transformer::new(self.arena);
+            if let Some(source_text) = self.source_text {
+                nested.set_source_text(source_text);
+            }
+            let has_await = nested.body_contains_await(method.body);
+            let mut generator_body = nested.transform_generator_body(method.body, has_await);
+            let hoisted_var_groups =
+                AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
+            return IRNode::FunctionExpr {
+                name: None,
+                parameters,
+                body: vec![IRNode::AwaiterCall {
+                    this_arg: Box::new(IRNode::this()),
+                    generator_body: Box::new(generator_body),
+                    hoisted_var_groups,
+                    promise_constructor: None,
+                    multiline_callback: false,
+                }],
+                is_expression_body: false,
+                body_source_range: None,
+            };
+        }
+
+        let body = self
+            .arena
+            .get(method.body)
+            .and_then(|body_node| self.arena.get_block(body_node))
+            .map(|block| {
+                block
+                    .statements
+                    .nodes
+                    .iter()
+                    .map(|&stmt_idx| self.statement_to_ir(stmt_idx))
+                    .collect()
+            })
+            .unwrap_or_default();
+        IRNode::FunctionExpr {
+            name: None,
+            parameters,
+            body,
+            is_expression_body: false,
+            body_source_range: None,
         }
     }
 }

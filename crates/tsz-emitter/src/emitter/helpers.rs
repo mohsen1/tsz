@@ -591,6 +591,7 @@ impl<'a> Printer<'a> {
         let saved_reserved = self.reserved_nested_temp_names.clone();
         let saved_for_of = self.first_for_of_emitted;
         let saved_preallocated = std::mem::take(&mut self.preallocated_temp_names);
+        let saved_preallocated_hoisted = std::mem::take(&mut self.preallocated_hoisted_temp_names);
         let saved_preallocated_assignment_temps =
             std::mem::take(&mut self.preallocated_assignment_temps);
         let saved_preallocated_logical_value_temps =
@@ -605,6 +606,7 @@ impl<'a> Printer<'a> {
             reserved_nested_temp_names: saved_reserved,
             first_for_of_emitted: saved_for_of,
             preallocated_temp_names: saved_preallocated,
+            preallocated_hoisted_temp_names: saved_preallocated_hoisted,
             preallocated_assignment_temps: saved_preallocated_assignment_temps,
             preallocated_logical_assignment_value_temps: saved_preallocated_logical_value_temps,
             hoisted_assignment_value_temps: saved_value_temps,
@@ -624,6 +626,7 @@ impl<'a> Printer<'a> {
             self.reserved_nested_temp_names = state.reserved_nested_temp_names;
             self.first_for_of_emitted = state.first_for_of_emitted;
             self.preallocated_temp_names = state.preallocated_temp_names;
+            self.preallocated_hoisted_temp_names = state.preallocated_hoisted_temp_names;
             self.preallocated_assignment_temps = state.preallocated_assignment_temps;
             self.preallocated_logical_assignment_value_temps =
                 state.preallocated_logical_assignment_value_temps;
@@ -706,6 +709,13 @@ impl<'a> Printer<'a> {
         for _ in 0..count {
             let name = self.generate_fresh_temp_name();
             self.preallocated_temp_names.push_back(name);
+        }
+    }
+
+    pub(super) fn preallocate_hoisted_temp_names(&mut self, count: usize) {
+        for _ in 0..count {
+            let name = self.generate_fresh_temp_name();
+            self.preallocated_hoisted_temp_names.push_back(name);
         }
     }
 
@@ -946,7 +956,11 @@ impl<'a> Printer<'a> {
     /// Like `make_unique_name` but also records the temp for hoisting as a `var` declaration.
     /// Used for assignment destructuring temps which need `var _a, _b, ...;` at scope top.
     pub(super) fn make_unique_name_hoisted(&mut self) -> String {
-        let name = self.make_unique_name();
+        let name = if let Some(name) = self.preallocated_hoisted_temp_names.pop_front() {
+            name
+        } else {
+            self.make_unique_name()
+        };
         self.hoisted_assignment_temps.push(name.clone());
         name
     }

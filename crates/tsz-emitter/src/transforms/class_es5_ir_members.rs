@@ -82,17 +82,20 @@ impl<'a> ES5ClassTransformer<'a> {
         let move_params_to_generator = self.async_generator_params_need_forwarding(params);
         let method_name =
             crate::transforms::emit_utils::identifier_text_or_empty(self.arena, method_name_idx);
-        let inner_name = (!method_name.is_empty()).then(|| format!("{method_name}_1"));
+        let inner_name =
+            (!method_name.is_empty()).then(|| self.next_async_generator_inner_name(&method_name));
         let mut transformer = AsyncES5Transformer::new(self.arena);
         if let Some(source_text) = self.source_text {
             transformer.set_source_text(source_text);
         }
+        self.configure_async_disposable_context(&mut transformer);
         let inner = transformer.transform_async_generator_inner_function(
             inner_name,
             params,
             body,
             move_params_to_generator,
         );
+        self.sync_async_disposable_context(&mut transformer);
         vec![IRNode::ReturnStatement(Some(Box::new(IRNode::CallExpr {
             callee: Box::new(IRNode::RuntimeHelper("__asyncGenerator".into())),
             arguments: vec![
@@ -418,9 +421,11 @@ impl<'a> ES5ClassTransformer<'a> {
                         if let Some(source_text) = self.source_text {
                             async_transformer.set_source_text(source_text);
                         }
+                        self.configure_async_disposable_context(&mut async_transformer);
                         let has_await = async_transformer.body_contains_await(method_data.body);
                         let mut generator_body =
                             async_transformer.transform_generator_body(method_data.body, has_await);
+                        self.sync_async_disposable_context(&mut async_transformer);
                         let hoisted_var_groups =
                             AsyncES5Transformer::extract_and_remove_var_decl_groups(
                                 &mut generator_body,
@@ -546,9 +551,11 @@ impl<'a> ES5ClassTransformer<'a> {
                         if let Some(source_text) = self.source_text {
                             async_transformer.set_source_text(source_text);
                         }
+                        self.configure_async_disposable_context(&mut async_transformer);
                         let has_await = async_transformer.body_contains_await(method_data.body);
                         let mut generator_body =
                             async_transformer.transform_generator_body(method_data.body, has_await);
+                        self.sync_async_disposable_context(&mut async_transformer);
                         let hoisted_var_groups =
                             AsyncES5Transformer::extract_and_remove_var_decl_groups(
                                 &mut generator_body,
@@ -1248,7 +1255,10 @@ impl<'a> ES5ClassTransformer<'a> {
             .any(|child_idx| self.contains_static_value_this_reference(child_idx))
     }
 
-    fn async_method_promise_constructor(&self, type_annotation: NodeIndex) -> Option<String> {
+    pub(super) fn async_method_promise_constructor(
+        &self,
+        type_annotation: NodeIndex,
+    ) -> Option<String> {
         let type_node = self.arena.get(type_annotation)?;
         if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
             return None;

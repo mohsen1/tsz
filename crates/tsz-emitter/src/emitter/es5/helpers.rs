@@ -663,6 +663,51 @@ impl<'a> Printer<'a> {
         true
     }
 
+    pub(in crate::emitter) fn try_emit_object_literal_es5_inline_computed_expression(
+        &mut self,
+        expression: NodeIndex,
+    ) -> bool {
+        if !self.ctx.target_es5 {
+            return false;
+        }
+
+        let Some(node) = self.arena.get(expression) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+
+        let Some(literal) = self.arena.get_literal_expr(node) else {
+            return false;
+        };
+        if literal
+            .elements
+            .nodes
+            .iter()
+            .any(|&idx| emit_utils::is_spread_element(self.arena, idx))
+        {
+            return false;
+        }
+        if !literal
+            .elements
+            .nodes
+            .iter()
+            .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx))
+        {
+            return false;
+        }
+
+        self.emit_object_literal_without_spread_es5_with_layout(
+            &literal.elements.nodes,
+            Some((node.pos, node.end)),
+            self.has_trailing_comma_in_source(node, &literal.elements.nodes),
+            true,
+            false,
+        );
+        true
+    }
+
     fn emit_object_literal_without_spread_es5_with_layout(
         &mut self,
         elements: &[NodeIndex],
@@ -1635,6 +1680,14 @@ impl<'a> Printer<'a> {
             async_emitter.set_tslib_prefix(true);
             async_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
+        let blocked_disposable_names = self
+            .file_identifiers
+            .iter()
+            .chain(self.generated_temp_names.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        async_emitter
+            .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
 
         let body_has_await = async_emitter.body_contains_await(func.body);
         let body_is_single_line = self
@@ -1650,6 +1703,10 @@ impl<'a> Printer<'a> {
             async_emitter.emit_simple_generator_body_with_hoisted_var_groups(func.body)
         };
         self.ctx.destructuring_state.temp_var_counter = async_emitter.temp_var_counter();
+        self.next_disposable_env_id = async_emitter.disposable_env_counter();
+        for generated_name in async_emitter.take_generated_disposable_env_names() {
+            self.generated_temp_names.insert(generated_name);
+        }
         let generator_mappings = async_emitter.take_mappings();
 
         if has_param_transforms {

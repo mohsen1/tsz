@@ -13,6 +13,11 @@ impl IRPrinter<'_> {
             .iter()
             .filter_map(|name| {
                 let name = name.as_ref();
+                // `_i` is the canonical ES5 for-of index temp; `tsc` does not
+                // reserve every intervening `_a`..`_h` generator-state name for it.
+                if name == "_i" {
+                    return None;
+                }
                 TEMP_NAMES.iter().position(|temp| *temp == name)
             })
             .max();

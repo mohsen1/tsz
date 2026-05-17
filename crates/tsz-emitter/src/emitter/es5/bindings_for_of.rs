@@ -208,7 +208,7 @@ impl<'a> Printer<'a> {
 
         // Check if the for-of initializer is a `using` declaration that needs dispose lowering.
         let using_info = if !self.ctx.options.target.supports_es2025() {
-            self.for_of_initializer_using_info(for_in_of.initializer)
+            crate::transforms::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
         } else {
             None
         };
@@ -281,9 +281,11 @@ impl<'a> Printer<'a> {
 
         // Scope was already entered above (before emitting the initialization expression)
 
-        if let Some((var_name, using_async)) = using_info {
+        if let Some(using_info) = using_info {
             // ES5 for-of with `using`: emit temp binding + dispose wrapper
             // Emit: var d1_1 = _b[_i];
+            let var_name = using_info.binding_name;
+            let using_async = using_info.using_async;
             let (env_name, error_name, result_name) = self.next_disposable_env_names();
             let temp_var_name = format!("{}_{}", var_name, self.next_disposable_env_id - 1);
             self.generated_temp_names.insert(temp_var_name.clone());
@@ -447,6 +449,11 @@ impl<'a> Printer<'a> {
             if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::BLOCK {
                 // If body is a block, emit its statements directly (unwrap the block)
                 if let Some(block) = self.arena.get_block(stmt_node) {
+                    if self
+                        .emit_statement_list_with_using_scope_for_node(&block.statements, statement)
+                    {
+                        return;
+                    }
                     for &stmt_idx in &block.statements.nodes {
                         if let Some(body_stmt) = self.arena.get(stmt_idx) {
                             let actual_start =

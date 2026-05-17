@@ -80,6 +80,7 @@ mod members;
 use helpers::*;
 
 use crate::context::transform::TransformContext;
+use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::ir::{
     IRCatchClause, IRMethodName, IRNode, IRParam, IRProperty, IRPropertyDescriptor, IRPropertyKey,
     IRPropertyKind, IRSwitchCase,
@@ -89,7 +90,7 @@ use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, collect_enclosing_source_binding_names,
     collect_private_accessors_with_reserved, collect_private_fields_with_reserved,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::node::{Node, NodeArena};
@@ -146,6 +147,10 @@ pub struct ES5ClassTransformer<'a> {
     use_define_for_class_fields: bool,
     commonjs_import_substitutions: FxHashMap<String, String>,
     module_kind: ModuleKind,
+    async_generator_inner_name_counts: RefCell<FxHashMap<String, u32>>,
+    disposable_env_counter: Cell<u32>,
+    blocked_disposable_env_names: RefCell<FxHashSet<String>>,
+    generated_disposable_env_names: RefCell<Vec<String>>,
     /// Additional hoisted temp variable names collected from expression conversions
     /// (e.g., from computed property lowering inside object literals)
     extra_hoisted_temps: RefCell<Vec<String>>,
@@ -178,6 +183,10 @@ impl<'a> ES5ClassTransformer<'a> {
             use_define_for_class_fields: false,
             commonjs_import_substitutions: FxHashMap::default(),
             module_kind: ModuleKind::None,
+            async_generator_inner_name_counts: RefCell::new(FxHashMap::default()),
+            disposable_env_counter: Cell::new(1),
+            blocked_disposable_env_names: RefCell::new(FxHashSet::default()),
+            generated_disposable_env_names: RefCell::new(Vec::new()),
             extra_hoisted_temps: RefCell::new(Vec::new()),
         }
     }
@@ -206,12 +215,77 @@ impl<'a> ES5ClassTransformer<'a> {
         self.module_kind = module_kind;
     }
 
+    pub fn set_async_generator_inner_name_counts(&mut self, counts: FxHashMap<String, u32>) {
+        *self.async_generator_inner_name_counts.borrow_mut() = counts;
+    }
+
+    pub fn take_async_generator_inner_name_counts(&self) -> FxHashMap<String, u32> {
+        std::mem::take(&mut *self.async_generator_inner_name_counts.borrow_mut())
+    }
+
+    fn next_async_generator_inner_name(&self, base: &str) -> String {
+        loop {
+            let candidate = {
+                let mut counts = self.async_generator_inner_name_counts.borrow_mut();
+                let count = counts
+                    .entry(base.to_string())
+                    .and_modify(|count| *count += 1)
+                    .or_insert(1);
+                format!("{base}_{count}")
+            };
+            if !self
+                .arena
+                .identifiers
+                .iter()
+                .any(|identifier| identifier.escaped_text == candidate)
+            {
+                return candidate;
+            }
+        }
+    }
+
     pub fn set_temp_var_counter(&mut self, counter: u32) {
         self.temp_var_counter.set(counter);
     }
 
     pub const fn temp_var_counter(&self) -> u32 {
         self.temp_var_counter.get()
+    }
+
+    pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.disposable_env_counter.set(next_id);
+        *self.blocked_disposable_env_names.borrow_mut() = blocked_names.into_iter().collect();
+        self.generated_disposable_env_names.borrow_mut().clear();
+    }
+
+    pub const fn disposable_env_counter(&self) -> u32 {
+        self.disposable_env_counter.get()
+    }
+
+    pub fn take_generated_disposable_env_names(&self) -> Vec<String> {
+        std::mem::take(&mut *self.generated_disposable_env_names.borrow_mut())
+    }
+
+    fn configure_async_disposable_context(&self, transformer: &mut AsyncES5Transformer<'a>) {
+        transformer.set_disposable_env_context(
+            self.disposable_env_counter.get(),
+            self.blocked_disposable_env_names.borrow().iter().cloned(),
+        );
+    }
+
+    fn sync_async_disposable_context(&self, transformer: &mut AsyncES5Transformer<'a>) {
+        self.disposable_env_counter
+            .set(transformer.disposable_env_counter());
+        let generated = transformer.take_generated_disposable_env_names();
+        let mut blocked = self.blocked_disposable_env_names.borrow_mut();
+        let mut all_generated = self.generated_disposable_env_names.borrow_mut();
+        for name in generated {
+            blocked.insert(name.clone());
+            all_generated.push(name);
+        }
     }
 
     fn fresh_super_name(&self) -> String {
@@ -3048,7 +3122,9 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let prop_name = self.get_property_name_ir(prop_data.name)?;
 
-        let value = self.convert_expression(prop_data.initializer);
+        let value = self
+            .convert_async_arrow_property_initializer(prop_data.initializer)
+            .unwrap_or_else(|| self.convert_expression(prop_data.initializer));
 
         if self.use_define_for_class_fields {
             Some(IRNode::DefineProperty {
@@ -3093,6 +3169,42 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
             }
         }
+    }
+
+    fn convert_async_arrow_property_initializer(&self, initializer: NodeIndex) -> Option<IRNode> {
+        let node = self.arena.get(initializer)?;
+        if node.kind != syntax_kind_ext::ARROW_FUNCTION {
+            return None;
+        }
+        let arrow = self.arena.get_function(node)?;
+        if !arrow.is_async {
+            return None;
+        }
+
+        let mut async_transformer = AsyncES5Transformer::new(self.arena);
+        if let Some(source_text) = self.source_text {
+            async_transformer.set_source_text(source_text);
+        }
+        self.configure_async_disposable_context(&mut async_transformer);
+        let has_await = async_transformer.body_contains_await(arrow.body);
+        let mut generator_body = async_transformer.transform_generator_body(arrow.body, has_await);
+        self.sync_async_disposable_context(&mut async_transformer);
+        let hoisted_var_groups =
+            AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
+
+        Some(IRNode::FunctionExpr {
+            name: None,
+            parameters: self.extract_parameters(&arrow.parameters),
+            body: vec![IRNode::AwaiterCall {
+                this_arg: Box::new(IRNode::id("_this")),
+                generator_body: Box::new(generator_body),
+                hoisted_var_groups,
+                promise_constructor: self.async_method_promise_constructor(arrow.type_annotation),
+                multiline_callback: false,
+            }],
+            is_expression_body: true,
+            body_source_range: None,
+        })
     }
 
     /// Get property name as IR-friendly representation
@@ -3389,6 +3501,14 @@ impl<'a> ES5ClassTransformer<'a> {
             let mut arrows = Vec::new();
             self.collect_arrow_functions_in_node(prop_data.initializer, &mut arrows);
             for &arrow_idx in &arrows {
+                if self
+                    .arena
+                    .get(arrow_idx)
+                    .and_then(|arrow_node| self.arena.get_function(arrow_node))
+                    .is_some_and(|arrow| arrow.is_async)
+                {
+                    return true;
+                }
                 if let Some(ref transforms) = self.transforms {
                     if let Some(crate::context::transform::TransformDirective::ES5ArrowFunction {
                         captures_this,

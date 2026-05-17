@@ -16,7 +16,9 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.emit(initializer);
+        if !self.try_emit_object_literal_es5_inline_computed_expression(initializer) {
+            self.emit(initializer);
+        }
     }
 
     fn top_level_using_initializer_is_tc39_decorated_class_expr(
