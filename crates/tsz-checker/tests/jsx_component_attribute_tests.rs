@@ -2348,6 +2348,10 @@ function UnwrappedLink2<T extends ElementType = ElementType>(
         "conditional ComponentPropsWithRef generic JSX props should contextually type callback params, got: {diags:?}"
     );
     assert!(
+        !has_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "conditional ComponentPropsWithRef generic JSX props should accept contextual callback attributes, got: {diags:?}"
+    );
+    assert!(
         !has_code(&diags, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE),
         "conditional ComponentPropsWithRef generic JSX props should preserve callback member access, got: {diags:?}"
     );
