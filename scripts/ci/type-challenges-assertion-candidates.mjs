@@ -279,12 +279,14 @@ const entries = [];
 for (const pair of pairs) {
   const declarations = pair.solution.declarations ?? [];
   const solutionPath = path.join(solutionsCompileDir, pair.solution.output);
+  const templatePath = path.join(typeChallengesCompileDir, pair.template.output);
   const testCasePath = path.join(
     typeChallengesCompileDir,
     "test-cases",
     pair.testCase.output,
   );
   const solutionText = readRequiredFile(solutionPath, "solution source");
+  readRequiredFile(templatePath, "template source");
   const testCaseText = readRequiredFile(testCasePath, "test-case source");
   const referencedSolutionDeclarations = declarations.filter((name) =>
     identifierPattern(name).test(testCaseText),
