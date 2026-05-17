@@ -263,3 +263,117 @@ function switchResponseWrong(x: unknown): SomeResponse {
         "Expected TS2322 to display the narrowed switch-case union, got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn unknown_equality_narrows_to_enum_objects_and_members() {
+    let source = r#"
+type isUnknown<T> = unknown extends T ? true : false;
+type isTrue<T extends true> = T;
+
+const u: unknown = undefined;
+
+enum NumberEnum {
+    A,
+    B,
+    C
+}
+
+enum StringEnum {
+    A = "A",
+    B = "B",
+    C = "C"
+}
+
+if (u === NumberEnum || u === StringEnum) {
+    let enumObj: object = u;
+}
+
+if (u === NumberEnum.A) {
+    let a: NumberEnum.A = u
+}
+
+if (u === StringEnum.B) {
+    let b: StringEnum.B = u
+}
+
+function switchTestEnum(x: unknown) {
+    switch (x) {
+        case StringEnum.A:
+            const a: StringEnum.A = x;
+            break;
+        case StringEnum.B:
+            const b: StringEnum.B = x;
+            break;
+        case StringEnum.C:
+            const c: StringEnum.C = x;
+            break;
+    }
+    type End = isTrue<isUnknown<typeof x>>
+}
+
+function switchTestCollectEnum(x: unknown) {
+    switch (x) {
+        case StringEnum.A:
+            const a: StringEnum.A = x;
+        case StringEnum.B:
+            const b: StringEnum.A | StringEnum.B = x;
+        case StringEnum.C:
+            const c: StringEnum.A | StringEnum.B | StringEnum.C = x;
+            const all: StringEnum = x;
+            return;
+    }
+    type End = isTrue<isUnknown<typeof x>>
+}
+"#;
+    let diagnostics = diag_messages(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected enum object/member equality to narrow unknown without diagnostics, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn unknown_negated_enum_equality_narrows_else_branch() {
+    let source = r#"
+const u: unknown = undefined;
+
+enum NumberEnum {
+    A,
+    B,
+    C
+}
+
+enum StringEnum {
+    A = "A",
+    B = "B",
+    C = "C"
+}
+
+function notNotEquals(u: unknown)  {
+    if (u !== NumberEnum) { }
+    else {
+        const o: object = u;
+    }
+
+    if (u !== NumberEnum.A) { }
+    else {
+        const a: NumberEnum.A = u;
+    }
+
+    if (u !== NumberEnum.A && u !== NumberEnum.B && u !== StringEnum.A) { }
+    else {
+        const aOrB: NumberEnum.A | NumberEnum.B | StringEnum.A  = u;
+    }
+
+    if (!(u === NumberEnum.A || u === NumberEnum.B || u === StringEnum.A)) { }
+    else {
+        const aOrB: NumberEnum.A | NumberEnum.B | StringEnum.A  = u;
+    }
+}
+"#;
+    let diagnostics = diag_messages(source);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected negated enum equality to narrow unknown in else branches, got: {diagnostics:#?}"
+    );
+}
