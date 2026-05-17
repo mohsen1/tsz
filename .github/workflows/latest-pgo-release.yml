@@ -1,0 +1,235 @@
+name: Latest PGO Release
+
+on:
+  schedule:
+    # Publish the newest successful PGO prep artifact of the UTC day.
+    - cron: "0 5 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: latest-pgo-release
+  cancel-in-progress: false
+
+env:
+  LATEST_TAG: latest
+  LATEST_TARGET: x86_64-unknown-linux-gnu
+
+jobs:
+  publish:
+    name: publish latest PGO
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - id: prep
+        name: Download latest Cloud Build PGO prep
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          today="$(date -u +%F)"
+          manifest_value() {
+            local key="$1"
+            awk -v key="$key" '
+              index($0, key "=") == 1 { value = substr($0, length(key) + 2) }
+              END { print value }
+            ' "$2"
+          }
+
+          if ! gcloud storage cp \
+            "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
+            latest-bench-prep.env >/dev/null 2>&1; then
+            echo "No latest Cloud Build PGO prep manifest is available; skipping release."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          latest_target_sha="$(manifest_value BENCH_TARGET_SHA latest-bench-prep.env)"
+          latest_build_date="$(manifest_value BENCH_BUILD_DATE latest-bench-prep.env)"
+          latest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED latest-bench-prep.env)"
+
+          if [[ -z "${latest_target_sha}" ]]; then
+            echo "Latest Cloud Build manifest did not include BENCH_TARGET_SHA."
+            exit 1
+          fi
+          if [[ "${latest_pgo_optimized}" != "1" ]]; then
+            echo "Latest Cloud Build manifest is not marked PGO optimized."
+            exit 1
+          fi
+          if [[ "${latest_build_date}" != "${today}" ]]; then
+            echo "Latest Cloud Build PGO prep is from ${latest_build_date:-unknown}, not ${today}; skipping release."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          gcloud storage cp \
+            "gs://tsz-ci_cloudbuild/bench-prep/${latest_target_sha}/bench-prep.env" \
+            bench-prep.env
+          gcloud storage cp \
+            "gs://tsz-ci_cloudbuild/bench-prep/${latest_target_sha}/bench-prep.tar" \
+            bench-prep.tar
+
+          manifest_target_sha="$(manifest_value BENCH_TARGET_SHA bench-prep.env)"
+          manifest_build_date="$(manifest_value BENCH_BUILD_DATE bench-prep.env)"
+          manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED bench-prep.env)"
+
+          if [[ "${manifest_target_sha}" != "${latest_target_sha}" ]]; then
+            echo "SHA-scoped manifest is for ${manifest_target_sha:-unknown}; expected ${latest_target_sha}."
+            exit 1
+          fi
+          if [[ "${manifest_build_date}" != "${latest_build_date}" ]]; then
+            echo "SHA-scoped manifest date ${manifest_build_date:-unknown} did not match latest date ${latest_build_date}."
+            exit 1
+          fi
+          if [[ "${manifest_pgo_optimized}" != "1" ]]; then
+            echo "SHA-scoped manifest is not marked PGO optimized."
+            exit 1
+          fi
+
+          tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+          tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
+
+          {
+            echo "target_sha=${latest_target_sha}"
+            echo "build_date=${latest_build_date}"
+            echo "should_publish=true"
+          } >> "$GITHUB_OUTPUT"
+
+      - id: release-gate
+        name: Skip already-published daily asset
+        if: steps.prep.outputs.should_publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TARGET_SHA: ${{ steps.prep.outputs.target_sha }}
+          RELEASE_BUILD_DATE: ${{ steps.prep.outputs.build_date }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          body="$(
+            gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${LATEST_TAG}" \
+              --jq '.body' 2>/dev/null || true
+          )"
+          if grep -Fq "Build date: ${RELEASE_BUILD_DATE}" <<<"$body" &&
+             grep -Fq "Target SHA: ${RELEASE_TARGET_SHA}" <<<"$body"; then
+            echo "latest release already points at ${RELEASE_TARGET_SHA} for ${RELEASE_BUILD_DATE}; skipping."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "should_publish=true" >> "$GITHUB_OUTPUT"
+
+      - name: Stage latest PGO release asset
+        if: steps.release-gate.outputs.should_publish == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tar -xf bench-prep.tar
+          test -x .target-bench/dist/tsz
+          test -f .target-bench/dist/.bench-pgo-optimized
+
+          staging="tsz-${LATEST_TAG}-${LATEST_TARGET}"
+          mkdir -p "dist/${staging}"
+          cp .target-bench/dist/tsz "dist/${staging}/"
+          cp README.md LICENSE "dist/${staging}/" 2>/dev/null || true
+          tar -C dist -czf "dist/${staging}.tar.gz" "${staging}"
+          sha256sum "dist/${staging}.tar.gz" | awk '{print $1}' > "dist/${staging}.tar.gz.sha256"
+          (
+            cd dist
+            printf "%s  %s\n" \
+              "$(cat "${staging}.tar.gz.sha256")" \
+              "${staging}.tar.gz" > SHA256SUMS
+          )
+          ls -la dist/
+
+      - name: Publish and smoke test latest channel release
+        if: steps.release-gate.outputs.should_publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TARGET_SHA: ${{ steps.prep.outputs.target_sha }}
+          RELEASE_BUILD_DATE: ${{ steps.prep.outputs.build_date }}
+          TSZ_REPO_OWNER: ${{ github.repository_owner }}
+          TSZ_REPO_NAME: ${{ github.event.repository.name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          had_previous=false
+          published_latest=false
+          previous_assets=()
+          rm -rf previous-latest-assets
+          mkdir -p previous-latest-assets
+
+          rollback_latest() {
+            local status=$?
+            local previous_prerelease_args=()
+
+            if [[ "${published_latest}" == "true" ]]; then
+              echo "latest publish smoke failed; restoring previous latest channel state."
+              gh release delete "${LATEST_TAG}" --cleanup-tag -y 2>/dev/null || true
+              git push origin ":refs/tags/${LATEST_TAG}" 2>/dev/null || true
+
+              if [[ "${had_previous}" == "true" ]]; then
+                if [[ "$(cat previous-latest-prerelease.txt)" == "true" ]]; then
+                  previous_prerelease_args=(--prerelease)
+                fi
+                previous_assets=(previous-latest-assets/*)
+                gh release create "${LATEST_TAG}" \
+                  "${previous_assets[@]}" \
+                  --target "$(cat previous-latest-target.txt)" \
+                  --title "$(cat previous-latest-title.txt)" \
+                  --notes-file previous-latest-notes.md \
+                  "${previous_prerelease_args[@]}" \
+                  --latest=false
+              fi
+            fi
+
+            exit "${status}"
+          }
+          trap rollback_latest ERR
+
+          if gh release view "${LATEST_TAG}" >/dev/null 2>&1; then
+            had_previous=true
+            gh release view "${LATEST_TAG}" --json name --jq '.name // "latest"' > previous-latest-title.txt
+            gh release view "${LATEST_TAG}" --json body --jq '.body // ""' > previous-latest-notes.md
+            gh release view "${LATEST_TAG}" --json isPrerelease --jq '.isPrerelease' > previous-latest-prerelease.txt
+            gh release view "${LATEST_TAG}" --json targetCommitish --jq '.targetCommitish // "main"' > previous-latest-target.txt
+            gh release download "${LATEST_TAG}" --dir previous-latest-assets --clobber
+          fi
+
+          cat > release-notes.md <<EOF
+          Daily PGO-optimized tsz build.
+
+          Build date: ${RELEASE_BUILD_DATE}
+          Target SHA: ${RELEASE_TARGET_SHA}
+          Target: ${LATEST_TARGET}
+          EOF
+
+          gh release delete "${LATEST_TAG}" --cleanup-tag -y 2>/dev/null || true
+          git push origin ":refs/tags/${LATEST_TAG}" 2>/dev/null || true
+          gh release create "${LATEST_TAG}" \
+            "dist/tsz-${LATEST_TAG}-${LATEST_TARGET}.tar.gz" \
+            "dist/tsz-${LATEST_TAG}-${LATEST_TARGET}.tar.gz.sha256" \
+            "dist/SHA256SUMS" \
+            --target "${RELEASE_TARGET_SHA}" \
+            --title "${LATEST_TAG}" \
+            --notes-file release-notes.md \
+            --prerelease \
+            --latest=false
+          published_latest=true
+
+          install_dir="${RUNNER_TEMP}/tsz-latest-install"
+          install_log="${RUNNER_TEMP}/tsz-latest-install.log"
+          bash scripts/install.sh --version latest --dir "${install_dir}" 2>&1 | tee "${install_log}"
+          grep -F "releases/download/latest/tsz-latest-${LATEST_TARGET}.tar.gz" "${install_log}"
+          cmp .target-bench/dist/tsz "${install_dir}/tsz"
+          "${install_dir}/tsz" --version
+
+          trap - ERR
