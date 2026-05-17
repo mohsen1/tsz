@@ -616,6 +616,97 @@ export const Mixed = mixin(Unmixed);
 }
 
 #[test]
+fn test_abstract_local_class_mixin_preserves_abstract_constructor_intersection() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface Constructor<C> { new (...args: any[]): C; }
+
+function mixin<B extends Constructor<{}>>(Base: B) {
+    abstract class PrivateMixed extends Base {
+        abstract bar: number;
+    }
+    return PrivateMixed;
+}
+
+export class Unmixed {}
+export const Mixed = mixin(Unmixed);
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare const Mixed: (abstract new (...args: any[]) => {\n    bar: number;\n}) & typeof Unmixed;"
+        ),
+        "Expected abstract mixin constructor type to preserve abstract new syntax: {output}"
+    );
+    assert!(
+        !output.contains("new (...args: any[]):"),
+        "Abstract returned local classes should not be forced into object construct-signature form: {output}"
+    );
+}
+
+#[test]
+fn test_abstract_constructor_with_static_members_parenthesizes_in_intersection() {
+    let (parser, _root) = parse_test_source("");
+    let binder = BinderState::new();
+    let interner = TypeInterner::new();
+
+    let x = interner.intern_string("x");
+    let mixin_method = interner.intern_string("mixinMethod");
+    let static_mixin_method = interner.intern_string("staticMixinMethod");
+    let args = interner.intern_string("args");
+
+    let void_method = interner.function(FunctionShape::new(Vec::new(), TypeId::VOID));
+    let instance_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![PropertyInfo::method(mixin_method, void_method)],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: Some(x),
+        }),
+        number_index: None,
+        symbol: None,
+    });
+    let constructor_type = interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(
+            vec![ParamInfo {
+                name: Some(args),
+                type_id: interner.array(TypeId::ANY),
+                optional: false,
+                rest: true,
+            }],
+            instance_type,
+        )],
+        properties: vec![PropertyInfo::method(static_mixin_method, void_method)],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: true,
+    });
+    let intersection = interner.intersection(vec![constructor_type, TypeId::STRING]);
+
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let printed = emitter.print_type_id(intersection);
+
+    assert!(
+        printed.starts_with("((abstract new (...args: any[]) => {"),
+        "Expected constructor/static intersection to be parenthesized before the next intersection member: {printed}"
+    );
+    assert!(
+        printed.contains("[x: string]: any;"),
+        "Expected the abstract constructor return shape to preserve its index signature: {printed}"
+    );
+    assert!(
+        printed.ends_with("}) & string"),
+        "Expected static members to stay in a separate intersection arm: {printed}"
+    );
+}
+
+#[test]
 fn test_returned_local_class_mixin_auto_accessor_uses_get_set_in_constructor_object() {
     let output = emit_dts_with_usage_analysis(
         r#"
