@@ -7,7 +7,6 @@ TypeScript/tests/cases/compiler/computedPropertyBindingElementDeclarationNoCrash
 TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts
 TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
 TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts
-TypeScript/tests/cases/compiler/declarationEmitUsingTypeAlias2.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts

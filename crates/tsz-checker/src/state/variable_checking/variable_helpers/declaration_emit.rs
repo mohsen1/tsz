@@ -396,9 +396,17 @@ impl<'a> CheckerState<'a> {
         let Some(sym_id) = self.ctx.def_to_symbol_id_with_fallback(def_id) else {
             return false;
         };
-        let Some(symbol) = self.get_symbol_from_any_binder(sym_id) else {
-            return false;
-        };
+        self.symbol_is_public_package_export(sym_id)
+    }
+
+    /// Returns true when `sym_id`'s declaration lives in a top-level
+    /// `node_modules/<pkg>` package (single `node_modules` segment) and that
+    /// package's module-exports table re-surfaces this symbol — directly, via
+    /// an import alias, or by resolving an alias chain. In that situation
+    /// `tsc` can name the symbol via `typeof import("<pkg>").<name>` for
+    /// declaration emit, so callers must not treat it as inaccessible just
+    /// because it isn't bound locally in the current file's scope.
+    pub(crate) fn symbol_is_public_package_export(&self, sym_id: SymbolId) -> bool {
         let Some(source_path) = self.symbol_source_path(sym_id) else {
             return false;
         };
@@ -408,6 +416,9 @@ impl<'a> CheckerState<'a> {
         if Self::node_modules_segment_count(&source_path) >= 2 {
             return false;
         }
+        let Some(symbol) = self.get_symbol_from_any_binder(sym_id) else {
+            return false;
+        };
 
         let name = symbol.escaped_name.as_str();
         let mut binders: Vec<&tsz_binder::BinderState> = vec![self.ctx.binder];
@@ -415,17 +426,29 @@ impl<'a> CheckerState<'a> {
             binders.extend(all_binders.iter().map(std::convert::AsRef::as_ref));
         }
 
+        // `AliasCycleTracker` accumulates visited symbols without popping
+        // (see `tsz_checker::symbols::alias_cycle`), so a fresh tracker must
+        // be constructed per candidate `exported` symbol — sharing one across
+        // iterations would cause later resolutions to bail out as cycles or
+        // hit the depth cap.
         binders.into_iter().any(|binder| {
             binder.module_exports.iter().any(|(_, exports)| {
                 exports.get(name).is_some_and(|exported| {
                     exported == sym_id
                         || binder.resolve_import_symbol(exported) == Some(sym_id)
-                        || self.ctx.binder.resolve_import_symbol(exported) == Some(sym_id)
                         || self.resolve_alias_symbol(exported, &mut AliasCycleTracker::new())
                             == Some(sym_id)
                 })
             })
         })
+    }
+
+    /// Convenience for unique-symbol accessibility checks where the symbol's
+    /// reported root (an enclosing namespace) and the symbol itself can each
+    /// independently satisfy the public-package nameability rule.
+    fn unique_symbol_is_publicly_reachable(&self, sym_id: SymbolId, root_sym_id: SymbolId) -> bool {
+        self.symbol_is_public_package_export(root_sym_id)
+            || (root_sym_id != sym_id && self.symbol_is_public_package_export(sym_id))
     }
 
     fn node_modules_segment_count(path: &str) -> usize {
@@ -1039,6 +1062,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        if self.unique_symbol_is_publicly_reachable(sym_id, root_sym_id) {
+            return None;
+        }
+
         let module_specifier = self.module_specifier_for_file(file_idx)?;
         Some((reported_name, module_specifier))
     }
@@ -1059,7 +1086,15 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        !self.local_value_name_resolves_to(root_sym_id)
+        if self.local_value_name_resolves_to(root_sym_id) {
+            return false;
+        }
+
+        if self.unique_symbol_is_publicly_reachable(sym_id, root_sym_id) {
+            return false;
+        }
+
+        true
     }
 
     pub(crate) fn exported_variable_initializer_symbol(
@@ -1375,7 +1410,15 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        !self.local_name_resolves_to(sym_id)
+        if self.local_name_resolves_to(sym_id) {
+            return false;
+        }
+
+        if self.symbol_is_public_package_export(sym_id) {
+            return false;
+        }
+
+        true
     }
 
     fn local_name_resolves_to(&self, target_sym_id: SymbolId) -> bool {
