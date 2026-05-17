@@ -3108,6 +3108,177 @@ EOF
 EOF
     done
 }
+
+generate_indexed_access_hotspot_file() {
+    local key_count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Indexed-access hotspot benchmark.
+// Mirrors project-code patterns that repeatedly read through mapped helpers.
+
+HEADER
+
+    echo "interface IndexedModel {" >> "$output"
+    for ((i=0; i<key_count; i++)); do
+        echo "    prop$i: { value: number; tag: 'prop$i'; nested: { flag: boolean } };" >> "$output"
+    done
+    echo "}" >> "$output"
+    cat >> "$output" << 'EOF'
+
+type IndexedReaders<T> = { [K in keyof T]: (value: T[K]) => T[K] };
+type IndexedValues<T> = { [K in keyof T]: T[K] }[keyof T];
+
+declare const model: IndexedModel;
+declare const readers: IndexedReaders<IndexedModel>;
+
+function readIndexed<K extends keyof IndexedModel>(key: K): IndexedModel[K] {
+    return readers[key](model[key]);
+}
+
+type AllIndexedValues = IndexedValues<IndexedModel>;
+EOF
+
+    for ((i=0; i<key_count; i++)); do
+        cat >> "$output" << EOF
+const indexedValue$i = readIndexed('prop$i').nested.flag ? readIndexed('prop$i').value : 0;
+EOF
+    done
+}
+
+generate_remapped_accessor_hotspot_file() {
+    local key_count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Remapped mapped-type accessor hotspot benchmark.
+// Exercises template-literal key remapping plus indexed access values.
+
+HEADER
+
+    echo "interface AccessorModel {" >> "$output"
+    for ((i=0; i<key_count; i++)); do
+        echo "    prop$i: { id: number; label: 'prop$i' };" >> "$output"
+    done
+    echo "}" >> "$output"
+    cat >> "$output" << 'EOF'
+
+type AccessorPair<T> = {
+    [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K]
+} & {
+    [K in keyof T as `set${Capitalize<string & K>}`]: (value: T[K]) => void
+};
+
+declare const accessors: AccessorPair<AccessorModel>;
+EOF
+
+    for ((i=0; i<key_count; i++)); do
+        cat >> "$output" << EOF
+const accessorValue$i = accessors.getProp$i().id;
+accessors.setProp$i({ id: accessorValue$i, label: 'prop$i' });
+EOF
+    done
+}
+
+generate_conditional_infer_hotspot_file() {
+    local case_count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Conditional infer hotspot benchmark.
+// Exercises nested conditional extraction seen in utility-heavy projects.
+
+type AsyncBox<T> = Promise<{ payload: T[]; meta: { created: string } }>;
+type ExtractPayload<T> = T extends Promise<{ payload: (infer U)[] }> ? U : never;
+type DeepUnwrap<T> =
+    T extends Promise<infer U> ? DeepUnwrap<U> :
+    T extends { payload: infer P } ? DeepUnwrap<P> :
+    T extends (infer E)[] ? DeepUnwrap<E> :
+    T;
+
+HEADER
+
+    for ((i=0; i<case_count; i++)); do
+        cat >> "$output" << EOF
+type ConditionalInput$i = AsyncBox<{ id: $i; nested: Promise<{ value: string; index: $i }> }>;
+type ConditionalPayload$i = ExtractPayload<ConditionalInput$i>;
+type ConditionalDeep$i = DeepUnwrap<ConditionalInput$i>;
+declare const conditionalPayload$i: ConditionalPayload$i;
+declare const conditionalDeep$i: ConditionalDeep$i;
+const conditionalValue$i = conditionalPayload$i.id + conditionalDeep$i.id;
+
+EOF
+    done
+}
+
+generate_object_spread_hotspot_file() {
+    local case_count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Object spread hotspot benchmark.
+// Exercises repeated object-literal spread inference and property merging.
+
+interface SpreadBase {
+    common: string;
+    enabled: boolean;
+}
+
+HEADER
+
+    for ((i=0; i<case_count; i++)); do
+        cat >> "$output" << EOF
+interface SpreadInput$i extends SpreadBase {
+    value$i: number;
+    nested$i: { readonly id: number; name: string };
+}
+
+declare const spreadInput$i: SpreadInput$i;
+const spreadMerged$i = {
+    ...spreadInput$i,
+    extra$i: spreadInput$i.value$i,
+    nested$i: { ...spreadInput$i.nested$i, name: spreadInput$i.common },
+};
+type SpreadResult$i = typeof spreadMerged$i;
+const spreadCheck$i: SpreadResult$i = spreadMerged$i;
+
+EOF
+    done
+}
+
+generate_contextual_callback_hotspot_file() {
+    local case_count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Contextual callback hotspot benchmark.
+// Exercises mapped callback tables and indexed dispatch return preservation.
+
+HEADER
+
+    echo "interface EventMap {" >> "$output"
+    for ((i=0; i<case_count; i++)); do
+        echo "    event$i: { type: 'event$i'; value: number; payload: { id: number } };" >> "$output"
+    done
+    echo "}" >> "$output"
+    cat >> "$output" << 'EOF'
+
+type HandlerMap<T> = { [K in keyof T]: (event: T[K]) => T[K] };
+declare const handlers: HandlerMap<EventMap>;
+
+function dispatchEvent<K extends keyof EventMap>(kind: K, event: EventMap[K]): EventMap[K] {
+    return handlers[kind](event);
+}
+
+EOF
+
+    for ((i=0; i<case_count; i++)); do
+        cat >> "$output" << EOF
+const dispatched$i = dispatchEvent('event$i', { type: 'event$i', value: $i, payload: { id: $i } });
+const dispatchedValue$i = dispatched$i.payload.id + dispatched$i.value;
+EOF
+    done
+}
 generate_typed_arrays_file() {
     local output="$1"
 
@@ -4119,6 +4290,31 @@ main() {
         generate_shallow_optional_chain_file 50 "$file"
         run_benchmark "Shallow optional-chain N=50" "$file"
         echo
+
+        file="$TEMP_DIR/indexed_access_hotspot_25.ts"
+        generate_indexed_access_hotspot_file 25 "$file"
+        run_benchmark "Indexed access hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/remapped_accessor_hotspot_25.ts"
+        generate_remapped_accessor_hotspot_file 25 "$file"
+        run_benchmark "Remapped accessor hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/conditional_infer_hotspot_25.ts"
+        generate_conditional_infer_hotspot_file 25 "$file"
+        run_benchmark "Conditional infer hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/object_spread_hotspot_25.ts"
+        generate_object_spread_hotspot_file 25 "$file"
+        run_benchmark "Object spread hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/contextual_callback_hotspot_25.ts"
+        generate_contextual_callback_hotspot_file 25 "$file"
+        run_benchmark "Contextual callback hotspot N=25" "$file"
+        echo
     else
         # Generate synthetic files of increasing size
         print_subheader "Class-heavy files (interfaces + classes)"
@@ -4150,6 +4346,43 @@ main() {
         generate_shallow_optional_chain_file 400 "$file"
         run_benchmark "Shallow optional-chain N=400" "$file"
         echo
+
+        print_subheader "Project hotspot microbenchmarks"
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/indexed_access_hotspot_${count}.ts"
+            generate_indexed_access_hotspot_file "$count" "$file"
+            run_benchmark "Indexed access hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/remapped_accessor_hotspot_${count}.ts"
+            generate_remapped_accessor_hotspot_file "$count" "$file"
+            run_benchmark "Remapped accessor hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/conditional_infer_hotspot_${count}.ts"
+            generate_conditional_infer_hotspot_file "$count" "$file"
+            run_benchmark "Conditional infer hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/object_spread_hotspot_${count}.ts"
+            generate_object_spread_hotspot_file "$count" "$file"
+            run_benchmark "Object spread hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/contextual_callback_hotspot_${count}.ts"
+            generate_contextual_callback_hotspot_file "$count" "$file"
+            run_benchmark "Contextual callback hotspot N=$count" "$file"
+            echo
+        done
         
         print_subheader "Union type stress test"
         
