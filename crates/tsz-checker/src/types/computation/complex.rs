@@ -167,12 +167,12 @@ impl<'a> CheckerState<'a> {
             crate::symbol_resolver::TypeSymbolResolution::Type(type_sym_id) => Some(type_sym_id),
             _ => None,
         };
+        let same_file_type_shadow_sym = self
+            .ctx
+            .same_file_type_declaration_symbol_for_name(callee_name);
         let type_sym_id = resolved_type_sym
             .filter(|&sym_id| !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id))
-            .or_else(|| {
-                self.ctx
-                    .same_file_type_declaration_symbol_for_name(callee_name)
-            })?;
+            .or(same_file_type_shadow_sym)?;
         if self.ctx.symbol_is_from_actual_or_cloned_lib(type_sym_id) {
             trace!(
                 callee_name,
@@ -184,7 +184,10 @@ impl<'a> CheckerState<'a> {
 
         let symbol = self.ctx.binder.get_symbol(type_sym_id)?;
         let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
-        if symbol.has_any_flags(value_flags_except_module) && !symbol.is_type_only {
+        if symbol.has_any_flags(value_flags_except_module)
+            && !symbol.is_type_only
+            && same_file_type_shadow_sym != Some(type_sym_id)
+        {
             trace!(
                 callee_name,
                 type_sym_id = type_sym_id.0,

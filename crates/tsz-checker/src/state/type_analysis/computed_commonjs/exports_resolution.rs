@@ -996,8 +996,17 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 if let Some(existing) = props.iter_mut().find(|prop| prop.name == name_atom) {
-                    existing.type_id = rhs_type;
-                    existing.write_type = rhs_type;
+                    let factory = self.ctx.types.factory();
+                    existing.type_id = if existing.type_id == rhs_type {
+                        existing.type_id
+                    } else {
+                        factory.union2(existing.type_id, rhs_type)
+                    };
+                    existing.write_type = if existing.write_type == rhs_type {
+                        existing.write_type
+                    } else {
+                        factory.union2(existing.write_type, rhs_type)
+                    };
                     existing.optional = false;
                     existing.readonly = false;
                     continue;

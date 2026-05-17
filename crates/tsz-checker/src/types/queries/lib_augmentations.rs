@@ -122,6 +122,9 @@ impl<'a> CheckerState<'a> {
         let Some(type_id) = cached else {
             return true;
         };
+        if self.ctx.file_local_type_shadow_for_lib_name(name) {
+            return false;
+        }
         if !crate::query_boundaries::common::type_id_is_known_to_db(self.ctx.types, type_id) {
             return false;
         }
