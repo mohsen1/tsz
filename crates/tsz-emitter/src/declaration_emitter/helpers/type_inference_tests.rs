@@ -125,6 +125,29 @@ fn types_versions_self_back_reference_detection_requires_package_root_reexport()
         "Subpath re-exports should not make the package root fall back to any"
     );
 
+    let subpath_types_dir = package_root.join("ts3.1").join("sub");
+    std::fs::create_dir_all(&subpath_types_dir).expect("create subpath typesVersions dir");
+    std::fs::write(
+        package_root.join("package.json"),
+        r#"{
+            "name": "ext",
+            "version": "1.0.0",
+            "typesVersions": {
+                ">=3.1.0-0": { "sub/*": ["ts3.1/sub/*"] }
+            }
+        }"#,
+    )
+    .expect("rewrite package json");
+    std::fs::write(
+        subpath_types_dir.join("index.d.ts"),
+        r#"export * from "../";"#,
+    )
+    .expect("write subpath back-reference");
+    assert!(
+        !DeclarationEmitter::package_root_has_types_versions_self_back_reference(&package_root),
+        "Subpath-only typesVersions mappings should not make root imports fall back to any"
+    );
+
     let _ = std::fs::remove_dir_all(&root);
 }
 

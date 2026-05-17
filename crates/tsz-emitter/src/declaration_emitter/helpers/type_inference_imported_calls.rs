@@ -70,7 +70,10 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(mappings) = mappings.as_object() else {
                 continue;
             };
-            for targets in mappings.values() {
+            for (mapping_key, targets) in mappings {
+                if mapping_key != "*" {
+                    continue;
+                }
                 let Some(targets) = targets.as_array() else {
                     continue;
                 };
