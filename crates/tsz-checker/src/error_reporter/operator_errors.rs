@@ -628,24 +628,15 @@ impl<'a> CheckerState<'a> {
                 self.widen_type_for_operator_display(right_surface),
             )
         };
-        let left_str = if let Some(text) =
-            self.operator_type_parameter_annotation_text_for_expression(left_idx)
-        {
-            text
-        } else if is_number_bigint_mix || is_unsigned_shift_bigint_mix {
-            self.format_type(left_diag)
-        } else {
-            self.format_type_for_operator_display(left_diag)
+        let mut format_operand = |diag| {
+            if is_number_bigint_mix || is_unsigned_shift_bigint_mix {
+                self.format_type(diag)
+            } else {
+                self.format_type_for_operator_display(diag)
+            }
         };
-        let right_str = if let Some(text) =
-            self.operator_type_parameter_annotation_text_for_expression(right_idx)
-        {
-            text
-        } else if is_number_bigint_mix || is_unsigned_shift_bigint_mix {
-            self.format_type(right_diag)
-        } else {
-            self.format_type_for_operator_display(right_diag)
-        };
+        let left_str = format_operand(left_diag);
+        let right_str = format_operand(right_diag);
 
         // Check if this is an arithmetic or bitwise operator
         // These operators require integer operands and emit TS2362/TS2363
