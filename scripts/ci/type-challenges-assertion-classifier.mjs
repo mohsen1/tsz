@@ -18,6 +18,11 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+function fail(message) {
+  console.error(`error: ${message}`);
+  process.exit(1);
+}
+
 function executableOrNull(file) {
   if (!file) {
     return null;
@@ -48,6 +53,98 @@ function diagnosticLines(output) {
 
 function normalizePath(file) {
   return file.split(/[\\/]+/).join("/");
+}
+
+function requiredRelativeManifestPath(value, label) {
+  if (typeof value !== "string" || value.trim() === "") {
+    fail(`manifest ${label} must be a non-empty relative path`);
+  }
+  const normalized = normalizePath(value).replace(/^\.\//, "");
+  if (
+    path.isAbsolute(value) ||
+    normalized === "" ||
+    normalized === "." ||
+    normalized.split("/").includes("..")
+  ) {
+    fail(`manifest ${label} must be a relative path inside the candidate directory: ${value}`);
+  }
+  return normalized;
+}
+
+function optionalCount(value, label) {
+  if (value === undefined) {
+    return null;
+  }
+  if (!Number.isInteger(value) || value < 0) {
+    fail(`manifest counts.${label} must be a non-negative integer`);
+  }
+  return value;
+}
+
+function validateCandidateManifest(manifest) {
+  const acceptedFixtures = new Set([
+    "type-challenges-assertion-candidates",
+    "type-challenges-assertions-tsc-clean",
+  ]);
+  if (!acceptedFixtures.has(manifest?.fixture)) {
+    fail(`unexpected assertion candidate manifest fixture: ${manifest?.fixture || "<missing>"}`);
+  }
+  if (!Array.isArray(manifest.entries)) {
+    fail("manifest entries must be an array");
+  }
+
+  const counts = manifest.counts ?? {};
+  const generatedAssertions = optionalCount(counts.generatedAssertions, "generatedAssertions");
+  const referenced = optionalCount(
+    counts.assertionsReferencingSolutionDeclaration,
+    "assertionsReferencingSolutionDeclaration",
+  );
+  const missing = optionalCount(
+    counts.assertionsMissingSolutionDeclarationReference,
+    "assertionsMissingSolutionDeclarationReference",
+  );
+
+  if (generatedAssertions !== null && generatedAssertions !== manifest.entries.length) {
+    fail(
+      `manifest counts.generatedAssertions (${generatedAssertions}) does not match entries length (${manifest.entries.length})`,
+    );
+  }
+  if (referenced !== null && missing !== null && referenced + missing !== manifest.entries.length) {
+    fail(
+      "manifest declaration-reference counts do not account for every assertion candidate",
+    );
+  }
+
+  const seenOutputs = new Set();
+  const entries = manifest.entries.map((entry, index) => {
+    const output = requiredRelativeManifestPath(entry?.output, `entries[${index}].output`);
+    if (!output.startsWith("assertions/")) {
+      fail(`manifest entries[${index}].output must be under assertions/: ${output}`);
+    }
+    if (seenOutputs.has(output)) {
+      fail(`duplicate assertion candidate output in manifest: ${output}`);
+    }
+    seenOutputs.add(output);
+
+    const outputPath = path.resolve(candidateRoot, output);
+    if (
+      outputPath === candidateRoot ||
+      !outputPath.startsWith(`${candidateRoot}${path.sep}`) ||
+      !fs.existsSync(outputPath)
+    ) {
+      fail(`manifest assertion candidate does not exist inside candidate directory: ${output}`);
+    }
+
+    return {
+      ...entry,
+      output,
+    };
+  });
+
+  return {
+    ...manifest,
+    entries,
+  };
 }
 
 function normalizeDiagnosticFile(file) {
@@ -395,7 +492,7 @@ function compareCompilers(tsc, tsz) {
   };
 }
 
-const manifest = readJson(candidateManifestPath);
+const manifest = validateCandidateManifest(readJson(candidateManifestPath));
 const tsconfig = path.join(candidateDir, "tsconfig.tsz-guard.json");
 if (!fs.existsSync(tsconfig)) {
   console.error(`error: assertion candidate tsconfig does not exist: ${tsconfig}`);
