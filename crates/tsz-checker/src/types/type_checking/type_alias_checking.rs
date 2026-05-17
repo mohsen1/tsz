@@ -940,8 +940,8 @@ impl<'a> CheckerState<'a> {
         if extends_type.is_none() {
             return Vec::new();
         }
-        let factory = self.ctx.types.factory();
-        let mut pushes: Vec<(String, Option<TypeId>)> = Vec::new();
+        // Phase 1: collect the names (immutable AST walk).
+        let mut infer_names: Vec<String> = Vec::new();
         let mut stack = vec![extends_type];
         while let Some(idx) = stack.pop() {
             let Some(node) = self.ctx.arena.get(idx) else {
@@ -955,18 +955,9 @@ impl<'a> CheckerState<'a> {
                         && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                     {
                         let name = ident.escaped_text.clone();
-                        let atom = self.ctx.types.intern_string(&name);
-                        let provisional = factory.type_param(tsz_solver::TypeParamInfo {
-                            name: atom,
-                            constraint: None,
-                            default: None,
-                            is_const: false,
-                        });
-                        let previous = self
-                            .ctx
-                            .type_parameter_scope
-                            .insert(name.clone(), provisional);
-                        pushes.push((name, previous));
+                        if !infer_names.contains(&name) {
+                            infer_names.push(name);
+                        }
                     }
                     // The constraint of `infer X extends Constraint` may itself
                     // contain `infer Y extends C2`; tsc binds those nested names
@@ -979,6 +970,32 @@ impl<'a> CheckerState<'a> {
             for child in self.ctx.arena.get_children(idx) {
                 stack.push(child);
             }
+        }
+
+        // Phase 2: compute each name's implicit constraint from the surrounding
+        // pattern (template literal → string, explicit extends → that type, etc.).
+        // Must run before borrowing the factory, since it takes &mut self.
+        let infer_constraints: Vec<Option<TypeId>> = infer_names
+            .iter()
+            .map(|name| self.effective_infer_constraint_from_extends_type(extends_type, name))
+            .collect();
+
+        // Phase 3: intern provisional `TypeParameter`s and install them in scope.
+        let factory = self.ctx.types.factory();
+        let mut pushes: Vec<(String, Option<TypeId>)> = Vec::new();
+        for (name, &constraint) in infer_names.iter().zip(infer_constraints.iter()) {
+            let atom = self.ctx.types.intern_string(name);
+            let provisional = factory.type_param(tsz_solver::TypeParamInfo {
+                name: atom,
+                constraint,
+                default: None,
+                is_const: false,
+            });
+            let previous = self
+                .ctx
+                .type_parameter_scope
+                .insert(name.clone(), provisional);
+            pushes.push((name.clone(), previous));
         }
         pushes
     }
