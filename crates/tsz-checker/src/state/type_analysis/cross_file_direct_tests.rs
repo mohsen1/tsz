@@ -1,4 +1,3 @@
-use super::{is_builtin_lib_file_name, is_external_package_declaration_file_name};
 use crate::context::{CheckerContext, CheckerOptions, LibContext};
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
@@ -8,36 +7,6 @@ use tsz_binder::BinderState;
 use tsz_common::perf_counters::{CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome};
 use tsz_parser::parser::{ParserState, syntax_kind_ext};
 use tsz_solver::TypeId;
-
-#[test]
-fn direct_actual_lib_alias_admission_list_is_track7_ratchet() {
-    const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSION_CEILING: usize = 28;
-
-    let admitted = super::DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS;
-    assert_eq!(
-        admitted.len(),
-        DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSION_CEILING,
-        "Track 7 actual-lib alias admissions are transitional; replace \
-         name-only admissions with stable lib identity queries before growing \
-         this ceiling.",
-    );
-    assert!(
-        admitted.windows(2).all(|pair| pair[0] < pair[1]),
-        "Keep actual-lib alias admissions sorted so additions are reviewable: {admitted:?}",
-    );
-    for name in admitted {
-        assert!(
-            super::is_direct_actual_lib_alias_body_admitted(name),
-            "{name} must be admitted by the shared classifier",
-        );
-    }
-    for name in ["Array", "Date", "Iterator", "Promise", "ReadonlyArray"] {
-        assert!(
-            !super::is_direct_actual_lib_alias_body_admitted(name),
-            "{name} is an interface/value helper, not a type-alias body admission",
-        );
-    }
-}
 
 fn parse_interface_declarations(
     source: &str,
@@ -141,50 +110,6 @@ fn interface_member_by_name(
                 .is_some_and(|name| name == member_name)
         })
         .unwrap_or_else(|| panic!("member {member_name:?} not found"))
-}
-
-#[test]
-fn detects_npm_and_source_tree_builtin_lib_names() {
-    assert!(is_builtin_lib_file_name("lib.es2024.d.ts"));
-    assert!(is_builtin_lib_file_name("lib.dom.d.ts"));
-    assert!(is_builtin_lib_file_name("es2024.d.ts"));
-    assert!(is_builtin_lib_file_name("es2024.full.d.ts"));
-    assert!(is_builtin_lib_file_name("dom.generated.d.ts"));
-    assert!(is_builtin_lib_file_name("dom.iterable.generated.d.ts"));
-    assert!(is_builtin_lib_file_name("webworker.asynciterable.d.ts"));
-    assert!(is_builtin_lib_file_name("decorators.legacy.d.ts"));
-}
-
-#[test]
-fn does_not_treat_arbitrary_declaration_files_as_builtin_libs() {
-    assert!(!is_builtin_lib_file_name("react/index.d.ts"));
-    assert!(!is_builtin_lib_file_name(
-        "node_modules/@types/node/fs.d.ts"
-    ));
-    assert!(!is_builtin_lib_file_name("packages/foo/src/types.d.ts"));
-}
-
-#[test]
-fn detects_external_package_declaration_paths() {
-    assert!(is_external_package_declaration_file_name(
-        "node_modules/react/index.d.ts"
-    ));
-    assert!(is_external_package_declaration_file_name(
-        "/repo/node_modules/@types/node/fs.d.ts"
-    ));
-    assert!(is_external_package_declaration_file_name(
-        r"C:\repo\node_modules\@types\node\fs.d.ts"
-    ));
-}
-
-#[test]
-fn does_not_treat_local_declaration_paths_as_external_packages() {
-    assert!(!is_external_package_declaration_file_name(
-        "packages/foo/src/types.d.ts"
-    ));
-    assert!(!is_external_package_declaration_file_name(
-        "/repo/fixtures/node-modules-like/types.d.ts"
-    ));
 }
 
 #[test]

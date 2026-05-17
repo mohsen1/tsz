@@ -14,10 +14,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::def::{DefId, DefKind};
 use tsz_solver::{TypeId, TypeParamInfo};
 
-#[cfg(test)]
-use super::cross_file_direct_files::{
-    DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS, is_external_package_declaration_file_name,
-};
 use super::cross_file_direct_files::{
     allow_actual_lib_declaration_proof_bypass, allow_generic_actual_lib_direct_fallback,
     is_direct_actual_lib_alias_body_admitted, is_direct_actual_lib_value_interface_name,
