@@ -74,6 +74,45 @@ const isBox: IsImportedBox<import("./module").Box> = true;
 }
 
 #[test]
+fn import_type_extends_structural_match_no_false_positive() {
+    // Regression test for https://github.com/mohsen1/tsz/issues/6801
+    // `T extends import("./m").Shape ? true : false` must resolve the import type
+    // so structural compatibility is evaluated correctly, not eagerly defaulted to false.
+    //
+    // Rule: when the extends position of a conditional type is an import type reference
+    // (`import("./m").T`), the type is resolved through cross-file module resolution
+    // before the subtype check. An unresolvable extends type must not cause the
+    // conditional to silently take the false branch.
+    let diagnostics = diagnostics_for_import_utility(
+        r#"
+type IsBox<T> = T extends import("./module").Box ? true : false;
+
+// Structurally compatible shape — should take the true branch.
+type Test1 = IsBox<import("./module").Box>;
+declare const t1: Test1;
+const t1Check: true = t1;
+
+// Structurally incompatible shape — must take the false branch.
+type Test2 = IsBox<{ unrelated: number }>;
+declare const t2: Test2;
+const t2Check: false = t2;
+
+// Infer in extends position must work cross-file too.
+type Unwrap<T> = T extends import("./module").Wrap<infer U> ? U : never;
+type UnwrappedString = Unwrap<import("./module").Wrap<string>>;
+declare const u: UnwrappedString;
+const uCheck: string = u;
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Structural conditional with cross-file import in extends position produced \
+         unexpected diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn typeof_import_function_member_feeds_return_type() {
     let diagnostics = diagnostics_for_import_utility(
         r#"
