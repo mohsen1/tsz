@@ -25,11 +25,12 @@ impl<'a> CheckerState<'a> {
         {
             return type_id;
         }
-        self.ctx
-            .enum_namespace_types
-            .get(&sym_id)
-            .copied()
-            .unwrap_or_else(|| self.merge_namespace_exports_into_object(sym_id, type_id))
+        let cached = self.ctx.enum_namespace_types.get(&sym_id).copied();
+        cached.unwrap_or_else(|| {
+            let merged = self.merge_namespace_exports_into_object(sym_id, type_id);
+            self.ctx.enum_namespace_types.insert(sym_id, merged);
+            merged
+        })
     }
 
     pub(crate) fn get_type_from_type_query_flow_sensitive_with_request(

@@ -4,6 +4,8 @@
 # project-compile guards. Keep fixture pins and generated tsconfig shapes here
 # so benchmark rows and compile guards cannot silently drift.
 
+TSZ_PROJECT_FIXTURES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
 # External project fixture repositories and pinned refs.
 : "${UTILITY_TYPES_REPO:=https://github.com/piotrwitek/utility-types.git}"
 : "${UTILITY_TYPES_REF:=2ee1f6ecb241651ab22390fee7ee5349942efda2}"
@@ -328,6 +330,10 @@ tsz_write_type_challenges_solutions_config() {
   mkdir -p "$compile_dir/solutions"
 
   local generated=0
+  local manifest_tsv="$compile_dir/type-challenges-solutions-manifest.tsv"
+  local manifest_json="$compile_dir/type-challenges-solutions-manifest.json"
+  printf 'output\tsource\tid\tlevel\ttitle\n' > "$manifest_tsv"
+
   local markdown
   while IFS= read -r markdown; do
     local id title level base output tmp
@@ -383,6 +389,13 @@ tsz_write_type_challenges_solutions_config() {
     } > "$output"
     rm -f "$tmp"
     generated=$((generated + 1))
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+      "solutions/${base}.ts" \
+      "en/${base}.md" \
+      "$id" \
+      "$level" \
+      "${title//$'\t'/ }" \
+      >> "$manifest_tsv"
   done < <(find "$source_dir/en" -maxdepth 1 -name '*.md' ! -name 'index.md' | sort)
 
   if [[ "$generated" -eq 0 ]]; then
@@ -393,6 +406,14 @@ tsz_write_type_challenges_solutions_config() {
     echo "error: generated ${generated} Type Challenges solution sources; expected ${TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED} for ${TYPE_CHALLENGES_SOLUTIONS_REF}" >&2
     return 1
   fi
+
+  TYPE_CHALLENGES_SOLUTIONS_REPO="$TYPE_CHALLENGES_SOLUTIONS_REPO" \
+  TYPE_CHALLENGES_SOLUTIONS_REF="$TYPE_CHALLENGES_SOLUTIONS_REF" \
+  TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED="$TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED" \
+  node "$TSZ_PROJECT_FIXTURES_ROOT/scripts/ci/type-challenges-solutions-manifest.mjs" \
+    "$manifest_tsv" \
+    "$manifest_json"
+  rm -f "$manifest_tsv"
 
   cat > "$compile_dir/type-challenges-globals.d.ts" <<'TYPES'
 type Equal<X, Y> =

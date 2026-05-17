@@ -475,6 +475,83 @@ fn test_bct_removes_structural_subtypes_in_fallback_union() {
     );
 }
 
+#[test]
+fn test_bct_unique_required_fields_prove_subtype_reduction_noop() {
+    use crate::types::{ObjectShape, PropertyInfo};
+
+    let interner = TypeInterner::new();
+    let shared = interner.intern_string("shared");
+    let name_a = interner.intern_string("a");
+    let name_b = interner.intern_string("b");
+    let name_c = interner.intern_string("c");
+
+    let a = interner.object(vec![
+        PropertyInfo::new(shared, TypeId::STRING),
+        PropertyInfo::new(name_a, TypeId::NUMBER),
+    ]);
+    let b = interner.object(vec![
+        PropertyInfo::new(shared, TypeId::STRING),
+        PropertyInfo::new(name_b, TypeId::NUMBER),
+    ]);
+    let c = interner.object_with_index(ObjectShape {
+        properties: vec![
+            PropertyInfo::new(shared, TypeId::STRING),
+            PropertyInfo::new(name_c, TypeId::NUMBER),
+        ],
+        ..ObjectShape::default()
+    });
+
+    assert!(
+        subtype_reduction_proven_noop_by_unique_required_fields(&interner, &[a, b, c]),
+        "unique required public fields should prove that no object candidate is a subtype"
+    );
+
+    let result = compute_best_common_type::<NoopResolver>(&interner, &[a, b, c], None);
+    let members =
+        crate::type_queries::get_union_members(&interner, result).expect("expected a union type");
+    assert_eq!(members.len(), 3);
+    assert!(members.contains(&a));
+    assert!(members.contains(&b));
+    assert!(members.contains(&c));
+}
+
+#[test]
+fn test_bct_unique_required_fields_noop_proof_rejects_optional_and_indexed_shapes() {
+    use crate::types::{IndexSignature, ObjectShape, PropertyInfo};
+
+    let interner = TypeInterner::new();
+    let name_a = interner.intern_string("a");
+    let name_b = interner.intern_string("b");
+
+    let optional_a = interner.object(vec![PropertyInfo::opt(name_a, TypeId::NUMBER)]);
+    let required_b = interner.object(vec![PropertyInfo::new(name_b, TypeId::NUMBER)]);
+    assert!(
+        !subtype_reduction_proven_noop_by_unique_required_fields(
+            &interner,
+            &[optional_a, required_b]
+        ),
+        "optional properties cannot prove a required-property miss"
+    );
+
+    let indexed_a = interner.object_with_index(ObjectShape {
+        properties: vec![PropertyInfo::new(name_a, TypeId::NUMBER)],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        ..ObjectShape::default()
+    });
+    assert!(
+        !subtype_reduction_proven_noop_by_unique_required_fields(
+            &interner,
+            &[indexed_a, required_b]
+        ),
+        "index signatures may satisfy otherwise missing required fields"
+    );
+}
+
 // =========================================================================
 // Subtype-Reduction Cache Wiring Tests
 // =========================================================================

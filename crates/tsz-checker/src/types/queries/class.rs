@@ -1715,10 +1715,10 @@ impl<'a> CheckerState<'a> {
         type_ref_name == class_name
     }
 
-    /// Get the type annotation of an explicit `this` parameter if present.
-    /// Returns `Some(type_annotation_idx)` if the first parameter is named "this" with a type annotation.
-    /// Returns None otherwise.
-    fn get_explicit_this_type_annotation(&self, params: &[NodeIndex]) -> Option<NodeIndex> {
+    pub(crate) fn get_explicit_this_type_annotation(
+        &self,
+        params: &[NodeIndex],
+    ) -> Option<NodeIndex> {
         let first_param_idx = params.first().copied()?;
         let param_node = self.ctx.arena.get(first_param_idx)?;
         let param = self.ctx.arena.get_parameter(param_node)?;
