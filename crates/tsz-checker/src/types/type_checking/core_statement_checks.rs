@@ -222,7 +222,8 @@ impl<'a> CheckerState<'a> {
             // A contextual async return can shape inline literals, but fixed call
             // arguments like identifiers keep their declared widened type in tsc's
             // TS2322 source display.
-            if request.contextual_type.is_some()
+            if self.ctx.in_async_context()
+                && request.contextual_type.is_some()
                 && self
                     .async_contextual_return_call_has_only_fixed_arguments(return_data.expression)
                 && !self.is_assignable_to(return_type, expected_type)
