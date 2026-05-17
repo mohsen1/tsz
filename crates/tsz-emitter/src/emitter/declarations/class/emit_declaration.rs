@@ -232,8 +232,15 @@ impl<'a> Printer<'a> {
                 );
 
             let alias_name = if needs_alias {
-                let alias = self.make_unique_name_from_base(&class_name);
-                self.hoisted_assignment_temps.push(alias.clone());
+                let alias = if let Some(alias) =
+                    self.preplanned_legacy_decorated_class_aliases.remove(&idx)
+                {
+                    alias
+                } else {
+                    let alias = self.make_unique_name_from_base(&class_name);
+                    self.hoisted_assignment_temps.push(alias.clone());
+                    alias
+                };
                 Some(alias)
             } else {
                 None

@@ -1188,8 +1188,11 @@ impl<'a> Printer<'a> {
                         .collect_constructor_param_decorators(&class_decl.members.nodes)
                         .is_empty())
             {
-                let alias_name =
-                    self.system_legacy_decorated_class_alias(&gen_name, &class_decl.members.nodes);
+                let alias_name = self.system_legacy_decorated_class_alias(
+                    export_decl.export_clause,
+                    &gen_name,
+                    &class_decl.members.nodes,
+                );
                 let emitted = self.capture_system_class_assignment(
                     clause_node,
                     export_decl.export_clause,
@@ -1275,7 +1278,11 @@ impl<'a> Printer<'a> {
                         .is_empty());
             let alias_name = needs_legacy_class_decorate
                 .then(|| {
-                    self.system_legacy_decorated_class_alias(&class_name, &class_decl.members.nodes)
+                    self.system_legacy_decorated_class_alias(
+                        export_decl.export_clause,
+                        &class_name,
+                        &class_decl.members.nodes,
+                    )
                 })
                 .flatten();
             if needs_legacy_class_decorate {

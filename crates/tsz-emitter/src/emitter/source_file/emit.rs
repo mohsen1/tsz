@@ -83,6 +83,7 @@ impl<'a> Printer<'a> {
         }
         self.generated_temp_names.clear();
         self.reserved_nested_temp_names.clear();
+        self.preplanned_legacy_decorated_class_aliases.clear();
         self.async_generator_inner_name_counts.clear();
         self.reserved_disposable_env_names.clear();
         self.node_esm_create_require_names = None;
