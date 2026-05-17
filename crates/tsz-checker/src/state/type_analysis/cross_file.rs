@@ -640,9 +640,7 @@ impl<'a> CheckerState<'a> {
                     )
             {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
-                if let Some(file_idx) = symbol_type_cache_file_idx
-                    && (!symbol_type_cache_from_symbol_arena || direct_params.is_empty())
-                {
+                if let Some(file_idx) = symbol_type_cache_file_idx {
                     if symbol_type_cache_from_symbol_arena {
                         self.ctx.cache_stable_source_file_symbol_arena_type(
                             sym_id,
@@ -758,9 +756,7 @@ impl<'a> CheckerState<'a> {
                 symbol_type_cache_from_symbol_arena,
             ) {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
-                if let Some(file_idx) = symbol_type_cache_file_idx
-                    && (!symbol_type_cache_from_symbol_arena || direct_params.is_empty())
-                {
+                if let Some(file_idx) = symbol_type_cache_file_idx {
                     if symbol_type_cache_from_symbol_arena {
                         self.ctx.cache_stable_source_file_symbol_arena_type(
                             sym_id,
@@ -1077,9 +1073,7 @@ impl<'a> CheckerState<'a> {
             // Write through to the canonical cross-file symbol-type cache so
             // other parallel checkers can reuse this result without rebuilding
             // a child checker.
-            if let Some(target_file_idx) = symbol_type_cache_file_idx
-                && (!symbol_type_cache_from_symbol_arena || result_params.is_empty())
-            {
+            if let Some(target_file_idx) = symbol_type_cache_file_idx {
                 if symbol_type_cache_from_symbol_arena {
                     self.ctx.cache_stable_source_file_symbol_arena_type(
                         sym_id,
