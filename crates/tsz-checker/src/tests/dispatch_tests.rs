@@ -834,6 +834,38 @@ let x: Dict = new C1();
 }
 
 #[test]
+fn simple_interface_lib_alias_member_preserves_shadowing() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Config {
+  options?: Record<string, unknown>;
+}
+const ok: Config = { options: { enabled: true } };
+"#,
+    );
+    assert!(
+        diags.is_empty(),
+        "Expected lib Record property annotation to be accepted, got: {diags:?}"
+    );
+
+    let shadowed = check_source_diagnostics(
+        r#"
+type Record<K, V> = number;
+interface Config {
+  options?: Record<string, unknown>;
+}
+const ok: Config = { options: 1 };
+const bad: Config = { options: { enabled: true } };
+"#,
+    );
+    assert_eq!(
+        diagnostic_count_with_code(&shadowed, 2322),
+        1,
+        "Local Record shadow should keep its local alias meaning, got: {shadowed:?}"
+    );
+}
+
+#[test]
 fn ts2352_merged_class_namespace_record_generic_cast() {
     // Same as ts2352_merged_class_namespace_record_cast but using Record<string, unknown>
     // (a mapped type) instead of a direct index signature. This reproduces the
