@@ -149,6 +149,10 @@ withTempDir((dir) => {
   assert.equal(report.compilers.tsc.status, "fail");
   assert.equal(report.compilers.tsc.exitCode, 1);
   assert.equal(report.compilers.tsc.diagnostics.errorCount, 2);
+  assert.deepEqual(report.compilers.tsc.diagnostics.firstErrors, [
+    "assertions/one.ts(1,1): error TS2344: mismatch",
+    "assertions/two.ts(2,3): error TS2304: missing",
+  ]);
   assert.deepEqual(report.compilers.tsc.diagnostics.byCode, [
     { key: "TS2304", count: 1 },
     { key: "TS2344", count: 1 },
