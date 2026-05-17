@@ -2093,9 +2093,11 @@ impl<'a> ES5ClassTransformer<'a> {
             };
         // Each entry: (Option<temp_name>, expr_idx, member_idx, outside_iife) for the
         // comma expression. Instance field keys can be initialized after the class
-        // IIFE because constructors observe them only when instances are created.
+        // IIFE only when no static property initializer can observe construction first.
         let mut computed_prop_entries: Vec<(Option<String>, NodeIndex, NodeIndex, bool)> =
             Vec::new();
+        let class_has_static_property_initializer =
+            self.has_static_property_initializer(&class_data.members);
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -2166,8 +2168,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 let temp = self.generate_temp_name();
                 self.computed_prop_temp_map
                     .insert(computed.expression, temp.clone());
-                let outside_iife =
-                    self.computed_instance_field_key_can_initialize_after_iife(member_idx);
+                let outside_iife = self.computed_instance_field_key_can_initialize_after_iife(
+                    member_idx,
+                    class_has_static_property_initializer,
+                );
                 computed_prop_entries.push((
                     Some(temp),
                     computed.expression,
@@ -3443,7 +3447,14 @@ impl<'a> ES5ClassTransformer<'a> {
         self.get_method_name_ir(name_idx)
     }
 
-    fn computed_instance_field_key_can_initialize_after_iife(&self, member_idx: NodeIndex) -> bool {
+    fn computed_instance_field_key_can_initialize_after_iife(
+        &self,
+        member_idx: NodeIndex,
+        class_has_static_property_initializer: bool,
+    ) -> bool {
+        if class_has_static_property_initializer {
+            return false;
+        }
         let Some(member_node) = self.arena.get(member_idx) else {
             return false;
         };

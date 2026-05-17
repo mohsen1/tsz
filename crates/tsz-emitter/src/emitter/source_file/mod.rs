@@ -505,6 +505,49 @@ mod tests {
     }
 
     #[test]
+    fn es5_define_property_computed_instance_key_precedes_static_new_observation() {
+        let source = "var key = \"x\";\nclass C {\n    [key] = 1;\n    static s = new C();\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        let class_iife_pos = output
+            .find("var C = /** @class */ (function () {")
+            .expect("expected lowered ES5 class IIFE");
+        let temp_decl_pos = output[class_iife_pos..]
+            .find("var _a;")
+            .map(|pos| class_iife_pos + pos)
+            .expect("computed instance-key temp declaration should stay inside the class IIFE");
+        let temp_init_pos = output[class_iife_pos..]
+            .find("_a = key;")
+            .map(|pos| class_iife_pos + pos)
+            .expect("computed instance-key temp init should stay inside the class IIFE");
+        let static_init_pos = output
+            .find("Object.defineProperty(C, \"s\"")
+            .expect("expected lowered static field initializer");
+
+        assert!(
+            temp_decl_pos < temp_init_pos && temp_init_pos < static_init_pos,
+            "Computed instance-field key temp must initialize before a static field can construct C.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("value: new C()"),
+            "Static initializer should still observe construction through new C().\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_async_method_with_multiply_default_stays_async_function() {
         let source = "declare var a: number, b: number;\ndeclare function g(): Promise<void>;\nvar o = { async m(x = a * b) { await g(); } };\n";
 
