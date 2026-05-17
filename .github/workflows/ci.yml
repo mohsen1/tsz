@@ -530,6 +530,7 @@ jobs:
             .target/project-compile-guard/*.log
             .target/project-compile-guard/project-compatibility.jsonl
             .target/project-compile-guard/project-compatibility-summary.json
+            .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
           retention-days: 7
           if-no-files-found: warn
 
@@ -568,6 +569,7 @@ jobs:
             .target/project-compile-guard/*.log
             .target/project-compile-guard/project-compatibility.jsonl
             .target/project-compile-guard/project-compatibility-summary.json
+            .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
           retention-days: 7
           if-no-files-found: warn
           compression-level: 1
