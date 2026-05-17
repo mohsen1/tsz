@@ -203,6 +203,101 @@ class Derived extends Base {
 }
 
 #[test]
+fn super_public_members_in_nested_arrows_no_ts2340() {
+    let source = r#"
+class User {
+    name: string = "Bob";
+    sayHello(): void {}
+}
+
+class RegisteredUser extends User {
+    name: string = "Frank";
+    constructor() {
+        super();
+        var direct = () => super.sayHello();
+        var nested = () => () => () => super.sayHello();
+        var superName = () => () => () => super.name;
+    }
+    sayHello(): void {
+        var direct = () => super.sayHello();
+        var nested = () => () => () => super.sayHello();
+        var superName = () => () => () => super.name;
+    }
+}
+"#;
+
+    for diagnostics in [check_es5(source), check_es2015(source)] {
+        assert!(
+            !has_diagnostic_code(&diagnostics, TS2340),
+            "public super method/field access in nested arrows must not emit TS2340, got: {diagnostics:?}",
+        );
+    }
+}
+
+#[test]
+fn super_in_lambdas_parse_error_does_not_cascade_to_ts2340() {
+    let source = r#"
+class User {
+    name: string = "Bob";
+    sayHello(): void {}
+}
+
+class RegisteredUser extends User {
+    name: string = "Frank";
+    constructor() {
+        super();
+        super.sayHello();
+        var x = () => super.sayHello();
+    }
+    sayHello(): void {
+        super.sayHello();
+        var x = () => super.sayHello();
+    }
+}
+
+class RegisteredUser2 extends User {
+    name: string = "Joe";
+    constructor() {
+        super();
+        var x = () => () => () => super.sayHello();
+    }
+    sayHello(): void {
+        var x = () => () => () => super.sayHello();
+    }
+}
+
+class RegisteredUser3 extends User {
+    name: string = "Sam";
+    constructor() {
+        super();
+        var superName = () => () => () => super.name;
+    }
+    sayHello(): void {
+        var superName = () => () => () => super.name;
+    }
+}
+
+class RegisteredUser4 extends User {
+    name: string = "Mark";
+    constructor() {
+        super();
+        var x = () => () => super;
+    }
+    sayHello(): void {
+        var x = () => () => super;
+    }
+}
+"#;
+
+    for diagnostics in [check_es5(source), check_es2015(source)] {
+        assert!(
+            !has_diagnostic_code(&diagnostics, TS2340),
+            "superInLambdas should not cascade to TS2340, got: {diagnostics:?}",
+        );
+    }
+}
+
+#[test]
 fn super_static_get_accessor_read_no_ts2340() {
     assert_no_ts2340(
         r#"
