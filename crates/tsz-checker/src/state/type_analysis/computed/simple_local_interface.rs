@@ -194,6 +194,8 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             };
             let is_symbol_named = self.is_symbol_property_name(sig.name);
+            let (is_string_named, single_quoted_name) =
+                self.ctx.arena.string_property_name_flags(sig.name);
             properties.push(PropertyInfo {
                 name: name_atom,
                 type_id,
@@ -205,9 +207,9 @@ impl<'a> CheckerState<'a> {
                 visibility: Visibility::Public,
                 parent_id: None,
                 declaration_order: member_order as u32 + 1,
-                is_string_named: false,
+                is_string_named,
                 is_symbol_named,
-                single_quoted_name: false,
+                single_quoted_name,
             });
         }
 

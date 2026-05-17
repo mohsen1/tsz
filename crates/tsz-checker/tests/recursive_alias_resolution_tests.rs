@@ -97,7 +97,9 @@ type Iteration = [
 
 type IterationMap = {
   '__': [number, '-' | '0' | '+', '__', '__', '__'],
+  '-1': [-1, '-', '__', '0', '1'],
   '0': [0, '0', '-1', '1', '0'],
+  '1': [1, '+', '0', '__', '-1'],
 };
 
 type IterationOf<N extends number> =

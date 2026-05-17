@@ -120,27 +120,6 @@ pub(crate) fn get_literal_or_well_known_property_name(
     None
 }
 
-/// Check if a property name node is syntactically a string key (not numeric).
-/// Handles direct string literals and computed property names with string literal expressions.
-pub(crate) fn is_string_property_name_node(arena: &NodeArena, name_idx: NodeIndex) -> bool {
-    let Some(name_node) = arena.get(name_idx) else {
-        return false;
-    };
-    // Direct string literal property name: { "404": value }
-    if name_node.kind == SyntaxKind::StringLiteral as u16 {
-        return true;
-    }
-    // Computed property name with string literal: { ["404"]: value }
-    if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-        && let Some(computed) = arena.get_computed_property(name_node)
-        && let Some(expr_node) = arena.get(computed.expression)
-        && expr_node.kind == SyntaxKind::StringLiteral as u16
-    {
-        return true;
-    }
-    false
-}
-
 impl<'a> CheckerState<'a> {
     // =========================================================================
     // Section 27: Modifier and Member Access Utilities

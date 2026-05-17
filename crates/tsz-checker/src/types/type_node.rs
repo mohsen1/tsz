@@ -1094,6 +1094,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         };
                         let name_atom = self.ctx.types.intern_string(&name);
                         let is_symbol_named = self.is_symbol_property_name(sig.name);
+                        let (is_string_named, single_quoted_name) =
+                            self.ctx.arena.string_property_name_flags(sig.name);
 
                         if member.kind == METHOD_SIGNATURE {
                             let (type_params, type_param_updates) = self
@@ -1131,9 +1133,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: (properties.len() + 1) as u32,
-                                is_string_named: false,
+                                is_string_named,
                                 is_symbol_named,
-                                single_quoted_name: false,
+                                single_quoted_name,
                             });
                         } else {
                             let type_id = if sig.type_annotation.is_some() {
@@ -1155,9 +1157,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: (properties.len() + 1) as u32,
-                                is_string_named: false,
+                                is_string_named,
                                 is_symbol_named,
-                                single_quoted_name: false,
+                                single_quoted_name,
                             });
                         }
                     }
@@ -1318,6 +1320,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             {
                 let name_atom = self.ctx.types.intern_string(&name);
                 let is_symbol_named = self.is_symbol_property_name(accessor.name);
+                let (is_string_named, single_quoted_name) =
+                    self.ctx.arena.string_property_name_flags(accessor.name);
                 let is_getter = member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR;
                 if is_getter {
                     let getter_type = if accessor.type_annotation.is_some() {
@@ -1339,9 +1343,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             visibility: Visibility::Public,
                             parent_id: None,
                             declaration_order: (properties.len() + 1) as u32,
-                            is_string_named: false,
+                            is_string_named,
                             is_symbol_named,
-                            single_quoted_name: false,
+                            single_quoted_name,
                         });
                     }
                 } else {
@@ -1371,9 +1375,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             visibility: Visibility::Public,
                             parent_id: None,
                             declaration_order: (properties.len() + 1) as u32,
-                            is_string_named: false,
+                            is_string_named,
                             is_symbol_named,
-                            single_quoted_name: false,
+                            single_quoted_name,
                         });
                     }
                 }

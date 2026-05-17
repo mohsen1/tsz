@@ -127,6 +127,8 @@ pub(super) struct MethodOverloads {
     pub(super) optional: bool,
     pub(super) readonly: bool,
     pub(super) is_symbol_named: bool,
+    pub(super) is_string_named: bool,
+    pub(super) single_quoted_name: bool,
     /// Declaration order of the first occurrence of this method, for diagnostic ordering.
     pub(super) declaration_order: u32,
 }
@@ -237,6 +239,8 @@ impl InterfaceParts {
         optional: bool,
         readonly: bool,
         is_symbol_named: bool,
+        is_string_named: bool,
+        single_quoted_name: bool,
     ) {
         use indexmap::map::Entry;
 
@@ -249,6 +253,8 @@ impl InterfaceParts {
                     optional,
                     readonly,
                     is_symbol_named,
+                    is_string_named,
+                    single_quoted_name,
                     declaration_order: next_order,
                 }));
             }
@@ -258,6 +264,8 @@ impl InterfaceParts {
                     methods.optional |= optional;
                     methods.readonly &= readonly;
                     methods.is_symbol_named |= is_symbol_named;
+                    methods.is_string_named |= is_string_named;
+                    methods.single_quoted_name |= single_quoted_name;
                 }
                 PropertyMerge::Property(prop) => {
                     let order = prop.declaration_order;
@@ -1541,6 +1549,8 @@ impl<'a> TypeLowering<'a> {
                             if let Some(name) = self.lower_signature_name(sig.name) {
                                 let is_symbol_named =
                                     self.lower_signature_name_is_symbol_named(sig.name);
+                                let (is_string_named, single_quoted_name) =
+                                    self.arena.string_property_name_flags(sig.name);
                                 let type_id = self.lower_method_signature(sig);
                                 properties.push(PropertyInfo {
                                     name,
@@ -1556,9 +1566,9 @@ impl<'a> TypeLowering<'a> {
                                     visibility: Visibility::Public,
                                     parent_id: None,
                                     declaration_order: 0,
-                                    is_string_named: false,
+                                    is_string_named,
                                     is_symbol_named,
-                                    single_quoted_name: false,
+                                    single_quoted_name,
                                 });
                             }
                         }
@@ -1589,6 +1599,8 @@ impl<'a> TypeLowering<'a> {
                     && let Some(name) = self.lower_signature_name(accessor.name)
                 {
                     let is_symbol_named = self.lower_signature_name_is_symbol_named(accessor.name);
+                    let (is_string_named, single_quoted_name) =
+                        self.arena.string_property_name_flags(accessor.name);
                     let is_getter = member.kind == syntax_kind_ext::GET_ACCESSOR;
                     if is_getter {
                         let getter_type = self.lower_type(accessor.type_annotation);
@@ -1606,9 +1618,9 @@ impl<'a> TypeLowering<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: 0,
-                                is_string_named: false,
+                                is_string_named,
                                 is_symbol_named,
-                                single_quoted_name: false,
+                                single_quoted_name,
                             });
                         }
                     } else {
@@ -1636,9 +1648,9 @@ impl<'a> TypeLowering<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: 0,
-                                is_string_named: false,
+                                is_string_named,
                                 is_symbol_named,
-                                single_quoted_name: false,
+                                single_quoted_name,
                             });
                         }
                     }
@@ -1935,6 +1947,8 @@ impl<'a> TypeLowering<'a> {
                         if let Some(name) = self.lower_signature_name(sig.name) {
                             let is_symbol_named =
                                 self.lower_signature_name_is_symbol_named(sig.name);
+                            let (is_string_named, single_quoted_name) =
+                                self.arena.string_property_name_flags(sig.name);
                             let mut signature = self.lower_call_signature(sig);
                             signature.is_method = true;
                             let readonly = self.arena.has_modifier(
@@ -1947,6 +1961,8 @@ impl<'a> TypeLowering<'a> {
                                 sig.question_token,
                                 readonly,
                                 is_symbol_named,
+                                is_string_named,
+                                single_quoted_name,
                             );
                         }
                     }
@@ -1973,6 +1989,8 @@ impl<'a> TypeLowering<'a> {
                 && let Some(name) = self.lower_signature_name(accessor.name)
             {
                 let is_symbol_named = self.lower_signature_name_is_symbol_named(accessor.name);
+                let (is_string_named, single_quoted_name) =
+                    self.arena.string_property_name_flags(accessor.name);
                 let is_getter = member.kind == syntax_kind_ext::GET_ACCESSOR;
                 if is_getter {
                     let getter_type = self.lower_type(accessor.type_annotation);
@@ -2000,9 +2018,9 @@ impl<'a> TypeLowering<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: order,
-                                is_string_named: false,
+                                is_string_named,
                                 is_symbol_named,
-                                single_quoted_name: false,
+                                single_quoted_name,
                             }));
                         }
                     }
@@ -2038,9 +2056,9 @@ impl<'a> TypeLowering<'a> {
                                 visibility: Visibility::Public,
                                 parent_id: None,
                                 declaration_order: order,
-                                is_string_named: false,
+                                is_string_named,
                                 is_symbol_named,
-                                single_quoted_name: false,
+                                single_quoted_name,
                             }));
                         }
                     }
@@ -2161,9 +2179,9 @@ impl<'a> TypeLowering<'a> {
                     visibility: Visibility::Public,
                     parent_id: None,
                     declaration_order: forward_order.unwrap_or(methods.declaration_order),
-                    is_string_named: false,
+                    is_string_named: methods.is_string_named,
                     is_symbol_named: methods.is_symbol_named,
-                    single_quoted_name: false,
+                    single_quoted_name: methods.single_quoted_name,
                 });
             } else if let PropertyMerge::Property(mut prop) = entry {
                 if let Some(order) = forward_order {
@@ -2438,6 +2456,8 @@ impl<'a> TypeLowering<'a> {
             // Get property name as Arc<str>
             let name = self.lower_signature_name(sig.name)?;
             let is_symbol_named = self.lower_signature_name_is_symbol_named(sig.name);
+            let (is_string_named, single_quoted_name) =
+                self.arena.string_property_name_flags(sig.name);
 
             // Check for readonly modifier
             let readonly = self
@@ -2460,9 +2480,9 @@ impl<'a> TypeLowering<'a> {
                 visibility,
                 parent_id: None, // Type literals don't have parent_id
                 declaration_order: 0,
-                is_string_named: false,
+                is_string_named,
                 is_symbol_named,
-                single_quoted_name: false,
+                single_quoted_name,
             })
         } else {
             None

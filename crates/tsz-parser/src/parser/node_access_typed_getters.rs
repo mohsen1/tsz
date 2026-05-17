@@ -400,4 +400,42 @@ impl NodeArena {
             None
         }
     }
+
+    /// Classify a property name node as `(is_string_named, single_quoted)`.
+    ///
+    /// `is_string_named` is true when the name was authored as a `StringLiteral`
+    /// (directly or as the expression of a `COMPUTED_PROPERTY_NAME`).
+    /// `single_quoted` is true when that string literal used `'…'` syntax.
+    /// `single_quoted` implies `is_string_named`.
+    ///
+    /// Drives the `keyof` key-type policy (`{ "1": ... }` yields the string
+    /// literal `"1"`; `{ 1: ... }` yields the number literal `1`) and the
+    /// DTS emit quote-style preservation.
+    #[must_use]
+    pub fn string_property_name_flags(&self, name_idx: crate::parser::NodeIndex) -> (bool, bool) {
+        use super::syntax_kind_ext::COMPUTED_PROPERTY_NAME;
+        use tsz_scanner::SyntaxKind;
+        let Some(name_node) = self.get(name_idx) else {
+            return (false, false);
+        };
+        let literal_node = if name_node.kind == SyntaxKind::StringLiteral as u16 {
+            Some(name_node)
+        } else if name_node.kind == COMPUTED_PROPERTY_NAME
+            && let Some(computed) = self.get_computed_property(name_node)
+            && let Some(expr_node) = self.get(computed.expression)
+            && expr_node.kind == SyntaxKind::StringLiteral as u16
+        {
+            Some(expr_node)
+        } else {
+            None
+        };
+        let Some(literal_node) = literal_node else {
+            return (false, false);
+        };
+        let single_quoted = self
+            .get_literal(literal_node)
+            .and_then(|lit| lit.raw_text.as_deref())
+            .is_some_and(|raw| raw.starts_with('\''));
+        (true, single_quoted)
+    }
 }
