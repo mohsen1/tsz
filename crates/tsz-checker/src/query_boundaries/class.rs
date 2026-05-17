@@ -1,7 +1,22 @@
 use crate::class_checker::ClassMemberInfo;
 use crate::state::CheckerState;
 use tsz_parser::NodeIndex;
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::{QueryDatabase, TypeDatabase, TypeId};
+
+pub(crate) fn maybe_substitute_this_type(
+    db: &dyn QueryDatabase,
+    type_id: TypeId,
+    self_type: Option<TypeId>,
+) -> TypeId {
+    let Some(st) = self_type else {
+        return type_id;
+    };
+    if crate::query_boundaries::common::contains_this_type(db.as_type_database(), type_id) {
+        crate::query_boundaries::common::substitute_this_type(db, type_id, st)
+    } else {
+        type_id
+    }
+}
 
 fn has_own_signature_type_params(checker: &CheckerState<'_>, type_id: TypeId) -> bool {
     if let Some(shape) = tsz_solver::type_queries::get_callable_shape(checker.ctx.types, type_id) {

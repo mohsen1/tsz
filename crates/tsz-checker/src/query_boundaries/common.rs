@@ -1865,21 +1865,6 @@ pub(crate) fn contains_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool
     tsz_solver::contains_this_type(db, type_id)
 }
 
-pub(crate) fn maybe_substitute_this_type(
-    db: &dyn QueryDatabase,
-    type_id: TypeId,
-    self_type: Option<TypeId>,
-) -> TypeId {
-    let Some(st) = self_type else {
-        return type_id;
-    };
-    if contains_this_type(db.as_type_database(), type_id) {
-        substitute_this_type(db, type_id, st)
-    } else {
-        type_id
-    }
-}
-
 pub(crate) fn function_shape_id(
     db: &dyn TypeDatabase,
     type_id: TypeId,

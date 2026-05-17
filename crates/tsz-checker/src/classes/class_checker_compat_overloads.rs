@@ -55,7 +55,7 @@ impl<'a> CheckerState<'a> {
                         if !derived_member_names.contains(&name) {
                             continue;
                         }
-                        let base_type = crate::query_boundaries::common::maybe_substitute_this_type(
+                        let base_type = crate::query_boundaries::class::maybe_substitute_this_type(
                             self.ctx.types,
                             instantiate_type(
                                 self.ctx.types,

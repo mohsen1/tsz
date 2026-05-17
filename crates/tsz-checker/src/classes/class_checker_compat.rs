@@ -385,7 +385,7 @@ impl<'a> CheckerState<'a> {
         // `oninit?(vnode: Vnode<A, ClassComponent<A>>)`). Without this substitution,
         // the comparison fails because the solver has no constraint info for `ThisType`.
         for member in &mut derived_members {
-            member.1 = crate::query_boundaries::common::maybe_substitute_this_type(
+            member.1 = crate::query_boundaries::class::maybe_substitute_this_type(
                 self.ctx.types,
                 member.1,
                 interface_self_type,
