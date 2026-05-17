@@ -1892,3 +1892,58 @@ fn test_rest_param_tuple_extracts_element_type_for_call() {
     // Arg 2: should also get (x: string) => number
     assert_eq!(ctx.get_parameter_type_for_call(2, 3), Some(str_callback));
 }
+
+fn make_fn(interner: &TypeInterner, param_ty: TypeId, is_constructor: bool) -> TypeId {
+    interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo::unnamed(param_ty)],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor,
+        is_method: false,
+    })
+}
+
+#[test]
+fn get_parameter_type_union_skips_constructor_only_when_callable_exists() {
+    let interner = TypeInterner::new();
+    let callable = make_fn(&interner, TypeId::STRING, false);
+    let ctor = make_fn(&interner, TypeId::NUMBER, true);
+    let union_ty = interner.union(vec![TypeId::STRING, callable, ctor]);
+    let ctx = ContextualTypeContext::with_expected(&interner, union_ty);
+    assert_eq!(ctx.get_parameter_type(0), Some(TypeId::STRING));
+}
+
+// Same rule with a different param type, proving the fix is structural not spelling-specific.
+#[test]
+fn get_parameter_type_union_skips_constructor_only_different_param_shape() {
+    let interner = TypeInterner::new();
+    let callable = make_fn(&interner, TypeId::BOOLEAN, false);
+    let ctor = make_fn(&interner, TypeId::NUMBER, true);
+    let union_ty = interner.union(vec![callable, ctor]);
+    let ctx = ContextualTypeContext::with_expected(&interner, union_ty);
+    assert_eq!(ctx.get_parameter_type(0), Some(TypeId::BOOLEAN));
+}
+
+// JSX-like union: string | ComponentClass (construct-only) | StatelessComponent (callable).
+#[test]
+fn get_parameter_type_jsx_like_string_ctor_callable_union() {
+    let interner = TypeInterner::new();
+    let component_class = make_fn(&interner, TypeId::NUMBER, true);
+    let stateless = make_fn(&interner, TypeId::STRING, false);
+    let union_ty = interner.union(vec![TypeId::STRING, component_class, stateless]);
+    let ctx = ContextualTypeContext::with_expected(&interner, union_ty);
+    assert_eq!(ctx.get_parameter_type(0), Some(TypeId::STRING));
+}
+
+// No regression: construct-only union still returns None for call-context param inference.
+#[test]
+fn get_parameter_type_constructor_only_union_returns_none() {
+    let interner = TypeInterner::new();
+    let ctor1 = make_fn(&interner, TypeId::STRING, true);
+    let ctor2 = make_fn(&interner, TypeId::NUMBER, true);
+    let union_ty = interner.union(vec![ctor1, ctor2]);
+    let ctx = ContextualTypeContext::with_expected(&interner, union_ty);
+    assert_eq!(ctx.get_parameter_type(0), None);
+}

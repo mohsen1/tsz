@@ -602,6 +602,12 @@ tr:nth-child(even) { background: var(--table-stripe); }
   font-size: 1.08rem;
 }
 
+.bench-runner-meta {
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  margin: -0.25rem 0 1rem;
+}
+
 .bench-category-desc {
   margin: 0 0 1rem;
   color: var(--text-secondary);

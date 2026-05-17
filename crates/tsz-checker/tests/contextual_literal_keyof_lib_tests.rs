@@ -256,3 +256,108 @@ duration.toString({ fractionalSecondDigits: 4 });
         "Temporal lib option literals should be contextually typed; got {ts2345:?}",
     );
 }
+
+#[test]
+fn intl_number_format_es2020_part_type_registry_merges_across_libs() {
+    let source = r#"
+const { notation, style, signDisplay } = new Intl.NumberFormat("en-NZ").resolvedOptions();
+
+new Intl.NumberFormat("en-NZ", {});
+new Intl.NumberFormat("en-NZ", { numberingSystem: "arab" });
+
+const { currency, currencySign } = new Intl.NumberFormat("en-NZ", {
+    style: "currency",
+    currency: "NZD",
+    currencySign: "accounting",
+}).resolvedOptions();
+
+const { unit, unitDisplay } = new Intl.NumberFormat("en-NZ", {
+    style: "unit",
+    unit: "kilogram",
+    unitDisplay: "narrow",
+}).resolvedOptions();
+
+const { compactDisplay } = new Intl.NumberFormat("en-NZ", {
+    notation: "compact",
+    compactDisplay: "long",
+}).resolvedOptions();
+
+new Intl.NumberFormat("en-NZ", { signDisplay: "always" });
+
+const types: Intl.NumberFormatPartTypes[] = ["compact", "unit", "unknown"];
+"#;
+
+    let diagnostics = check_with_named_libs(
+        source,
+        &["es5.d.ts", "es2018.intl.d.ts", "es2020.intl.d.ts"],
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        ts2322.is_empty(),
+        "Intl.NumberFormatPartTypes should include ES2020 registry augmentations; got {ts2322:?}",
+    );
+}
+
+#[test]
+fn intl_number_format_es2023_range_part_registry_merges_across_libs() {
+    let source = r#"
+const { roundingPriority, roundingMode, roundingIncrement, trailingZeroDisplay, useGrouping } =
+    new Intl.NumberFormat("en-GB").resolvedOptions();
+
+new Intl.NumberFormat("en-GB", {});
+new Intl.NumberFormat("en-GB", {
+    roundingPriority: "lessPrecision",
+    roundingIncrement: 100,
+    roundingMode: "trunc",
+});
+
+const { signDisplay } = new Intl.NumberFormat("en-GB", { signDisplay: "negative" }).resolvedOptions();
+
+new Intl.NumberFormat("en-GB", { useGrouping: true });
+new Intl.NumberFormat("en-GB", { useGrouping: "true" });
+new Intl.NumberFormat("en-GB", { useGrouping: "always" });
+
+new Intl.NumberFormat("en-GB").formatRange(10, 100);
+new Intl.NumberFormat("en-GB").formatRange(10n, 1000n);
+new Intl.NumberFormat("en-GB").formatRangeToParts(10, 1000)[0];
+new Intl.NumberFormat("en-GB").formatRangeToParts(10n, 1000n)[0];
+
+new Intl.NumberFormat("en-GB").format("-12.3E-4");
+new Intl.NumberFormat("en-GB").formatRange("123.4", "567.8");
+new Intl.NumberFormat("en-GB").formatRangeToParts("123E-4", "567E8");
+new Intl.NumberFormat("en-GB").format("Infinity");
+new Intl.NumberFormat("en-GB").format("-Infinity");
+new Intl.NumberFormat("en-GB").format("+Infinity");
+
+const nf = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "EUR",
+    maximumFractionDigits: 0,
+});
+
+const filtered = nf
+    .formatRangeToParts(100, 100)
+    .filter((part) => part.type !== "approximatelySign")
+    .map((part) => part.value)
+    .join("");
+"#;
+
+    let diagnostics = check_with_named_libs(
+        source,
+        &[
+            "es5.d.ts",
+            "es2018.intl.d.ts",
+            "es2020.bigint.d.ts",
+            "es2020.intl.d.ts",
+            "es2023.intl.d.ts",
+        ],
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322 || d.code == 2367)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Intl.NumberFormat range parts should preserve ES2023 registry augmentations; got {relevant:?}",
+    );
+}

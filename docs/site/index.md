@@ -14,6 +14,7 @@ extra_scripts: '<script src="/home.js" defer></script>'
 <div class="hero-actions">
   <a href="/install.html">Install tsz</a>
   <a href="/playground/">Try the playground</a>
+  <a href="https://github.com/mohsen1/tsz">GitHub</a>
 </div>
 
 ## Performance

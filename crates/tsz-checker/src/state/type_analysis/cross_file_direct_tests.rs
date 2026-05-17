@@ -11,7 +11,7 @@ use tsz_solver::TypeId;
 
 #[test]
 fn direct_actual_lib_alias_admission_list_is_track7_ratchet() {
-    const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSION_CEILING: usize = 26;
+    const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSION_CEILING: usize = 28;
 
     let admitted = super::DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS;
     assert_eq!(
@@ -904,7 +904,9 @@ fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
         "es5.d.ts",
         "es2015.collection.d.ts",
         "es2015.iterable.d.ts",
+        "es2018.intl.d.ts",
         "es2020.intl.d.ts",
+        "es2023.intl.d.ts",
     ]);
     let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
     let root = parser.parse_source_file();
@@ -944,6 +946,8 @@ fn direct_actual_lib_symbol_type_handles_selected_value_interfaces() {
         ("NumberFormatOptionsSignDisplayRegistry", 0),
         ("NumberFormatOptionsStyleRegistry", 0),
         ("NumberFormatOptionsUseGroupingRegistry", 0),
+        ("NumberFormatPartTypeRegistry", 0),
+        ("NumberFormatRangePartTypeRegistry", 0),
         ("Object", 0),
         ("Promise", 1),
         ("RegExp", 0),
@@ -1719,7 +1723,12 @@ fn direct_actual_lib_symbol_type_handles_record_generic_alias_body_query() {
 
 #[test]
 fn direct_actual_lib_symbol_type_handles_intl_non_generic_alias_bodies() {
-    let lib_files = load_lib_files(&["es5.d.ts", "es2020.intl.d.ts"]);
+    let lib_files = load_lib_files(&[
+        "es5.d.ts",
+        "es2018.intl.d.ts",
+        "es2020.intl.d.ts",
+        "es2023.intl.d.ts",
+    ]);
     let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
     let root = parser.parse_source_file();
     let mut binder = BinderState::new();
@@ -1751,6 +1760,8 @@ fn direct_actual_lib_symbol_type_handles_intl_non_generic_alias_bodies() {
         "NumberFormatOptionsSignDisplay",
         "NumberFormatOptionsStyle",
         "NumberFormatOptionsUseGrouping",
+        "NumberFormatPartTypes",
+        "NumberFormatRangePartTypes",
         "UnicodeBCP47LocaleIdentifier",
     ] {
         let sym_id = state
