@@ -2597,6 +2597,38 @@ module.exports = a;
 }
 
 #[test]
+fn test_js_module_exports_function_emits_before_hoisted_jsdoc() {
+    let source = r#"
+/**
+ * @param {number} timeout
+ */
+function Timer(timeout) {
+    this.timeout = timeout;
+}
+module.exports = Timer;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.starts_with("export = Timer;\n/**"),
+        "Expected JS module.exports export= to precede hoisted function JSDoc: {output}"
+    );
+    assert!(
+        output.contains("declare function Timer(timeout: number): void;"),
+        "Expected hoisted function declaration to keep its JSDoc signature: {output}"
+    );
+    assert_eq!(
+        output.matches("export = Timer;").count(),
+        1,
+        "Did not expect duplicate JS export= statements: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_function_with_typedef_members() {
     let output = emit_js_dts(
         r#"
