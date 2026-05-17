@@ -44,6 +44,27 @@ function validateClassificationCompilerReport(report) {
   }
 }
 
+function validateSourceMetadata(source, label) {
+  if (source?.repository && source?.ref) return;
+
+  fail(
+    [
+      `assertion classification candidateManifest.sources.${label} is missing source metadata`,
+      `${source?.repository || "<missing repository>"} @ ${source?.ref || "<missing ref>"}`,
+    ].join("\n"),
+  );
+}
+
+function validateCandidateManifestSources(manifest) {
+  if (!manifest?.sources || typeof manifest.sources !== "object") {
+    fail("assertion classification candidateManifest is missing sources");
+  }
+
+  for (const label of ["templates", "testCases", "solutions"]) {
+    validateSourceMetadata(manifest.sources[label], label);
+  }
+}
+
 function validateReport(report) {
   validateClassificationCompilerReport(report);
   if (!report.comparison || typeof report.comparison !== "object") {
@@ -52,6 +73,7 @@ function validateReport(report) {
   if (!report.candidateManifest || typeof report.candidateManifest !== "object") {
     fail("assertion classification report is missing candidateManifest");
   }
+  validateCandidateManifestSources(report.candidateManifest);
 }
 
 validateReport(report);
@@ -134,6 +156,13 @@ if (cleanSubsetManifest) {
 }
 if (cleanSubsetClassification) {
   validateClassificationCompilerReport(cleanSubsetClassification);
+  if (
+    !cleanSubsetClassification.candidateManifest ||
+    typeof cleanSubsetClassification.candidateManifest !== "object"
+  ) {
+    fail("tsc-clean assertion classification is missing candidateManifest");
+  }
+  validateCandidateManifestSources(cleanSubsetClassification.candidateManifest);
 }
 if (cleanSubsetManifest && cleanSubsetClassification) {
   const acceptedAssertions = cleanSubsetManifest.counts.tscAcceptedAssertions;
