@@ -493,11 +493,21 @@ jobs:
           fi
           node scripts/bench/merge-results.mjs "$GITHUB_WORKSPACE/bench-results.json" "${json_files[@]}"
 
+      - name: Summarize green tsgo winners
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/bench/tsgo-winner-report.mjs \
+            "$GITHUB_WORKSPACE/bench-results.json" \
+            "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json"
+
       - name: Upload merged benchmark artifact
         uses: actions/upload-artifact@v4
         with:
           name: bench-results-merged
-          path: bench-results.json
+          path: |
+            bench-results.json
+            bench-results-tsgo-winners.json
           retention-days: 30
           if-no-files-found: error
           compression-level: 1
@@ -515,6 +525,9 @@ jobs:
           gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
             "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
           echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.json"
+          gsutil -q cp "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json" \
+            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.tsgo-winners.json"
+          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/${TIMESTAMP}.tsgo-winners.json"
 
           if [[ "${EVENT_NAME}" == "workflow_run" && -n "${MAIN_SHA}" && "${TARGET_SHA}" != "${MAIN_SHA}" ]]; then
             echo "Bench target ${TARGET_SHA} is stale; current main is ${MAIN_SHA}."
@@ -530,6 +543,9 @@ jobs:
           gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
             "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
           echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.json"
+          gsutil -q cp "$GITHUB_WORKSPACE/bench-results-tsgo-winners.json" \
+            "${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.tsgo-winners.json"
+          echo "Published: ${_TSZ_CI_CACHE_BUCKET}/bench-runs/latest.tsgo-winners.json"
           echo "should_redeploy=true" >> "$GITHUB_OUTPUT"
 
       - name: Report severe benchmark gaps
