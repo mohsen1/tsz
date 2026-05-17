@@ -71,14 +71,18 @@ function requiredRelativeManifestPath(value, label) {
   return normalized;
 }
 
-function optionalCount(value, label) {
-  if (value === undefined) {
-    return null;
-  }
+function requiredCount(value, label) {
   if (!Number.isInteger(value) || value < 0) {
     fail(`manifest counts.${label} must be a non-negative integer`);
   }
   return value;
+}
+
+function optionalCount(value, label) {
+  if (value === undefined) {
+    return null;
+  }
+  return requiredCount(value, label);
 }
 
 function validateCandidateManifest(manifest) {
@@ -92,21 +96,57 @@ function validateCandidateManifest(manifest) {
   if (!Array.isArray(manifest.entries)) {
     fail("manifest entries must be an array");
   }
+  if (manifest.entries.length === 0) {
+    fail("manifest entries must include at least one assertion candidate");
+  }
 
   const counts = manifest.counts ?? {};
-  const generatedAssertions = optionalCount(counts.generatedAssertions, "generatedAssertions");
-  const referenced = optionalCount(
-    counts.assertionsReferencingSolutionDeclaration,
-    "assertionsReferencingSolutionDeclaration",
-  );
-  const missing = optionalCount(
-    counts.assertionsMissingSolutionDeclarationReference,
-    "assertionsMissingSolutionDeclarationReference",
-  );
+  const pairedSolutions =
+    manifest.fixture === "type-challenges-assertion-candidates"
+      ? requiredCount(counts.pairedSolutions, "pairedSolutions")
+      : optionalCount(counts.pairedSolutions, "pairedSolutions");
+  const generatedAssertions =
+    manifest.fixture === "type-challenges-assertion-candidates"
+      ? requiredCount(counts.generatedAssertions, "generatedAssertions")
+      : optionalCount(counts.generatedAssertions, "generatedAssertions");
+  const tscAcceptedAssertions =
+    manifest.fixture === "type-challenges-assertions-tsc-clean"
+      ? requiredCount(counts.tscAcceptedAssertions, "tscAcceptedAssertions")
+      : optionalCount(counts.tscAcceptedAssertions, "tscAcceptedAssertions");
+  const referenced =
+    manifest.fixture === "type-challenges-assertion-candidates"
+      ? requiredCount(
+          counts.assertionsReferencingSolutionDeclaration,
+          "assertionsReferencingSolutionDeclaration",
+        )
+      : optionalCount(
+          counts.assertionsReferencingSolutionDeclaration,
+          "assertionsReferencingSolutionDeclaration",
+        );
+  const missing =
+    manifest.fixture === "type-challenges-assertion-candidates"
+      ? requiredCount(
+          counts.assertionsMissingSolutionDeclarationReference,
+          "assertionsMissingSolutionDeclarationReference",
+        )
+      : optionalCount(
+          counts.assertionsMissingSolutionDeclarationReference,
+          "assertionsMissingSolutionDeclarationReference",
+        );
 
+  if (pairedSolutions !== null && pairedSolutions !== manifest.entries.length) {
+    fail(
+      `manifest counts.pairedSolutions (${pairedSolutions}) does not match entries length (${manifest.entries.length})`,
+    );
+  }
   if (generatedAssertions !== null && generatedAssertions !== manifest.entries.length) {
     fail(
       `manifest counts.generatedAssertions (${generatedAssertions}) does not match entries length (${manifest.entries.length})`,
+    );
+  }
+  if (tscAcceptedAssertions !== null && tscAcceptedAssertions !== manifest.entries.length) {
+    fail(
+      `manifest counts.tscAcceptedAssertions (${tscAcceptedAssertions}) does not match entries length (${manifest.entries.length})`,
     );
   }
   if (referenced !== null && missing !== null && referenced + missing !== manifest.entries.length) {
@@ -654,6 +694,7 @@ const report = {
   fixture: "type-challenges-assertion-classification",
   candidateManifest: {
     fixture: manifest.fixture,
+    sources: manifest.sources ?? null,
     counts: manifest.counts,
     semanticFamilies: summarizeCandidateSemanticFamilies(manifest),
   },
