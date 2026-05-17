@@ -1062,13 +1062,16 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             .and_then(|idx| idx.get(root_name))
             .and_then(|entries| {
                 entries.iter().find(|(file_idx, sym)| {
-                    self.all_binders
+                    let Some(symbol) = self
+                        .all_binders
                         .as_ref()
                         .and_then(|b| b.as_ref().get(*file_idx))
                         .and_then(|binder| binder.get_symbol(*sym))
-                        .is_some_and(|symbol| {
-                            !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
-                        })
+                    else {
+                        return false;
+                    };
+                    !symbol.has_any_flags(tsz_binder::symbol_flags::ALIAS)
+                        && !self.is_private_cross_file_type(symbol, root_name)
                 })
             })
             .map(|&(_, sym)| sym);

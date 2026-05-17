@@ -1255,10 +1255,15 @@ impl<'a> CheckerState<'a> {
                     if should_skip_lib_symbol(sym_id) {
                         return false;
                     }
-                    if is_private_external_module_type_symbol(sym_id) {
+                    // `is_private_external_module_type_symbol` searches only the
+                    // current binder so it misses symbols from `all_binders`.
+                    // Use the canonical helper with the already-resolved symbol.
+                    if !self.is_in_declare_namespace_or_module(idx)
+                        && !self.ctx.symbol_is_from_lib(sym_id)
+                        && self.ctx.is_private_cross_file_type(symbol, name)
+                    {
                         return false;
                     }
-
                     let is_class_member = Self::is_class_member_symbol(symbol.flags);
                     if is_class_member {
                         return false;
@@ -1469,7 +1474,16 @@ impl<'a> CheckerState<'a> {
                     .as_ref()
                     .and_then(|idx| idx.get(root_name))
                     .and_then(|entries| entries.iter().max_by_key(|(_, sym)| sym.0))
-                    .map(|&(_, sym)| sym)
+                    .and_then(|&(file_idx, sym_id)| {
+                        let symbol = self
+                            .ctx
+                            .get_binder_for_file(file_idx)
+                            .and_then(|b| b.get_symbol(sym_id))?;
+                        if self.ctx.is_private_cross_file_type(symbol, root_name) {
+                            return None;
+                        }
+                        Some(sym_id)
+                    })
             })
             .or_else(|| {
                 lib_binders

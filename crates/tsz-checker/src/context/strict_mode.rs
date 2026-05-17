@@ -9,6 +9,62 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl CheckerContext<'_> {
+    /// Returns `true` when `symbol` is a type-only alias that lives in a
+    /// *different* external-module file and has no global augmentation for
+    /// `name`. Such symbols are inaccessible without an explicit import — tsc
+    /// emits TS2304 for any reference to them across module boundaries.
+    ///
+    /// Used as a single canonical privacy gate in all cross-file symbol
+    /// resolution paths so the rule is enforced consistently.
+    pub(crate) fn is_private_cross_file_type(
+        &self,
+        symbol: &tsz_binder::Symbol,
+        name: &str,
+    ) -> bool {
+        if !self.binder.is_external_module()
+            || symbol.is_umd_export
+            || symbol.decl_file_idx == u32::MAX
+            || symbol.decl_file_idx == self.current_file_idx as u32
+            || symbol.has_any_flags(tsz_binder::symbol_flags::VALUE)
+        {
+            return false;
+        }
+        let owner_is_decl = self
+            .get_arena_for_file(symbol.decl_file_idx)
+            .source_files
+            .first()
+            .is_some_and(|sf| sf.is_declaration_file);
+        if owner_is_decl {
+            return false;
+        }
+        self.file_idx_is_external_module(symbol.decl_file_idx)
+            && self
+                .get_binder_for_file(symbol.decl_file_idx as usize)
+                .is_none_or(|b| !b.global_augmentations.contains_key(name))
+    }
+
+    /// Check whether a specific file (by index) is an external module.
+    ///
+    /// Uses the pre-built `is_external_module_by_file` map when available,
+    /// falling back to the binder check. Cross-file lookup binders report
+    /// `is_external_module = false`, so the map is the reliable source.
+    pub(crate) fn file_idx_is_external_module(&self, file_idx: u32) -> bool {
+        if let Some(ref map) = self.is_external_module_by_file {
+            let file_name = self
+                .get_arena_for_file(file_idx)
+                .source_files
+                .first()
+                .map(|sf| sf.file_name.as_str());
+            if let Some(name) = file_name
+                && let Some(&is_ext) = map.get(name)
+            {
+                return is_ext;
+            }
+        }
+        self.get_binder_for_file(file_idx as usize)
+            .is_some_and(|b| b.is_external_module())
+    }
+
     /// Check whether the given AST node is in strict mode context.
     ///
     /// Strict mode is active when any of these conditions are true:

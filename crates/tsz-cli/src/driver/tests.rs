@@ -1025,6 +1025,94 @@ fn test_compile_project_keeps_unimported_external_module_type_alias_unresolved()
     );
 }
 
+// Variant: different user-chosen names prove the check is structural, not name-keyed.
+#[test]
+fn test_compile_project_mapped_unimported_constraint_variant_names() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2015",
+    "declaration": true
+  },
+  "files": ["TypeUtils.ts", "Schema.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("TypeUtils.ts"),
+        "export type KeysOf<TObj> = Extract<string, keyof TObj>;\n",
+    )
+    .expect("write TypeUtils.ts");
+    fs::write(
+        dir.path().join("Schema.ts"),
+        "export type Projection<TRow> = {\n    [TCol in KeysOf<TRow>]: unknown;\n};\n",
+    )
+    .expect("write Schema.ts");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_NAME && diag.message_text.contains("KeysOf")
+        }),
+        "Expected TS2304 for unimported KeysOf in mapped type constraint, got: {:?}",
+        result.diagnostics
+    );
+}
+
+// Variant: when the constraint type IS imported, no TS2304 must be produced.
+#[test]
+fn test_compile_project_mapped_imported_constraint_no_ts2304() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2015",
+    "declaration": true
+  },
+  "files": ["Helpers.ts", "Model.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("Helpers.ts"),
+        "export type StringKeyOf<TObj> = Extract<string, keyof TObj>;\n",
+    )
+    .expect("write Helpers.ts");
+    fs::write(
+        dir.path().join("Model.ts"),
+        concat!(
+            "import type { StringKeyOf } from \"./Helpers\";\n",
+            "export type Row<TColumns> = {\n",
+            "    [TName in StringKeyOf<TColumns>]: any;\n",
+            "};\n",
+        ),
+    )
+    .expect("write Model.ts");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    assert!(
+        !result.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_NAME
+                && diag.message_text.contains("StringKeyOf")
+        }),
+        "Did not expect TS2304 when StringKeyOf is properly imported, got: {:?}",
+        result.diagnostics
+    );
+}
+
 #[test]
 fn test_compile_project_mixin_constructor_object_does_not_emit_ts2510() {
     let dir = tempfile::tempdir().expect("temp dir");

@@ -834,7 +834,7 @@ impl<'a> CheckerState<'a> {
                 .get_global_type_with_libs(name, &lib_binders)
         })
         .or_else(|| {
-            resolve_name_to_lib_symbol(
+            let sym_id = resolve_name_to_lib_symbol(
                 name,
                 self.ctx.binder,
                 self.ctx.global_file_locals_index.as_deref(),
@@ -843,7 +843,14 @@ impl<'a> CheckerState<'a> {
                     .as_ref()
                     .map(|binders| binders.as_ref().as_slice()),
                 &self.ctx.lib_contexts,
-            )
+            )?;
+            let symbol = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id));
+            if symbol.is_some_and(|s| self.ctx.is_private_cross_file_type(s, name)) {
+                return None;
+            }
+            Some(sym_id)
         });
 
         let selected_symbol = selected_lib_symbol_for_name(&self.ctx, name, sym_id, &lib_binders);

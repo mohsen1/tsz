@@ -111,7 +111,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     .as_ref()
                     .and_then(|idx| idx.get(root_name))
                     .and_then(|entries| entries.iter().max_by_key(|(_, sym)| sym.0))
-                    .map(|&(_, sym)| sym)
+                    .and_then(|&(_, sym_id)| {
+                        let symbol = self.get_symbol_from_any_context(sym_id)?;
+                        if self.ctx.is_private_cross_file_type(symbol, root_name) {
+                            return None;
+                        }
+                        Some(sym_id)
+                    })
             })?;
 
         for segment in segments {
