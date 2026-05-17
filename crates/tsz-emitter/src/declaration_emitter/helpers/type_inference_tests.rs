@@ -1,5 +1,8 @@
 use super::DeclarationEmitter;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tsz_parser::parser::ParserState;
+
+static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn simultaneous_word_replacement_does_not_rewrite_inserted_import_paths() {
@@ -87,13 +90,11 @@ fn import_type_text_helpers_accept_single_quoted_specifiers() {
 
 #[test]
 fn types_versions_self_back_reference_detection_requires_package_root_reexport() {
+    let temp_id = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
         "tsz-types-versions-self-ref-{}-{}",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock before UNIX_EPOCH")
-            .as_nanos()
+        temp_id
     ));
     let package_root = root.join("node_modules").join("ext");
     let types_dir = package_root.join("ts3.1");
