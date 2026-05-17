@@ -122,6 +122,10 @@ pub fn input_supertype_candidate<R: TypeResolver>(
         return None;
     }
 
+    if types.contains(&TypeId::ANY) {
+        return Some(TypeId::ANY);
+    }
+
     let mut best = types[0];
     if let Some(resolver) = resolver {
         let mut checker = SubtypeChecker::with_resolver(interner, resolver);

@@ -173,6 +173,61 @@ fn test_input_supertype_candidate_finds_lazy_base_candidate() {
 }
 
 #[test]
+fn test_return_supertype_candidate_any_absorbs_candidate_order() {
+    let interner = TypeInterner::new();
+    let resolver = NoopResolver;
+
+    assert_eq!(
+        input_supertype_candidate(&interner, &[TypeId::ANY, TypeId::STRING], Some(&resolver)),
+        Some(TypeId::ANY)
+    );
+    assert_eq!(
+        input_supertype_candidate(&interner, &[TypeId::STRING, TypeId::ANY], Some(&resolver)),
+        Some(TypeId::ANY)
+    );
+    assert_eq!(
+        input_supertype_candidate(
+            &interner,
+            &[TypeId::NUMBER, TypeId::ANY, TypeId::STRING],
+            Some(&resolver)
+        ),
+        Some(TypeId::ANY)
+    );
+    assert_eq!(
+        input_supertype_candidate(
+            &interner,
+            &[TypeId::STRING, TypeId::NUMBER],
+            Some(&resolver)
+        ),
+        None
+    );
+}
+
+#[test]
+fn test_conditional_resolver_any_branch_stays_any_in_both_orders() {
+    let interner = TypeInterner::new();
+    let resolver = NoopResolver;
+
+    let first = compute_conditional_expression_type_with_resolver(
+        &interner,
+        TypeId::BOOLEAN,
+        TypeId::ANY,
+        TypeId::STRING,
+        Some(&resolver),
+    );
+    let second = compute_conditional_expression_type_with_resolver(
+        &interner,
+        TypeId::BOOLEAN,
+        TypeId::STRING,
+        TypeId::ANY,
+        Some(&resolver),
+    );
+
+    assert_eq!(first, TypeId::ANY);
+    assert_eq!(second, TypeId::ANY);
+}
+
+#[test]
 fn test_conditional_resolver_keeps_unrelated_lazy_siblings() {
     use crate::types::PropertyInfo;
 
@@ -971,15 +1026,20 @@ fn test_bct_cache_resolver_present_distinct_from_absent() {
 
     let name_x = interner.intern_string("x");
     let name_y = interner.intern_string("y");
+    let name_z = interner.intern_string("z");
 
-    let a = interner.object(vec![PropertyInfo::new(name_x, TypeId::NUMBER)]);
-    let b = interner.object(vec![PropertyInfo::new(name_y, TypeId::STRING)]);
+    let base = interner.object(vec![PropertyInfo::new(name_x, TypeId::NUMBER)]);
+    let derived = interner.object(vec![
+        PropertyInfo::new(name_x, TypeId::NUMBER),
+        PropertyInfo::new(name_y, TypeId::STRING),
+    ]);
+    let unrelated = interner.object(vec![PropertyInfo::new(name_z, TypeId::BOOLEAN)]);
 
     // No-resolver path.
     let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
         &interner,
         Some(&db),
-        &[a, b],
+        &[base, derived, unrelated],
         None,
     );
     let entries_no_res = db.statistics().subtype_reduction_cache_entries;
@@ -989,7 +1049,7 @@ fn test_bct_cache_resolver_present_distinct_from_absent() {
     let _ = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
         &interner,
         Some(&db),
-        &[a, b],
+        &[base, derived, unrelated],
         Some(&resolver),
     );
     let entries_with_res = db.statistics().subtype_reduction_cache_entries;
