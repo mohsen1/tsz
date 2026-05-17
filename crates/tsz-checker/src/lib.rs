@@ -387,6 +387,9 @@ mod assertion_type_predicate_diagnostics_tests;
 #[path = "../tests/bigint_target_ts2737_tests.rs"]
 mod bigint_target_ts2737_tests;
 #[cfg(test)]
+#[path = "tests/call_architecture_contextual_tests.rs"]
+mod call_architecture_contextual_tests;
+#[cfg(test)]
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
 #[cfg(test)]
