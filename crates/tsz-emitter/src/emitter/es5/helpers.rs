@@ -1479,13 +1479,21 @@ impl<'a> Printer<'a> {
             match node.kind {
                 k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => return true,
                 k if k == syntax_kind_ext::TYPE_ASSERTION
-                    || k == syntax_kind_ext::AS_EXPRESSION =>
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
                 {
                     if let Some(ta) = self.arena.get_type_assertion(node) {
                         idx = ta.expression;
                     } else {
                         return false;
                     }
+                }
+                k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+                {
+                    return self.arena.get_access_expr(node).is_some_and(|access| {
+                        self.type_assertion_wraps_object_literal(access.expression)
+                    });
                 }
                 // Already parenthesized — the emitter will preserve the parens
                 k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => return false,

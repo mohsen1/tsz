@@ -257,9 +257,7 @@ impl<'a> Printer<'a> {
             if let Some(body_node) = self.arena.get(func.body) {
                 self.emit_arrow_concise_body_leading_comments(body_node.pos);
             }
-            self.write("(");
-            self.emit(func.body);
-            self.write(")");
+            self.parenthesized(|emitter| emitter.emit(func.body));
         } else {
             // Emit comments between => and the body expression (e.g. triple-slash comments)
             // tsc preserves these and places the body on a new line when comments exist.
