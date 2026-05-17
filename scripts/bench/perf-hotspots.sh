@@ -45,6 +45,7 @@ Options:
 Notes:
   - This script delegates execution to scripts/bench/bench-vs-tsgo.sh.
   - JSON output is always enabled.
+  - A sibling *.tsgo-winners.json report is generated from the benchmark JSON.
 USAGE
 }
 
@@ -113,3 +114,10 @@ fi
 echo "Running hotspot suite with filter: $FILTER"
 echo "JSON output: $JSON_FILE"
 "${CMD[@]}"
+
+WINNER_REPORT="${JSON_FILE%.json}.tsgo-winners.json"
+if [[ "$WINNER_REPORT" == "$JSON_FILE" ]]; then
+    WINNER_REPORT="${JSON_FILE}.tsgo-winners.json"
+fi
+
+node "$PROJECT_ROOT/scripts/bench/tsgo-winner-report.mjs" "$JSON_FILE" "$WINNER_REPORT"
