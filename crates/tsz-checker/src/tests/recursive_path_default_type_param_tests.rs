@@ -11,6 +11,12 @@
 //! Anti-hardcoding: every rule below must work regardless of identifier
 //! choices, the predicate used to detect nesting (`extends object`,
 //! `extends Record<string, any>`), and the recursion call site.
+//!
+//! Diagnostic-surface discipline: positive cases assert the diagnostic vector
+//! is fully empty so a regression that swaps TS2322 for any other diagnostic
+//! (TS2589 depth, TS2590 complexity, TS2304 unresolved symbol, etc.) still
+//! fails the test. The negative case asserts the exact expected TS2322 set
+//! with no extras for the same reason.
 
 use crate::context::CheckerOptions;
 use crate::test_utils::{check_source_with_libs, load_default_lib_files};
@@ -60,8 +66,8 @@ const p4: Paths = "d";
     );
     let codes = strict_codes_with_libs(&source);
     assert!(
-        !codes.contains(&2322),
-        "Path<Obj> must include all valid paths, not collapse to never. Got: {codes:?}"
+        codes.is_empty(),
+        "Path<Obj> with valid paths must emit no diagnostics. Got: {codes:?}"
     );
 }
 
@@ -88,8 +94,8 @@ const p4: Paths = "d";
 "#,
     );
     assert!(
-        !codes.contains(&2322),
-        "Renamed iteration param Key must not change the result. Got: {codes:?}"
+        codes.is_empty(),
+        "Renamed iteration param Key must emit no diagnostics. Got: {codes:?}"
     );
 }
 
@@ -115,8 +121,8 @@ const p4: Paths = "m";
 "#,
     );
     assert!(
-        !codes.contains(&2322),
-        "Renamed value param U must not change the result. Got: {codes:?}"
+        codes.is_empty(),
+        "Renamed value param U must emit no diagnostics. Got: {codes:?}"
     );
 }
 
@@ -143,8 +149,8 @@ const d: Paths = "flag";
 "#,
     );
     assert!(
-        !codes.contains(&2322),
-        "Renaming both T->U and K->P must not change the result. Got: {codes:?}"
+        codes.is_empty(),
+        "Renaming both T->U and K->P must emit no diagnostics. Got: {codes:?}"
     );
 }
 
@@ -175,14 +181,15 @@ const p4: Paths = "log";
 "#,
     );
     assert!(
-        !codes.contains(&2322),
-        "Path with Record<string, any> predicate must produce full union. Got: {codes:?}"
+        codes.is_empty(),
+        "Path with Record<string, any> predicate must emit no diagnostics. Got: {codes:?}"
     );
 }
 
-/// Negative case: an invalid path string must still emit TS2322. Confirms the
-/// recursion produces the *correct* union, not a `string` widening that would
-/// silently accept anything.
+/// Negative case: invalid path strings must emit exactly the expected TS2322
+/// set with no other diagnostics. Asserting the *exact* surface keeps this
+/// from masking regressions that swap TS2322 for, e.g., TS2589 depth errors,
+/// TS2590 complexity errors, or TS2304 unresolved-symbol failures.
 #[test]
 fn recursive_path_default_keyof_rejects_invalid_path() {
     let source = format!(
@@ -196,10 +203,10 @@ const wrong_leaf: Paths = "a.b.bogus";
 "#
     );
     let codes = strict_codes_with_libs(&source);
-    let count_2322 = codes.iter().filter(|&&c| c == 2322).count();
-    assert!(
-        count_2322 >= 2,
-        "Invalid path strings must still produce TS2322. Got: {codes:?}"
+    assert_eq!(
+        codes,
+        vec![2322, 2322],
+        "Invalid path strings must produce exactly two TS2322 and no other diagnostics. Got: {codes:?}"
     );
 }
 
@@ -221,8 +228,8 @@ const d: PathsExplicit = "d";
     );
     let codes = strict_codes_with_libs(&source);
     assert!(
-        !codes.contains(&2322),
-        "Explicit `keyof Obj` second arg must match default. Got: {codes:?}"
+        codes.is_empty(),
+        "Explicit `keyof Obj` second arg must emit no diagnostics. Got: {codes:?}"
     );
 }
 
@@ -243,7 +250,7 @@ const c: Paths = "z";
     );
     let codes = strict_codes_with_libs(&source);
     assert!(
-        !codes.contains(&2322),
-        "Single-level Path must yield the union of top-level keys. Got: {codes:?}"
+        codes.is_empty(),
+        "Single-level Path must emit no diagnostics. Got: {codes:?}"
     );
 }
