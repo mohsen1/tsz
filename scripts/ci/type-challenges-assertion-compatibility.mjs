@@ -129,9 +129,17 @@ if (cleanSubsetManifest) {
       `tsc-clean assertion manifest counts.tscAcceptedAssertions (${acceptedAssertions}) does not match entries length (${cleanSubsetEntries.length})`,
     );
   }
+  if (!Number.isInteger(acceptedReferencingSolutionDeclaration)) {
+    fail(
+      "tsc-clean assertion manifest counts.tscAcceptedAssertionsReferencingSolutionDeclaration must be an integer",
+    );
+  }
+  if (!Number.isInteger(acceptedMissingSolutionDeclarationReference)) {
+    fail(
+      "tsc-clean assertion manifest counts.tscAcceptedAssertionsMissingSolutionDeclarationReference must be an integer",
+    );
+  }
   if (
-    Number.isInteger(acceptedReferencingSolutionDeclaration) &&
-    Number.isInteger(acceptedMissingSolutionDeclarationReference) &&
     acceptedReferencingSolutionDeclaration + acceptedMissingSolutionDeclarationReference !==
       acceptedAssertions
   ) {
