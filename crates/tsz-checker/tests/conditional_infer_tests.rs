@@ -368,6 +368,111 @@ const matched: true = null as any as ExtractPropsMatch;
     );
 }
 
+/// Conditional source is a wrapper Application (e.g. `Exclude<X<T> | undefined,
+/// undefined>`) whose base does not match the pattern's base, but whose
+/// evaluated form does. The evaluator must reduce through the wrapper so the
+/// Application-vs-Application infer match can bind type arguments.
+///
+/// Without the wrapper-base reduction, `match_infer_pattern` falls through to
+/// structural pattern expansion that cannot bind infer arguments through a
+/// `Callable` pattern that also carries properties — the common shape for
+/// validator-style interfaces (call signature + tagged property).
+#[test]
+fn exclude_wrapped_source_application_binds_infer_arg() {
+    fn check(label: &str, source: &str) {
+        let diagnostics = check_source_strict_with_default_libs(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != 2322),
+            "[{label}] expected infer to bind through Exclude wrapper; all diagnostics: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| (d.code, d.message_text.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    // 1) Callable+property interface — the original PropTypes-style shape.
+    check(
+        "callable+property",
+        r#"
+declare const tag: unique symbol;
+interface Validator<T> {
+    (props: object): Error | null;
+    [tag]?: T;
+}
+type R = Exclude<Validator<number> | undefined, undefined> extends Validator<infer X> ? X : "no";
+const r: number = (null as any as R);
+"#,
+    );
+
+    // 2) Plain property interface — same rule, different shape.
+    check(
+        "property-only",
+        r#"
+interface Box<T> {
+    value: T;
+}
+type R = Exclude<Box<number> | undefined, undefined> extends Box<infer X> ? X : "no";
+const r: number = (null as any as R);
+"#,
+    );
+
+    // 3) Renamed type parameter — rule is structural, not name-based.
+    check(
+        "renamed-param",
+        r#"
+interface Wrap<Value> {
+    payload: Value;
+}
+type R = Exclude<Wrap<string> | undefined, undefined> extends Wrap<infer Y> ? Y : "no";
+const r: string = (null as any as R);
+"#,
+    );
+
+    // 4) Builtin NonNullable wrapper — same shape as Exclude<T, null | undefined>.
+    check(
+        "nonnullable-wrapper",
+        r#"
+interface Box<T> {
+    value: T;
+}
+type R = NonNullable<Box<number> | null | undefined> extends Box<infer X> ? X : "no";
+const r: number = (null as any as R);
+"#,
+    );
+
+    // 5) Generic conditional consumes the wrapped Application correctly.
+    check(
+        "generic-context",
+        r#"
+interface Box<T> { value: T; }
+type Unbox<X> = Exclude<X, undefined> extends Box<infer U> ? U : never;
+type R = Unbox<Box<number> | undefined>;
+const r: number = (null as any as R);
+"#,
+    );
+}
+
+#[test]
+fn exclude_wrapped_source_application_does_not_bind_unrelated_base() {
+    let diagnostics = check_source_strict_with_default_libs(
+        r#"
+interface Box<T> { value: T; }
+interface Other<T> { other: T; }
+type R = Exclude<Box<number> | undefined, undefined> extends Other<infer X> ? X : "no";
+const r: "no" = (null as any as R);
+"#,
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2322),
+        "unrelated application bases must not bind through wrapper recovery; diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Test that conditional types with constrained type parameters don't emit false TS2322.
 ///
 /// `UnrollOnHover<S>` is `S extends object ? { [K in keyof S]: S[K] } : never`.

@@ -17,6 +17,7 @@ use tracing::trace;
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
+use crate::type_queries::get_application_base;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Maximum depth for tail-recursive conditional evaluation.
@@ -2312,9 +2313,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // it at the Application level. This is critical for complex generic interfaces
         // like Promise, Map, Set where structural expansion loses the ability to
         // match type arguments directly.
-        let Some(TypeData::Application(_)) = self.interner().lookup(cond.extends_type) else {
+        let Some(TypeData::Application(pattern_app_id)) = self.interner().lookup(cond.extends_type)
+        else {
             return None;
         };
+        let pattern_base = self.interner().type_application(pattern_app_id).base;
 
         let contains_infer =
             if let Some(contains_infer) = self.cached_contains_infer(cond.extends_type) {
@@ -2328,46 +2331,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         }
 
-        // Use the raw (unevaluated) check_type — it may still be an Application
-        // which enables Application-vs-Application matching in match_infer_pattern.
-        // When the raw form is *not* an Application (e.g. an IndexAccess inside a
-        // mapped-type per-key conditional like `S[K] extends Pattern<infer T>`),
-        // evaluate it once: if evaluation yields an Application, that Application
-        // is what we want to feed to `match_infer_pattern` so the
-        // Application-vs-Application path can bind the infer arguments. Without
-        // this, downstream `try_expand_application_for_conditional_check`
-        // unfolds the evaluated Application into its structural Object form and
-        // the Application-level match is irretrievably lost.
-        // The raw `cond.check_type` may not be an Application (e.g. an
-        // `IndexAccess` like `S[K]` inside a mapped-type per-key conditional).
-        // Try to recover an Application form so the Application-vs-Application
-        // path in `match_infer_pattern` can bind the infer arguments:
-        //   1. Evaluate the raw type once. If that yields an Application,
-        //      use it directly.
-        //   2. Otherwise, the raw type may have evaluated to the *body* of
-        //      an Application (the structural Object the body interned to).
-        //      The interner records `display_alias[body] = Application` for
-        //      every evaluated Application; consult it to recover the
-        //      original Application form when the evaluated check_type is
-        //      not itself an Application but came from one.
+        // Recover an Application form for `check_type` whose base matches
+        // `pattern_base`. Three shapes need recovery:
+        //   1. raw type isn't an Application (e.g. `S[K]` inside a per-key
+        //      conditional) — evaluate may yield one;
+        //   2. raw type evaluates to a structural Object/Callable — the
+        //      `display_alias` map records a back-reference to the original
+        //      Application;
+        //   3. raw type IS an Application but its base differs from the
+        //      pattern's (e.g. `Exclude<X<T> | undefined, undefined>` wraps
+        //      `X<T>`) — evaluate through the wrapper so the
+        //      Application-vs-Application match has a same-base source.
         let mut check_type = cond.check_type;
-        if !matches!(
-            self.interner().lookup(check_type),
-            Some(TypeData::Application(_))
-        ) {
+        if get_application_base(self.interner(), check_type) != Some(pattern_base) {
             let evaluated = self.evaluate(check_type);
-            if matches!(
-                self.interner().lookup(evaluated),
-                Some(TypeData::Application(_))
-            ) {
+            if get_application_base(self.interner(), evaluated) == Some(pattern_base) {
                 check_type = evaluated;
-            } else if let Some(application_origin) = self.interner().get_display_alias(evaluated)
-                && matches!(
-                    self.interner().lookup(application_origin),
-                    Some(TypeData::Application(_))
-                )
+            } else if let Some(origin) = self.try_recover_application_from_display_alias(evaluated)
+                && get_application_base(self.interner(), origin) == Some(pattern_base)
             {
-                check_type = application_origin;
+                check_type = origin;
             }
         }
 
