@@ -8,6 +8,7 @@
 
 mod enum_indexed_access;
 mod indexed_access_fast_path;
+mod type_query_declared_type;
 
 use super::type_node::TypeNodeChecker;
 use super::type_node_helpers::{
@@ -1131,47 +1132,26 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 };
 
             if declared_type.is_none() {
-                let type_ann_idx = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
-                    let decl = symbol.value_declaration;
-                    if decl.is_none() {
-                        return None;
-                    }
-                    let decl_node = self.ctx.arena.get(decl)?;
-                    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
-                        if var_decl.type_annotation.is_some() {
-                            return Some(var_decl.type_annotation);
-                        }
-                    } else if decl_node.kind == syntax_kind_ext::PARAMETER {
-                        let param = self.ctx.arena.get_parameter(decl_node)?;
-                        if param.type_annotation.is_some() {
-                            return Some(param.type_annotation);
-                        }
-                    } else if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-                        && let Some(ext) = self.ctx.arena.get_extended(decl)
-                        && ext.parent.is_some()
-                        && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-                        && parent_node.kind == syntax_kind_ext::PARAMETER
-                    {
-                        let param = self.ctx.arena.get_parameter(parent_node)?;
-                        if param.name == decl && param.type_annotation.is_some() {
-                            return Some(param.type_annotation);
-                        }
-                    }
-                    None
-                });
-                if let Some(ann_idx) = type_ann_idx {
-                    let resolved = self.check(ann_idx);
-                    if resolved != TypeId::ANY && resolved != TypeId::ERROR {
-                        declared_type = Some(resolved);
-                    }
-                }
+                declared_type = self.declared_annotation_type_for_type_query_symbol(sym_id);
             }
 
             if let Some(declared_type) = declared_type
                 && declared_type != TypeId::ANY
                 && declared_type != TypeId::ERROR
             {
+                if crate::query_boundaries::common::is_unique_symbol_type(
+                    self.ctx.types,
+                    declared_type,
+                ) {
+                    if let Some(type_arguments) = &type_arguments {
+                        return self.apply_instantiation_expression_type_arguments(
+                            declared_type,
+                            type_arguments,
+                        );
+                    }
+                    return declared_type;
+                }
+
                 if !use_flow_sensitive_query {
                     if let Some(type_arguments) = &type_arguments {
                         return self.apply_instantiation_expression_type_arguments(
@@ -1243,14 +1223,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         return narrowed;
                     }
                 }
-            }
-
-            if let Some(value_type) = self.declared_type_for_type_query_symbol(sym_id) {
-                if let Some(type_arguments) = &type_arguments {
-                    return self
-                        .apply_instantiation_expression_type_arguments(value_type, type_arguments);
-                }
-                return value_type;
             }
 
             let factory = self.ctx.types.factory();
