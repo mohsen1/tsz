@@ -256,7 +256,7 @@ function record() {
     reduced_repro_path: repro.reduced_repro_path,
     repro,
     exit_codes: {
-      tsc: [],
+      tsc: toExitCodes(process.env.COMPAT_TSC_EXIT_CODES),
       tsz: toExitCodes(process.env.COMPAT_TSZ_EXIT_CODES),
       tsgo: [],
     },

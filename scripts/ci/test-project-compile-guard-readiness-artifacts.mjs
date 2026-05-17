@@ -21,9 +21,9 @@ function withTempDir(fn) {
   }
 }
 
-function writeFile(file, text) {
+function writeFile(file, text, mode = 0o644) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, text, "utf8");
+  fs.writeFileSync(file, text, { encoding: "utf8", mode });
 }
 
 function writeJson(file, value) {
@@ -31,34 +31,66 @@ function writeJson(file, value) {
 }
 
 function writeExecutable(file, text) {
-  writeFile(file, text);
+  writeFile(file, text, 0o755);
   fs.chmodSync(file, 0o755);
 }
 
-function git(cwd, args) {
-  const result = spawnSync("git", args, {
-    cwd,
+function run(command, args, options = {}) {
+  const result = spawnSync(command, args, {
+    cwd: ROOT,
     encoding: "utf8",
+    ...options,
   });
   assert.equal(
     result.status,
     0,
-    `git ${args.join(" ")} failed\n${result.stderr || result.stdout}`,
+    [
+      `${command} ${args.join(" ")} failed`,
+      result.stdout,
+      result.stderr,
+    ].filter(Boolean).join("\n"),
   );
-  return result.stdout.trim();
+  return result;
+}
+
+function git(cwd, args) {
+  return run("git", args, { cwd }).stdout.trim();
 }
 
 function createGitRepo(dir, files) {
   fs.mkdirSync(dir, { recursive: true });
-  git(dir, ["init", "-q"]);
-  git(dir, ["config", "user.email", "tsz@example.invalid"]);
-  git(dir, ["config", "user.name", "tsz test"]);
   for (const [file, text] of Object.entries(files)) {
     writeFile(path.join(dir, file), text);
   }
-  git(dir, ["add", "."]);
-  git(dir, ["commit", "-q", "-m", "fixture"]);
-  return git(dir, ["rev-parse", "HEAD"]);
+  return initRepo(dir);
+}
+
+function initRepo(dir) {
+  run("git", ["init", "--quiet"], { cwd: dir });
+  run("git", ["add", "."], { cwd: dir });
+  run(
+    "git",
+    [
+      "-c",
+      "user.name=smoke",
+      "-c",
+      "user.email=smoke@example.invalid",
+      "commit",
+      "--quiet",
+      "-m",
+      "init",
+    ],
+    { cwd: dir },
+  );
+  return run("git", ["rev-parse", "HEAD"], { cwd: dir }).stdout.trim();
+}
+
+function readJsonl(file) {
+  return fs.readFileSync(file, "utf8")
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
 }
 
 function manifest(entry) {
@@ -261,4 +293,69 @@ withTempDir((dir) => {
 
   const log = fs.readFileSync(fakeTszLog, "utf8");
   assert.match(log, /type-challenges-assertions/);
+});
+
+withTempDir((dir) => {
+  const solutionsRepo = path.join(dir, "solutions");
+  const fixtureRoot = path.join(dir, "fixture-root");
+  const binDir = path.join(dir, "bin");
+  const tszTouched = path.join(dir, "tsz-ran");
+
+  writeFile(
+    path.join(solutionsRepo, "en", "00014-easy-first.md"),
+    [
+      "id: 14",
+      "title: First",
+      "level: easy",
+      "",
+      "## Solution",
+      "```ts",
+      "type First<T extends unknown[]> = T[0]",
+      "```",
+      "",
+    ].join("\n"),
+  );
+  const solutionsRef = initRepo(solutionsRepo);
+
+  writeFile(
+    path.join(binDir, "tsz"),
+    `#!/usr/bin/env bash\ntouch ${JSON.stringify(tszTouched)}\nexit 0\n`,
+    0o755,
+  );
+  writeFile(
+    path.join(binDir, "tsc"),
+    "#!/usr/bin/env bash\necho 'solutions/00014-easy-first.ts(1,1): error TS2344: oracle failed' >&2\nexit 1\n",
+    0o755,
+  );
+
+  const result = spawnSync("bash", [GUARD_SCRIPT], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TSZ_BIN: path.join(binDir, "tsz"),
+      TYPE_CHALLENGES_ASSERTION_TSC_BIN: path.join(binDir, "tsc"),
+      TYPE_CHALLENGES_SOLUTIONS_REPO: solutionsRepo,
+      TYPE_CHALLENGES_SOLUTIONS_REF: solutionsRef,
+      TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED: "1",
+      TSZ_PROJECT_COMPILE_FIXTURE_ROOT: fixtureRoot,
+      TSZ_PROJECT_COMPILE_SET: "canary",
+      TSZ_PROJECT_COMPILE_FILTER: "type-challenges-solutions-project",
+      TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS: "0",
+    },
+  });
+
+  assert.equal(result.status, 1, result.stdout || result.stderr);
+  assert.match(result.stderr, /failed the tsc oracle check/);
+  assert.equal(fs.existsSync(tszTouched), false);
+
+  const rows = readJsonl(path.join(fixtureRoot, "project-compatibility.jsonl"));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, "type-challenges-solutions-project");
+  assert.equal(rows[0].state, "yellow");
+  assert.equal(rows[0].exit_class, "fixture invalid");
+  assert.equal(rows[0].phase, "fixture setup");
+  assert.equal(rows[0].diagnostic_status, "tsc fixture failed");
+  assert.deepEqual(rows[0].exit_codes.tsc, [1]);
+  assert.deepEqual(rows[0].exit_codes.tsz, []);
 });
