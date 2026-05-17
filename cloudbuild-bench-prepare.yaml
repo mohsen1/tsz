@@ -8,6 +8,7 @@ steps:
       - 'BENCH_FULL=1'
       - 'BENCH_COLD=1'
       - 'BENCH_PGO=1'
+      - 'BENCH_REQUIRE_PGO=1'
       - 'TSC_NPM_SPEC=6.0.2'
       - 'CARGO_BUILD_JOBS=32'
       - 'CARGO_INCREMENTAL=0'
@@ -81,10 +82,12 @@ steps:
 
       ./scripts/bench/bench-vs-tsgo.sh --prepare-only
       test -x .target-bench/dist/tsz
+      test -f .target-bench/dist/.bench-pgo-optimized
       tar -cf bench-prep.tar .target-bench/tools .target-bench/dist
       {
         printf 'BENCH_TARGET_SHA=%s\n' "${_BENCH_TARGET_SHA}"
         printf 'BENCH_BUILD_DATE=%s\n' "$(date -u +%F)"
+        printf 'BENCH_PGO_OPTIMIZED=1\n'
       } > bench-prep.env
       mkdir -p "bench-prep/${_BENCH_TARGET_SHA}" bench-prep/latest
       cp bench-prep.tar bench-prep.env "bench-prep/${_BENCH_TARGET_SHA}/"
