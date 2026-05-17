@@ -252,12 +252,17 @@ impl<'a> CheckerState<'a> {
             && let Some((base, args)) = query::application_info(self.ctx.types, type_id)
             && !args.is_empty()
         {
+            let mut changed = false;
             let canonical_args: Vec<TypeId> = args
                 .into_iter()
-                .map(|arg| self.resolve_lazy_type(arg))
+                .map(|arg| {
+                    let resolved = self.resolve_lazy_type(arg);
+                    changed |= resolved != arg;
+                    resolved
+                })
                 .collect();
-            let key = self.ctx.types.application(base, canonical_args);
-            if key != type_id {
+            if changed {
+                let key = self.ctx.types.application(base, canonical_args);
                 canonical_key = Some(key);
                 let cached_opt = self
                     .ctx
