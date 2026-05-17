@@ -80,6 +80,11 @@ await fs.writeFile(artifact, `${JSON.stringify({
         emit_status: "not in scope (noEmit assertion check)",
         dts_status: "not in scope (noEmit assertion check)",
         assertion_candidates: {
+          sources: {
+            templates: { repository: "type", ref: "type-ref" },
+            testCases: { repository: "type", ref: "type-ref" },
+            solutions: { repository: "solutions", ref: "solutions-ref" },
+          },
           paired_solutions: 78,
           generated_assertions: 78,
           tsc_diagnostic_free: 10,
@@ -226,6 +231,9 @@ try {
   assert.match(compatibilityDashboard, /type-challenges assertions/);
   assert.match(compatibilityDashboard, /paired solutions: 78/);
   assert.match(compatibilityDashboard, /assertions generated: 78/);
+  assert.match(compatibilityDashboard, /templates ref: type-ref/);
+  assert.match(compatibilityDashboard, /test cases ref: type-ref/);
+  assert.match(compatibilityDashboard, /solutions ref: solutions-ref/);
   assert.match(compatibilityDashboard, /tsc clean: 10/);
   assert.match(compatibilityDashboard, /tsz clean: 7/);
   assert.match(compatibilityDashboard, /both accepted: 5/);

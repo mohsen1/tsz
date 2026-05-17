@@ -1914,6 +1914,17 @@ export function getProjectCompatibilityDashboard() {
     addCount("assertions generated", candidates.generated_assertions);
     addCount("tsc clean", candidates.tsc_diagnostic_free);
     addCount("tsz clean", candidates.tsz_diagnostic_free);
+    const sources = candidates.sources && typeof candidates.sources === "object"
+      ? candidates.sources
+      : {};
+    const addRef = (label, source) => {
+      if (source?.ref) {
+        parts.push(`${label} ref: ${source.ref}`);
+      }
+    };
+    addRef("templates", sources.templates);
+    addRef("test cases", sources.testCases);
+    addRef("solutions", sources.solutions);
 
     const counts = candidates.file_comparison?.counts;
     addCount("both accepted", candidates.both_accepted ?? counts?.bothAccepted);
