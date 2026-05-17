@@ -23,11 +23,16 @@ type PrefixVisible<Input extends object> = {
   [Key in keyof Input as Key extends string ? `x${Key}` : never]: Input[Key]
 };
 
+type RequiredVisible<Input extends object> = {
+  [Key in keyof Input as Key extends `_${string}` ? never : Key]-?: Input[Key]
+};
+
 type cases = [
   Must<Same<VisibleOnly<{ c?: number }>, { c?: number }>>,
   Must<Same<VisibleOnly<{ readonly c?: number }>, { readonly c?: number }>>,
   Must<Same<VisibleOnlyRenamed<{ readonly kept?: string; _hidden: boolean }>, { readonly kept?: string }>>,
   Must<Same<PrefixVisible<{ kept?: string }>, { xkept?: string }>>,
+  Must<Same<RequiredVisible<{ kept?: string; _hidden?: boolean }>, { kept: string }>>,
   Must<Same<VisibleOnly<{ _hidden?: number }>, {}>>,
 ];
 "#,
