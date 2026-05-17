@@ -2568,6 +2568,56 @@ const Strings = {
 }
 
 #[test]
+fn test_js_exported_object_literal_property_reference_member_emits_import_alias() {
+    let output = emit_js_dts_with_usage_analysis(
+        r##"
+export const colors = {
+    royalBlue: "#6400e4",
+};
+
+export const brandColors = {
+    purple: colors.royalBlue,
+};
+"##,
+    );
+
+    let expected = r##"export namespace colors {
+    let royalBlue: string;
+}
+export namespace brandColors {
+    import purple = colors.royalBlue;
+    export { purple };
+}"##;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected exported object literal property references to stay namespace-shaped: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_object_literal_ordinary_property_access_member_emits_value() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const s = "x";
+
+export const ns = {
+    len: s.length,
+};
+"#,
+    );
+
+    let expected = r#"export namespace ns {
+    let len: number;
+}"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected ordinary property accesses to emit typed namespace values, not import aliases: {output}"
+    );
+}
+
+#[test]
 fn test_js_class_zero_arg_constructor_is_omitted() {
     let source = r#"
 export class Preferences {

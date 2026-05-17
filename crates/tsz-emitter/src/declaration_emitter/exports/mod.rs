@@ -2026,6 +2026,21 @@ impl<'a> DeclarationEmitter<'a> {
                     ) {
                         continue;
                     }
+                    if self.source_is_js_file
+                        && self.emit_js_object_literal_namespace(
+                            decl.name,
+                            decl.initializer,
+                            true,
+                            false,
+                        )
+                    {
+                        if let Some(dn) = self.arena.get(decl_idx) {
+                            let skip_end =
+                                self.arena.get(decl.initializer).map_or(dn.end, |n| n.end);
+                            self.skip_comments_in_node(dn.pos, skip_end);
+                        }
+                        continue;
+                    }
                 }
 
                 // Emit all regular declarations together on one line

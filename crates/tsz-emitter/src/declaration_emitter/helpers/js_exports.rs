@@ -2535,6 +2535,10 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => true,
             k if k == syntax_kind_ext::NEW_EXPRESSION => true,
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
+                .js_namespace_property_reference_text(initializer)
+                .or_else(|| self.js_namespace_value_member_type_text(initializer))
+                .is_some(),
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 self.is_negative_literal(init_node)
             }
