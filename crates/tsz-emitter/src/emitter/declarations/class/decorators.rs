@@ -650,7 +650,7 @@ impl<'a> Printer<'a> {
         &mut self,
         parameters: &NodeList,
         return_type: NodeIndex,
-        is_async: bool,
+        async_returns_promise: bool,
     ) {
         // design:type is always Function for methods
         self.write_helper("__metadata");
@@ -671,7 +671,7 @@ impl<'a> Printer<'a> {
             self.write("(\"design:returntype\", ");
             self.write(&serialized);
             self.write(")");
-        } else if is_async {
+        } else if async_returns_promise {
             self.write_helper("__metadata");
             self.write("(\"design:returntype\", Promise)");
         } else {
@@ -1034,7 +1034,7 @@ impl<'a> Printer<'a> {
             Method {
                 parameters: NodeList,
                 return_type: NodeIndex,
-                is_async: bool,
+                async_returns_promise: bool,
             },
             Accessor {
                 name: NodeIndex,
@@ -1057,12 +1057,21 @@ impl<'a> Printer<'a> {
                     if !method.body.is_some() {
                         continue;
                     }
+                    let has_async_modifier = self
+                        .arena
+                        .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
+                    let has_generator_asterisk = method.asterisk_token
+                        || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                            self.source_text,
+                            member_node.pos,
+                            self.arena
+                                .get(method.body)
+                                .map_or(member_node.end, |body| body.pos),
+                        );
                     let meta = MemberMetadata::Method {
                         parameters: method.parameters.clone(),
                         return_type: method.type_annotation,
-                        is_async: self
-                            .arena
-                            .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword),
+                        async_returns_promise: has_async_modifier && !has_generator_asterisk,
                     };
                     (&method.modifiers, method.name, false, false, meta)
                 }
@@ -1208,9 +1217,13 @@ impl<'a> Printer<'a> {
                     MemberMetadata::Method {
                         ref parameters,
                         return_type,
-                        is_async,
+                        async_returns_promise,
                     } => {
-                        self.emit_metadata_for_method(parameters, return_type, is_async);
+                        self.emit_metadata_for_method(
+                            parameters,
+                            return_type,
+                            async_returns_promise,
+                        );
                         self.write_line();
                     }
                     MemberMetadata::Accessor { name, is_static } => {

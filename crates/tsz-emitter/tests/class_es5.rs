@@ -236,6 +236,7 @@ fn test_legacy_async_method_decorator_metadata_without_annotation_uses_promise()
     let source = r#"class A {
         @dec async inferred() {}
         @dec async explicitAny(): any { return 1; }
+        @dec async *stream() { yield 1; }
     }"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -267,6 +268,10 @@ fn test_legacy_async_method_decorator_metadata_without_annotation_uses_promise()
     assert!(
         output.contains("__metadata(\"design:returntype\", Object)"),
         "Explicit async `any` ES5 method metadata should serialize normally.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__metadata(\"design:returntype\", void 0)"),
+        "Unannotated async generator ES5 method metadata should stay void 0.\nOutput:\n{output}"
     );
 }
 
