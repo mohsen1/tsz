@@ -42,8 +42,10 @@ impl TupleLengthEstimate {
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn type_node_produces_too_large_tuple(&self, type_node: NodeIndex) -> bool {
-        self.estimate_tuple_type_node_length(type_node, &mut FxHashSet::default(), 0)
-            .is_too_large()
+        self.type_node_contains_tuple_spread(type_node, 0)
+            && self
+                .estimate_tuple_type_node_length(type_node, &mut FxHashSet::default(), 0)
+                .is_too_large()
     }
 
     pub(crate) fn array_literal_produces_too_large_tuple(&self, expr: NodeIndex) -> bool {
@@ -271,6 +273,21 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// `dot_dot_dot_token` on `NAMED_TUPLE_MEMBER` is a boolean field, not an
+    /// AST child, so it is invisible to the generic `get_children` traversal
+    /// and must be checked explicitly.
+    fn tuple_element_is_spread(&self, element: NodeIndex) -> bool {
+        self.ctx.arena.get(element).is_some_and(|node| {
+            node.kind == syntax_kind_ext::REST_TYPE
+                || (node.kind == syntax_kind_ext::NAMED_TUPLE_MEMBER
+                    && self
+                        .ctx
+                        .arena
+                        .get_named_tuple_member(node)
+                        .is_some_and(|m| m.dot_dot_dot_token))
+        })
+    }
+
     fn type_node_contains_tuple_spread(&self, type_node: NodeIndex, depth: usize) -> bool {
         if type_node.is_none() || depth > MAX_AST_RECURSION_DEPTH {
             return false;
@@ -278,17 +295,16 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(type_node) else {
             return false;
         };
-        if node.kind == syntax_kind_ext::REST_TYPE {
+        if self.tuple_element_is_spread(type_node) {
             return true;
         }
         if node.kind == syntax_kind_ext::TUPLE_TYPE
             && let Some(tuple) = self.ctx.arena.get_tuple_type(node)
-            && tuple.elements.nodes.iter().any(|&element| {
-                self.ctx
-                    .arena
-                    .get(element)
-                    .is_some_and(|element_node| element_node.kind == syntax_kind_ext::REST_TYPE)
-            })
+            && tuple
+                .elements
+                .nodes
+                .iter()
+                .any(|&el| self.tuple_element_is_spread(el))
         {
             return true;
         }
