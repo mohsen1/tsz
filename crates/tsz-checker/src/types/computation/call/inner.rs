@@ -963,11 +963,17 @@ impl<'a> CheckerState<'a> {
                         if self.sensitive_callback_placeholder_should_skip_round1_inference(
                             &shape, param_type,
                         ) {
-                            // Parameterless lambdas get their return type from the body,
-                            // not from contextual T — skip suppression so they seed Round 1.
                             if let Some(func) = self.ctx.arena.get_function(arg_node)
-                                && !func.parameters.nodes.is_empty()
+                                && func.parameters.nodes.is_empty()
                             {
+                                let raw_arg_type = self
+                                    .get_type_of_node_with_request(args[i], &TypingRequest::NONE);
+                                let seeded =
+                                    self.sanitize_generic_inference_arg_type(args[i], raw_arg_type);
+                                if seeded != TypeId::UNKNOWN && seeded != TypeId::ERROR {
+                                    *arg_type = seeded;
+                                }
+                            } else {
                                 *arg_type = TypeId::UNKNOWN;
                             }
                         }

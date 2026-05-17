@@ -4800,19 +4800,22 @@ bar("hi", () => 42);
 #[test]
 fn parameterless_lambda_infers_t_from_return_type() {
     let source = r#"
-function foo<T>(o: Take<T>, i: Make<T>) { }
+function foo<T>(o: Take<T>, i: Make<T>): T { return i(); }
 interface Make<T> {
     (): T;
 }
 interface Take<T> {
     (n: T): void;
 }
-foo(n => n.length, () => 'hi');
+const result = foo(n => n.length, () => 'hi');
+const asString: string = result;
+const asNumber: number = result;
 "#;
     let diags = relevant_diagnostics(source);
+    let ts2322_count = diagnostic_count(&diags, 2322);
     assert!(
-        diags.is_empty(),
-        "T should be inferred as string from `() => 'hi'`; `n` must not be unknown. Got: {diags:#?}"
+        ts2322_count == 1 && lacks_diagnostic_code(&diags, 2339),
+        "T should be inferred as string, not any or unknown. Expected only the number assignment to fail. Got: {diags:#?}"
     );
 }
 
@@ -4821,19 +4824,22 @@ foo(n => n.length, () => 'hi');
 #[test]
 fn parameterless_lambda_infers_k_from_return_type_renamed() {
     let source = r#"
-function bar<K>(consumer: Consume<K>, producer: Produce<K>) { }
+function bar<K>(consumer: Consume<K>, producer: Produce<K>): K { return producer(); }
 interface Produce<K> {
     (): K;
 }
 interface Consume<K> {
     (val: K): void;
 }
-bar(val => val.toFixed(), () => 42);
+const result = bar(val => val.toFixed(), () => 42);
+const asNumber: number = result;
+const asString: string = result;
 "#;
     let diags = relevant_diagnostics(source);
+    let ts2322_count = diagnostic_count(&diags, 2322);
     assert!(
-        diags.is_empty(),
-        "K should be inferred as number from `() => 42`; `val` must not be unknown. Got: {diags:#?}"
+        ts2322_count == 1 && lacks_diagnostic_code(&diags, 2339),
+        "K should be inferred as number, not any or unknown. Expected only the string assignment to fail. Got: {diags:#?}"
     );
 }
 
@@ -4844,13 +4850,16 @@ fn parameterless_lambda_infers_t_type_alias_variant() {
     let source = r#"
 type Getter<T> = () => T;
 type Setter<T> = (v: T) => void;
-function wire<T>(set: Setter<T>, get: Getter<T>): void { }
-wire(v => v.trim(), () => 'hello');
+function wire<T>(set: Setter<T>, get: Getter<T>): T { return get(); }
+const result = wire(v => v.trim(), () => 'hello');
+const asString: string = result;
+const asNumber: number = result;
 "#;
     let diags = relevant_diagnostics(source);
+    let ts2322_count = diagnostic_count(&diags, 2322);
     assert!(
-        diags.is_empty(),
-        "T should be inferred as string from type-alias `Getter<T>`. Got: {diags:#?}"
+        ts2322_count == 1 && lacks_diagnostic_code(&diags, 2339),
+        "T should be inferred as string from type-alias `Getter<T>`, not any or unknown. Got: {diags:#?}"
     );
 }
 
@@ -4859,13 +4868,16 @@ wire(v => v.trim(), () => 'hello');
 #[test]
 fn parameterless_lambda_infers_number_from_return() {
     let source = r#"
-function pair<T>(use: (x: T) => void, make: () => T): void { }
-pair(x => x * 2, () => 10);
+function pair<T>(use: (x: T) => void, make: () => T): T { return make(); }
+const result = pair(x => x * 2, () => 10);
+const asNumber: number = result;
+const asString: string = result;
 "#;
     let diags = relevant_diagnostics(source);
+    let ts2322_count = diagnostic_count(&diags, 2322);
     assert!(
-        diags.is_empty(),
-        "T should be inferred as number from `() => 10`. Got: {diags:#?}"
+        ts2322_count == 1,
+        "T should be inferred as number from `() => 10`, not any. Expected only the string assignment to fail. Got: {diags:#?}"
     );
 }
 
