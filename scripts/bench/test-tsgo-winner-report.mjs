@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -26,6 +26,8 @@ function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
+
+const { createTsgoWinnerReport } = await import(pathToFileURL(SCRIPT));
 
 withTempDir((dir) => {
   const input = path.join(dir, "bench.json");
@@ -143,6 +145,10 @@ withTempDir((dir) => {
       worst_row: "vite-vanilla-ts-app",
     },
   ]);
+
+  const importedReport = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
+  assert.equal(importedReport.totals.green_tsgo_winners, 3);
+  assert.equal(importedReport.worst.name, "ts-toolbelt-project");
 });
 
 const benchWorkflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");
@@ -199,4 +205,9 @@ assert.match(
   eleventyConfig,
   /"benchmark-data\/latest\.tsgo-winners\.json"/,
   "website should publish the green tsgo winner report beside benchmark-data/latest.json",
+);
+assert.match(
+  eleventyConfig,
+  /createTsgoWinnerReport\(benchmarkData, latestBenchmarkArtifact\)/,
+  "website should synthesize the green tsgo winner report when the selected benchmark has no prebuilt report",
 );
