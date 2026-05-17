@@ -1347,13 +1347,16 @@ impl QueryDatabase for QueryCache<'_> {
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator = evaluator.with_query_db(self);
         let result = evaluator.evaluate(type_id);
+        let persist_identity_conditionals = !evaluator.is_silent_depth_bailed();
 
         // PERF: Persist intermediate evaluation results from this session into
         // the long-lived eval_cache. During recursive mapped type expansion
         // (e.g., DeepPartial<T>), the evaluator computes many sub-results
         // that would otherwise be recomputed in subsequent top-level evaluate
-        // calls. Only persist entries where the result differs from the input
-        // (identity mappings are free to recompute) and skip intrinsics.
+        // calls. Most identity mappings are free to recompute, but a deferred
+        // conditional that evaluates to itself may have already paid for infer
+        // pattern checks and generic deferral logic. Keep those stable identity
+        // answers unless the evaluator hit a silent depth bailout.
         {
             let mut cache = self.eval_cache.borrow_mut();
             cache.insert(key, result);
@@ -1362,7 +1365,15 @@ impl QueryDatabase for QueryCache<'_> {
                 shared.eval_cache.insert(key, result);
             }
             for (intermediate_id, intermediate_result) in evaluator.drain_cache() {
-                if intermediate_id != intermediate_result && !intermediate_id.is_intrinsic() {
+                let should_persist_identity = persist_identity_conditionals
+                    && intermediate_id == intermediate_result
+                    && matches!(
+                        self.interner.lookup(intermediate_id),
+                        Some(TypeData::Conditional(_))
+                    );
+                if (intermediate_id != intermediate_result || should_persist_identity)
+                    && !intermediate_id.is_intrinsic()
+                {
                     let ikey = (intermediate_id, no_unchecked_indexed_access);
                     cache.entry(ikey).or_insert(intermediate_result);
                     if let Some(shared) = self.shared {

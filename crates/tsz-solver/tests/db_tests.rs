@@ -1,8 +1,8 @@
 use crate::caches::query_cache::subtype_cache_config_from_legacy_flags;
 use crate::{
-    LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryCacheStatistics, QueryDatabase,
-    RelationCacheKey, RelationCacheProbe, TupleElement, TypeData, TypeDatabase, TypeId,
-    TypeInterner, Visibility,
+    ConditionalType, LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryCacheStatistics,
+    QueryDatabase, RelationCacheKey, RelationCacheProbe, TupleElement, TypeData, TypeDatabase,
+    TypeId, TypeInterner, TypeParamInfo, Visibility,
 };
 
 impl<'a> QueryCache<'a> {
@@ -83,6 +83,43 @@ fn query_cache_caches_evaluate_and_subtype() {
     assert_eq!(db.subtype_cache_len(), 1);
     assert!(db.is_subtype_of(hello, TypeId::STRING));
     assert_eq!(db.subtype_cache_len(), 1);
+}
+
+#[test]
+fn query_cache_persists_deferred_conditional_intermediates() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let inner = interner.conditional(ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::NUMBER,
+        false_type: TypeId::BOOLEAN,
+        is_distributive: true,
+    });
+    let outer = interner.conditional(ConditionalType {
+        check_type: TypeId::STRING,
+        extends_type: TypeId::STRING,
+        true_type: inner,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    assert_eq!(db.eval_cache_len(), 0);
+    assert_eq!(db.evaluate_type(outer), inner);
+    assert_eq!(
+        db.eval_cache_len(),
+        2,
+        "root evaluation should persist the deferred conditional intermediate"
+    );
+    assert_eq!(db.evaluate_type(inner), inner);
+    assert_eq!(db.eval_cache_len(), 2);
 }
 
 /// Test cache poisoning prevention.
