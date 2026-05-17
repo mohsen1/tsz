@@ -261,6 +261,83 @@ const rejected: CC1 = "anything";
 }
 
 #[test]
+fn local_capitalize_alias_shadows_string_intrinsic() {
+    let source = r#"
+type MyCapitalize<S extends string> = Capitalize<S>;
+interface CapitalizedChars {
+  f: "F";
+}
+type Capitalize<S> = S extends `${infer C}${infer T}`
+  ? `${C extends keyof CapitalizedChars ? CapitalizedChars[C] : C}${T}`
+  : S;
+
+const a: MyCapitalize<"a"> = "A";
+const f: MyCapitalize<"f"> = "F";
+
+export {};
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322_errors.len(),
+        1,
+        "local Capitalize alias should shadow the compiler intrinsic and reject only the non-remapped letter. Actual diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.start, d.length, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn local_uppercase_alias_shadows_string_intrinsic() {
+    let source = r#"
+type UseUppercase<S extends string> = Uppercase<S>;
+type Uppercase<S> = S;
+
+const rejected: UseUppercase<"a"> = "A";
+const accepted: UseUppercase<"a"> = "a";
+
+export {};
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322_errors.len(),
+        1,
+        "local Uppercase alias should shadow the compiler intrinsic. Actual diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.start, d.length, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn unshadowed_string_intrinsic_still_uses_compiler_mapping() {
+    let source = r#"
+type BuiltinUpper = Uppercase<"a">;
+
+const accepted: BuiltinUpper = "A";
+const rejected: BuiltinUpper = "a";
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    let ts2322_errors: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322_errors.len(),
+        1,
+        "unshadowed Uppercase should still use compiler intrinsic mapping. Actual diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.start, d.length, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn chained_infer_extends_preserves_numeric_literal() {
     let source = r#"
 type GetPromiseValue<T> = T extends Promise<infer V extends string>
