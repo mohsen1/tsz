@@ -133,7 +133,21 @@ impl<'a> CheckerState<'a> {
                         .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                         .collect();
                     if !type_args.is_empty() {
-                        return self.ctx.types.application(resolved, type_args);
+                        let base = self
+                            .resolve_import_type_target_symbol(call_idx, type_name_idx)
+                            .and_then(|target_sym_id| {
+                                let symbol_name = self
+                                    .get_cross_file_symbol(target_sym_id)
+                                    .or_else(|| self.ctx.binder.get_symbol(target_sym_id))
+                                    .map(|symbol| symbol.escaped_name.clone())?;
+                                let def_id = self.ctx.get_or_create_def_id_for_symbol_name(
+                                    target_sym_id,
+                                    &symbol_name,
+                                );
+                                Some(self.ctx.types.lazy(def_id))
+                            })
+                            .unwrap_or(resolved);
+                        return self.ctx.types.application(base, type_args);
                     }
                 }
                 return resolved;
