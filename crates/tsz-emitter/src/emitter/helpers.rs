@@ -705,6 +705,19 @@ impl<'a> Printer<'a> {
         name
     }
 
+    pub(super) fn blocked_disposable_names_for_transform(&self) -> Vec<String> {
+        self.file_identifiers
+            .iter()
+            .chain(self.generated_temp_names.iter())
+            .chain(
+                self.temp_scope_stack
+                    .iter()
+                    .flat_map(|state| state.generated_temp_names.iter()),
+            )
+            .cloned()
+            .collect()
+    }
+
     pub(super) fn preallocate_temp_names(&mut self, count: usize) {
         for _ in 0..count {
             let name = self.generate_fresh_temp_name();

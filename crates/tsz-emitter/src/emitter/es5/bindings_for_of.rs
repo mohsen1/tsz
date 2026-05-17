@@ -284,7 +284,11 @@ impl<'a> Printer<'a> {
         if let Some(using_info) = using_info {
             // ES5 for-of with `using`: emit temp binding + dispose wrapper
             // Emit: var d1_1 = _b[_i];
-            let var_name = using_info.binding_name;
+            let var_name = if using_info.recovered_missing_binding {
+                self.get_temp_var_name()
+            } else {
+                using_info.binding_name
+            };
             let using_async = using_info.using_async;
             let (env_name, error_name, result_name) = self.next_disposable_env_names();
             let temp_var_name = format!("{}_{}", var_name, self.next_disposable_env_id - 1);

@@ -2200,10 +2200,7 @@ impl<'a> Printer<'a> {
 
         // Check if the initializer is a `using` declaration that needs dispose lowering.
         let using_info = if !self.ctx.options.target.supports_es2025() {
-            crate::transforms::emit_utils::for_of_using_declaration_info(
-                self.arena,
-                for_in_of.initializer,
-            )
+            crate::transforms::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
         } else {
             None
         };
@@ -2214,7 +2211,11 @@ impl<'a> Printer<'a> {
             // Then: _d = false;
             // Then: const d1_1 = _c;
             // Then: const env = ...; try { const d1 = __addDisposable(env, d1_1, ...); body } catch/finally
-            let var_name = using_info.binding_name;
+            let var_name = if using_info.recovered_missing_binding {
+                self.get_temp_var_name()
+            } else {
+                using_info.binding_name
+            };
             let using_async = using_info.using_async;
             let value_temp = loop_result_name.clone();
 
