@@ -1374,7 +1374,7 @@ impl<'a> CheckerState<'a> {
         root: NodeIndex,
     ) -> bool {
         ["Array", "ReadonlyArray"].iter().any(|name| {
-            delegate_binder.file_locals.get(*name).is_some()
+            delegate_binder.file_locals.get(name).is_some()
                 && Self::source_file_type_node_contains_identifier_name(arena, root, name)
         })
     }
