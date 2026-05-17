@@ -1,4 +1,5 @@
 //! Tests for type expression parsing in the parser.
+use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::{parse_source, parse_source_named};
 
 #[test]
@@ -371,34 +372,234 @@ fn jsdoc_legacy_constructor_function_suffix_does_not_cascade() {
 #[test]
 fn parse_type_predicate_does_not_overshoot_into_following_arrow() {
     let source = "const f = (x: any): x is string => true;";
-    let (parser, _root) = crate::parser::test_fixture::parse_source(source);
+    let (parser, _root) = parse_source(source);
     assert!(
         parser.get_diagnostics().is_empty(),
         "expected no diagnostics, got {:?}",
         parser.get_diagnostics()
     );
+    assert_span_on(
+        &parser,
+        source,
+        syntax_kind_ext::TYPE_PREDICATE,
+        "x is string",
+    );
+}
+
+/// Assert the first node of `kind` at `expected_text` has the correct span.
+/// Error messages include the full source for debugging.
+fn assert_span_on(
+    parser: &crate::parser::ParserState,
+    source: &str,
+    kind: u16,
+    expected_text: &str,
+) {
     let arena = &parser.arena;
-    let predicate_text = "x is string";
-    let predicate_offset = source.find(predicate_text).expect("predicate in source");
-    let predicate_end = predicate_offset + predicate_text.len();
+    let expected_start = source
+        .find(expected_text)
+        .unwrap_or_else(|| panic!("expected_text {expected_text:?} not found in {source:?}"));
+    let expected_end = expected_start + expected_text.len();
+
     let mut found = false;
-    for index in 0..arena.len() {
-        let Some(node) = arena.get(crate::parser::NodeIndex(index as u32)) else {
+    for i in 0..arena.len() {
+        let Some(node) = arena.get(crate::parser::NodeIndex(i as u32)) else {
             continue;
         };
-        if node.kind == crate::parser::syntax_kind_ext::TYPE_PREDICATE
-            && node.pos as usize == predicate_offset
-        {
+        if node.kind == kind && node.pos as usize == expected_start {
             assert_eq!(
-                node.end as usize, predicate_end,
-                "TypePredicate node end {} should equal `string`'s end position {} (anchored on inner type, not next token)",
-                node.end, predicate_end
+                node.end as usize, expected_end,
+                "span mismatch for kind={kind} in {source:?}: got [{}..{}], expected [{}..{}] ({expected_text:?})",
+                node.pos, node.end, expected_start, expected_end
             );
             found = true;
+            break;
         }
     }
     assert!(
         found,
-        "expected to find a TypePredicate node at {predicate_offset}"
+        "no node of kind={kind} found at offset {expected_start} in {source:?}"
+    );
+}
+
+fn assert_span(source: &str, kind: u16, expected_text: &str) {
+    let (parser, _) = parse_source(source);
+    assert_span_on(&parser, source, kind, expected_text);
+}
+
+// --- composite type node span tests ---
+// Each test verifies that the composite type node's end does NOT overshoot into
+// the following token (e.g. `;`). Names are varied to prove the fix is structural.
+
+#[test]
+fn union_type_span_excludes_trailing_semicolon() {
+    assert_span("type A = X | Y;", syntax_kind_ext::UNION_TYPE, "X | Y");
+}
+
+#[test]
+fn union_type_span_varies_names() {
+    assert_span(
+        "type A = Foo | Bar;",
+        syntax_kind_ext::UNION_TYPE,
+        "Foo | Bar",
+    );
+}
+
+#[test]
+fn union_type_span_three_members() {
+    assert_span(
+        "type A = P | Q | R;",
+        syntax_kind_ext::UNION_TYPE,
+        "P | Q | R",
+    );
+}
+
+#[test]
+fn intersection_type_span_excludes_trailing_semicolon() {
+    assert_span(
+        "type A = X & Y;",
+        syntax_kind_ext::INTERSECTION_TYPE,
+        "X & Y",
+    );
+}
+
+#[test]
+fn intersection_type_span_varies_names() {
+    assert_span(
+        "type A = Alpha & Beta;",
+        syntax_kind_ext::INTERSECTION_TYPE,
+        "Alpha & Beta",
+    );
+}
+
+#[test]
+fn array_type_span_excludes_trailing_semicolon() {
+    assert_span("type A = X[];", syntax_kind_ext::ARRAY_TYPE, "X[]");
+}
+
+#[test]
+fn array_type_span_varies_names() {
+    assert_span(
+        "type A = MyItem[];",
+        syntax_kind_ext::ARRAY_TYPE,
+        "MyItem[]",
+    );
+}
+
+#[test]
+fn indexed_access_type_span_excludes_trailing_semicolon() {
+    assert_span(
+        "type A = T[K];",
+        syntax_kind_ext::INDEXED_ACCESS_TYPE,
+        "T[K]",
+    );
+}
+
+#[test]
+fn indexed_access_type_span_varies_names() {
+    assert_span(
+        "type A = Obj[Prop];",
+        syntax_kind_ext::INDEXED_ACCESS_TYPE,
+        "Obj[Prop]",
+    );
+}
+
+#[test]
+fn function_type_span_excludes_trailing_semicolon() {
+    assert_span(
+        "type A = () => X;",
+        syntax_kind_ext::FUNCTION_TYPE,
+        "() => X",
+    );
+}
+
+#[test]
+fn function_type_span_varies_return_type_name() {
+    assert_span(
+        "type A = () => MyResult;",
+        syntax_kind_ext::FUNCTION_TYPE,
+        "() => MyResult",
+    );
+}
+
+#[test]
+fn constructor_type_span_excludes_trailing_semicolon() {
+    assert_span(
+        "type A = new () => X;",
+        syntax_kind_ext::CONSTRUCTOR_TYPE,
+        "new () => X",
+    );
+}
+
+#[test]
+fn constructor_type_span_varies_names() {
+    assert_span(
+        "type A = new (arg: Param) => Instance;",
+        syntax_kind_ext::CONSTRUCTOR_TYPE,
+        "new (arg: Param) => Instance",
+    );
+}
+
+#[test]
+fn conditional_type_span_excludes_trailing_semicolon() {
+    assert_span(
+        "type A = X extends Y ? P : Q;",
+        syntax_kind_ext::CONDITIONAL_TYPE,
+        "X extends Y ? P : Q",
+    );
+}
+
+#[test]
+fn conditional_type_span_varies_names() {
+    assert_span(
+        "type A = Input extends Base ? TrueResult : FalseResult;",
+        syntax_kind_ext::CONDITIONAL_TYPE,
+        "Input extends Base ? TrueResult : FalseResult",
+    );
+}
+
+#[test]
+fn tuple_type_span_excludes_trailing_semicolon() {
+    assert_span("type A = [X, Y];", syntax_kind_ext::TUPLE_TYPE, "[X, Y]");
+}
+
+#[test]
+fn tuple_type_span_varies_names() {
+    assert_span(
+        "type A = [First, Second, Third];",
+        syntax_kind_ext::TUPLE_TYPE,
+        "[First, Second, Third]",
+    );
+}
+
+#[test]
+fn parenthesized_type_span_excludes_trailing_semicolon() {
+    assert_span("type A = (X);", syntax_kind_ext::PARENTHESIZED_TYPE, "(X)");
+}
+
+#[test]
+fn parenthesized_type_span_varies_names() {
+    assert_span(
+        "type A = (MyWrapped);",
+        syntax_kind_ext::PARENTHESIZED_TYPE,
+        "(MyWrapped)",
+    );
+}
+
+#[test]
+fn infer_type_span_excludes_trailing_token() {
+    // infer only appears inside conditional types
+    assert_span(
+        "type A = X extends infer U ? U : never;",
+        syntax_kind_ext::INFER_TYPE,
+        "infer U",
+    );
+}
+
+#[test]
+fn infer_type_span_varies_names() {
+    assert_span(
+        "type A = X extends infer Captured ? Captured : never;",
+        syntax_kind_ext::INFER_TYPE,
+        "infer Captured",
     );
 }
