@@ -61,6 +61,26 @@ function candidateManifest(generatedAssertions = 1) {
   };
 }
 
+function cleanCandidateManifest({
+  tscAcceptedAssertions = 1,
+  referencing = tscAcceptedAssertions,
+  missing = 0,
+  totalCandidates = tscAcceptedAssertions,
+  rejected = totalCandidates - tscAcceptedAssertions,
+} = {}) {
+  return {
+    fixture: "type-challenges-assertions-tsc-clean",
+    sources: candidateSources(),
+    counts: {
+      totalCandidates,
+      tscAcceptedAssertions,
+      tscAcceptedAssertionsReferencingSolutionDeclaration: referencing,
+      tscAcceptedAssertionsMissingSolutionDeclarationReference: missing,
+      tscRejectedAssertions: rejected,
+    },
+  };
+}
+
 function runCompatibility({ dir, classification, cleanSubsetManifest = null, cleanSubsetClassification = null }) {
   const candidateDir = path.join(dir, "type-challenges-assertions");
   const classificationPath = path.join(candidateDir, "classification.json");
@@ -244,7 +264,13 @@ withTempDir((dir) => {
     },
     cleanSubsetClassification: {
       fixture: "type-challenges-assertion-classification",
-      candidateManifest: candidateManifest(1),
+      candidateManifest: cleanCandidateManifest({
+        totalCandidates: 2,
+        tscAcceptedAssertions: 1,
+        referencing: 1,
+        missing: 0,
+        rejected: 1,
+      }),
       compilers: {
         tsc: {
           status: "pass",
@@ -782,10 +808,13 @@ withTempDir((dir) => {
     },
     cleanSubsetClassification: {
       fixture: "type-challenges-assertion-classification",
-      candidateManifest: {
-        sources: candidateSources(),
-        counts: { generatedAssertions: 2 },
-      },
+      candidateManifest: cleanCandidateManifest({
+        totalCandidates: 2,
+        tscAcceptedAssertions: 2,
+        referencing: 2,
+        missing: 0,
+        rejected: 0,
+      }),
       compilers: {
         tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 2 } },
         tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 2 } },
@@ -796,7 +825,7 @@ withTempDir((dir) => {
   assert.equal(result.status, 1);
   assert.match(
     result.stderr,
-    /classification generatedAssertions \(2\) does not match manifest tscAcceptedAssertions \(1\)/,
+    /classification tscAcceptedAssertions \(2\) does not match manifest tscAcceptedAssertions \(1\)/,
   );
   assert.equal(fs.existsSync(outFile), false);
 });
@@ -823,7 +852,13 @@ withTempDir((dir) => {
     },
     cleanSubsetClassification: {
       fixture: "type-challenges-assertion-classification",
-      candidateManifest: candidateManifest(1),
+      candidateManifest: cleanCandidateManifest({
+        totalCandidates: 2,
+        tscAcceptedAssertions: 1,
+        referencing: 1,
+        missing: 0,
+        rejected: 1,
+      }),
       compilers: {
         tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 1 } },
         tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 2 } },
