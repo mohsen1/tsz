@@ -361,10 +361,7 @@ impl<'a> CheckerState<'a> {
             let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) else {
                 continue;
             };
-            // Re-exports reference the target module's surface, not new local declarations.
-            if export_decl.module_specifier.is_some() {
-                continue;
-            }
+            let is_reexport = export_decl.module_specifier.is_some();
             let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) else {
                 continue;
             };
@@ -401,6 +398,19 @@ impl<'a> CheckerState<'a> {
                 let conflict_decls =
                     self.module_augmentation_conflict_declarations_for_current_file(&export_name);
                 if conflict_decls.is_empty() {
+                    continue;
+                }
+
+                // Re-exported interfaces reference the target module's surface,
+                // not new local declarations, and can be augmented by interface
+                // declarations. Keep value-space conflicts (for example a
+                // type-only function re-export versus an augmentation `const`)
+                // visible so they still report TS2451/TS2300.
+                if is_reexport
+                    && conflict_decls.iter().all(|(_, flags, _, _, _)| {
+                        (*flags & tsz_binder::symbol_flags::INTERFACE) != 0
+                    })
+                {
                     continue;
                 }
 
