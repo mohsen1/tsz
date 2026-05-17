@@ -1,5 +1,6 @@
 use super::type_node::TypeNodeChecker;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
@@ -82,6 +83,46 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         let lazy_type_params_resolver =
             |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
+        let computed_unique_symbol_name =
+            |expr_idx: NodeIndex| -> Option<tsz_common::interner::Atom> {
+                let sym_id = tsz_binder::SymbolId(value_resolver(expr_idx)?);
+                let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                let mut value_decl = if symbol.value_declaration.is_some() {
+                    symbol.value_declaration
+                } else {
+                    symbol.primary_declaration()?
+                };
+                let mut value_node = self.ctx.arena.get(value_decl)?;
+                if value_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                    value_decl = self.ctx.arena.get_extended(value_decl)?.parent;
+                    value_node = self.ctx.arena.get(value_decl)?;
+                }
+                if value_node.kind != tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                    || !self.ctx.arena.is_const_variable_declaration(value_decl)
+                {
+                    return None;
+                }
+
+                let decl = self.ctx.arena.get_variable_declaration(value_node)?;
+                let has_unique_annotation = decl.type_annotation.is_some()
+                    && crate::types_domain::unique_symbol_arena::is_unique_symbol_type_annotation(
+                        self.ctx.arena,
+                        decl.type_annotation,
+                    );
+                let has_symbol_initializer = decl.initializer.is_some()
+                    && crate::types_domain::unique_symbol_arena::is_symbol_call_initializer(
+                        self.ctx.arena,
+                        decl.initializer,
+                    );
+
+                (has_unique_annotation || has_symbol_initializer).then(|| {
+                    self.ctx
+                        .types
+                        .intern_string(&format!("__unique_{}", sym_id.0))
+                })
+            };
+        let computed_symbol_name_resolver =
+            |expr_idx: NodeIndex| -> bool { computed_unique_symbol_name(expr_idx).is_some() };
         let name_def_id_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
             if !type_name.contains('.') && self.ctx.type_parameter_scope.contains_key(type_name) {
                 return None;
@@ -153,6 +194,78 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 return Some(tuple_type);
             }
 
+            let const_symbol_type_query = || -> Option<TypeId> {
+                let sym_id = tsz_binder::SymbolId(value_resolver(expr_name_idx)?);
+                let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                let mut value_decl = if symbol.value_declaration.is_some() {
+                    symbol.value_declaration
+                } else {
+                    symbol.primary_declaration()?
+                };
+                let mut value_node = self.ctx.arena.get(value_decl)?;
+                if value_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                    value_decl = self.ctx.arena.get_extended(value_decl)?.parent;
+                    value_node = self.ctx.arena.get(value_decl)?;
+                }
+                if value_node.kind != tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                    || !self.ctx.arena.is_const_variable_declaration(value_decl)
+                {
+                    return None;
+                }
+
+                let decl = self.ctx.arena.get_variable_declaration(value_node)?;
+                let initializer = self.ctx.arena.skip_parenthesized(decl.initializer);
+                let init_node = self.ctx.arena.get(initializer)?;
+                if init_node.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION {
+                    return None;
+                }
+                let call = self.ctx.arena.get_call_expr(init_node)?;
+                let callee_node = self.ctx.arena.get(call.expression)?;
+                let symbol_callee =
+                    if let Some(callee_ident) = self.ctx.arena.get_identifier(callee_node) {
+                        callee_ident.escaped_text == "Symbol"
+                            && self
+                                .resolve_value_symbol_with_libs(call.expression)
+                                .map(tsz_binder::SymbolId)
+                                .is_some_and(|callee_sym_id| {
+                                    self.ctx.symbol_is_from_actual_or_cloned_lib(callee_sym_id)
+                                        || self.ctx.symbol_is_from_lib(callee_sym_id)
+                                })
+                    } else if callee_node.kind
+                        == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    {
+                        let access = self.ctx.arena.get_access_expr(callee_node)?;
+                        self.ctx
+                            .arena
+                            .get_identifier_text(access.expression)
+                            .is_some_and(|name| name == "Symbol")
+                            && self
+                                .ctx
+                                .arena
+                                .get_identifier_text(access.name_or_argument)
+                                .is_some_and(|name| name == "for")
+                            && self
+                                .resolve_value_symbol_with_libs(access.expression)
+                                .map(tsz_binder::SymbolId)
+                                .is_some_and(|callee_sym_id| {
+                                    self.ctx.symbol_is_from_actual_or_cloned_lib(callee_sym_id)
+                                        || self.ctx.symbol_is_from_lib(callee_sym_id)
+                                })
+                    } else {
+                        false
+                    };
+
+                symbol_callee.then(|| {
+                    self.ctx
+                        .types
+                        .unique_symbol(tsz_solver::SymbolRef(sym_id.0))
+                })
+            };
+
+            if let Some(symbol_type) = const_symbol_type_query() {
+                return Some(symbol_type);
+            }
+
             if let Some(property_type) = self.value_property_type_query(expr_name_idx) {
                 return Some(property_type);
             }
@@ -195,6 +308,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             &value_resolver,
         )
         .with_strict_null_checks(self.ctx.strict_null_checks())
+        .with_computed_name_resolver(&computed_unique_symbol_name)
+        .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
         .with_name_def_id_resolver(&name_def_id_resolver)
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_type_query_override(&type_query_override);

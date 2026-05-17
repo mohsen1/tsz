@@ -4,7 +4,9 @@
 //! Including homomorphic mapped types that preserve modifiers.
 
 use crate::TypeDatabase;
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{
+    TypeSubstitution, instantiate_type, instantiate_type_preserving,
+};
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::Visibility;
@@ -87,7 +89,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         );
 
         let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
-        let remapped = instantiate_type(self.interner(), name_type, &subst);
+        let remapped = instantiate_type_preserving(self.interner(), name_type, &subst);
 
         tracing::trace!(
             remapped_before_eval = remapped.0,
@@ -552,7 +554,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 // Substitute into the template
                 let instantiated_template =
-                    instantiate_type(self.interner(), mapped.template, &subst);
+                    instantiate_type_preserving(self.interner(), mapped.template, &subst);
                 let evaluated = self.evaluate(instantiated_template);
 
                 // Check if evaluation hit depth limit
@@ -650,7 +652,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             } else {
                 subst.clear();
                 subst.insert(mapped.type_param.name, *symbol_key_id);
-                let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
+                let instantiated =
+                    instantiate_type_preserving(self.interner(), mapped.template, &subst);
                 let evaluated = self.evaluate(instantiated);
                 if evaluated == TypeId::ERROR && self.is_depth_exceeded() {
                     return TypeId::ERROR;
@@ -848,7 +851,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             subst.insert(mapped.type_param.name, member);
 
             // Evaluate the `as` clause to get the remapped key
-            let remapped_key = self.evaluate(instantiate_type(self.interner(), name_type, &subst));
+            let remapped_key = self.evaluate(instantiate_type_preserving(
+                self.interner(),
+                name_type,
+                &subst,
+            ));
 
             // If remapped key is `never`, skip this member (filtered out)
             if remapped_key == TypeId::NEVER {
@@ -875,7 +882,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             // Evaluate the template with the substitution
-            let instantiated_template = instantiate_type(self.interner(), mapped.template, &subst);
+            let instantiated_template =
+                instantiate_type_preserving(self.interner(), mapped.template, &subst);
             let property_type = self.evaluate(instantiated_template);
 
             if property_type == TypeId::ERROR && self.is_depth_exceeded() {

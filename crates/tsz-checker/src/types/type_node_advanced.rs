@@ -16,7 +16,7 @@ use super::type_node_helpers::{
     is_typeof_global_this_type_node,
 };
 use super::unique_symbol_arena::has_declared_unique_symbol_owner;
-use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -1223,6 +1223,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         return narrowed;
                     }
                 }
+            }
+
+            if let Some(value_type) = self.declared_type_for_type_query_symbol(sym_id) {
+                if let Some(type_arguments) = &type_arguments {
+                    return self
+                        .apply_instantiation_expression_type_arguments(value_type, type_arguments);
+                }
+                return value_type;
             }
 
             let factory = self.ctx.types.factory();

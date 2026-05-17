@@ -28,9 +28,75 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///   `MutableKeys` built on top of it) able to distinguish properties
     ///   by mutability.
     fn conditional_extends_types_equivalent(&mut self, left: TypeId, right: TypeId) -> bool {
-        self.with_extends_clause_identity_mode(|sub| {
+        if self.with_extends_clause_identity_mode(|sub| {
             sub.check_subtype(left, right).is_true() && sub.check_subtype(right, left).is_true()
-        })
+        }) {
+            return true;
+        }
+
+        let left_eval = self.evaluate_type(left);
+        let right_eval = self.evaluate_type(right);
+        if (left_eval != left || right_eval != right)
+            && self.with_extends_clause_identity_mode(|sub| {
+                sub.check_subtype(left_eval, right_eval).is_true()
+                    && sub.check_subtype(right_eval, left_eval).is_true()
+            })
+        {
+            return true;
+        }
+
+        if !self.identity_fallback_property_modifiers_match(left_eval, right_eval) {
+            return false;
+        }
+
+        let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
+        fallback.check_subtype(left_eval, right_eval).is_true()
+            && fallback.check_subtype(right_eval, left_eval).is_true()
+    }
+
+    fn identity_fallback_property_modifiers_match(&self, left: TypeId, right: TypeId) -> bool {
+        let left_members = match self.interner.lookup(left) {
+            Some(TypeData::Union(list_id)) => self.interner.type_list(list_id).to_vec(),
+            _ => vec![left],
+        };
+        let right_members = match self.interner.lookup(right) {
+            Some(TypeData::Union(list_id)) => self.interner.type_list(list_id).to_vec(),
+            _ => vec![right],
+        };
+
+        for left_member in &left_members {
+            for right_member in &right_members {
+                let left_shape = match self.interner.lookup(*left_member) {
+                    Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                        Some(self.interner.object_shape(shape_id))
+                    }
+                    _ => None,
+                };
+                let right_shape = match self.interner.lookup(*right_member) {
+                    Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                        Some(self.interner.object_shape(shape_id))
+                    }
+                    _ => None,
+                };
+                let (Some(left_shape), Some(right_shape)) = (left_shape, right_shape) else {
+                    continue;
+                };
+                for left_prop in &left_shape.properties {
+                    if let Some(right_prop) = right_shape
+                        .properties
+                        .iter()
+                        .find(|prop| prop.name == left_prop.name)
+                        && (left_prop.optional != right_prop.optional
+                            || left_prop.readonly != right_prop.readonly
+                            || left_prop.is_symbol_named != right_prop.is_symbol_named)
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        true
     }
 
     /// Run `f` with the stricter property-modifier identity rules used by

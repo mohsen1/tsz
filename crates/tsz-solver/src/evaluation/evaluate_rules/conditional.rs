@@ -9,7 +9,8 @@ use crate::instantiation::instantiate::{
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
-    ConditionalType, ObjectShapeId, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
+    ConditionalType, ObjectShape, ObjectShapeId, PropertyInfo, TupleElement, TypeData, TypeId,
+    TypeParamInfo,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
@@ -24,6 +25,56 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// This allows patterns like `type Loop<T> = T extends [...infer R] ? Loop<R> : never`
     /// to work with up to 1000 recursive calls instead of being limited to `MAX_EVALUATE_DEPTH`.
     const MAX_TAIL_RECURSION_DEPTH: usize = 1000;
+
+    fn normalize_conditional_object_operand(&mut self, type_id: TypeId) -> TypeId {
+        let (shape_id, with_index) = match self.interner().lookup(type_id) {
+            Some(TypeData::Object(shape_id)) => (shape_id, false),
+            Some(TypeData::ObjectWithIndex(shape_id)) => (shape_id, true),
+            _ => return type_id,
+        };
+
+        let shape = self.interner().object_shape(shape_id).clone();
+        let mut changed = false;
+        let mut properties = shape.properties.clone();
+        for prop in &mut properties {
+            let read_type = self.evaluate(prop.type_id);
+            let write_type = self.evaluate(prop.write_type);
+            changed |= read_type != prop.type_id || write_type != prop.write_type;
+            prop.type_id = read_type;
+            prop.write_type = write_type;
+        }
+
+        let mut string_index = shape.string_index;
+        if let Some(index) = string_index.as_mut() {
+            let value_type = self.evaluate(index.value_type);
+            changed |= value_type != index.value_type;
+            index.value_type = value_type;
+        }
+
+        let mut number_index = shape.number_index;
+        if let Some(index) = number_index.as_mut() {
+            let value_type = self.evaluate(index.value_type);
+            changed |= value_type != index.value_type;
+            index.value_type = value_type;
+        }
+
+        if !changed {
+            return type_id;
+        }
+
+        if with_index {
+            self.interner().object_with_index(ObjectShape {
+                flags: shape.flags,
+                properties,
+                string_index,
+                number_index,
+                symbol: shape.symbol,
+            })
+        } else {
+            self.interner()
+                .object_with_flags_and_symbol(properties, shape.flags, shape.symbol)
+        }
+    }
 
     fn conditional_subtype_checker(&self) -> SubtypeChecker<'a, R> {
         let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
@@ -118,8 +169,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.interner().conditional(*cond);
             }
 
-            let mut check_type = self.evaluate(cond.check_type);
-            let extends_type = self.evaluate(cond.extends_type);
+            let evaluated_check = self.evaluate(cond.check_type);
+            let mut check_type = self.normalize_conditional_object_operand(evaluated_check);
+            let evaluated_extends = self.evaluate(cond.extends_type);
+            let extends_type = self.normalize_conditional_object_operand(evaluated_extends);
             if matches!(
                 self.interner().lookup(check_type),
                 Some(TypeData::Application(_))

@@ -1237,8 +1237,11 @@ impl<'a> TypeInstantiator<'a> {
                             }
                             let mut member_subst = self.substitution.clone();
                             member_subst.insert(info.name, member);
-                            let instantiated =
-                                instantiate_type(self.interner, cond_type, &member_subst);
+                            let instantiated = if self.preserve_unsubstituted_type_params {
+                                instantiate_type_preserving(self.interner, cond_type, &member_subst)
+                            } else {
+                                instantiate_type(self.interner, cond_type, &member_subst)
+                            };
                             if instantiated == TypeId::ERROR {
                                 self.depth_exceeded = true;
                                 return TypeId::ERROR;
@@ -1282,8 +1285,11 @@ impl<'a> TypeInstantiator<'a> {
                             }
                             let mut member_subst = self.substitution.clone();
                             member_subst.insert(info.name, member);
-                            let instantiated =
-                                instantiate_type(self.interner, cond_type, &member_subst);
+                            let instantiated = if self.preserve_unsubstituted_type_params {
+                                instantiate_type_preserving(self.interner, cond_type, &member_subst)
+                            } else {
+                                instantiate_type(self.interner, cond_type, &member_subst)
+                            };
                             // Check if instantiation hit depth limit
                             if instantiated == TypeId::ERROR {
                                 self.depth_exceeded = true;
@@ -1356,19 +1362,28 @@ impl<'a> TypeInstantiator<'a> {
                             member_subst.insert(tp_info.name, member);
                             let new_constraint =
                                 instantiate_type(self.interner, mapped.constraint, &member_subst);
-                            let new_template =
-                                instantiate_type(self.interner, mapped.template, &member_subst);
+                            let new_template = instantiate_type_preserving(
+                                self.interner,
+                                mapped.template,
+                                &member_subst,
+                            );
                             let new_name_type = mapped
                                 .name_type
-                                .map(|t| instantiate_type(self.interner, t, &member_subst));
+                                .map(|t| {
+                                    instantiate_type_preserving(self.interner, t, &member_subst)
+                                });
                             let new_param_constraint = mapped
                                 .type_param
                                 .constraint
-                                .map(|c| instantiate_type(self.interner, c, &member_subst));
+                                .map(|c| {
+                                    instantiate_type_preserving(self.interner, c, &member_subst)
+                                });
                             let new_param_default = mapped
                                 .type_param
                                 .default
-                                .map(|d| instantiate_type(self.interner, d, &member_subst));
+                                .map(|d| {
+                                    instantiate_type_preserving(self.interner, d, &member_subst)
+                                });
                             results.push(self.interner.mapped(MappedType {
                                 constraint: new_constraint,
                                 template: new_template,
@@ -1656,11 +1671,20 @@ impl<'a> TypeInstantiator<'a> {
                     "instantiate Mapped: about to instantiate constraint"
                 );
                 let new_constraint = self.instantiate(mapped.constraint);
-                let new_template = self.instantiate(mapped.template);
-                let new_name_type = mapped.name_type.map(|t| self.instantiate(t));
-                let new_param_constraint =
-                    mapped.type_param.constraint.map(|c| self.instantiate(c));
-                let new_param_default = mapped.type_param.default.map(|d| self.instantiate(d));
+                let new_template = instantiate_type_preserving(
+                    self.interner,
+                    mapped.template,
+                    &self.substitution,
+                );
+                let new_name_type = mapped.name_type.map(|t| {
+                    instantiate_type_preserving(self.interner, t, &self.substitution)
+                });
+                let new_param_constraint = mapped.type_param.constraint.map(|c| {
+                    instantiate_type_preserving(self.interner, c, &self.substitution)
+                });
+                let new_param_default = mapped.type_param.default.map(|d| {
+                    instantiate_type_preserving(self.interner, d, &self.substitution)
+                });
 
                 self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
@@ -1718,11 +1742,14 @@ impl<'a> TypeInstantiator<'a> {
                 // `undefined extends T[P] ? never : P` where the extends_type is an
                 // IndexAccess that may contain Lazy internally but can be evaluated.
                 let mapped_type = self.interner.mapped(instantiated);
-                let has_lazy_extends = if let Some(cond) =
+                let has_lazy_conditional_boundary = if let Some(cond) =
                     crate::type_queries::get_conditional_type(self.interner, new_template)
                 {
                     matches!(
                         self.interner.lookup(cond.extends_type),
+                        Some(crate::types::TypeData::Lazy(_))
+                    ) || matches!(
+                        self.interner.lookup(cond.check_type),
                         Some(crate::types::TypeData::Lazy(_))
                     )
                 } else {
@@ -1744,7 +1771,7 @@ impl<'a> TypeInstantiator<'a> {
                 let resolver_dependent_constraint =
                     mapped_constraint_needs_resolver(self.interner, new_constraint);
                 if self.preserve_meta_types
-                    || has_lazy_extends
+                    || has_lazy_conditional_boundary
                     || has_lazy_application
                     || name_type_has_lazy_application
                     || resolver_dependent_constraint

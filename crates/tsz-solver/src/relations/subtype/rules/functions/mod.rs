@@ -12,6 +12,7 @@
 
 use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::relations::compat::CompatChecker;
 use crate::type_param_info;
 use crate::types::{
     CallSignature, FunctionShape, InferencePriority, ParamInfo, TypeData, TypeId, TypeParamInfo,
@@ -765,6 +766,82 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        if let (
+            Some(TypeData::Conditional(source_cond_id)),
+            Some(TypeData::Conditional(target_cond_id)),
+        ) = (
+            self.interner.lookup(source_return),
+            self.interner.lookup(target_return),
+        ) {
+            let source_cond = self.interner.get_conditional(source_cond_id);
+            let target_cond = self.interner.get_conditional(target_cond_id);
+            if source_cond.is_distributive == target_cond.is_distributive
+                && source_cond.check_type == target_cond.check_type
+                && source_cond.true_type == target_cond.true_type
+                && source_cond.false_type == target_cond.false_type
+            {
+                let source_extends_eval = self.evaluate_type(source_cond.extends_type);
+                let target_extends_eval = self.evaluate_type(target_cond.extends_type);
+                if (source_extends_eval == TypeId::ANY) != (target_extends_eval == TypeId::ANY) {
+                    return SubtypeResult::False;
+                }
+                if self
+                    .check_subtype(source_cond.extends_type, target_cond.extends_type)
+                    .is_true()
+                    && self
+                        .check_subtype(target_cond.extends_type, source_cond.extends_type)
+                        .is_true()
+                {
+                    return SubtypeResult::True;
+                }
+                let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
+                if fallback
+                    .check_subtype(source_cond.extends_type, target_cond.extends_type)
+                    .is_true()
+                    && fallback
+                        .check_subtype(target_cond.extends_type, source_cond.extends_type)
+                        .is_true()
+                {
+                    return SubtypeResult::True;
+                }
+                if source_extends_eval == target_extends_eval
+                    || self.same_evaluated_union_members(source_extends_eval, target_extends_eval)
+                    || self.object_shapes_equivalent_for_conditional_return(
+                        source_extends_eval,
+                        target_extends_eval,
+                    )
+                    || self
+                        .union_contains_equivalent_member(source_extends_eval, target_extends_eval)
+                    || self
+                        .union_contains_equivalent_member(target_extends_eval, source_extends_eval)
+                {
+                    return SubtypeResult::True;
+                }
+                let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
+                if fallback
+                    .check_subtype(source_extends_eval, target_extends_eval)
+                    .is_true()
+                    && fallback
+                        .check_subtype(target_extends_eval, source_extends_eval)
+                        .is_true()
+                {
+                    return SubtypeResult::True;
+                }
+                let mut compat = CompatChecker::with_resolver(self.interner, self.resolver);
+                compat.set_strict_function_types(self.strict_function_types);
+                if compat.is_assignable(source_cond.extends_type, target_cond.extends_type)
+                    && compat.is_assignable(target_cond.extends_type, source_cond.extends_type)
+                {
+                    return SubtypeResult::True;
+                }
+                if compat.is_assignable(source_extends_eval, target_extends_eval)
+                    && compat.is_assignable(target_extends_eval, source_extends_eval)
+                {
+                    return SubtypeResult::True;
+                }
+            }
+        }
+
         let source_needs_raw_fallback = matches!(
             self.interner.lookup(source_return),
             Some(TypeData::Application(_) | TypeData::Lazy(_))
@@ -784,6 +861,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        let source_eval = self.evaluate_type(source_return);
+        let target_eval = self.evaluate_type(target_return);
+        if source_eval != source_return || target_eval != target_return {
+            let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
+            if fallback.check_subtype(source_eval, target_eval).is_true()
+                && fallback.check_subtype(target_eval, source_eval).is_true()
+            {
+                return SubtypeResult::True;
+            }
+        }
+
         if let Some(&original_strict_function_types) = self.method_bivariance_strict_stack.last() {
             let saved_strict_function_types = self.strict_function_types;
             self.strict_function_types = original_strict_function_types;
@@ -792,6 +880,149 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             result
         } else {
             self.check_subtype(source_return, target_return)
+        }
+    }
+
+    fn same_evaluated_union_members(&mut self, source: TypeId, target: TypeId) -> bool {
+        let Some(TypeData::Union(source_list)) = self.interner.lookup(source) else {
+            return false;
+        };
+        let Some(TypeData::Union(target_list)) = self.interner.lookup(target) else {
+            return false;
+        };
+        let source_members: Vec<_> = self.interner.type_list(source_list).to_vec();
+        let target_members: Vec<_> = self.interner.type_list(target_list).to_vec();
+        if source_members.len() != target_members.len() {
+            return false;
+        }
+
+        let source_evaluated: Vec<_> = source_members
+            .iter()
+            .map(|&member| self.evaluate_type(member))
+            .collect();
+        let mut unmatched: Vec<_> = target_members
+            .iter()
+            .map(|&member| self.evaluate_type(member))
+            .collect();
+        for source_member in source_evaluated {
+            let Some(index) = unmatched.iter().position(|&target_member| {
+                if source_member == target_member {
+                    return true;
+                }
+                match (
+                    self.interner.lookup(source_member),
+                    self.interner.lookup(target_member),
+                ) {
+                    (Some(TypeData::Literal(source_lit)), Some(TypeData::Literal(target_lit))) => {
+                        source_lit == target_lit
+                    }
+                    (
+                        Some(TypeData::Intrinsic(source_kind)),
+                        Some(TypeData::Intrinsic(target_kind)),
+                    ) => source_kind == target_kind,
+                    _ => {
+                        let mut fallback =
+                            SubtypeChecker::with_resolver(self.interner, self.resolver);
+                        fallback
+                            .check_subtype(source_member, target_member)
+                            .is_true()
+                            && fallback
+                                .check_subtype(target_member, source_member)
+                                .is_true()
+                    }
+                }
+            }) else {
+                return false;
+            };
+            unmatched.swap_remove(index);
+        }
+        true
+    }
+
+    fn union_contains_equivalent_member(&mut self, union: TypeId, member: TypeId) -> bool {
+        let Some(TypeData::Union(list_id)) = self.interner.lookup(union) else {
+            return false;
+        };
+        let members: Vec<_> = self.interner.type_list(list_id).to_vec();
+        members.iter().any(|&candidate| {
+            candidate == member || {
+                let candidate = self.evaluate_type(candidate);
+                candidate == member || {
+                    let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
+                    fallback.check_subtype(candidate, member).is_true()
+                        && fallback.check_subtype(member, candidate).is_true()
+                }
+            }
+        })
+    }
+
+    fn object_shapes_equivalent_for_conditional_return(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let source_shape_id = match self.interner.lookup(source) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
+            _ => return false,
+        };
+        let target_shape_id = match self.interner.lookup(target) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
+            _ => return false,
+        };
+        let source_shape = self.interner.object_shape(source_shape_id);
+        let target_shape = self.interner.object_shape(target_shape_id);
+        if source_shape.symbol != target_shape.symbol
+            || source_shape.string_index != target_shape.string_index
+            || source_shape.number_index != target_shape.number_index
+            || source_shape.properties.len() != target_shape.properties.len()
+        {
+            return false;
+        }
+
+        let source_properties = source_shape.properties.clone();
+        let target_properties = target_shape.properties.clone();
+        for source_prop in source_properties {
+            let Some(target_prop) = target_properties.iter().find(|target_prop| {
+                source_prop.name == target_prop.name
+                    && source_prop.is_string_named == target_prop.is_string_named
+                    && source_prop.is_symbol_named == target_prop.is_symbol_named
+            }) else {
+                return false;
+            };
+
+            if source_prop.optional != target_prop.optional
+                || source_prop.readonly != target_prop.readonly
+                || source_prop.is_method != target_prop.is_method
+                || source_prop.visibility != target_prop.visibility
+                || !self.conditional_return_property_types_equivalent(
+                    source_prop.type_id,
+                    target_prop.type_id,
+                )
+                || !self.conditional_return_property_types_equivalent(
+                    source_prop.write_type,
+                    target_prop.write_type,
+                )
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn conditional_return_property_types_equivalent(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if source == target {
+            return true;
+        }
+        let source_eval = self.evaluate_type(source);
+        let target_eval = self.evaluate_type(target);
+        source_eval == target_eval || {
+            let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
+            fallback.check_subtype(source_eval, target_eval).is_true()
+                && fallback.check_subtype(target_eval, source_eval).is_true()
         }
     }
 

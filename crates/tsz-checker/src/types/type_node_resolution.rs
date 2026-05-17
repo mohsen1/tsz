@@ -976,8 +976,32 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 type_alias.type_node,
                 &resolve_text_symbol,
             );
-            let computed_name_resolver =
-                |expr_idx: NodeIndex| computed_names.get(&expr_idx).copied();
+            let computed_name_resolver = |expr_idx: NodeIndex| {
+                computed_names.get(&expr_idx).copied().or_else(|| {
+                    let sym_id =
+                        value_resolver(expr_idx)
+                            .map(tsz_binder::SymbolId)
+                            .or_else(|| {
+                                Self::resolve_computed_property_symbol_in_arena(
+                                    decl_arena,
+                                    expr_idx,
+                                    &resolve_text_symbol,
+                                )
+                            })?;
+                    self.symbol_refers_to_unique_symbol_anywhere(sym_id)
+                        .then(|| {
+                            self.ctx
+                                .types
+                                .intern_string(&format!("__unique_{}", sym_id.0))
+                        })
+                })
+            };
+            let computed_symbol_name_resolver = |expr_idx: NodeIndex| {
+                computed_name_resolver(expr_idx).is_some_and(|name| {
+                    let name = self.ctx.types.resolve_atom(name);
+                    name.starts_with("[Symbol.") || name.starts_with("__unique_")
+                })
+            };
 
             // Provide flow-narrowed types for `typeof expr` in the type alias body.
             // These were pre-computed by `precompute_type_query_flow_types` during
@@ -1081,8 +1105,75 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     Some(factory.tuple(elements))
                 };
 
+                let const_symbol_type_query_in_decl_arena = || -> Option<TypeId> {
+                    let expr_node = decl_arena.get(expr_name_idx)?;
+                    let ident = decl_arena.get_identifier(expr_node)?;
+                    let sym_id = resolve_text_symbol(&ident.escaped_text)?;
+                    let symbol = decl_binder.get_symbol(sym_id)?;
+                    if !symbol.has_any_flags(symbol_flags::BLOCK_SCOPED_VARIABLE) {
+                        return None;
+                    }
+
+                    let mut value_decl = if symbol.value_declaration.is_some() {
+                        symbol.value_declaration
+                    } else {
+                        symbol.primary_declaration()?
+                    };
+                    let mut value_node = decl_arena.get(value_decl)?;
+                    if value_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                        value_decl = decl_arena.get_extended(value_decl)?.parent;
+                        value_node = decl_arena.get(value_decl)?;
+                    }
+                    if value_node.kind != tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION
+                        || !decl_arena.is_const_variable_declaration(value_decl)
+                    {
+                        return None;
+                    }
+
+                    let decl = decl_arena.get_variable_declaration(value_node)?;
+                    let initializer = decl_arena.skip_parenthesized(decl.initializer);
+                    let init_node = decl_arena.get(initializer)?;
+                    if init_node.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION {
+                        return None;
+                    }
+                    let call = decl_arena.get_call_expr(init_node)?;
+                    let callee_node = decl_arena.get(call.expression)?;
+                    let symbol_callee = if let Some(callee_ident) =
+                        decl_arena.get_identifier(callee_node)
+                    {
+                        callee_ident.escaped_text == "Symbol"
+                            && decl_binder
+                                .resolve_identifier(decl_arena, call.expression)
+                                .and_then(|callee_sym_id| decl_binder.get_symbol(callee_sym_id))
+                                .is_some_and(|callee_symbol| callee_symbol.escaped_name == "Symbol")
+                    } else if callee_node.kind
+                        == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    {
+                        let access = decl_arena.get_access_expr(callee_node)?;
+                        decl_arena
+                            .get_identifier_text(access.expression)
+                            .is_some_and(|name| name == "Symbol")
+                            && decl_arena
+                                .get_identifier_text(access.name_or_argument)
+                                .is_some_and(|name| name == "for")
+                            && decl_binder
+                                .resolve_identifier(decl_arena, access.expression)
+                                .and_then(|callee_sym_id| decl_binder.get_symbol(callee_sym_id))
+                                .is_some_and(|callee_symbol| callee_symbol.escaped_name == "Symbol")
+                    } else {
+                        false
+                    };
+
+                    symbol_callee.then(|| {
+                        self.ctx
+                            .types
+                            .unique_symbol(tsz_solver::SymbolRef(sym_id.0))
+                    })
+                };
+
                 self.const_asserted_array_tuple_type_query(expr_name_idx)
                     .or_else(const_asserted_array_tuple_in_decl_arena)
+                    .or_else(const_symbol_type_query_in_decl_arena)
                     .or_else(|| self.const_array_to_enum_object_type_query(expr_name_idx))
                     .or_else(|| self.const_object_member_literal_type_query(expr_name_idx))
                     .or_else(|| {
@@ -1104,6 +1195,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 )
                 .with_type_param_bindings(bindings)
                 .with_computed_name_resolver(&computed_name_resolver)
+                .with_computed_symbol_name_resolver(&computed_symbol_name_resolver)
                 .with_name_def_id_resolver(&name_resolver)
                 .with_type_query_override(&type_query_override)
             };
