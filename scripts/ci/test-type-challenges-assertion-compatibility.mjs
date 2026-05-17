@@ -103,6 +103,8 @@ withTempDir((dir) => {
         counts: {
           pairedSolutions: 2,
           generatedAssertions: 2,
+          assertionsReferencingSolutionDeclaration: 1,
+          assertionsMissingSolutionDeclarationReference: 1,
         },
       },
       compilers: {
@@ -229,6 +231,8 @@ withTempDir((dir) => {
   assert.deepEqual(row.assertion_candidates, {
     paired_solutions: 2,
     generated_assertions: 2,
+    assertions_referencing_solution_declaration: 1,
+    assertions_missing_solution_declaration_reference: 1,
     tsc_diagnostic_free: 1,
     tsc_with_diagnostics: 1,
     tsz_diagnostic_free: 2,

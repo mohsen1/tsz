@@ -1912,6 +1912,14 @@ export function getProjectCompatibilityDashboard() {
     };
     addCount("paired solutions", candidates.paired_solutions);
     addCount("assertions generated", candidates.generated_assertions);
+    addCount(
+      "assertions referencing solutions",
+      candidates.assertions_referencing_solution_declaration,
+    );
+    addCount(
+      "assertions missing solution references",
+      candidates.assertions_missing_solution_declaration_reference,
+    );
     addCount("tsc clean", candidates.tsc_diagnostic_free);
     addCount("tsz clean", candidates.tsz_diagnostic_free);
     const sources = candidates.sources && typeof candidates.sources === "object"
