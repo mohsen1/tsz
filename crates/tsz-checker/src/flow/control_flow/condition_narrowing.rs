@@ -1499,7 +1499,11 @@ impl<'a> FlowAnalyzer<'a> {
                 // The type will be computed from the already-narrowed base or via literal comparison.
             }
 
-            if let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target) {
+            // Loose equality (==) does not narrow non-nullish literals on top types (unknown/any).
+            // Nullish loose equality (x == null) is handled above as NullishEquality.
+            if (is_strict || !type_id.is_any_or_unknown())
+                && let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target)
+            {
                 if effective_truth {
                     let narrowed = narrowing.narrow_to_type(type_id, literal_type);
                     if narrowed != TypeId::NEVER {
@@ -1527,7 +1531,8 @@ impl<'a> FlowAnalyzer<'a> {
             // sources; for any other source, primitive-intrinsic
             // comparands are not narrowing literals (see
             // `is_narrowing_literal`).
-            if (type_id == TypeId::UNKNOWN || type_id == TypeId::ANY)
+            if is_strict
+                && type_id.is_any_or_unknown()
                 && let Some(literal_type) =
                     self.literal_comparison_for_unknown_target(bin.left, bin.right, target)
             {

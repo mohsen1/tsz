@@ -1348,8 +1348,6 @@ impl BinderState {
                             self.bind_node(arena, stmt_idx);
                         }
 
-                        self.add_antecedent(end_label, self.current_flow);
-
                         if Self::clause_allows_fallthrough(arena, clause) {
                             fallthrough_flow = self.current_flow;
                         } else {
@@ -1357,6 +1355,12 @@ impl BinderState {
                         }
                     }
                 }
+
+                // Add end_label antecedent once after all clauses (not per-clause).
+                // Mirrors TypeScript binder: `addAntecedent(postSwitchLabel, currentFlow)`
+                // is called after the CaseBlock loop. Break statements contribute via
+                // `currentBreakTarget`; this handles fallthrough from the final clause.
+                self.add_antecedent(end_label, self.current_flow);
 
                 // Exhaustiveness: if no default clause, create an implicit default
                 // path representing "no case matched". This SWITCH_CLAUSE uses the
