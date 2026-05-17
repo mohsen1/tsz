@@ -1143,10 +1143,18 @@ run_conformance() {
     local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
     if [[ -n "$bucket" && "$run_key" != "unknown" ]] && command -v gsutil >/dev/null 2>&1; then
       ensure_gcs_auth
-      gsutil -q cp "$METRICS_DIR/conformance.json" \
-        "${bucket%/}/conformance-runs/${run_key}/shard-${shard_index}.json" 2>/dev/null \
-        && echo "Uploaded shard result: shard-${shard_index}.json" \
-        || echo "warning: failed to upload shard result (non-fatal)" >&2
+      local up_attempt up_rc=1
+      for up_attempt in 1 2 3; do
+        if gsutil -q cp "$METRICS_DIR/conformance.json" \
+            "${bucket%/}/conformance-runs/${run_key}/shard-${shard_index}.json" 2>/dev/null; then
+          up_rc=0
+          echo "Uploaded shard result: shard-${shard_index}.json (attempt ${up_attempt})"
+          break
+        fi
+        echo "warning: upload attempt ${up_attempt}/3 failed for shard-${shard_index}.json" >&2
+        [[ "$up_attempt" -lt 3 ]] && sleep "$((up_attempt * 5))"
+      done
+      [[ "$up_rc" -ne 0 ]] && echo "warning: failed to upload shard result after 3 attempts (non-fatal)" >&2
 
       if [[ -f "$timings_file" ]]; then
         gsutil -q cp "$timings_file" \
@@ -1202,8 +1210,17 @@ run_conformance_aggregate() {
 
   ensure_gcs_auth
   echo "Downloading shard results from ${prefix}/shard-*.json ..."
-  if ! gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
-    echo "error: failed to download shard results from GCS" >&2
+  local dl_attempt dl_rc=1
+  for dl_attempt in 1 2 3; do
+    if gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
+      dl_rc=0
+      break
+    fi
+    echo "warning: GCS download attempt ${dl_attempt}/3 failed" >&2
+    [[ "$dl_attempt" -lt 3 ]] && sleep "$((dl_attempt * 5))"
+  done
+  if [[ "$dl_rc" -ne 0 ]]; then
+    echo "error: failed to download shard results from GCS after 3 attempts" >&2
     return 1
   fi
 
