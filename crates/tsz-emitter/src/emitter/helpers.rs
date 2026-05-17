@@ -693,6 +693,7 @@ impl<'a> Printer<'a> {
             let candidate = format!("{base}_{suffix}");
             if !self.file_identifiers.contains(&candidate)
                 && !self.generated_temp_names.contains(&candidate)
+                && !self.ctx.block_scope_state.is_reserved_name(&candidate)
             {
                 self.generated_temp_names.insert(candidate.clone());
                 self.ctx.block_scope_state.reserve_name(candidate.clone());

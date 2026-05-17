@@ -640,6 +640,10 @@ fn test_es5_class_expression_uses_variable_declaration_name() {
         output.contains("var C = /** @class */"),
         "Expected class expression to use surrounding variable name.\nOutput: {output}"
     );
+    assert!(
+        !output.contains("var C = (function ()"),
+        "Variable-initializer class expression should not be wrapped in an extra IIFE.\nOutput: {output}"
+    );
 }
 
 #[test]
@@ -654,8 +658,35 @@ fn test_es5_class_expression_uses_assignment_lhs_name() {
     );
 
     assert!(
-        output.contains("var C = /** @class */"),
+        output.contains("C = /** @class */"),
         "Expected class expression to use assignment lhs name.\nOutput: {output}"
+    );
+    assert!(
+        !output.contains("C = (function ()"),
+        "Assignment class expression should not be wrapped in an extra IIFE.\nOutput: {output}"
+    );
+}
+
+#[test]
+fn test_es5_class_expression_instance_field_uses_synthetic_name() {
+    let source = "const C = class { a = 1; };";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var C = /** @class */")
+            && output.contains("function class_1()")
+            && output.contains("this.a = 1;"),
+        "Anonymous class expression with instance fields should emit as a direct IIFE with a synthetic constructor name.\nOutput: {output}"
+    );
+    assert!(
+        !output.contains("var C = (function ()"),
+        "Instance-field class expression should not be wrapped in an extra IIFE.\nOutput: {output}"
     );
 }
 
@@ -1111,6 +1142,25 @@ fn static_field_class_expression_in_binding_key_uses_es5_comma_alias() {
     assert!(
         !output.contains("return _c;"),
         "Static-field class expressions in computed binding keys should not use a nested wrapper IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn nested_static_field_class_expression_uses_statement_depth_indent() {
+    let source = "function outer() {\n    function inner() {\n        var y = class { static a = x };\n    }\n}";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(
+            "        var y = (_a = /** @class */ (function () {\n                function class_1() {"
+        ),
+        "Nested ES5 static class expression should indent the generated class IIFE by statement depth, not current visual indent width.\nOutput:\n{output}"
     );
 }
 
