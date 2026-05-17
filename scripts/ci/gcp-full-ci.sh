@@ -1197,33 +1197,55 @@ run_conformance() {
 
 run_conformance_aggregate() {
   ci_section "Conformance aggregate"
-  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-  local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
   local expected_shards="${_TSZ_CI_CONFORMANCE_SHARD_COUNT:-${TSZ_CI_CONFORMANCE_SHARDS:-32}}"
-
-  if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
-    echo "error: cannot aggregate — no bucket or run key available" >&2
-    return 1
-  fi
-
-  local prefix="${bucket%/}/conformance-runs/${run_key}"
   local tmp_dir
   tmp_dir="$(mktemp -d)"
 
-  ensure_gcs_auth
-  echo "Downloading shard results from ${prefix}/shard-*.json ..."
-  local dl_attempt dl_rc=1
-  for dl_attempt in 1 2 3; do
-    if gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
-      dl_rc=0
-      break
+  # Prefer GitHub Actions artifacts (downloaded by the workflow's download-artifact step)
+  # over GCS, which requires SA key permissions that may not be available.
+  local artifacts_dir=".conformance-shards"
+  local using_artifacts=0
+  if [[ -d "$artifacts_dir" ]]; then
+    # Flatten: each shard artifact lands at .conformance-shards/conformance-shard-N/conformance.json
+    local found=0
+    for shard_dir in "$artifacts_dir"/conformance-shard-*/; do
+      [[ -d "$shard_dir" ]] || continue
+      local json="$shard_dir/conformance.json"
+      [[ -f "$json" ]] || continue
+      local shard_name
+      shard_name="$(basename "$shard_dir")"
+      cp "$json" "$tmp_dir/shard-${shard_name#conformance-shard-}.json"
+      found=$(( found + 1 ))
+    done
+    if [[ "$found" -gt 0 ]]; then
+      echo "Using ${found} GitHub Actions artifact shard results from ${artifacts_dir}/"
+      using_artifacts=1
     fi
-    echo "warning: GCS download attempt ${dl_attempt}/3 failed" >&2
-    [[ "$dl_attempt" -lt 3 ]] && sleep "$((dl_attempt * 5))"
-  done
-  if [[ "$dl_rc" -ne 0 ]]; then
-    echo "error: failed to download shard results from GCS after 3 attempts" >&2
-    return 1
+  fi
+
+  if [[ "$using_artifacts" -eq 0 ]]; then
+    local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+    local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+    if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
+      echo "error: cannot aggregate — no artifact dir and no GCS bucket/run key available" >&2
+      return 1
+    fi
+    local prefix="${bucket%/}/conformance-runs/${run_key}"
+    ensure_gcs_auth
+    echo "Downloading shard results from ${prefix}/shard-*.json ..."
+    local dl_attempt dl_rc=1
+    for dl_attempt in 1 2 3; do
+      if gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
+        dl_rc=0
+        break
+      fi
+      echo "warning: GCS download attempt ${dl_attempt}/3 failed" >&2
+      [[ "$dl_attempt" -lt 3 ]] && sleep "$((dl_attempt * 5))"
+    done
+    if [[ "$dl_rc" -ne 0 ]]; then
+      echo "error: failed to download shard results from GCS after 3 attempts" >&2
+      return 1
+    fi
   fi
 
   local total_passed=0 total_tests=0 shard_count=0
