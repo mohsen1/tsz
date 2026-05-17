@@ -81,10 +81,36 @@ withTempDir((dir) => {
       {
         id: "one",
         output: "assertions/one.ts",
+        solution: {
+          output: "solutions/one.ts",
+          source: "en/one.md",
+          declarations: ["Parse"],
+        },
+        testCase: {
+          output: "questions/00001-one/test-cases.ts",
+          source: "questions/00001-one/test-cases.ts",
+        },
+        assertion: {
+          hasReferencedSolutionDeclaration: true,
+          referencedSolutionDeclarations: ["Parse"],
+        },
       },
       {
         id: "two",
         output: "assertions/two.ts",
+        solution: {
+          output: "solutions/two.ts",
+          source: "en/two.md",
+          declarations: ["Remap"],
+        },
+        testCase: {
+          output: "questions/00002-two/test-cases.ts",
+          source: "questions/00002-two/test-cases.ts",
+        },
+        assertion: {
+          hasReferencedSolutionDeclaration: false,
+          referencedSolutionDeclarations: [],
+        },
       },
     ],
   });
@@ -167,6 +193,80 @@ withTempDir((dir) => {
     candidatesWithoutDiagnostics: 0,
     filesWithDiagnostics: ["assertions/one.ts", "assertions/two.ts"],
     filesWithoutDiagnostics: [],
+    byCandidate: [
+      {
+        file: "assertions/one.ts",
+        errorCount: 1,
+        candidate: {
+          id: "one",
+          solution: {
+            output: "solutions/one.ts",
+            source: "en/one.md",
+            declarations: ["Parse"],
+          },
+          testCase: {
+            output: "questions/00001-one/test-cases.ts",
+            source: "questions/00001-one/test-cases.ts",
+          },
+          assertion: {
+            hasReferencedSolutionDeclaration: true,
+            referencedSolutionDeclarations: ["Parse"],
+          },
+        },
+        codes: [{ key: "TS2344", count: 1 }],
+        semanticFamilies: [
+          "distributive conditionals",
+          "inference cache/session behavior",
+          "recursive conditionals",
+          "template literal inference",
+          "tuple recursion",
+        ],
+        firstErrors: [
+          {
+            line: 1,
+            column: 1,
+            code: "TS2344",
+            message: "mismatch",
+            text: "assertions/one.ts(1,1): error TS2344: mismatch",
+          },
+        ],
+      },
+      {
+        file: "assertions/two.ts",
+        errorCount: 1,
+        candidate: {
+          id: "two",
+          solution: {
+            output: "solutions/two.ts",
+            source: "en/two.md",
+            declarations: ["Remap"],
+          },
+          testCase: {
+            output: "questions/00002-two/test-cases.ts",
+            source: "questions/00002-two/test-cases.ts",
+          },
+          assertion: {
+            hasReferencedSolutionDeclaration: false,
+            referencedSolutionDeclarations: [],
+          },
+        },
+        codes: [{ key: "TS2304", count: 1 }],
+        semanticFamilies: [
+          "indexed access",
+          "mapped/key-remapped types",
+          "template literal inference",
+        ],
+        firstErrors: [
+          {
+            line: 2,
+            column: 3,
+            code: "TS2304",
+            message: "missing",
+            text: "assertions/two.ts(2,3): error TS2304: missing",
+          },
+        ],
+      },
+    ],
   });
   assert.deepEqual(
     report.compilers.tsc.diagnostics.bySemanticFamily.map((entry) => [
@@ -201,6 +301,7 @@ withTempDir((dir) => {
     candidatesWithoutDiagnostics: 2,
     filesWithDiagnostics: [],
     filesWithoutDiagnostics: ["assertions/one.ts", "assertions/two.ts"],
+    byCandidate: [],
   });
   assert.deepEqual(report.comparison, {
     status: "tsz-accepts-tsc-rejected",
