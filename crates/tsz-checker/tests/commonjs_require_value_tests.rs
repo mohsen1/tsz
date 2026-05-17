@@ -153,6 +153,67 @@ json1.b;
 }
 
 #[test]
+fn check_js_require_of_json_array_object_union_completes_sibling_properties() {
+    let diagnostics = check_js_require_value_diagnostics(
+        r#"{ "obj": { "items": [{ "x": 1 }, { "x": 2, "y": 3 }, { "x": 4, "err": true }] } }"#,
+        r#"module.exports = { a: 0 };"#,
+        r#"
+const json = require("./json.json");
+const item = json.obj.items[0];
+item.y;
+item.err;
+item.missing;
+"#,
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected only the truly absent JSON item property to fail, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339[0]
+            .1
+            .contains("Property 'missing' does not exist on type"),
+        "Expected the missing-property diagnostic to target `missing`, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn check_js_require_of_json_preserves_object_property_declaration_order() {
+    let diagnostics = check_js_require_value_diagnostics(
+        r#"{ "x": 0, "y": 1 }"#,
+        r#"module.exports = { a: 0 };"#,
+        r#"
+const json = require("./json.json");
+json.z;
+"#,
+    );
+
+    let ts2339: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2339)
+        .collect();
+
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected one missing-property diagnostic, got: {diagnostics:#?}"
+    );
+    assert!(
+        ts2339[0]
+            .1
+            .contains("Property 'z' does not exist on type '{ x: number; y: number; }'."),
+        "Expected JSON object display to preserve declaration order, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn check_js_require_of_commonjs_preserves_property_presence_and_assignment() {
     let diagnostics = check_js_require_value_diagnostics(
         r#"{ "a": 0 }"#,

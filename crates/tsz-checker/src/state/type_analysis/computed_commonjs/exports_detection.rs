@@ -329,47 +329,103 @@ impl<'a> CheckerState<'a> {
     }
 
     fn json_value_type(&mut self, value: &JsonValue) -> TypeId {
-        let factory = self.ctx.types.factory();
         match value {
             JsonValue::Null => TypeId::NULL,
             JsonValue::Bool(_) => TypeId::BOOLEAN,
             JsonValue::Number(_) => TypeId::NUMBER,
             JsonValue::String(_) => TypeId::STRING,
-            JsonValue::Array(elements) => {
-                let element_types: Vec<TypeId> = elements
-                    .iter()
-                    .map(|element| self.json_value_type(element))
-                    .collect();
-                let element_type = match element_types.as_slice() {
-                    [] => TypeId::NEVER,
-                    [single] => *single,
-                    _ => factory.union(element_types),
-                };
-                factory.array(element_type)
-            }
-            JsonValue::Object(entries) => {
-                let mut props = Vec::with_capacity(entries.len());
-                for (declaration_order, (name, entry_value)) in entries.iter().enumerate() {
-                    let prop_type = self.json_value_type(entry_value);
-                    props.push(PropertyInfo {
-                        name: self.ctx.types.intern_string(name),
-                        type_id: prop_type,
-                        write_type: prop_type,
-                        optional: false,
-                        readonly: false,
-                        is_method: false,
-                        is_class_prototype: false,
-                        visibility: Visibility::Public,
-                        parent_id: None,
-                        declaration_order: declaration_order as u32,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
-                    });
+            JsonValue::Array(elements) => self.json_array_type(elements),
+            JsonValue::Object(entries) => self.json_object_type(entries, None),
+        }
+    }
+
+    fn json_array_type(&mut self, elements: &[JsonValue]) -> TypeId {
+        let object_property_order = Self::json_array_object_property_order(elements);
+        let element_types: Vec<TypeId> = elements
+            .iter()
+            .map(|element| match element {
+                JsonValue::Object(entries) if !object_property_order.is_empty() => {
+                    self.json_object_type(entries, Some(&object_property_order))
                 }
-                factory.object(props)
+                _ => self.json_value_type(element),
+            })
+            .collect();
+        let element_type = match element_types.as_slice() {
+            [] => TypeId::NEVER,
+            [single] => *single,
+            _ => self.ctx.types.factory().union(element_types),
+        };
+        self.ctx.types.factory().array(element_type)
+    }
+
+    fn json_array_object_property_order(elements: &[JsonValue]) -> Vec<String> {
+        let mut names = Vec::new();
+        for element in elements {
+            let JsonValue::Object(entries) = element else {
+                continue;
+            };
+            for name in entries.keys() {
+                if !names.iter().any(|existing| existing == name) {
+                    names.push(name.clone());
+                }
             }
         }
+        names
+    }
+
+    fn json_object_type(
+        &mut self,
+        entries: &serde_json::Map<String, JsonValue>,
+        complete_property_order: Option<&[String]>,
+    ) -> TypeId {
+        let mut props = Vec::with_capacity(entries.len());
+        let mut present_names = FxHashSet::default();
+        for (declaration_order, (name, entry_value)) in entries.iter().enumerate() {
+            let prop_type = self.json_value_type(entry_value);
+            present_names.insert(name.as_str());
+            props.push(PropertyInfo {
+                name: self.ctx.types.intern_string(name),
+                type_id: prop_type,
+                write_type: prop_type,
+                optional: false,
+                readonly: false,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: (declaration_order + 1) as u32,
+                is_string_named: false,
+                is_symbol_named: false,
+                single_quoted_name: false,
+            });
+        }
+
+        if let Some(all_names) = complete_property_order {
+            let mut declaration_order = props.len() as u32 + 1;
+            for name in all_names {
+                if present_names.contains(name.as_str()) {
+                    continue;
+                }
+                props.push(PropertyInfo {
+                    name: self.ctx.types.intern_string(name),
+                    type_id: TypeId::UNDEFINED,
+                    write_type: TypeId::UNDEFINED,
+                    optional: true,
+                    readonly: false,
+                    is_method: false,
+                    is_class_prototype: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                    declaration_order,
+                    is_string_named: false,
+                    is_symbol_named: false,
+                    single_quoted_name: false,
+                });
+                declaration_order += 1;
+            }
+        }
+
+        self.ctx.types.factory().object(props)
     }
 
     pub(crate) fn json_module_type_for_module(
