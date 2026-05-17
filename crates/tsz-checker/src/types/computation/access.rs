@@ -1545,14 +1545,30 @@ impl<'a> CheckerState<'a> {
             && crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
         {
             let resolved_pre = self.resolve_lazy_type(pre_resolution_object_type);
-            if crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved_pre)
+            let substitution_object = if crate::query_boundaries::common::application_id(
+                self.ctx.types,
+                pre_resolution_object_type,
+            )
+            .is_some()
+            {
+                Some(pre_resolution_object_type)
+            } else if let Some(alias) = self.ctx.types.get_display_alias(pre_resolution_object_type)
+                && crate::query_boundaries::common::application_id(self.ctx.types, alias).is_some()
+            {
+                Some(pre_resolution_object_type)
+            } else if crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved_pre)
                 .is_some()
             {
+                Some(resolved_pre)
+            } else {
+                None
+            };
+            if let Some(substitution_object) = substitution_object {
                 let index_access = self
                     .ctx
                     .types
                     .factory()
-                    .index_access(resolved_pre, index_type);
+                    .index_access(substitution_object, index_type);
                 let evaluated = self.evaluate_type_with_env(index_access);
                 if evaluated != index_access && evaluated != TypeId::ERROR {
                     result_type = Some(evaluated);
