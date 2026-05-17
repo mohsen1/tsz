@@ -555,7 +555,7 @@ impl<'a> CheckerState<'a> {
                             .ctx
                             .type_parameter_scope
                             .insert(param_name.clone(), type_id);
-                        param_bindings.push((param_name, previous));
+                        param_bindings.push((param_name.clone(), previous));
                     }
 
                     // Check true_type with infer type parameters in scope

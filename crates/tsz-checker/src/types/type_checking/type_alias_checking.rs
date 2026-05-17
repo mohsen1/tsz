@@ -947,18 +947,13 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(idx) else {
                 continue;
             };
-            if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE {
-                if let Some(tlt) = self.ctx.arena.get_template_literal_type(node) {
-                    for &span_idx in &tlt.template_spans.nodes {
-                        if let Some(span_node) = self.ctx.arena.get(span_idx)
-                            && let Some(span) = self.ctx.arena.get_template_span(span_node)
-                            && let Some(expr_node) = self.ctx.arena.get(span.expression)
-                            && expr_node.kind == syntax_kind_ext::INFER_TYPE
-                        {
-                            span_infer_nodes.insert(span.expression);
-                        }
-                    }
+            if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE_SPAN {
+                // get_children does not handle TEMPLATE_LITERAL_TYPE_SPAN (kind=205),
+                // so explicitly push the expression child (which may be INFER_TYPE).
+                if let Some(span) = self.ctx.arena.get_template_span(node) {
+                    stack.push(span.expression);
                 }
+                continue;
             } else if node.kind == syntax_kind_ext::INFER_TYPE {
                 if let Some(infer_data) = self.ctx.arena.get_infer_type(node) {
                     if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
