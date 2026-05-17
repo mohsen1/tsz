@@ -533,12 +533,24 @@ impl<'a> CheckerState<'a> {
 
                     // Collect infer type parameters from extends_type and add them to scope for true_type
                     let infer_params = self.collect_infer_type_parameters(cond.extends_type);
+                    let infer_constraints: Vec<Option<TypeId>> = infer_params
+                        .iter()
+                        .map(|name| {
+                            self.effective_infer_constraint_from_extends_type(
+                                cond.extends_type,
+                                name,
+                            )
+                        })
+                        .collect();
+                    let factory = self.ctx.types.factory();
                     let mut param_bindings = Vec::new();
-                    for param_name in &infer_params {
+                    for (param_name, &constraint) in
+                        infer_params.iter().zip(infer_constraints.iter())
+                    {
                         let atom = self.ctx.types.intern_string(param_name);
                         let type_id = factory.type_param(tsz_solver::TypeParamInfo {
                             name: atom,
-                            constraint: None,
+                            constraint,
                             default: None,
                             is_const: false,
                         });
