@@ -1,5 +1,4 @@
 //! Direct cross-file query fast paths that avoid constructing child checkers.
-
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
@@ -15,211 +14,27 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::def::{DefId, DefKind};
 use tsz_solver::{TypeId, TypeParamInfo};
 
+#[cfg(test)]
+use super::cross_file_direct_files::{
+    DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS, is_external_package_declaration_file_name,
+};
+use super::cross_file_direct_files::{
+    allow_actual_lib_declaration_proof_bypass, allow_generic_actual_lib_direct_fallback,
+    is_builtin_lib_declaration_arena, is_direct_actual_lib_alias_body_admitted,
+    is_direct_actual_lib_value_interface_name, is_direct_lowering_declaration_arena,
+    is_direct_lowering_source_file_arena, is_direct_type_alias_declaration_arena,
+    iterator_object_has_global_augmentations,
+};
+pub(crate) use super::cross_file_direct_files::{
+    is_builtin_lib_file_name, is_direct_actual_lib_declaration_arena,
+};
+
 struct DirectActualLibAliasBodyProof {
     body: TypeId,
     type_params: Vec<TypeParamInfo>,
     def_id: DefId,
     outcome: DirectActualLibAliasBodyOutcome,
 }
-
-/// Track 7 transitional allowlist for actual-lib type-alias bodies that can be
-/// lowered directly across checker arenas. Additions should move toward stable
-/// lib identity queries instead of expanding name-only admissions.
-const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS: &[&str] = &[
-    "Capitalize",
-    "DecoratorMetadata",
-    "DecoratorMetadataObject",
-    "Exclude",
-    "Extract",
-    "FlatArray",
-    "IteratorResult",
-    "LocalesArgument",
-    "Lowercase",
-    "NonNullable",
-    "NumberFormatOptionsCurrencyDisplay",
-    "NumberFormatOptionsSignDisplay",
-    "NumberFormatOptionsStyle",
-    "NumberFormatOptionsUseGrouping",
-    "Omit",
-    "Partial",
-    "Pick",
-    "PropertyKey",
-    "Readonly",
-    "Record",
-    "Required",
-    "ReturnType",
-    "Uncapitalize",
-    "UnicodeBCP47LocaleIdentifier",
-    "Uppercase",
-    "WeakKey",
-];
-
-fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
-    DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS.contains(&name)
-}
-
-pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
-    let basename = std::path::Path::new(file_name)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(file_name);
-
-    if basename.starts_with("lib.") && basename.ends_with(".d.ts") {
-        return true;
-    }
-
-    let stem = basename
-        .strip_suffix(".generated.d.ts")
-        .or_else(|| basename.strip_suffix(".d.ts"))
-        .unwrap_or(basename);
-
-    stem == "lib"
-        || stem == "scripthost"
-        || stem == "decorators"
-        || stem == "decorators.legacy"
-        || stem == "dom"
-        || stem.starts_with("dom.")
-        || stem == "webworker"
-        || stem.starts_with("webworker.")
-        || stem == "esnext"
-        || stem.starts_with("esnext.")
-        || (stem.starts_with("es") && stem.as_bytes().get(2).is_some_and(u8::is_ascii_digit))
-}
-
-fn is_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
-    arena.source_files.first().is_some_and(|source_file| {
-        if !source_file.is_declaration_file {
-            return false;
-        }
-        is_builtin_lib_file_name(&source_file.file_name)
-    })
-}
-
-fn is_dom_like_builtin_lib_file_name(file_name: &str) -> bool {
-    let basename = std::path::Path::new(file_name)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(file_name);
-    let stem = basename
-        .strip_suffix(".generated.d.ts")
-        .or_else(|| basename.strip_suffix(".d.ts"))
-        .unwrap_or(basename);
-    let stem = stem.strip_prefix("lib.").unwrap_or(stem);
-
-    stem == "dom"
-        || stem.starts_with("dom.")
-        || stem == "webworker"
-        || stem.starts_with("webworker.")
-}
-
-pub(crate) fn is_direct_actual_lib_declaration_arena(arena: &NodeArena) -> bool {
-    arena.source_files.first().is_some_and(|source_file| {
-        if !source_file.is_declaration_file {
-            return false;
-        }
-        is_builtin_lib_file_name(&source_file.file_name)
-            && !is_dom_like_builtin_lib_file_name(&source_file.file_name)
-    })
-}
-
-fn is_external_package_declaration_file_name(file_name: &str) -> bool {
-    file_name.starts_with("node_modules/")
-        || file_name.starts_with("node_modules\\")
-        || file_name.contains("/node_modules/")
-        || file_name.contains("\\node_modules\\")
-}
-
-fn is_direct_lowering_declaration_arena(arena: &NodeArena) -> bool {
-    arena.source_files.first().is_some_and(|source_file| {
-        source_file.is_declaration_file
-            && is_external_package_declaration_file_name(&source_file.file_name)
-            && !is_builtin_lib_file_name(&source_file.file_name)
-    })
-}
-
-fn is_direct_type_alias_declaration_arena(arena: &NodeArena) -> bool {
-    arena.source_files.first().is_some_and(|source_file| {
-        source_file.is_declaration_file
-            && (is_builtin_lib_file_name(&source_file.file_name)
-                || is_external_package_declaration_file_name(&source_file.file_name))
-    })
-}
-
-fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
-    arena
-        .source_files
-        .first()
-        .is_some_and(|source_file| !source_file.is_declaration_file)
-}
-
-fn allow_generic_actual_lib_direct_fallback(name: &str) -> bool {
-    matches!(
-        name,
-        "Array"
-            | "ArrayIterator"
-            | "Iterator"
-            | "Map"
-            | "MapIterator"
-            | "Object"
-            | "Promise"
-            | "PromiseLike"
-            | "RegExpStringIterator"
-            | "Set"
-            | "SetIterator"
-            | "StringIterator"
-            | "WeakMap"
-            | "WeakSet"
-    )
-}
-
-fn allow_actual_lib_declaration_proof_bypass(name: &str) -> bool {
-    matches!(name, "Iterator")
-}
-
-fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
-    matches!(
-        name,
-        "Array"
-            | "Date"
-            | "DateTimeFormatOptions"
-            | "Error"
-            | "Function"
-            | "Iterator"
-            | "IteratorObject"
-            | "Locale"
-            | "Map"
-            | "NumberFormatOptions"
-            | "NumberFormatOptionsCurrencyDisplayRegistry"
-            | "NumberFormatOptionsSignDisplayRegistry"
-            | "NumberFormatOptionsStyleRegistry"
-            | "NumberFormatOptionsUseGroupingRegistry"
-            | "Object"
-            | "Promise"
-            | "RegExp"
-            | "Set"
-            | "Symbol"
-            | "WeakMap"
-            | "WeakSet"
-    )
-}
-
-fn iterator_object_has_global_augmentations(ctx: &crate::context::CheckerContext<'_>) -> bool {
-    if ctx
-        .binder
-        .global_augmentations
-        .get("IteratorObject")
-        .is_some_and(|augmentations| !augmentations.is_empty())
-    {
-        return true;
-    }
-
-    ctx.binder
-        .file_locals
-        .get("IteratorObject")
-        .and_then(|sym_id| ctx.binder.get_symbol(sym_id))
-        .is_some_and(|symbol| symbol.declarations.len() > 1)
-}
-
 impl<'a> CheckerState<'a> {
     fn symbol_is_actual_lib_namespace_export(
         &self,
