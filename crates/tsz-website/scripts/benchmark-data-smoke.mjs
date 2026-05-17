@@ -87,6 +87,8 @@ await fs.writeFile(artifact, `${JSON.stringify({
           },
           paired_solutions: 78,
           generated_assertions: 78,
+          assertions_referencing_solution_declaration: 76,
+          assertions_missing_solution_declaration_reference: 2,
           tsc_diagnostic_free: 10,
           tsc_with_diagnostics: 68,
           tsz_diagnostic_free: 7,
@@ -237,6 +239,8 @@ try {
   assert.match(compatibilityDashboard, /type-challenges assertions/);
   assert.match(compatibilityDashboard, /paired solutions: 78/);
   assert.match(compatibilityDashboard, /assertions generated: 78/);
+  assert.match(compatibilityDashboard, /assertions referencing solutions: 76/);
+  assert.match(compatibilityDashboard, /assertions missing solution references: 2/);
   assert.match(compatibilityDashboard, /templates ref: type-ref/);
   assert.match(compatibilityDashboard, /test cases ref: type-ref/);
   assert.match(compatibilityDashboard, /solutions ref: solutions-ref/);
