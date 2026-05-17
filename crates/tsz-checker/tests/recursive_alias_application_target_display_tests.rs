@@ -194,23 +194,37 @@ function assign(base: Chain<BaseNode>, leaf: Chain<LeafNode>) {
     );
 }
 
-/// Negative/fallback: a non-recursive intersection alias should still expand
-/// normally (the structural-body path must not over-eagerly alias concrete
-/// intersection types that are not from type aliases).
+/// Negative/fallback: a non-recursive intersection alias must still take the
+/// ordinary diagnostic path and assert its actual display surface. This catches
+/// over-eager structural-body aliasing without relying on an assignable
+/// superset assignment.
 #[test]
 fn ts2322_non_recursive_intersection_alias_not_affected() {
     let source = r#"
-type WithId = { id: number };
-type WithName = { name: string };
-type Combined = WithId & WithName;
+type Box<T> = T & { name: string };
 
-let a: Combined;
-let b: { id: number; name: string; extra: boolean };
+let a: Box<{ id: number }>;
+let b: { id: string; name: string } = { id: "bad", name: "ok" };
 a = b;
 "#;
     let diags = check_strict(source);
-    // There should be a TS2322 (extra property or structural mismatch)
-    // The important thing is that the fix doesn't break non-recursive cases.
-    // We just assert it doesn't crash and produces some diagnostic.
-    let _ = diags;
+    let ts2322: Vec<&(u32, String)> = diags.iter().filter(|(c, _)| *c == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected exactly one TS2322 for `a = b`; got: {diags:?}"
+    );
+    let msg = &ts2322[0].1;
+    assert!(
+        msg.contains("Box<"),
+        "non-recursive intersection aliases should keep the ordinary TS2322 \
+         alias display surface. Got: {msg:?}"
+    );
+    assert_eq!(
+        msg,
+        "Type '{ id: string; name: string; }' is not assignable to type \
+         'Box<{ id: number; }>'.",
+        "non-recursive intersection aliases should keep the ordinary TS2322 \
+         display surface while the recursive-only rule remains scoped. Got: {msg:?}"
+    );
 }
