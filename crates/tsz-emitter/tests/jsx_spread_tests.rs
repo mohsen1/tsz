@@ -96,6 +96,25 @@ export const element = <></>;
 }
 
 #[test]
+fn classic_fragment_factory_pragma_tag_is_case_insensitive() {
+    let source = r#"/* @jsx jsx */
+/* @jsxfrag null */
+import { jsx } from "./renderer";
+export const element = <><span /></>;
+"#;
+    let output = emit_classic_cjs_jsx(source);
+
+    assert!(
+        output.contains("(0, renderer_1.jsx)(null, null,"),
+        "Lower-case @jsxfrag should be recognized as the classic fragment factory pragma.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("React.Fragment"),
+        "Recognized @jsxfrag null must suppress the default React.Fragment factory.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn classic_jsx_component_tag_uses_cjs_identifier_substitution() {
     let source = r#"/** @jsx h */
 declare const h: any;
