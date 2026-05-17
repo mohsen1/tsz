@@ -193,12 +193,28 @@ export function parseBaseline(content: string): BaselineContent {
   const sourceLikeFiles: Array<{ name: string; content: string }> = [];
   const outputSegments: typeof segments = [];
   const outputFileNames: Set<string> = new Set();
-  const originalOutputFileNames: Set<string> = new Set();
-  const missingOriginalDtsOutputFileNames: Set<string> = new Set();
   const sourceFileNames: Set<string> = new Set();
   const dtsOutputCandidates: Set<string> = new Set();
   const dtsSourceFiles: Array<{ name: string; content: string }> = [];
-  let missingOriginalDtsOutput: { name: string; content: string } | null = null;
+  let missingOriginalDtsOutput: { segment: BaselineSegment; content: string } | null = null;
+  let selectedDtsOutputSegment: BaselineSegment | null = null;
+
+  const segmentContent = (seg: BaselineSegment): string => {
+    return trimSegmentBoundaryNewlines(content.slice(seg.start, seg.end));
+  };
+  const selectDtsOutputSegment = (seg: BaselineSegment, fileContent = segmentContent(seg)): void => {
+    result.dts = fileContent;
+    result.dtsFileName = seg.name.trim();
+    selectedDtsOutputSegment = seg;
+  };
+  const findOriginalDtsOutputSegment = (fileName: string): BaselineSegment | undefined => {
+    return outputSegments.find(seg => {
+      return seg.name.trim() === fileName
+        && seg.name.trim().endsWith('.d.ts')
+        && !seg.missingFromOriginalEmit
+        && !seg.differsFromOriginalEmit;
+    });
+  };
 
   // Pre-pass: find the last auxiliary file (package.json, tsconfig.json).
   // In multi-file baselines with duplicate filenames (e.g., multiple index.js
@@ -363,13 +379,6 @@ export function parseBaseline(content: string): BaselineContent {
     } else if (segIndex >= outputStart && !seg.differsFromOriginalEmit) {
       outputSegments.push(seg);
       outputFileNames.add(name);
-      if (seg.missingFromOriginalEmit) {
-        if (name.endsWith('.d.ts')) {
-          missingOriginalDtsOutputFileNames.add(name);
-        }
-      } else {
-        originalOutputFileNames.add(name);
-      }
     }
   }
 
@@ -437,10 +446,9 @@ export function parseBaseline(content: string): BaselineContent {
       // Declaration segment: classify as emitted output when name matches an emitted d.ts path.
       if (dtsOutputCandidates.has(name)) {
         if (seg.missingFromOriginalEmit) {
-          missingOriginalDtsOutput ??= { name, content: fileContent };
+          missingOriginalDtsOutput ??= { segment: seg, content: fileContent };
         } else if (!result.dts || result.dtsFileName === name) {
-          result.dts = fileContent;
-          result.dtsFileName = name;
+          selectDtsOutputSegment(seg, fileContent);
         }
       } else {
         dtsSourceFiles.push({ name, content: fileContent });
@@ -456,9 +464,9 @@ export function parseBaseline(content: string): BaselineContent {
     result.js = result.files.get('out.js') ?? result.js;
     result.jsFileName = 'out.js';
   }
-  if (originalOutputFileNames.has('out.d.ts') && result.files.has('out.d.ts')) {
-    result.dts = result.files.get('out.d.ts') ?? result.dts;
-    result.dtsFileName = 'out.d.ts';
+  const outDtsSegment = findOriginalDtsOutputSegment('out.d.ts');
+  if (outDtsSegment) {
+    selectDtsOutputSegment(outDtsSegment);
   }
 
   // Refine JS/DTS selection by preferring files that match the source basename.
@@ -485,14 +493,14 @@ export function parseBaseline(content: string): BaselineContent {
       }
     }
 
-    if (!result.dts && originalOutputFileNames.has(preferredDtsName) && result.files.has(preferredDtsName)) {
-      result.dts = result.files.get(preferredDtsName) ?? result.dts;
-      result.dtsFileName = preferredDtsName;
+    const preferredDtsSegment = findOriginalDtsOutputSegment(preferredDtsName);
+    if (!result.dts && preferredDtsSegment) {
+      selectDtsOutputSegment(preferredDtsSegment);
     } else if (!result.dts) {
-      for (const [name, fileContent] of result.files) {
-        if (originalOutputFileNames.has(name) && name.endsWith('.d.ts')) {
-          result.dts = fileContent;
-          result.dtsFileName = name;
+      for (const seg of outputSegments) {
+        const name = seg.name.trim();
+        if (!seg.missingFromOriginalEmit && !seg.differsFromOriginalEmit && name.endsWith('.d.ts')) {
+          selectDtsOutputSegment(seg);
           break;
         }
       }
@@ -501,10 +509,11 @@ export function parseBaseline(content: string): BaselineContent {
 
   if (!result.dts && missingOriginalDtsOutput) {
     result.dts = missingOriginalDtsOutput.content;
-    result.dtsFileName = missingOriginalDtsOutput.name;
+    result.dtsFileName = missingOriginalDtsOutput.segment.name.trim();
+    selectedDtsOutputSegment = missingOriginalDtsOutput.segment;
   }
 
-  if (result.dtsFileName && !missingOriginalDtsOutputFileNames.has(result.dtsFileName)) {
+  if (selectedDtsOutputSegment && !selectedDtsOutputSegment.missingFromOriginalEmit) {
     result.noDtsEmitExpected = false;
   }
 
