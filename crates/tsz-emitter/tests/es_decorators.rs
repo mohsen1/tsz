@@ -117,6 +117,91 @@ fn test_class_decorator_has_class_extra_initializers() {
     );
 }
 
+#[test]
+fn test_static_blocks_private_method_decorator_uses_descriptor_wrapper() {
+    let source = "class C { @dec #foo() {} }";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("let _private_foo_descriptor;"),
+        "Expected descriptor temp for decorated private method.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "__esDecorate(this, _private_foo_descriptor = { value: __setFunctionName(function () { }, \"#foo\") }"
+        ),
+        "Expected descriptor-valued private method decorator application.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("get #foo() { return _private_foo_descriptor.value; }"),
+        "Expected wrapper getter for decorated private method.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\n        #foo()"),
+        "Original private method must not remain in the class body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_static_blocks_private_accessor_decorators_use_getter_setter_descriptors() {
+    let source = "class C { @dec get #foo() { return 1; } @dec set #foo(value: number) {} }";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("let _private_get_foo_descriptor;"),
+        "Expected getter descriptor temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("let _private_set_foo_descriptor;"),
+        "Expected setter descriptor temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_private_get_foo_descriptor = { get: __setFunctionName(function () { return 1; }, \"#foo\", \"get\") }"
+        ),
+        "Expected descriptor-valued private getter decorator application.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_private_set_foo_descriptor = { set: __setFunctionName(function (value) { }, \"#foo\", \"set\") }"
+        ),
+        "Expected descriptor-valued private setter decorator application.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("get #foo() { return _private_get_foo_descriptor.get.call(this); }"),
+        "Expected wrapper getter for decorated private getter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "set #foo(value) { return _private_set_foo_descriptor.set.call(this, value); }"
+        ),
+        "Expected wrapper setter for decorated private setter.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_class_decorator_static_private_method_is_externalized() {
+    let source = "@dec class C { static #foo() {} }";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("var _C_foo;"),
+        "Expected temp for class-decorated static private method.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static { __setFunctionName(this, \"C\"); }"),
+        "Expected class name helper before static private method temp initialization.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static { _C_foo = function _C_foo() { }; }"),
+        "Expected static private method body to be externalized into a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("static #foo()"),
+        "Original static private method must not remain in the class body.\nOutput:\n{output}"
+    );
+}
+
 // =============================================================================
 // Decorator Temp Hygiene (#3091)
 // =============================================================================
