@@ -51,6 +51,47 @@ await fs.writeFile(artifact, `${JSON.stringify({
       tsgo_ms: 30,
       winner: "tsz",
     },
+    {
+      name: "type-challenges-assertion-candidates",
+      lines: 78,
+      kb: 8,
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+      status: "diagnostic mismatch",
+      compatibility: {
+        exit_class: "diagnostic mismatch",
+        phase: "assertion-classification",
+        last_successful_phase: null,
+        diagnostic_status: "tsz rejects tsc-accepted assertion candidates",
+        diagnostic_deltas: ["tsz: assertions/two.ts(2,3): error TS2589: deep"],
+        diagnostic_subsystems: [
+          {
+            subsystem: "type-challenges recursive conditionals",
+            codes: ["TS2589"],
+            count: 1,
+            examples: [],
+          },
+        ],
+        known_blockers: ["tsz rejects tsc-accepted assertion candidates"],
+        exit_codes: { tsc: [0], tsz: [1], tsgo: [] },
+        files_reached: 78,
+        peak_memory_bytes: null,
+        emit_status: "not in scope (noEmit assertion check)",
+        dts_status: "not in scope (noEmit assertion check)",
+        assertion_candidates: {
+          generated_assertions: 78,
+          tsc_diagnostic_free: 10,
+          tsc_with_diagnostics: 68,
+          tsz_diagnostic_free: 7,
+          diagnostic_free_candidate_delta: -3,
+          both_accepted: 5,
+          both_rejected: 60,
+          tsc_accepted_tsz_rejected: 3,
+          tsc_rejected_tsz_accepted: 2,
+        },
+      },
+    },
   ],
 }, null, 2)}\n`, "utf8");
 
@@ -82,7 +123,11 @@ await fs.writeFile(failedOnlyArtifact, `${JSON.stringify({
 process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = artifact;
 
 try {
-  const { getBenchmarkCharts, getBenchmarkPages } = await import("../src/_data/benchmark_data.js");
+  const {
+    getBenchmarkCharts,
+    getBenchmarkPages,
+    getProjectCompatibilityDashboard,
+  } = await import("../src/_data/benchmark_data.js");
   const pages = getBenchmarkPages();
   const fixturePage = pages.find((page) => page.name === "conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts");
   assert.ok(fixturePage, "expected TypeScript fixture benchmark page");
@@ -116,6 +161,13 @@ try {
   assert.match(charts, /Compile canaries and incomplete project timings/);
   assert.match(charts, /type-challenges project/);
   assert.match(charts, /type-challenges solutions project/);
+
+  const compatibilityDashboard = getProjectCompatibilityDashboard();
+  assert.match(compatibilityDashboard, /type-challenges assertions/);
+  assert.match(compatibilityDashboard, /generated: 78/);
+  assert.match(compatibilityDashboard, /tsc-clean: 10/);
+  assert.match(compatibilityDashboard, /both accepted: 5/);
+  assert.match(compatibilityDashboard, /tsc accepted\/tsz rejected: 3/);
 
   process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = failedOnlyArtifact;
   const failedOnlyCharts = getBenchmarkCharts();
