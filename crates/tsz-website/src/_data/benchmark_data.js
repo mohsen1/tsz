@@ -1898,6 +1898,34 @@ export function getProjectCompatibilityDashboard() {
     return parts;
   };
 
+  const assertionCandidateParts = (row) => {
+    const candidates = row.assertionCandidates;
+    if (!candidates || typeof candidates !== "object") return [];
+
+    const parts = [];
+    const addCount = (label, value) => {
+      if (Number.isFinite(Number(value))) {
+        parts.push(`${label}: ${fmt(Number(value))}`);
+      }
+    };
+    addCount("assertions generated", candidates.generated_assertions);
+    addCount("tsc clean", candidates.tsc_diagnostic_free);
+    addCount("tsz clean", candidates.tsz_diagnostic_free);
+
+    const counts = candidates.file_comparison?.counts;
+    addCount("both accepted", candidates.both_accepted ?? counts?.bothAccepted);
+    addCount("both rejected", candidates.both_rejected ?? counts?.bothRejected);
+    addCount(
+      "tsc accepted/tsz rejected",
+      candidates.tsc_accepted_tsz_rejected ?? counts?.tscAcceptedTszRejected,
+    );
+    addCount(
+      "tsc rejected/tsz accepted",
+      candidates.tsc_rejected_tsz_accepted ?? counts?.tscRejectedTszAccepted,
+    );
+    return parts;
+  };
+
   const exitCodeParts = (row) => {
     const codes = row.exitCodes || {};
     return ["tsc", "tsz", "tsgo"]
@@ -1917,24 +1945,11 @@ export function getProjectCompatibilityDashboard() {
     const reductionCandidates = Array.isArray(row.reductionCandidates)
       ? row.reductionCandidates.filter(Boolean).slice(0, 5)
       : [];
-    const assertionCandidates = row.assertionCandidates && typeof row.assertionCandidates === "object"
-      ? row.assertionCandidates
-      : null;
-    const assertionCandidateParts = [];
-    const addAssertionCandidateMetric = (label, key) => {
-      const value = assertionCandidates?.[key];
-      if (Number.isFinite(Number(value))) {
-        assertionCandidateParts.push(`${label}: ${fmt(value)}`);
-      }
-    };
-    addAssertionCandidateMetric("generated", "generated_assertions");
-    addAssertionCandidateMetric("tsc-clean", "tsc_diagnostic_free");
-    addAssertionCandidateMetric("both accepted", "both_accepted");
-    addAssertionCandidateMetric("both rejected", "both_rejected");
-    addAssertionCandidateMetric("tsc accepted/tsz rejected", "tsc_accepted_tsz_rejected");
-    addAssertionCandidateMetric("tsc rejected/tsz accepted", "tsc_rejected_tsz_accepted");
     const knownBlockers = Array.isArray(row.knownBlockers)
       ? row.knownBlockers.filter(Boolean).slice(0, 8)
+      : [];
+    const diagnosticCandidateExamples = Array.isArray(row.assertionCandidates?.diagnostic_candidate_examples)
+      ? row.assertionCandidates.diagnostic_candidate_examples.filter(Boolean).slice(0, 5)
       : [];
     const parts = [
       `phase: ${row.phase || "unknown"}`,
@@ -1949,6 +1964,7 @@ export function getProjectCompatibilityDashboard() {
       row.emitStatus ? `emit: ${row.emitStatus}` : "",
       row.dtsStatus ? `dts: ${row.dtsStatus}` : "",
       ...measurementParts(row),
+      ...assertionCandidateParts(row),
       ...exitCodeParts(row),
     ].filter(Boolean);
     const blockerHtml = row.className === "green" || !knownBlockers.length
@@ -1962,11 +1978,17 @@ export function getProjectCompatibilityDashboard() {
           <span>${escapeHtml(`queue: ${diagnosticCodes.length ? diagnosticCodes.join(", ") : "unclassified diagnostic"}`)}</span>
           ${reductionCandidates.map((candidate) => `<code>${escapeHtml(candidate)}</code>`).join("")}
         </div>`;
-    const assertionHtml = assertionCandidateParts.length
-      ? `<div class="compat-assertions">
-          ${assertionCandidateParts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}
-        </div>`
-      : "";
+    const candidateExampleHtml = row.className === "green" || !diagnosticCandidateExamples.length
+      ? ""
+      : `<div class="compat-queue">
+          ${diagnosticCandidateExamples.map((example) => {
+            const codes = Array.isArray(example.codes) && example.codes.length
+              ? ` ${example.codes.slice(0, 3).join(",")}`
+              : "";
+            const file = example.file || example.candidate_id || "unknown candidate";
+            return `<code>${escapeHtml(`${example.compiler || "compiler"}:${codes} ${file}`)}</code>`;
+          }).join("")}
+        </div>`;
     const subsystemHtml = row.className === "green" || !diagnosticSubsystems.length
       ? ""
       : `<div class="compat-subsystems">
@@ -1982,7 +2004,7 @@ export function getProjectCompatibilityDashboard() {
           ? deltas.map((delta) => `<code>${escapeHtml(delta)}</code>`).join("")
           : `<span>${escapeHtml("diagnostic delta not captured")}</span>`}
         </div>`;
-    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${blockerHtml}${subsystemHtml}${assertionHtml}${queueHtml}${deltaHtml}`;
+    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${blockerHtml}${subsystemHtml}${queueHtml}${candidateExampleHtml}${deltaHtml}`;
   };
 
   return `<section class="compat-dashboard">

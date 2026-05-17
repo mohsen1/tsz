@@ -118,6 +118,38 @@ withTempDir((dir) => {
             candidatesWithDiagnostics: 1,
             candidatesWithoutDiagnostics: 1,
             filesWithDiagnostics: ["assertions/one.ts"],
+            byCandidate: [
+              {
+                file: "assertions/one.ts",
+                errorCount: 1,
+                codes: [{ key: "TS2344", count: 1 }],
+                semanticFamilies: ["mapped/key-remapped types"],
+                firstErrors: [
+                  {
+                    line: 1,
+                    column: 1,
+                    code: "TS2344",
+                    message: "mismatch",
+                  },
+                ],
+                candidate: {
+                  id: "00001-easy-pick",
+                  solution: {
+                    output: "solutions/one.ts",
+                    source: "questions/00001-easy-pick/README.md",
+                    declarations: ["MyPick"],
+                  },
+                  testCase: {
+                    output: "test-cases/one.ts",
+                    source: "questions/00001-easy-pick/test-cases.ts",
+                  },
+                  assertion: {
+                    hasReferencedSolutionDeclaration: true,
+                    referencedSolutionDeclarations: ["MyPick"],
+                  },
+                },
+              },
+            ],
           },
         },
         tsz: {
@@ -132,12 +164,17 @@ withTempDir((dir) => {
         status: "tsz-accepts-tsc-rejected",
         diagnosticFreeCandidateDelta: 1,
         candidateFileComparison: {
+          totalCandidates: 2,
           counts: {
             bothAccepted: 1,
             bothRejected: 0,
             tscAcceptedTszRejected: 0,
             tscRejectedTszAccepted: 1,
           },
+          bothAccepted: ["assertions/two.ts"],
+          bothRejected: [],
+          tscAcceptedTszRejected: [],
+          tscRejectedTszAccepted: ["assertions/one.ts"],
         },
         bySemanticFamilyDelta: [{ key: "mapped/key-remapped types", delta: -1 }],
       },
@@ -211,6 +248,35 @@ withTempDir((dir) => {
       tsc_diagnostic_free: 1,
       tsz_diagnostic_free: 1,
     },
+    file_comparison: {
+      total_candidates: 2,
+      counts: {
+        bothAccepted: 1,
+        bothRejected: 0,
+        tscAcceptedTszRejected: 0,
+        tscRejectedTszAccepted: 1,
+      },
+      both_accepted: ["type-challenges-assertions/assertions/two.ts"],
+      both_rejected: [],
+      tsc_accepted_tsz_rejected: [],
+      tsc_rejected_tsz_accepted: ["type-challenges-assertions/assertions/one.ts"],
+    },
+    diagnostic_candidate_examples: [
+      {
+        compiler: "tsc",
+        file: "type-challenges-assertions/assertions/one.ts",
+        candidate_id: "00001-easy-pick",
+        error_count: 1,
+        codes: ["TS2344"],
+        semantic_families: ["mapped/key-remapped types"],
+        first_error: {
+          line: 1,
+          column: 1,
+          code: "TS2344",
+          message: "mismatch",
+        },
+      },
+    ],
   });
 });
 
