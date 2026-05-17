@@ -168,12 +168,24 @@ impl<'a> CheckerState<'a> {
         if !Self::interface_declarations_have_heritage(&declarations) {
             return false;
         }
-        self.ctx
+        if self
+            .ctx
             .lib_type_resolution_cache
             .get(normalized)
             .copied()
             .flatten()
-            .is_none_or(|cached| !self.cached_lib_type_is_usable(normalized, Some(cached)))
+            .is_some_and(|cached| self.cached_lib_type_is_usable(normalized, Some(cached)))
+        {
+            return false;
+        }
+        if !self.lib_name_locally_augmented(normalized)
+            && let Some(shared) = &self.ctx.shared_lib_type_cache
+            && let Some(Some(cached)) = shared.get(normalized).map(|entry| *entry)
+            && self.cached_lib_type_is_usable(normalized, Some(cached))
+        {
+            return false;
+        }
+        true
     }
 
     fn computed_property_name_is_well_known_symbol(arena: &NodeArena, name_idx: NodeIndex) -> bool {
