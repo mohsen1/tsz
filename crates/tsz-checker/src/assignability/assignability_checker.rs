@@ -1548,6 +1548,36 @@ impl<'a> CheckerState<'a> {
             evaluated = distributed;
         }
 
+        // tsc expands homomorphic mapped type applications (e.g. `PassThrough<A|B>`)
+        // before structural comparison; mirror that for tuple elements.
+        if let Some(elements) =
+            crate::query_boundaries::common::tuple_elements(self.ctx.types, evaluated)
+        {
+            let mut any_changed = false;
+            let new_elements: Vec<tsz_solver::TupleElement> = elements
+                .iter()
+                .map(|elem| {
+                    if matches!(
+                        classify_for_assignability_eval(self.ctx.types, elem.type_id),
+                        AssignabilityEvalKind::Resolved
+                    ) {
+                        return *elem;
+                    }
+                    let elem_eval = self.evaluate_type_for_assignability(elem.type_id);
+                    if elem_eval != elem.type_id {
+                        any_changed = true;
+                    }
+                    tsz_solver::TupleElement {
+                        type_id: elem_eval,
+                        ..*elem
+                    }
+                })
+                .collect();
+            if any_changed {
+                evaluated = self.ctx.types.as_type_database().tuple(new_elements);
+            }
+        }
+
         if crate::query_boundaries::assignability::remapped_mapped_type_has_no_outer_type_params(
             self.ctx.types,
             evaluated,
