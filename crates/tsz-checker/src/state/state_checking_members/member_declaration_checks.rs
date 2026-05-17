@@ -26,8 +26,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1277: `const` modifier can only appear on a type parameter of a
-    /// function, method, or class. Interfaces and type aliases are rejected.
+    /// TS1277: `const` modifier can only appear on a type parameter of a function, method, or class. Interfaces and type aliases are rejected.
     pub(crate) fn check_const_type_parameter_on_non_function(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
@@ -59,10 +58,8 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1273: modifiers categorically invalid on a type parameter (public,
-    /// private, protected, static, readonly, async, declare, abstract,
-    /// override, export, default, accessor). TS1274 is reserved for `in`/`out`
-    /// in the wrong context.
+    /// TS1273: modifiers categorically invalid on a type parameter (public, private, protected, static, readonly, async, declare, abstract,
+    /// override, export, default, accessor). TS1274 is reserved for `in`/`out` in the wrong context.
     pub(crate) fn check_never_valid_type_parameter_modifiers(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
@@ -126,9 +123,8 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1274: Check that variance modifiers (`in`, `out`) are not used on
-    /// function/method type parameters. They are only valid on class, interface,
-    /// and type alias type parameters.
+    /// TS1274: Check that variance modifiers (`in`, `out`) are not used on function/method type parameters.
+    /// They are only valid on class, interface, and type alias type parameters.
     pub(crate) fn check_variance_on_function_type_parameters(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
@@ -321,11 +317,8 @@ impl<'a> CheckerState<'a> {
         MemberLookup::NotFound
     }
 
-    /// Scan constructor body for `this.name = ...` assignment statements
-    /// with JSDoc `@private` / `@protected` tags (common in JS class patterns).
-    ///
-    /// Returns `Some(MemberLookup)` if a matching `this.name` assignment is
-    /// found, using the JSDoc tag to determine access level.
+    /// Scan constructor body for `this.name = ...` assignments with JSDoc `@private` / `@protected` tags.
+    /// Returns `Some(MemberLookup)` using the matching assignment's JSDoc access tag.
     fn lookup_ctor_this_assignment_jsdoc(
         &self,
         body: NodeIndex,
