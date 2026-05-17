@@ -17,58 +17,36 @@ fn expr_offset_after(source: &str, needle: &str, prefix: &str) -> u32 {
         + prefix.len() as u32
 }
 
-/// Indexed-access return: `Things[K1]` returned where `Things[K2]` is expected.
+/// Indexed-access return: `Things[A1]` returned where `Things[A2]` is expected.
 /// tsc anchors TS2322 at the returned identifier, not the `return` keyword.
+/// Runs with two type-parameter name pairs (anti-hardcoding §25).
 #[test]
 fn indexed_access_return_anchors_at_expression_not_return_keyword() {
-    let source = r#"
-interface Things {
-    a: { id?: string };
-}
-function f<K1 extends keyof Things, K2 extends keyof Things>(p: Things[K1]): Things[K2] {
+    for (a1, a2) in [("K1", "K2"), ("T1", "T2")] {
+        let source = format!(
+            r#"
+interface Things {{
+    a: {{ id?: string }};
+}}
+function f<{a1} extends keyof Things, {a2} extends keyof Things>(p: Things[{a1}]): Things[{a2}] {{
     return p;
-}
-"#;
-    let diags = check_source_diagnostics(source);
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
-    assert_eq!(
-        ts2322.len(),
-        1,
-        "expected exactly one TS2322; got: {diags:#?}"
-    );
-    let expected = expr_offset_after(source, "    return p", "    return ");
-    assert_eq!(
-        ts2322[0].start, expected,
-        "TS2322 must anchor at returned `p` (offset {expected}), got offset {}",
-        ts2322[0].start
-    );
-}
-
-/// Same rule with alt type-parameter names (anti-hardcoding §25: the fix must
-/// not match on `K1`/`K2` literally).
-#[test]
-fn indexed_access_return_anchors_at_expression_alt_names() {
-    let source = r#"
-interface Things {
-    a: { id?: string };
-}
-function f<T1 extends keyof Things, T2 extends keyof Things>(p: Things[T1]): Things[T2] {
-    return p;
-}
-"#;
-    let diags = check_source_diagnostics(source);
-    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
-    assert_eq!(
-        ts2322.len(),
-        1,
-        "expected exactly one TS2322 with alt names; got: {diags:#?}"
-    );
-    let expected = expr_offset_after(source, "    return p", "    return ");
-    assert_eq!(
-        ts2322[0].start, expected,
-        "TS2322 must anchor at returned `p` (offset {expected}), got offset {}",
-        ts2322[0].start
-    );
+}}
+"#
+        );
+        let diags = check_source_diagnostics(&source);
+        let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+        assert_eq!(
+            ts2322.len(),
+            1,
+            "({a1}/{a2}) expected exactly one TS2322; got: {diags:#?}"
+        );
+        let expected = expr_offset_after(&source, "    return p", "    return ");
+        assert_eq!(
+            ts2322[0].start, expected,
+            "({a1}/{a2}) TS2322 must anchor at returned `p` (offset {expected}), got offset {}",
+            ts2322[0].start
+        );
+    }
 }
 
 /// Simple concrete mismatch: `return 42` in a `string`-returning function.
@@ -103,8 +81,7 @@ fn identifier_return_mismatch_anchors_at_identifier() {
         1,
         "expected exactly one TS2322 for `return x` (number vs string); got: {diags:#?}"
     );
-    // `x` appears three times; the returned one is the last occurrence.
-    let expected = source.rfind('x').expect("x in source") as u32;
+    let expected = expr_offset_after(source, "return x", "return ");
     assert_eq!(
         ts2322[0].start, expected,
         "TS2322 must anchor at the returned `x` (offset {expected}), got offset {}",
