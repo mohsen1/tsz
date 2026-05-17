@@ -2473,9 +2473,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Visit a lazy type reference: Lazy(DefId)
     fn visit_lazy(&mut self, def_id: DefId, original_type_id: TypeId) -> TypeId {
         if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner) {
-            if matches!(self.interner.lookup(resolved), Some(TypeData::Union(_)))
-                && crate::visitor::contains_lazy_def_id(self.interner, resolved, def_id)
-            {
+            if self.is_self_recursive_promise_union(resolved, def_id) {
                 return original_type_id;
             }
 
@@ -2516,6 +2514,75 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         } else {
             original_type_id
         }
+    }
+
+    /// Detect recursive aliases whose recursion flows through a well-known
+    /// promise-like wrapper, e.g. `type T = string | Promise<T>`.
+    ///
+    /// General recursive unions such as `Json` and recursive arrays must still
+    /// expand so structural assignability can inspect their non-recursive arms.
+    /// Promise fulfillment cycles are different: structural comparison of
+    /// `Promise<T>`'s callbacks can chase `T -> Promise<T> -> T` indefinitely.
+    /// Keep only those promise-recursive aliases opaque at the outer lazy
+    /// boundary and let ordinary recursion continue through the normal
+    /// evaluator guard.
+    fn is_self_recursive_promise_union(&self, type_id: TypeId, def_id: DefId) -> bool {
+        let Some(TypeData::Union(list_id)) = self.interner.lookup(type_id) else {
+            return false;
+        };
+
+        self.interner
+            .type_list(list_id)
+            .iter()
+            .any(|member| self.is_promise_application_containing_def(*member, def_id, 0))
+    }
+
+    fn is_promise_application_containing_def(
+        &self,
+        type_id: TypeId,
+        def_id: DefId,
+        depth: u8,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
+
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                let args_contain_def = app
+                    .args
+                    .iter()
+                    .any(|arg| crate::visitor::contains_lazy_def_id(self.interner, *arg, def_id));
+                (self.is_well_known_promise_base(app.base) && args_contain_def)
+                    || app.args.iter().any(|arg| {
+                        self.is_promise_application_containing_def(*arg, def_id, depth + 1)
+                    })
+            }
+            Some(TypeData::Union(list_id)) => {
+                self.interner.type_list(list_id).iter().any(|member| {
+                    self.is_promise_application_containing_def(*member, def_id, depth + 1)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn is_well_known_promise_base(&self, base: TypeId) -> bool {
+        if base == TypeId::PROMISE_BASE {
+            return true;
+        }
+
+        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(base) else {
+            return false;
+        };
+        let Some(name) = self.resolver.get_def_name(def_id) else {
+            return false;
+        };
+        matches!(
+            self.interner.resolve_atom(name).as_str(),
+            "Promise" | "PromiseLike"
+        )
     }
 
     /// Visit a string manipulation intrinsic type: Uppercase<T>, Lowercase<T>, etc.
