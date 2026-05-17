@@ -4814,7 +4814,9 @@ const asNumber: number = result;
     let diags = relevant_diagnostics(source);
     let ts2322_count = diagnostic_count(&diags, 2322);
     assert!(
-        ts2322_count == 1 && lacks_diagnostic_code(&diags, 2339),
+        ts2322_count == 1
+            && lacks_diagnostic_code(&diags, 2339)
+            && lacks_diagnostic_code(&diags, 18046),
         "T should be inferred as string, not any or unknown. Expected only the number assignment to fail. Got: {diags:#?}"
     );
 }
@@ -4838,7 +4840,9 @@ const asString: string = result;
     let diags = relevant_diagnostics(source);
     let ts2322_count = diagnostic_count(&diags, 2322);
     assert!(
-        ts2322_count == 1 && lacks_diagnostic_code(&diags, 2339),
+        ts2322_count == 1
+            && lacks_diagnostic_code(&diags, 2339)
+            && lacks_diagnostic_code(&diags, 18046),
         "K should be inferred as number, not any or unknown. Expected only the string assignment to fail. Got: {diags:#?}"
     );
 }
@@ -4858,7 +4862,9 @@ const asNumber: number = result;
     let diags = relevant_diagnostics(source);
     let ts2322_count = diagnostic_count(&diags, 2322);
     assert!(
-        ts2322_count == 1 && lacks_diagnostic_code(&diags, 2339),
+        ts2322_count == 1
+            && lacks_diagnostic_code(&diags, 2339)
+            && lacks_diagnostic_code(&diags, 18046),
         "T should be inferred as string from type-alias `Getter<T>`, not any or unknown. Got: {diags:#?}"
     );
 }

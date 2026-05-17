@@ -32,6 +32,7 @@ impl<'a> CheckerState<'a> {
         self.maybe_emit_unknown_callback_body_diagnostics(
             emit_unknown_callback_body_diagnostics,
             shape,
+            finalized_contextual_param_types,
             args,
             arg_types,
             check_excess_properties,
@@ -43,6 +44,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         enabled: bool,
         shape: Option<&FunctionShape>,
+        finalized_contextual_param_types: Option<&[Option<TypeId>]>,
         args: &[NodeIndex],
         arg_types: &[TypeId],
         check_excess_properties: bool,
@@ -53,6 +55,7 @@ impl<'a> CheckerState<'a> {
         };
         self.emit_uninferred_callback_unknown_body_diagnostics(
             shape,
+            finalized_contextual_param_types,
             args,
             arg_types,
             check_excess_properties,
@@ -63,6 +66,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn emit_uninferred_callback_unknown_body_diagnostics(
         &mut self,
         shape: &FunctionShape,
+        finalized_contextual_param_types: Option<&[Option<TypeId>]>,
         args: &[NodeIndex],
         arg_types: &[TypeId],
         check_excess_properties: bool,
@@ -76,6 +80,18 @@ impl<'a> CheckerState<'a> {
 
         for (index, &arg_idx) in args.iter().enumerate() {
             if !self.is_callback_like_argument(arg_idx) {
+                continue;
+            }
+            if finalized_contextual_param_types
+                .and_then(|types| types.get(index).copied().flatten())
+                .is_some_and(|ty| {
+                    ty != TypeId::UNKNOWN
+                        && ty != TypeId::ERROR
+                        && !common::contains_type_by_id(self.ctx.types, ty, TypeId::UNKNOWN)
+                        && !common::contains_type_parameters(self.ctx.types, ty)
+                        && !common::contains_infer_types(self.ctx.types, ty)
+                })
+            {
                 continue;
             }
             let Some(param_type) = shape.params.get(index).map(|p| p.type_id).or_else(|| {
