@@ -501,3 +501,55 @@ withTempDir((dir) => {
   assert.match(result.stderr, /template\/test-case level: warm vs easy/);
   assert.ok(!fs.existsSync(output));
 });
+
+withTempDir((dir) => {
+  const templates = path.join(dir, "templates.json");
+  const testCases = path.join(dir, "test-cases.json");
+  const solutions = path.join(dir, "solutions.json");
+  const output = path.join(dir, "pairing.json");
+
+  writeJson(
+    templates,
+    manifest("questions/**/template.ts", [
+      {
+        id: "13",
+        level: "warm",
+        source: "questions/00013-warm-hello-world/template.ts",
+      },
+    ]),
+  );
+  writeJson(
+    testCases,
+    manifest("questions/**/test-cases.ts", [
+      {
+        id: "13",
+        level: "warm",
+        source: "questions/00013-warm-hello-world/test-cases.ts",
+      },
+    ]),
+  );
+  writeJson(
+    solutions,
+    manifest("en/*.md", [
+      { id: "13", level: "warm", source: "en/hello-world.md" },
+      { id: "189", level: "easy", source: "en/awaited.md" },
+    ]),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, output],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /solution entries are missing official assertion sources/,
+  );
+  assert.match(result.stderr, /solutions without templates: 1/);
+  assert.match(result.stderr, /solutions without test cases: 1/);
+  assert.ok(!fs.existsSync(output));
+});
