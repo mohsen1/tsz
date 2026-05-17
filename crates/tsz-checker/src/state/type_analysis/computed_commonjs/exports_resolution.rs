@@ -958,6 +958,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let preexisting_names = props
+            .iter()
+            .map(|prop| prop.name)
+            .collect::<rustc_hash::FxHashSet<_>>();
+
         for stmt_idx in &all_stmts {
             let Some(stmt_node) = target_arena.get(*stmt_idx) else {
                 continue;
@@ -996,17 +1001,22 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 if let Some(existing) = props.iter_mut().find(|prop| prop.name == name_atom) {
-                    let factory = self.ctx.types.factory();
-                    existing.type_id = if existing.type_id == rhs_type {
-                        existing.type_id
+                    if preexisting_names.contains(&name_atom) {
+                        let factory = self.ctx.types.factory();
+                        existing.type_id = if existing.type_id == rhs_type {
+                            existing.type_id
+                        } else {
+                            factory.union2(existing.type_id, rhs_type)
+                        };
+                        existing.write_type = if existing.write_type == rhs_type {
+                            existing.write_type
+                        } else {
+                            factory.union2(existing.write_type, rhs_type)
+                        };
                     } else {
-                        factory.union2(existing.type_id, rhs_type)
-                    };
-                    existing.write_type = if existing.write_type == rhs_type {
-                        existing.write_type
-                    } else {
-                        factory.union2(existing.write_type, rhs_type)
-                    };
+                        existing.type_id = rhs_type;
+                        existing.write_type = rhs_type;
+                    }
                     existing.optional = false;
                     existing.readonly = false;
                     continue;

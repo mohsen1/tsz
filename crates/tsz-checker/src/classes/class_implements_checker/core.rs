@@ -9,6 +9,7 @@ use crate::query_boundaries::class::{
 use crate::query_boundaries::common::PropertyAccessResult;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
@@ -899,6 +900,21 @@ impl<'a> CheckerState<'a> {
                 // Resolve interface/class symbols through canonical heritage resolution so
                 // qualified names (e.g. `Promise.Thenable`) are handled correctly.
                 if let Some(raw_sym_id) = self.resolve_heritage_symbol(expr_idx) {
+                    let heritage_name = self.heritage_name_text(expr_idx);
+                    let heritage_symbol_name = self
+                        .ctx
+                        .arena
+                        .get_identifier_at(expr_idx)
+                        .map(|ident| ident.escaped_text.as_str())
+                        .or(heritage_name.as_deref());
+                    let raw_sym_id = heritage_symbol_name
+                        .and_then(|name| {
+                            self.ctx
+                                .file_local_type_shadow_for_lib_name(name)
+                                .then(|| self.ctx.same_file_type_declaration_symbol_for_name(name))
+                                .flatten()
+                        })
+                        .unwrap_or(raw_sym_id);
                     let mut visited_aliases =
                         crate::symbols_domain::alias_cycle::AliasCycleTracker::new();
                     let sym_id = self
@@ -912,10 +928,32 @@ impl<'a> CheckerState<'a> {
                     };
                     let symbol_name = symbol.escaped_name.clone();
                     let symbol_flags = symbol.flags;
-                    let symbol_declarations = symbol.declarations.clone();
-                    let interface_name = self
-                        .heritage_name_text(expr_idx)
-                        .unwrap_or_else(|| symbol_name.clone());
+                    let local_shadow_declarations = heritage_symbol_name.and_then(|name| {
+                        self.ctx
+                            .file_local_type_shadow_for_lib_name(name)
+                            .then(|| {
+                                symbol
+                                    .declarations
+                                    .iter()
+                                    .copied()
+                                    .filter(|&decl_idx| {
+                                        self.ctx
+                                            .arena
+                                            .get(decl_idx)
+                                            .and_then(|node| self.ctx.arena.get_interface(node))
+                                            .and_then(|decl| {
+                                                self.ctx.arena.get_identifier_text(decl.name)
+                                            })
+                                            == Some(name)
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                            .filter(|decls| !decls.is_empty())
+                    });
+                    let interface_name = heritage_name.unwrap_or_else(|| symbol_name.clone());
+                    let symbol_declarations = local_shadow_declarations
+                        .clone()
+                        .unwrap_or_else(|| symbol.declarations.clone());
 
                     let is_class = (symbol_flags & tsz_binder::symbol_flags::CLASS) != 0;
 
@@ -1039,7 +1077,20 @@ impl<'a> CheckerState<'a> {
                         &type_args,
                     );
 
-                    let raw_interface_type = if is_class {
+                    let raw_interface_type = if let Some(local_declarations) =
+                        local_shadow_declarations.as_ref()
+                    {
+                        let mut merged = TypeId::ERROR;
+                        for &decl_idx in local_declarations {
+                            let interface_type = self.get_type_of_interface(decl_idx);
+                            merged = if merged == TypeId::ERROR {
+                                interface_type
+                            } else {
+                                self.merge_interface_types(merged, interface_type)
+                            };
+                        }
+                        merged
+                    } else if is_class {
                         let mut instance_type = None;
                         for &decl_idx in &symbol_declarations {
                             if let Some(node) = self.ctx.arena.get(decl_idx)
