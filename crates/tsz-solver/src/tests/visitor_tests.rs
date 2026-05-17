@@ -820,7 +820,7 @@ fn test_contains_infer_types() {
 }
 
 #[test]
-fn test_cached_contains_infer_and_type_query_predicates() {
+fn test_cached_contains_infer_type_parameter_and_type_query_predicates() {
     let interner = TypeInterner::new();
 
     let infer_type = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -829,12 +829,19 @@ fn test_cached_contains_infer_and_type_query_predicates() {
         default: None,
         is_const: false,
     }));
+    let type_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
     let type_query = interner.type_query(SymbolRef(7));
-    let nested = interner.union(vec![infer_type, type_query]);
+    let nested = interner.union(vec![infer_type, type_param, type_query]);
 
     assert!(crate::type_queries::contains_infer_types_db(
         &interner, nested
     ));
+    assert!(contains_type_parameters(&interner, nested));
     assert!(crate::type_queries::contains_type_query_db(
         &interner, nested
     ));
@@ -842,6 +849,7 @@ fn test_cached_contains_infer_and_type_query_predicates() {
         &interner,
         TypeId::STRING
     ));
+    assert!(!contains_type_parameters(&interner, TypeId::STRING));
     assert!(!crate::type_queries::contains_type_query_db(
         &interner,
         TypeId::STRING
@@ -852,6 +860,7 @@ fn test_cached_contains_infer_and_type_query_predicates() {
     assert!(crate::type_queries::contains_infer_types_db(
         &interner, nested
     ));
+    assert!(contains_type_parameters(&interner, nested));
     assert!(crate::type_queries::contains_type_query_db(
         &interner, nested
     ));

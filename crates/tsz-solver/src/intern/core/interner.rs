@@ -546,6 +546,9 @@ pub struct TypeInterner {
     /// and conditional subtype paths ask this repeatedly for the same
     /// conditional/application shapes.
     pub(crate) contains_infer_cache: DashMap<TypeId, bool, FxBuildHasher>,
+    /// Cache for `contains_type_parameters` checks. Results are immutable per
+    /// `TypeId` and shared by checker and solver generic guards.
+    pub(crate) contains_type_parameters_cache: DashMap<TypeId, bool, FxBuildHasher>,
     /// Cache for `contains_type_query_db` checks. Results are immutable per
     /// `TypeId` and shared across evaluator instances.
     pub(crate) contains_type_query_cache: DashMap<TypeId, bool, FxBuildHasher>,
@@ -684,6 +687,7 @@ impl TypeInterner {
             identity_comparable_cache: DashMap::with_hasher(FxBuildHasher),
             contains_this_cache: DashMap::with_hasher(FxBuildHasher),
             contains_infer_cache: DashMap::with_hasher(FxBuildHasher),
+            contains_type_parameters_cache: DashMap::with_hasher(FxBuildHasher),
             contains_type_query_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
             array_display_base_type: AtomicU32::new(u32::MAX),

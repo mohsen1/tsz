@@ -554,10 +554,32 @@ fn is_identity_comparable_type_impl(types: &dyn TypeDatabase, type_id: TypeId, d
 // =============================================================================
 
 /// Check if a type contains any type parameters.
+#[inline]
 pub fn contains_type_parameters(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    contains_type_matching(types, type_id, |key| {
-        matches!(key, TypeData::TypeParameter(_) | TypeData::Infer(_))
-    })
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    if let Some(cached) = types.contains_type_parameters_cached(type_id) {
+        return cached;
+    }
+    let result = match types.lookup(type_id) {
+        Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => true,
+        Some(
+            TypeData::Literal(_)
+            | TypeData::Intrinsic(_)
+            | TypeData::Error
+            | TypeData::ThisType
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::Recursive(_),
+        ) => false,
+        _ => contains_type_matching(types, type_id, |key| {
+            matches!(key, TypeData::TypeParameter(_) | TypeData::Infer(_))
+        }),
+    };
+    types.set_contains_type_parameters_cache(type_id, result);
+    result
 }
 
 /// Check if a type contains free type parameters, excluding those bound by

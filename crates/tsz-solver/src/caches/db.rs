@@ -321,6 +321,18 @@ pub trait TypeDatabase {
     /// interner cache. Default impl is a no-op.
     fn set_contains_infer_types_cache(&self, _type_id: TypeId, _result: bool) {}
 
+    /// Look up a cached `contains_type_parameters(type_id)` result if available.
+    ///
+    /// Like the other structural predicate caches, the answer is stable for an
+    /// interned `TypeId` because type data is immutable.
+    fn contains_type_parameters_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+
+    /// Record the result of `contains_type_parameters(type_id)` in the shared
+    /// interner cache. Default impl is a no-op.
+    fn set_contains_type_parameters_cache(&self, _type_id: TypeId, _result: bool) {}
+
     /// Look up a cached `contains_type_query_db(type_id)` result if available.
     fn contains_type_query_cached(&self, _type_id: TypeId) -> Option<bool> {
         None
@@ -720,6 +732,16 @@ impl TypeDatabase for TypeInterner {
 
     fn set_contains_infer_types_cache(&self, type_id: TypeId, result: bool) {
         self.contains_infer_cache.insert(type_id, result);
+    }
+
+    fn contains_type_parameters_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_type_parameters_cache
+            .get(&type_id)
+            .map(|v| *v)
+    }
+
+    fn set_contains_type_parameters_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_type_parameters_cache.insert(type_id, result);
     }
 
     fn contains_type_query_cached(&self, type_id: TypeId) -> Option<bool> {
