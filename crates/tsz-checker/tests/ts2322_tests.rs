@@ -8154,9 +8154,8 @@ dst = src;
 #[test]
 fn ts2820_union_of_plain_string_literals_uses_literal_union_form() {
     let source = r#"
-type Colors = "red" | "green" | "blue";
 declare let c: "bleu";
-let x: Colors = c;
+let x: "red" | "green" | "blue" = c;
 "#;
     let all = get_all_diagnostics(source);
     let msg = all
@@ -8164,7 +8163,7 @@ let x: Colors = c;
         .find_map(|(code, msg)| (*code == 2322 || *code == 2820).then_some(msg))
         .unwrap_or_else(|| panic!("expected a type mismatch diagnostic, got none"));
     assert!(
-        msg.contains('"'),
-        "plain string literal union target should use literal form, got: {msg}"
+        msg.contains("\"red\" | \"green\" | \"blue\""),
+        "plain string literal union target should use full literal union form, got: {msg}"
     );
 }
