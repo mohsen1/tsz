@@ -512,6 +512,7 @@ run_lint() {
   node scripts/bench/test-tsgo-winner-report.mjs || return $?
   node scripts/ci/test-project-compile-guard-readiness-artifacts.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-classifier.mjs || return $?
+  node scripts/ci/test-type-challenges-assertion-clean-row.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-clean-subset.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-candidates.mjs || return $?
