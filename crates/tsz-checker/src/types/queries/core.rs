@@ -133,10 +133,19 @@ impl<'a> CheckerState<'a> {
         let expr_node = self.ctx.arena.get(expr_idx)?;
         self.ctx.arena.get_identifier(expr_node)?;
 
-        let sym_id = self.resolve_identifier_symbol(expr_idx)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let local_sym_id = self.resolve_identifier_symbol(expr_idx)?;
+        let sym_id = self
+            .ctx
+            .resolve_import_alias_and_register(local_sym_id)
+            .unwrap_or(local_sym_id);
+        let symbol = self.get_cross_file_symbol(sym_id)?;
         let value_decl = symbol.value_declaration;
-        if value_decl.is_none() || !self.ctx.arena.is_const_variable_declaration(value_decl) {
+        let decl_arena = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
+            .unwrap_or(self.ctx.arena);
+        if value_decl.is_none() || !decl_arena.is_const_variable_declaration(value_decl) {
             return None;
         }
 
