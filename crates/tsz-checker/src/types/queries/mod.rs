@@ -15,6 +15,7 @@ pub(crate) mod binding;
 pub(crate) mod callable_truthiness;
 pub(crate) mod class;
 pub(crate) mod core;
+pub(crate) mod infer_bindings;
 pub(crate) mod lib;
 pub(crate) mod lib_augmentations;
 pub(crate) mod lib_decls;
