@@ -71,6 +71,11 @@ withTempDir((dir) => {
   );
   writeJson(manifest, {
     fixture: "type-challenges-assertion-candidates",
+    sources: {
+      templates: { repository: "type", ref: "type-ref" },
+      testCases: { repository: "type", ref: "type-ref" },
+      solutions: { repository: "solutions", ref: "solutions-ref" },
+    },
     counts: {
       pairedSolutions: 2,
       generatedAssertions: 2,
@@ -117,21 +122,21 @@ withTempDir((dir) => {
   writeExecutable(
     fakeTsc,
     [
-      "#!/usr/bin/env node",
-      `console.error(${JSON.stringify(
-        `${path.join(candidates, "assertions", "one.ts")}(1,1): error TS2344: mismatch`,
-      )})`,
-      "console.error(\"assertions/two.ts(2,3): error TS2304: missing\")",
-      "process.exit(1)",
+      "#!/usr/bin/perl",
+      `print STDERR ${JSON.stringify(
+        `${path.join(candidates, "assertions", "one.ts")}(1,1): error TS2344: mismatch\n`,
+      )};`,
+      "print STDERR \"assertions/two.ts(2,3): error TS2304: missing\\n\";",
+      "exit 1;",
       "",
     ].join("\n"),
   );
   writeExecutable(
     fakeTsz,
     [
-      "#!/usr/bin/env node",
-      "console.log(\"ok\")",
-      "process.exit(0)",
+      "#!/usr/bin/perl",
+      "print \"ok\\n\";",
+      "exit 0;",
       "",
     ].join("\n"),
   );
@@ -150,6 +155,11 @@ withTempDir((dir) => {
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.equal(report.fixture, "type-challenges-assertion-classification");
+  assert.deepEqual(report.candidateManifest.sources, {
+    templates: { repository: "type", ref: "type-ref" },
+    testCases: { repository: "type", ref: "type-ref" },
+    solutions: { repository: "solutions", ref: "solutions-ref" },
+  });
   assert.deepEqual(report.candidateManifest.counts, {
     pairedSolutions: 2,
     generatedAssertions: 2,

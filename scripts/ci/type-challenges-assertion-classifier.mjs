@@ -694,6 +694,7 @@ const report = {
   fixture: "type-challenges-assertion-classification",
   candidateManifest: {
     fixture: manifest.fixture,
+    sources: manifest.sources ?? null,
     counts: manifest.counts,
     semanticFamilies: summarizeCandidateSemanticFamilies(manifest),
   },
