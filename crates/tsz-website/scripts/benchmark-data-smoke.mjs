@@ -95,6 +95,12 @@ await fs.writeFile(artifact, `${JSON.stringify({
           both_rejected: 60,
           tsc_accepted_tsz_rejected: 3,
           tsc_rejected_tsz_accepted: 2,
+          tsc_clean_subset: {
+            generated_assertions: 10,
+            rejected_from_full_corpus: 68,
+            tsc_status: "pass",
+            tsz_status: "fail",
+          },
           file_comparison: {
             counts: {
               bothAccepted: 5,
@@ -236,6 +242,10 @@ try {
   assert.match(compatibilityDashboard, /solutions ref: solutions-ref/);
   assert.match(compatibilityDashboard, /tsc clean: 10/);
   assert.match(compatibilityDashboard, /tsz clean: 7/);
+  assert.match(compatibilityDashboard, /tsc-clean subset: 10/);
+  assert.match(compatibilityDashboard, /tsc-clean rejected: 68/);
+  assert.match(compatibilityDashboard, /tsc-clean tsc: pass/);
+  assert.match(compatibilityDashboard, /tsc-clean tsz: fail/);
   assert.match(compatibilityDashboard, /both accepted: 5/);
   assert.match(compatibilityDashboard, /both rejected: 60/);
   assert.match(compatibilityDashboard, /tsc accepted\/tsz rejected: 3/);

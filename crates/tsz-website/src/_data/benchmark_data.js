@@ -1926,6 +1926,20 @@ export function getProjectCompatibilityDashboard() {
     addRef("test cases", sources.testCases);
     addRef("solutions", sources.solutions);
 
+    const cleanSubset = candidates.tsc_clean_subset && typeof candidates.tsc_clean_subset === "object"
+      ? candidates.tsc_clean_subset
+      : null;
+    if (cleanSubset) {
+      addCount("tsc-clean subset", cleanSubset.generated_assertions);
+      addCount("tsc-clean rejected", cleanSubset.rejected_from_full_corpus);
+      if (cleanSubset.tsc_status) {
+        parts.push(`tsc-clean tsc: ${cleanSubset.tsc_status}`);
+      }
+      if (cleanSubset.tsz_status) {
+        parts.push(`tsc-clean tsz: ${cleanSubset.tsz_status}`);
+      }
+    }
+
     const counts = candidates.file_comparison?.counts;
     addCount("both accepted", candidates.both_accepted ?? counts?.bothAccepted);
     addCount("both rejected", candidates.both_rejected ?? counts?.bothRejected);
