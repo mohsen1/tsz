@@ -207,7 +207,20 @@ impl<'a> Printer<'a> {
                 self.decrease_indent();
             } else {
                 // Newline before dot: `expr\n    .name`
-                self.write_line();
+                let mut comment_wrote_newline = false;
+                if let Some(expr_node) = self.arena.get(access.expression)
+                    && let Some(name_node) = self.arena.get(access.name_or_argument)
+                    && let Some(dot_pos) =
+                        self.find_char_after_skipping_comments(expr_node.end, name_node.pos, b'.')
+                {
+                    let expr_token_end =
+                        self.find_token_end_before_trivia(expr_node.pos, expr_node.end);
+                    comment_wrote_newline =
+                        self.emit_comments_before_multiline_property_dot(expr_token_end, dot_pos);
+                }
+                if !comment_wrote_newline {
+                    self.write_line();
+                }
                 self.increase_indent();
                 self.write_dot_token(access.expression);
                 self.emit_property_name_without_import_substitution(access.name_or_argument);
@@ -386,6 +399,39 @@ impl<'a> Printer<'a> {
         }
 
         None
+    }
+
+    fn emit_comments_before_multiline_property_dot(&mut self, from_pos: u32, dot_pos: u32) -> bool {
+        if self.ctx.options.remove_comments || from_pos >= dot_pos {
+            return false;
+        }
+
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(comment) = self
+            .all_comments
+            .iter()
+            .skip(self.comment_emit_idx)
+            .find(|comment| comment.pos >= from_pos && comment.end <= dot_pos)
+        else {
+            return false;
+        };
+
+        let gap_start = std::cmp::min(from_pos as usize, text.len());
+        let gap_end = std::cmp::min(comment.pos as usize, text.len());
+        if text.as_bytes()[gap_start..gap_end]
+            .iter()
+            .any(|&b| b == b'\n' || b == b'\r')
+        {
+            self.write_line();
+            let (_, _, had_trailing_newline) =
+                self.emit_comments_in_range(from_pos, dot_pos, true, false);
+            had_trailing_newline
+        } else {
+            self.write_space();
+            self.emit_unemitted_comments_between(from_pos, dot_pos)
+        }
     }
 
     /// Write the `.` token for property access, adding an extra `.` when the
@@ -1412,6 +1458,26 @@ mod tests {
         assert!(
             !output.contains(". /* has . in comment */x"),
             "Dot lookup must not treat comment text as the member-access dot.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn property_access_line_comment_before_dot_stays_with_callee_chain() {
+        let output = emit_es6(
+            "const result = values.map((arr) => arr // keep with arr\n    .filter((obj) => obj) // keep with body\n);\n",
+        );
+
+        assert!(
+            output.contains("arr // keep with arr\n    .filter((obj) => obj)"),
+            "Line comments before a member-access dot should stay before the dot, not move into the call arguments.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains(".filter(// keep with arr"),
+            "Call argument comment scanning must start at the actual argument-list paren.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(".filter((obj) => obj) // keep with body"),
+            "Trailing comments on concise arrow body expressions should stay with the body before the outer call closes.\nOutput:\n{output}"
         );
     }
 
