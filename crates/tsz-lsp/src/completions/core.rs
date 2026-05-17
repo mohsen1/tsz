@@ -1090,7 +1090,21 @@ impl<'a> Completions<'a> {
             if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                 let access = self.arena.get_access_expr(node)?;
                 let expr_node = self.arena.get(access.expression)?;
-                if offset >= expr_node.end && offset <= node.end {
+                // When the source ends with `expr.name.` (a second incomplete dot
+                // after the name), the parser absorbs the trailing dot into the
+                // current PropertyAccessExpression by extending its `end` past the
+                // name node. Detect this by comparing the name node's end with the
+                // expression's end: if the cursor is beyond the name but still
+                // within the extended expression, the whole expression is the
+                // completion target (e.g., `this.#lines.` → target = `this.#lines`).
+                let name_end = self
+                    .arena
+                    .get(access.name_or_argument)
+                    .map_or(node.end, |n| n.end);
+                if offset > name_end && offset <= node.end {
+                    return Some(current);
+                }
+                if offset >= expr_node.end && offset <= name_end {
                     return Some(access.expression);
                 }
             }

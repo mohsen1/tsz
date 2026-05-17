@@ -4625,3 +4625,72 @@ fn test_completions_object_intrinsic_keeps_object_prototype_members() {
         ],
     );
 }
+
+// ── ECMAScript private fields (`#field`) ─────────────────────────────────────
+
+/// `this.` inside a class method must include ECMAScript private fields.
+/// tsc shows `#lines` (with the `#` prefix) in `this.` completions when the
+/// cursor is inside the class body.
+#[test]
+fn test_completions_this_includes_ecma_private_field() {
+    // ECMAScript private field -- NOT TypeScript `private` modifier.
+    // The completions for `this.` inside the method must include `#lines`.
+    let names = member_names_at_end(
+        "class MemoryLogger {\n  #lines: string[] = [];\n  write(msg: string) { this.",
+    );
+    assert!(
+        names.contains(&"#lines".to_string()),
+        "Expected `#lines` in `this.` completions; got: {names:?}"
+    );
+    assert!(
+        names.contains(&"write".to_string()),
+        "Expected `write` in `this.` completions; got: {names:?}"
+    );
+}
+
+/// Completions on `this.#lines.` (a private field of type `string[]`) must
+/// expose Array.prototype members exactly as a plain `string[]` variable would.
+#[test]
+fn test_completions_ecma_private_field_member_access_exposes_array_methods() {
+    let names = member_names_at_end(
+        "class MemoryLogger {\n  #lines: string[] = [];\n  write(msg: string) { this.#lines.",
+    );
+    assert!(
+        names.contains(&"push".to_string()),
+        "Expected `push` in `this.#lines.` completions; got: {names:?}"
+    );
+    assert!(
+        names.contains(&"length".to_string()),
+        "Expected `length` in `this.#lines.` completions; got: {names:?}"
+    );
+    assert!(
+        names.contains(&"map".to_string()),
+        "Expected `map` in `this.#lines.` completions; got: {names:?}"
+    );
+}
+
+/// Completions for `this.#field.` work for different field names and types
+/// (proves the fix is structural, not keyed to a specific identifier spelling).
+#[test]
+fn test_completions_ecma_private_field_different_names_and_types() {
+    // Different field name (#items) and element type (number)
+    let names = member_names_at_end(
+        "class Container {\n  #items: number[] = [];\n  add(x: number) { this.#items.",
+    );
+    assert!(
+        names.contains(&"push".to_string()),
+        "Expected `push` in `this.#items.` completions; got: {names:?}"
+    );
+    assert!(
+        names.contains(&"pop".to_string()),
+        "Expected `pop` in `this.#items.` completions; got: {names:?}"
+    );
+    // The field itself must appear in `this.` completions.
+    let this_names = member_names_at_end(
+        "class Container {\n  #items: number[] = [];\n  add(x: number) { this.",
+    );
+    assert!(
+        this_names.contains(&"#items".to_string()),
+        "Expected `#items` in `this.` completions; got: {this_names:?}"
+    );
+}
