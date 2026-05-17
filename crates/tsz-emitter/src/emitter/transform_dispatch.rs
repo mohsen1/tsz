@@ -1046,17 +1046,7 @@ impl<'a> Printer<'a> {
         &self,
         class_data: &tsz_parser::parser::node::ClassData,
     ) -> bool {
-        let has_decorator = |mods: &Option<tsz_parser::parser::NodeList>| {
-            mods.as_ref().is_some_and(|mods| {
-                mods.nodes.iter().any(|&mod_idx| {
-                    self.arena
-                        .get(mod_idx)
-                        .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
-                })
-            })
-        };
-
-        if has_decorator(&class_data.modifiers) {
+        if self.modifiers_have_decorator(&class_data.modifiers) {
             return true;
         }
 
@@ -1068,15 +1058,15 @@ impl<'a> Printer<'a> {
                 k if k == syntax_kind_ext::METHOD_DECLARATION => self
                     .arena
                     .get_method_decl(member_node)
-                    .is_some_and(|method| has_decorator(&method.modifiers)),
+                    .is_some_and(|method| self.modifiers_have_decorator(&method.modifiers)),
                 k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
                     .arena
                     .get_property_decl(member_node)
-                    .is_some_and(|prop| has_decorator(&prop.modifiers)),
+                    .is_some_and(|prop| self.modifiers_have_decorator(&prop.modifiers)),
                 k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                     self.arena
                         .get_accessor(member_node)
-                        .is_some_and(|accessor| has_decorator(&accessor.modifiers))
+                        .is_some_and(|accessor| self.modifiers_have_decorator(&accessor.modifiers))
                 }
                 k if k == syntax_kind_ext::CONSTRUCTOR => {
                     self.arena.get_constructor(member_node).is_some_and(|ctor| {
@@ -1084,12 +1074,24 @@ impl<'a> Printer<'a> {
                             self.arena
                                 .get(param_idx)
                                 .and_then(|param_node| self.arena.get_parameter(param_node))
-                                .is_some_and(|param| has_decorator(&param.modifiers))
+                                .is_some_and(|param| {
+                                    self.modifiers_have_decorator(&param.modifiers)
+                                })
                         })
                     })
                 }
                 _ => false,
             }
+        })
+    }
+
+    fn modifiers_have_decorator(&self, mods: &Option<tsz_parser::parser::NodeList>) -> bool {
+        mods.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&mod_idx| {
+                self.arena
+                    .get(mod_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+            })
         })
     }
 
@@ -1156,6 +1158,7 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text_for_map() {
             emitter.set_source_text(text);
         }
+        self.seed_tc39_decorator_function_bodies(&mut emitter, class_node);
         let output = emitter.emit_class(class_node);
         if output.is_empty() {
             // No transform needed (e.g., all decorated members are abstract).
@@ -1170,6 +1173,77 @@ impl<'a> Printer<'a> {
         // Skip comments within the class range - the TC39 decorator emitter
         // handles them separately.
         self.skip_comments_for_erased_node(node);
+    }
+
+    fn seed_tc39_decorator_function_bodies(
+        &self,
+        emitter: &mut crate::transforms::es_decorators::TC39DecoratorEmitter<'a>,
+        class_node: NodeIndex,
+    ) {
+        let Some(node) = self.arena.get(class_node) else {
+            return;
+        };
+        let Some(class_data) = self.arena.get_class(node) else {
+            return;
+        };
+        let class_has_decorators = self.modifiers_have_decorator(&class_data.modifiers);
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if let Some(method) = self.arena.get_method_decl(member_node) {
+                let is_private = self.arena.get(method.name).is_some_and(|name| {
+                    name.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+                });
+                let is_decorated_private =
+                    is_private && self.modifiers_have_decorator(&method.modifiers);
+                let is_class_decorated_static_private =
+                    class_has_decorators && is_private && self.arena.is_static(&method.modifiers);
+                if is_decorated_private || is_class_decorated_static_private {
+                    self.seed_tc39_decorator_function_body(emitter, method.body);
+                }
+                continue;
+            }
+            if let Some(accessor) = self.arena.get_accessor(member_node) {
+                let is_decorated_private = self.modifiers_have_decorator(&accessor.modifiers)
+                    && self.arena.get(accessor.name).is_some_and(|name| {
+                        name.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+                    });
+                if is_decorated_private {
+                    self.seed_tc39_decorator_function_body(emitter, accessor.body);
+                }
+            }
+        }
+    }
+
+    fn seed_tc39_decorator_function_body(
+        &self,
+        emitter: &mut crate::transforms::es_decorators::TC39DecoratorEmitter<'a>,
+        body_idx: NodeIndex,
+    ) {
+        if body_idx == NodeIndex::NONE {
+            return;
+        }
+        let body = self.render_tc39_decorator_function_body(body_idx);
+        emitter.set_function_body_text(body_idx, body);
+    }
+
+    fn render_tc39_decorator_function_body(&self, body_idx: NodeIndex) -> String {
+        let options = self.ctx.options.clone();
+        let ctx = crate::context::emit::EmitContext::with_options(options.clone());
+        let transforms = crate::lowering::LoweringPass::new(self.arena, &ctx).run(body_idx);
+        let mut printer = Self::with_transforms_and_options(self.arena, transforms, options);
+        if let Some(text) = self.source_text_for_map() {
+            printer.set_source_text(text);
+        }
+        printer.emitting_function_body_block = true;
+        printer.emit(body_idx);
+        let output = printer.get_output().to_string();
+        if output.trim().is_empty() {
+            "{ }".to_string()
+        } else {
+            output
+        }
     }
 
     fn emit_commonjs_inner(
