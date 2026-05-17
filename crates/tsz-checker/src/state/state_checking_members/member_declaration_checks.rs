@@ -742,20 +742,14 @@ impl<'a> CheckerState<'a> {
             };
             let name = ident.escaped_text.clone();
             let atom = self.ctx.types.intern_string(&name);
-            let constraint = (param.constraint != NodeIndex::NONE)
-                .then(|| self.get_type_from_type_node(param.constraint))
-                .filter(|&ty| ty != TypeId::ERROR);
-            let default = (param.default != NodeIndex::NONE)
-                .then(|| self.get_type_from_type_node(param.default))
-                .filter(|&ty| ty != TypeId::ERROR);
             let is_const = self
                 .ctx
                 .arena
                 .has_modifier(&param.modifiers, SyntaxKind::ConstKeyword);
             let type_id = factory.type_param(TypeParamInfo {
                 name: atom,
-                constraint,
-                default,
+                constraint: None,
+                default: None,
                 is_const,
             });
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);

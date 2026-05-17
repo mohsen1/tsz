@@ -1421,6 +1421,10 @@ impl<'a> CheckerState<'a> {
                 }
             }
             k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                // Force function/constructor type validation (TS2371 for parameter
+                // initializers in type position, including binding element defaults).
+                let _ = self.get_type_from_type_node(node_idx);
+
                 // TS2370: Check that rest parameters have array types.
                 // This is needed because function/constructor types in type aliases
                 // don't go through the normal function declaration checking path.
@@ -1435,7 +1439,7 @@ impl<'a> CheckerState<'a> {
                     let type_parameters = func_type.type_parameters.clone();
                     let parameters = func_type.parameters.nodes.clone();
                     let type_annotation = func_type.type_annotation;
-                    let tp_updates = self.push_missing_name_type_parameters(&type_parameters);
+                    let (_type_params, tp_updates) = self.push_type_parameters(&type_parameters);
                     for &param_idx in &parameters {
                         let param_type_annotation = (|| {
                             let param_node = self.ctx.arena.get(param_idx)?;
@@ -1455,10 +1459,6 @@ impl<'a> CheckerState<'a> {
                     self.check_rest_parameter_types(&parameters);
                     self.pop_type_parameters(tp_updates);
                 }
-
-                // Force function/constructor type validation (TS2371 for parameter
-                // initializers in type position, including binding element defaults).
-                let _ = self.get_type_from_type_node(node_idx);
             }
             k if k == syntax_kind_ext::TYPE_QUERY => {
                 // `typeof expr<Args>` — validate instantiation expression type args.
