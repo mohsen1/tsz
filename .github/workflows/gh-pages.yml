@@ -225,6 +225,16 @@ jobs:
 
       - name: Prepare benchmark data for website
         run: |
+          snapshot="crates/tsz-website/bench-snapshot.json"
+          if [[ -f artifacts/bench-results.json && -f "${snapshot}" ]]; then
+            artifact_generated="$(jq -r '.generated_at // ""' artifacts/bench-results.json 2>/dev/null || echo "")"
+            snapshot_generated="$(jq -r '.generated_at // ""' "${snapshot}" 2>/dev/null || echo "")"
+            if [[ -n "${snapshot_generated}" && "${snapshot_generated}" > "${artifact_generated}" ]]; then
+              echo "Repository benchmark snapshot (${snapshot_generated}) is newer than GitHub artifact (${artifact_generated:-unknown}); using snapshot."
+              rm -f artifacts/bench-results.json
+            fi
+          fi
+
           if [[ ! -f artifacts/bench-results.json ]]; then
             echo "No benchmark artifact downloaded; bench charts will use repository/local fallback data."
             exit 0

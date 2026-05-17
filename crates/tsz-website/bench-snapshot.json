@@ -1,0 +1,1940 @@
+{
+  "generated_at": "2026-05-17T01:23:02.991Z",
+  "benchmark_runner": "scripts/bench/bench-vs-tsgo.sh",
+  "merged_from": [
+    "bench-results.json",
+    "bench-results.json",
+    "bench-results.json"
+  ],
+  "validation": {
+    "hyperfine_exit_codes_required": true,
+    "project_compatibility_required_fields": true
+  },
+  "quick_mode": false,
+  "filter": null,
+  "totals": {
+    "benchmarks_run": 83,
+    "rows": 83,
+    "tsz_wins": 73,
+    "tsgo_wins": 6,
+    "error_cases": 4
+  },
+  "results": [
+    {
+      "name": "typedArrays.ts",
+      "lines": 53,
+      "kb": 2,
+      "tsz_ms": 39.42,
+      "tsgo_ms": 125.7,
+      "tsz_lps": 1344,
+      "tsgo_lps": 422,
+      "winner": "tsz",
+      "factor": 3.19,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "typedArrays.bench.ts",
+        "sha256": "c7f7976cdf3a35994f3c00fec105ab1012a52af82c816bc8d1bc70416650e38c"
+      }
+    },
+    {
+      "name": "utility-types/index.ts",
+      "lines": 69,
+      "kb": 1,
+      "tsz_ms": 45.55,
+      "tsgo_ms": 126.5,
+      "tsz_lps": 1515,
+      "tsgo_lps": 545,
+      "winner": "tsz",
+      "factor": 2.78,
+      "status": null,
+      "source": {
+        "origin": "utility-types",
+        "ref": "2ee1f6ecb241651ab22390fee7ee5349942efda2",
+        "path": "utility-types/src/index.ts",
+        "sha256": "d8289a00ce3be661bef5899d1a4281375ad4da6a630b7a66449733617adfd5cc"
+      }
+    },
+    {
+      "name": "utility-types/utility-types.ts",
+      "lines": 175,
+      "kb": 5,
+      "tsz_ms": 42.77,
+      "tsgo_ms": 127.94,
+      "tsz_lps": 4092,
+      "tsgo_lps": 1368,
+      "winner": "tsz",
+      "factor": 2.99,
+      "status": null,
+      "source": {
+        "origin": "utility-types",
+        "ref": "2ee1f6ecb241651ab22390fee7ee5349942efda2",
+        "path": "utility-types/src/utility-types.ts",
+        "sha256": "5a1d7b52f7ef14b40096a746454bc676658018d98fcd42b0948921bf40b0e3e8"
+      }
+    },
+    {
+      "name": "utility-types/mapped-types.ts",
+      "lines": 650,
+      "kb": 17,
+      "tsz_ms": 41.59,
+      "tsgo_ms": 127.82,
+      "tsz_lps": 15629,
+      "tsgo_lps": 5085,
+      "winner": "tsz",
+      "factor": 3.07,
+      "status": null,
+      "source": {
+        "origin": "utility-types",
+        "ref": "2ee1f6ecb241651ab22390fee7ee5349942efda2",
+        "path": "utility-types/src/mapped-types.ts",
+        "sha256": "52d833c0204063fa2775b38cb6c9cebab0e22f83f35701ddff3a81502fe87b9d"
+      }
+    },
+    {
+      "name": "utility-types/aliases-and-guards.ts",
+      "lines": 103,
+      "kb": 3,
+      "tsz_ms": 47.18,
+      "tsgo_ms": 146.71,
+      "tsz_lps": 2183,
+      "tsgo_lps": 702,
+      "winner": "tsz",
+      "factor": 3.11,
+      "status": null,
+      "source": {
+        "origin": "utility-types",
+        "ref": "2ee1f6ecb241651ab22390fee7ee5349942efda2",
+        "path": "utility-types/src/aliases-and-guards.ts",
+        "sha256": "55af7df374167ecee4cb5a6983cf2e38212e071a42c76ab17cca0c3213f6a6e1"
+      }
+    },
+    {
+      "name": "ts-toolbelt/Iteration/Iteration.ts",
+      "lines": 215,
+      "kb": 8,
+      "tsz_ms": 41.83,
+      "tsgo_ms": 135.96,
+      "tsz_lps": 5140,
+      "tsgo_lps": 1581,
+      "winner": "tsz",
+      "factor": 3.25,
+      "status": null,
+      "source": {
+        "origin": "ts-toolbelt",
+        "ref": "b8a49285e3ed3a7d8bb8e0b433389eac46a5f140",
+        "path": "ts-toolbelt/sources/Iteration/Iteration.ts",
+        "sha256": "3987261c5d36d1528d56ac7efc9ea89a3771be04622998a438183104caacb085"
+      }
+    },
+    {
+      "name": "ts-toolbelt/Misc/BuiltIn.ts",
+      "lines": 82,
+      "kb": 1,
+      "tsz_ms": 37.45,
+      "tsgo_ms": 128.25,
+      "tsz_lps": 2189,
+      "tsgo_lps": 639,
+      "winner": "tsz",
+      "factor": 3.42,
+      "status": null,
+      "source": {
+        "origin": "ts-toolbelt",
+        "ref": "b8a49285e3ed3a7d8bb8e0b433389eac46a5f140",
+        "path": "ts-toolbelt/sources/Misc/BuiltIn.ts",
+        "sha256": "63b15a30a41fac61dc8431bf8148289d71ad997f16fe5fdd7d2559fcd2e47892"
+      }
+    },
+    {
+      "name": "ts-toolbelt/Object/Invert.ts",
+      "lines": 47,
+      "kb": 0,
+      "tsz_ms": 47.49,
+      "tsgo_ms": 222.89,
+      "tsz_lps": 990,
+      "tsgo_lps": 211,
+      "winner": "tsz",
+      "factor": 4.69,
+      "status": null,
+      "source": {
+        "origin": "ts-toolbelt",
+        "ref": "b8a49285e3ed3a7d8bb8e0b433389eac46a5f140",
+        "path": "ts-toolbelt/sources/Object/Invert.ts",
+        "sha256": "8420691aba64e0b8f08b4e0c491cb03703b61cc74f15d91f30f2beea36c83125"
+      }
+    },
+    {
+      "name": "ts-toolbelt/Any/Compute.ts",
+      "lines": 61,
+      "kb": 1,
+      "tsz_ms": 82.79,
+      "tsgo_ms": 157.07,
+      "tsz_lps": 737,
+      "tsgo_lps": 388,
+      "winner": "tsz",
+      "factor": 1.9,
+      "status": null,
+      "source": {
+        "origin": "ts-toolbelt",
+        "ref": "b8a49285e3ed3a7d8bb8e0b433389eac46a5f140",
+        "path": "ts-toolbelt/sources/Any/Compute.ts",
+        "sha256": "2bdbe9a8910ed6a7d250bb94f2414d1ebf2e4a8d69983c036f848e1c5e66b359"
+      }
+    },
+    {
+      "name": "ts-essentials/xor.ts",
+      "lines": 2717,
+      "kb": 44,
+      "tsz_ms": 19.9,
+      "tsgo_ms": 43.23,
+      "tsz_lps": 136522,
+      "tsgo_lps": 62853,
+      "winner": "tsz",
+      "factor": 2.17,
+      "status": null,
+      "source": {
+        "origin": "ts-essentials",
+        "ref": "5abe8700b42068048bd3c368e0531b6defe56558",
+        "path": "ts-essentials/lib/xor/index.ts",
+        "sha256": "c28c93c9b01bd4e0e6f22e2187ca0b41e5fe00c2a2813b6157eae35a50ba1c6f"
+      }
+    },
+    {
+      "name": "ts-essentials/paths.ts",
+      "lines": 101,
+      "kb": 3,
+      "tsz_ms": 19.7,
+      "tsgo_ms": 39.02,
+      "tsz_lps": 5126,
+      "tsgo_lps": 2589,
+      "winner": "tsz",
+      "factor": 1.98,
+      "status": null,
+      "source": {
+        "origin": "ts-essentials",
+        "ref": "5abe8700b42068048bd3c368e0531b6defe56558",
+        "path": "ts-essentials/lib/paths/index.ts",
+        "sha256": "c75ce4604bb6ff5778f0634c529a338a89f94abd1eeeac59be162dc338275056"
+      }
+    },
+    {
+      "name": "ts-essentials/deep-pick.ts",
+      "lines": 47,
+      "kb": 1,
+      "tsz_ms": 16.76,
+      "tsgo_ms": 38.37,
+      "tsz_lps": 2805,
+      "tsgo_lps": 1225,
+      "winner": "tsz",
+      "factor": 2.29,
+      "status": null,
+      "source": {
+        "origin": "ts-essentials",
+        "ref": "5abe8700b42068048bd3c368e0531b6defe56558",
+        "path": "ts-essentials/lib/deep-pick/index.ts",
+        "sha256": "d764ba918407ffde4af6cb46dd46ac5a223d1da6b94a00edfb6532afdce35e74"
+      }
+    },
+    {
+      "name": "ts-essentials/deep-readonly.ts",
+      "lines": 39,
+      "kb": 1,
+      "tsz_ms": 18.16,
+      "tsgo_ms": 38.63,
+      "tsz_lps": 2147,
+      "tsgo_lps": 1010,
+      "winner": "tsz",
+      "factor": 2.13,
+      "status": null,
+      "source": {
+        "origin": "ts-essentials",
+        "ref": "5abe8700b42068048bd3c368e0531b6defe56558",
+        "path": "ts-essentials/lib/deep-readonly/index.ts",
+        "sha256": "b59c111f2fcbe8e2273a382d7f03bbb26a8540f9dd7c097c9686fed104e31c1e"
+      }
+    },
+    {
+      "name": "utility-types-project",
+      "lines": 1012,
+      "kb": 27,
+      "project_files": 5,
+      "tsz_ms": 46.97,
+      "tsgo_ms": 47.72,
+      "tsz_lps": 21544,
+      "tsgo_lps": 21207,
+      "winner": "tsz",
+      "factor": 1.02,
+      "status": null,
+      "readme": "<div align=\"center\">\n\n# utility-types\n\nCollection of utility types, complementing TypeScript built-in mapped types and aliases (think \"lodash\" for static types).\n\n[![Latest Stable Version](https://img.shields.io/npm/v/utility-types.svg)](https://www.npmjs.com/package/utility-types)\n[![NPM Downloads](https://img.shields.io/npm/dm/utility-types.svg)](https://www.npmjs.com/package/utility-types)\n[![NPM Downloads](https://img.shields.io/npm/dt/utility-types.svg)](https://www.npmjs.com/package/utility-types)\n[![Bundlephobia Size](https://img.shields.io/bundlephobia/minzip/utility-types.svg)](https://www.npmjs.com/package/utility-types)\n\n[![Build Status](https://semaphoreci.com/api/v1/piotrekwitek/utility-types/branches/master/shields_badge.svg)](https://semaphoreci.com/piotrekwitek/utility-types)\n[![Dependency Status](https://img.shields.io/david/piotrwitek/utility-types.svg)](https://david-dm.org/piotrwitek/utility-types)\n[![License](https://img.shields.io/npm/l/utility-types.svg?style=flat)](https://david-dm.org/piotrwitek/utility-types?type=peer)\n[![Join the community on Spectrum](https://withspectrum.github.io/badge/badge.svg)](https://spectrum.chat/utility-types)\n\n_Found it useful? Want more updates?_\n\n[**Show your support by giving a :star:**](https://github.com/piotrwitek/utility-types/stargazers)\n\n<a href=\"https://www.buymeacoffee.com/piotrekwitek\">\n  <img src=\"https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png\" alt=\"Buy Me a Coffee\">\n</a>\n<a href=\"https://www.patreon.com/piotrekwitek\">\n  <img src=\"https://c5.patreon.com/external/logo/become_a_patron_button@2x.png\" alt=\"Become a Patron\" width=\"160\">\n</a>\n\n<br/><hr/>\n\n### **What's new?**\n\n:tada: _Now updated to support **TypeScript v3.7**_ :tada:\n\n<hr/><br/>\n\n</div>\n\n## Features\n\n* Providing a set of [Common Types](#table-of-contents) for TypeScript projects that are idiomatic and complementary to existing [TypeScript Mapped Types](https://www.typescriptlang.org/docs/handbook/advanced-types.html) so you don't need to copy them between the projects.\n* Providing a set of [Additional Types](#) compatible with [Flow's Utility Types](https://flow.org/en/docs/types/utilities/) to allow much easier migration to `TypeScript`.\n\n## Goals\n\n* Quality - thoroughly tested for type correctness with type-testing library `dts-jest`\n* Secure and minimal - no third-party dependencies\n* No runtime cost - it's type-level only\n\n## Installation\n\n```bash\n# NPM\nnpm install utility-types\n\n# YARN\nyarn add utility-types\n```\n\n## Compatibility Notes\n\n**TypeScript support**\n* `v3.x.x` - TypeScript v3.1+\n* `v2.x.x` - TypeScript v2.8.1+\n* `v1.x.x` - TypeScript v2.7.2+\n\n## Funding Issues\n**Utility-Types** is an open-source project created by people investing their time for the benefit of our community.\n\nIssues like bug fixes or feature requests can be very quickly resolved when funded through the IssueHunt platform.\n\nI highly recommend adding a bounty to the issue that you're waiting for to attract some contributors willing to work on it.\n\n[![Let's fund issues in this repository](https://issuehunt.io/static/embed/issuehunt-button-v1.svg)](https://issuehunt.io/repos/76400842)\n\n## Contributing\n\nWe are open for contributions. If you're planning to contribute please make sure to read the contributing guide as it can save you from wasting your time: [CONTRIBUTING.md](/CONTRIBUTING.md)\n\n---\n\n* _(built-in)_ - types built-in TypeScript, no need to import\n\n# Table of Contents\n\n## Aliases & Type Guards\n\n* [`Primitive`](#primitive)\n* [`isPrimitive`](#isprimitive)\n* [`Falsy`](#falsy)\n* [`isFalsy`](#isfalsy)\n* [`Nullish`](#nullish)\n* [`isNullish`](#isnullish)\n\n## Union operators\n\n* [`SetIntersection<A, B>`](#setintersectiona-b-same-as-extract)\n* [`SetDifference<A, B>`](#setdifferencea-b-same-as-exclude)\n* [`SetComplement<A, A1>`](#setcomplementa-a1)\n* [`SymmetricDifference<A, B>`](#symmetricdifferencea-b)\n* [`Exclude<A, B>`](#excludea-b) _(built-in)_\n* [`Extract<A, B>`](#extracta-b) _(built-in)_\n* [`NonNullable<T>`](#nonnullablea) _(built-in)_\n* [`NonUndefined<T>`](#nonundefineda)\n\n## Object operators\n\n* [`FunctionKeys<T>`](#functionkeyst)\n* [`NonFunctionKeys<T>`](#nonfunctionkeyst)\n* [`MutableKeys<T>`](#mutablekeyst)\n* [`ReadonlyKeys<T>`](#readonlykeyst)\n* [`RequiredKeys<T>`](#requiredkeyst)\n* [`OptionalKeys<T>`](#optionalkeyst)\n* [`Optional<T, K>`](#optionalt-k)\n* [`Partial<T>`](#partialt) _(built-in)_\n* [`DeepPartial<T>`](#deeppartialt)\n* [`Required<T, K>`](#requiredt-k)\n* [`DeepRequired<T>`](#deeprequiredt)\n* [`Readonly<T>`](#readonlyt) _(built-in)_\n* [`DeepReadonly<T>`](#deepreadonlyt)\n* [`Mutable<T>`](#mutablet)\n* [`Pick<T, K>` _(built-in)_](#pickt-k-built-in)\n* [`Omit<T, K>`](#omitt-k) _(built-in)_\n* [`PickByValue<T, ValueType>`](#pickbyvaluet-valuetype)\n* [`PickByValueExact<T, ValueType>`](#pickbyvalueexactt-valuetype)\n* [`OmitByValue<T, ValueType>`](#omitbyvaluet-valuetype)\n* [`OmitByValueExact<T, ValueType>`](#omitbyvalueexactt-valuetype)\n* [`Intersection<T, U>`](#intersectiont-u)\n* [`Diff<T, U>`](#difft-u)\n* [`Subtract<T, T1>`](#subtractt-t1)\n* [`Overwrite<T, U>`](#overwritet-u)\n* [`Assign<T, U>`](#assignt-u)\n* [`ValuesType<T>`](#valuestypet)\n\n## Special operators\n\n* [`ReturnType<T>`](#returntypet) _(built-in)_\n* [`InstanceType<T>`](#instancetypet) _(built-in)_\n* [`PromiseType<T>`](#promisetypet)\n* [`Unionize<T>`](#unionizet)\n* [`Brand<T, U>`](#brandt-u)\n* [`UnionToIntersection<U>`](#uniontointersectionu)\n\n## Flow's Utility Types\n\n* [`$Keys<T>`](#keyst)\n* [`$Values<T>`](#valuest)\n* [`$ReadOnly<T>`](#readonly2)\n* [`$Diff<T, U>`](#diff2)\n* [`$PropertyType<T, K>`](#propertytypet-k)\n* [`$ElementType<T, K>`](#elementtypet-k)\n* [`$Call<T>`](#callt)\n* [`$Shape<T>`](#shapet)\n* [`$NonMaybeType<T>`](#nonmaybetypet)\n* [`Class<T>`](#classt)\n* [`mixed`](#mixed)\n\n## Deprecated API (use at own risk)\n* `getReturnOfExpression()` - from TS v2.0 it's better to use type-level `ReturnType` instead\n\n---\n\n### `Primitive`\n\nType representing primitive types in JavaScript, and thus TypeScript: `string | number | bigint | boolean |  symbol | null | undefined`\n\nYou can test for singular of these types with [`typeof`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/typeof)\n\n### `isPrimitive`\n\nThis is a [TypeScript Typeguard](https://www.typescriptlang.org/docs/handbook/advanced-types.html#type-guards-and-differentiating-types) for the [`Primitive`](#primitive) type.\n\nThis can be useful to control the type of a parameter as the program flows. Example:\n\n```ts\nconst consumer = (param: Primitive[] | Primitive): string => {\n    if (isPrimitive(param)) {\n        // typeof param === Primitive\n        return String(param) + ' was Primitive';\n    }\n    // typeof param === Primitive[]\n    const resultArray = param\n        .map(consumer)\n        .map(rootString => '\\n\\t' + rootString);\n    return resultArray.reduce((comm, newV) => comm + newV, 'this was nested:');\n};\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `Falsy`\n\nType representing falsy values in TypeScript: `false | \"\" | 0 | null | undefined`\n> Except `NaN` which cannot be represented as a type literal\n\n### `isFalsy`\n\n```ts\nconst consumer = (param: Falsy | string): string => {\n    if (isFalsy(param)) {\n        // typeof param === Falsy\n        return String(param) + ' was Falsy';\n    }\n    // typeof param === string\n    return param.toString();\n};\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `Nullish`\n\nType representing [nullish values](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-7.html#nullish-coalescing) in TypeScript: `null | undefined`\n\n[⇧ back to top](#table-of-contents)\n\n### `isNullish`\n\n```ts\nconst consumer = (param: Nullish | string): string => {\n    if (isNullish(param)) {\n        // typeof param === Nullish\n        return String(param) + ' was Nullish';\n    }\n    // typeof param === string\n    return param.toString();\n};\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `SetIntersection<A, B>` (same as Extract)\n\nSet intersection of given union types `A` and `B`\n\n**Usage:**\n\n```ts\nimport { SetIntersection } from 'utility-types';\n\n// Expect: \"2\" | \"3\"\ntype ResultSet = SetIntersection<'1' | '2' | '3', '2' | '3' | '4'>;\n// Expect: () => void\ntype ResultSetMixed = SetIntersection<string | number | (() => void), Function>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `SetDifference<A, B>` (same as Exclude)\n\nSet difference of given union types `A` and `B`\n\n**Usage:**\n\n```ts\nimport { SetDifference } from 'utility-types';\n\n// Expect: \"1\"\ntype ResultSet = SetDifference<'1' | '2' | '3', '2' | '3' | '4'>;\n// Expect: string | number\ntype ResultSetMixed = SetDifference<string | number | (() => void), Function>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `SetComplement<A, A1>`\n\nSet complement of given union types `A` and (it's subset) `A1`\n\n**Usage:**\n\n```ts\nimport { SetComplement } from 'utility-types';\n\n// Expect: \"1\"\ntype ResultSet = SetComplement<'1' | '2' | '3', '2' | '3'>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `SymmetricDifference<A, B>`\n\nSet difference of union and intersection of given union types `A` and `B`\n\n**Usage:**\n\n```ts\nimport { SymmetricDifference } from 'utility-types';\n\n// Expect: \"1\" | \"4\"\ntype ResultSet = SymmetricDifference<'1' | '2' | '3', '2' | '3' | '4'>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `NonNullable<A>`\n\nExclude `null` and `undefined` from set `A`\n\n[⇧ back to top](#table-of-contents)\n\n### `NonUndefined<A>`\n\nExclude `undefined` from set `A`\n\n[⇧ back to top](#table-of-contents)\n\n### `Exclude<A, B>`\n\nExclude subset `B` from set `A`\n\n[⇧ back to top](#table-of-contents)\n\n### `Extract<A, B>`\n\nExtract subset `B` from set `A`\n\n[⇧ back to top](#table-of-contents)\n\n## Operations on objects\n\n### `FunctionKeys<T>`\n\nGet union type of keys that are functions in object type `T`\n\n**Usage:**\n\n```ts\nimport { FunctionKeys } from 'utility-types';\n\ntype MixedProps = { name: string; setName: (name: string) => void };\n\n// Expect: \"setName\"\ntype Keys = FunctionKeys<MixedProps>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `NonFunctionKeys<T>`\n\nGet union type of keys that are non-functions in object type `T`\n\n**Usage:**\n\n```ts\nimport { NonFunctionKeys } from 'utility-types';\n\ntype MixedProps = { name: string; setName: (name: string) => void };\n\n// Expect: \"name\"\ntype Keys = NonFunctionKeys<MixedProps>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `MutableKeys<T>`\n\nGet union type of keys that are mutable (not readonly) in object type `T`\n\nAlias: `WritableKeys<T>`\n\n**Usage:**\n\n```ts\nimport { MutableKeys } from 'utility-types';\n\ntype Props = { readonly foo: string; bar: number };\n\n// Expect: \"bar\"\ntype Keys = MutableKeys<Props>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `ReadonlyKeys<T>`\n\nGet union type of keys that are readonly in object type `T`\n\n**Usage:**\n\n```ts\nimport { ReadonlyKeys } from 'utility-types';\n\ntype Props = { readonly foo: string; bar: number };\n\n// Expect: \"foo\"\ntype Keys = ReadonlyKeys<Props>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `RequiredKeys<T>`\n\nGet union type of keys that are required in object type `T`\n\n**Usage:**\n\n```ts\nimport { RequiredKeys } from 'utility-types';\n\ntype Props = { req: number; reqUndef: number | undefined; opt?: string; optUndef?: number | undefined; };\n\n// Expect: \"req\" | \"reqUndef\"\ntype Keys = RequiredKeys<Props>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `OptionalKeys<T>`\n\nGet union type of keys that are optional in object type `T`\n\n**Usage:**\n\n```ts\nimport { OptionalKeys } from 'utility-types';\n\ntype Props = { req: number; reqUndef: number | undefined; opt?: string; optUndef?: number | undefined; };\n\n// Expect: \"opt\" | \"optUndef\"\ntype Keys = OptionalKeys<Props>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `Optional<T, K>`\n\nFrom `T` make a set of properties by key `K` become optional\n\n**Usage:**\n\n```ts\nimport { Optional } from 'utility-types';\n\ntype Props = { name: string; age: number; visible: boolean; };\n\n// Expect: { name?: string; age?: number; visible?: boolean; }\ntype Props = Optional<Props>\n// Expect: { name: string; age?: number; visible?: boolean; }\ntype Props = Optional<Props, 'age' | 'visible'>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n\n### `Pick<T, K>` _(built-in)_\n\nFrom `T` pick a set of properties by key `K`\n\n**Usage:**\n\n```ts\ntype Props = { name: string; age: number; visible: boolean };\n\n// Expect: { age: number; }\ntype Props = Pick<Props, 'age'>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `PickByValue<T, ValueType>`\n\nFrom `T` pick a set of properties by value matching `ValueType`.\n_(Credit: [Piotr Lewandowski](https://medium.com/dailyjs/typescript-create-a-condition-based-subset-types-9d902cea5b8c))_\n\n**Usage:**\n\n```ts\nimport { PickByValue } from 'utility-types';\n\ntype Props = { req: number; reqUndef: number | undefined; opt?: string; };\n\n// Expect: { req: number }\ntype Props = PickByValue<Props, number>;\n// Expect: { req: number; reqUndef: number | undefined; }\ntype Props = PickByValue<Props, number | undefined>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `PickByValueExact<T, ValueType>`\n\nFrom `T` pick a set of properties by value matching exact `ValueType`.\n\n**Usage:**\n\n```ts\nimport { PickByValueExact } from 'utility-types';\n\ntype Props = { req: number; reqUndef: number | undefined; opt?: string; };\n\n// Expect: { req: number }\ntype Props = PickByValueExact<Props, number>;\n// Expect: { reqUndef: number | undefined; }\ntype Props = PickByValueExact<Props, number | undefined>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `Omit<T, K>`\n\nFrom `T` remove a set of properties by key `K`\n\n**Usage:**\n\n```ts\nimport { Omit } from 'utility-types';\n\ntype Props = { name: string; age: number; visible: boolean };\n\n// Expect: { name: string; visible: boolean; }\ntype Props = Omit<Props, 'age'>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `OmitByValue<T, ValueType>`\n\nFrom `T` remove a set of properties by value matching `ValueType`.\n_(Credit: [Piotr Lewandowski](https://medium.com/dailyjs/typescript-create-a-condition-based-subset-types-9d902cea5b8c))_\n\n**Usage:**\n\n```ts\nimport { OmitByValue } from 'utility-types';\n\ntype Props = { req: number; reqUndef: number | undefined; opt?: string; };\n\n// Expect: { reqUndef: number | undefined; opt?: string; }\ntype Props = OmitByValue<Props, number>;\n// Expect: { opt?: string; }\ntype Props = OmitByValue<Props, number | undefined>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `OmitByValueExact<T, ValueType>`\n\nFrom `T` remove a set of properties by value matching exact `ValueType`.\n\n**Usage:**\n\n```ts\nimport { OmitByValueExact } from 'utility-types';\n\ntype Props = { req: number; reqUndef: number | undefined; opt?: string; };\n\n// Expect: { reqUndef: number | undefined; opt?: string; }\ntype Props = OmitByValueExact<Props, number>;\n// Expect: { req: number; opt?: string }\ntype Props = OmitByValueExact<Props, number | undefined>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `Intersection<T, U>`\n\nFrom `T` pick properties that exist in `U`\n\n**Usage:**\n\n```ts\nimport { Intersection } from 'utility-types';\n\ntype Props = { name: string; age: number; visible: boolean };\ntype DefaultProps = { age: number };\n\n// Expect: { age: number; }\ntype DuplicatedProps = Intersection<Props, DefaultProps>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `Diff<T, U>`\n\nFrom `T` remove properties that exist in `U`\n\n**Usage:**\n\n```ts\nimport { Diff } from 'utility-types';\n\ntype Props = { name: string; age: number; visible: boolean };\ntype DefaultProps = { age: number };\n\n// Expect: { name: string; visible: boolean; }\ntype RequiredProps = Diff<Props, DefaultProps>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `Subtract<T, T1>`\n\nFrom `T` remove properties that exist in `T1` (`T1` has a subset of the properties of `T`)\n\n**Usage:**\n\n```ts\nimport { Subtract } from 'utility-types';\n\ntype Props = { name: string; age: number; visible: boolean };\ntype DefaultProps = { age: number };\n\n// Expect: { name: string; visible: boolean; }\ntype RequiredProps = Subtract<Props, DefaultProps>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `Overwrite<T, U>`\n\nFrom `U` overwrite properties to `T`\n\n**Usage:**\n\n```ts\nimport { Overwrite } from 'utility-types';\n\ntype Props = { name: string; age: number; visible: boolean };\ntype NewProps = { age: string; other: string };\n\n// Expect: { name: string; age: string; visible: boolean; }\ntype ReplacedProps = Overwrite<Props, NewProps>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `Assign<T, U>`\n\nFrom `U` assign properties to `T` (just like object assign)\n\n**Usage:**\n\n```ts\nimport { Assign } from 'utility-types';\n\ntype Props = { name: string; age: number; visible: boolean };\ntype NewProps = { age: string; other: string };\n\n// Expect: { name: string; age: string; visible: boolean; other: string; }\ntype ExtendedProps = Assign<Props, NewProps>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `ValuesType<T>`\n\nGet the union type of all the values in an object, tuple, array or array-like type `T`.\n\n**Usage:**\n\n```ts\nimport { ValuesType } from 'utility-types';\n\ntype Props = { name: string; age: number; visible: boolean };\n// Expect: string | number | boolean\ntype PropsValues = ValuesType<Props>;\n\ntype NumberArray = number[];\n// Expect: number\ntype NumberItems = ValuesType<NumberArray>;\n\ntype ReadonlyNumberTuple = readonly [1, 2];\n// Expect: 1 | 2\ntype AnotherNumberUnion = ValuesType<NumberTuple>;\n\ntype BinaryArray = Uint8Array;\n// Expect: number\ntype BinaryItems = ValuesType<BinaryArray>;\n```\n\n[⇧ back to top](#table-of-contents)\n\n### `Partial<T>`\n\nMake all properties of object type optional\n\n[⇧ back to top](#table-of-contents)\n\n### `Required<T, K>`\n\nFrom `T` make a set of properties by key `K` become required\n\n**Usage:**\n\n```ts\nimport { Required } from 'utility-types';\n\ntype Props = { name?: string; age?: number; visible?: boolean; };\n\n// Expect: { name: string; age: number; visible: boolean; }\ntype Props = Required<Props>\n// Expect: { name?: string; age: number; visible: boolean; }\ntype Props = Required<Props, 'age' | 'visible'>;\n```\n\n[⇧ back to\n\n...",
+      "compatibility": {
+        "exit_class": "exit success",
+        "phase": "check",
+        "last_successful_phase": "check",
+        "diagnostic_status": "none",
+        "diagnostic_deltas": [],
+        "diagnostic_codes": [],
+        "diagnostic_subsystems": [],
+        "primary_subsystem": null,
+        "reduction_candidates": [],
+        "emit_status": "not in scope (noEmit project check)",
+        "dts_status": "not in scope (noEmit project check)",
+        "known_blockers": [],
+        "exit_codes": {
+          "tsc": [
+            0
+          ],
+          "tsz": [
+            0
+          ],
+          "tsgo": [
+            0
+          ]
+        },
+        "semantic_owner_family": "utility type project surface",
+        "files_reached": 5,
+        "peak_memory_bytes": null
+      }
+    },
+    {
+      "name": "ts-essentials-project",
+      "lines": 3903,
+      "kb": 87,
+      "project_files": 95,
+      "tsz_ms": 74.43,
+      "tsgo_ms": 50.83,
+      "tsz_lps": 52441,
+      "tsgo_lps": 76786,
+      "winner": "tsgo",
+      "factor": 1.46,
+      "status": null,
+      "readme": "<p align=\"center\">\n  <img src=\"/logo.png\" width=\"120\" alt=\"ts-essentials\">\n  <h3 align=\"center\">ts-essentials</h3>\n  <p align=\"center\">All essential TypeScript types in one place 🤙</p>\n  <p align=\"center\">\n    <a href=\"https://www.npmjs.com/package/ts-essentials\" title=\"View this project on NPM\">\n      <img alt=\"Version\" src=\"https://img.shields.io/npm/v/ts-essentials.svg\">\n    </a>\n    <img alt=\"Downloads\" src=\"https://img.shields.io/npm/dm/ts-essentials.svg\">\n    <a href=\"https://github.com/ts-essentials/ts-essentials/actions?query=branch%3Amaster\" title=\"View Github Build status\">\n      <img alt=\"Build status\" src=\"https://github.com/ts-essentials/ts-essentials/actions/workflows/ci.yml/badge.svg\">\n    </a>\n    <a href=\"https://t.me/ts_essentials\" title=\"Get support in Telegram\">\n      <img alt=\"Telegram\" src=\"https://img.shields.io/badge/-telegram-red?color=white&logo=telegram\">\n    </a>\n    <a href=\"/package.json\"><img alt=\"Software License\" src=\"https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat-square\"></a>\n  </p>\n</p>\n\n## Install\n\n```sh\nnpm install --save-dev ts-essentials\n```\n\n👉 We require `typescript>=4.5`. If you're looking for support for older TS versions, please have a look at the\n[TypeScript dependency table](https://github.com/ts-essentials/ts-essentials/tree/master#TypeScript-dependency-table)\n\n👉 As we really want types to be stricter, we require enabled\n[strictNullChecks](https://www.typescriptlang.org/tsconfig#strictNullChecks) in your project\n\n## API\n\n`ts-essentials` is a set of high-quality, useful TypeScript types that make writing type-safe code easier.\n\n### Basic\n\n- [`Builtin`](/lib/built-in) - Matches primitive, function, date, error or regular expression\n- [`JsonArray`](/lib/json-array) - Matches any [JSON array](https://www.rfc-editor.org/rfc/rfc8259#section-3)\n- [`JsonObject`](/lib/json-object) - Matches any [JSON object](https://www.rfc-editor.org/rfc/rfc8259#section-3)\n- [`JsonPrimitive`](/lib/json-primitive) - Matches any\n  [JSON primitive value](https://www.rfc-editor.org/rfc/rfc8259#section-3)\n- [`JsonValue`](/lib/json-value) - Matches any [JSON value](https://www.rfc-editor.org/rfc/rfc8259#section-3)\n- [`KeyofBase`](/lib/key-of-base) -\n  [`keyofStringsOnly`](https://www.typescriptlang.org/tsconfig#keyofStringsOnly)-tolerant analogue for `PropertyKey`\n- [`Prettify<Type>`](/lib/prettify/) - flattens type and makes it more readable on the hover in your IDE\n- [`Primitive`](/lib/primitive) - Matches any\n  [primitive value](https://developer.mozilla.org/en-US/docs/Glossary/Primitive)\n- [`StrictExclude<UnionType, ExcludedMembers>`](/lib/strict-exclude) - Constructs a type by excluding from `UnionType`\n  all union members that are assignable to `ExcludedMembers`. This is stricter version of\n  [`Exclude`](https://www.typescriptlang.org/docs/handbook/utility-types.html#excludeuniontype-excludedmembers)\n- [`StrictExtract<Type, Union>`](/lib/strict-extract) - Constructs a type by extracting from `Type` all union members\n  that are assignable to `Union`. This is stricter version of\n  [`Extract`](https://www.typescriptlang.org/docs/handbook/utility-types.html#extracttype-union)\n- [`StrictOmit<Type, Keys>`](/lib/strict-omit) - Constructs a type by picking all properties from `Type` and then\n  removing `Keys`. This is stricter version of\n  [`Omit`](https://www.typescriptlang.org/docs/handbook/utility-types.html#omittype-keys)\n- [`Writable<Type>`](/lib/writable) - Constructs a type with removed `readonly` for all properties of `Type`, meaning\n  the properties of the constructed type can be reassigned\n\n### Utility types\n\n- [`AsyncOrSync<Type>`](/lib/async-or-sync) - Constructs a type with `Type` or `PromiseLike<Type>`\n- [`AsyncOrSyncType<Type>`](/lib/async-or-sync-type) - Unwraps `AsyncOrSync` type\n- [`Dictionary<Type, Keys?>`](/lib/dictionary) - Constructs a required object type which property keys are `Keys`\n  (`string` by default) and which property values are `Type`\n- [`Merge<Object1, Object2>`](/lib/merge) - Constructs a type by picking all properties from `Object1` and `Object2`.\n  Property values from `Object2` override property values from `Object1` when property keys are the same\n- [`MergeN<Tuple>`](/lib/merge-n) - Constructs a type by merging objects with type `Merge` in tuple `Tuple` recursively\n- [`Newable<ReturnType>`](/lib/newable) - Constructs a class type with constructor which has return type `ReturnType`\n- [`OmitNeverProperties<Type>`](/lib/omit-never-properties) - Constructs a type by picking all properties from type `Type`, which values don't\n  equal to `never`\n- [`OmitProperties<Type, Value>`](/lib/omit-properties) - Constructs a type by picking all properties from type `Type`\n  and removing those properties which values equal to `Value`\n- [`Opaque<Type, Token>`](/lib/opaque) - Constructs a type which is a subset of `Type` with a specified unique token\n  `Token`\n- [`PathValue<Type, Path>`](/lib/path-value) - Constructs a path value for type `Type` and path `Path`\n- [`Paths<Type>`](/lib/paths) - Constructs a union type by picking all possible paths for type `Type`\n- [`PickProperties<Type, Value>`](/lib/pick-properties) - Constructs a type by picking all properties from type `Type`\n  which values equal to `Value`\n- [`RequireAtLeastOne<Type, Keys?>`](/lib/require-at-least-one) - Constructs a type with at least one required key from `Keys` (`keyof Type` by default) and other keys from `Type` which are not part of `Keys`\n- [`RequireAtMostOne<Type, Keys?>`](/lib/require-at-most-one) - Constructs a type with at most one required key from `Keys` (`keyof Type` by default) and other keys from `Type` which are not part of `Keys` \n- [`SafeDictionary<Type, Keys?>`](/lib/safe-dictionary) - Constructs an optional object type which property keys are\n  `Keys` (`string` by default) and which property values are `Type`\n- [`UnionToIntersection<Union>`](/lib/union-to-intersection) - Constructs a intersection type from union type `Union`\n- [`ValueOf<Type>`](/lib/value-of) - Constructs a type for type `Type` and equals to a primitive for primitives, array\n  elements for arrays, function return type for functions or object property values for objects\n- [`XOR<Type1, Type2, Type3?, ..., Type50?>`](/lib/xor) - Construct a type which is assignable to either type `Type1`,\n  `Type2` but not both. Starting in ts-essentials@10, it supports up to 50 generic types.\n\n### Mark wrapper types\n\n- [`MarkOptional<Type, Keys>`](/lib/mark-optional) - Constructs a type by picking all properties from type `Type` where\n  properties `Keys` are set as optional, meaning they aren't required\n- [`MarkReadonly<Type, Keys>`](/lib/mark-readonly) - Constructs a type by picking all properties from type `Type` where\n  properties `Keys` are set to `readonly`, meaning they cannot be reassigned\n- [`MarkRequired<Type, Keys>`](/lib/mark-required) - Constructs a type by picking all properties from type `Type` where\n  properties `Keys` are set as required\n- [`MarkWritable<Type, Keys>`](/lib/mark-writable) - Constructs a type by picking all properties from type `Type` where\n  properties `Keys` remove `readonly` modifier, meaning they can be reassigned\n\n### Deep wrapper types\n\n- [`Buildable<Type>`](/lib/buildable) - Constructs a type by combining `DeepPartial` and `DeepWritable`, meaning all\n  properties from type `Type` are recursively set as non-`readonly` and optional, meaning they can be reassigned and\n  aren't required\n- [`DeepMarkOptional<Type, KeyPathUnion>`](/lib/deep-mark-optional) - Constructs a type by picking all properties from type `Type` where\n  properties by paths `KeyPathUnion` are set as optional. To mark properties optional on one level, use [`MarkOptional<Type, Keys>`](/lib/mark-optional).  \n- [`DeepMarkRequired<Type, KeyPathUnion>`](/lib/deep-mark-required) - Constructs a type by picking all properties from type `Type` where\n  properties by paths `KeyPathUnion` are set as required. To mark properties required on one level, use [`MarkRequired<Type, Keys>`](/lib/mark-required).\n- [`DeepNonNullable<Type>`](/lib/deep-non-nullable) - Constructs a type by picking all properties from type `Type`\n  recursively and exclude `null` and `undefined` property values from all of them. To make properties non-nullable on\n  one level, use [`NonNullable<Type>`](https://www.typescriptlang.org/docs/handbook/utility-types.html#nonnullabletype)\n- [`DeepNullable<Type>`](/lib/deep-nullable) - Constructs a type by picking all properties from type `Type` recursively\n  and include `null` property values for all of them\n- [`DeepOmit<Type, Filter>`](/lib/deep-omit) - Constructs a type by picking all properties from type `Type` and removing\n  properties which values are `never` or `true` in type `Filter`. If you'd like type `Filter` to be validated against a\n  structure of `Type`, please use [`StrictDeepOmit<Type, Filter>`](./lib/strict-deep-omit/).\n- [`DeepPartial<Type>`](/lib/deep-partial) - Constructs a type by picking all properties from type `Type` recursively\n  and setting them as optional, meaning they aren't required. To make properties optional on one level, use\n  [`Partial<Type>`](https://www.typescriptlang.org/docs/handbook/utility-types.html#partialtype)\n- [`DeepPick<Type, Filter>`](/lib/deep-pick) - Constructs a type by picking set of properties, which have property\n  values `never` or `true` in type `Filter`, from type `Type`. If you'd like type `Filter` to be validated against a\n  structure of `Type`, please use [`StrictDeepPick<Type, Filter>`](./lib/strict-deep-pick/).\n- [`DeepReadonly<Type>`](/lib/deep-readonly) - Constructs a type by picking all properties from type `Type` recursively\n  and setting `readonly` modifier, meaning they cannot be reassigned. To make properties `readonly` on one level, use\n  [`Readonly<Type>`](https://www.typescriptlang.org/docs/handbook/utility-types.html#readonlytype)\n- [`DeepRequired<Type>`](/lib/deep-required) - Constructs a type by picking all properties from type `Type` recursively\n  and setting as required. To make properties required on one level, use\n  [`Required<Type>`](https://www.typescriptlang.org/docs/handbook/utility-types.html#requiredtype)\n- [`DeepUndefinable<Type>`](/lib/deep-undefinable) - Constructs a type by picking all properties from type `Type`\n  recursively and include `undefined` property values for all of them\n- [`DeepWritable<Type>`](/lib/deep-writable) - Constructs a type by picking all properties from type `Type` recursively\n  and removing `readonly` modifier, meaning they can be reassigned. To make properties writable on one level, use\n  `Writable<Type>`\n- [`StrictDeepOmit<Type, Filter>`](/lib/strict-deep-omit) - Constructs a type by picking all properties from type `Type`\n  and removing properties which values are `never` or `true` in type `Filter`. The type `Filter` is validated against a\n  structure of `Type`.\n- [`StrictDeepPick<Type, Filter>`](/lib/strict-deep-pick) - Constructs a type by picking set of properties, which have\n  property values `never` or `true` in type `Filter`, from type `Type`. The type `Filter` is validated against a\n  structure of `Type`.\n\n### Key types\n\n- [`OptionalKeys<Type>`](/lib/optional-keys) - Constructs a union type by picking all optional properties of object type\n  `Type`\n- [`PickKeys<Type, Value>`](/lib/pick-keys) - Constructs a union type by picking all properties of object type `Type`\n  which values are assignable to type `Value`\n- [`ReadonlyKeys<Type>`](/lib/readonly-keys) - Constructs a union type by picking all `readonly` properties of object\n  type `Type`, meaning their values cannot be reassigned\n- [`RequiredKeys<Type>`](/lib/required-keys) - Constructs a union type by picking all required properties of object type\n  `Type`\n- [`UnionKeys<UnionType>`](/lib/union-keys) - Constructs a union type by picking all properties from all union members of `UnionType`\n- [`WritableKeys<Type>`](/lib/writable-keys) - Constructs a union type by picking all writable properties of object type\n  `Type`, meaning their values can be reassigned\n\n### Type checkers\n\n- [`IsAny<Type>`](/lib/is-any) - Returns `true` when type `Type` is `any`. Otherwise returns `false`\n- [`IsExact<Type, Shape>`](/lib/is-exact) - Returns `Type` when type `Type` and `Shape` are identical. Otherwise returns\n  `never`\n- [`IsNever<Type>`](/lib/is-never) - Returns `true` when type `Type` is `never`. Otherwise returns `false`\n- [`IsUnknown<Type>`](/lib/is-unknown) - Returns `true` when type `Type` is `unknown`. Otherwise returns `false`\n- [`IsTuple<Type>`](/lib/is-tuple) - Returns `Type` when type `Type` is tuple. Otherwise returns `never`\n- [`NonEmptyObject<Object>`](/lib/non-empty-object) - Returns `Object` when `Object` has at least one key. Otherwise\n  returns `never`\n- [`NonUnion<Type>`](/lib/non-union) - Returns `Type` when `Type` is not an union. Otherwise returns `never`\n\n### Arrays and Tuples\n\n- [`AnyArray<Type?>`](/lib/any-array) - Matches `Array` or `ReadonlyArray` (`Type` is `any` by default)\n- [`AnyNonEmptyArray<Type>`](/lib/any-non-empty-array) - Matches array with at least one element of type `Type`\n- [`ArrayOrSingle<Type>`](/lib/array-or-single) - Matches `Type` or `Type[]`\n- [`ElementOf<Type>`](/lib/element-of) - Constructs a type which equals to array element type for type `Type`\n- [`Head<Type>`](/lib/head) - Constructs a type which equals to first element in type `Type`\n- [`ReadonlyArrayOrSingle`](/lib/readonly-array-or-single) - Matches `Type` or `readonly Type[]`\n- [`Tail<Type>`](/lib/tail) - Constructs a type which equals to elements but first one in type `Type`\n- [`Tuple<Type?>`](/lib/tuple) - Matches type constraint for tuple with elements of type `Type` (`any` by default)\n\n### Change case\n\n- [`CamelCase<Type>`](/lib/camel-case) - Converts type `Type` to camel case (e.g. `camelCase`)\n- [`DeepCamelCaseProperties<Type>`](/lib/deep-camel-case-properties) - Constructs a type by picking all properties from\n  type `Type` recursively and converting all of them to camel case\n\n### Function types\n\n- [`AnyFunction<Args?, ReturnType?>`](/lib/any-function) - Matches function type with arguments type `Args` (`any[]` by\n  default) and return type `ReturnType` (`any` by default)\n- [`PredicateFunction`](/lib/predicate-function) - Matches type constraint for type guard, meaning first argument is\n  used in return type and return type is\n  [type predicate](https://www.typescriptlang.org/docs/handbook/2/narrowing.html#using-type-predicates)\n- [`PredicateType<Type>`](/lib/predicate-type) - Constructs a type which equals to narrowed type in predicate function\n  `Type`\n\n### Utility functions\n\n⚠️ Make sure you add `ts-essentials` to your `dependencies` (`npm install --save ts-essentials`) to avoid runtime errors\n\n- [`new UnreachableCaseError(value)`](/lib/functions/unreachable-case-error) - Matches runtime class instance type that\n  helps check exhaustiveness for `value`. When `value` isn't `never`, it shows TypeScript error\n- [`assert(condition, message?)`](/lib/functions/assert) - Matches runtime function that helps assert `condition`. When\n  `condition` is falsy, it throws an error with `Assertion Error: ${message}` (message is\n  `\"no additional info provided\"` by default)\n- [`createFactoryWithConstraint<Constraint>()(value)`](/lib/functions/create-factory-with-constraint) - Matches runtime\n  function, which validates that type of `value` matches `Constraint` without changing resulting type of `value`.\n  Ponyfill for\n  [`satisfies` operator](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html#the-satisfies-operator)\n- [`isExact<Expected>()(actual)`](/lib/functions/is-exact) - Matches runtime function, which validates that type of\n  `actual` equals to `Expected`. Otherwise shows TypeScript error\n- [`noop(..._args)`](/lib/functions/noop) - Matches runtime function that does nothing with arguments `_args`\n\n## Search\n\nWhen one of utility types is known by a different name, kindly ask adding it here for the better search.\n\n- `ArrayValues` - [`ValueOf<Type>`](/lib/value-of)\n- `Branded` - [`Opaque<Type, Token>`](/lib/opaque)\n- `ConditionalKeys` - [`PickKeys<Type, Value>`](/lib/pick-keys)\n- `Except` - [`StrictOmit<Type, Keys>`](/lib/strict-omit)\n- `Get` - [`PathValue<Type, Path>`](/lib/path-value)\n- `Mutable` - [`Writable<Type>`](/lib/writable)\n- `Nominal` - [`Opaque<Type, Token>`](/lib/opaque)\n- `Set*`, e.g. `SetOptional` - `Mark*`, e.g. [`MarkReadonly<Type, Keys>`](/lib/mark-readonly)\n- `Unwrap` - [`Prettify<Type>`](/lib/prettify/)\n- `ValueOf` - `DictionaryValues`\n\n## Built-in types\n\nTypeScript provides several [utility types](https://www.typescriptlang.org/docs/handbook/utility-types.html) to\nfacilitate common type transformations. These utilities are available globally.\n\n- [`Awaited<Type>`](https://www.typescriptlang.org/docs/handbook/utility-types.html#awaitedtype) - This type is meant to\n  model operations like `await` in `async` functions, or the `.then()` method on `Promise`s - specifically, the way that\n  they recursively unwrap `Promise`s\n- [`Capitalize<StringType>`](https://www.typescriptlang.org/docs/handbook/2/template-literal-types.html#capitalizestringtype) -\n  Converts the first character in the string to an uppercase equivalent\n- [`ConstructorParameters<Type>`](https://www.typescriptlang.org/docs/handbook/utility-types.html#constructorparameterstype) -\n  Constructs a tuple or array type from the types of a constructor function type `Type`\n- [`Exclude<UnionType, ExcludedMembers>`](https://www.typescriptlang.org/docs/handbook/utility-types.html#excludeuniontype-excludedmembers) -\n  Constructs a type by excluding from `UnionType` all union members that are assignable to `ExcludedMembers`\n- [`Extract<Type, Union>`](https://www.typescriptlang.org/docs/handbook/utility-types.html#extracttype-union) -\n  Constructs a type by extracting from `Type` all union members that are assignable to `Union`\n- [`InstanceType<Type>`](https://www.typescriptlang.org/docs/handbook/utility-type\n\n...",
+      "compatibility": {
+        "exit_class": "exit success",
+        "phase": "check",
+        "last_successful_phase": "check",
+        "diagnostic_status": "none",
+        "diagnostic_deltas": [],
+        "diagnostic_codes": [],
+        "diagnostic_subsystems": [],
+        "primary_subsystem": null,
+        "reduction_candidates": [],
+        "emit_status": "not in scope (noEmit project check)",
+        "dts_status": "not in scope (noEmit project check)",
+        "known_blockers": [],
+        "exit_codes": {
+          "tsc": [
+            0
+          ],
+          "tsz": [
+            0
+          ],
+          "tsgo": [
+            0
+          ]
+        },
+        "semantic_owner_family": "utility types plus recursive JSON shapes",
+        "files_reached": 95,
+        "peak_memory_bytes": null
+      }
+    },
+    {
+      "name": "rxjs-project",
+      "lines": 20151,
+      "kb": 742,
+      "project_files": 240,
+      "tsz_ms": 28.4,
+      "tsgo_ms": 57.84,
+      "tsz_lps": 709548,
+      "tsgo_lps": 348376,
+      "winner": "tsz",
+      "factor": 2.04,
+      "status": null,
+      "readme": "# <img src=\"docs_app/src/assets/images/logos/Rx_Logo_S.png\" alt=\"RxJS Logo\" width=\"86\" height=\"86\"> RxJS: Reactive Extensions For JavaScript\n\n![CI](https://github.com/reactivex/rxjs/workflows/CI/badge.svg)\n[![npm version](https://badge.fury.io/js/rxjs.svg)](http://badge.fury.io/js/rxjs)\n[![Join the chat at https://gitter.im/Reactive-Extensions/RxJS](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/Reactive-Extensions/RxJS?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)\n\n# The Roadmap from RxJS 7 to 8\n\nCurious what's next for RxJS? Follow along with [Issue 6367](https://github.com/ReactiveX/rxjs/issues/6367).\n\n# RxJS 7\n\n### FOR 6.X PLEASE GO TO [THE 6.x BRANCH](https://github.com/ReactiveX/rxjs/tree/6.x)\n\nReactive Extensions Library for JavaScript. This is a rewrite of [Reactive-Extensions/RxJS](https://github.com/Reactive-Extensions/RxJS) and is the latest production-ready version of RxJS. This rewrite is meant to have better performance, better modularity, better debuggable call stacks, while staying mostly backwards compatible, with some breaking changes that reduce the API surface.\n\n[Apache 2.0 License](LICENSE.txt)\n\n- [Code of Conduct](CODE_OF_CONDUCT.md)\n- [Contribution Guidelines](CONTRIBUTING.md)\n- [Maintainer Guidelines](docs_app/content/maintainer-guidelines.md)\n- [API Documentation](https://rxjs.dev/)\n\n## Versions In This Repository\n\n- [master](https://github.com/ReactiveX/rxjs/commits/master) - This is all of the current work, which is against v7 of RxJS right now\n- [6.x](https://github.com/ReactiveX/rxjs/tree/6.x) - This is the branch for version 6.X\n\nMost PRs should be made to **master**.\n\n## Important\n\nBy contributing or commenting on issues in this repository, whether you've read them or not, you're agreeing to the [Contributor Code of Conduct](CODE_OF_CONDUCT.md). Much like traffic laws, ignorance doesn't grant you immunity.\n\n## Installation and Usage\n\n### ES6 via npm\n\n```shell\nnpm install rxjs\n```\n\nIt's recommended to pull in the Observable creation methods you need directly from `'rxjs'` as shown below with `range`.\nIf you're using RxJS version 7.2 or above, you can pull in any operator you need from the same spot, `'rxjs'`.\n\n```ts\nimport { range, filter, map } from 'rxjs';\n\nrange(1, 200)\n  .pipe(\n    filter(x => x % 2 === 1),\n    map(x => x + x)\n  )\n  .subscribe(x => console.log(x));\n```\n\nIf you're using RxJS version below 7.2, you can pull in any operator you need from one spot, under `'rxjs/operators'`.\n\n```ts\nimport { range } from 'rxjs';\nimport { filter, map } from 'rxjs/operators';\n\nrange(1, 200)\n  .pipe(\n    filter(x => x % 2 === 1),\n    map(x => x + x)\n  )\n  .subscribe(x => console.log(x));\n```\n\n### CDN\n\nFor CDN, you can use [unpkg](https://unpkg.com/):\n\n[https://unpkg.com/rxjs@^7/dist/bundles/rxjs.umd.min.js](https://unpkg.com/rxjs@%5E7/dist/bundles/rxjs.umd.min.js)\n\nThe global namespace for rxjs is `rxjs`:\n\n```js\nconst { range } = rxjs;\nconst { filter, map } = rxjs.operators;\n\nrange(1, 200)\n  .pipe(\n    filter(x => x % 2 === 1),\n    map(x => x + x)\n  )\n  .subscribe(x => console.log(x));\n```\n\n## Goals\n\n- Smaller overall bundles sizes\n- Provide better performance than preceding versions of RxJS\n- To model/follow the [Observable Spec Proposal](https://github.com/zenparsing/es-observable) to the observable\n- Provide more modular file structure in a variety of formats\n- Provide more debuggable call stacks than preceding versions of RxJS\n\n## Building/Testing\n\n- `npm run compile` build everything\n- `npm test` run tests\n- `npm run dtslint` run dtslint tests\n\n## Adding documentation\n\nWe appreciate all contributions to the documentation of any type. All of the information needed to get the docs app up and running locally as well as how to contribute can be found in the [documentation directory](./docs_app).",
+      "compatibility": {
+        "exit_class": "exit success",
+        "phase": "check",
+        "last_successful_phase": "check",
+        "diagnostic_status": "none",
+        "diagnostic_deltas": [],
+        "diagnostic_codes": [],
+        "diagnostic_subsystems": [],
+        "primary_subsystem": null,
+        "reduction_candidates": [],
+        "emit_status": "not in scope (noEmit project check)",
+        "dts_status": "not in scope (noEmit project check)",
+        "known_blockers": [],
+        "exit_codes": {
+          "tsc": [
+            0
+          ],
+          "tsz": [
+            0
+          ],
+          "tsgo": [
+            0
+          ]
+        },
+        "semantic_owner_family": "reactive library generic project surface",
+        "files_reached": 240,
+        "peak_memory_bytes": null
+      }
+    },
+    {
+      "name": "type-fest-project",
+      "lines": 16758,
+      "kb": 467,
+      "project_files": 206,
+      "tsz_ms": 20.11,
+      "tsgo_ms": 43.05,
+      "tsz_lps": 833379,
+      "tsgo_lps": 389294,
+      "winner": "tsz",
+      "factor": 2.14,
+      "status": null,
+      "readme": "<div align=\"center\">\n\t<br>\n\t<br>\n\t<img src=\"media/logo.svg\" alt=\"type-fest\" height=\"300\">\n\t<br>\n\t<br>\n\t<b>A collection of essential TypeScript types</b>\n\t<br>\n\t<br>\n\t<br>\n\t<br>\n\t<hr>\n\t<div align=\"center\">\n\t\t<p>\n\t\t\t<p>\n\t\t\t\t<sup>\n\t\t\t\t\t<a href=\"https://github.com/sponsors/sindresorhus\">Sindre Sorhus' open source work is supported by the community</a>\n\t\t\t\t</sup>\n\t\t\t</p>\n\t\t\t<sup>Special thanks to:</sup>\n\t\t\t<br>\n\t\t\t<br>\n\t\t\t<a href=\"https://nitric.io/?utm_campaign=github_repo&utm_medium=referral&utm_content=sindresorhus&utm_source=github\">\n\t\t\t\t<div>\n\t\t\t\t\t<img width=\"230\" src=\"https://sindresorhus.com/assets/thanks/nitric-logo.svg\" alt=\"nitric logo\">\n\t\t\t\t</div>\n\t\t\t\t<b>Effortless backends with infrastructure from code</b>\n\t\t\t\t<div>\n\t\t\t\t\t<sup>An open-source framework that supports any programming language, cloud provider, or deployment automation tool.</sup>\n\t\t\t\t</div>\n\t\t\t</a>\n\t\t\t<br>\n\t\t\t<br>\n\t\t\t<a href=\"https://circleback.ai?utm_source=sindresorhus&utm_medium=sponsorship&utm_campaign=awesome-list&utm_id=type-fest\">\n\t\t\t\t<div>\n\t\t\t\t\t<img width=\"300\" src=\"https://sindresorhus.com/assets/thanks/circleback-logo.png?x\" alt=\"Circleback logo\">\n\t\t\t\t</div>\n\t\t\t\t<b>Get the most out of every conversation.</b>\n\t\t\t\t<div>\n\t\t\t\t\t<sup>AI-powered meeting notes, automations, and search. Give AI agents the context they need to get things done.</sup>\n\t\t\t\t</div>\n\t\t\t</a>\n\t\t</p>\n\t</div>\n\t<br>\n\t<hr>\n</div>\n<br>\n<br>\n\n[![](https://img.shields.io/badge/unicorn-approved-ff69b4.svg)](https://giphy.com/gifs/illustration-rainbow-unicorn-26AHG5KGFxSkUWw1i)\n[![npm dependents](https://badgen.net/npm/dependents/type-fest)](https://www.npmjs.com/package/type-fest?activeTab=dependents)\n[![npm downloads](https://badgen.net/npm/dt/type-fest)](https://www.npmjs.com/package/type-fest)\n\nMany of the types here should have been built-in. You can help by suggesting some of them to the [TypeScript project](https://github.com/Microsoft/TypeScript/blob/main/CONTRIBUTING.md).\n\nEither add this package as a dependency or copy-paste the needed types. No credit required. 👌\n\nPR welcome for additional commonly needed types and docs improvements. Read the [contributing guidelines](.github/contributing.md) first.\n\n**Help wanted with reviewing [proposals](https://github.com/sindresorhus/type-fest/issues) and [pull requests](https://github.com/sindresorhus/type-fest/pulls).**\n\n## Install\n\n```sh\nnpm install type-fest\n```\n\n*Requires TypeScript >=5.9, [ESM](https://gist.github.com/sindresorhus/a39789f98801d908bbc7ff3ecc99d99c), and [`{strict: true}`](https://www.typescriptlang.org/tsconfig#strict) in your tsconfig.*\n\n> [!NOTE]\n> This readme shows the current development version. For docs about the latest version, see the [npm page](https://www.npmjs.com/package/type-fest).\n\n*You may also like my [`ts-extras`](https://github.com/sindresorhus/ts-extras) package which provides runtime functions for some of these types.*\n\n## Usage\n\n```ts\nimport type {Except} from 'type-fest';\n\ntype Foo = {\n\tunicorn: string;\n\trainbow: boolean;\n};\n\ntype FooWithoutRainbow = Except<Foo, 'rainbow'>;\n//=> {unicorn: string}\n```\n\n## API\n\nClick the type names for complete docs.\n\n### Basic\n\n- [`Primitive`](source/primitive.d.ts) - Matches any [primitive value](https://developer.mozilla.org/en-US/docs/Glossary/Primitive).\n- [`Class`](source/basic.d.ts) - Matches a [`class`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes).\n- [`Constructor`](source/basic.d.ts) - Matches a [`class` constructor](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Classes).\n- [`AbstractClass`](source/basic.d.ts) - Matches an [`abstract class`](https://www.typescriptlang.org/docs/handbook/2/classes.html#abstract-classes-and-members).\n- [`AbstractConstructor`](source/basic.d.ts) - Matches an [`abstract class`](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-2.html#abstract-construct-signatures) constructor.\n- [`TypedArray`](source/typed-array.d.ts) - Matches any [typed array](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/TypedArray), like `Uint8Array` or `Float64Array`.\n- [`ObservableLike`](source/globals/observable-like.d.ts) - Matches a value that is like an [Observable](https://github.com/tc39/proposal-observable).\n- [`LowercaseLetter`](source/characters.d.ts) - Matches any lowercase letter in the basic Latin alphabet (a-z).\n- [`UppercaseLetter`](source/characters.d.ts) - Matches any uppercase letter in the basic Latin alphabet (A-Z).\n- [`DigitCharacter`](source/characters.d.ts) - Matches any digit as a string ('0'-'9').\n- [`Alphanumeric`](source/characters.d.ts) - Matches any lowercase letter (a-z), uppercase letter (A-Z), or digit ('0'-'9') in the basic Latin alphabet.\n\n### Utilities\n\n- [`EmptyObject`](source/empty-object.d.ts) - Represents a strictly empty plain object, the `{}` value.\n- [`NonEmptyObject`](source/non-empty-object.d.ts) - Represents an object with at least 1 non-optional key.\n- [`UnknownRecord`](source/unknown-record.d.ts) - Represents an object with `unknown` value. You probably want this instead of `{}`.\n- [`UnknownArray`](source/unknown-array.d.ts) - Represents an array with `unknown` value.\n- [`UnknownMap`](source/unknown-map.d.ts) - Represents a map with `unknown` key and value.\n- [`UnknownSet`](source/unknown-set.d.ts) - Represents a set with `unknown` value.\n- [`Except`](source/except.d.ts) - Create a type from an object type without certain keys.\n- [`Writable`](source/writable.d.ts) - Create a type that strips `readonly` from the given type. Inverse of `Readonly<T>`.\n- [`WritableDeep`](source/writable-deep.d.ts) - Create a deeply mutable version of an `object`/`ReadonlyMap`/`ReadonlySet`/`ReadonlyArray` type. The inverse of `ReadonlyDeep<T>`. Use `Writable<T>` if you only need one level deep.\n- [`Merge`](source/merge.d.ts) - Merge two types into a new type. Keys of the second type overrides keys of the first type.\n- [`ObjectMerge`](source/object-merge.d.ts) - Merge two object types into a new object type, where keys from the second override keys from the first.\n- [`MergeDeep`](source/merge-deep.d.ts) - Merge two objects or two arrays/tuples recursively into a new type.\n- [`MergeExclusive`](source/merge-exclusive.d.ts) - Create a type that has mutually exclusive keys.\n- [`OverrideProperties`](source/override-properties.d.ts) - Override existing properties of the given type. Similar to `Merge`, but enforces that the original type has the properties you want to override.\n- [`RequireAtLeastOne`](source/require-at-least-one.d.ts) - Create a type that requires at least one of the given keys, while keeping the remaining keys as is.\n- [`RequireExactlyOne`](source/require-exactly-one.d.ts) - Create a type that requires exactly one of the given keys and disallows more, while keeping the remaining keys as is.\n- [`RequireAllOrNone`](source/require-all-or-none.d.ts) - Create a type that requires all of the given keys or none of the given keys, while keeping the remaining keys as is.\n- [`RequireOneOrNone`](source/require-one-or-none.d.ts) - Create a type that requires exactly one of the given keys or none of the given keys, while keeping the remaining keys as is.\n- [`SingleKeyObject`](source/single-key-object.d.ts) - Create a type that only accepts an object with a single key.\n- [`RequiredDeep`](source/required-deep.d.ts) - Create a deeply required version of another type.\n- [`PickDeep`](source/pick-deep.d.ts) - Pick properties from a deeply-nested object.\n- [`OmitDeep`](source/omit-deep.d.ts) - Omit properties from a deeply-nested object.\n- [`OmitIndexSignature`](source/omit-index-signature.d.ts) - Omit any index signatures from the given object type, leaving only explicitly defined properties.\n- [`PickIndexSignature`](source/pick-index-signature.d.ts) - Pick only index signatures from the given object type, leaving out all explicitly defined properties.\n- [`PartialDeep`](source/partial-deep.d.ts) - Create a deeply optional version of another type.\n- [`PartialOnUndefinedDeep`](source/partial-on-undefined-deep.d.ts) - Create a deep version of another type where all keys accepting `undefined` type are set to optional.\n- [`UndefinedOnPartialDeep`](source/undefined-on-partial-deep.d.ts) - Create a deep version of another type where all optional keys are set to also accept `undefined`.\n- [`UnwrapPartial`](source/unwrap-partial.d.ts) - Revert the `Partial` modifier on an object type.\n- [`ReadonlyDeep`](source/readonly-deep.d.ts) - Create a deeply immutable version of another type.\n- [`LiteralUnion`](source/literal-union.d.ts) - Create a union type by combining primitive types and literal types without sacrificing auto-completion in IDEs for the literal type part of the union.\n- [`Tagged`](source/tagged.d.ts) - Create a [tagged type](https://medium.com/@KevinBGreene/surviving-the-typescript-ecosystem-branding-and-type-tagging-6cf6e516523d) that can support [multiple tags](https://github.com/sindresorhus/type-fest/issues/665) and [per-tag metadata](https://medium.com/@ethanresnick/advanced-typescript-tagged-types-improved-with-type-level-metadata-5072fc125fcf).\n- [`UnwrapTagged`](source/tagged.d.ts) - Get the untagged portion of a tagged type created with `Tagged`.\n- [`InvariantOf`](source/invariant-of.d.ts) - Create an [invariant type](https://basarat.gitbook.io/typescript/type-system/type-compatibility#footnote-invariance), which is a type that does not accept supertypes and subtypes.\n- [`SetOptional`](source/set-optional.d.ts) - Create a type that makes the given keys optional, while keeping the remaining keys as is.\n- [`SetReadonly`](source/set-readonly.d.ts) - Create a type that makes the given keys readonly, while keeping the remaining keys as is.\n- [`SetRequired`](source/set-required.d.ts) - Create a type that makes the given keys required, while keeping the remaining keys as is.\n- [`SetRequiredDeep`](source/set-required-deep.d.ts) - Create a type that makes the given keys required, with support for deeply nested key paths, while keeping the remaining keys as is.\n- [`SetNonNullable`](source/set-non-nullable.d.ts) - Create a type that makes the given keys non-nullable, while keeping the remaining keys as is.\n- [`SetNonNullableDeep`](source/set-non-nullable-deep.d.ts) - Create a type that makes the specified keys non-nullable (removes `null` and `undefined`), supports deeply nested key paths, and leaves all other keys unchanged.\n- [`NonNullableDeep`](source/non-nullable-deep.d.ts) - Recursively removes `null` and `undefined` from the specified type.\n- [`ValueOf`](source/value-of.d.ts) - Create a union of the given object's values, and optionally specify which keys to get the values from.\n- [`ConditionalKeys`](source/conditional-keys.d.ts) - Extract the keys from a type where the value type of the key extends the given `Condition`.\n- [`ConditionalPick`](source/conditional-pick.d.ts) - Pick keys from the shape that matches the given `Condition`.\n- [`ConditionalPickDeep`](source/conditional-pick-deep.d.ts) - Pick keys recursively from the shape that matches the given condition.\n- [`ConditionalExcept`](source/conditional-except.d.ts) - Exclude keys from a shape that matches the given `Condition`.\n- [`UnionToIntersection`](source/union-to-intersection.d.ts) - Convert a union type to an intersection type.\n- [`LiteralToPrimitive`](source/literal-to-primitive.d.ts) - Given a [literal type](https://www.typescriptlang.org/docs/handbook/2/everyday-types.html#literal-types) return the [primitive type](https://developer.mozilla.org/en-US/docs/Glossary/Primitive) it belongs to, or `never` if it's not a primitive.\n- [`LiteralToPrimitiveDeep`](source/literal-to-primitive-deep.d.ts) - Like `LiteralToPrimitive` except it converts literal types inside an object or array deeply.\n- [`Stringified`](source/stringified.d.ts) - Create a type with the keys of the given type changed to `string` type.\n- [`IterableElement`](source/iterable-element.d.ts) - Get the element type of an `Iterable`/`AsyncIterable`. For example, `Array`, `Set`, `Map`, generator, stream, etc.\n- [`Entry`](source/entry.d.ts) - Create a type that describes a single key-value pair produced when calling a collection’s `entries` method.\n- [`Entries`](source/entries.d.ts) - Create a type that describes the key-value pairs produced when calling a collection’s `entries` method.\n- [`SetReturnType`](source/set-return-type.d.ts) - Create a function type with a return type of your choice and the same parameters as the given function type.\n- [`SetParameterType`](source/set-parameter-type.d.ts) - Create a function that replaces some parameters with the given parameters.\n- [`Simplify`](source/simplify.d.ts) - Useful to flatten the type output to improve type hints shown in editors. And also to transform an interface into a type to aide with assignability.\n- [`SimplifyDeep`](source/simplify-deep.d.ts) - Deeply simplifies an object type.\n- [`Get`](source/get.d.ts) - Get a deeply-nested property from an object using a key path, like [Lodash's `.get()`](https://lodash.com/docs/latest#get) function.\n- [`KeyAsString`](source/key-as-string.d.ts) - Get keys of the given type as strings.\n- [`Schema`](source/schema.d.ts) - Create a deep version of another object type where property values are recursively replaced into a given value type.\n- [`Exact`](source/exact.d.ts) - Create a type that does not allow extra properties, meaning it only allows properties that are explicitly declared.\n- [`KeysOfUnion`](source/keys-of-union.d.ts) - Create a union of all keys from a given type, even those exclusive to specific union members.\n- [`OptionalKeysOf`](source/optional-keys-of.d.ts) - Extract all optional keys from the given type.\n- [`HasOptionalKeys`](source/has-optional-keys.d.ts) - Returns a boolean for whether the given type has any optional fields.\n- [`RequiredKeysOf`](source/required-keys-of.d.ts) - Extract all required keys from the given type.\n- [`HasRequiredKeys`](source/has-required-keys.d.ts) - Returns a boolean for whether the given type has any required fields.\n- [`ReadonlyKeysOf`](source/readonly-keys-of.d.ts) - Extract all readonly keys from the given type.\n- [`HasReadonlyKeys`](source/has-readonly-keys.d.ts) - Returns a boolean for whether the given type has any readonly fields.\n- [`WritableKeysOf`](source/writable-keys-of.d.ts) - Extract all writable keys from the given type.\n- [`HasWritableKeys`](source/has-writable-keys.d.ts) - Returns a boolean for whether the given type has any writable fields.\n- [`Spread`](source/spread.d.ts) - Mimic the type inferred by TypeScript when merging two objects or two arrays/tuples using the spread syntax.\n- [`IsEqual`](source/is-equal.d.ts) - Returns a boolean for whether the two given types are equal.\n- [`TaggedUnion`](source/tagged-union.d.ts) - Create a union of types that share a common discriminant property.\n- [`IntRange`](source/int-range.d.ts) - Generate a union of numbers between a specified start (inclusive) and end (exclusive), with an optional step.\n- [`IntClosedRange`](source/int-closed-range.d.ts) - Generate a union of numbers between a specified start and end (both inclusive), with an optional step.\n- [`ArrayIndices`](source/array-indices.d.ts) - Provides valid indices for a constant array or tuple.\n- [`ArrayValues`](source/array-values.d.ts) - Provides all values for a constant array or tuple.\n- [`ArraySplice`](source/array-splice.d.ts) - Create a new array type by adding or removing elements at a specified index range in the original array.\n- [`ArrayTail`](source/array-tail.d.ts) - Extract the type of an array or tuple minus the first element.\n- [`SetFieldType`](source/set-field-type.d.ts) - Create a type that changes the type of the given keys.\n- [`Paths`](source/paths.d.ts) - Generate a union of all possible paths to properties in the given object.\n- [`SharedUnionFields`](source/shared-union-fields.d.ts) - Create a type with shared fields from a union of object types.\n- [`SharedUnionFieldsDeep`](source/shared-union-fields-deep.d.ts) - Create a type with shared fields from a union of object types, deeply traversing nested structures.\n- [`AllUnionFields`](source/all-union-fields.d.ts) - Create a type with all fields from a union of object types.\n- [`DistributedOmit`](source/distributed-omit.d.ts) - Omits keys from a type, distributing the operation over a union.\n- [`DistributedPick`](source/distributed-pick.d.ts) - Pick keys from a type, distributing the operation over a union.\n- [`And`](source/and.d.ts) - Returns a boolean for whether two given types are both `true`.\n- [`Or`](source/or.d.ts) - Returns a boolean for whether either of two given types is `true`.\n- [`Xor`](source/xor.d.ts) - Returns a boolean for whether only one of two given types is `true`.\n- [`AndAll`](source/and-all.d.ts) - Returns a boolean for whether all of the given elements are `true`.\n- [`OrAll`](source/or-all.d.ts) - Returns a boolean for whether any of the given elements is `true`.\n- [`AllExtend`](source/all-extend.d.ts) - Returns a boolean for whether every element in an array type extends another type.\n- [`SomeExtend`](source/some-extend.d.ts) - Returns a boolean for whether some element in an array type extends another type.\n- [`NonEmptyTuple`](source/non-empty-tuple.d.ts) - Matches any non-empty tuple.\n- [`NonEmptyString`](source/non-empty-string.d.ts) - Matches any non-empty string.\n- [`FindGlobalType`](source/find-global-type.d.ts) - Tries to find the type of a global with the given name.\n- [`FindGlobalInstanceType`](source/find-global-type.d.ts) - Tries to find one or more types from their globally-defined constructors.\n- [`ConditionalSimplify`](source/conditional-simplify.d.ts) - Simplifies a type while including and/or excluding certain types from being simplified.\n- [`ConditionalSimplifyDeep`](source/conditional-simplify-deep.d.ts) - Recursively simplifies a type while including and/or excluding certain types from being simplified.\n- [`ExclusifyUnion`](source/exclusify-union.d.ts) - Ensure mutual exclusi\n\n...",
+      "compatibility": {
+        "exit_class": "exit success",
+        "phase": "check",
+        "last_successful_phase": "check",
+        "diagnostic_status": "none",
+        "diagnostic_deltas": [],
+        "diagnostic_codes": [],
+        "diagnostic_subsystems": [],
+        "primary_subsystem": null,
+        "reduction_candidates": [],
+        "emit_status": "not in scope (noEmit project check)",
+        "dts_status": "not in scope (noEmit project check)",
+        "known_blockers": [],
+        "exit_codes": {
+          "tsc": [
+            0
+          ],
+          "tsz": [
+            0
+          ],
+          "tsgo": [
+            0
+          ]
+        },
+        "semantic_owner_family": "mapped/conditional/key-space utility surface",
+        "files_reached": 206,
+        "peak_memory_bytes": null
+      }
+    },
+    {
+      "name": "vite-vanilla-ts-app",
+      "lines": 86,
+      "kb": 2,
+      "project_files": 4,
+      "tsz_ms": 109.69,
+      "tsgo_ms": 48.81,
+      "tsz_lps": 784,
+      "tsgo_lps": 1762,
+      "winner": "tsgo",
+      "factor": 2.25,
+      "status": null,
+      "readme": "# Fresh Vite vanilla TypeScript app benchmark\n\nThis fixture is generated by `scripts/bench/generate-vite-app-fixture.mjs`.\n\nEach benchmark run recreates the app, installs current npm versions, and type-checks the generated Vite project with:\n\n```sh\ntsz --noEmit -p tsconfig.json\ntsgo --noEmit -p tsconfig.json\n```\n\nThe fixture intentionally mirrors a fresh `npm create vite -- -t vanilla-ts` project by using `src/vite-env.d.ts` with `/// <reference types=\"vite/client\" />` and imports for CSS, SVG, and PNG assets. That keeps ambient asset module declarations in the automated project benchmark path.",
+      "compatibility": {
+        "exit_class": "exit success",
+        "phase": "check",
+        "last_successful_phase": "check",
+        "diagnostic_status": "none",
+        "diagnostic_deltas": [],
+        "diagnostic_codes": [],
+        "diagnostic_subsystems": [],
+        "primary_subsystem": null,
+        "reduction_candidates": [],
+        "emit_status": "not in scope (noEmit project check)",
+        "dts_status": "not in scope (noEmit project check)",
+        "known_blockers": [],
+        "exit_codes": {
+          "tsc": [
+            0
+          ],
+          "tsz": [
+            0
+          ],
+          "tsgo": [
+            0
+          ]
+        },
+        "semantic_owner_family": "generated Vite dependency graph",
+        "files_reached": 4,
+        "peak_memory_bytes": null
+      }
+    },
+    {
+      "name": "nextjs-fresh-app",
+      "lines": 282,
+      "kb": 7,
+      "project_files": 7,
+      "tsz_ms": 73.49,
+      "tsgo_ms": 54.04,
+      "tsz_lps": 3837,
+      "tsgo_lps": 5219,
+      "winner": "tsgo",
+      "factor": 1.36,
+      "status": null,
+      "readme": "# Fresh Next.js app benchmark\n\nThis fixture is generated by `scripts/bench/generate-next-app-fixture.mjs`.\n\nEach benchmark run recreates the app, installs current npm versions, and type-checks the generated Next.js project with:\n\n```sh\ntsz --noEmit -p tsconfig.json\ntsgo --noEmit -p tsconfig.json\n```\n\nThe app intentionally imports and uses common type-heavy dependencies:\n\n- `zod`\n- `@tanstack/react-query`\n- `react-hook-form`\n- `type-fest`\n- `ts-pattern`\n- `superjson`\n- `date-fns`\n- `clsx`\n- `zustand`\n- `valibot`\n\nThe generated source mixes App Router pages, server actions, schema inference, discriminated unions, form helpers, query typing, store typing, and JSON-safe utility types so the benchmark reflects a modern application rather than a tiny startup file.",
+      "compatibility": {
+        "exit_class": "exit success",
+        "phase": "check",
+        "last_successful_phase": "check",
+        "diagnostic_status": "none",
+        "diagnostic_deltas": [],
+        "diagnostic_codes": [],
+        "diagnostic_subsystems": [],
+        "primary_subsystem": null,
+        "reduction_candidates": [],
+        "emit_status": "not in scope (noEmit project check)",
+        "dts_status": "not in scope (noEmit project check)",
+        "known_blockers": [],
+        "exit_codes": {
+          "tsc": [
+            0
+          ],
+          "tsz": [
+            0
+          ],
+          "tsgo": [
+            0
+          ]
+        },
+        "semantic_owner_family": "generated app-router dependency graph",
+        "files_reached": 7,
+        "peak_memory_bytes": null
+      }
+    },
+    {
+      "name": "large-ts-repo",
+      "lines": 1288641,
+      "kb": 38451,
+      "project_files": 6061,
+      "tsz_ms": null,
+      "tsgo_ms": null,
+      "tsz_lps": null,
+      "tsgo_lps": null,
+      "winner": "error",
+      "factor": 0,
+      "status": "tsz exit codes 142",
+      "readme": "# Large TypeScript Monorepo\n\nThis is a large AI-generated TypeScript monorepo that contains multiple packages and projects. \n\n## Why?\n\nMost very large open source TypeScript monorepos have custom build systems (e.g., VSCode, Next.js). This monorepo is designed to be a public resource for testing TypeScript compilers and tools on large codebases. Personally, I am using this for [`tsz`](https://tsz.dev), which is a TypeScript compiler written in Rust.\n\n\n## How was it generated?\n\nThis is entirely AI-generated. The initial code was generated using `Codex-5.3-Spark` on a loop (see [`generate.sh`](./scripts/generate.sh)). Additional deep-chain packages were generated with [`gen-deep.cjs`](./scripts/gen-deep.cjs) to create richer cross-tier project reference graphs.\n\n## Project Graph\n\nSee [`GRAPH.md`](./GRAPH.md) for the TypeScript project-reference graph generated from `tsconfig.json` by [`scripts/graph.sh`](./scripts/graph.sh).\n\nRun `bash scripts/graph.sh` to regenerate. Run `bash scripts/count.sh` to update stats below.\n\n## Lines of Code\n\n<!-- LOC:START -->\n\n| Metric | Value |\n| :-- | --: |\n| TypeScript files | **4,883** |\n| Code lines | **1,194,919** |\n| Blank lines | 129,302 |\n| Packages | 624 |\n| Project references | 2,683 |\n| Max reference depth | 14 |\n| Avg reference depth | 5.2 |\n| Last updated | `2026-03-08` |\n\n<!-- LOC:END -->\n\n\n## License\nThis monorepo is licensed under the MIT License.",
+      "compatibility": {
+        "exit_class": "timeout",
+        "phase": "timing",
+        "last_successful_phase": null,
+        "diagnostic_status": "compiler timed out",
+        "diagnostic_deltas": [
+          "tsz exit codes 142"
+        ],
+        "diagnostic_codes": [],
+        "diagnostic_subsystems": [
+          {
+            "subsystem": "uncoded diagnostic",
+            "codes": [],
+            "count": 1,
+            "examples": [
+              "tsz exit codes 142"
+            ]
+          }
+        ],
+        "primary_subsystem": "uncoded diagnostic",
+        "reduction_candidates": [
+          "tsz exit codes 142"
+        ],
+        "emit_status": "not in scope (noEmit project check)",
+        "dts_status": "not in scope (noEmit project check)",
+        "known_blockers": [
+          "timeout during project check",
+          "timing phase blocker",
+          "uncoded diagnostic"
+        ],
+        "exit_codes": {
+          "tsc": [],
+          "tsz": [
+            142
+          ],
+          "tsgo": []
+        },
+        "semantic_owner_family": "residency/runtime/project graph stress",
+        "files_reached": 6061,
+        "peak_memory_bytes": null
+      }
+    },
+    {
+      "name": "10 classes",
+      "lines": 463,
+      "kb": 8,
+      "tsz_ms": 41.46,
+      "tsgo_ms": 138.67,
+      "tsz_lps": 11167,
+      "tsgo_lps": 3339,
+      "winner": "tsz",
+      "factor": 3.34,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "synthetic_10_classes.ts",
+        "sha256": "b24c34b4bef526a80154b7fb6bf6fd50d35435dc44470a8f1ef339163d0940fd"
+      }
+    },
+    {
+      "name": "50 classes",
+      "lines": 2303,
+      "kb": 40,
+      "tsz_ms": 52.57,
+      "tsgo_ms": 136.26,
+      "tsz_lps": 43807,
+      "tsgo_lps": 16901,
+      "winner": "tsz",
+      "factor": 2.59,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "synthetic_50_classes.ts",
+        "sha256": "81917c5838061351c5c86135d11d0fa8fcb3158b3ea2623c7e9f326d552bedb5"
+      }
+    },
+    {
+      "name": "100 classes",
+      "lines": 4603,
+      "kb": 81,
+      "tsz_ms": 73.35,
+      "tsgo_ms": 137.07,
+      "tsz_lps": 62756,
+      "tsgo_lps": 33582,
+      "winner": "tsz",
+      "factor": 1.87,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "synthetic_100_classes.ts",
+        "sha256": "c78162f2dd93232ef087abe744bcd1ab2bbef551749b5fa364e815a72b489b84"
+      }
+    },
+    {
+      "name": "200 classes",
+      "lines": 9203,
+      "kb": 162,
+      "tsz_ms": 145.09,
+      "tsgo_ms": 137.01,
+      "tsz_lps": 63431,
+      "tsgo_lps": 67172,
+      "winner": "tsgo",
+      "factor": 1.06,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "synthetic_200_classes.ts",
+        "sha256": "9f92989348a21ba6fedb98962cc956cea9294baf3ca2e2f293b29dea7e53f174"
+      }
+    },
+    {
+      "name": "20 generic functions",
+      "lines": 471,
+      "kb": 14,
+      "tsz_ms": 44.89,
+      "tsgo_ms": 124.94,
+      "tsz_lps": 10493,
+      "tsgo_lps": 3770,
+      "winner": "tsz",
+      "factor": 2.78,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "complex_20_funcs.ts",
+        "sha256": "3afcfc2a44982528d872b86f816bedbe443b2b047ecc70916539f20199e1008d"
+      }
+    },
+    {
+      "name": "50 generic functions",
+      "lines": 1161,
+      "kb": 36,
+      "tsz_ms": 56.78,
+      "tsgo_ms": 126.56,
+      "tsz_lps": 20446,
+      "tsgo_lps": 9174,
+      "winner": "tsz",
+      "factor": 2.23,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "complex_50_funcs.ts",
+        "sha256": "22cd6116a270d2c47fe1a6a0e243382d1daf3a381dcf561328bc77d1b66641d7"
+      }
+    },
+    {
+      "name": "100 generic functions",
+      "lines": 2311,
+      "kb": 72,
+      "tsz_ms": 75.75,
+      "tsgo_ms": 130,
+      "tsz_lps": 30508,
+      "tsgo_lps": 17777,
+      "winner": "tsz",
+      "factor": 1.72,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "complex_100_funcs.ts",
+        "sha256": "83fb33d3aea3ea53038bc83ebddd1d79fa4428db1820613649adf819b0d113b0"
+      }
+    },
+    {
+      "name": "200 generic functions",
+      "lines": 4611,
+      "kb": 143,
+      "tsz_ms": 113.98,
+      "tsgo_ms": 135.03,
+      "tsz_lps": 40453,
+      "tsgo_lps": 34149,
+      "winner": "tsz",
+      "factor": 1.18,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "complex_200_funcs.ts",
+        "sha256": "ca75219568f9f06b3bf47aa17a70a98c10d9c3d80b4e52d78556964a95ae2ed4"
+      }
+    },
+    {
+      "name": "DeepPartial optional-chain N=400",
+      "lines": 16424,
+      "kb": 4112,
+      "tsz_ms": 170.88,
+      "tsgo_ms": 528.1,
+      "tsz_lps": 96114,
+      "tsgo_lps": 31100,
+      "winner": "tsz",
+      "factor": 3.09,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "deeppartial_optional_400.ts",
+        "sha256": "f86d25e7d2330e2aa32a65af45d1b72e9d24ff932578a6890191d54798b0658f"
+      }
+    },
+    {
+      "name": "Shallow optional-chain N=400",
+      "lines": 16420,
+      "kb": 4112,
+      "tsz_ms": 149.3,
+      "tsgo_ms": 528.91,
+      "tsz_lps": 109977,
+      "tsgo_lps": 31045,
+      "winner": "tsz",
+      "factor": 3.54,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "shallow_optional_400.ts",
+        "sha256": "7751ed4e2737f55fb2796a89a3c167cfb987a1eedabdefcd487c7d41f5f3c856"
+      }
+    },
+    {
+      "name": "50 union members",
+      "lines": 131,
+      "kb": 6,
+      "tsz_ms": 41.44,
+      "tsgo_ms": 124.4,
+      "tsz_lps": 3161,
+      "tsgo_lps": 1053,
+      "winner": "tsz",
+      "factor": 3,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "union_50.ts",
+        "sha256": "b0e624e28fcde63d52f9f6bae7cd293d12af5566c3311ed8176cae4cf1539ca2"
+      }
+    },
+    {
+      "name": "100 union members",
+      "lines": 251,
+      "kb": 12,
+      "tsz_ms": 56.44,
+      "tsgo_ms": 123.74,
+      "tsz_lps": 4447,
+      "tsgo_lps": 2028,
+      "winner": "tsz",
+      "factor": 2.19,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "union_100.ts",
+        "sha256": "02381d2020a40b7ae09d36602a3c7a2075ce8164d3ac48de4d2026dfeda5ec24"
+      }
+    },
+    {
+      "name": "200 union members",
+      "lines": 491,
+      "kb": 24,
+      "tsz_ms": 88.71,
+      "tsgo_ms": 126.34,
+      "tsz_lps": 5535,
+      "tsgo_lps": 3886,
+      "winner": "tsz",
+      "factor": 1.42,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "union_200.ts",
+        "sha256": "9d18673b8f6c54b6932d54926fc22f7139b3b5c114301eafd85ba2d6af6c1b53"
+      }
+    },
+    {
+      "name": "Recursive generic depth=20",
+      "lines": 39,
+      "kb": 1,
+      "tsz_ms": 37.7,
+      "tsgo_ms": 124,
+      "tsz_lps": 1035,
+      "tsgo_lps": 315,
+      "winner": "tsz",
+      "factor": 3.29,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "recursive_generic_20.ts",
+        "sha256": "5821b4c309dd19145b49ae31f4ffcf954cb9d6f2a106e9542204cbfc9b4fdf8a"
+      }
+    },
+    {
+      "name": "Recursive generic depth=35",
+      "lines": 54,
+      "kb": 2,
+      "tsz_ms": 41.13,
+      "tsgo_ms": 123.57,
+      "tsz_lps": 1313,
+      "tsgo_lps": 437,
+      "winner": "tsz",
+      "factor": 3,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "recursive_generic_35.ts",
+        "sha256": "3ba5c650c399fb227b5f222a3d382d3db08dbf1a3d7eb2307f2f0eddeacf47e2"
+      }
+    },
+    {
+      "name": "Recursive generic depth=45",
+      "lines": 64,
+      "kb": 2,
+      "tsz_ms": 43.3,
+      "tsgo_ms": 124.8,
+      "tsz_lps": 1478,
+      "tsgo_lps": 513,
+      "winner": "tsz",
+      "factor": 2.88,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "recursive_generic_45.ts",
+        "sha256": "3aadd72a3d340e1e91026442531eb9193e5a8961572955008a288ec84420925e"
+      }
+    },
+    {
+      "name": "Conditional dist N=50",
+      "lines": 82,
+      "kb": 1,
+      "tsz_ms": 38.93,
+      "tsgo_ms": 123.61,
+      "tsz_lps": 2106,
+      "tsgo_lps": 663,
+      "winner": "tsz",
+      "factor": 3.18,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "conditional_dist_50.ts",
+        "sha256": "925de2ed261315561aeb63ea8ff70d10d52ce9b2527de6666be5f91f4a137611"
+      }
+    },
+    {
+      "name": "Conditional dist N=80",
+      "lines": 112,
+      "kb": 2,
+      "tsz_ms": 40.38,
+      "tsgo_ms": 124.09,
+      "tsz_lps": 2773,
+      "tsgo_lps": 903,
+      "winner": "tsz",
+      "factor": 3.07,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "conditional_dist_80.ts",
+        "sha256": "7fffdacc4bd75120113aefe596487f27c128b5ee5f0a10bfd4e2c834e31849e6"
+      }
+    },
+    {
+      "name": "Conditional dist N=95",
+      "lines": 127,
+      "kb": 2,
+      "tsz_ms": 42.21,
+      "tsgo_ms": 125.13,
+      "tsz_lps": 3008,
+      "tsgo_lps": 1015,
+      "winner": "tsz",
+      "factor": 2.96,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "conditional_dist_95.ts",
+        "sha256": "f4bf50d4c25b6e575aec811336a9b3516b20ddcc781c0dfae515e7cf2cedf547"
+      }
+    },
+    {
+      "name": "Mapped type keys=100",
+      "lines": 131,
+      "kb": 2,
+      "tsz_ms": 41.88,
+      "tsgo_ms": 122.98,
+      "tsz_lps": 3128,
+      "tsgo_lps": 1065,
+      "winner": "tsz",
+      "factor": 2.94,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "mapped_100.ts",
+        "sha256": "2421adb5d6aee971b4f8a54e0b34a2639022aee888fdc6cd016f2fe36452f2fe"
+      }
+    },
+    {
+      "name": "Mapped type keys=300",
+      "lines": 331,
+      "kb": 7,
+      "tsz_ms": 65.77,
+      "tsgo_ms": 123.33,
+      "tsz_lps": 5032,
+      "tsgo_lps": 2684,
+      "winner": "tsz",
+      "factor": 1.88,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "mapped_300.ts",
+        "sha256": "9000f7432e25872329da7c74f99423525635fac5a4c06eec0f1af0cfc2845fba"
+      }
+    },
+    {
+      "name": "Mapped type keys=450",
+      "lines": 481,
+      "kb": 10,
+      "tsz_ms": 92.87,
+      "tsgo_ms": 123.28,
+      "tsz_lps": 5179,
+      "tsgo_lps": 3902,
+      "winner": "tsz",
+      "factor": 1.33,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "mapped_450.ts",
+        "sha256": "5ed8d81239fc8b219d2637a1c1d3da214cfdfbc3e186e45a09629eb04ba32da4"
+      }
+    },
+    {
+      "name": "Template literal N=20",
+      "lines": 83,
+      "kb": 1,
+      "tsz_ms": 42.24,
+      "tsgo_ms": 126.26,
+      "tsz_lps": 1965,
+      "tsgo_lps": 657,
+      "winner": "tsz",
+      "factor": 2.99,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "template_20.ts",
+        "sha256": "261738c65847634247c0ad923dfb5fd490763a7a8314fdf4338935605e30ac91"
+      }
+    },
+    {
+      "name": "Template literal N=35",
+      "lines": 128,
+      "kb": 2,
+      "tsz_ms": 73.89,
+      "tsgo_ms": 139.38,
+      "tsz_lps": 1732,
+      "tsgo_lps": 918,
+      "winner": "tsz",
+      "factor": 1.89,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "template_35.ts",
+        "sha256": "40a8234788f5c2adeb71bf038d1f3f3f0122ebd1fd2b1805369a1aa3ffce94c8"
+      }
+    },
+    {
+      "name": "Template literal N=45",
+      "lines": 158,
+      "kb": 2,
+      "tsz_ms": 119.45,
+      "tsgo_ms": 162.04,
+      "tsz_lps": 1323,
+      "tsgo_lps": 975,
+      "winner": "tsz",
+      "factor": 1.36,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "template_45.ts",
+        "sha256": "8adeef80853bd5a0343321162b41b34f18b2e65fab4d0960f588e1eb2cdbd3be"
+      }
+    },
+    {
+      "name": "Deep subtype depth=30",
+      "lines": 81,
+      "kb": 2,
+      "tsz_ms": 36.78,
+      "tsgo_ms": 124.61,
+      "tsz_lps": 2203,
+      "tsgo_lps": 650,
+      "winner": "tsz",
+      "factor": 3.39,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "deep_subtype_30.ts",
+        "sha256": "1fc6e5bfeecb7bcff4b5fe1b38fe2001ec040ebcea5e4616b13d5a3830b34a0f"
+      }
+    },
+    {
+      "name": "Deep subtype depth=60",
+      "lines": 101,
+      "kb": 3,
+      "tsz_ms": 38.19,
+      "tsgo_ms": 127.79,
+      "tsz_lps": 2645,
+      "tsgo_lps": 790,
+      "winner": "tsz",
+      "factor": 3.35,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "deep_subtype_60.ts",
+        "sha256": "f010115ad0c427d0ad56d263ea68d96f8247563a3006b88b9d376066a6e4ec60"
+      }
+    },
+    {
+      "name": "Deep subtype depth=90",
+      "lines": 101,
+      "kb": 3,
+      "tsz_ms": 38.19,
+      "tsgo_ms": 129.17,
+      "tsz_lps": 2645,
+      "tsgo_lps": 782,
+      "winner": "tsz",
+      "factor": 3.38,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "deep_subtype_90.ts",
+        "sha256": "f010115ad0c427d0ad56d263ea68d96f8247563a3006b88b9d376066a6e4ec60"
+      }
+    },
+    {
+      "name": "Intersection N=20",
+      "lines": 139,
+      "kb": 2,
+      "tsz_ms": 35.78,
+      "tsgo_ms": 122.48,
+      "tsz_lps": 3884,
+      "tsgo_lps": 1135,
+      "winner": "tsz",
+      "factor": 3.42,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "intersection_20.ts",
+        "sha256": "dbec4df67f74dcba56a7030172b89bacdd6df5dfb34f6383ae3e4852e4bfb2ae"
+      }
+    },
+    {
+      "name": "Intersection N=35",
+      "lines": 229,
+      "kb": 3,
+      "tsz_ms": 36.53,
+      "tsgo_ms": 122.9,
+      "tsz_lps": 6269,
+      "tsgo_lps": 1863,
+      "winner": "tsz",
+      "factor": 3.36,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "intersection_35.ts",
+        "sha256": "efdda9c657c71cf58c76d93cfaf95c97867c946f4da06e75aa177e3e85e95778"
+      }
+    },
+    {
+      "name": "Intersection N=45",
+      "lines": 289,
+      "kb": 4,
+      "tsz_ms": 36.55,
+      "tsgo_ms": 123.49,
+      "tsz_lps": 7908,
+      "tsgo_lps": 2340,
+      "winner": "tsz",
+      "factor": 3.38,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "intersection_45.ts",
+        "sha256": "13c959ebc2d119da745848260b616c8a9f3ff4380abc7b226e1fef59353a507a"
+      }
+    },
+    {
+      "name": "Infer stress N=15",
+      "lines": 249,
+      "kb": 5,
+      "tsz_ms": 37.72,
+      "tsgo_ms": 123.86,
+      "tsz_lps": 6602,
+      "tsgo_lps": 2010,
+      "winner": "tsz",
+      "factor": 3.28,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "infer_15.ts",
+        "sha256": "f46d25629f5596351bc93b66573be7761f8f26b0924f1639db5d68b6a1d68029"
+      }
+    },
+    {
+      "name": "Infer stress N=25",
+      "lines": 514,
+      "kb": 10,
+      "tsz_ms": 38.85,
+      "tsgo_ms": 124.43,
+      "tsz_lps": 13231,
+      "tsgo_lps": 4131,
+      "winner": "tsz",
+      "factor": 3.2,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "infer_25.ts",
+        "sha256": "ca1d14d476c72eee043f3195d74532bdab76103dbb5647ff3940422f45edf66e"
+      }
+    },
+    {
+      "name": "Infer stress N=30",
+      "lines": 684,
+      "kb": 13,
+      "tsz_ms": 40.06,
+      "tsgo_ms": 124.66,
+      "tsz_lps": 17076,
+      "tsgo_lps": 5487,
+      "winner": "tsz",
+      "factor": 3.11,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "infer_30.ts",
+        "sha256": "51f23830472575d1967dfb068c31914b6b75c2d4bc5cc9fff1d6e6667dc02396"
+      }
+    },
+    {
+      "name": "CFA branches=50",
+      "lines": 313,
+      "kb": 9,
+      "tsz_ms": 62.27,
+      "tsgo_ms": 139.84,
+      "tsz_lps": 5026,
+      "tsgo_lps": 2238,
+      "winner": "tsz",
+      "factor": 2.25,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "cfa_50.ts",
+        "sha256": "3ab5d6743e84988345e2a7c44ddef2723a7a3b960f934d2def94df7725f95965"
+      }
+    },
+    {
+      "name": "CFA branches=100",
+      "lines": 603,
+      "kb": 18,
+      "tsz_ms": 153.74,
+      "tsgo_ms": 193.29,
+      "tsz_lps": 3922,
+      "tsgo_lps": 3120,
+      "winner": "tsz",
+      "factor": 1.26,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "cfa_100.ts",
+        "sha256": "a5a3c658049a7e6b7a642b8a9dee71979689c760b7b2361d3b4f9657c3114b15"
+      }
+    },
+    {
+      "name": "CFA branches=150",
+      "lines": 893,
+      "kb": 27,
+      "tsz_ms": 264.7,
+      "tsgo_ms": 343.33,
+      "tsz_lps": 3374,
+      "tsgo_lps": 2601,
+      "winner": "tsz",
+      "factor": 1.3,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "cfa_150.ts",
+        "sha256": "a22e4026f7ad3f44c12c348f1fa94e193cbb1edb42cda22feb184d4318ffc7f8"
+      }
+    },
+    {
+      "name": "BCT candidates=25",
+      "lines": 78,
+      "kb": 5,
+      "tsz_ms": 41.9,
+      "tsgo_ms": 134.1,
+      "tsz_lps": 1862,
+      "tsgo_lps": 582,
+      "winner": "tsz",
+      "factor": 3.2,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "bct_25.ts",
+        "sha256": "fc7705ce69d091c781618f038ce145a8d7997906127e78be0c0db0aa5ae49b92"
+      }
+    },
+    {
+      "name": "BCT candidates=50",
+      "lines": 128,
+      "kb": 9,
+      "tsz_ms": 43.58,
+      "tsgo_ms": 134.99,
+      "tsz_lps": 2937,
+      "tsgo_lps": 948,
+      "winner": "tsz",
+      "factor": 3.1,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "bct_50.ts",
+        "sha256": "8e554f076d6c62ef7b4ac74a236f5527984af096909fd81b57e5e50f1e6ba177"
+      }
+    },
+    {
+      "name": "BCT candidates=100",
+      "lines": 228,
+      "kb": 17,
+      "tsz_ms": 52.97,
+      "tsgo_ms": 140.19,
+      "tsz_lps": 4304,
+      "tsgo_lps": 1626,
+      "winner": "tsz",
+      "factor": 2.65,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "bct_100.ts",
+        "sha256": "4ee9bd324a49c7d8c13e0f370d374e42d5f9fc6004acf8cc55d608f496a24064"
+      }
+    },
+    {
+      "name": "BCT candidates=200",
+      "lines": 428,
+      "kb": 36,
+      "tsz_ms": 169.77,
+      "tsgo_ms": 156.16,
+      "tsz_lps": 2521,
+      "tsgo_lps": 2741,
+      "winner": "tsgo",
+      "factor": 1.09,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "bct_200.ts",
+        "sha256": "0c256430e30138e9caf7ba402712d6c63b95c896f53785984816e7bb6cbda7cd"
+      }
+    },
+    {
+      "name": "Constraint conflicts N=20",
+      "lines": 99,
+      "kb": 7,
+      "tsz_ms": 40.05,
+      "tsgo_ms": 132.87,
+      "tsz_lps": 2472,
+      "tsgo_lps": 745,
+      "winner": "tsz",
+      "factor": 3.32,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "constraint_conflict_20.ts",
+        "sha256": "a45ee076a59b089381ab2dcc99b2521f31d1188bf448b12de0213187589c3fa5"
+      }
+    },
+    {
+      "name": "Constraint conflicts N=50",
+      "lines": 219,
+      "kb": 28,
+      "tsz_ms": 41.97,
+      "tsgo_ms": 134.41,
+      "tsz_lps": 5218,
+      "tsgo_lps": 1629,
+      "winner": "tsz",
+      "factor": 3.2,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "constraint_conflict_50.ts",
+        "sha256": "6774fe50bd53d75f06738d2b676c94d2c2acc73e5de1f36db1ec9bd24a2015b2"
+      }
+    },
+    {
+      "name": "Constraint conflicts N=100",
+      "lines": 419,
+      "kb": 89,
+      "tsz_ms": 48.35,
+      "tsgo_ms": 139.38,
+      "tsz_lps": 8665,
+      "tsgo_lps": 3006,
+      "winner": "tsz",
+      "factor": 2.88,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "constraint_conflict_100.ts",
+        "sha256": "ec915d5a26a05a9aecd1977eb54e62cb307af24bd5cc0656ef6859b67e22b284"
+      }
+    },
+    {
+      "name": "Constraint conflicts N=200",
+      "lines": 819,
+      "kb": 321,
+      "tsz_ms": 69.1,
+      "tsgo_ms": 151.14,
+      "tsz_lps": 11853,
+      "tsgo_lps": 5419,
+      "winner": "tsz",
+      "factor": 2.19,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "constraint_conflict_200.ts",
+        "sha256": "19105cc7c8f5fc7061cff0208c4d35f9caf5089d3a3497bb77cc96d0a0f3cca0"
+      }
+    },
+    {
+      "name": "Mapped complex template keys=25",
+      "lines": 77,
+      "kb": 3,
+      "tsz_ms": 44.22,
+      "tsgo_ms": 135.46,
+      "tsz_lps": 1741,
+      "tsgo_lps": 568,
+      "winner": "tsz",
+      "factor": 3.06,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "mapped_complex_25.ts",
+        "sha256": "4191da5689f69ff4d6342d413773f8326284ecc4fb1652117db61a28d9f85c86"
+      }
+    },
+    {
+      "name": "Mapped complex template keys=50",
+      "lines": 102,
+      "kb": 3,
+      "tsz_ms": 47.24,
+      "tsgo_ms": 134.6,
+      "tsz_lps": 2159,
+      "tsgo_lps": 758,
+      "winner": "tsz",
+      "factor": 2.85,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "mapped_complex_50.ts",
+        "sha256": "d8df2675edaa661c60fdafa08521bb885ec923265ad6f8672237750ae77b5f84"
+      }
+    },
+    {
+      "name": "Mapped complex template keys=100",
+      "lines": 152,
+      "kb": 5,
+      "tsz_ms": 55.29,
+      "tsgo_ms": 135.07,
+      "tsz_lps": 2749,
+      "tsgo_lps": 1125,
+      "winner": "tsz",
+      "factor": 2.44,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "mapped_complex_100.ts",
+        "sha256": "c48ea08ba99613d26cd46cc4f5806bf108d64d1adeac696f4aeb7c782b1c285b"
+      }
+    },
+    {
+      "name": "Mapped complex template keys=200",
+      "lines": 252,
+      "kb": 7,
+      "tsz_ms": 82.3,
+      "tsgo_ms": 138.96,
+      "tsz_lps": 3062,
+      "tsgo_lps": 1814,
+      "winner": "tsz",
+      "factor": 1.69,
+      "status": null,
+      "source": {
+        "origin": "generated",
+        "path": "mapped_complex_200.ts",
+        "sha256": "46479ad6d373b8ab5931b9d8b96f80fa3c3cea8507ecb8342d011b72deffb656"
+      }
+    },
+    {
+      "name": "conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts",
+      "lines": 8012,
+      "kb": 136,
+      "tsz_ms": 58.22,
+      "tsgo_ms": 156.9,
+      "tsz_lps": 137615,
+      "tsgo_lps": 51066,
+      "winner": "tsz",
+      "factor": 2.69,
+      "status": null,
+      "source": {
+        "origin": "typescript",
+        "path": "TypeScript/tests/cases/compiler/conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts",
+        "sha256": "f756b32010d82782a53e40bddc1e3be91de442e9d7598e9e7a7a5df85e827046"
+      }
+    },
+    {
+      "name": "manyConstExports.ts",
+      "lines": 5003,
+      "kb": 150,
+      "tsz_ms": 49.47,
+      "tsgo_ms": 121.56,
+      "tsz_lps": 101126,
+      "tsgo_lps": 41155,
+      "winner": "tsz",
+      "factor": 2.46,
+      "status": null,
+      "source": {
+        "origin": "typescript",
+        "path": "TypeScript/tests/cases/compiler/manyConstExports.ts",
+        "sha256": "9ffcc05152b70649c93493222625a197103f75ac6d047aa35304a3605f25d10f"
+      }
+    },
+    {
+      "name": "binderBinaryExpressionStress.ts",
+      "lines": 4971,
+      "kb": 38,
+      "tsz_ms": 35.24,
+      "tsgo_ms": 122.53,
+      "tsz_lps": 141061,
+      "tsgo_lps": 40571,
+      "winner": "tsz",
+      "factor": 3.48,
+      "status": null,
+      "source": {
+        "origin": "typescript",
+        "path": "TypeScript/tests/cases/compiler/binderBinaryExpressionStress.ts",
+        "sha256": "1300a7ac2c09c05272c84f71b1d350c8f1218d6efa0b4860d93be69415f985fa"
+      }
+    },
+    {
+      "name": "binderBinaryExpressionStressJs.ts",
+      "lines": 4973,
+      "kb": 39,
+      "tsz_ms": 35.32,
+      "tsgo_ms": 123.65,
+      "tsz_lps": 140789,
+      "tsgo_lps": 40218,
+      "winner": "tsz",
+      "factor": 3.5,
+      "status": null,
+      "source": {
+        "origin": "typescript",
+        "path": "TypeScript/tests/cases/compiler/binderBinaryExpressionStressJs.ts",
+        "sha256": "e8308daac337749047ada81e0dc61cab00857b6f35fac26493d846ce54412673"
+      }
+    },
+    {
+      "name": "enumLiteralsSubtypeReduction.ts",
+      "lines": 2055,
+      "kb": 39,
+      "tsz_ms": 52.96,
+      "tsgo_ms": 128.59,
+      "tsz_lps": 38801,
+      "tsgo_lps": 15981,
+      "winner": "tsz",
+      "factor": 2.43,
+      "status": null,
+      "source": {
+        "origin": "typescript",
+        "path": "TypeScript/tests/cases/compiler/enumLiteralsSubtypeReduction.ts",
+        "sha256": "8cb681f16812d49337731e24c414df0fc4e63362ede83566cb077f34092c6170"
+      }
+    },
+    {
+      "name": "binaryArithmeticControlFlowGraphNotTooLarge.ts",
+      "lines": 1298,
+      "kb": 44,
+      "tsz_ms": 123.56,
+      "tsgo_ms": 138.04,
+      "tsz_lps": 10505,
+      "tsgo_lps": 9403,
+      "winner": "tsz",
+      "factor": 1.12,
+      "status": null,
+      "source": {
+        "origin": "typescript",
+        "path": "TypeScript/tests/cases/compiler/binaryArithmeticControlFlowGraphNotTooLarge.ts",
+        "sha256": "4375ec17682b72ce06860043247958c565113afcab1377a59fa2755f7ed6f827"
+      }
+    },
+    {
+      "name": "privacyFunctionParameterDeclFile.ts",
+      "lines": 687,
+      "kb": 26,
+      "tsz_ms": 37.13,
+      "tsgo_ms": 121.61,
+      "tsz_lps": 18501,
+      "tsgo_lps": 5649,
+      "winner": "tsz",
+      "factor": 3.27,
+      "status": null,
+      "source": {
+        "origin": "typescript",
+        "path": "TypeScript/tests/cases/compiler/privacyFunctionParameterDeclFile.ts",
+        "sha256": "548f0bf1631e7dcd3c1dffce3b6c7edad1e8b5e30f1aa36fab2a2b8340dc7f5a"
+      }
+    },
+    {
+      "name": "privacyGloFunc.ts",
+      "lines": 531,
+      "kb": 10,
+      "tsz_ms": 36.37,
+      "tsgo_ms": 120.12,
+      "tsz_lps": 14601,
+      "tsgo_lps": 4421,
+      "winner": "tsz",
+      "factor": 3.3,
+      "status": null,
+      "source": {
+        "origin": "typescript",
+        "path": "TypeScript/tests/cases/compiler/privacyGloFunc.ts",
+        "sha256": "b7b3c1f0755c96003907614d311eeeebfd234baf4c1be99804b7c4fbc13e9cb0"
+      }
+    },
+    {
+      "name": "privacyTypeParameterOfFunctionDeclFile.ts",
+      "lines": 440,
+      "kb": 14,
+      "tsz_ms": 36.36,
+      "tsgo_ms": 122.21,
+      "tsz_lps": 12102,
+      "tsgo_lps": 3600,
+      "winner": "tsz",
+      "factor": 3.36,
+      "status": null,
+      "source": {
+        "origin": "typescript",
+        "path": "TypeScript/tests/cases/compiler/privacyTypeParameterOfFunctionDeclFile.ts",
+        "sha256": "2deadc2165af1d914c337c4cb8d98c99577a642d1418ef32b348d0e8e960bfdd"
+      }
+    },
+    {
+      "name": "controlFlowArrays.ts",
+      "lines": 190,
+      "kb": 3,
+      "tsz_ms": 36.33,
+      "tsgo_ms": 121.88,
+      "tsz_lps": 5230,
+      "tsgo_lps": 1559,
+      "winner": "tsz",
+      "factor": 3.36,
+      "status": null,
+      "source": {
+        "origin": "typescript",
+        "path": "TypeScript/tests/cases/compiler/controlFlowArrays.ts",
+        "sha256": "31117be7f5ccfa2e5946ad2d88506cb637ce69e3d29bc75212f9021b15251ddd"
+      }
+    },
+    {
+      "name": "ts-toolbelt-project",
+      "lines": 8044,
+      "kb": 216,
+      "project_files": 242,
+      "tsz_ms": 753.63,
+      "tsgo_ms": 100.09,
+      "tsz_lps": 10674,
+      "tsgo_lps": 80369,
+      "winner": "tsgo",
+      "factor": 7.53,
+      "status": null,
+      "readme": "<p align=\"center\">\n  <a href=\"https://github.com/millsp/ts-toolbelt\">\n    <img alt=\"banner\" title=\"ts-toolbelt\" src=\"https://raw.githubusercontent.com/millsp/ts-toolbelt/master/.github/banner.svg\">\n  </a>\n  <h4 align=\"center\">TypeScript's largest utility library</h4>\n</p>\n\n<p align=\"center\">\n  <a href=\"https://www.npmjs.com/package/ts-toolbelt\" >\n    <img src=\"https://img.shields.io/npm/v/ts-toolbelt.svg\">\n  </a>\n  <a href=\"#\">\n    <img src=\"https://img.shields.io/npm/dm/ts-toolbelt.svg\">\n  </a>\n  <a href=\"#\">\n    <img src=\"http://isitmaintained.com/badge/resolution/millsp/ts-toolbelt.svg\"/>\n  </a>\n</p>\n\n<p align=\"center\">\n  <a href=\"https://gitter.im/ts-toolbelt/community?utm_source=share-link&utm_medium=link&utm_campaign=share-link\" >\n    <img src=\"https://img.shields.io/gitter/room/ts-toolbelt/community.svg\">\n  </a>\n  <a href=\"http://makeapullrequest.com\" >\n    <img src=\"https://img.shields.io/badge/PRs-welcome-brightgreen.svg\">\n  </a>\n  <a href=\"https://conventionalcommits.org\" >\n    <img src=\"https://img.shields.io/badge/Conventional%20Commits-1.0.0-green.svg\">\n  </a>\n  <a href=\"https://github.com/millsp/ts-toolbelt/blob/master/CODE_OF_CONDUCT.md\" >\n    <img src=\"https://img.shields.io/badge/CoC-Contributor%20Covenant-green.svg\">\n  </a>\n  <a href=\"#\">\n    <img src=\"https://img.shields.io/npm/l/ts-toolbelt.svg\">\n  </a>\n</p>\n\n<p align=\"center\">\n  <a href=\"https://millsp.github.io/ts-toolbelt/\">📖 Documentation</a>\n  ·\n  <a href=\"https://github.com/millsp/ts-toolbelt/issues?utf8=✓&q=is%3Aissue+label%3Aannouncement+sort%3Acreated-desc+\">📣 Announcements</a>\n  ·\n  <a href=\"https://github.com/millsp/ts-toolbelt/issues/new?template=---bug-report.md\" alt=\"Bug Report\">🐞 Report Bug</a>\n  ·\n  <a href=\"https://github.com/millsp/ts-toolbelt/issues/new?template=---feature-request.md\" alt=\"Request Feature\">🍩 Request Feature</a>\n  ·\n  <a href=\"https://github.com/millsp/ts-toolbelt/discussions/new\" alt=\"Ask Questions\">🤔 Ask Questions</a>\n</p>\n\n## About\n\n**ts-toolbelt** is the largest, and most tested type library available right\nnow, featuring **+200 utilities**. Our type collection packages some of the most\nadvanced mapped types, conditional types, and recursive types on the market.\n\n**Spend less time, build stronger**. Benefit from a wide range of generic type\nfunctions to achieve better type safety. \n\nWe work just like lodash, or ramda, but applied to the type system. Our mission\nis to provide you with simple ways to compute, change, and create types. We\nabstract all those complex type checks away for you. We provide a simple,\nreusable, and standard API to help you get more done with TypeScript.\n\n**ts-toolbelt** is a well organized package that can help you perform advanced\noperations on object types, union types, as well as function, and literal types.\nIt is carefully and coherently designed for building robust, flexible, and\ntype-safe software.\n\n<p align=\"center\">\n  <a href=\"https://codesandbox.io/s/ts-toolbelt-x4jly?file=/src/index.ts\">\n    <img alt=\"demo\" width=\"800\" title=\"ts-toolbelt\" src=\"https://raw.githubusercontent.com/millsp/ts-toolbelt/master/.github/demo.svg\">\n  </a>\n</p>\n\nWe are a community and a knowledge base. Everyone is welcome to ask questions\nabout types. If you are stuck or you misunderstand something, you came to the\nright place!. We welcome beginners and advanced developers to come take part.\n**Welcome!**\n\n## Getting Started\n\n### Prerequisites\n\n```sh\nnpm install typescript@^4.1.0 --save-dev\n```\n\nFor best results, add this to your `tsconfig.json`\n\n```ts\n{\n  \"compilerOptions\": {\n    // highly recommended (required by few utilities)\n    \"strictNullChecks\": true,\n\n    // this is optional, but enable whenever possible\n    \"strict\": true,\n\n    // this is the lowest supported standard library\n    \"lib\": [\"es2015\"],\n  }\n}\n```\n\n### Installation\n\n```sh\nnpm install ts-toolbelt --save\n```\n\n### Hello World\n\n```ts\nimport {Object} from \"ts-toolbelt\"\n// Check the docs below for more\n\n// Merge two `object` together\ntype merge = Object.Merge<{name: string}, {age?: number}>\n// {name: string, age?: number}\n\n// Make a field of an `object` optional\ntype optional = Object.Optional<{id: number, name: string}, \"name\">\n// {id: number, name?: string}\n```\n\nYou can [**level-up, and re-code this library from\nscratch**](https://medium.com/free-code-camp/typescript-curry-ramda-types-f747e99744ab).\n\n## [Documentation ⤢](https://millsp.github.io/ts-toolbelt/)\n\n### Imports\n\nThe project is organized around TypeScript's main concepts:\n\n| **Any**    | **Boolean** | **Class**    | **Function** | **Iteration** | **List** |\n|------------|-------------|--------------|--------------|---------------|----------|\n| **Number** | **Object**  | **Object.P** | **String**   | **Union**     | **Test** |\n\n> **`TIP`** How to choose categories? Match your type with them.\n\nThere are many ways to import the types into your project:\n\n* **Explicit**\n  ```ts\n  import {Any, Boolean, Class, Function, Iteration, List, Number, Object, String, Union} from \"ts-toolbelt\"\n  ```\n\n* **Compact**\n  ```ts\n  import {A, B, C, F, I, L, N, O, S, U} from \"ts-toolbelt\"\n  ```\n\n* **Portable**\n  ```ts\n  import tb from \"ts-toolbelt\"\n  ```\n\nYou can also import our non-official API from the community:\n  ```ts\n  import {Community} from \"ts-toolbelt\"\n  ```\n\n> **`TIP`** The community API is for our community to publish useful types that\n> don't see fit in the standard API.\n\n### Utility Index\n\n|ANY|OBJECT|LIST|FUNCTION|STRING|UNION|CLASS|BOOLEAN|NUMBER|OBJECT.P|ITERATION|\n|---|---|---|---|---|---|---|---|---|---|---|\n|[Await](https://millsp.github.io/ts-toolbelt/modules/any_await.html)|[Assign](https://millsp.github.io/ts-toolbelt/modules/object_assign.html)|[Append](https://millsp.github.io/ts-toolbelt/modules/list_append.html)|[AutoPath](https://millsp.github.io/ts-toolbelt/modules/function_autopath.html)|[At](https://millsp.github.io/ts-toolbelt/modules/string_at.html)|[Diff](https://millsp.github.io/ts-toolbelt/modules/union_diff.html)|[Class](https://millsp.github.io/ts-toolbelt/modules/class_class.html)|[And](https://millsp.github.io/ts-toolbelt/modules/boolean_and.html)|[Absolute](https://millsp.github.io/ts-toolbelt/modules/number_absolute.html)|[Merge](https://millsp.github.io/ts-toolbelt/modules/object_p_merge.html)|[Iteration](https://millsp.github.io/ts-toolbelt/modules/iteration_iteration.html)|\n|[At](https://millsp.github.io/ts-toolbelt/modules/any_at.html)|[AtLeast](https://millsp.github.io/ts-toolbelt/modules/object_atleast.html)|[Assign](https://millsp.github.io/ts-toolbelt/modules/list_assign.html)|[Compose](https://millsp.github.io/ts-toolbelt/modules/function_compose.html)|[Join](https://millsp.github.io/ts-toolbelt/modules/string_join.html)|[Exclude](https://millsp.github.io/ts-toolbelt/modules/union_exclude.html)|[Instance](https://millsp.github.io/ts-toolbelt/modules/class_instance.html)|[Not](https://millsp.github.io/ts-toolbelt/modules/boolean_not.html)|[Add](https://millsp.github.io/ts-toolbelt/modules/number_add.html)|[Omit](https://millsp.github.io/ts-toolbelt/modules/object_p_omit.html)|[IterationOf](https://millsp.github.io/ts-toolbelt/modules/iteration_iterationof.html)|\n|[Cast](https://millsp.github.io/ts-toolbelt/modules/any_cast.html)|[Compulsory](https://millsp.github.io/ts-toolbelt/modules/object_compulsory.html)|[AtLeast](https://millsp.github.io/ts-toolbelt/modules/list_atleast.html)|[Curry](https://millsp.github.io/ts-toolbelt/modules/function_curry.html)|[Length](https://millsp.github.io/ts-toolbelt/modules/string_length.html)|[Filter](https://millsp.github.io/ts-toolbelt/modules/union_filter.html)|[Parameters](https://millsp.github.io/ts-toolbelt/modules/class_parameters.html)|[Or](https://millsp.github.io/ts-toolbelt/modules/boolean_or.html)|[Greater](https://millsp.github.io/ts-toolbelt/modules/number_greater.html)|[Pick](https://millsp.github.io/ts-toolbelt/modules/object_p_pick.html)|[Key](https://millsp.github.io/ts-toolbelt/modules/iteration_key.html)|\n|[Compute](https://millsp.github.io/ts-toolbelt/modules/any_compute.html)|[CompulsoryKeys](https://millsp.github.io/ts-toolbelt/modules/object_compulsorykeys.html)|[Compulsory](https://millsp.github.io/ts-toolbelt/modules/list_compulsory.html)|[Exact](https://millsp.github.io/ts-toolbelt/modules/function_exact.html)|[Replace](https://millsp.github.io/ts-toolbelt/modules/string_replace.html)|[Has](https://millsp.github.io/ts-toolbelt/modules/union_has.html)||[Xor](https://millsp.github.io/ts-toolbelt/modules/boolean_xor.html)|[GreaterEq](https://millsp.github.io/ts-toolbelt/modules/number_greatereq.html)|[Readonly](https://millsp.github.io/ts-toolbelt/modules/object_p_readonly.html)|[Next](https://millsp.github.io/ts-toolbelt/modules/iteration_next.html)|\n|[Contains](https://millsp.github.io/ts-toolbelt/modules/any_contains.html)|[Diff](https://millsp.github.io/ts-toolbelt/modules/object_diff.html)|[CompulsoryKeys](https://millsp.github.io/ts-toolbelt/modules/list_compulsorykeys.html)|[Function](https://millsp.github.io/ts-toolbelt/modules/function_function.html)|[Split](https://millsp.github.io/ts-toolbelt/modules/string_split.html)|[IntersectOf](https://millsp.github.io/ts-toolbelt/modules/union_intersectof.html)|||[IsNegative](https://millsp.github.io/ts-toolbelt/modules/number_isnegative.html)|[Update](https://millsp.github.io/ts-toolbelt/modules/object_p_update.html)|[Pos](https://millsp.github.io/ts-toolbelt/modules/iteration_pos.html)|\n|[Equals](https://millsp.github.io/ts-toolbelt/modules/any_equals.html)|[Either](https://millsp.github.io/ts-toolbelt/modules/object_either.html)|[Concat](https://millsp.github.io/ts-toolbelt/modules/list_concat.html)|[Length](https://millsp.github.io/ts-toolbelt/modules/function_length.html)||[Last](https://millsp.github.io/ts-toolbelt/modules/union_last.html)|||[IsPositive](https://millsp.github.io/ts-toolbelt/modules/number_ispositive.html)|[Record](https://millsp.github.io/ts-toolbelt/modules/object_p_record.html)|[Prev](https://millsp.github.io/ts-toolbelt/modules/iteration_prev.html)|\n|[Extends](https://millsp.github.io/ts-toolbelt/modules/any_extends.html)|[Exclude](https://millsp.github.io/ts-toolbelt/modules/object_exclude.html)|[Diff](https://millsp.github.io/ts-toolbelt/modules/list_diff.html)|[Narrow](https://millsp.github.io/ts-toolbelt/modules/function_narrow.html)||[Merge](https://millsp.github.io/ts-toolbelt/modules/union_merge.html)|||[IsZero](https://millsp.github.io/ts-toolbelt/modules/number_iszero.html)|||\n|[Key](https://millsp.github.io/ts-toolbelt/modules/any_key.html)|[ExcludeKeys](https://millsp.github.io/ts-toolbelt/modules/object_excludekeys.html)|[Drop](https://millsp.github.io/ts-toolbelt/modules/list_drop.html)|[NoInfer](https://millsp.github.io/ts-toolbelt/modules/function_noinfer.html)||[NonNullable](https://millsp.github.io/ts-toolbelt/modules/union_nonnullable.html)|||[Lower](https://millsp.github.io/ts-toolbelt/modules/number_lower.html)|||\n|[Keys](https://millsp.github.io/ts-toolbelt/modules/any_keys.html)|[Filter](https://millsp.github.io/ts-toolbelt/modules/object_filter.html)|[Either](https://millsp.github.io/ts-toolbelt/modules/list_either.html)|[Parameters](https://millsp.github.io/ts-toolbelt/modules/function_parameters.html)||[Nullable](https://millsp.github.io/ts-toolbelt/modules/union_nullable.html)|||[LowerEq](https://millsp.github.io/ts-toolbelt/modules/number_lowereq.html)|||\n|[KnownKeys](https://millsp.github.io/ts-toolbelt/modules/any_knownkeys.html)|[FilterKeys](https://millsp.github.io/ts-toolbelt/modules/object_filterkeys.html)|[Exclude](https://millsp.github.io/ts-toolbelt/modules/list_exclude.html)|[Pipe](https://millsp.github.io/ts-toolbelt/modules/function_pipe.html)||[Pop](https://millsp.github.io/ts-toolbelt/modules/union_pop.html)|||[Negate](https://millsp.github.io/ts-toolbelt/modules/number_negate.html)|||\n|[Is](https://millsp.github.io/ts-toolbelt/modules/any_is.html)|[Has](https://millsp.github.io/ts-toolbelt/modules/object_has.html)|[ExcludeKeys](https://millsp.github.io/ts-toolbelt/modules/list_excludekeys.html)|[Promisify](https://millsp.github.io/ts-toolbelt/modules/function_promisify.html)||[Replace](https://millsp.github.io/ts-toolbelt/modules/union_replace.html)|||[Range](https://millsp.github.io/ts-toolbelt/modules/number_range.html)|||\n|[Promise](https://millsp.github.io/ts-toolbelt/modules/any_promise.html)|[HasPath](https://millsp.github.io/ts-toolbelt/modules/object_haspath.html)|[Extract](https://millsp.github.io/ts-toolbelt/modules/list_extract.html)|[Return](https://millsp.github.io/ts-toolbelt/modules/function_return.html)||[Select](https://millsp.github.io/ts-toolbelt/modules/union_select.html)|||[Sub](https://millsp.github.io/ts-toolbelt/modules/number_sub.html)|||\n|[Try](https://millsp.github.io/ts-toolbelt/modules/any_try.html)|[Includes](https://millsp.github.io/ts-toolbelt/modules/object_includes.html)|[Filter](https://millsp.github.io/ts-toolbelt/modules/list_filter.html)|[UnCurry](https://millsp.github.io/ts-toolbelt/modules/function_uncurry.html)||[Strict](https://millsp.github.io/ts-toolbelt/modules/union_strict.html)||||||\n|[Type](https://millsp.github.io/ts-toolbelt/modules/any_type.html)|[Intersect](https://millsp.github.io/ts-toolbelt/modules/object_intersect.html)|[FilterKeys](https://millsp.github.io/ts-toolbelt/modules/list_filterkeys.html)|[ValidPath](https://millsp.github.io/ts-toolbelt/modules/function_validpath.html)||[ListOf](https://millsp.github.io/ts-toolbelt/modules/union_listof.html)||||||\n|[x](https://millsp.github.io/ts-toolbelt/modules/any_x.html)|[IntersectKeys](https://millsp.github.io/ts-toolbelt/modules/object_intersectkeys.html)|[Flatten](https://millsp.github.io/ts-toolbelt/modules/list_flatten.html)|||||||||\n||[Invert](https://millsp.github.io/ts-toolbelt/modules/object_invert.html)|[Group](https://millsp.github.io/ts-toolbelt/modules/list_group.html)|||||||||\n||[ListOf](https://millsp.github.io/ts-toolbelt/modules/object_listof.html)|[Has](https://millsp.github.io/ts-toolbelt/modules/list_has.html)|||||||||\n||[Merge](https://millsp.github.io/ts-toolbelt/modules/object_merge.html)|[HasPath](https://millsp.github.io/ts-toolbelt/modules/list_haspath.html)|||||||||\n||[MergeAll](https://millsp.github.io/ts-toolbelt/modules/object_mergeall.html)|[Head](https://millsp.github.io/ts-toolbelt/modules/list_head.html)|||||||||\n||[Modify](https://millsp.github.io/ts-toolbelt/modules/object_modify.html)|[Includes](https://millsp.github.io/ts-toolbelt/modules/list_includes.html)|||||||||\n||[NonNullable](https://millsp.github.io/ts-toolbelt/modules/object_nonnullable.html)|[Intersect](https://millsp.github.io/ts-toolbelt/modules/list_intersect.html)|||||||||\n||[NonNullableKeys](https://millsp.github.io/ts-toolbelt/modules/object_nonnullablekeys.html)|[IntersectKeys](https://millsp.github.io/ts-toolbelt/modules/list_intersectkeys.html)|||||||||\n||[Nullable](https://millsp.github.io/ts-toolbelt/modules/object_nullable.html)|[KeySet](https://millsp.github.io/ts-toolbelt/modules/list_keyset.html)|||||||||\n||[NullableKeys](https://millsp.github.io/ts-toolbelt/modules/object_nullablekeys.html)|[Last](https://millsp.github.io/ts-toolbelt/modules/list_last.html)|||||||||\n||[Object](https://millsp.github.io/ts-toolbelt/modules/object_object.html)|[LastKey](https://millsp.github.io/ts-toolbelt/modules/list_lastkey.html)|||||||||\n||[Omit](https://millsp.github.io/ts-toolbelt/modules/object_omit.html)|[Length](https://millsp.github.io/ts-toolbelt/modules/list_length.html)|||||||||\n||[Optional](https://millsp.github.io/ts-toolbelt/modules/object_optional.html)|[List](https://millsp.github.io/ts-toolbelt/modules/list_list.html)|||||||||\n||[OptionalKeys](https://millsp.github.io/ts-toolbelt/modules/object_optionalkeys.html)|[Longest](https://millsp.github.io/ts-toolbelt/modules/list_longest.html)|||||||||\n||[Overwrite](https://millsp.github.io/ts-toolbelt/modules/object_overwrite.html)|[Merge](https://millsp.github.io/ts-toolbelt/modules/list_merge.html)|||||||||\n||[Partial](https://millsp.github.io/ts-toolbelt/modules/object_partial.html)|[MergeAll](https://millsp.github.io/ts-toolbelt/modules/list_mergeall.html)|||||||||\n||[Patch](https://millsp.github.io/ts-toolbelt/modules/object_patch.html)|[Modify](https://millsp.github.io/ts-toolbelt/modules/list_modify.html)|||||||||\n||[PatchAll](https://millsp.github.io/ts-toolbelt/modules/object_patchall.html)|[NonNullable](https://millsp.github.io/ts-toolbelt/modules/list_nonnullable.html)|||||||||\n||[Path](https://millsp.github.io/ts-toolbelt/modules/object_path.html)|[NonNullableKeys](https://millsp.github.io/ts-toolbelt/modules/list_nonnullablekeys.html)|||||||||\n||[Paths](https://millsp.github.io/ts-toolbelt/modules/object_paths.html)|[Nullable](https://millsp.github.io/ts-toolbelt/modules/list_nullable.html)|||||||||\n||[Pick](https://millsp.github.io/ts-toolbelt/modules/object_pick.html)|[NullableKeys](https://millsp.github.io/ts-toolbelt/modules/list_nullablekeys.html)|||||||||\n||[Readonly](https://millsp.github.io/ts-toolbelt/modules/object_readonly.html)|[ObjectOf](https://millsp.github.io/ts-toolbelt/modules/list_objectof.html)|||||||||\n||[ReadonlyKeys](https://millsp.github.io/ts-toolbelt/modules/object_readonlykeys.html)|[Omit](https://millsp.github.io/ts-toolbelt/modules/list_omit.html)|||||||||\n||[Record](https://millsp.github.io/ts-toolbelt/modules/object_record.html)|[Optional](https://millsp.github.io/ts-toolbelt/modules/list_optional.html)|||||||||\n||[Replace](https://millsp.github.io/ts-toolbelt/modules/object_replace.html)|[OptionalKeys](https://millsp.github.io/ts-toolbelt/modules/list_optionalkeys.html)|||||||||\n||[Required](https://millsp.github.io/ts-toolbelt/modules/object_required.html)|[Overwrite](https://millsp.github.io/ts-toolbelt/modules/list_overwrite.html)|||||||||\n||[RequiredKeys](https://millsp.github.io/ts-toolbelt/modules/object_requiredkeys.html)|[Partial](https://millsp.github.io/ts-toolbelt/modules/list_partial.html)|||||||\n\n...",
+      "compatibility": {
+        "exit_class": "exit success",
+        "phase": "check",
+        "last_successful_phase": "check",
+        "diagnostic_status": "none",
+        "diagnostic_deltas": [],
+        "diagnostic_codes": [],
+        "diagnostic_subsystems": [],
+        "primary_subsystem": null,
+        "reduction_candidates": [],
+        "emit_status": "not in scope (noEmit project check)",
+        "dts_status": "not in scope (noEmit project check)",
+        "known_blockers": [],
+        "exit_codes": {
+          "tsc": [
+            0
+          ],
+          "tsz": [
+            0
+          ],
+          "tsgo": [
+            0
+          ]
+        },
+        "semantic_owner_family": "recursive type evaluation pressure",
+        "files_reached": 242,
+        "peak_memory_bytes": null
+      }
+    },
+    {
+      "name": "zod-project",
+      "lines": 4333,
+      "kb": 115,
+      "project_files": 8,
+      "tsz_ms": null,
+      "tsgo_ms": null,
+      "tsz_lps": null,
+      "tsgo_lps": null,
+      "winner": "error",
+      "factor": 0,
+      "status": "tsz error; tsc ok",
+      "readme": "<p align=\"center\">\n  <img src=\"logo.svg\" width=\"200px\" align=\"center\" />\n  <h1 align=\"center\">Zod</h1>\n</p>\n<p align=\"center\">\n<a href=\"https://twitter.com/colinhacks\" rel=\"nofollow\"><img src=\"https://img.shields.io/badge/created%20by-@colinhacks-4BBAAB.svg\" alt=\"Created by Colin McDonnell\"></a>\n<a href=\"https://opensource.org/licenses/MIT\" rel=\"nofollow\"><img src=\"https://img.shields.io/github/license/colinhacks/zod\" alt=\"License\"></a>\n<a href=\"https://www.npmjs.com/package/zod\" rel=\"nofollow\"><img src=\"https://img.shields.io/npm/dw/zod.svg\" alt=\"npm\"></a>\n<a href=\"https://www.npmjs.com/package/zod\" rel=\"nofollow\"><img src=\"https://img.shields.io/github/stars/colinhacks/zod\" alt=\"stars\"></a>\n<a href=\"./src/__tests__\" rel=\"nofollow\"><img src=\"./coverage.svg\" alt=\"coverage\"></a>\n\n</p>\n<p align=\"center\">\n⭐️ smash that star button ⭐️\n</p>\n\n> Like typesafety? Check out [tRPC](https://trpc.io) — a better way to build end-to-end typesafe APIs without GraphQL or code generation — just TypeScript.\n\n<br/>\n\n# Table of contents\n\n- [What is Zod](#what-is-zod)\n- [Installation](#installation)\n- [Ecosystem](#ecosystem)\n- [Basic usage](#basic-usage)\n- [Defining schemas](#defining-schemas)\n  - [Primitives](#primitives)\n  - [Literals](#literals)\n  - [Strings](#strings)\n  - [Numbers](#numbers)\n  - [Booleans](#booleans)\n  - [Enums](#enums)\n    - [Zod enums](#zod-enums)\n    - [Native enums](#native-enums)\n  - [Optionals](#optionals)\n  - [Nullables](#nullables)\n  - [Objects](#objects)\n    - [.shape](#shape)\n    - [.extend](#extend)\n    - [.merge](#merge)\n    - [.pick/.omit](#pickomit)\n    - [.partial](#partial)\n    - [.deepPartial](#deepPartial)\n    - [.passthrough](#passthrough)\n    - [.strict](#strict)\n    - [.strip](#strip)\n    - [.catchall](#catchall)\n  - [Arrays](#arrays)\n    - [.nonempty](#nonempty)\n    - [.min/.max/.length](#minmaxlength)\n  - [Tuples](#tuples)\n  - [Records](#records)\n  - [Maps](#maps)\n  - [Sets](#sets)\n  - [Unions](#unions)\n  - [Recursive types](#recursive-types)\n    - [JSON type](#json-type)\n    - [Cyclical data](#cyclical-objects)\n  - [Promises](#promises)\n  - [Instanceof](#instanceof)\n  - [Function schemas](#function-schemas)\n  - [Preprocess](#preprocess)\n- [Schema methods](#zodtype-methods-and-properties)\n  - [.parse](#parse)\n  - [.parseAsync](#parseasync)\n  - [.safeParse](#safeparse)\n  - [.safeParseAsync](#safeparseasync)\n  - [.refine](#refine)\n  - [.superRefine](#superRefine)\n  - [.transform](#transform)\n  - [.default](#default)\n  - [.optional](#optional)\n  - [.nullable](#nullable)\n  - [.nullish](#nullish)\n  - [.array](#array)\n  - [.promise](#promise)\n  - [.or](#or)\n  - [.and](#and)\n- [Type inference](#type-inference)\n- [Errors](#errors)\n- [Comparison](#comparison)\n  - [Joi](#joi)\n  - [Yup](#yup)\n  - [io-ts](#io-ts)\n  - [Runtypes](#runtypes)\n- [Changelog](#changelog)\n\n<!-- **Zod 2 is coming! Follow [@colinhacks](https://twitter.com/colinhacks) to stay updated and discuss the future of Zod.** -->\n\n# What is Zod\n\nZod is a TypeScript-first schema declaration and validation library. I'm using the term \"schema\" to broadly refer to any data type, from a simple `string` to a complex nested object.\n\nZod is designed to be as developer-friendly as possible. The goal is to eliminate duplicative type declarations. With Zod, you declare a validator _once_ and Zod will automatically infer the static TypeScript type. It's easy to compose simpler types into complex data structures.\n\nSome other great aspects:\n\n- Zero dependencies\n- Works in Node.js and browsers (including IE 11)\n- Tiny: 8kb minified + zipped\n- Immutable: methods (i.e. `.optional()` return a new instance\n- Concise, chainable interface\n- Functional approach: [parse, don't validate](https://lexi-lambda.github.io/blog/2019/11/05/parse-don-t-validate/)\n- Works with plain JavaScript too! You don't need to use TypeScript.\n\n# Sponsorship\n\nSponsorship at any level is appreciated and encouraged. Zod is maintained by a solo developer ([hi!](https://twitter.com/colinhacks)). For individual developers, consider the [Cup of Coffee tier](https://github.com/sponsors/colinhacks). If you built a paid product using Zod, consider the [Startup tier](https://github.com/sponsors/colinhacks). You can learn more about the tiers at [github.com/sponsors/colinhacks](https://github.com/sponsors/colinhacks).\n\n### Sponsors\n\n<table>\n  <tr>\n   <td align=\"center\">\n      <a href=\"https://deletype.com/\">\n        <img src=\"https://avatars0.githubusercontent.com/u/15068039?s=200&v=4\" width=\"100px;\" alt=\"\" />\n      </a>\n      <br>\n      <b>Deletype</b>\n      <br>\n      <a href=\"https://deletype.com/\">deletype.com/</a>\n    </td>\n  <td align=\"center\">\n      <a href=\"https://github.com/kevinsimper\">\n        <img src=\"https://avatars1.githubusercontent.com/u/1126497?s=460&v=4\" width=\"100px;\" alt=\"\" />\n      </a>\n      <br>\n      <b>Kevin Simper</b>\n      <br>\n      <a href=\"https://github.com/kevinsimper\">@kevinsimper</a>\n    </td>\n    <td align=\"center\">\n      <a href=\"https://twitter.com/flybayer\">\n        <img src=\"https://avatars2.githubusercontent.com/u/8813276?s=460&u=4ff8beb9a67b173015c4b426a92d89cab960af1b&v=4\" width=\"100px;\" alt=\"\"/>\n      </a>\n      <br>\n      <b>Brandon Bayer</b>\n      <br/>\n      <a href=\"https://twitter.com/flybayer\">@flybayer</a>,\n      <span>creator of <a href=\"https://blitzjs.com\">Blitz.js</a></span>\n      <br />\n    </td>\n    \n  </tr>\n  <tr>\n    <td align=\"center\">\n      <a href=\"https://www.bamboocreative.nz/\">\n        <img src=\"https://avatars1.githubusercontent.com/u/41406870?s=460&v=4\" width=\"100px;\" alt=\"\" />\n      </a>\n      <br>\n      <b>Bamboo Creative</b>\n      <br>\n      <a href=\"https://www.bamboocreative.nz/\">bamboocreative.nz</a>\n    </td>\n    <td align=\"center\">\n      <a href=\"https://github.com/jeremyBanks\">\n        <img src=\"https://avatars.githubusercontent.com/u/18020?s=400&u=dba6c1402ae1746a276a5d256e01d68e774a0e9d&v=4\" width=\"100px;\" alt=\"\" />\n      </a>\n      <br>\n      <b>Jeremy Banks</b>\n      <br>\n      <a href=\"https://github.com/jeremyBanks\">github.com/jeremyBanks</a>\n    </td>\n     <td align=\"center\">\n      <a href=\"https://marcatopartners.com/\">\n        <img src=\"https://avatars.githubusercontent.com/u/84106192?s=200&v=4\" width=\"100px;\" alt=\"Marcato Partners\" />\n      </a>\n      <br>\n      <b>Marcato Partners</b>\n      <br>\n      <a href=\"https://marcatopartners.com/\">marcatopartners.com</a>\n    </td>\n  </tr>\n</table>\n\n_To get your name + Twitter + website here, sponsor Zod at the [Freelancer](https://github.com/sponsors/colinhacks) or [Consultancy](https://github.com/sponsors/colinhacks) tier._\n\n# Installation\n\nTo install Zod v3:\n\n```sh\nnpm install zod\n```\n\n⚠️ IMPORTANT: You must enable `strict` mode in your `tsconfig.json`. This is a best practice for all TypeScript projects.\n\n```ts\n// tsconfig.json\n{\n  // ...\n  \"compilerOptions\": {\n    // ...\n    \"strict\": true\n  }\n}\n```\n\n#### TypeScript requirements\n\n- Zod 3.x requires TypeScript 4.1+\n- Zod 2.x requires TypeScript 3.7+\n- Zod 1.x requires TypeScript 3.3+\n\n# Ecosystem\n\nThere are a growing number of tools that are built atop or support Zod natively! If you've built a tool or library on top of Zod, tell me about it [on Twitter](https://twitter.com/colinhacks) or [start a Discussion](https://github.com/colinhacks/zod/discussions). I'll add it below and tweet it out.\n\n- [`tRPC`](https://github.com/trpc/trpc): Build end-to-end typesafe APIs without GraphQL\n- [`ts-to-zod`](https://github.com/fabien0102/ts-to-zod): Convert TypeScript definitions into Zod schemas.\n- [`zod-mocking`](https://github.com/dipasqualew/zod-mocking): Generate mock data from your Zod schemas.\n- [`zod-fast-check`](https://github.com/DavidTimms/zod-fast-check): Generate `fast-check` arbitraries from Zod schemas.\n- [`zod-endpoints`](https://github.com/flock-community/zod-endpoints): Contract-first strictly typed endpoints with Zod. OpenAPI compatible.\n- [`express-zod-api`](https://github.com/RobinTail/express-zod-api): Build Express-based APIs with I/O schema validation and custom middlewares\n- [`zod-to-json-schema`](https://github.com/StefanTerdell/zod-to-json-schema): Convert your Zod schemas into [JSON Schemas](https://json-schema.org/).\n- [`json-to-zod`](https://github.com/rsinohara/json-to-zod): Convert JSON objects into Zod schemas. Use it live [here](https://rsinohara.github.io/json-to-zod-react/).\n\n### Form integrations\n\n- [`react-hook-form`](https://github.com/react-hook-form/resolvers#zod): A first-party Zod resolver for React Hook Form\n- [`formik`](https://github.com/robertLichtnow/zod-formik-adapter): A community-maintained Formik adapter for Zod\n\n# Basic usage\n\nCreating a simple string schema\n\n```ts\nimport { z } from \"zod\";\n\n// creating a schema for strings\nconst mySchema = z.string();\n\n// parsing\nmySchema.parse(\"tuna\"); // => \"tuna\"\nmySchema.parse(12); // => throws ZodError\n\n// \"safe\" parsing (doesn't throw error if validation fails)\nmySchema.safeParse(\"tuna\"); // => { success: true; data: \"tuna\" }\nmySchema.safeParse(12); // => { success: false; error: ZodError }\n```\n\nCreating an object schema\n\n```ts\nimport { z } from \"zod\";\n\nconst User = z.object({\n  username: z.string(),\n});\n\nUser.parse({ username: \"Ludwig\" });\n\n// extract the inferred type\ntype User = z.infer<typeof User>;\n// { username: string }\n```\n\n# Defining schemas\n\n## Primitives\n\n```ts\nimport { z } from \"zod\";\n\n// primitive values\nz.string();\nz.number();\nz.bigint();\nz.boolean();\nz.date();\n\n// empty types\nz.undefined();\nz.null();\nz.void(); // accepts undefined\n\n// catch-all types\n// allows any value\nz.any();\nz.unknown();\n\n// never type\n// allows no values\nz.never();\n```\n\n## Literals\n\n```ts\nconst tuna = z.literal(\"tuna\");\nconst twelve = z.literal(12);\nconst tru = z.literal(true);\n\n// retrieve literal value\ntuna.value; // \"tuna\"\n```\n\n> Currently there is no support for Date or bigint literals in Zod. If you have a use case for this feature, please file an issue.\n\n## Strings\n\nYou can customize certain errors when creating a string schema.\n\n```ts\nconst name = z.string({\n  required: \"Name is required\",\n  invalid: \"Invalid name\",\n});\n```\n\nZod includes a handful of string-specific validations.\n\n```ts\nz.string().max(5);\nz.string().min(5);\nz.string().length(5);\nz.string().email();\nz.string().url();\nz.string().uuid();\nz.string().cuid();\nz.string().regex(regex);\n\n// deprecated, equivalent to .min(1)\nz.string().nonempty();\n\n// optional custom error message\nz.string().nonempty({ message: \"Can't be empty\" });\n```\n\n> Check out [validator.js](https://github.com/validatorjs/validator.js) for a bunch of other useful string validation functions.\n\n#### Custom error messages\n\nYou can customize certain errors when creating a string schema.\n\n```ts\nconst name = z.string({\n  required_error: \"Name is required\",\n  invalid_type_error: \"Name must be a string\",\n});\n```\n\nWhen using validation methods, you can pass in an additional argument to provide a custom error message.\n\n```ts\nz.string().min(5, { message: \"Must be 5 or more characters long\" });\nz.string().max(5, { message: \"Must be 5 or fewer characters long\" });\nz.string().length(5, { message: \"Must be exactly 5 characters long\" });\nz.string().email({ message: \"Invalid email address\" });\nz.string().url({ message: \"Invalid url\" });\nz.string().uuid({ message: \"Invalid UUID\" });\n```\n\n## Numbers\n\nYou can customize certain error messages when creating a number schema.\n\n```ts\nconst age = z.number({\n  required_error: \"Age is required\",\n  invalid_type_error: \"Age must be a number\",\n});\n```\n\nZod includes a handful of number-specific validations.\n\n```ts\nz.number().gt(5);\nz.number().gte(5); // alias .min(5)\nz.number().lt(5);\nz.number().lte(5); // alias .max(5)\n\nz.number().int(); // value must be an integer\n\nz.number().positive(); //     > 0\nz.number().nonnegative(); //  >= 0\nz.number().negative(); //     < 0\nz.number().nonpositive(); //  <= 0\n\nz.number().multipleOf(5); // Evenly divisible by 5. Alias .step(5)\n```\n\nOptionally, you can pass in a second argument to provide a custom error message.\n\n```ts\nz.number().lte(5, { message: \"this👏is👏too👏big\" });\n```\n\n## Booleans\n\nYou can customize certain error messages when creating a boolean schema.\n\n```ts\nconst isActive = z.boolean({\n  required_error: \"isActive is required\",\n  invalid_type_error: \"isActive must be a boolean\",\n});\n```\n\n## Enums\n\nThere are two ways to define enums in Zod.\n\n### Zod enums\n\n```ts\nconst FishEnum = z.enum([\"Salmon\", \"Tuna\", \"Trout\"]);\ntype FishEnum = z.infer<typeof FishEnum>;\n// 'Salmon' | 'Tuna' | 'Trout'\n```\n\nYou must pass the array of values directly into `z.enum()`. Alternatively, use `as const` to define your enum values as a tuple of strings. See the [const assertion docs](https://www.typescriptlang.org/docs/handbook/release-notes/typescript-3-4.html#const-assertions) for details.\n\n```ts\nconst VALUES = [\"Salmon\", \"Tuna\", \"Trout\"] as const;\nconst FishEnum = z.enum(VALUES);\n```\n\nThis is not allowed:\n\n```ts\nconst fish = [\"Salmon\", \"Tuna\", \"Trout\"];\nconst FishEnum = z.enum(fish);\n```\n\nIn that case, the inferred type of `fish` is simply `string[]`, so Zod isn't able to infer the individual enum elements.\n\n**Autocompletion**\n\nTo get autocompletion with a Zod enum, use the `.enum` property of your schema:\n\n```ts\nFishEnum.enum.Salmon; // => autocompletes\n\nFishEnum.enum;\n/* \n=> {\n  Salmon: \"Salmon\",\n  Tuna: \"Tuna\",\n  Trout: \"Trout\",\n} \n*/\n```\n\nYou can also retrieve the list of options as a tuple with the `.options` property:\n\n```ts\nFishEnum.options; // [\"Salmon\", \"Tuna\", \"Trout\"]);\n```\n\n### Native enums\n\nZod enums are the recommended approach to defining and validating enums. But if you need to validate against an enum from a third-party library (or you don't want to rewrite your existing enums) you can use `z.nativeEnum()` .\n\n**Numeric enums**\n\n```ts\nenum Fruits {\n  Apple,\n  Banana,\n}\n\nconst FruitEnum = z.nativeEnum(Fruits);\ntype FruitEnum = z.infer<typeof FruitEnum>; // Fruits\n\nFruitEnum.parse(Fruits.Apple); // passes\nFruitEnum.parse(Fruits.Banana); // passes\nFruitEnum.parse(0); // passes\nFruitEnum.parse(1); // passes\nFruitEnum.parse(3); // fails\n```\n\n**String enums**\n\n```ts\nenum Fruits {\n  Apple = \"apple\",\n  Banana = \"banana\",\n  Cantaloupe, // you can mix numerical and string enums\n}\n\nconst FruitEnum = z.nativeEnum(Fruits);\ntype FruitEnum = z.infer<typeof FruitEnum>; // Fruits\n\nFruitEnum.parse(Fruits.Apple); // passes\nFruitEnum.parse(Fruits.Cantaloupe); // passes\nFruitEnum.parse(\"apple\"); // passes\nFruitEnum.parse(\"banana\"); // passes\nFruitEnum.parse(0); // passes\nFruitEnum.parse(\"Cantaloupe\"); // fails\n```\n\n**Const enums**\n\nThe `.nativeEnum()` function works for `as const` objects as well. ⚠️ `as const` required TypeScript 3.4+!\n\n```ts\nconst Fruits = {\n  Apple: \"apple\",\n  Banana: \"banana\",\n  Cantaloupe: 3,\n} as const;\n\nconst FruitEnum = z.nativeEnum(Fruits);\ntype FruitEnum = z.infer<typeof FruitEnum>; // \"apple\" | \"banana\" | 3\n\nFruitEnum.parse(\"apple\"); // passes\nFruitEnum.parse(\"banana\"); // passes\nFruitEnum.parse(3); // passes\nFruitEnum.parse(\"Cantaloupe\"); // fails\n```\n\n## Optionals\n\nYou can make any schema optional with `z.optional()`:\n\n```ts\nconst schema = z.optional(z.string());\n\nschema.parse(undefined); // => returns undefined\ntype A = z.infer<typeof A>; // string | undefined\n```\n\nYou can make an existing schema optional with the `.optional()` method:\n\n```ts\nconst user = z.object({\n  username: z.string().optional(),\n});\ntype C = z.infer<typeof C>; // { username?: string | undefined };\n```\n\n#### `.unwrap`\n\n```ts\nconst stringSchema = z.string();\nconst optionalString = stringSchema.optional();\noptionalString.unwrap() === stringSchema; // true\n```\n\n## Nullables\n\nSimilarly, you can create nullable types like so:\n\n```ts\nconst nullableString = z.nullable(z.string());\nnullableString.parse(\"asdf\"); // => \"asdf\"\nnullableString.parse(null); // => null\n```\n\nYou can make an existing schema nullable with the `nullable` method:\n\n```ts\nconst E = z.string().nullable(); // equivalent to D\ntype E = z.infer<typeof D>; // string | null\n```\n\n#### `.unwrap`\n\n```ts\nconst stringSchema = z.string();\nconst nullableString = stringSchema.nullable();\nnullableString.unwrap() === stringSchema; // true\n```\n\n## Objects\n\n```ts\n// all properties are required by default\nconst Dog = z.object({\n  name: z.string(),\n  age: z.number(),\n});\n\n// extract the inferred type like this\ntype Dog = z.infer<typeof Dog>;\n\n// equivalent to:\ntype Dog = {\n  name: string;\n  age: number;\n};\n```\n\n### `.shape`\n\nUse `.shape` to access the schemas for a particular key.\n\n```ts\nDog.shape.name; // => string schema\nDog.shape.age; // => number schema\n```\n\n### `.extend`\n\nYou can add additional fields an object schema with the `.extend` method.\n\n```ts\nconst DogWithBreed = Dog.extend({\n  breed: z.string(),\n});\n```\n\nYou can use `.extend` to overwrite fields! Be careful with this power!\n\n### `.merge`\n\nEquivalent to `A.extend(B.shape)`.\n\n```ts\nconst BaseTeacher = z.object({ students: z.array(z.string()) });\nconst HasID = z.object({ id: z.string() });\n\nconst Teacher = BaseTeacher.merge(HasID);\ntype Teacher = z.infer<typeof Teacher>; // => { students: string[], id: string }\n```\n\n> If the two schemas share keys, the properties of B overrides the property of A. The returned schema also inherits the \"unknownKeys\" policy (strip/strict/passthrough) and the catchall schema of B.\n\n### `.pick/.omit`\n\nInspired by TypeScript's built-in `Pick` and `Omit` utility types, all Zod object schemas have `.pick` and `.omit` methods that return a modified version. Consider this Recipe schema:\n\n```ts\nconst Recipe = z.object({\n  id: z.string(),\n  name: z.string(),\n  ingredients: z.array(z.string()),\n});\n```\n\nTo only keep certain keys, use `.pick` .\n\n```ts\nconst JustTheName = Recipe.pick({ name: true });\ntype JustTheName = z.infer<typeof JustTheName>;\n// => { name: string }\n```\n\nTo remove certain keys, use `.omit` .\n\n```ts\nconst NoIDRecipe = Recipe.omit({ id: true });\n\ntype NoIDRecipe = z.infer<typeof NoIDRecipe>;\n// => { name: string, ingredients: string[] }\n```\n\n### `.partial`\n\nInspired by\n\n...",
+      "compatibility": {
+        "exit_class": "nonzero exit",
+        "phase": "check",
+        "last_successful_phase": null,
+        "diagnostic_status": "diagnostic mismatch or compiler error",
+        "diagnostic_deltas": [
+          "tsz: .target-bench/external/zod/src/types.ts(84,30): error TS2741: Property 'name' is missing in type 'ZodError' but required in type 'ZodError<Input>'.",
+          "tsz: .target-bench/external/zod/src/types.ts(304,5): error TS2322: Type 'ZodPromise<ZodPromise<T>>' is not assignable to type 'ZodPromise<this>'.",
+          "tsz: .target-bench/external/zod/src/types.ts(312,5): error TS2322: Type 'ZodIntersection<ZodIntersection<T, U>, T>' is not assignable to type 'ZodIntersection<this, T>'.",
+          "tsz: .target-bench/external/zod/src/types.ts(391,11): error TS2322: Type '\"array\" | \"number\" | \"map\" | \"function\" | \"bigint\" | \"boolean\" | \"symbol\" | \"undefined\" | \"object\" | \"nan\" | ...' is not assignable to type 'ZodParsedType'.",
+          "tsz: .target-bench/external/zod/src/types.ts(513,49): error TS2345: Argument of type '{ validation: StringValidation; code: string; message?: string | undefined; }' is not assignable to parameter of type '(IssueData) | ((arg: string, ctx: RefinementCtx) => IssueData)'.",
+          "tsz: .target-bench/external/zod/src/types.ts(515,7): error TS2322: Type 'string' is not assignable to type '\"invalid_enum_value\"'.",
+          "tsz: .target-bench/external/zod/src/types.ts(646,11): error TS2322: Type '\"array\" | \"string\" | \"map\" | \"function\" | \"bigint\" | \"boolean\" | \"symbol\" | \"undefined\" | \"object\" | \"nan\" | ...' is not assignable to type 'ZodParsedType'.",
+          "tsz: .target-bench/external/zod/src/types.ts(682,30): error TS2339: Property 'value' does not exist on type 'ZodNumberCheck'.",
+          "tsz: .target-bench/external/zod/src/types.ts(684,32): error TS2339: Property 'inclusive' does not exist on type 'ZodNumberCheck'.",
+          "tsz: .target-bench/external/zod/src/types.ts(700,30): error TS2339: Property 'value' does not exist on type 'ZodNumberCheck'.",
+          "tsz: .target-bench/external/zod/src/types.ts(702,32): error TS2339: Property 'inclusive' does not exist on type 'ZodNumberCheck'.",
+          "tsz: .target-bench/external/zod/src/types.ts(730,5): error TS2740: Type '{ _parse(ctx: ParseContext, data: number, parsedType: \"array\" | \"string\" | \"number\" | \"map\" | \"function\" | \"bigint\" | \"boolean\" | \"symbol\" | \"undefined\" | \"object\" | ...): ParseReturnType<number>; gte(value: number, message?: ErrMessage | undefined): any; gt(value: number, message?: ErrMessage | undefined): any; lte(value: number, message?: ErrMessage | undefined): any; lt(value: number, message?: ErrMessage | undefined): any; setLimit(kind: string, value: number, inclusive: boolean, message?: string | ...): any; _addCheck(check: ZodNumberCheck): any; int(message?: ErrMessage | undefined): any; positive(message?: ErrMessage | undefined): any; negative(message?: ErrMessage | undefined): any; nonpositive(message?: ErrMessage | undefined): any; nonnegative(message?: ErrMessage | undefined): any; multipleOf(value: number, message?: ErrMessage | undefined): any; }' is missing the following properties from type 'ZodNumber': min, max, step, minValue, and 31 more.",
+          "tsz: .target-bench/external/zod/src/types.ts(885,11): error TS2322: Type '\"array\" | \"string\" | \"number\" | \"map\" | \"function\" | \"boolean\" | \"symbol\" | \"undefined\" | \"object\" | \"nan\" | ...' is not assignable to type 'ZodParsedType'.",
+          "tsz: .target-bench/external/zod/src/types.ts(896,26): error TS2554: Expected 0 arguments, but got 1.",
+          "tsz: .target-bench/external/zod/src/types.ts(926,11): error TS2322: Type '\"array\" | \"string\" | \"number\" | \"map\" | \"function\" | \"bigint\" | \"symbol\" | \"undefined\" | \"object\" | \"nan\" | ...' is not assignable to type 'ZodParsedType'.",
+          "tsz: .target-bench/external/zod/src/types.ts(937,27): error TS2554: Expected 0 arguments, but got 1.",
+          "tsz: .target-bench/external/zod/src/types.ts(967,11): error TS2322: Type '\"array\" | \"string\" | \"number\" | \"map\" | \"function\" | \"bigint\" | \"boolean\" | \"symbol\" | \"undefined\" | \"object\" | ...' is not assignable to type 'ZodParsedType'.",
+          "tsz: .target-bench/external/zod/src/types.ts(990,24): error TS2554: Expected 0 arguments, but got 1.",
+          "tsz: .target-bench/external/zod/src/types.ts(1020,11): error TS2322: Type '\"array\" | \"string\" | \"number\" | \"map\" | \"function\" | \"bigint\" | \"boolean\" | \"symbol\" | \"object\" | \"nan\" | ...' is not assignable to type 'ZodParsedType'.",
+          "tsz: .target-bench/external/zod/src/types.ts(1032,29): error TS2554: Expected 0 arguments, but got 1."
+        ],
+        "diagnostic_codes": [
+          "TS2741",
+          "TS2322",
+          "TS2345",
+          "TS2339",
+          "TS2740",
+          "TS2554"
+        ],
+        "diagnostic_subsystems": [
+          {
+            "subsystem": "relations-assignability",
+            "codes": [
+              "TS2741",
+              "TS2322",
+              "TS2345",
+              "TS2740"
+            ],
+            "count": 12,
+            "examples": [
+              "tsz: .target-bench/external/zod/src/types.ts(84,30): error TS2741: Property 'name' is missing in type 'ZodError' but required in type 'ZodError<Input>'.",
+              "tsz: .target-bench/external/zod/src/types.ts(304,5): error TS2322: Type 'ZodPromise<ZodPromise<T>>' is not assignable to type 'ZodPromise<this>'.",
+              "tsz: .target-bench/external/zod/src/types.ts(312,5): error TS2322: Type 'ZodIntersection<ZodIntersection<T, U>, T>' is not assignable to type 'ZodIntersection<this, T>'."
+            ]
+          },
+          {
+            "subsystem": "keyspace-property-indexed",
+            "codes": [
+              "TS2339"
+            ],
+            "count": 4,
+            "examples": [
+              "tsz: .target-bench/external/zod/src/types.ts(682,30): error TS2339: Property 'value' does not exist on type 'ZodNumberCheck'.",
+              "tsz: .target-bench/external/zod/src/types.ts(684,32): error TS2339: Property 'inclusive' does not exist on type 'ZodNumberCheck'.",
+              "tsz: .target-bench/external/zod/src/types.ts(700,30): error TS2339: Property 'value' does not exist on type 'ZodNumberCheck'."
+            ]
+          },
+          {
+            "subsystem": "unclassified diagnostic",
+            "codes": [
+              "TS2554"
+            ],
+            "count": 4,
+            "examples": [
+              "tsz: .target-bench/external/zod/src/types.ts(896,26): error TS2554: Expected 0 arguments, but got 1.",
+              "tsz: .target-bench/external/zod/src/types.ts(937,27): error TS2554: Expected 0 arguments, but got 1.",
+              "tsz: .target-bench/external/zod/src/types.ts(990,24): error TS2554: Expected 0 arguments, but got 1."
+            ]
+          }
+        ],
+        "primary_subsystem": "relations-assignability",
+        "reduction_candidates": [
+          "tsz: .target-bench/external/zod/src/types.ts(84,30): error TS2741: Property 'name' is missing in type 'ZodError' but required in type 'ZodError<Input>'.",
+          "tsz: .target-bench/external/zod/src/types.ts(304,5): error TS2322: Type 'ZodPromise<ZodPromise<T>>' is not assignable to type 'ZodPromise<this>'.",
+          "tsz: .target-bench/external/zod/src/types.ts(312,5): error TS2322: Type 'ZodIntersection<ZodIntersection<T, U>, T>' is not assignable to type 'ZodIntersection<this, T>'.",
+          "tsz: .target-bench/external/zod/src/types.ts(391,11): error TS2322: Type '\"array\" | \"number\" | \"map\" | \"function\" | \"bigint\" | \"boolean\" | \"symbol\" | \"undefined\" | \"object\" | \"nan\" | ...' is not assignable to type 'ZodParsedType'.",
+          "tsz: .target-bench/external/zod/src/types.ts(513,49): error TS2345: Argument of type '{ validation: StringValidation; code: string; message?: string | undefined; }' is not assignable to parameter of type '(IssueData) | ((arg: string, ctx: RefinementCtx) => IssueData)'."
+        ],
+        "emit_status": "not in scope (noEmit project check)",
+        "dts_status": "not in scope (noEmit project check)",
+        "known_blockers": [
+          "relations-assignability",
+          "keyspace-property-indexed",
+          "unclassified diagnostic"
+        ],
+        "exit_codes": {
+          "tsc": [
+            0
+          ],
+          "tsz": [
+            2
+          ],
+          "tsgo": [
+            0
+          ]
+        },
+        "semantic_owner_family": "recursive conditionals, object guards, class/generic identity",
+        "files_reached": 8,
+        "peak_memory_bytes": null
+      }
+    },
+    {
+      "name": "kysely-project",
+      "lines": 39724,
+      "kb": 1089,
+      "project_files": 272,
+      "tsz_ms": null,
+      "tsgo_ms": null,
+      "tsz_lps": null,
+      "tsgo_lps": null,
+      "winner": "error",
+      "factor": 0,
+      "status": "tsz error; tsc ok",
+      "compatibility": {
+        "exit_class": "nonzero exit",
+        "phase": "check",
+        "last_successful_phase": null,
+        "diagnostic_status": "diagnostic mismatch or compiler error",
+        "diagnostic_deltas": [
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-dialect.ts(60,5): error TS2322: Type 'MssqlDriver' is not assignable to type 'Driver'.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-dialect.ts(68,5): error TS2322: Type 'MssqlAdapter' is not assignable to type 'DialectAdapter'.",
+          "tsz:   Types of property 'acquireMigrationLock' are incompatible.",
+          "tsz:   Type 'MssqlAdapter' is not assignable to type '(db: Kysely<any>, options: MigrationLockOptions) => Promise<void>'.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-dialect.ts(72,5): error TS2322: Type 'MssqlIntrospector' is not assignable to type 'DatabaseIntrospector'.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-driver.ts(212,32): error TS2345: Argument of type 'TediousRequest' is not assignable to parameter of type 'typeof TediousRequest'.",
+          "tsz:   Property 'prototype' is missing in type 'TediousRequest' but required in type 'typeof TediousRequest'.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-driver.ts(257,30): error TS2345: Argument of type 'TediousRequest' is not assignable to parameter of type 'typeof TediousRequest'.",
+          "tsz:   Property 'prototype' is missing in type 'TediousRequest' but required in type 'typeof TediousRequest'.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-driver.ts(352,32): error TS2345: Argument of type 'TediousRequest' is not assignable to parameter of type 'typeof TediousRequest'.",
+          "tsz:   Property 'prototype' is missing in type 'TediousRequest' but required in type 'typeof TediousRequest'.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-driver.ts(399,7): error TS7053: Element implicitly has an 'any' type because expression of type '\"onDone\"' can't be used to index type '{}'.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-driver.ts(399,45): error TS7006: Parameter 'event' implicitly has an 'any' type.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-driver.ts(399,52): error TS7006: Parameter 'error' implicitly has an 'any' type.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-driver.ts(404,16): error TS7053: Element implicitly has an 'any' type because expression of type '\"onDone\"' can't be used to index type '{}'.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-driver.ts(417,5): error TS2740: Type 'TediousRequest' is missing the following properties from type 'TediousRequest': addParameter, off, on, once, and 2 more.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-introspector.ts(19,5): error TS2322: Type 'Kysely<any>' is not assignable to type 'Kysely<MssqlSysTables>'.",
+          "tsz:   Return type 'ControlledTransactionBuilder<any>' is not assignable to 'ControlledTransactionBuilder<MssqlSysTables>'.",
+          "tsz:   Types of property 'execute' are incompatible.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-introspector.ts(64,10): error TS7006: Parameter 'eb' implicitly has an 'any' type."
+        ],
+        "diagnostic_codes": [
+          "TS2322",
+          "TS2345",
+          "TS7053",
+          "TS7006",
+          "TS2740"
+        ],
+        "diagnostic_subsystems": [
+          {
+            "subsystem": "relations-assignability",
+            "codes": [
+              "TS2322",
+              "TS2345",
+              "TS2740"
+            ],
+            "count": 8,
+            "examples": [
+              "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-dialect.ts(60,5): error TS2322: Type 'MssqlDriver' is not assignable to type 'Driver'.",
+              "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-dialect.ts(68,5): error TS2322: Type 'MssqlAdapter' is not assignable to type 'DialectAdapter'.",
+              "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-dialect.ts(72,5): error TS2322: Type 'MssqlIntrospector' is not assignable to type 'DatabaseIntrospector'."
+            ]
+          },
+          {
+            "subsystem": "uncoded diagnostic",
+            "codes": [],
+            "count": 7,
+            "examples": [
+              "tsz:   Types of property 'acquireMigrationLock' are incompatible.",
+              "tsz:   Type 'MssqlAdapter' is not assignable to type '(db: Kysely<any>, options: MigrationLockOptions) => Promise<void>'.",
+              "tsz:   Property 'prototype' is missing in type 'TediousRequest' but required in type 'typeof TediousRequest'."
+            ]
+          },
+          {
+            "subsystem": "keyspace-property-indexed",
+            "codes": [
+              "TS7053"
+            ],
+            "count": 2,
+            "examples": [
+              "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-driver.ts(399,7): error TS7053: Element implicitly has an 'any' type because expression of type '\"onDone\"' can't be used to index type '{}'.",
+              "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-driver.ts(404,16): error TS7053: Element implicitly has an 'any' type because expression of type '\"onDone\"' can't be used to index type '{}'."
+            ]
+          },
+          {
+            "subsystem": "unclassified diagnostic",
+            "codes": [
+              "TS7006"
+            ],
+            "count": 3,
+            "examples": [
+              "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-driver.ts(399,45): error TS7006: Parameter 'event' implicitly has an 'any' type.",
+              "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-driver.ts(399,52): error TS7006: Parameter 'error' implicitly has an 'any' type.",
+              "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-introspector.ts(64,10): error TS7006: Parameter 'eb' implicitly has an 'any' type."
+            ]
+          }
+        ],
+        "primary_subsystem": "relations-assignability",
+        "reduction_candidates": [
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-dialect.ts(60,5): error TS2322: Type 'MssqlDriver' is not assignable to type 'Driver'.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-dialect.ts(68,5): error TS2322: Type 'MssqlAdapter' is not assignable to type 'DialectAdapter'.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-dialect.ts(72,5): error TS2322: Type 'MssqlIntrospector' is not assignable to type 'DatabaseIntrospector'.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-driver.ts(212,32): error TS2345: Argument of type 'TediousRequest' is not assignable to parameter of type 'typeof TediousRequest'.",
+          "tsz: .target-bench/external/kysely/src/dialect/mssql/mssql-driver.ts(257,30): error TS2345: Argument of type 'TediousRequest' is not assignable to parameter of type 'typeof TediousRequest'."
+        ],
+        "emit_status": "not in scope (noEmit project check)",
+        "dts_status": "not in scope (noEmit project check)",
+        "known_blockers": [
+          "relations-assignability",
+          "uncoded diagnostic",
+          "keyspace-property-indexed",
+          "unclassified diagnostic"
+        ],
+        "exit_codes": {
+          "tsc": [
+            0
+          ],
+          "tsz": [
+            2
+          ],
+          "tsgo": [
+            0
+          ]
+        },
+        "semantic_owner_family": "contextual generics, guards, indexed/property access",
+        "files_reached": 272,
+        "peak_memory_bytes": null
+      }
+    },
+    {
+      "name": "nextjs",
+      "lines": 222594,
+      "kb": 6946,
+      "project_files": 1396,
+      "tsz_ms": null,
+      "tsgo_ms": null,
+      "tsz_lps": null,
+      "tsgo_lps": null,
+      "winner": "error",
+      "factor": 0,
+      "status": "tsz error",
+      "compatibility": {
+        "exit_class": "nonzero exit",
+        "phase": "check",
+        "last_successful_phase": null,
+        "diagnostic_status": "diagnostic mismatch or compiler error",
+        "diagnostic_deltas": [
+          "tsz: .target-bench/external/next.js/packages/next/src/build/analyze/index.ts(20,1): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/index.ts(4208,5): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/output/index.ts(28,3): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/output/index.ts(30,3): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/output/index.ts(32,3): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/swc/index.ts(341,5): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/swc/index.ts(365,5): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/swc/index.ts(414,3): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/templates/app-route.ts(483,9): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/templates/edge-ssr.ts(243,11): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/templates/edge-ssr.ts(322,9): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/utils.ts(879,9): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/utils.ts(1130,5): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/utils.ts(1133,5): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/utils.ts(1137,3): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/webpack-build/impl.ts(269,15): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/webpack/config/index.ts(42,5): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/webpack/config/utils.ts(29,3): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/webpack/loaders/css-loader/src/plugins/postcss-import-parser.ts(8,3): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/webpack/loaders/css-loader/src/plugins/postcss-import-parser.ts(140,15): error TS2578: Unused '@ts-expect-error' directive."
+        ],
+        "diagnostic_codes": [
+          "TS2578"
+        ],
+        "diagnostic_subsystems": [
+          {
+            "subsystem": "unclassified diagnostic",
+            "codes": [
+              "TS2578"
+            ],
+            "count": 20,
+            "examples": [
+              "tsz: .target-bench/external/next.js/packages/next/src/build/analyze/index.ts(20,1): error TS2578: Unused '@ts-expect-error' directive.",
+              "tsz: .target-bench/external/next.js/packages/next/src/build/index.ts(4208,5): error TS2578: Unused '@ts-expect-error' directive.",
+              "tsz: .target-bench/external/next.js/packages/next/src/build/output/index.ts(28,3): error TS2578: Unused '@ts-expect-error' directive."
+            ]
+          }
+        ],
+        "primary_subsystem": "unclassified diagnostic",
+        "reduction_candidates": [
+          "tsz: .target-bench/external/next.js/packages/next/src/build/analyze/index.ts(20,1): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/index.ts(4208,5): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/output/index.ts(28,3): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/output/index.ts(30,3): error TS2578: Unused '@ts-expect-error' directive.",
+          "tsz: .target-bench/external/next.js/packages/next/src/build/output/index.ts(32,3): error TS2578: Unused '@ts-expect-error' directive."
+        ],
+        "emit_status": "not in scope (noEmit project check)",
+        "dts_status": "not in scope (noEmit project check)",
+        "known_blockers": [
+          "unclassified diagnostic"
+        ],
+        "exit_codes": {
+          "tsc": [],
+          "tsz": [
+            2
+          ],
+          "tsgo": [
+            0
+          ]
+        },
+        "semantic_owner_family": "module graph plus generated app dependencies",
+        "files_reached": 1396,
+        "peak_memory_bytes": null
+      }
+    }
+  ],
+  "snapshot_note": "Local full benchmark snapshot used as website fallback when CI benchmark artifacts are stale."
+}
