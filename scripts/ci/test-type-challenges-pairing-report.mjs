@@ -26,13 +26,22 @@ function withTempDir(fn) {
   }
 }
 
-function manifest(sourcePath, entries, extraEntryFields = () => ({}), options = {}) {
+function manifest(
+  sourcePath,
+  entries,
+  extraEntryFields = () => ({}),
+  sourceOverrides = {},
+  manifestOverrides = {},
+) {
   return {
-    fixture: options.fixture || "type-challenges-project",
+    fixture: sourcePath === "en/*.md"
+      ? "type-challenges-solutions-project"
+      : "type-challenges-project",
     source: {
-      repository: options.repository || "https://example.invalid/repo.git",
-      ref: options.ref || "fixture-ref",
+      repository: "https://example.invalid/repo.git",
+      ref: "fixture-ref",
       path: sourcePath,
+      ...sourceOverrides,
     },
     expectedGenerated: entries.length,
     generated: entries.length,
@@ -44,6 +53,7 @@ function manifest(sourcePath, entries, extraEntryFields = () => ({}), options = 
         ...extraEntryFields({ id, level, slug, source }),
       };
     }),
+    ...manifestOverrides,
   };
 }
 
@@ -100,7 +110,6 @@ withTempDir((dir) => {
       ({ id }) => ({
         declarations: id === "13" ? ["HelloWorld"] : ["MyAwaited"],
       }),
-      { fixture: "type-challenges-solutions-project" },
     ),
   );
 
@@ -168,17 +177,12 @@ withTempDir((dir) => {
       "questions/**/test-cases.ts",
       [{ id: "13", source: "questions/00013-warm-hello-world/test-cases.ts" }],
       () => ({}),
-      { ref: "different-fixture-ref" },
+      { ref: "different-official-ref" },
     ),
   );
   writeJson(
     solutions,
-    manifest(
-      "en/*.md",
-      [{ id: "13", level: "warm", source: "en/hello-world.md" }],
-      () => ({ declarations: ["HelloWorld"] }),
-      { fixture: "type-challenges-solutions-project" },
-    ),
+    manifest("en/*.md", [{ id: "13", source: "en/hello-world.md" }]),
   );
 
   const result = spawnSync(
@@ -192,9 +196,48 @@ withTempDir((dir) => {
   assert.equal(result.status, 1);
   assert.match(
     result.stderr,
-    /template and test-case manifests must come from the same official snapshot/,
+    /template and test-case manifests come from different source snapshots/,
   );
-  assert.equal(fs.existsSync(output), false);
+  assert.ok(!fs.existsSync(output));
+});
+
+withTempDir((dir) => {
+  const templates = path.join(dir, "templates.json");
+  const testCases = path.join(dir, "test-cases.json");
+  const solutions = path.join(dir, "solutions.json");
+  const output = path.join(dir, "pairing.json");
+
+  writeJson(
+    templates,
+    manifest(
+      "questions/**/template.ts",
+      [{ id: "13", source: "questions/00013-warm-hello-world/template.ts" }],
+      () => ({}),
+      { ref: "" },
+    ),
+  );
+  writeJson(
+    testCases,
+    manifest("questions/**/test-cases.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/test-cases.ts" },
+    ]),
+  );
+  writeJson(
+    solutions,
+    manifest("en/*.md", [{ id: "13", source: "en/hello-world.md" }]),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, output],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /<missing ref>/);
+  assert.ok(!fs.existsSync(output));
 });
 
 withTempDir((dir) => {
@@ -219,9 +262,9 @@ withTempDir((dir) => {
     solutions,
     manifest(
       "en/*.md",
-      [{ id: "13", level: "warm", source: "en/hello-world.md" }],
-      () => ({ declarations: ["HelloWorld"] }),
-      { fixture: "type-challenges-project" },
+      [{ id: "13", source: "en/hello-world.md" }],
+      () => ({}),
+      { repository: "" },
     ),
   );
 
@@ -234,8 +277,9 @@ withTempDir((dir) => {
     },
   );
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /unexpected solution manifest fixture/);
-  assert.equal(fs.existsSync(output), false);
+  assert.match(result.stderr, /solution manifest is missing pinned source metadata/);
+  assert.match(result.stderr, /<missing repository>/);
+  assert.ok(!fs.existsSync(output));
 });
 
 withTempDir((dir) => {
@@ -243,13 +287,6 @@ withTempDir((dir) => {
   const testCases = path.join(dir, "test-cases.json");
   const solutions = path.join(dir, "solutions.json");
   const output = path.join(dir, "pairing.json");
-  const solutionManifest = manifest(
-    "en/*.md",
-    [{ id: "13", level: "warm", source: "en/hello-world.md" }],
-    () => ({ declarations: ["HelloWorld"] }),
-    { fixture: "type-challenges-solutions-project" },
-  );
-  delete solutionManifest.generated;
 
   writeJson(
     templates,
@@ -259,11 +296,20 @@ withTempDir((dir) => {
   );
   writeJson(
     testCases,
-    manifest("questions/**/test-cases.ts", [
-      { id: "13", source: "questions/00013-warm-hello-world/test-cases.ts" },
+    manifest("questions/**/template.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/template.ts" },
     ]),
   );
-  writeJson(solutions, solutionManifest);
+  writeJson(
+    solutions,
+    manifest(
+      "en/*.md",
+      [{ id: "13", source: "en/hello-world.md" }],
+      () => ({}),
+      {},
+      { fixture: "type-challenges-solutions-project" },
+    ),
+  );
 
   const result = spawnSync(
     process.execPath,
@@ -274,6 +320,137 @@ withTempDir((dir) => {
     },
   );
   assert.equal(result.status, 1);
-  assert.match(result.stderr, /solution manifest is missing generated count metadata/);
-  assert.equal(fs.existsSync(output), false);
+  assert.match(result.stderr, /test-case manifest has unexpected fixture metadata/);
+  assert.match(result.stderr, /questions\/\*\*\/test-cases\.ts/);
+  assert.ok(!fs.existsSync(output));
+});
+
+withTempDir((dir) => {
+  const templates = path.join(dir, "templates.json");
+  const testCases = path.join(dir, "test-cases.json");
+  const solutions = path.join(dir, "solutions.json");
+  const output = path.join(dir, "pairing.json");
+
+  writeJson(
+    templates,
+    manifest(
+      "questions/**/template.ts",
+      [{ id: "13", source: "questions/00013-warm-hello-world/template.ts" }],
+      () => ({}),
+      {},
+      { generated: 2 },
+    ),
+  );
+  writeJson(
+    testCases,
+    manifest("questions/**/test-cases.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/test-cases.ts" },
+    ]),
+  );
+  writeJson(
+    solutions,
+    manifest("en/*.md", [{ id: "13", source: "en/hello-world.md" }]),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, output],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /template manifest count metadata is inconsistent/);
+  assert.match(result.stderr, /generated: 2/);
+  assert.ok(!fs.existsSync(output));
+});
+
+withTempDir((dir) => {
+  const templates = path.join(dir, "templates.json");
+  const testCases = path.join(dir, "test-cases.json");
+  const solutions = path.join(dir, "solutions.json");
+  const output = path.join(dir, "pairing.json");
+
+  writeJson(
+    templates,
+    manifest(
+      "questions/**/template.ts",
+      [],
+      () => ({}),
+      {},
+      { expectedGenerated: 0, generated: 0 },
+    ),
+  );
+  writeJson(
+    testCases,
+    manifest("questions/**/test-cases.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/test-cases.ts" },
+    ]),
+  );
+  writeJson(
+    solutions,
+    manifest("en/*.md", [{ id: "13", source: "en/hello-world.md" }]),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, output],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /template manifest has no entries/);
+  assert.ok(!fs.existsSync(output));
+});
+
+withTempDir((dir) => {
+  const templates = path.join(dir, "templates.json");
+  const testCases = path.join(dir, "test-cases.json");
+  const solutions = path.join(dir, "solutions.json");
+  const output = path.join(dir, "pairing.json");
+
+  writeJson(
+    templates,
+    manifest("questions/**/template.ts", [
+      {
+        id: "13",
+        level: "warm",
+        slug: "hello-world",
+        source: "questions/00013-warm-hello-world/template.ts",
+      },
+    ]),
+  );
+  writeJson(
+    testCases,
+    manifest("questions/**/test-cases.ts", [
+      {
+        id: "13",
+        level: "easy",
+        slug: "hello-world",
+        source: "questions/00013-easy-hello-world/test-cases.ts",
+      },
+    ]),
+  );
+  writeJson(
+    solutions,
+    manifest("en/*.md", [
+      { id: "13", level: "warm", source: "en/hello-world.md" },
+    ]),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, output],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /paired source metadata mismatch for challenge id 13/);
+  assert.match(result.stderr, /template\/test-case level: warm vs easy/);
+  assert.ok(!fs.existsSync(output));
 });
