@@ -148,15 +148,61 @@ jobs:
           )
           ls -la dist/
 
-      - name: Publish latest channel release
+      - name: Publish and smoke test latest channel release
         if: steps.release-gate.outputs.should_publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TARGET_SHA: ${{ steps.prep.outputs.target_sha }}
           RELEASE_BUILD_DATE: ${{ steps.prep.outputs.build_date }}
+          TSZ_REPO_OWNER: ${{ github.repository_owner }}
+          TSZ_REPO_NAME: ${{ github.event.repository.name }}
         shell: bash
         run: |
           set -euo pipefail
+          shopt -s nullglob
+
+          had_previous=false
+          published_latest=false
+          previous_assets=()
+          rm -rf previous-latest-assets
+          mkdir -p previous-latest-assets
+
+          rollback_latest() {
+            local status=$?
+            local previous_prerelease_args=()
+
+            if [[ "${published_latest}" == "true" ]]; then
+              echo "latest publish smoke failed; restoring previous latest channel state."
+              gh release delete "${LATEST_TAG}" --cleanup-tag -y 2>/dev/null || true
+              git push origin ":refs/tags/${LATEST_TAG}" 2>/dev/null || true
+
+              if [[ "${had_previous}" == "true" ]]; then
+                if [[ "$(cat previous-latest-prerelease.txt)" == "true" ]]; then
+                  previous_prerelease_args=(--prerelease)
+                fi
+                previous_assets=(previous-latest-assets/*)
+                gh release create "${LATEST_TAG}" \
+                  "${previous_assets[@]}" \
+                  --target "$(cat previous-latest-target.txt)" \
+                  --title "$(cat previous-latest-title.txt)" \
+                  --notes-file previous-latest-notes.md \
+                  "${previous_prerelease_args[@]}" \
+                  --latest=false
+              fi
+            fi
+
+            exit "${status}"
+          }
+          trap rollback_latest ERR
+
+          if gh release view "${LATEST_TAG}" >/dev/null 2>&1; then
+            had_previous=true
+            gh release view "${LATEST_TAG}" --json name --jq '.name // "latest"' > previous-latest-title.txt
+            gh release view "${LATEST_TAG}" --json body --jq '.body // ""' > previous-latest-notes.md
+            gh release view "${LATEST_TAG}" --json isPrerelease --jq '.isPrerelease' > previous-latest-prerelease.txt
+            gh release view "${LATEST_TAG}" --json targetCommitish --jq '.targetCommitish // "main"' > previous-latest-target.txt
+            gh release download "${LATEST_TAG}" --dir previous-latest-assets --clobber
+          fi
 
           cat > release-notes.md <<EOF
           Daily PGO-optimized tsz build.
@@ -177,15 +223,7 @@ jobs:
             --notes-file release-notes.md \
             --prerelease \
             --latest=false
-
-      - name: Smoke test latest installer
-        if: steps.release-gate.outputs.should_publish == 'true'
-        shell: bash
-        env:
-          TSZ_REPO_OWNER: ${{ github.repository_owner }}
-          TSZ_REPO_NAME: ${{ github.event.repository.name }}
-        run: |
-          set -euo pipefail
+          published_latest=true
 
           install_dir="${RUNNER_TEMP}/tsz-latest-install"
           install_log="${RUNNER_TEMP}/tsz-latest-install.log"
@@ -193,3 +231,5 @@ jobs:
           grep -F "releases/download/latest/tsz-latest-${LATEST_TARGET}.tar.gz" "${install_log}"
           cmp .target-bench/dist/tsz "${install_dir}/tsz"
           "${install_dir}/tsz" --version
+
+          trap - ERR
