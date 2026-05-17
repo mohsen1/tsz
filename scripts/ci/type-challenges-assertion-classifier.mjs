@@ -183,9 +183,12 @@ function parseDiagnostic(line) {
 }
 
 function normalizeDiagnosticLine(line) {
-  const diagnostic = parseDiagnostic(line);
+  return formatDiagnostic(parseDiagnostic(line));
+}
+
+function formatDiagnostic(diagnostic) {
   if (!diagnostic.file || !diagnostic.code) {
-    return line;
+    return diagnostic.raw;
   }
 
   const location =
@@ -306,12 +309,34 @@ function summarizeDiagnostics(errors) {
   const byFile = new Map();
   const bySemanticFamily = new Map();
   const semanticFamilyFiles = new Map();
+  const byCandidate = new Map();
   const sourceCache = new Map();
 
   for (const diagnostic of parsed) {
     increment(byCode, diagnostic.code ?? "unknown");
     if (diagnostic.file) {
       increment(byFile, diagnostic.file);
+      if (!byCandidate.has(diagnostic.file)) {
+        byCandidate.set(diagnostic.file, {
+          file: diagnostic.file,
+          errorCount: 0,
+          codes: new Map(),
+          firstErrors: [],
+          semanticFamilies: new Set(),
+        });
+      }
+      const candidate = byCandidate.get(diagnostic.file);
+      candidate.errorCount += 1;
+      increment(candidate.codes, diagnostic.code ?? "unknown");
+      if (candidate.firstErrors.length < 5) {
+        candidate.firstErrors.push({
+          line: diagnostic.line,
+          column: diagnostic.column,
+          code: diagnostic.code,
+          message: diagnostic.message,
+          text: formatDiagnostic(diagnostic),
+        });
+      }
     }
     for (const family of familiesForDiagnosticFile(diagnostic.file, sourceCache)) {
       increment(bySemanticFamily, family);
@@ -320,6 +345,7 @@ function summarizeDiagnostics(errors) {
       }
       if (diagnostic.file) {
         semanticFamilyFiles.get(family).add(diagnostic.file);
+        byCandidate.get(diagnostic.file)?.semanticFamilies.add(family);
       }
     }
   }
@@ -332,6 +358,15 @@ function summarizeDiagnostics(errors) {
       errorCount: entry.count,
       files: [...(semanticFamilyFiles.get(entry.key) ?? [])].sort(),
     })),
+    byCandidate: [...byCandidate.values()]
+      .sort((a, b) => b.errorCount - a.errorCount || a.file.localeCompare(b.file))
+      .map((entry) => ({
+        file: entry.file,
+        errorCount: entry.errorCount,
+        codes: sortedCounts(entry.codes),
+        semanticFamilies: [...entry.semanticFamilies].sort(),
+        firstErrors: entry.firstErrors,
+      })),
   };
 }
 
@@ -353,6 +388,7 @@ function runCompiler(label, bin, tsconfig, timeoutMs) {
         byCode: [],
         byFile: [],
         bySemanticFamily: [],
+        byCandidate: [],
       },
     };
   }
@@ -393,9 +429,11 @@ function runCompiler(label, bin, tsconfig, timeoutMs) {
 }
 
 function withCandidateDiagnostics(result, manifest) {
-  const outputs = (manifest.entries ?? [])
+  const entries = manifest.entries ?? [];
+  const outputs = entries
     .map((entry) => entry.output)
     .filter(Boolean);
+  const entriesByOutput = new Map(entries.map((entry) => [entry.output, entry]));
   const diagnosticFiles = new Set(
     (result.diagnostics?.byFile ?? []).map((entry) => entry.key),
   );
@@ -408,12 +446,17 @@ function withCandidateDiagnostics(result, manifest) {
         candidatesWithDiagnostics: null,
         candidatesWithoutDiagnostics: null,
         filesWithDiagnostics: [],
+        filesWithoutDiagnostics: [],
+        byCandidate: [],
       },
     };
   }
 
   const filesWithDiagnostics = outputs.filter((output) => diagnosticFiles.has(output));
   const filesWithoutDiagnostics = outputs.filter((output) => !diagnosticFiles.has(output));
+  const diagnosticsByCandidate = new Map(
+    (result.diagnostics?.byCandidate ?? []).map((entry) => [entry.file, entry]),
+  );
   return {
     ...result,
     candidateDiagnostics: {
@@ -422,6 +465,44 @@ function withCandidateDiagnostics(result, manifest) {
       candidatesWithoutDiagnostics: filesWithoutDiagnostics.length,
       filesWithDiagnostics,
       filesWithoutDiagnostics,
+      byCandidate: filesWithDiagnostics
+        .map((file) => {
+          const diagnostic = diagnosticsByCandidate.get(file);
+          if (!diagnostic) {
+            return null;
+          }
+          const entry = entriesByOutput.get(file);
+          return {
+            ...diagnostic,
+            candidate: entry
+              ? {
+                  id: entry.id ?? null,
+                  solution: entry.solution
+                    ? {
+                        output: entry.solution.output ?? null,
+                        source: entry.solution.source ?? null,
+                        declarations: entry.solution.declarations ?? [],
+                      }
+                    : null,
+                  testCase: entry.testCase
+                    ? {
+                        output: entry.testCase.output ?? null,
+                        source: entry.testCase.source ?? null,
+                      }
+                    : null,
+                  assertion: entry.assertion
+                    ? {
+                        hasReferencedSolutionDeclaration:
+                          entry.assertion.hasReferencedSolutionDeclaration ?? null,
+                        referencedSolutionDeclarations:
+                          entry.assertion.referencedSolutionDeclarations ?? [],
+                      }
+                    : null,
+                }
+              : null,
+          };
+        })
+        .filter(Boolean),
     },
   };
 }
