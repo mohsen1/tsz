@@ -1487,3 +1487,109 @@ mod ts2502_alias_prior_decl_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod function_type_nested_check_tests {
+    use crate::test_utils::{check_source_diagnostics, diagnostic_count};
+
+    /// TS2536 inside a function return type must be reported.
+    /// Rule: tsc validates all nested type nodes in function/constructor return
+    /// types (and parameter types) in the scope of the function's own type
+    /// parameters. Any indexed-access expression `T[P]` where `P` is not a
+    /// subtype of `keyof T` must emit TS2536 regardless of whether it appears
+    /// inside a function return type, a constructor return type, a parameter
+    /// type annotation, or any nesting of those.
+    ///
+    /// Pattern used: `{ [P in T]: T[P] }` (P iterates over T itself, the same
+    /// unconstrained type param as the object). tsc emits TS2536 because T is
+    /// not a valid key domain for T. The same pattern triggers TS2536 when the
+    /// mapped type is at the top level (covered by `mapped_template_invalid_key_index_reports_ts2536`).
+    #[test]
+    fn ts2536_in_function_return_type_reported() {
+        let source = "type Bad<T> = () => { [P in T]: T[P] };";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            1,
+            "Expected TS2536 for T[P] (P in T) inside function return type"
+        );
+    }
+
+    /// Same rule with a different iteration variable name — the fix must not be
+    /// keyed on the variable name.
+    #[test]
+    fn ts2536_in_function_return_type_different_var_name() {
+        let source = "type Bad<T> = () => { [Key in T]: T[Key] };";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            1,
+            "Expected TS2536 for T[Key] (Key in T) inside function return type (variable name variant)"
+        );
+    }
+
+    /// TS2536 inside a constructor return type must also be reported.
+    #[test]
+    fn ts2536_in_constructor_return_type_reported() {
+        let source = "type BadCtor<T> = new () => { [Q in T]: T[Q] };";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            1,
+            "Expected TS2536 for T[Q] (Q in T) inside constructor return type"
+        );
+    }
+
+    /// TS2536 inside a parameter type annotation must be reported.
+    #[test]
+    fn ts2536_in_function_parameter_type_reported() {
+        let source = "type BadParam<T> = (x: { [P in T]: T[P] }) => void;";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            1,
+            "Expected TS2536 for T[P] (P in T) inside parameter type annotation"
+        );
+    }
+
+    /// When the outer mapped type's key (`K` from `keyof T`) is used as the
+    /// constraint of an inner mapped type inside a function return type, no
+    /// TS2536 must be emitted because `K` is constrained to `keyof T`.
+    /// Regression guard for false positives introduced by the fix.
+    #[test]
+    fn no_ts2536_when_outer_mapped_key_constrains_inner_index() {
+        let source = "type Ok<T> = { [K in keyof T]: () => { [P in K[]]: T[K] } };";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            0,
+            "Expected no TS2536 when outer mapped key constrains inner index"
+        );
+    }
+
+    /// TS2536 inside a doubly-nested return type must be reported (recursive
+    /// traversal through nested function types).
+    #[test]
+    fn ts2536_in_nested_function_return_type_reported() {
+        let source = "type Nested<T> = () => () => { [P in T]: T[P] };";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            1,
+            "Expected TS2536 for T[P] (P in T) inside doubly-nested function return type"
+        );
+    }
+
+    /// A valid indexed access in a function return type with `keyof` constraint
+    /// must not emit any diagnostic.
+    #[test]
+    fn no_ts2536_for_valid_indexed_access_in_function_return() {
+        let source = "type Getter<T, K extends keyof T> = () => T[K];";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            0,
+            "Expected no TS2536 for valid T[K] (K extends keyof T) in function return type"
+        );
+    }
+}
