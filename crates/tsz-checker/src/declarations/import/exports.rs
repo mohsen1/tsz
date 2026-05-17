@@ -184,14 +184,14 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check direct exported file locals. In merged binders, `file_locals`
-        // can contain symbols declared by other files, so keep only locals that
-        // originate in the file being traced.
+        // Check direct exported file locals. After Phase 2 stamping, user symbols
+        // have their file's decl_file_idx set; lib/synthetic symbols retain u32::MAX,
+        // so `== file_idx` cleanly excludes both cross-file and lib symbols.
         if let Some(sym_id) = target_binder.file_locals.get(export_name)
             && let Some(symbol) = target_binder.symbols.get(sym_id)
             && symbol.is_exported
             && symbol.import_module.is_none()
-            && (symbol.decl_file_idx == file_idx as u32 || symbol.decl_file_idx == u32::MAX)
+            && symbol.decl_file_idx == file_idx as u32
         {
             return Some(file_idx);
         }
@@ -254,7 +254,7 @@ impl<'a> CheckerState<'a> {
             };
             if !symbol.is_exported
                 || symbol.import_module.is_some()
-                || (symbol.decl_file_idx != file_idx as u32 && symbol.decl_file_idx != u32::MAX)
+                || symbol.decl_file_idx != file_idx as u32
             {
                 continue;
             }
