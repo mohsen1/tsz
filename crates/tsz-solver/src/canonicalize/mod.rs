@@ -206,10 +206,22 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     } else {
                         // Canonicalize base type
                         let c_base = self.canonicalize(app.base);
+                        let mut changed = c_base != app.base;
                         // Canonicalize all generic arguments
-                        let c_args: Vec<TypeId> =
-                            app.args.iter().map(|&arg| self.canonicalize(arg)).collect();
-                        self.interner.application(c_base, c_args)
+                        let c_args: Vec<TypeId> = app
+                            .args
+                            .iter()
+                            .map(|&arg| {
+                                let canonical = self.canonicalize(arg);
+                                changed |= canonical != arg;
+                                canonical
+                            })
+                            .collect();
+                        if changed {
+                            self.interner.application(c_base, c_args)
+                        } else {
+                            type_id
+                        }
                     }
                 }
 
