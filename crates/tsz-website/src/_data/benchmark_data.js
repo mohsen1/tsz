@@ -596,7 +596,8 @@ function categoryFor(name, lines) {
     name === "kysely-project" ||
     name === "type-challenges-project" ||
     name === "type-challenges-solutions-project" ||
-    name === "type-challenges-assertion-candidates"
+    name === "type-challenges-assertion-candidates" ||
+    name === "type-challenges-assertions-tsc-clean"
   ) {
     return "Projects: external libraries";
   }
@@ -704,6 +705,7 @@ function displayName(name) {
   if (name === "type-challenges-project") return "type-challenges project";
   if (name === "type-challenges-solutions-project") return "type-challenges solutions project";
   if (name === "type-challenges-assertion-candidates") return "type-challenges assertion candidates";
+  if (name === "type-challenges-assertions-tsc-clean") return "type-challenges tsc-clean assertions";
 
   const cleaned = String(name || "")
     .replace(/^utility-types\//, "")
