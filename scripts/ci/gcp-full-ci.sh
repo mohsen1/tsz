@@ -519,6 +519,7 @@ run_lint() {
   node scripts/ci/test-type-challenges-assertion-clean-subset.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-candidates.mjs || return $?
+  node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-pairing-report.mjs || return $?
   node scripts/ci/test-type-challenges-template-manifest.mjs || return $?
   node scripts/ci/test-type-challenges-test-cases-manifest.mjs || return $?
