@@ -15,6 +15,7 @@ use crate::types::{
     IntrinsicKind, ObjectFlags, PropertyInfo, TemplateSpan, TypeData, TypeId, Visibility,
 };
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use std::sync::Arc;
 use tsz_common::interner::Atom;
 
@@ -42,7 +43,7 @@ pub fn compute_conditional_expression_type(
 }
 
 /// Computes the result type of a conditional expression using a resolver-aware
-/// subtype-reduction step for class/interface/lazy branch types.
+/// subtype-reduction step for explicit class/interface base chains.
 pub fn compute_conditional_expression_type_with_resolver<R: TypeResolver>(
     interner: &dyn TypeDatabase,
     condition: TypeId,
@@ -101,7 +102,7 @@ pub fn compute_conditional_expression_type_with_resolver<R: TypeResolver>(
 
     if let Some(resolver) = resolver
         && let Some(candidate) =
-            input_supertype_candidate(interner, &[true_type, false_type], Some(resolver))
+            input_explicit_base_supertype_candidate(interner, &[true_type, false_type], resolver)
     {
         return candidate;
     }
@@ -154,6 +155,42 @@ pub fn input_supertype_candidate<R: TypeResolver>(
         });
         is_supertype.then_some(best)
     }
+}
+
+fn input_explicit_base_supertype_candidate<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    types: &[TypeId],
+    resolver: &R,
+) -> Option<TypeId> {
+    if types.is_empty() {
+        return None;
+    }
+
+    types.iter().copied().find(|&candidate| {
+        types
+            .iter()
+            .all(|&ty| ty == candidate || has_explicit_base_type(interner, resolver, ty, candidate))
+    })
+}
+
+fn has_explicit_base_type<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+    mut ty: TypeId,
+    target: TypeId,
+) -> bool {
+    let mut seen: SmallVec<[TypeId; 8]> = SmallVec::new();
+    while let Some(base) = resolver.get_base_type(ty, interner) {
+        if base == target {
+            return true;
+        }
+        if seen.contains(&base) {
+            return false;
+        }
+        seen.push(base);
+        ty = base;
+    }
+    false
 }
 
 fn contains_unique_symbol(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {

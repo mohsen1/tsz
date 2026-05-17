@@ -54,6 +54,24 @@ impl TypeResolver for LazyTypeResolver {
     }
 }
 
+struct BaseTypeResolver {
+    base_map: FxHashMap<TypeId, TypeId>,
+}
+
+impl TypeResolver for BaseTypeResolver {
+    fn resolve_ref(
+        &self,
+        _symbol: crate::types::SymbolRef,
+        _interner: &dyn TypeDatabase,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    fn get_base_type(&self, type_id: TypeId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        self.base_map.get(&type_id).copied()
+    }
+}
+
 // =========================================================================
 // Conditional Expression Tests
 // =========================================================================
@@ -87,7 +105,50 @@ fn test_conditional_different_branches() {
 }
 
 #[test]
-fn test_conditional_resolver_reduces_lazy_subtype_branch() {
+fn test_conditional_resolver_reduces_explicit_base_branch() {
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let name_x = interner.intern_string("x");
+    let name_y = interner.intern_string("y");
+
+    let base = interner.object(vec![PropertyInfo::new(name_x, TypeId::STRING)]);
+    let derived_shape = interner.object(vec![
+        PropertyInfo::new(name_x, TypeId::STRING),
+        PropertyInfo::new(name_y, TypeId::NUMBER),
+    ]);
+    let resolver = BaseTypeResolver {
+        base_map: FxHashMap::from_iter([(derived_shape, base)]),
+    };
+
+    let without_resolver =
+        compute_conditional_expression_type(&interner, TypeId::BOOLEAN, derived_shape, base);
+    assert_ne!(
+        without_resolver, base,
+        "plain union reduction cannot resolve explicit class/interface base chains"
+    );
+
+    let result = compute_conditional_expression_type_with_resolver(
+        &interner,
+        TypeId::BOOLEAN,
+        derived_shape,
+        base,
+        Some(&resolver),
+    );
+    assert_eq!(result, base);
+
+    let reversed = compute_conditional_expression_type_with_resolver(
+        &interner,
+        TypeId::BOOLEAN,
+        base,
+        derived_shape,
+        Some(&resolver),
+    );
+    assert_eq!(reversed, base);
+}
+
+#[test]
+fn test_conditional_resolver_preserves_structural_subtype_union_without_explicit_base() {
     use crate::types::PropertyInfo;
 
     let interner = TypeInterner::new();
@@ -107,13 +168,6 @@ fn test_conditional_resolver_reduces_lazy_subtype_branch() {
         lazy_map: FxHashMap::from_iter([(base_def, base_shape), (derived_def, derived_shape)]),
     };
 
-    let without_resolver =
-        compute_conditional_expression_type(&interner, TypeId::BOOLEAN, derived, base);
-    assert_ne!(
-        without_resolver, base,
-        "plain union reduction cannot resolve lazy class/interface branches"
-    );
-
     let result = compute_conditional_expression_type_with_resolver(
         &interner,
         TypeId::BOOLEAN,
@@ -121,16 +175,11 @@ fn test_conditional_resolver_reduces_lazy_subtype_branch() {
         base,
         Some(&resolver),
     );
-    assert_eq!(result, base);
-
-    let reversed = compute_conditional_expression_type_with_resolver(
-        &interner,
-        TypeId::BOOLEAN,
-        base,
-        derived,
-        Some(&resolver),
-    );
-    assert_eq!(reversed, base);
+    let members =
+        crate::type_queries::get_union_members(&interner, result).expect("expected a union type");
+    assert_eq!(members.len(), 2);
+    assert!(members.contains(&derived));
+    assert!(members.contains(&base));
 }
 
 #[test]
