@@ -395,9 +395,11 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 }
 
                 // Object types: canonicalize property types while preserving metadata
-                TypeData::Object(shape_id) => self.canonicalize_object(shape_id, false),
+                TypeData::Object(shape_id) => self.canonicalize_object(type_id, shape_id, false),
 
-                TypeData::ObjectWithIndex(shape_id) => self.canonicalize_object(shape_id, true),
+                TypeData::ObjectWithIndex(shape_id) => {
+                    self.canonicalize_object(type_id, shape_id, true)
+                }
 
                 // Task #47: Template Literal canonicalization for alpha-equivalence
                 // Uppercase<T> and Uppercase<U> should be identical when T and U are identical
@@ -637,8 +639,14 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
     ///
     /// Preserves all metadata (names, optional, readonly, visibility, `parent_id`)
     /// and nominal symbols. Only transforms the `TypeIds` within properties.
-    fn canonicalize_object(&mut self, shape_id: ObjectShapeId, _with_index: bool) -> TypeId {
+    fn canonicalize_object(
+        &mut self,
+        type_id: TypeId,
+        shape_id: ObjectShapeId,
+        _with_index: bool,
+    ) -> TypeId {
         let shape = self.interner.object_shape(shape_id);
+        let mut changed = false;
 
         // Canonicalize all properties
         let mut new_props = Vec::with_capacity(shape.properties.len());
@@ -648,6 +656,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             new_prop.type_id = self.canonicalize(prop.type_id);
             // Canonicalize write type (setter/assignment)
             new_prop.write_type = self.canonicalize(prop.write_type);
+            changed |= new_prop.type_id != prop.type_id || new_prop.write_type != prop.write_type;
             // Preserve all other metadata as-is
             // - name (Atom): Property names are NOT remapped
             // - optional (bool): Part of type identity
@@ -661,6 +670,11 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         // Canonicalize index signatures if present
         let new_string_index = self.canonicalize_index_signature(&shape.string_index);
         let new_number_index = self.canonicalize_index_signature(&shape.number_index);
+        changed |= new_string_index != shape.string_index || new_number_index != shape.number_index;
+
+        if !changed {
+            return type_id;
+        }
 
         // Preserve the symbol field for nominal types (class instances)
         // This ensures that class A and class B with same properties remain distinct

@@ -544,6 +544,7 @@ fn canonicalize_object_with_primitives() {
     ]);
 
     let result = canon.canonicalize(obj);
+    assert_eq!(result, obj);
     if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
         interner.lookup(result)
     {
@@ -562,6 +563,7 @@ fn canonicalize_empty_object() {
 
     let obj = interner.object(vec![]);
     let result = canon.canonicalize(obj);
+    assert_eq!(result, obj);
     if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
         interner.lookup(result)
     {
@@ -1067,6 +1069,7 @@ fn canonicalize_object_with_index_signature() {
     let obj = interner.object_with_index(shape);
 
     let result = canon.canonicalize(obj);
+    assert_eq!(result, obj);
     if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
         interner.lookup(result)
     {
