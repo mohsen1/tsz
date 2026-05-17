@@ -164,3 +164,13 @@ assert.match(
   /bench-runs\/latest\.tsgo-winners\.json/,
   "benchmark publish step should write latest green tsgo winner reports",
 );
+assert.match(
+  benchWorkflow,
+  /JSON\.parse\(fs\.readFileSync\("bench-results-tsgo-winners\.json", "utf8"\)\)/,
+  "severe benchmark alert should read the generated green tsgo winner report",
+);
+assert.match(
+  benchWorkflow,
+  /row\.semantic_owner_family \|\| "n\/a"/,
+  "severe benchmark alert should include semantic owner family from the winner report",
+);

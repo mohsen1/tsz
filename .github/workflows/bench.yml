@@ -565,8 +565,9 @@ jobs:
             const runUrl = `${process.env.GITHUB_SERVER_URL}/${repo}/actions/runs/${process.env.GITHUB_RUN_ID}`;
             const threshold = Number(process.env.BENCH_ALERT_TSZ_SLOWER_FACTOR || 5);
             const data = JSON.parse(fs.readFileSync("bench-results.json", "utf8"));
-            const rows = (data.results || [])
-              .filter((row) => !row.status && row.winner === "tsgo" && Number(row.factor) >= threshold)
+            const winnerReport = JSON.parse(fs.readFileSync("bench-results-tsgo-winners.json", "utf8"));
+            const rows = (winnerReport.rows || [])
+              .filter((row) => Number(row.factor) >= threshold)
               .sort((a, b) => Number(b.factor || 0) - Number(a.factor || 0));
 
             if (!rows.length) {
@@ -621,17 +622,18 @@ jobs:
               const tsz = Number(row.tsz_ms || 0).toFixed(2);
               const tsgo = Number(row.tsgo_ms || 0).toFixed(2);
               const factor = Number(row.factor || 0).toFixed(2);
-              return `| \`${row.name}\` | ${factor}x | ${tsz} | ${tsgo} | ${row.lines || 0} |`;
+              const owner = row.semantic_owner_family || "n/a";
+              return `| \`${row.name}\` | ${factor}x | ${tsz} | ${tsgo} | ${row.lines || 0} | ${owner} |`;
             }).join("\n");
             const body = [
               `A completed main benchmark found ${rows.length} green row(s) where \`tsgo\` is at least ${threshold}x faster than \`tsz\`.`,
               "",
               `Run: ${runUrl}`,
               `Target SHA: \`${process.env.BENCH_TARGET_SHA || process.env.GITHUB_SHA}\``,
-              `Generated at: \`${data.generated_at || "unknown"}\``,
+              `Generated at: \`${winnerReport.generated_at || data.generated_at || "unknown"}\``,
               "",
-              "| Row | tsgo factor | tsz ms | tsgo ms | lines |",
-              "|---|---:|---:|---:|---:|",
+              "| Row | tsgo factor | tsz ms | tsgo ms | lines | owner family |",
+              "|---|---:|---:|---:|---:|---|",
               table,
               "",
               "AgentName: github-actions-bench-alert",
