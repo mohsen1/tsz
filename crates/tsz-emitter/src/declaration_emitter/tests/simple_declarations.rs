@@ -2522,6 +2522,26 @@ export class Preferences {
 }
 
 #[test]
+fn test_js_function_like_class_zero_arg_constructor_is_omitted() {
+    let source = r#"
+function C1() {
+    this.prop = 1;
+}
+C1.prototype.method = function () {};
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare class C1"),
+        "Expected JS function-like class surface: {output}"
+    );
+    assert!(
+        !output.contains("constructor();"),
+        "Expected zero-arg synthetic JS function-like constructors to be omitted: {output}"
+    );
+}
+
+#[test]
 fn test_js_subclass_zero_arg_constructor_is_emitted() {
     let source = r#"
 export class Super {

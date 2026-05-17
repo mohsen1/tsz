@@ -4319,14 +4319,16 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
-        if let Some(jsdoc) = self.function_like_jsdoc_for_node(jsdoc_anchor) {
-            self.emit_multiline_jsdoc_comment(&jsdoc);
+        if !params.nodes.is_empty() {
+            if let Some(jsdoc) = self.function_like_jsdoc_for_node(jsdoc_anchor) {
+                self.emit_multiline_jsdoc_comment(&jsdoc);
+            }
+            self.write_indent();
+            self.write("constructor(");
+            self.emit_parameters_with_body(params, body_idx);
+            self.write(");");
+            self.write_line();
         }
-        self.write_indent();
-        self.write("constructor(");
-        self.emit_parameters_with_body(params, body_idx);
-        self.write(");");
-        self.write_line();
 
         let returns_new = self
             .get_identifier_text(name_idx)
