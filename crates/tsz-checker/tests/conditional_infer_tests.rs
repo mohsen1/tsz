@@ -453,6 +453,26 @@ const r: number = (null as any as R);
     );
 }
 
+#[test]
+fn exclude_wrapped_source_application_does_not_bind_unrelated_base() {
+    let diagnostics = check_source_strict_with_default_libs(
+        r#"
+interface Box<T> { value: T; }
+interface Other<T> { other: T; }
+type R = Exclude<Box<number> | undefined, undefined> extends Other<infer X> ? X : "no";
+const r: "no" = (null as any as R);
+"#,
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2322),
+        "unrelated application bases must not bind through wrapper recovery; diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Test that conditional types with constrained type parameters don't emit false TS2322.
 ///
 /// `UnrollOnHover<S>` is `S extends object ? { [K in keyof S]: S[K] } : never`.

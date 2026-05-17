@@ -2345,9 +2345,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut check_type = cond.check_type;
         if get_application_base(self.interner(), check_type) != Some(pattern_base) {
             let evaluated = self.evaluate(check_type);
-            if get_application_base(self.interner(), evaluated).is_some() {
+            if get_application_base(self.interner(), evaluated) == Some(pattern_base) {
                 check_type = evaluated;
             } else if let Some(origin) = self.try_recover_application_from_display_alias(evaluated)
+                && get_application_base(self.interner(), origin) == Some(pattern_base)
             {
                 check_type = origin;
             }
