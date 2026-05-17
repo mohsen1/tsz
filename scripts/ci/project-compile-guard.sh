@@ -389,12 +389,31 @@ write_type_challenges_assertion_candidates() {
   fi
 }
 
+ensure_type_challenges_assertion_tsc() {
+  if [[ -n "${TYPE_CHALLENGES_ASSERTION_TSC_BIN+x}" ]]; then
+    return 0
+  fi
+
+  if [[ -x scripts/node_modules/.bin/tsc || -x node_modules/.bin/tsc ]]; then
+    return 0
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "warn: npm not found; Type Challenges assertion classifier will report tsc unavailable" >&2
+    return 0
+  fi
+
+  echo "Installing scripts Node dependencies for Type Challenges assertion classifier"
+  (cd scripts && npm install --silent)
+}
+
 write_type_challenges_assertion_classification() {
   local candidate_dir="$FIXTURE_ROOT/type-challenges-assertions"
   local manifest="$candidate_dir/type-challenges-assertions-manifest.json"
   local output="$candidate_dir/type-challenges-assertions-classification.json"
 
   if [[ -f "$manifest" ]]; then
+    ensure_type_challenges_assertion_tsc
     node scripts/ci/type-challenges-assertion-classifier.mjs \
       "$candidate_dir" \
       "$manifest" \
