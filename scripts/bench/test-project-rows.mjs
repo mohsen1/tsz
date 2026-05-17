@@ -21,6 +21,19 @@ const PROJECT_COMPILE_GUARD_EXCLUDED_ROWS = new Set([
   "large-ts-repo",
   "nextjs",
 ]);
+const ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL = new Map([
+  ["utility-types", "utility-types-project"],
+  ["rxjs", "rxjs-project"],
+  ["Kysely", "kysely-project"],
+  ["Zod", "zod-project"],
+  ["ts-toolbelt", "ts-toolbelt-project"],
+  ["type-fest", "type-fest-project"],
+  ["ts-essentials", "ts-essentials-project"],
+  ["generated Vite app", "vite-vanilla-ts-app"],
+  ["generated Next app", "nextjs-fresh-app"],
+  ["large-ts-repo", "large-ts-repo"],
+  ["Next.js full project", "nextjs"],
+]);
 
 function sortedUnique(values) {
   return [...new Set(values)].sort();
@@ -50,14 +63,53 @@ function without(values, excluded) {
   return values.filter((value) => !excluded.has(value));
 }
 
+function roadmapRequiredProjectRows() {
+  const roadmap = readRepoFile("docs/plan/ROADMAP.md");
+  const rows = [];
+  let inTable = false;
+
+  for (const line of roadmap.split(/\r?\n/)) {
+    if (line.trim() === "Required project rows:") {
+      inTable = true;
+      continue;
+    }
+    if (!inTable) continue;
+    if (!line.startsWith("|")) {
+      if (rows.length > 0) break;
+      continue;
+    }
+    if (line.includes("---") || line.includes("| Project |")) continue;
+
+    const label = line.split("|")[1]?.trim();
+    if (label) rows.push(label);
+  }
+
+  return rows;
+}
+
 const requiredRows = sortedUnique(REQUIRED_PROJECT_ROWS);
 const compileCanaryRows = sortedUnique(COMPILE_CANARY_PROJECT_ROWS);
 const allTrackedRows = sortedUnique([...requiredRows, ...compileCanaryRows]);
 const compatibilityRows = COMPATIBILITY_CORPUS_ROWS.map((row) => row.name);
+const roadmapRequiredRows = roadmapRequiredProjectRows();
+const mappedRoadmapRequiredRows = roadmapRequiredRows.map((label) => (
+  ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL.get(label) || `unmapped roadmap row: ${label}`
+));
 
 assertNoDuplicates("REQUIRED_PROJECT_ROWS", REQUIRED_PROJECT_ROWS);
 assertNoDuplicates("COMPILE_CANARY_PROJECT_ROWS", COMPILE_CANARY_PROJECT_ROWS);
 assertNoDuplicates("COMPATIBILITY_CORPUS_ROWS", compatibilityRows);
+assertNoDuplicates("ROADMAP required project rows", roadmapRequiredRows);
+assert.deepEqual(
+  sortedUnique(ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL.keys()),
+  sortedUnique(roadmapRequiredRows),
+  "ROADMAP required project row labels drifted from scripts/bench/test-project-rows.mjs",
+);
+assert.deepEqual(
+  sortedUnique(mappedRoadmapRequiredRows),
+  sortedUnique(mappedRoadmapRequiredRows.filter((row) => allTrackedRows.includes(row))),
+  "docs/plan/ROADMAP.md required project rows must be tracked in scripts/bench/project-rows.mjs",
+);
 assert.deepEqual(
   sortedUnique(compatibilityRows),
   allTrackedRows,
