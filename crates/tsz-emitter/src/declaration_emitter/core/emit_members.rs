@@ -902,7 +902,9 @@ impl<'a> DeclarationEmitter<'a> {
                                 self.write("?");
                             }
                             if !is_private {
-                                self.emit_flattened_binding_type_annotation(ident_idx, type_id);
+                                self.emit_flattened_binding_type_annotation(
+                                    ident_idx, type_id, None,
+                                );
                             }
                             self.write(";");
                             self.write_line();
