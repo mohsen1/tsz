@@ -45,6 +45,12 @@ function basePairingReport(overrides = {}) {
     },
     counts: {
       pairedSolutions: 2,
+      solutionsMissingTemplates: 0,
+      solutionsMissingTestCases: 0,
+    },
+    missing: {
+      solutionsMissingTemplates: [],
+      solutionsMissingTestCases: [],
     },
     pairedSolutions: [
       {
@@ -229,6 +235,90 @@ withTempDir((dir) => {
   writeJson(
     pairingPath,
     basePairingReport({
+      counts: {
+        pairedSolutions: 0,
+        solutionsMissingTemplates: 0,
+        solutionsMissingTestCases: 0,
+      },
+      pairedSolutions: [],
+    }),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, pairingPath, dir, dir, outputDir, manifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /pairing report has no paired solutions/);
+  assert.equal(fs.existsSync(manifestPath), false);
+});
+
+withTempDir((dir) => {
+  const pairingPath = path.join(dir, "pairing.json");
+  const outputDir = path.join(dir, "assertions");
+  const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
+  writeJson(
+    pairingPath,
+    basePairingReport({
+      counts: {
+        pairedSolutions: 2,
+        solutionsMissingTemplates: 1,
+        solutionsMissingTestCases: 0,
+      },
+    }),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, pairingPath, dir, dir, outputDir, manifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /solutionsMissingTemplates must be 0/);
+  assert.equal(fs.existsSync(manifestPath), false);
+});
+
+withTempDir((dir) => {
+  const pairingPath = path.join(dir, "pairing.json");
+  const outputDir = path.join(dir, "assertions");
+  const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
+  writeJson(
+    pairingPath,
+    basePairingReport({
+      missing: {
+        solutionsMissingTemplates: [{ source: "en/missing-template.md" }],
+        solutionsMissingTestCases: [],
+      },
+    }),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, pairingPath, dir, dir, outputDir, manifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /missing\.solutionsMissingTemplates must be an empty array/);
+  assert.equal(fs.existsSync(manifestPath), false);
+});
+
+withTempDir((dir) => {
+  const pairingPath = path.join(dir, "pairing.json");
+  const outputDir = path.join(dir, "assertions");
+  const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
+  writeJson(
+    pairingPath,
+    basePairingReport({
       sources: {
         templates: { repository: "type", ref: "" },
         testCases: { repository: "type", ref: "type-ref" },
@@ -303,7 +393,11 @@ withTempDir((dir) => {
           },
         },
       ],
-      counts: { pairedSolutions: 1 },
+      counts: {
+        pairedSolutions: 1,
+        solutionsMissingTemplates: 0,
+        solutionsMissingTestCases: 0,
+      },
     }),
   );
 
@@ -348,7 +442,11 @@ withTempDir((dir) => {
           },
         },
       ],
-      counts: { pairedSolutions: 1 },
+      counts: {
+        pairedSolutions: 1,
+        solutionsMissingTemplates: 0,
+        solutionsMissingTestCases: 0,
+      },
     }),
   );
 
@@ -412,7 +510,11 @@ withTempDir((dir) => {
           },
         },
       ],
-      counts: { pairedSolutions: 2 },
+      counts: {
+        pairedSolutions: 2,
+        solutionsMissingTemplates: 0,
+        solutionsMissingTestCases: 0,
+      },
     }),
   );
 

@@ -76,6 +76,30 @@ function ensurePairingReportShape(report) {
     );
     process.exit(1);
   }
+  if (pairs.length === 0) {
+    console.error("error: Type Challenges pairing report has no paired solutions");
+    process.exit(1);
+  }
+
+  for (const countName of ["solutionsMissingTemplates", "solutionsMissingTestCases"]) {
+    const value = report?.counts?.[countName];
+    if (value !== 0) {
+      console.error(
+        `error: Type Challenges pairing report count ${countName} must be 0; got ${Number.isInteger(value) ? value : "<missing>"}`,
+      );
+      process.exit(1);
+    }
+  }
+
+  for (const missingName of ["solutionsMissingTemplates", "solutionsMissingTestCases"]) {
+    const entries = report?.missing?.[missingName];
+    if (!Array.isArray(entries) || entries.length !== 0) {
+      console.error(
+        `error: Type Challenges pairing report missing.${missingName} must be an empty array; got ${Array.isArray(entries) ? entries.length : "<missing>"}`,
+      );
+      process.exit(1);
+    }
+  }
 
   for (const label of ["templates", "testCases", "solutions"]) {
     const source = report?.sources?.[label];
