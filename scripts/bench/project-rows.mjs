@@ -19,12 +19,16 @@ export const COMPILE_CANARY_PROJECT_ROWS = [
 
 export const REQUIRED_COMPATIBILITY_FIELDS = [
   "exit_class",
+  "first_failure_class",
+  "owner_track",
   "phase",
   "last_successful_phase",
   "diagnostic_status",
   "diagnostic_deltas",
   "diagnostic_subsystems",
   "known_blockers",
+  "reduced_repro_path",
+  "repro",
   "exit_codes",
   "files_reached",
   "peak_memory_bytes",
