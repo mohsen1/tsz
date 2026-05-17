@@ -1,7 +1,7 @@
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::{
     check_multi_file_with_libs, check_source_code_messages, check_source_with_libs_code_messages,
-    load_compiled_lib_files,
+    load_compiled_lib_files, load_lib_files,
 };
 use tsz_common::common::ModuleKind;
 
@@ -170,5 +170,78 @@ const bad: PropertyDescriptor = {};
             .iter()
             .any(|(code, message)| *code == 2741 && message.contains("custom")),
         "imported user interface named PropertyDescriptor must keep its own shape, got {messages:?}",
+    );
+}
+
+#[test]
+fn simple_interface_member_accepts_actual_lib_record_alias() {
+    let lib_files = load_lib_files(&["es5.d.ts"]);
+    assert!(!lib_files.is_empty(), "es5 lib fixture should be available");
+
+    let diagnostics = check_source_with_libs_code_messages(
+        r#"
+interface Config {
+  options?: Record<string, unknown>;
+}
+const ok: Config = { options: { enabled: true } };
+const bad: Config = { options: 1 };
+"#,
+        "test.ts",
+        CheckerOptions::default(),
+        &lib_files,
+    );
+
+    assert!(
+        diagnostics.iter().all(|(code, _)| *code != 2304),
+        "actual lib Record must resolve in the lib-loaded fast-path harness, got {diagnostics:?}",
+    );
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected only the primitive value to reject against lib Record, got {diagnostics:?}",
+    );
+}
+
+#[test]
+fn simple_interface_member_preserves_local_record_shadow_with_libs() {
+    let lib_files = load_lib_files(&["es5.d.ts"]);
+    assert!(!lib_files.is_empty(), "es5 lib fixture should be available");
+
+    let diagnostics = check_source_with_libs_code_messages(
+        r#"
+export {};
+type Record<K, V> = number;
+interface Config {
+  options?: Record<string, unknown>;
+}
+const ok: Config = { options: 1 };
+const bad: Config = { options: { enabled: true } };
+"#,
+        "test.ts",
+        CheckerOptions {
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    );
+
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "local module Record shadow should keep its local alias meaning, got {diagnostics:?}",
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|(_, message)| message.contains("Type '{ enabled: boolean; }'")),
+        "local Record shadow should reject the object assignment, not the numeric one, got {ts2322:?}",
     );
 }
