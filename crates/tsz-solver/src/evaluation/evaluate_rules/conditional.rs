@@ -2344,13 +2344,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         //      Application-vs-Application match has a same-base source.
         let mut check_type = cond.check_type;
         if get_application_base(self.interner(), check_type) != Some(pattern_base) {
-            let evaluated = self.evaluate(check_type);
-            if get_application_base(self.interner(), evaluated) == Some(pattern_base) {
-                check_type = evaluated;
-            } else if let Some(origin) = self.try_recover_application_from_display_alias(evaluated)
-                && get_application_base(self.interner(), origin) == Some(pattern_base)
+            if let Some(instantiated) = self.try_instantiate_application_for_tail_call(check_type)
+                && get_application_base(self.interner(), instantiated) == Some(pattern_base)
             {
-                check_type = origin;
+                check_type = instantiated;
+            } else {
+                let evaluated = self.evaluate(check_type);
+                if get_application_base(self.interner(), evaluated) == Some(pattern_base) {
+                    check_type = evaluated;
+                } else if let Some(origin) =
+                    self.try_recover_application_from_display_alias(evaluated)
+                    && get_application_base(self.interner(), origin) == Some(pattern_base)
+                {
+                    check_type = origin;
+                }
             }
         }
 
@@ -2363,6 +2370,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(TypeData::TypeParameter(_))
         ) {
             return None;
+        }
+
+        if self.application_pattern_required_property_miss(check_type, pattern_app_id) {
+            return Some(self.evaluate(cond.false_type));
         }
 
         // Try infer pattern matching with unevaluated types.
