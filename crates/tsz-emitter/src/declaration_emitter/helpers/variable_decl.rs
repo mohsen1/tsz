@@ -612,12 +612,6 @@ impl<'a> DeclarationEmitter<'a> {
                     .is_some()
             {
                 self.write(": any");
-            } else if has_initializer
-                && let Some(type_text) =
-                    self.object_literal_declared_shorthand_type_text(initializer, self.indent_level)
-            {
-                self.write(": ");
-                self.write(&type_text);
             } else if let Some(resolved_type) = self.resolve_declaration_type_text(
                 &[decl_idx, decl_name],
                 has_initializer.then_some(initializer),
@@ -886,8 +880,14 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
 
+                let selected_type_text = if has_initializer {
+                    self.object_literal_declared_shorthand_type_text(initializer, self.indent_level)
+                        .unwrap_or_else(|| selected_type_text.to_string())
+                } else {
+                    selected_type_text.to_string()
+                };
                 let selected_type_text =
-                    self.qualify_current_namespace_self_type_text(selected_type_text);
+                    self.qualify_current_namespace_self_type_text(&selected_type_text);
                 let selected_type_text = if has_initializer {
                     self.imported_call_public_type_text(initializer, &selected_type_text)
                 } else {

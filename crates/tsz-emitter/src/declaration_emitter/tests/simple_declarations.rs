@@ -2684,6 +2684,31 @@ if (holder.guard.isLeader()) {
 }
 
 #[test]
+fn test_object_shorthand_mixed_members_keep_resolved_member_types() {
+    let source = r#"
+class RoyalGuard {
+    isLeader(): this is LeadGuard {
+        return this instanceof LeadGuard;
+    }
+}
+
+class LeadGuard extends RoyalGuard {
+    lead(): void {}
+}
+
+let guard: RoyalGuard = new LeadGuard();
+var holder = { guard, generated: 1 };
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output
+            .contains("declare var holder: {\n    guard: RoyalGuard;\n    generated: number;\n};"),
+        "Expected mixed object literal to preserve declared shorthand member and resolved generated member: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_bracket_string_exports_emit_named_declarations() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
