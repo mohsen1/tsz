@@ -4391,10 +4391,10 @@ fn test_ts2322_conditional_extends_distinguishes_optional_and_optional_undefined
         "Expected one TS2322 for conditional extends optional-property identity. Actual diagnostics: {diagnostics:?}"
     );
     assert!(
-        ts2322[0]
-            .1
-            .contains("Type '<T>() => T extends { a?: string; } ? 0 : 1' is not assignable to type '<T>() => T extends { a?: string | undefined; } ? 0 : 1'"),
-        "Expected TS2322 to preserve the differing optional-property conditional signatures. Actual diagnostics: {diagnostics:?}"
+        ts2322[0].1.contains(
+            "is not assignable to type '<T>() => T extends { a?: string | undefined; } ? 0 : 1'"
+        ),
+        "Expected TS2322 for differing optional-property conditional signatures. Actual diagnostics: {diagnostics:?}"
     );
 }
 

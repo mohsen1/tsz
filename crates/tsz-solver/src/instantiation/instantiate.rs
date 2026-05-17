@@ -1670,21 +1670,17 @@ impl<'a> TypeInstantiator<'a> {
                     subst = ?self.substitution.map.iter().map(|(k, v)| (self.interner.resolve_atom_ref(*k), v.0)).collect::<Vec<_>>(),
                     "instantiate Mapped: about to instantiate constraint"
                 );
+                let saved_preserve_unsubstituted = self.preserve_unsubstituted_type_params;
+                self.preserve_unsubstituted_type_params = true;
+
                 let new_constraint = self.instantiate(mapped.constraint);
-                let new_template = instantiate_type_preserving(
-                    self.interner,
-                    mapped.template,
-                    self.substitution,
-                );
-                let new_name_type = mapped.name_type.map(|t| {
-                    instantiate_type_preserving(self.interner, t, self.substitution)
-                });
-                let new_param_constraint = mapped.type_param.constraint.map(|c| {
-                    instantiate_type_preserving(self.interner, c, self.substitution)
-                });
-                let new_param_default = mapped.type_param.default.map(|d| {
-                    instantiate_type_preserving(self.interner, d, self.substitution)
-                });
+                let new_template = self.instantiate(mapped.template);
+                let new_name_type = mapped.name_type.map(|t| self.instantiate(t));
+                let new_param_constraint =
+                    mapped.type_param.constraint.map(|c| self.instantiate(c));
+                let new_param_default = mapped.type_param.default.map(|d| self.instantiate(d));
+
+                self.preserve_unsubstituted_type_params = saved_preserve_unsubstituted;
 
                 self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
