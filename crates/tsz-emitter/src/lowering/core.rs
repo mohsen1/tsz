@@ -275,8 +275,7 @@ impl<'a> LoweringPass<'a> {
                 self.transforms.helpers_mut().mark_values();
             }
         }
-        if !for_in_of.await_modifier
-            && !self.ctx.options.target.supports_es2025()
+        if !self.ctx.options.target.supports_es2025()
             && crate::transforms::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
                 .is_some()
         {

@@ -567,12 +567,7 @@ impl<'a> Printer<'a> {
                 async_emitter.set_tslib_prefix(true);
                 async_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
             }
-            let blocked_disposable_names = self
-                .file_identifiers
-                .iter()
-                .chain(self.generated_temp_names.iter())
-                .cloned()
-                .collect::<Vec<_>>();
+            let blocked_disposable_names = self.blocked_disposable_names_for_transform();
             async_emitter
                 .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
 

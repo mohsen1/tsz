@@ -7,6 +7,7 @@ use tsz_scanner::SyntaxKind;
 pub(crate) struct ForOfUsingInfo {
     pub binding_name: String,
     pub using_async: bool,
+    pub recovered_missing_binding: bool,
 }
 
 /// Returns true when a function/method header contains the async-generator
@@ -185,6 +186,7 @@ pub(crate) fn for_of_using_info(
         return Some(ForOfUsingInfo {
             binding_name: "_a".to_string(),
             using_async: true,
+            recovered_missing_binding: true,
         });
     }
 
@@ -215,6 +217,7 @@ pub(crate) fn for_of_using_declaration_info(
         return Some(ForOfUsingInfo {
             binding_name,
             using_async: node_flags::is_await_using(flags),
+            recovered_missing_binding: false,
         });
     }
     None

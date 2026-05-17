@@ -868,12 +868,7 @@ impl<'a> Printer<'a> {
         &mut self,
         es5_emitter: &mut ClassES5Emitter<'a>,
     ) {
-        let blocked_disposable_names = self
-            .file_identifiers
-            .iter()
-            .chain(self.generated_temp_names.iter())
-            .cloned()
-            .collect::<Vec<_>>();
+        let blocked_disposable_names = self.blocked_disposable_names_for_transform();
         es5_emitter
             .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
     }

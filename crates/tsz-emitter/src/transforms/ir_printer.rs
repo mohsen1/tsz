@@ -1720,6 +1720,20 @@ impl<'a> IRPrinter<'a> {
                 self.write(&end_label.to_string());
                 self.write("]);");
             }
+            IRNode::GeneratorTryPushFinally {
+                start_label,
+                finally_label,
+                end_label,
+            } => {
+                self.write(self.generator_state_name);
+                self.write(".trys.push([");
+                self.write(&start_label.to_string());
+                self.write(", , ");
+                self.write(&finally_label.to_string());
+                self.write(", ");
+                self.write(&end_label.to_string());
+                self.write("]);");
+            }
 
             IRNode::IfBreak {
                 condition,
