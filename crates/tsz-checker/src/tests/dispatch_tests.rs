@@ -3138,6 +3138,30 @@ type UseText = Text;
 }
 
 #[test]
+fn base_class_field_this_does_not_recover_derived_only_members() {
+    let diags = check_source_diagnostics(
+        r#"
+class Base {
+    x = this.derivedOnly;
+}
+
+class Derived extends Base {
+    derivedOnly() {
+        return 1;
+    }
+}
+"#,
+    );
+    let ts2339 = diagnostics_with_code(&diags, 2339);
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected TS2339 for derived-only member in base initializer, got: {:?}",
+        diagnostic_summaries(&diags)
+    );
+}
+
+#[test]
 fn getter_returning_this_no_false_ts2339() {
     // When a class getter returns `this` without an explicit type annotation,
     // the inferred return type must be the polymorphic `ThisType` — not the
