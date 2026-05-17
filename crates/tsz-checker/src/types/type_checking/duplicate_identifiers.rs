@@ -27,6 +27,37 @@ pub(super) enum DuplicateDeclarationOrigin {
 }
 
 impl<'a> CheckerState<'a> {
+    fn is_global_symbol_constructor_interface_group(
+        &self,
+        scope: tsz_binder::SymbolId,
+        declarations: &[NodeIndex],
+    ) -> bool {
+        if scope != tsz_binder::SymbolId::NONE || self.ctx.binder.is_external_module() {
+            return false;
+        }
+
+        declarations.iter().all(|&decl_idx| {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(interface) = self.ctx.arena.get_interface(node) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get(interface.name)
+                .and_then(|name| self.ctx.arena.get_identifier(name))
+                .is_some_and(|ident| ident.escaped_text == "SymbolConstructor")
+        })
+    }
+
+    fn is_symbol_constructor_symbol_refinement_pair(&self, left: TypeId, right: TypeId) -> bool {
+        (left == TypeId::SYMBOL
+            && crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, right))
+            || (right == TypeId::SYMBOL
+                && crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, left))
+    }
+
     fn function_decl_has_body_for_duplicate_symbol(
         &self,
         sym_id: tsz_binder::SymbolId,
@@ -2494,7 +2525,7 @@ impl<'a> CheckerState<'a> {
                 .push(decl_idx);
         }
 
-        for (_, mut declarations_in_scope) in declarations_by_scope {
+        for (scope, mut declarations_in_scope) in declarations_by_scope {
             if declarations_in_scope.len() <= 1 {
                 continue;
             }
@@ -2505,6 +2536,8 @@ impl<'a> CheckerState<'a> {
             if !self.interface_type_parameters_are_group_merge_compatible(&declarations_in_scope) {
                 continue;
             }
+            let allow_symbol_constructor_refinement =
+                self.is_global_symbol_constructor_interface_group(scope, &declarations_in_scope);
 
             declarations_in_scope.sort_by_key(|&decl_idx| {
                 self.ctx
@@ -2702,6 +2735,14 @@ impl<'a> CheckerState<'a> {
                         // Method overloads (multiple methods with same name) are valid
                         // and don't need compatibility checking here.
                         if !*is_method {
+                            if allow_symbol_constructor_refinement
+                                && self.is_symbol_constructor_symbol_refinement_pair(
+                                    existing_type,
+                                    *property_type,
+                                )
+                            {
+                                continue;
+                            }
                             let compatible_both_ways = self
                                 .is_assignable_to(existing_type, *property_type)
                                 && self.is_assignable_to(*property_type, existing_type);
