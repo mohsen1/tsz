@@ -1,4 +1,5 @@
 use super::FlowAnalyzer;
+use rustc_hash::FxHashMap;
 use tsz_binder::{FlowNodeId, flow_flags};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -20,21 +21,30 @@ impl<'a> FlowAnalyzer<'a> {
         }
     }
 
-    pub(crate) fn antecedent_typeof_exclusion_mask(
+    /// Uses memoization so each flow node is evaluated exactly once (O(N) per call).
+    /// The sentinel 0 (no exclusions) is inserted before recursion: if a back-edge
+    /// returns to this node mid-traversal, the cycle contributes nothing, which is
+    /// the correct conservative answer for an "all paths" intersection.
+    pub(crate) fn antecedent_typeof_exclusion_mask_memoized(
         &self,
         flow_id: FlowNodeId,
         target: NodeIndex,
-        visited: &mut Vec<FlowNodeId>,
+        memo: &mut FxHashMap<FlowNodeId, u8>,
     ) -> u8 {
-        if flow_id.is_none() || visited.contains(&flow_id) {
+        if flow_id.is_none() {
             return 0;
         }
-        visited.push(flow_id);
+        if let Some(&cached) = memo.get(&flow_id) {
+            return cached;
+        }
+
+        memo.insert(flow_id, 0);
 
         let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
             return 0;
         };
         if flow.has_any_flags(flow_flags::UNREACHABLE) {
+            memo.insert(flow_id, 0);
             return 0;
         }
 
@@ -50,34 +60,29 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         if flow.antecedent.is_empty() {
+            memo.insert(flow_id, own);
             return own;
         }
 
         let mut common_antecedent_mask = None;
-        for &antecedent in &flow.antecedent {
-            if antecedent.is_none() {
-                continue;
-            }
-            if self
-                .binder
-                .flow_nodes
-                .get(antecedent)
-                .is_some_and(|antecedent_flow| {
-                    antecedent_flow.has_any_flags(flow_flags::UNREACHABLE)
-                })
-            {
-                continue;
-            }
-            let mut branch_visited = visited.clone();
-            let mask =
-                self.antecedent_typeof_exclusion_mask(antecedent, target, &mut branch_visited);
+        for &ant in flow.antecedent.iter().filter(|&&ant| {
+            !ant.is_none()
+                && !self
+                    .binder
+                    .flow_nodes
+                    .get(ant)
+                    .is_some_and(|f| f.has_any_flags(flow_flags::UNREACHABLE))
+        }) {
+            let mask = self.antecedent_typeof_exclusion_mask_memoized(ant, target, memo);
             common_antecedent_mask = Some(match common_antecedent_mask {
                 Some(common) => common & mask,
                 None => mask,
             });
         }
 
-        own | common_antecedent_mask.unwrap_or(0)
+        let result = own | common_antecedent_mask.unwrap_or(0);
+        memo.insert(flow_id, result);
+        result
     }
 
     pub(crate) fn flow_has_exhaustive_typeof_exclusions(
@@ -85,7 +90,8 @@ impl<'a> FlowAnalyzer<'a> {
         flow_id: FlowNodeId,
         target: NodeIndex,
     ) -> bool {
-        self.antecedent_typeof_exclusion_mask(flow_id, target, &mut Vec::new())
+        let mut memo = FxHashMap::default();
+        self.antecedent_typeof_exclusion_mask_memoized(flow_id, target, &mut memo)
             == Self::ALL_TYPEOF_EXCLUSIONS
     }
 

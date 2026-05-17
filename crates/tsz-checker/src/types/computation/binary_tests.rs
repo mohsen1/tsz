@@ -1092,3 +1092,119 @@ var r = x instanceof o4;
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn no_errors_for_hasinstance_with_many_instanceof_checks_and_complex_generic() {
+    let libs = load_lib_files(&[
+        "es5.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
+    ]);
+    let diags = check_source_with_libs(
+        r#"
+interface Point { x: number; y: number }
+interface Line { start: Point; end: Point }
+
+declare var rhs0: { [Symbol.hasInstance](value: unknown): boolean };
+declare var rhs1: { [Symbol.hasInstance](value: any): value is Point };
+declare class Rhs2 { static [Symbol.hasInstance](value: unknown): boolean }
+declare class Rhs3 { static [Symbol.hasInstance](value: any): value is Point }
+
+declare var lhs0: any;
+declare var lhs1: object;
+
+lhs0 instanceof rhs0 && lhs0;
+lhs0 instanceof rhs1 && lhs0;
+lhs0 instanceof Rhs2 && lhs0;
+lhs0 instanceof Rhs3 && lhs0;
+lhs1 instanceof rhs0 && lhs1;
+lhs1 instanceof rhs1 && lhs1;
+lhs1 instanceof Rhs2 && lhs1;
+lhs1 instanceof Rhs3 && lhs1;
+
+declare class WithGenericHasInstance {
+    static [Symbol.hasInstance]<T>(this: T, value: unknown): value is (
+        T extends Function ?
+            T extends { readonly prototype: infer U } ?
+                boolean extends (U extends never ? true : false) ?
+                    T extends (abstract new (...args: any) => infer V) ? V : {} :
+                    U :
+                never :
+            never
+    );
+}
+declare class SubClass extends WithGenericHasInstance { }
+
+declare const obj: unknown;
+if (obj instanceof WithGenericHasInstance) { obj; }
+if (obj instanceof SubClass) { obj; }
+"#,
+        "test.ts",
+        crate::context::CheckerOptions::default(),
+        &libs,
+    );
+    let error_codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        error_codes.is_empty(),
+        "Expected no diagnostics for valid instanceof with [Symbol.hasInstance], got: {:?}",
+        error_codes
+    );
+}
+
+#[test]
+fn no_errors_for_hasinstance_with_many_instanceof_checks_renamed_vars() {
+    let libs = load_lib_files(&[
+        "es5.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
+    ]);
+    let diags = check_source_with_libs(
+        r#"
+interface Shape { x: number; y: number }
+interface Path { start: Shape; end: Shape }
+
+declare var checker0: { [Symbol.hasInstance](value: unknown): boolean };
+declare var checker1: { [Symbol.hasInstance](value: any): value is Shape };
+declare class Checker2 { static [Symbol.hasInstance](value: unknown): boolean }
+declare class Checker3 { static [Symbol.hasInstance](value: any): value is Shape }
+
+declare var item0: any;
+declare var item1: object;
+
+item0 instanceof checker0 && item0;
+item0 instanceof checker1 && item0;
+item0 instanceof Checker2 && item0;
+item0 instanceof Checker3 && item0;
+item1 instanceof checker0 && item1;
+item1 instanceof checker1 && item1;
+item1 instanceof Checker2 && item1;
+item1 instanceof Checker3 && item1;
+
+declare class GenericHasInstance {
+    static [Symbol.hasInstance]<K>(this: K, value: unknown): value is (
+        K extends Function ?
+            K extends { readonly prototype: infer X } ?
+                boolean extends (X extends never ? true : false) ?
+                    K extends (abstract new (...args: any) => infer Y) ? Y : {} :
+                    X :
+                never :
+            never
+    );
+}
+declare class DerivedClass extends GenericHasInstance { }
+
+declare const val: unknown;
+if (val instanceof GenericHasInstance) { val; }
+if (val instanceof DerivedClass) { val; }
+"#,
+        "test.ts",
+        crate::context::CheckerOptions::default(),
+        &libs,
+    );
+    let error_codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+    assert!(
+        error_codes.is_empty(),
+        "Expected no diagnostics for valid instanceof with [Symbol.hasInstance] (renamed vars), got: {:?}",
+        error_codes
+    );
+}

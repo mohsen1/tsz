@@ -5,6 +5,7 @@ use crate::query_boundaries::flow_analysis::{
     empty_object_type, is_unit_type, is_unknown_narrowing_literal,
 };
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
+use rustc_hash::FxHashMap;
 use tsz_binder::{FlowNodeId, SymbolId, flow_flags, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -16,12 +17,19 @@ impl<'a> FlowAnalyzer<'a> {
         &self,
         flow_id: FlowNodeId,
         target: NodeIndex,
-        visited: &mut Vec<FlowNodeId>,
+        memo: &mut FxHashMap<FlowNodeId, bool>,
     ) -> bool {
-        if flow_id.is_none() || visited.contains(&flow_id) {
+        if flow_id.is_none() {
             return false;
         }
-        visited.push(flow_id);
+        if let Some(&cached) = memo.get(&flow_id) {
+            return cached;
+        }
+
+        // Sentinel false (doesn't exclude null) inserted before recursion: a back-edge
+        // returning to this node means the cycle contributes no null exclusion, which is
+        // the correct conservative answer for an "all paths" query.
+        memo.insert(flow_id, false);
 
         let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
             return false;
@@ -29,6 +37,7 @@ impl<'a> FlowAnalyzer<'a> {
         if flow.has_any_flags(flow_flags::CONDITION)
             && self.condition_branch_excludes_null_for_target(flow, target)
         {
+            memo.insert(flow_id, true);
             return true;
         }
 
@@ -38,10 +47,12 @@ impl<'a> FlowAnalyzer<'a> {
                 continue;
             }
             saw_antecedent = true;
-            if !self.antecedent_chain_excludes_null_for_target(antecedent, target, visited) {
+            if !self.antecedent_chain_excludes_null_for_target(antecedent, target, memo) {
+                memo.insert(flow_id, false);
                 return false;
             }
         }
+        memo.insert(flow_id, saw_antecedent);
         saw_antecedent
     }
 
@@ -712,8 +723,11 @@ impl<'a> FlowAnalyzer<'a> {
             && let Some(current_exclusion) =
                 self.typeof_exclusion_for_condition(condition_idx, target, is_true_branch)
         {
-            let prior_exclusions =
-                self.antecedent_typeof_exclusion_mask(antecedent_id, target, &mut Vec::new());
+            let prior_exclusions = self.antecedent_typeof_exclusion_mask_memoized(
+                antecedent_id,
+                target,
+                &mut FxHashMap::default(),
+            );
             let exclusions = prior_exclusions | Self::typeof_exclusion_bit(current_exclusion);
             if exclusions == Self::ALL_TYPEOF_EXCLUSIONS {
                 return empty_object_type(self.interner);
@@ -845,7 +859,7 @@ impl<'a> FlowAnalyzer<'a> {
                                 && self.antecedent_chain_excludes_null_for_target(
                                     antecedent_id,
                                     target,
-                                    &mut Vec::new(),
+                                    &mut FxHashMap::default(),
                                 )
                             {
                                 return narrowing.narrow_excluding_type(result, TypeId::NULL);
@@ -1350,7 +1364,7 @@ impl<'a> FlowAnalyzer<'a> {
                     && self.antecedent_chain_excludes_null_for_target(
                         antecedent_id,
                         target,
-                        &mut Vec::new(),
+                        &mut FxHashMap::default(),
                     )
                 {
                     return narrowing.narrow_excluding_type(narrowed, TypeId::NULL);
