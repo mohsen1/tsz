@@ -1270,7 +1270,7 @@ impl<'a> CheckerState<'a> {
         }
         if self
             .get_property_name_resolved(name_idx)
-            .is_some_and(|name| name.starts_with("[Symbol.") || name.starts_with("__unique_"))
+            .is_some_and(|name| name.starts_with("[Symbol."))
         {
             return true;
         }

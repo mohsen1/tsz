@@ -17,6 +17,7 @@ use crate::types::{
     CallSignature, FunctionShape, InferencePriority, ParamInfo, TypeData, TypeId, TypeParamInfo,
     TypePredicate,
 };
+use crate::visitor::contains_any_type;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -779,13 +780,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 && source_cond.true_type == target_cond.true_type
                 && source_cond.false_type == target_cond.false_type
             {
+                if source_cond.extends_type == target_cond.extends_type {
+                    return SubtypeResult::True;
+                }
+                if self.conditional_extends_difference_is_definitely_distinct(
+                    source_cond.extends_type,
+                    target_cond.extends_type,
+                ) {
+                    return SubtypeResult::False;
+                }
                 let source_extends_eval = self.evaluate_type(source_cond.extends_type);
                 let target_extends_eval = self.evaluate_type(target_cond.extends_type);
                 if (source_extends_eval == TypeId::ANY) != (target_extends_eval == TypeId::ANY) {
                     return SubtypeResult::False;
                 }
-                if source_cond.extends_type == target_cond.extends_type
-                    || source_extends_eval == target_extends_eval
+                if source_extends_eval == target_extends_eval
                     || self.same_evaluated_union_members(source_extends_eval, target_extends_eval)
                 {
                     return SubtypeResult::True;
@@ -820,6 +829,70 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             result
         } else {
             self.check_subtype(source_return, target_return)
+        }
+    }
+
+    fn conditional_extends_difference_is_definitely_distinct(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if self.conditional_extends_raw_structures_equivalent(source, target) {
+            return false;
+        }
+
+        if contains_any_type(self.interner, source) || contains_any_type(self.interner, target) {
+            return true;
+        }
+
+        matches!(
+            (self.interner.lookup(source), self.interner.lookup(target)),
+            (
+                Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)),
+                Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+            ) | (Some(TypeData::Array(_)), Some(TypeData::Array(_)))
+        )
+    }
+
+    fn conditional_extends_raw_structures_equivalent(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if source == target {
+            return true;
+        }
+
+        match (self.interner.lookup(source), self.interner.lookup(target)) {
+            (Some(TypeData::Array(source_elem)), Some(TypeData::Array(target_elem))) => {
+                self.conditional_extends_property_types_equivalent(source_elem, target_elem)
+            }
+            (
+                Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)),
+                Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)),
+            ) => self.object_members_equivalent_for_conditional_extends(source, target),
+            (Some(TypeData::Union(source_list)), Some(TypeData::Union(target_list))) => {
+                let source_members: Vec<_> = self.interner.type_list(source_list).to_vec();
+                let target_members: Vec<_> = self.interner.type_list(target_list).to_vec();
+                if source_members.len() != target_members.len() {
+                    return false;
+                }
+
+                let mut unmatched = target_members;
+                for source_member in source_members {
+                    let Some(index) = unmatched.iter().position(|&target_member| {
+                        self.conditional_extends_raw_structures_equivalent(
+                            source_member,
+                            target_member,
+                        )
+                    }) else {
+                        return false;
+                    };
+                    unmatched.swap_remove(index);
+                }
+                true
+            }
+            _ => false,
         }
     }
 
@@ -930,6 +1003,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> bool {
         if source == target {
             return true;
+        }
+        if contains_any_type(self.interner, source) || contains_any_type(self.interner, target) {
+            return false;
         }
         self.evaluate_type(source) == self.evaluate_type(target)
     }
