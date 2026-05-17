@@ -16,7 +16,7 @@ use super::type_node_helpers::{
     is_typeof_global_this_type_node,
 };
 use super::unique_symbol_arena::has_declared_unique_symbol_owner;
-use tsz_parser::parser::node::{Node, NodeAccess};
+use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
