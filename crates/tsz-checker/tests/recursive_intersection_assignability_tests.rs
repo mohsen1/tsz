@@ -5,17 +5,36 @@
 //! properties. Assignability still follows the element shape: a richer element
 //! list is assignable to a base element list, but not the reverse.
 
-use tsz_checker::test_utils::check_source_code_messages;
+use tsz_checker::diagnostics::Diagnostic;
+use tsz_checker::test_utils::check_source_diagnostics;
 
-fn diagnostics(source: &str) -> Vec<(u32, String)> {
-    check_source_code_messages(source)
+fn diagnostics(source: &str) -> Vec<Diagnostic> {
+    check_source_diagnostics(source)
 }
 
-fn code_count(diagnostics: &[(u32, String)], code: u32) -> usize {
-    diagnostics
+fn code_count(diagnostics: &[Diagnostic], code: u32) -> usize {
+    diagnostics.iter().filter(|diag| diag.code == code).count()
+}
+
+fn assert_only_reverse_assignment_ts2322(
+    diagnostics: &[Diagnostic],
+    forward_start: u32,
+    reverse_start: u32,
+) {
+    let ts2322_starts = diagnostics
         .iter()
-        .filter(|(actual, _)| *actual == code)
-        .count()
+        .filter(|diag| diag.code == 2322)
+        .map(|diag| diag.start)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ts2322_starts,
+        vec![reverse_start],
+        "only the reverse assignment from base list to richer list should fail, got: {diagnostics:?}"
+    );
+    assert!(
+        !ts2322_starts.contains(&forward_start),
+        "forward assignment from richer list to base list must stay assignable, got: {diagnostics:?}"
+    );
 }
 
 #[test]
@@ -43,6 +62,8 @@ productList = entityList;
 "#;
 
     let diags = diagnostics(source);
+    let forward_assignment = source.find("entityList = productList").unwrap() as u32;
+    let reverse_assignment = source.find("productList = entityList").unwrap() as u32;
     assert_eq!(
         code_count(&diags, 2339),
         0,
@@ -53,11 +74,7 @@ productList = entityList;
         5,
         "upstream baseline expects use-before-assigned diagnostics for the four entity reads and product assignment, got: {diags:?}"
     );
-    assert_eq!(
-        code_count(&diags, 2322),
-        1,
-        "only the reverse assignment from base list to richer list should fail, got: {diags:?}"
-    );
+    assert_only_reverse_assignment_ts2322(&diags, forward_assignment, reverse_assignment);
 }
 
 #[test]
@@ -84,14 +101,12 @@ decoratedChain = baseChain;
 "#;
 
     let diags = diagnostics(source);
+    let forward_assignment = source.find("baseChain = decoratedChain").unwrap() as u32;
+    let reverse_assignment = source.find("decoratedChain = baseChain").unwrap() as u32;
     assert_eq!(
         code_count(&diags, 2339),
         0,
         "renamed recursive intersection link must expose nested base properties, got: {diags:?}"
     );
-    assert_eq!(
-        code_count(&diags, 2322),
-        1,
-        "reverse assignment must still fail for renamed element/link symbols, got: {diags:?}"
-    );
+    assert_only_reverse_assignment_ts2322(&diags, forward_assignment, reverse_assignment);
 }
