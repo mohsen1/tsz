@@ -703,9 +703,12 @@ impl<'a> CheckerContext<'a> {
 
     /// Register a non-generic definition body in **both** type environments.
     pub fn register_def_in_envs(&self, def_id: DefId, body: TypeId) {
+        let body_changed = self.definition_store.get_body(def_id) != Some(body);
         self.definition_store.set_body(def_id, body);
-        self.def_no_type_params.borrow_mut().insert(def_id);
-        self.clear_type_evaluation_caches_for_def(def_id);
+        let no_type_params_changed = self.def_no_type_params.borrow_mut().insert(def_id);
+        if body_changed || no_type_params_changed {
+            self.clear_type_evaluation_caches_for_def(def_id);
+        }
         self.with_envs_for_register("insert_def", |env| {
             env.insert_def(def_id, body);
         });
@@ -719,13 +722,19 @@ impl<'a> CheckerContext<'a> {
         body: TypeId,
         params: Vec<tsz_solver::TypeParamInfo>,
     ) {
+        let body_changed = self.definition_store.get_body(def_id) != Some(body);
+        let params_changed = self
+            .definition_store
+            .get_type_params(def_id)
+            .is_none_or(|existing| existing != params);
         self.definition_store.set_body(def_id, body);
         self.definition_store
             .set_type_params(def_id, params.clone());
-        if !params.is_empty() {
-            self.def_no_type_params.borrow_mut().remove(&def_id);
+        let no_type_params_changed =
+            !params.is_empty() && self.def_no_type_params.borrow_mut().remove(&def_id);
+        if body_changed || params_changed || no_type_params_changed {
+            self.clear_type_evaluation_caches_for_def(def_id);
         }
-        self.clear_type_evaluation_caches_for_def(def_id);
         let declared_variances = tsz_solver::TypeResolver::get_type_param_variance(self, def_id);
         self.with_envs_for_register("insert_def_with_params", |env| {
             env.insert_def_with_params(def_id, body, params.clone());
