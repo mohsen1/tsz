@@ -405,6 +405,9 @@ ensure_type_challenges_assertion_tsc() {
 
   echo "Installing scripts Node dependencies for Type Challenges assertion classifier"
   (cd scripts && npm install --silent)
+  if [[ ! -x scripts/node_modules/.bin/tsc ]]; then
+    echo "warn: scripts Node install did not provide tsc; Type Challenges assertion classifier will report tsc unavailable" >&2
+  fi
 }
 
 write_type_challenges_assertion_classification() {
@@ -418,6 +421,11 @@ write_type_challenges_assertion_classification() {
       "$candidate_dir" \
       "$manifest" \
       "$output"
+    node scripts/ci/type-challenges-assertion-compatibility.mjs \
+      "$output" \
+      "$candidate_dir" \
+      "$PROJECT_COMPATIBILITY_JSONL" \
+      "$FIXTURE_ROOT"
   fi
 }
 
@@ -551,6 +559,13 @@ if should_check_project "type-challenges-solutions-project"; then
   ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
   write_type_challenges_solutions_config
   check_project "type-challenges-solutions-project" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/solutions"
+fi
+
+if should_check_project "type-challenges-assertion-candidates"; then
+  ensure_git_fixture "type-challenges" "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF" "$FIXTURE_ROOT/type-challenges"
+  write_type_challenges_config
+  ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
+  write_type_challenges_solutions_config
 fi
 }
 
