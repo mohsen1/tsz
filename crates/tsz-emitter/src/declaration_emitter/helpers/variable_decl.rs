@@ -530,8 +530,15 @@ impl<'a> DeclarationEmitter<'a> {
                     .type_text_is_directly_nameable_reference(&type_text)
                     && (Self::type_text_starts_with_import_type(&type_text)
                         || type_text.contains(['<', '.']));
+                let fallback_to_any_for_types_versions_self_reference = self
+                    .call_initializer_types_versions_self_reference_falls_back_to_any(
+                        initializer,
+                        &type_text,
+                    );
                 self.write(": ");
-                if keyword == "const"
+                if fallback_to_any_for_types_versions_self_reference {
+                    self.write("any");
+                } else if keyword == "const"
                     && let Some(formatted) =
                         self.call_initializer_unexported_alias_literal_text(initializer)
                 {
@@ -539,7 +546,8 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     self.write(&type_text);
                 }
-                if !has_public_import_type
+                if !fallback_to_any_for_types_versions_self_reference
+                    && !has_public_import_type
                     && !has_reusable_surface_type
                     && let Some(name_text) = self.get_identifier_text(decl_name)
                     && let Some(name_node) = self.arena.get(decl_name)
@@ -932,18 +940,27 @@ impl<'a> DeclarationEmitter<'a> {
                         &selected_type_text,
                     );
                 }
-                self.insert_import_for_unqualified_imported_type(&selected_type_text);
-                self.write(": ");
-                if keyword == "const"
-                    && has_initializer
-                    && let Some(template_index_type) =
-                        self.template_index_signature_element_access_type_text(initializer)
-                {
-                    self.write(&template_index_type);
-                } else {
-                    self.write(&Self::strip_synthetic_anonymous_object_members(
+                if has_initializer
+                    && self.call_initializer_types_versions_self_reference_falls_back_to_any(
+                        initializer,
                         &selected_type_text,
-                    ));
+                    )
+                {
+                    self.write(": any");
+                } else {
+                    self.insert_import_for_unqualified_imported_type(&selected_type_text);
+                    self.write(": ");
+                    if keyword == "const"
+                        && has_initializer
+                        && let Some(template_index_type) =
+                            self.template_index_signature_element_access_type_text(initializer)
+                    {
+                        self.write(&template_index_type);
+                    } else {
+                        self.write(&Self::strip_synthetic_anonymous_object_members(
+                            &selected_type_text,
+                        ));
+                    }
                 }
             } else if let Some(typeof_text) =
                 self.typeof_prefix_for_value_entity(initializer, has_initializer, None)

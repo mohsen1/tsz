@@ -86,6 +86,48 @@ fn import_type_text_helpers_accept_single_quoted_specifiers() {
 }
 
 #[test]
+fn types_versions_self_back_reference_detection_requires_package_root_reexport() {
+    let root = std::env::temp_dir().join(format!(
+        "tsz-types-versions-self-ref-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock before UNIX_EPOCH")
+            .as_nanos()
+    ));
+    let package_root = root.join("node_modules").join("ext");
+    let types_dir = package_root.join("ts3.1");
+    std::fs::create_dir_all(&types_dir).expect("create typesVersions dir");
+    std::fs::write(
+        package_root.join("package.json"),
+        r#"{
+            "name": "ext",
+            "version": "1.0.0",
+            "typesVersions": {
+                ">=3.1.0-0": { "*": ["ts3.1/*"] }
+            }
+        }"#,
+    )
+    .expect("write package json");
+    std::fs::write(types_dir.join("index.d.ts"), r#"export * from "../";"#)
+        .expect("write self back-reference");
+
+    assert!(
+        DeclarationEmitter::package_root_has_types_versions_self_back_reference(&package_root),
+        "Expected root typesVersions index re-exporting the parent package root to be detected"
+    );
+
+    std::fs::write(types_dir.join("index.d.ts"), r#"export * from "../other";"#)
+        .expect("rewrite non-root re-export");
+    assert!(
+        !DeclarationEmitter::package_root_has_types_versions_self_back_reference(&package_root),
+        "Subpath re-exports should not make the package root fall back to any"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn empty_object_union_arm_expands_missing_quoted_property() {
     let mut types = vec!["{\n    \"a-b\": string;\n}".to_string(), "{}".to_string()];
 
