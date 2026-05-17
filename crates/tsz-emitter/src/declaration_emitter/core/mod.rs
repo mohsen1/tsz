@@ -169,6 +169,11 @@ pub struct DeclarationEmitter<'a> {
     /// JS namespace-like alias exports synthesized from expando assignments such
     /// as `foo.default = foo` and `module.exports.Bar = Bar`.
     pub(super) js_namespace_export_aliases: FxHashMap<String, Vec<JsNamespaceExportAlias>>,
+    /// Top-level JS declarations whose value is exported through a namespace
+    /// alias schedule, e.g. `Root.Member = Member`.
+    pub(super) js_deferred_namespace_alias_declarations: FxHashMap<String, Vec<NodeIndex>>,
+    /// Fast lookup for statements owned by `js_deferred_namespace_alias_declarations`.
+    pub(super) js_deferred_namespace_alias_declaration_stmts: FxHashSet<NodeIndex>,
     /// CJS export aliases for `exports.X = Y` / `module.exports.X = Y`.
     pub(super) js_cjs_export_aliases: Vec<(String, String)>,
     /// CJS export aliases that also need a value declaration because the same
