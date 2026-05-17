@@ -2025,19 +2025,16 @@ impl<'a> CheckerState<'a> {
                 TypeId::ANY
             };
 
-            // When the body return type contains the polymorphic `this` type
-            // (e.g. from `async (): Promise<this> => this`), substitute it
-            // with the concrete `this` type from the enclosing class so that
-            // the return-statement assignability check compares against the
-            // same concrete type that the `this` keyword expression resolves to.
-            // Only apply when the function has an explicit type annotation;
-            // contextually-typed functions may carry `ThisType` from their
-            // contextual signature but substituting would produce false positives.
+            // When the body return type is the direct polymorphic `this` type
+            // (e.g. from unwrapping `async (): Promise<this> => this`), substitute it
+            // with the concrete `this` type from the enclosing class so that the
+            // return-statement assignability check compares against the same concrete
+            // type that the `this` keyword expression resolves to. Keep wrapper types
+            // such as `Box<this>` intact: they contextually type generic factory calls
+            // and must remain polymorphic for return-expression inference.
             let body_return_type = if (has_type_annotation || jsdoc_return_context.is_some())
-                && crate::query_boundaries::common::contains_this_type(
-                    self.ctx.types,
-                    body_return_type,
-                ) {
+                && crate::query_boundaries::common::is_this_type(self.ctx.types, body_return_type)
+            {
                 if let Some(concrete_this) = self.current_this_type() {
                     crate::query_boundaries::common::substitute_this_type(
                         self.ctx.types,

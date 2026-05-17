@@ -54,6 +54,9 @@ pub(crate) fn literal_key_for_property_name(
 /// and any atom that is not a valid JavaScript numeric literal.
 pub(crate) fn atom_as_numeric_key(db: &dyn TypeDatabase, atom: Atom) -> Option<f64> {
     let name = db.resolve_atom_ref(atom);
+    if !is_numeric_literal_name(name.as_ref()) {
+        return None;
+    }
     tsz_common::numeric::parse_numeric_literal_value(name.as_ref())
 }
 

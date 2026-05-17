@@ -9,18 +9,137 @@ use crate::query_boundaries::common::ContextualTypeContext;
 use crate::query_boundaries::type_computation::complex as query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
+use std::fmt::Write;
 use tracing::trace;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{FunctionShape, ParamInfo, TypeId};
+use tsz_solver::{FunctionShape, ParamInfo, TypeId, TypeParamInfo};
 
 use super::super::call_result::CallResultContext;
 use super::super::complex::is_contextually_sensitive;
 use super::post_generic::PostGenericCallDiagnostics;
 
 impl<'a> CheckerState<'a> {
+    fn freshen_contextual_signature_shape_for_inference(
+        &mut self,
+        shape: FunctionShape,
+        contextual_type: Option<TypeId>,
+        arg_types: &[TypeId],
+        generic_inference_arg_types: &[TypeId],
+    ) -> FunctionShape {
+        if shape.type_params.is_empty() {
+            return shape;
+        }
+
+        let collides = shape.type_params.iter().any(|tp| {
+            arg_types
+                .iter()
+                .copied()
+                .chain(generic_inference_arg_types.iter().copied())
+                .chain(contextual_type)
+                .flat_map(|ty| {
+                    crate::query_boundaries::common::collect_referenced_types(self.ctx.types, ty)
+                })
+                .any(|referenced| {
+                    crate::query_boundaries::common::type_param_info(self.ctx.types, referenced)
+                        .is_some_and(|referenced_tp| referenced_tp.name == tp.name)
+                })
+        });
+        if !collides {
+            return shape;
+        }
+
+        // TypeSubstitution is name-keyed, so freshen the callee's local type
+        // parameters before matching its return type against outer generic
+        // context that happens to use the same parameter names.
+        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        let mut renamed_type_params = Vec::with_capacity(shape.type_params.len());
+        let mut name_buf = String::with_capacity(64);
+        for (index, tp) in shape.type_params.iter().enumerate() {
+            name_buf.clear();
+            write!(
+                name_buf,
+                "__contextual_call_shape_{}_tp_{}",
+                shape.return_type.0, index
+            )
+            .expect("write to String is infallible");
+            let fresh_name = self.ctx.types.intern_string(&name_buf);
+            let fresh_type = self.ctx.types.factory().type_param(TypeParamInfo {
+                name: fresh_name,
+                constraint: None,
+                default: None,
+                is_const: tp.is_const,
+            });
+            substitution.insert(tp.name, fresh_type);
+            renamed_type_params.push(TypeParamInfo {
+                name: fresh_name,
+                constraint: tp.constraint.map(|constraint| {
+                    crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        constraint,
+                        &substitution,
+                    )
+                }),
+                default: tp.default.map(|default| {
+                    crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        default,
+                        &substitution,
+                    )
+                }),
+                is_const: tp.is_const,
+            });
+        }
+
+        FunctionShape {
+            params: shape
+                .params
+                .iter()
+                .map(|param| ParamInfo {
+                    name: param.name,
+                    type_id: crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        param.type_id,
+                        &substitution,
+                    ),
+                    optional: param.optional,
+                    rest: param.rest,
+                })
+                .collect(),
+            return_type: crate::query_boundaries::common::instantiate_type(
+                self.ctx.types,
+                shape.return_type,
+                &substitution,
+            ),
+            this_type: shape.this_type.map(|this_type| {
+                crate::query_boundaries::common::instantiate_type(
+                    self.ctx.types,
+                    this_type,
+                    &substitution,
+                )
+            }),
+            type_params: renamed_type_params,
+            type_predicate: shape
+                .type_predicate
+                .map(|predicate| tsz_solver::TypePredicate {
+                    asserts: predicate.asserts,
+                    target: predicate.target,
+                    type_id: predicate.type_id.map(|type_id| {
+                        crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            type_id,
+                            &substitution,
+                        )
+                    }),
+                    parameter_index: predicate.parameter_index,
+                }),
+            is_constructor: shape.is_constructor,
+            is_method: shape.is_method,
+        }
+    }
+
     fn fresh_direct_function_call_signature(
         &mut self,
         callee_expression: NodeIndex,
@@ -2015,7 +2134,8 @@ impl<'a> CheckerState<'a> {
                                 call_checker::get_contextual_signature(self.ctx.types, ctx)
                                     .is_some_and(|shape| !shape.type_params.is_empty());
                             (!common::contains_type_parameters(self.ctx.types, ctx)
-                                || contextual_generic_callable)
+                                || contextual_generic_callable
+                                || common::contains_this_type(self.ctx.types, ctx))
                                 && !common::contains_infer_types(self.ctx.types, ctx)
                                 && !common::contains_type_by_id(
                                     self.ctx.types,
@@ -2785,6 +2905,12 @@ impl<'a> CheckerState<'a> {
                 args.len(),
             )
         {
+            let shape = self.freshen_contextual_signature_shape_for_inference(
+                shape,
+                Some(ctx_type),
+                &arg_types,
+                &generic_inference_arg_types,
+            );
             let mut return_context_substitution =
                 self.compute_return_context_substitution_from_shape(&shape, Some(ctx_type));
             let return_param_names: FxHashSet<_> = self
@@ -2820,11 +2946,12 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .copied()
                     .any(|arg| self.is_callback_like_argument(arg));
-                let contextual_return_is_concrete =
-                    !common::contains_type_parameters(self.ctx.types, ctx_type)
+                let contextual_return_is_stable =
+                    (!common::contains_type_parameters(self.ctx.types, ctx_type)
+                        || common::contains_this_type(self.ctx.types, ctx_type))
                         && !common::contains_infer_types(self.ctx.types, ctx_type)
                         && !common::contains_type_by_id(self.ctx.types, ctx_type, TypeId::UNKNOWN);
-                if !has_callback_like_arg && contextual_return_is_concrete {
+                if !has_callback_like_arg && contextual_return_is_stable {
                     let instantiated_shape_return =
                         crate::query_boundaries::common::instantiate_type(
                             self.ctx.types,
@@ -3120,7 +3247,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-
         let call_context = CallResultContext {
             callee_expr: call.expression,
             call_idx: idx,

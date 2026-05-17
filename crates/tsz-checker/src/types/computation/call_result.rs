@@ -112,7 +112,15 @@ impl<'a> CheckerState<'a> {
         return_type: TypeId,
         is_optional_chain: bool,
     ) -> TypeId {
-        let return_type = self.apply_this_substitution_to_call_return(return_type, callee_expr);
+        let declared_return_has_this =
+            assign_query::get_function_return_type(self.ctx.types, callee_type).is_some_and(
+                |declared_return| common::contains_this_type(self.ctx.types, declared_return),
+            );
+        let return_type = if declared_return_has_this {
+            self.apply_this_substitution_to_call_return(return_type, callee_expr)
+        } else {
+            return_type
+        };
         let return_type =
             self.apply_direct_callable_this_substitution(return_type, callee_expr, callee_type);
         let return_type =

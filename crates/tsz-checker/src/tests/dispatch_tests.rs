@@ -3138,6 +3138,98 @@ type UseText = Text;
 }
 
 #[test]
+fn wrapped_this_return_annotations_contextualize_generic_factories() {
+    // Explicit return annotations like `Wrapper<this>` should remain
+    // polymorphic while checking a return expression. Substituting the annotation
+    // to the concrete currently-constructed subclass too early makes generic
+    // factory calls infer nested wrapper types instead of the annotated `this`.
+    let diags = check_source_diagnostics(
+        r#"
+interface Def { tag?: string }
+
+type TypeAny = Type<any, any, any>;
+type output<T extends TypeAny> = T["_output"];
+type input<T extends TypeAny> = T["_input"];
+
+class Type<Output, D extends Def = Def, Input = Output> {
+    readonly _output!: Output;
+    readonly _input!: Input;
+    readonly _def!: D;
+
+    constructor(def: D) {
+        this._def = def;
+    }
+
+    wrap(): Wrapper<this> {
+        return Wrapper.create(this);
+    }
+
+    and<T extends TypeAny>(incoming: T): Intersection<this, T> {
+        return Intersection.create(this, incoming);
+    }
+}
+
+interface WrapperDef<T extends TypeAny = TypeAny> extends Def {
+    type: T;
+    typeName: "wrapper";
+}
+
+class Wrapper<T extends TypeAny> extends Type<
+    { wrapped: output<T> },
+    WrapperDef<T>,
+    { wrapped: input<T> }
+> {
+    constructor(def: WrapperDef<T>) {
+        super(def);
+    }
+
+    static create<T extends TypeAny>(schema: T): Wrapper<T> {
+        return new Wrapper<T>({ type: schema, typeName: "wrapper" });
+    }
+}
+
+interface IntersectionDef<Left extends TypeAny, Right extends TypeAny> extends Def {
+    left: Left;
+    right: Right;
+    typeName: "intersection";
+}
+
+class Intersection<Left extends TypeAny, Right extends TypeAny> extends Type<
+    output<Left> & output<Right>,
+    IntersectionDef<Left, Right>,
+    input<Left> & input<Right>
+> {
+    constructor(def: IntersectionDef<Left, Right>) {
+        super(def);
+    }
+
+    static create = <Left extends TypeAny, Right extends TypeAny>(
+        left: Left,
+        right: Right
+    ): Intersection<Left, Right> =>
+        new Intersection<Left, Right>({ left, right, typeName: "intersection" });
+}
+
+class Text extends Type<string> {
+    constructor() {
+        super({});
+    }
+}
+
+type UseWrapper = Wrapper<Text>;
+type UseIntersection = Intersection<Text, Text>;
+"#,
+    );
+    let ts2322 = diagnostics_with_code(&diags, 2322);
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected wrapped `this` return annotations to contextualize factory calls, got: {:?}",
+        diagnostic_messages(&ts2322)
+    );
+}
+
+#[test]
 fn getter_returning_this_no_false_ts2339() {
     // When a class getter returns `this` without an explicit type annotation,
     // the inferred return type must be the polymorphic `ThisType` — not the
