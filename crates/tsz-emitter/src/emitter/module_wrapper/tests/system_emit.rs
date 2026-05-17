@@ -296,6 +296,49 @@ fn system_es5_named_exported_class_uses_class_iife_assignment() {
 }
 
 #[test]
+fn system_es5_named_exported_class_static_block_runs_after_export() {
+    let source = r#"declare function side(x: any): void;
+export class A {
+    static {
+        side(A);
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let assignment_pos = output
+        .find("A = /** @class */ (function () {")
+        .expect("System ES5 named class export should assign an ES5 class IIFE");
+    let export_pos = output
+        .find("exports_1(\"A\", A);")
+        .expect("System named export should publish the class binding after assignment");
+    let static_block_pos = output
+        .find("(function () {\n                side(A);\n            })();")
+        .expect("System ES5 static block should lower to an IIFE");
+
+    assert!(
+        assignment_pos < export_pos && export_pos < static_block_pos,
+        "System ES5 named class static block should run after the export call.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("A = (_a ="),
+        "Static-block-only class exports should not fold the static block into the assignment RHS.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_wrapper_inlines_const_enum_member_accesses() {
     let source = r#"declare function use(a: any);
 const enum TopLevelConstEnum { X }

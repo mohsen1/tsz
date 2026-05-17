@@ -1231,8 +1231,11 @@ impl<'a> Printer<'a> {
             self.write(&gen_name);
             self.write(" = ");
             self.anonymous_default_export_name = None;
-            let deferred =
-                self.emit_system_class_expression_value(clause_node, export_decl.export_clause);
+            let deferred = self.emit_system_class_expression_value(
+                clause_node,
+                export_decl.export_clause,
+                false,
+            );
             if !self.output_ends_with_semicolon() {
                 self.write(";");
             }
@@ -1327,8 +1330,11 @@ impl<'a> Printer<'a> {
 
             self.write(&class_name);
             self.write(" = ");
-            let deferred =
-                self.emit_system_class_expression_value(clause_node, export_decl.export_clause);
+            let deferred = self.emit_system_class_expression_value(
+                clause_node,
+                export_decl.export_clause,
+                true,
+            );
             if !self.output_ends_with_semicolon() {
                 self.write(";");
             }
@@ -1504,7 +1510,7 @@ impl<'a> Printer<'a> {
         }
         self.write(&class_name);
         self.write(" = ");
-        let deferred = self.emit_system_class_expression_value(node, idx);
+        let deferred = self.emit_system_class_expression_value(node, idx, false);
         if !self.output_ends_with_semicolon() {
             self.write(";");
         }
@@ -1535,9 +1541,18 @@ impl<'a> Printer<'a> {
         &mut self,
         node: &tsz_parser::parser::node::Node,
         idx: NodeIndex,
+        defer_es5_static_block_tail: bool,
     ) -> Vec<(NodeIndex, usize)> {
         if self.ctx.target_es5 {
+            if defer_es5_static_block_tail {
+                self.defer_class_static_blocks = true;
+                self.deferred_class_static_blocks.clear();
+            }
             self.emit_class_expression_es5(idx);
+            if defer_es5_static_block_tail {
+                self.defer_class_static_blocks = false;
+                return std::mem::take(&mut self.deferred_class_static_blocks);
+            }
             return Vec::new();
         }
 
