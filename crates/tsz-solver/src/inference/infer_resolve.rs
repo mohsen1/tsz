@@ -39,18 +39,21 @@ impl<'a> InferenceContext<'a> {
     ///
     /// The covariant inference wins when it is assignable to some
     /// contra-candidate (tsc's normal `getInferredType` rule), or when every
-    /// contra-candidate is a bare unconstrained type parameter — such names
-    /// carry no shape requirement that the covariant could violate and are
-    /// typically stale leaks from union-contextual overload argument typing.
+    /// contra-candidate is a bare unconstrained type parameter and the covariant
+    /// inference came from array-element matching (`T[]`). That is the stale leak
+    /// shape from union-contextual overload argument typing, while higher-order
+    /// function return-context inferences can carry real outer generic evidence.
     fn choose_covariant_or_contra(
         &self,
         covariant_result: TypeId,
         concrete_contra: &[InferenceCandidate],
         covariant_assignable_to_contra: bool,
         covariant_is_uninformative: bool,
+        allow_stale_unconstrained_contra_override: bool,
     ) -> TypeId {
         if covariant_assignable_to_contra
-            || (!covariant_is_uninformative
+            || (allow_stale_unconstrained_contra_override
+                && !covariant_is_uninformative
                 && concrete_contra
                     .iter()
                     .all(|c| self.is_unconstrained_type_parameter(c.type_id)))
@@ -520,6 +523,7 @@ impl<'a> InferenceContext<'a> {
                     &concrete_contra_candidates,
                     covariant_assignable_to_contra,
                     covariant_is_uninformative,
+                    candidates.iter().any(|c| c.from_array_element),
                 )
             } else {
                 covariant_result
@@ -1826,6 +1830,7 @@ impl<'a> InferenceContext<'a> {
                         &concrete_contra_candidates,
                         covariant_assignable_to_contra,
                         covariant_is_uninformative,
+                        candidates.iter().any(|c| c.from_array_element),
                     )
                 } else {
                     covariant_result
