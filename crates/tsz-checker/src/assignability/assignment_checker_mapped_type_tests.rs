@@ -19,10 +19,15 @@ type VisibleOnlyRenamed<Shape extends object> = {
   [Prop in keyof Shape as Prop extends `_${string}` ? never : Prop]: Shape[Prop]
 };
 
+type PrefixVisible<Input extends object> = {
+  [Key in keyof Input as Key extends string ? `x${Key}` : never]: Input[Key]
+};
+
 type cases = [
   Must<Same<VisibleOnly<{ c?: number }>, { c?: number }>>,
   Must<Same<VisibleOnly<{ readonly c?: number }>, { readonly c?: number }>>,
   Must<Same<VisibleOnlyRenamed<{ readonly kept?: string; _hidden: boolean }>, { readonly kept?: string }>>,
+  Must<Same<PrefixVisible<{ kept?: string }>, { xkept?: string }>>,
   Must<Same<VisibleOnly<{ _hidden?: number }>, {}>>,
 ];
 "#,
