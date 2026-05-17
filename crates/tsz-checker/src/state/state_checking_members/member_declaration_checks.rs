@@ -544,9 +544,7 @@ impl<'a> CheckerState<'a> {
                         .collect();
                     let factory = self.ctx.types.factory();
                     let mut param_bindings = Vec::new();
-                    for (param_name, &constraint) in
-                        infer_params.iter().zip(infer_constraints.iter())
-                    {
+                    for (param_name, &constraint) in infer_params.iter().zip(&infer_constraints) {
                         let atom = self.ctx.types.intern_string(param_name);
                         let type_id = factory.type_param(tsz_solver::TypeParamInfo {
                             name: atom,
