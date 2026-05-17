@@ -7,6 +7,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 mod callable_type_arguments;
+mod infer_implicit_constraints;
 
 pub(super) const fn should_cache_base_expr_result(
     type_argument_count: usize,

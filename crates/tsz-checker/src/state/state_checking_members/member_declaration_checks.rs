@@ -531,35 +531,16 @@ impl<'a> CheckerState<'a> {
                     // TS2838: Check that duplicate infer type params have identical constraints
                     self.check_infer_constraint_consistency(cond.extends_type);
 
-                    // Collect infer type parameters from extends_type and add them to scope for true_type
-                    let infer_params = self.collect_infer_type_parameters(cond.extends_type);
-                    let mut param_bindings = Vec::new();
-                    for param_name in &infer_params {
-                        let atom = self.ctx.types.intern_string(param_name);
-                        let type_id = factory.type_param(tsz_solver::TypeParamInfo {
-                            name: atom,
-                            constraint: None,
-                            default: None,
-                            is_const: false,
-                        });
-                        let previous = self
-                            .ctx
-                            .type_parameter_scope
-                            .insert(param_name.clone(), type_id);
-                        param_bindings.push((param_name.clone(), previous));
-                    }
+                    // Push infer parameters from extends_type with their implicit/explicit
+                    // constraints (`${infer X}` → string, `...infer X` → array, etc.) so
+                    // later TS2344 substitution sees the correct base.
+                    let param_bindings =
+                        self.push_infer_bindings_for_missing_names(cond.extends_type);
 
                     // Check true_type with infer type parameters in scope
                     self.check_type_for_missing_names(cond.true_type);
 
-                    // Remove infer type parameters from scope
-                    for (name, previous) in param_bindings.into_iter().rev() {
-                        if let Some(prev_type) = previous {
-                            self.ctx.type_parameter_scope.insert(name, prev_type);
-                        } else {
-                            self.ctx.type_parameter_scope.remove(&name);
-                        }
-                    }
+                    self.pop_infer_bindings_for_missing_names(param_bindings);
 
                     // Check false_type (infer type params not in scope)
                     self.check_type_for_missing_names(cond.false_type);

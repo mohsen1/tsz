@@ -2,17 +2,21 @@
 
 use tsz_checker::diagnostics::Diagnostic;
 
-fn assert_no_ts2322(source: &str, label: &str) {
+fn assert_no_code(code: u32, source: &str, label: &str) {
     let diags = tsz_checker::test_utils::check_source_strict(source);
-    let errors: Vec<&Diagnostic> = diags.iter().filter(|d| d.code == 2322).collect();
+    let errors: Vec<&Diagnostic> = diags.iter().filter(|d| d.code == code).collect();
     assert!(
         errors.is_empty(),
-        "[{label}] expected no TS2322, got:\n{:#?}",
+        "[{label}] expected no TS{code}, got:\n{:#?}",
         diags
             .iter()
             .map(|d| (d.code, d.start, d.message_text.as_str()))
             .collect::<Vec<_>>()
     );
+}
+
+fn assert_no_ts2322(source: &str, label: &str) {
+    assert_no_code(2322, source, label);
 }
 
 fn check_source_strict_with_default_libs(source: &str) -> Vec<Diagnostic> {
@@ -2642,5 +2646,173 @@ fn equal_any_then_is_union_no_cross_contamination() {
             export {{}};\n"
         ),
         "Equal<any,X> then IsUnion cross-contamination",
+    );
+}
+
+// =============================================================================
+// Implicit-constraint propagation for `infer X` declared inside a
+// template-literal slot, a rest position, or `infer X extends C`.
+// Regression coverage for #6748 — recursive template-literal aliases used to
+// emit false TS2344 because the pushed `infer X` had no `string`/array
+// constraint and the substituted witness collapsed to `unknown`.
+// =============================================================================
+
+fn assert_no_ts2344(source: &str, label: &str) {
+    assert_no_code(2344, source, label);
+}
+
+#[test]
+fn recursive_template_literal_camel_case_no_false_ts2344() {
+    // Rule: when `infer Rest` is declared inside `${...}`, its implicit
+    // `string` constraint must propagate so `CamelCase<Rest>` substitutes to
+    // `CamelCase<string>` (= string) and satisfies the `extends string`
+    // constraint of `Capitalize`.
+    let underscore = r#"
+type CamelCase<S extends string> =
+  S extends `${infer First}_${infer Rest}`
+    ? `${First}${Capitalize<CamelCase<Rest>>}`
+    : S;
+type C1 = CamelCase<"foo_bar_baz">;
+"#;
+    let kebab = r#"
+type KebabToCamel<S extends string> = S extends `${infer T}-${infer U}`
+  ? `${T}${Capitalize<KebabToCamel<U>>}`
+  : S;
+type K1 = KebabToCamel<"foo-bar-baz">;
+"#;
+    let trim_start = r#"
+type TrimStart<S extends string> = S extends ` ${infer Rest}` ? TrimStart<Rest> : S;
+type ParseJSON<S extends string> = S extends `"${infer Str}"` ? Str : never;
+type ParseArray<S extends string> =
+  S extends `${infer First},${infer Rest}`
+    ? [ParseJSON<TrimStart<First>>, ...ParseArray<Rest>]
+    : [ParseJSON<TrimStart<S>>];
+"#;
+    for (label, src) in [
+        ("CamelCase underscore", underscore),
+        ("KebabToCamel hyphen", kebab),
+        ("TrimStart inside ParseArray", trim_start),
+    ] {
+        assert_no_ts2344(src, label);
+    }
+}
+
+#[test]
+fn template_literal_infer_implicit_string_works_under_any_name() {
+    // Anti-hardcoding: the rule must hold regardless of the chosen names.
+    let names = [("First", "Rest"), ("Head", "Tail"), ("Lead", "Suffix")];
+    for (a, b) in names {
+        let src = format!(
+            r#"
+type Camel<S extends string> =
+  S extends `${{infer {a}}}_${{infer {b}}}`
+    ? `${{{a}}}${{Capitalize<Camel<{b}>>}}`
+    : S;
+type R = Camel<"foo_bar">;
+"#,
+        );
+        assert_no_ts2344(&src, &format!("Camel with infer {a}/{b}"));
+    }
+}
+
+#[test]
+fn rest_position_infer_satisfies_array_like_constraint() {
+    // `[...infer Init, infer L]` puts `Init` in rest position → implicit
+    // `unknown[]` constraint. Functions that take `T extends readonly unknown[]`
+    // should accept it without TS2344.
+    let src = r#"
+type Reverse<T extends readonly unknown[]> = T extends readonly [infer Head, ...infer Rest]
+  ? [...Reverse<Rest>, Head]
+  : T;
+type R = Reverse<[1, 2, 3]>;
+"#;
+    assert_no_ts2344(src, "Reverse with ...infer Rest");
+}
+
+#[test]
+fn explicit_infer_extends_constraint_propagates() {
+    // `infer X extends number` should carry that constraint to nested uses.
+    let src = r#"
+type AddOne<N extends number> = [...{ length: N }[number][], unknown]["length"] & number;
+type Inc<T> = T extends { length: infer N extends number } ? AddOne<N> : never;
+type R = Inc<[1, 2, 3]>;
+"#;
+    assert_no_ts2344(src, "infer N extends number → AddOne<N>");
+}
+
+#[test]
+fn nested_recursive_template_no_false_ts2344_with_capitalize() {
+    // The rule should hold regardless of which utility wraps the recursive call.
+    for util in ["Capitalize", "Uppercase", "Lowercase", "Uncapitalize"] {
+        let src = format!(
+            r#"
+type Conv<S extends string> =
+  S extends `${{infer A}}_${{infer B}}`
+    ? `${{A}}${{{util}<Conv<B>>}}`
+    : S;
+type R = Conv<"foo_bar">;
+"#,
+        );
+        assert_no_ts2344(&src, &format!("Conv with {util}"));
+    }
+}
+
+// =============================================================================
+// Recursive mapped + template-literal path aliases (#6214 regression).
+// =============================================================================
+
+#[test]
+fn recursive_mapped_template_path_includes_top_level_keys() {
+    // `{ [K in keyof T]: `${K}` | `${K}.${P<T[K]>}` }[keyof T]` should include
+    // both `"k"` and `"k.nested"`. Regression for #6214.
+    let src = r#"
+type Path<T> = T extends object
+  ? { [K in keyof T]: K extends string
+      ? `${K}` | `${K}.${Path<T[K]>}`
+      : never
+    }[keyof T]
+  : never;
+
+interface Config {
+  user: { name: string };
+  settings: { debug: boolean };
+}
+
+type P = Path<Config>;
+const a: P = "user";
+const b: P = "user.name";
+const c: P = "settings";
+const d: P = "settings.debug";
+"#;
+    assert_no_ts2322(src, "Path<Config> assignments");
+    assert_no_ts2344(src, "Path<Config> assignments");
+}
+
+#[test]
+fn recursive_mapped_template_path_rejects_invalid_member() {
+    let src = r#"
+type Path<T> = T extends object
+  ? { [K in keyof T]: K extends string
+      ? `${K}` | `${K}.${Path<T[K]>}`
+      : never
+    }[keyof T]
+  : never;
+
+interface Config {
+  user: { name: string };
+}
+type P = Path<Config>;
+const bad: P = "nope";
+"#;
+    let diags = tsz_checker::test_utils::check_source_strict(src);
+    let ts2322: Vec<&Diagnostic> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected one TS2322 for invalid path, got: {:#?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.as_str()))
+            .collect::<Vec<_>>()
     );
 }
