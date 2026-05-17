@@ -1149,7 +1149,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                     && sig.question_token
                                     && sig.type_annotation.is_some()
                                     && !type_node_includes_explicit_undefined(
-                                        &self.ctx.arena,
+                                        self.ctx.arena,
                                         sig.type_annotation,
                                     )
                                 {
