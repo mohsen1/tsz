@@ -1888,8 +1888,7 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Whether `name_idx` is the IDENTIFIER node `intrinsic` directly inside a
-    /// `TypeReference` that forms the entire body of a `TypeAliasDeclaration`.
+    /// Whether `name_idx` is `intrinsic` in a full type-alias `TypeReference` body.
     /// In that position tsc treats `intrinsic` as a keyword and reports TS2795
     /// (or accepts it for the four built-in string mapping aliases) — name
     /// resolution must not also fire TS2304.
@@ -1922,8 +1921,7 @@ impl<'a> CheckerState<'a> {
         parent_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
     }
 
-    /// Check if a type node subtree contains a circular reference to any type
-    /// currently being resolved (i.e., present in `symbol_resolution_set`).
+    /// Check if a type node subtree references any resolving type.
     /// Used to detect TS2577 "Return type annotation circularly references itself".
     fn type_node_contains_circular_reference(&self, type_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(type_idx) else {
