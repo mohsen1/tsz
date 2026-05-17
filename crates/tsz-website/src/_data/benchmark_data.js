@@ -425,6 +425,9 @@ function compatibilityRowFor(definition, allResults) {
     diagnosticCodes: Array.isArray(compatibility.diagnostic_codes) ? compatibility.diagnostic_codes.slice(0, 8) : [],
     diagnosticSubsystems,
     primarySubsystem: compatibility.primary_subsystem || diagnosticSubsystems[0]?.subsystem || null,
+    assertionCandidates: compatibility.assertion_candidates && typeof compatibility.assertion_candidates === "object"
+      ? compatibility.assertion_candidates
+      : null,
     reductionCandidates: Array.isArray(compatibility.reduction_candidates)
       ? compatibility.reduction_candidates.slice(0, 5)
       : [],
@@ -1914,6 +1917,22 @@ export function getProjectCompatibilityDashboard() {
     const reductionCandidates = Array.isArray(row.reductionCandidates)
       ? row.reductionCandidates.filter(Boolean).slice(0, 5)
       : [];
+    const assertionCandidates = row.assertionCandidates && typeof row.assertionCandidates === "object"
+      ? row.assertionCandidates
+      : null;
+    const assertionCandidateParts = [];
+    const addAssertionCandidateMetric = (label, key) => {
+      const value = assertionCandidates?.[key];
+      if (Number.isFinite(Number(value))) {
+        assertionCandidateParts.push(`${label}: ${fmt(value)}`);
+      }
+    };
+    addAssertionCandidateMetric("generated", "generated_assertions");
+    addAssertionCandidateMetric("tsc-clean", "tsc_diagnostic_free");
+    addAssertionCandidateMetric("both accepted", "both_accepted");
+    addAssertionCandidateMetric("both rejected", "both_rejected");
+    addAssertionCandidateMetric("tsc accepted/tsz rejected", "tsc_accepted_tsz_rejected");
+    addAssertionCandidateMetric("tsc rejected/tsz accepted", "tsc_rejected_tsz_accepted");
     const knownBlockers = Array.isArray(row.knownBlockers)
       ? row.knownBlockers.filter(Boolean).slice(0, 8)
       : [];
@@ -1943,6 +1962,11 @@ export function getProjectCompatibilityDashboard() {
           <span>${escapeHtml(`queue: ${diagnosticCodes.length ? diagnosticCodes.join(", ") : "unclassified diagnostic"}`)}</span>
           ${reductionCandidates.map((candidate) => `<code>${escapeHtml(candidate)}</code>`).join("")}
         </div>`;
+    const assertionHtml = assertionCandidateParts.length
+      ? `<div class="compat-assertions">
+          ${assertionCandidateParts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}
+        </div>`
+      : "";
     const subsystemHtml = row.className === "green" || !diagnosticSubsystems.length
       ? ""
       : `<div class="compat-subsystems">
@@ -1958,7 +1982,7 @@ export function getProjectCompatibilityDashboard() {
           ? deltas.map((delta) => `<code>${escapeHtml(delta)}</code>`).join("")
           : `<span>${escapeHtml("diagnostic delta not captured")}</span>`}
         </div>`;
-    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${blockerHtml}${subsystemHtml}${queueHtml}${deltaHtml}`;
+    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${blockerHtml}${subsystemHtml}${assertionHtml}${queueHtml}${deltaHtml}`;
   };
 
   return `<section class="compat-dashboard">

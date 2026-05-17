@@ -48,6 +48,7 @@ const comparison = report.comparison || {};
 const counts = report.candidateManifest?.counts || {};
 const tscCandidateDiagnostics = tsc.candidateDiagnostics || {};
 const tszCandidateDiagnostics = tsz.candidateDiagnostics || {};
+const candidateFileComparisonCounts = comparison.candidateFileComparison?.counts || {};
 const tscFilesWithDiagnostics = Array.isArray(tscCandidateDiagnostics.filesWithDiagnostics)
   ? tscCandidateDiagnostics.filesWithDiagnostics
   : [];
@@ -176,6 +177,12 @@ const row = {
     tsc_with_diagnostics: tscCandidateDiagnostics.candidatesWithDiagnostics ?? null,
     tsz_diagnostic_free: tszCandidateDiagnostics.candidatesWithoutDiagnostics ?? null,
     diagnostic_free_candidate_delta: comparison.diagnosticFreeCandidateDelta ?? null,
+    both_accepted: candidateFileComparisonCounts.bothAccepted ?? null,
+    both_rejected: candidateFileComparisonCounts.bothRejected ?? null,
+    tsc_accepted_tsz_rejected:
+      candidateFileComparisonCounts.tscAcceptedTszRejected ?? null,
+    tsc_rejected_tsz_accepted:
+      candidateFileComparisonCounts.tscRejectedTszAccepted ?? null,
   },
 };
 
