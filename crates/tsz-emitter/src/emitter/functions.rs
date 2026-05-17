@@ -15,7 +15,7 @@ impl<'a> Printer<'a> {
         let self_paren = self.ctx.flags.paren_leftmost_function_or_object;
         if self_paren {
             self.ctx.flags.paren_leftmost_function_or_object = false;
-            self.write("(");
+            self.open_paren();
         }
 
         let has_generator_asterisk = func.asterisk_token
@@ -33,7 +33,7 @@ impl<'a> Printer<'a> {
             };
             self.emit_async_function_es5(func, &func_name, "this");
             if self_paren {
-                self.write(")");
+                self.close_paren();
             }
             return;
         }
@@ -47,7 +47,7 @@ impl<'a> Printer<'a> {
             };
             self.emit_async_generator_lowered(func, &func_name);
             if self_paren {
-                self.write(")");
+                self.close_paren();
             }
             return;
         }
@@ -84,7 +84,7 @@ impl<'a> Printer<'a> {
                 .map(|source_pos| source_pos.pos)
                 .unwrap_or(search_start)
         };
-        self.write("(");
+        self.open_paren();
         let search_start = func
             .parameters
             .nodes
@@ -106,7 +106,8 @@ impl<'a> Printer<'a> {
             search_start,
             search_end,
         );
-        self.write(") ");
+        self.close_paren();
+        self.write_space();
 
         // Emit body - tsc never collapses multi-line function expression bodies
         // to single lines. Single-line formatting is preserved via emit_block
@@ -155,7 +156,7 @@ impl<'a> Printer<'a> {
         self.function_scope_depth -= 1;
         self.emitting_function_body_block = prev_emitting_function_body_block;
         if self_paren {
-            self.write(")");
+            self.close_paren();
         }
     }
 
