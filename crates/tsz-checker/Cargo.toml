@@ -1317,5 +1317,9 @@ path = "tests/track8_debt_contract_tests.rs"
 name = "static_readonly_unique_symbol_tests"
 path = "tests/static_readonly_unique_symbol_tests.rs"
 
+[[test]]
+name = "class_expression_as_type_annotation_tests"
+path = "tests/class_expression_as_type_annotation_tests.rs"
+
 [lints]
 workspace = true

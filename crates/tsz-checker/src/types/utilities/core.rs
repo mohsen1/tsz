@@ -2047,6 +2047,18 @@ impl<'a> CheckerState<'a> {
                 k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => return true,
                 k if k == syntax_kind_ext::CLASS_DECLARATION => return true,
                 k if k == syntax_kind_ext::ENUM_DECLARATION => return true,
+                k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                    // A variable whose initializer is a class expression (e.g. `const Foo =
+                    // class<T> { ... }`) introduces both a value (the constructor) and a type
+                    // (the instance type), just like a class declaration.  TypeScript allows the
+                    // variable name to be used as a type annotation in that case.
+                    if let Some(var_decl) = arena.get_variable_declaration(node)
+                        && let Some(init_node) = arena.get(var_decl.initializer)
+                        && init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    {
+                        return true;
+                    }
+                }
                 _ => {}
             }
         }
