@@ -618,6 +618,7 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text_for_map() {
             emitter.set_source_text(text);
         }
+        self.seed_tc39_decorator_function_bodies(&mut emitter, class_node);
 
         let output = emitter.emit_class(class_node);
         if output.is_empty() {

@@ -1175,7 +1175,7 @@ impl<'a> Printer<'a> {
         self.skip_comments_for_erased_node(node);
     }
 
-    fn seed_tc39_decorator_function_bodies(
+    pub(in crate::emitter) fn seed_tc39_decorator_function_bodies(
         &self,
         emitter: &mut crate::transforms::es_decorators::TC39DecoratorEmitter<'a>,
         class_node: NodeIndex,
