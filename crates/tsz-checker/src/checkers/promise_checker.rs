@@ -18,6 +18,8 @@ struct ThenableAwaitInfo {
     has_callable_then: bool,
 }
 
+const MAX_THENABLE_THIS_VALIDATION_DEPTH: u8 = 10;
+
 // =============================================================================
 // Promise and Async Type Checking Methods
 // =============================================================================
@@ -121,6 +123,26 @@ impl<'a> CheckerState<'a> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         Self::is_builtin_promise_like_name(symbol.escaped_name.as_str())
             .then(|| args.first().copied().unwrap_or(TypeId::UNKNOWN))
+    }
+
+    pub(crate) fn standard_lib_promise_like_application_arg(
+        &self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let query::PromiseTypeKind::Application { base, args, .. } =
+            query::classify_promise_type(self.ctx.types, type_id)
+        else {
+            return None;
+        };
+        let sym_id = match query::classify_promise_type(self.ctx.types, base) {
+            query::PromiseTypeKind::Lazy(def_id) => self.ctx.def_to_symbol_id(def_id)?,
+            query::PromiseTypeKind::TypeQuery(sym_ref) => SymbolId(sym_ref.0),
+            _ => return None,
+        };
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        (Self::is_builtin_promise_like_name(symbol.escaped_name.as_str())
+            && self.symbol_has_standard_lib_origin(sym_id))
+        .then(|| args.first().copied().unwrap_or(TypeId::UNKNOWN))
     }
 
     pub(crate) fn promise_branch_alias_body_from_application(
@@ -624,6 +646,25 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> Option<TypeId> {
+        self.await_operand_invalid_thenable_this_type_with_depth(type_id, 0)
+    }
+
+    fn await_operand_invalid_thenable_this_type_with_depth(
+        &mut self,
+        type_id: TypeId,
+        depth: u8,
+    ) -> Option<TypeId> {
+        if depth > MAX_THENABLE_THIS_VALIDATION_DEPTH {
+            return None;
+        }
+
+        if let Some(inner) = self.standard_lib_promise_like_application_arg(type_id) {
+            if self.is_awaited_application(inner) {
+                return None;
+            }
+            return self.await_operand_invalid_thenable_this_type_with_depth(inner, depth + 1);
+        }
+
         let info = self.extract_awaited_type_from_valid_thenable(type_id, true);
         if info.has_callable_then && info.awaited_type.is_none() {
             return info.rejected_this_type;
