@@ -211,3 +211,38 @@ assert.match(
   /createTsgoWinnerReport\(benchmarkData, latestBenchmarkArtifact\)/,
   "website should synthesize the green tsgo winner report when the selected benchmark has no prebuilt report",
 );
+
+withTempDir((dir) => {
+  const script = [
+    "import assert from 'node:assert/strict';",
+    "import fs from 'node:fs';",
+    "import path from 'node:path';",
+    "import configure from './.eleventy.js';",
+    "const callbacks = [];",
+    "const passthrough = [];",
+    "configure({",
+    "  addPassthroughCopy(copy) { passthrough.push(copy); },",
+    "  addWatchTarget() {},",
+    "  setServerOptions() {},",
+    "  on(event, callback) { if (event === 'eleventy.after') callbacks.push(callback); },",
+    "});",
+    "assert.ok(passthrough.some((copy) => copy['bench-snapshot.json'] === 'benchmark-data/latest.json'));",
+    "fs.mkdirSync(process.env.TSZ_TEST_DIST, { recursive: true });",
+    "for (const callback of callbacks) callback({ dir: { output: process.env.TSZ_TEST_DIST } });",
+    "const reportPath = path.join(process.env.TSZ_TEST_DIST, 'benchmark-data', 'latest.tsgo-winners.json');",
+    "const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));",
+    "assert.equal(report.worst.name, 'ts-toolbelt-project');",
+    "assert.equal(report.totals.green_tsgo_winners, 6);",
+    "",
+  ].join("\n");
+
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    cwd: path.join(ROOT, "crates", "tsz-website"),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TSZ_TEST_DIST: path.join(dir, "dist"),
+    },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
