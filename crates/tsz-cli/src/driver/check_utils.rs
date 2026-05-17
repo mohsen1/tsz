@@ -2234,16 +2234,15 @@ pub(super) fn apply_ts_directive_suppression(
     // here; callers still pass it so the public signature stays stable while
     // any deeper revisit of declaration-emit fingerprints lands.
     let _ = preserve_declaration_jsdoc_name_diagnostics;
-    // tsc's `getSyntacticDiagnostics` path bypasses directive suppression entirely.
+    // tsc's `getSyntacticDiagnostics` path bypasses directive suppression, but
+    // syntactic diagnostics on the target line still make `@ts-expect-error`
+    // used. Keep those diagnostics while recording the directive hit.
     diagnostics.retain(|diag| {
-        if is_real_syntax_error(diag.code) {
-            return true;
-        }
         let diag_line = line_of_offset(&line_starts, diag.start);
         for (idx, directive) in directives.iter().enumerate() {
             if diag_line == directive.suppressed_line {
                 directive_used[idx] = true;
-                return false;
+                return is_ts_directive_unsuppressible_syntactic(diag.code);
             }
         }
         true
@@ -2268,6 +2267,10 @@ pub(super) fn apply_ts_directive_suppression(
             }
         }
     }
+}
+
+const fn is_ts_directive_unsuppressible_syntactic(code: u32) -> bool {
+    is_real_syntax_error(code) || is_js_only_syntactic_diagnostic(code)
 }
 
 /// Classify a parse diagnostic code as a "real" syntax error (actual parse failure)
@@ -3879,17 +3882,31 @@ export declare function __classPrivateFieldSet<T extends object, V>(receiver: T,
     #[test]
     fn apply_suppression_never_suppresses_real_syntax_errors() {
         // TS1109 (Expression expected) is a real syntax error and must survive
-        // directive suppression even in the full-check path.
+        // directive suppression even in the full-check path. It still marks
+        // @ts-expect-error as used, matching tsc's TS2578 behavior.
         let source = "// @ts-expect-error\nconst broken = ;\n";
         let remaining = check_directive_suppression(source, &[1109]);
         assert!(
             remaining.iter().any(|d| d.code == 1109),
             "TS1109 must not be suppressed, got: {remaining:#?}"
         );
-        // The directive did not suppress anything → TS2578 is emitted.
         assert!(
-            remaining.iter().any(|d| d.code == 2578),
-            "TS2578 should be emitted when directive only targets a parse error, got: {remaining:#?}"
+            !remaining.iter().any(|d| d.code == 2578),
+            "TS2578 must not be emitted when directive targets a parse error, got: {remaining:#?}"
+        );
+    }
+
+    #[test]
+    fn apply_suppression_never_suppresses_js_only_syntactic_errors() {
+        let source = "// @ts-expect-error\nlet x: number;\n";
+        let remaining = check_directive_suppression(source, &[8010]);
+        assert!(
+            remaining.iter().any(|d| d.code == 8010),
+            "TS8010 must not be suppressed, got: {remaining:#?}"
+        );
+        assert!(
+            !remaining.iter().any(|d| d.code == 2578),
+            "TS2578 must not be emitted when directive targets a JS syntactic diagnostic, got: {remaining:#?}"
         );
     }
 

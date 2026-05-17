@@ -4156,6 +4156,73 @@ fn compile_no_check_expect_error_does_not_suppress_js_grammar_diagnostics() {
 }
 
 #[test]
+fn compile_expect_error_keeps_parse_diagnostic_without_unused_directive() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        "// @ts-expect-error\nconst broken = ;\n",
+    );
+
+    let args = parse_args(&[
+        "tsz",
+        "--ignoreConfig",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "main.ts",
+    ]);
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&1109),
+        "TS1109 must be reported even with @ts-expect-error, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2578),
+        "TS2578 must not be emitted when @ts-expect-error targets a parse diagnostic, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn compile_expect_error_keeps_js_syntactic_diagnostic_without_unused_directive() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.js"),
+        "// @ts-expect-error\nlet x: number;\n",
+    );
+
+    let args = parse_args(&[
+        "tsz",
+        "--ignoreConfig",
+        "--checkJs",
+        "--noEmit",
+        "--pretty",
+        "false",
+        "main.js",
+    ]);
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&8010),
+        "TS8010 must be reported even with @ts-expect-error, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&2578),
+        "TS2578 must not be emitted when @ts-expect-error targets a JS syntactic diagnostic, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_no_check_no_emit_is_parse_only() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
