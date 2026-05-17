@@ -82,6 +82,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         let lazy_type_params_resolver =
             |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
+        let type_reference_override = |type_name_idx: NodeIndex| -> Option<TypeId> {
+            self.import_call_type_reference(type_name_idx)
+        };
         let name_def_id_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
             if !type_name.contains('.') && self.ctx.type_parameter_scope.contains_key(type_name) {
                 return None;
@@ -178,7 +181,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 )
                 .with_strict_null_checks(self.ctx.strict_null_checks())
                 .with_name_def_id_resolver(&name_def_id_resolver)
-                .with_lazy_type_params_resolver(&lazy_type_params_resolver);
+                .with_lazy_type_params_resolver(&lazy_type_params_resolver)
+                .with_type_reference_override(&type_reference_override);
                 let resolved = annotation_lowering.lower_type(annotation_idx);
                 if resolved != TypeId::ANY && resolved != TypeId::ERROR {
                     return Some(resolved);
@@ -197,6 +201,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         .with_strict_null_checks(self.ctx.strict_null_checks())
         .with_name_def_id_resolver(&name_def_id_resolver)
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
+        .with_type_reference_override(&type_reference_override)
         .with_type_query_override(&type_query_override);
         if use_qualified_names {
             lowering = lowering.prefer_name_def_id_resolution();

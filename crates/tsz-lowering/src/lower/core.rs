@@ -64,6 +64,10 @@ pub struct TypeLowering<'a> {
     /// Optional resolver for lazy type parameter metadata. This is used when
     /// a lowered lazy reference omits type arguments but all parameters have defaults.
     pub(super) lazy_type_params_resolver: Option<&'a LazyTypeParamsResolver<'a>>,
+    /// Optional checker-owned override for non-standard type-reference names.
+    /// This lets the checker resolve shapes such as `import("./m").T` while
+    /// keeping conditional/mapped/indexed lowering centralized here.
+    pub(super) type_reference_override: Option<&'a NodeIndexResolver<'a, TypeId>>,
     /// Optional compiler-controlled intrinsic replacement for the lib-only
     /// `BuiltinIteratorReturn` alias.
     pub(super) builtin_iterator_return_type: Option<TypeId>,
@@ -356,6 +360,7 @@ impl<'a> TypeLowering<'a> {
             computed_name_resolver: None,
             computed_symbol_name_resolver: None,
             lazy_type_params_resolver: None,
+            type_reference_override: None,
             builtin_iterator_return_type: None,
             prefer_name_def_id_resolution: false,
             preferred_self_name: None,
@@ -469,6 +474,7 @@ impl<'a> TypeLowering<'a> {
             computed_name_resolver: self.computed_name_resolver,
             computed_symbol_name_resolver: self.computed_symbol_name_resolver,
             lazy_type_params_resolver: self.lazy_type_params_resolver,
+            type_reference_override: self.type_reference_override,
             builtin_iterator_return_type: self.builtin_iterator_return_type,
             prefer_name_def_id_resolution: self.prefer_name_def_id_resolution,
             preferred_self_name: self.preferred_self_name.clone(),
@@ -744,6 +750,19 @@ impl<'a> TypeLowering<'a> {
         resolver: &'a dyn Fn(DefId) -> Option<Vec<TypeParamInfo>>,
     ) -> Self {
         self.lazy_type_params_resolver = Some(resolver);
+        self
+    }
+
+    /// Set a checker-owned type-reference override.
+    ///
+    /// The callback receives the `type_name` node from a `TYPE_REFERENCE` and
+    /// may return the already-resolved base type. `TypeLowering` still owns
+    /// type-argument application and default filling for the reference.
+    pub fn with_type_reference_override(
+        mut self,
+        resolver: &'a dyn Fn(NodeIndex) -> Option<TypeId>,
+    ) -> Self {
+        self.type_reference_override = Some(resolver);
         self
     }
 
@@ -2509,6 +2528,7 @@ mod constructor_parity_tests {
         // Optional knobs default to disabled.
         assert!(lowering.computed_name_resolver.is_none());
         assert!(lowering.lazy_type_params_resolver.is_none());
+        assert!(lowering.type_reference_override.is_none());
         assert!(!lowering.prefer_name_def_id_resolution);
         assert!(lowering.preferred_self_name.is_none());
         assert!(lowering.preferred_self_def_id.is_none());

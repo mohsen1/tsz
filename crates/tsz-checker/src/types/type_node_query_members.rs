@@ -103,7 +103,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         self.value_property_type_query(expr_name)
     }
 
-    pub(crate) fn import_call_type_reference(&mut self, type_name: NodeIndex) -> Option<TypeId> {
+    pub(crate) fn import_call_type_reference(&self, type_name: NodeIndex) -> Option<TypeId> {
         let (sym_id, target_file_idx, remaining_segments) =
             self.resolve_import_call_member_symbol(type_name)?;
         let mut resolved = self.with_import_target_checker(target_file_idx, |checker| {

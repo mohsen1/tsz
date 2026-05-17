@@ -29,8 +29,8 @@ impl<'a> TypeLowering<'a> {
                 self.add_type_param_binding(name, type_id);
             }
             let true_type = self.lower_type(data.true_type);
-            let false_type = self.lower_type(data.false_type);
             self.pop_type_param_scope();
+            let false_type = self.lower_type(data.false_type);
 
             let cond = ConditionalType {
                 check_type,
@@ -448,6 +448,16 @@ impl<'a> TypeLowering<'a> {
         };
 
         if let Some(data) = self.arena.get_type_ref(node) {
+            if let Some(override_fn) = self.type_reference_override
+                && let Some(base_type) = override_fn(data.type_name)
+            {
+                return self.apply_type_reference_arguments(
+                    base_type,
+                    data.type_name,
+                    data.type_arguments.as_ref(),
+                );
+            }
+
             if let Some(name_node) = self.arena.get(data.type_name)
                 && let Some(ident) = self.arena.get_identifier(name_node)
             {
@@ -546,59 +556,69 @@ impl<'a> TypeLowering<'a> {
 
             // For now, just lower the type name as an identifier
             let base_type = self.lower_type(data.type_name);
-            if let Some(args) = &data.type_arguments
-                && !args.nodes.is_empty()
-            {
-                let mut type_args: Vec<TypeId> =
-                    args.nodes.iter().map(|&idx| self.lower_type(idx)).collect();
-                let type_symbol = self.resolve_type_symbol(data.type_name);
-                let value_symbol = self.resolve_value_symbol(data.type_name);
-                let base_type = if type_symbol.is_some() && base_type != TypeId::ERROR {
-                    base_type
-                } else if base_type == TypeId::ERROR {
-                    value_symbol
-                        .map(|symbol_id| self.interner.type_query(SymbolRef(symbol_id)))
-                        .unwrap_or(base_type)
-                } else {
-                    base_type
-                };
-                // Fill in missing type arguments from defaults (tsc's
-                // fillMissingTypeArguments). Defaults can reference earlier type
-                // params, so resolve them through the solver helper instead of
-                // copying the raw default type.
-                if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(base_type)
-                    && let Some(resolve_params) = self.lazy_type_params_resolver
-                    && let Some(type_params) = resolve_params(def_id)
-                    && type_args.len() < type_params.len()
-                    && type_params[type_args.len()..]
-                        .iter()
-                        .all(|p| p.default.is_some())
-                    && let Some(defaulted_args) = tsz_solver::fill_application_defaults(
-                        self.interner,
-                        &type_args,
-                        &type_params,
-                    )
-                {
-                    type_args = defaulted_args;
-                }
-                return self.interner.application(base_type, type_args);
-            }
-
-            if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(base_type)
-                && let Some(resolve_params) = self.lazy_type_params_resolver
-                && let Some(type_params) = resolve_params(def_id)
-                && !type_params.is_empty()
-                && type_params.iter().all(|param| param.default.is_some())
-                && let Some(default_args) =
-                    tsz_solver::fill_application_defaults(self.interner, &[], &type_params)
-            {
-                return self.interner.application(base_type, default_args);
-            }
-
-            base_type
+            self.apply_type_reference_arguments(
+                base_type,
+                data.type_name,
+                data.type_arguments.as_ref(),
+            )
         } else {
             TypeId::ERROR
         }
+    }
+
+    fn apply_type_reference_arguments(
+        &self,
+        base_type: TypeId,
+        type_name: NodeIndex,
+        type_arguments: Option<&tsz_parser::parser::NodeList>,
+    ) -> TypeId {
+        if let Some(args) = type_arguments
+            && !args.nodes.is_empty()
+        {
+            let mut type_args: Vec<TypeId> =
+                args.nodes.iter().map(|&idx| self.lower_type(idx)).collect();
+            let type_symbol = self.resolve_type_symbol(type_name);
+            let value_symbol = self.resolve_value_symbol(type_name);
+            let base_type = if type_symbol.is_some() && base_type != TypeId::ERROR {
+                base_type
+            } else if base_type == TypeId::ERROR {
+                value_symbol
+                    .map(|symbol_id| self.interner.type_query(SymbolRef(symbol_id)))
+                    .unwrap_or(base_type)
+            } else {
+                base_type
+            };
+            // Fill in missing type arguments from defaults (tsc's
+            // fillMissingTypeArguments). Defaults can reference earlier type
+            // params, so resolve them through the solver helper instead of
+            // copying the raw default type.
+            if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(base_type)
+                && let Some(resolve_params) = self.lazy_type_params_resolver
+                && let Some(type_params) = resolve_params(def_id)
+                && type_args.len() < type_params.len()
+                && type_params[type_args.len()..]
+                    .iter()
+                    .all(|p| p.default.is_some())
+                && let Some(defaulted_args) =
+                    tsz_solver::fill_application_defaults(self.interner, &type_args, &type_params)
+            {
+                type_args = defaulted_args;
+            }
+            return self.interner.application(base_type, type_args);
+        }
+
+        if let Some(tsz_solver::TypeData::Lazy(def_id)) = self.interner.lookup(base_type)
+            && let Some(resolve_params) = self.lazy_type_params_resolver
+            && let Some(type_params) = resolve_params(def_id)
+            && !type_params.is_empty()
+            && type_params.iter().all(|param| param.default.is_some())
+            && let Some(default_args) =
+                tsz_solver::fill_application_defaults(self.interner, &[], &type_params)
+        {
+            return self.interner.application(base_type, default_args);
+        }
+
+        base_type
     }
 
     /// Lower a qualified name type (A.B).

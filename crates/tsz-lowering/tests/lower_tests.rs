@@ -650,12 +650,12 @@ fn test_lower_conditional_infer_binding_false_branch() {
         TypeData::Conditional(cond_id) => {
             let cond = interner.conditional_type(cond_id);
             assert_eq!(cond.true_type, TypeId::NEVER);
-            assert_eq!(cond.false_type, cond.extends_type);
+            assert_ne!(cond.false_type, cond.extends_type);
             match interner.lookup(cond.false_type) {
-                Some(TypeData::Infer(info)) => {
-                    assert_eq!(interner.resolve_atom(info.name), "R");
+                Some(TypeData::UnresolvedTypeName(name)) => {
+                    assert_eq!(interner.resolve_atom(name), "R");
                 }
-                other => panic!("Expected infer type in false branch, got {other:?}"),
+                other => panic!("Expected unresolved type name in false branch, got {other:?}"),
             }
         }
         _ => panic!("Expected Conditional type, got {key:?}"),

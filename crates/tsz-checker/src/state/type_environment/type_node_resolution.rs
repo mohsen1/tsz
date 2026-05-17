@@ -329,7 +329,7 @@ impl<'a> CheckerState<'a> {
                     && self.find_leftmost_import_call(type_ref.type_name).is_some()
                 {
                     let imported_operand = {
-                        let mut checker = crate::TypeNodeChecker::new(&mut self.ctx);
+                        let checker = crate::TypeNodeChecker::new(&mut self.ctx);
                         checker.import_call_type_reference(type_ref.type_name)
                     };
                     if let Some(imported_operand) = imported_operand {
