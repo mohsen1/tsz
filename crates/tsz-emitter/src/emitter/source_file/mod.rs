@@ -1039,6 +1039,63 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn decorator_metadata_unresolved_qualified_type_uses_checked_entity_chain() {
+        let source = "declare function decorate(...args: any[]): any;\ndeclare namespace A {\n    export namespace B {\n        export namespace C {\n            export namespace D {\n            }\n        }\n    }\n}\nclass Foo {\n    f(@decorate user: A.B.C.D.E): void {}\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                emit_decorator_metadata: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a, _b, _c, _d;"),
+            "Qualified metadata fallback should hoist intermediate and final temps.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("__metadata(\"design:paramtypes\", [typeof (_d = typeof A !== \"undefined\" && (_a = A.B) !== void 0 && (_b = _a.C) !== void 0 && (_c = _b.D) !== void 0 && _c.E) === \"function\" ? _d : Object])"),
+            "Unresolved qualified metadata should emit tsc's checked entity-name fallback.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn decorator_metadata_import_equals_qualified_type_keeps_runtime_root() {
+        let source = "import database = require(\"./db\");\ndeclare function decorate(...args: any[]): any;\n@decorate\nclass MyClass {\n    constructor(value: database.db) {}\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                module: ModuleKind::CommonJS,
+                legacy_decorators: true,
+                emit_decorator_metadata: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("__metadata(\"design:paramtypes\", [database.db])"),
+            "Runtime import-equals qualified metadata should not be wrapped in the unresolved fallback.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("typeof (_a = typeof database"),
+            "Known runtime import-equals metadata should stay direct.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn commonjs_top_level_using_direct_exported_legacy_class_stays_inline() {
         let source =
             "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {}\n";
