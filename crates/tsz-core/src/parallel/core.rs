@@ -1399,6 +1399,14 @@ pub fn parse_and_bind_parallel_with_libs_and_target(
     lib_files: &[Arc<lib_loader::LibFile>],
     language_version: ScriptTarget,
 ) -> Vec<BindResult> {
+    let premerged_lib_binder = if files.len() > 1 && !lib_files.is_empty() {
+        let mut binder = BinderState::new();
+        binder.merge_lib_symbols(lib_files);
+        Some(Arc::new(binder))
+    } else {
+        None
+    };
+
     if files.len() <= 1 {
         return files
             .into_iter()
@@ -1408,6 +1416,7 @@ pub fn parse_and_bind_parallel_with_libs_and_target(
                     source_text,
                     lib_files,
                     language_version,
+                    premerged_lib_binder.as_deref(),
                 )
             })
             .collect();
@@ -1423,6 +1432,7 @@ pub fn parse_and_bind_parallel_with_libs_and_target(
                 source_text,
                 lib_files,
                 language_version,
+                premerged_lib_binder.as_deref(),
             )
         })
         .collect()
@@ -1433,6 +1443,7 @@ fn bind_file_with_libs_with_language_version(
     source_text: String,
     lib_files: &[Arc<lib_loader::LibFile>],
     language_version: ScriptTarget,
+    premerged_lib_binder: Option<&BinderState>,
 ) -> BindResult {
     // Skip parsing .json files - they should not be parsed as TypeScript.
     // JSON module imports should be resolved during module resolution and
@@ -1449,12 +1460,14 @@ fn bind_file_with_libs_with_language_version(
     let (arena, parse_diagnostics) = parser.into_parts();
 
     // Bind with lib symbols
-    let mut binder = BinderState::new();
+    let mut binder = premerged_lib_binder
+        .cloned()
+        .unwrap_or_else(BinderState::new);
     binder.set_debug_file(&file_name);
 
     // IMPORTANT: Merge lib symbols BEFORE binding source file
     // so that symbols like console, Array, Promise are available during binding
-    if !lib_files.is_empty() {
+    if premerged_lib_binder.is_none() && !lib_files.is_empty() {
         binder.merge_lib_symbols(lib_files);
     }
 

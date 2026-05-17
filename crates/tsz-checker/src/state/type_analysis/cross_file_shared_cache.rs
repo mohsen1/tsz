@@ -1,7 +1,7 @@
 //! Shared cross-file caches for actual library symbol delegation.
 
 use crate::state::CheckerState;
-use crate::state_type_analysis::cross_file_direct::is_direct_actual_lib_declaration_arena;
+use crate::state_type_analysis::cross_file_direct::is_builtin_lib_declaration_arena;
 use tsz_binder::SymbolId;
 use tsz_solver::{TypeId, TypeParamInfo};
 
@@ -17,7 +17,7 @@ impl<'a> CheckerState<'a> {
         needs_cross_file_delegation: bool,
     ) -> Option<String> {
         if needs_cross_file_delegation
-            || !delegate_arena.is_some_and(is_direct_actual_lib_declaration_arena)
+            || !delegate_arena.is_some_and(is_builtin_lib_declaration_arena)
         {
             return None;
         }
@@ -138,6 +138,39 @@ mod tests {
         assert!(
             state.ctx.lib_delegation_cache.contains_symbol_type(sym_id),
             "shared hits should warm the file-local delegation cache"
+        );
+    }
+
+    #[test]
+    fn shared_actual_lib_delegation_name_accepts_dom_builtin_libs() {
+        let lib_files = load_lib_files(&["dom.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let state = CheckerState { ctx };
+
+        let dom_arena = lib_files[0].arena.as_ref();
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get("HTMLElement")
+            .expect("HTMLElement should resolve to a DOM lib symbol");
+
+        assert_eq!(
+            state.shared_actual_lib_delegation_name(sym_id, Some(dom_arena), false),
+            Some("HTMLElement".to_string())
         );
     }
 }

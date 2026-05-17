@@ -67,7 +67,7 @@ pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
         || (stem.starts_with("es") && stem.as_bytes().get(2).is_some_and(u8::is_ascii_digit))
 }
 
-pub(super) fn is_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
+pub(crate) fn is_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
     arena.source_files.first().is_some_and(|source_file| {
         if !source_file.is_declaration_file {
             return false;

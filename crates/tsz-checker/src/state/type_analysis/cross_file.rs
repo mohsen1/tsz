@@ -644,6 +644,9 @@ impl<'a> CheckerState<'a> {
                 delegate_arena,
                 needs_cross_file_delegation,
             ) {
+                if let Some(shared_name) = shared_actual_lib_delegation_name.as_deref() {
+                    self.cache_shared_actual_lib_delegation(shared_name, result.0);
+                }
                 return Some(result);
             }
 
@@ -730,6 +733,9 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .lib_delegation_cache
                         .insert_symbol_type(sym_id, (direct_type, direct_params.clone()));
+                    if let Some(shared_name) = shared_actual_lib_delegation_name.as_deref() {
+                        self.cache_shared_actual_lib_delegation(shared_name, direct_type);
+                    }
                 }
                 return Some((direct_type, direct_params));
             }
@@ -800,6 +806,12 @@ impl<'a> CheckerState<'a> {
                             direct_params.clone(),
                         );
                     }
+                }
+                if symbol_type_cache_file_idx.is_none()
+                    && !needs_cross_file_delegation
+                    && let Some(shared_name) = shared_actual_lib_delegation_name.as_deref()
+                {
+                    self.cache_shared_actual_lib_delegation(shared_name, direct_type);
                 }
                 return Some((direct_type, direct_params));
             }
