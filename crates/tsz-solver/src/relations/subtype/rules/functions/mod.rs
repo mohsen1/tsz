@@ -12,7 +12,6 @@
 
 use crate::inference::infer::InferenceContext;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-use crate::relations::compat::CompatChecker;
 use crate::type_param_info;
 use crate::types::{
     CallSignature, FunctionShape, InferencePriority, ParamInfo, TypeData, TypeId, TypeParamInfo,
@@ -785,57 +784,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if (source_extends_eval == TypeId::ANY) != (target_extends_eval == TypeId::ANY) {
                     return SubtypeResult::False;
                 }
-                if self
-                    .check_subtype(source_cond.extends_type, target_cond.extends_type)
-                    .is_true()
-                    && self
-                        .check_subtype(target_cond.extends_type, source_cond.extends_type)
-                        .is_true()
-                {
-                    return SubtypeResult::True;
-                }
-                let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                if fallback
-                    .check_subtype(source_cond.extends_type, target_cond.extends_type)
-                    .is_true()
-                    && fallback
-                        .check_subtype(target_cond.extends_type, source_cond.extends_type)
-                        .is_true()
-                {
-                    return SubtypeResult::True;
-                }
-                if source_extends_eval == target_extends_eval
+                if source_cond.extends_type == target_cond.extends_type
+                    || source_extends_eval == target_extends_eval
                     || self.same_evaluated_union_members(source_extends_eval, target_extends_eval)
-                    || self.object_shapes_equivalent_for_conditional_return(
-                        source_extends_eval,
-                        target_extends_eval,
-                    )
-                    || self
-                        .union_contains_equivalent_member(source_extends_eval, target_extends_eval)
-                    || self
-                        .union_contains_equivalent_member(target_extends_eval, source_extends_eval)
-                {
-                    return SubtypeResult::True;
-                }
-                let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                if fallback
-                    .check_subtype(source_extends_eval, target_extends_eval)
-                    .is_true()
-                    && fallback
-                        .check_subtype(target_extends_eval, source_extends_eval)
-                        .is_true()
-                {
-                    return SubtypeResult::True;
-                }
-                let mut compat = CompatChecker::with_resolver(self.interner, self.resolver);
-                compat.set_strict_function_types(self.strict_function_types);
-                if compat.is_assignable(source_cond.extends_type, target_cond.extends_type)
-                    && compat.is_assignable(target_cond.extends_type, source_cond.extends_type)
-                {
-                    return SubtypeResult::True;
-                }
-                if compat.is_assignable(source_extends_eval, target_extends_eval)
-                    && compat.is_assignable(target_extends_eval, source_extends_eval)
                 {
                     return SubtypeResult::True;
                 }
@@ -858,17 +809,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             self.bypass_evaluation = prev;
             if raw_result.is_false() {
                 return raw_result;
-            }
-        }
-
-        let source_eval = self.evaluate_type(source_return);
-        let target_eval = self.evaluate_type(target_return);
-        if source_eval != source_return || target_eval != target_return {
-            let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
-            if fallback.check_subtype(source_eval, target_eval).is_true()
-                && fallback.check_subtype(target_eval, source_eval).is_true()
-            {
-                return SubtypeResult::True;
             }
         }
 
@@ -906,21 +846,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .collect();
         for source_member in source_evaluated {
             let Some(index) = unmatched.iter().position(|&target_member| {
-                if source_member == target_member {
-                    return true;
-                }
-                match (
-                    self.interner.lookup(source_member),
-                    self.interner.lookup(target_member),
-                ) {
-                    (Some(TypeData::Literal(source_lit)), Some(TypeData::Literal(target_lit))) => {
-                        source_lit == target_lit
-                    }
-                    (
-                        Some(TypeData::Intrinsic(source_kind)),
-                        Some(TypeData::Intrinsic(target_kind)),
-                    ) => source_kind == target_kind,
-                    _ => {
+                source_member == target_member
+                    || self.object_members_equivalent_for_conditional_extends(
+                        source_member,
+                        target_member,
+                    )
+                    || {
                         let mut fallback =
                             SubtypeChecker::with_resolver(self.interner, self.resolver);
                         fallback
@@ -930,7 +861,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 .check_subtype(target_member, source_member)
                                 .is_true()
                     }
-                }
             }) else {
                 return false;
             };
@@ -939,24 +869,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         true
     }
 
-    fn union_contains_equivalent_member(&mut self, union: TypeId, member: TypeId) -> bool {
-        let Some(TypeData::Union(list_id)) = self.interner.lookup(union) else {
-            return false;
-        };
-        let members: Vec<_> = self.interner.type_list(list_id).to_vec();
-        members.iter().any(|&candidate| {
-            candidate == member || {
-                let candidate = self.evaluate_type(candidate);
-                candidate == member || {
-                    let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
-                    fallback.check_subtype(candidate, member).is_true()
-                        && fallback.check_subtype(member, candidate).is_true()
-                }
-            }
-        })
-    }
-
-    fn object_shapes_equivalent_for_conditional_return(
+    fn object_members_equivalent_for_conditional_extends(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -971,8 +884,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         };
         let source_shape = self.interner.object_shape(source_shape_id);
         let target_shape = self.interner.object_shape(target_shape_id);
-        if source_shape.symbol != target_shape.symbol
-            || source_shape.string_index != target_shape.string_index
+        if source_shape.string_index != target_shape.string_index
             || source_shape.number_index != target_shape.number_index
             || source_shape.properties.len() != target_shape.properties.len()
         {
@@ -994,11 +906,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 || source_prop.readonly != target_prop.readonly
                 || source_prop.is_method != target_prop.is_method
                 || source_prop.visibility != target_prop.visibility
-                || !self.conditional_return_property_types_equivalent(
+                || (source_prop.visibility != tsz_common::Visibility::Public
+                    && source_prop.parent_id != target_prop.parent_id)
+                || !self.conditional_extends_property_types_equivalent(
                     source_prop.type_id,
                     target_prop.type_id,
                 )
-                || !self.conditional_return_property_types_equivalent(
+                || !self.conditional_extends_property_types_equivalent(
                     source_prop.write_type,
                     target_prop.write_type,
                 )
@@ -1009,7 +923,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         true
     }
 
-    fn conditional_return_property_types_equivalent(
+    fn conditional_extends_property_types_equivalent(
         &mut self,
         source: TypeId,
         target: TypeId,
@@ -1017,13 +931,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if source == target {
             return true;
         }
-        let source_eval = self.evaluate_type(source);
-        let target_eval = self.evaluate_type(target);
-        source_eval == target_eval || {
-            let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
-            fallback.check_subtype(source_eval, target_eval).is_true()
-                && fallback.check_subtype(target_eval, source_eval).is_true()
-        }
+        self.evaluate_type(source) == self.evaluate_type(target)
     }
 
     pub(crate) fn instantiate_function_shape(
