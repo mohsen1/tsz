@@ -458,21 +458,15 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         initializer: NodeIndex,
     ) -> Option<String> {
-        let Some(init_node) = self.arena.get(initializer) else {
-            return None;
-        };
+        let init_node = self.arena.get(initializer)?;
         if init_node.kind != syntax_kind_ext::CALL_EXPRESSION {
             return None;
         }
-        let Some(call) = self.arena.get_call_expr(init_node) else {
-            return None;
-        };
+        let call = self.arena.get_call_expr(init_node)?;
         if self.get_identifier_text(call.expression).as_deref() != Some("require") {
             return None;
         }
-        let Some(args) = call.arguments.as_ref() else {
-            return None;
-        };
+        let args = call.arguments.as_ref()?;
         let [arg_idx] = args.nodes.as_slice() else {
             return None;
         };
