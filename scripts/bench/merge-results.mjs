@@ -36,9 +36,49 @@ const errorCases = results.filter((row) => row.status).length;
 const hyperfineExitCodesRequired = payloads.every(
   ({ payload }) => payload.validation?.hyperfine_exit_codes_required === true,
 );
+const runnerEnvironments = payloads
+  .map(({ file, payload }) => ({ file, environment: payload.runner_environment }))
+  .filter(({ environment }) => environment && typeof environment === "object");
+const runnerEnvironment = runnerEnvironments[0]?.environment || null;
+const runnerEnvironmentWarnings = validateRunnerEnvironmentConsistency(runnerEnvironments);
 
 function hasProjectCompatibilityRows(rows) {
   return rows.some((row) => REQUIRED_PROJECT_ROWS.includes(row?.name));
+}
+
+function runnerHardwareSignature(environment) {
+  return {
+    platform: environment?.platform || null,
+    arch: environment?.arch || null,
+    release: environment?.release || null,
+    cpu_count: environment?.cpu_count ?? null,
+    cpu_model: environment?.cpu_model || null,
+    total_memory_bytes: environment?.total_memory_bytes ?? null,
+    github_runner_os: environment?.github_actions?.runner_os || null,
+    github_runner_arch: environment?.github_actions?.runner_arch || null,
+    cloud_build_machine_type: environment?.cloud_build?.machine_type || null,
+  };
+}
+
+function validateRunnerEnvironmentConsistency(environments) {
+  if (environments.length <= 1) return [];
+
+  const baseline = runnerHardwareSignature(environments[0].environment);
+  const warnings = [];
+  for (const { file, environment } of environments.slice(1)) {
+    const current = runnerHardwareSignature(environment);
+    const mismatchedFields = Object.keys(baseline)
+      .filter((key) => baseline[key] !== current[key]);
+    if (mismatchedFields.length > 0) {
+      warnings.push({
+        file: path.basename(file),
+        mismatched_fields: mismatchedFields,
+        expected: baseline,
+        actual: current,
+      });
+    }
+  }
+  return warnings;
 }
 
 function validateProjectCompatibilityRows(rows) {
@@ -83,7 +123,9 @@ const merged = {
   validation: {
     hyperfine_exit_codes_required: hyperfineExitCodesRequired,
     project_compatibility_required_fields: projectCompatibilityRequiredFields,
+    runner_environment_warnings: runnerEnvironmentWarnings,
   },
+  ...(runnerEnvironment ? { runner_environment: runnerEnvironment } : {}),
   quick_mode: payloads.every(({ payload }) => payload.quick_mode === true),
   filter: null,
   binaries: payloads.find(({ payload }) => payload.binaries)?.payload.binaries || {},
