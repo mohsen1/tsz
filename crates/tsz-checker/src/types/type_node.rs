@@ -221,7 +221,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// Each component is lowered through the checker's full machinery so that
     /// cross-file import type references (e.g. `import("./m").SomeType`) in the
     /// extends position are resolved via module-resolution rather than returning
-    /// `ERROR` (the TypeLowering fallback for call-expression type names).
+    /// `ERROR` (the `TypeLowering` fallback for call-expression type names).
     fn get_type_from_conditional_type(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_solver::ConditionalType;
 
@@ -243,11 +243,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let check_type = self.check(check_node);
         let extends_type = self.check(extends_node);
 
-        // Push infer type bindings from the extends pattern into scope so
-        // that the true branch can reference them (e.g. `infer R` in `T extends
-        // Array<infer R> ? R : never`). Both branches get the scope to match
-        // TypeLowering's behaviour (false branch cannot use infer names in valid
-        // TypeScript, so the extra scope entry is harmless there).
+        // Push infer type bindings from the extends pattern into scope only
+        // while checking the true branch (e.g. `infer R` in `T extends
+        // Array<infer R> ? R : never`). The false branch must not see these
+        // names; `tsc` reports TS2304 for `T extends [infer U] ? U : U`.
         let saved: Vec<(String, Option<TypeId>)> = if extends_type == TypeId::ERROR {
             Vec::new()
         } else {
@@ -262,9 +261,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         };
 
         let true_type = self.check(true_node);
-        let false_type = self.check(false_node);
-
-        for (name, prev) in saved {
+        for (name, prev) in saved.into_iter().rev() {
             match prev {
                 Some(v) => {
                     self.ctx.type_parameter_scope.insert(name, v);
@@ -274,6 +271,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
         }
+        let false_type = self.check(false_node);
 
         let cond = ConditionalType {
             check_type,

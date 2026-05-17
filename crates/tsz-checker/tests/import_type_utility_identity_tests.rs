@@ -113,6 +113,22 @@ const uCheck: string = u;
 }
 
 #[test]
+fn conditional_infer_binding_is_not_visible_in_false_branch() {
+    let diagnostics = diagnostics_for_import_utility(
+        r#"
+type FalseBranch<T> = T extends [infer U] ? U : U;
+type Result = FalseBranch<string>;
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, _)| *code == 2304),
+        "Expected TS2304 for an infer binding referenced from the false branch. \
+         Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn typeof_import_function_member_feeds_return_type() {
     let diagnostics = diagnostics_for_import_utility(
         r#"
