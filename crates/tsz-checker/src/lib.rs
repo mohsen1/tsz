@@ -432,6 +432,9 @@ mod cross_file_class_merge_tests;
 #[path = "../tests/cross_file_type_params_cache_tests.rs"]
 mod cross_file_type_params_cache_tests;
 #[cfg(test)]
+#[path = "tests/direct_generic_return_tests.rs"]
+mod direct_generic_return_tests;
+#[cfg(test)]
 #[path = "tests/dispatch_tests.rs"]
 mod dispatch_tests;
 #[cfg(test)]
