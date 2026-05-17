@@ -509,6 +509,9 @@ run_lint() {
   scripts/check-crate-root-files.sh || return $?
   node scripts/bench/test-merge-results.mjs || return $?
   node scripts/bench/test-perf-hotspots.mjs || return $?
+  for script in scripts/ci/*type-challenges*.mjs; do
+    node --check "$script" || return $?
+  done
   node scripts/ci/test-project-compile-guard-readiness-artifacts.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-classifier.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-clean-row.mjs || return $?
