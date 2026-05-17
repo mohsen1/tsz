@@ -356,6 +356,23 @@ write_type_challenges_pairing_report() {
   fi
 }
 
+write_type_challenges_assertion_candidates() {
+  local pairing_report="$FIXTURE_ROOT/type-challenges-readiness-pairing.json"
+  local type_challenges_compile_dir="$FIXTURE_ROOT/type-challenges/.tsz-compile"
+  local solutions_compile_dir="$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile"
+  local output_dir="$FIXTURE_ROOT/type-challenges-assertions"
+  local manifest="$output_dir/type-challenges-assertions-manifest.json"
+
+  if [[ -f "$pairing_report" ]]; then
+    node scripts/ci/type-challenges-assertion-candidates.mjs \
+      "$pairing_report" \
+      "$type_challenges_compile_dir" \
+      "$solutions_compile_dir" \
+      "$output_dir" \
+      "$manifest"
+  fi
+}
+
 check_project() {
   local name="$1"
   local tsconfig="$2"
@@ -507,6 +524,7 @@ case "$PROJECT_SET" in
 esac
 
 write_type_challenges_pairing_report
+write_type_challenges_assertion_candidates
 
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "Project compile failures: $FAILURES"
