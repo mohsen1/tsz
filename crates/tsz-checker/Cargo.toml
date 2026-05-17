@@ -550,6 +550,10 @@ name = "conditional_infer_tests"
 path = "tests/conditional_infer_tests.rs"
 
 [[test]]
+name = "conditional_co_located_infer_tests"
+path = "tests/conditional_co_located_infer_tests.rs"
+
+[[test]]
 name = "recursive_conditional_mapped_infer_tests"
 path = "tests/recursive_conditional_mapped_infer_tests.rs"
 

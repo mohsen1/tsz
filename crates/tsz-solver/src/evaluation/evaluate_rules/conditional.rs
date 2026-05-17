@@ -205,7 +205,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let mut visited = FxHashSet::default();
                     let mut checker = self.conditional_subtype_checker();
                     checker.allow_bivariant_rest = true;
-                    self.match_infer_pattern(
+                    self.match_infer_pattern_with_variance(
                         check_type,
                         extends_type,
                         &mut bindings,
@@ -432,7 +432,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     checker.allow_bivariant_rest = true;
                     let mut bindings = FxHashMap::default();
                     let mut visited = FxHashSet::default();
-                    if self.match_infer_pattern(
+                    if self.match_infer_pattern_with_variance(
                         constraint,
                         extends_type,
                         &mut bindings,
@@ -615,7 +615,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // PERF: Only allocate SubtypeChecker when infer matching is needed.
                 let mut checker = self.conditional_subtype_checker();
                 checker.allow_bivariant_rest = true;
-                if self.match_infer_pattern(
+                if self.match_infer_pattern_with_variance(
                     check_type,
                     extends_type,
                     &mut loop_bindings,
@@ -709,7 +709,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         let mut visited2 = FxHashSet::default();
                         let mut checker2 = self.conditional_subtype_checker();
                         checker2.allow_bivariant_rest = true;
-                        if self.match_infer_pattern(
+                        if self.match_infer_pattern_with_variance(
                             constraint,
                             extends_type,
                             &mut bindings2,
@@ -1957,15 +1957,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().conditional(*cond);
         }
 
-        let mut subst = TypeSubstitution::new();
+        // Phase 1: per infer-variable name, accumulate every candidate
+        // resolved from each property position. Object-property positions are
+        // all covariant for inference purposes, so candidates for the same
+        // name are unioned in phase 2 (matching tsc's behaviour for
+        // `T extends { a: infer U; b: infer U }` over `{ a: A; b: B }`,
+        // which yields `U = A | B`). Constraint filtering is applied per
+        // position before accumulation so an out-of-constraint candidate
+        // does not contaminate the union of the rest.
+        type CandidateList = SmallVec<[TypeId; 4]>;
+        let mut candidates: SmallVec<[(Atom, CandidateList); 4]> = SmallVec::new();
         for &(prop_name, info, optional) in infer_props {
             let Some(mut inferred) =
                 self.resolve_conditional_infer_property(check_unwrapped, prop_name, optional)
             else {
-                return self.evaluate(cond.false_type);
+                let subst = build_multi_prop_subst(self.interner(), candidates.as_slice());
+                let false_inst =
+                    instantiate_type_with_infer(self.interner(), cond.false_type, &subst);
+                return self.evaluate(false_inst);
             };
-
-            subst.insert(info.name, inferred);
 
             if let Some(constraint) = info.constraint {
                 let mut checker = self.conditional_subtype_checker();
@@ -1975,6 +1985,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let Some(filtered) =
                         self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
                     else {
+                        let subst = build_multi_prop_subst(self.interner(), candidates.as_slice());
                         let false_inst =
                             instantiate_type_with_infer(self.interner(), cond.false_type, &subst);
                         return self.evaluate(false_inst);
@@ -1987,12 +1998,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         &mut checker,
                     );
                 } else if !checker.is_subtype_of(inferred, constraint) {
-                    return self.evaluate(cond.false_type);
+                    let subst = build_multi_prop_subst(self.interner(), candidates.as_slice());
+                    let false_inst =
+                        instantiate_type_with_infer(self.interner(), cond.false_type, &subst);
+                    return self.evaluate(false_inst);
                 }
-                subst.insert(info.name, inferred);
+            }
+
+            if let Some(slot) = candidates.iter_mut().find(|(name, _)| *name == info.name) {
+                slot.1.push(inferred);
+            } else {
+                let mut v: CandidateList = SmallVec::new();
+                v.push(inferred);
+                candidates.push((info.name, v));
             }
         }
 
+        // Phase 2: union accumulated candidates per name. `union_from_slice`
+        // short-circuits single-element input, so the common N=1 path needs
+        // no special case.
+        let subst = build_multi_prop_subst(self.interner(), candidates.as_slice());
         let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
         self.evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst))
     }
@@ -2372,7 +2397,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker.allow_bivariant_rest = true;
         let mut bindings = FxHashMap::default();
         let mut visited = FxHashSet::default();
-        let matched = self.match_infer_pattern(
+        let matched = self.match_infer_pattern_with_variance(
             check_type,
             cond.extends_type,
             &mut bindings,
@@ -2410,7 +2435,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 checker.allow_bivariant_rest = true;
                 let mut bindings = FxHashMap::default();
                 let mut visited = FxHashSet::default();
-                let matched = self.match_infer_pattern(
+                let matched = self.match_infer_pattern_with_variance(
                     reduced,
                     cond.extends_type,
                     &mut bindings,
@@ -2497,7 +2522,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     checker.allow_bivariant_rest = true;
                     let mut bindings = FxHashMap::default();
                     let mut visited = FxHashSet::default();
-                    if !self.match_infer_pattern(
+                    if !self.match_infer_pattern_with_variance(
                         check_eval,
                         cond_extends,
                         &mut bindings,
@@ -2632,6 +2657,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             _ => false,
         }
     }
+}
+
+/// Build a [`TypeSubstitution`] from per-name candidate lists accumulated by
+/// `eval_conditional_object_multi_prop_infer`. `union_from_slice` already
+/// collapses 1-element slices to the element itself, so no separate single-
+/// candidate path is needed here. Free function rather than a method so the
+/// caller can keep the `candidates` borrow alive without aliasing `self`.
+fn build_multi_prop_subst(
+    interner: &dyn crate::caches::db::TypeDatabase,
+    candidates: &[(Atom, SmallVec<[TypeId; 4]>)],
+) -> TypeSubstitution {
+    let mut subst = TypeSubstitution::new();
+    for (name, cands) in candidates {
+        subst.insert(*name, interner.union_from_slice(cands));
+    }
+    subst
 }
 
 #[cfg(test)]

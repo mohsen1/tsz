@@ -99,6 +99,19 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// of recursive type-tree walks like `ts-toolbelt`'s `ComputeDeep` /
     /// `Invert` mapped+conditional bodies. See `is_silent_depth_bailed`.
     silent_depth_bailed: bool,
+    /// Names of `infer` variables that appear in contravariant (function/callable
+    /// parameter) positions of the *current* top-level extends pattern.
+    ///
+    /// Set by [`match_infer_pattern_with_variance`] (a `&mut self` entry point
+    /// used by conditional evaluation) and consumed by `bind_infer` to decide
+    /// how to merge multiple candidates for the same `infer` name: covariant
+    /// → union, contravariant → intersection. Restored to its previous value
+    /// when the outer match completes, so nested matches (constraint checks
+    /// triggering another extends evaluation) get their own snapshot. Plain
+    /// `Option` rather than `RefCell`, matching the conventions for
+    /// `apparent_conditional_branch` and `suppress_this_binding`.
+    pub(crate) pattern_contravariant_infers:
+        Option<rustc_hash::FxHashSet<tsz_common::interner::Atom>>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -173,6 +186,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             expand_application_display_alias_args: false,
             apparent_conditional_branch: None,
             silent_depth_bailed: false,
+            pattern_contravariant_infers: None,
         }
     }
 }
@@ -235,6 +249,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             expand_application_display_alias_args: false,
             apparent_conditional_branch: None,
             silent_depth_bailed: false,
+            pattern_contravariant_infers: None,
         }
     }
 

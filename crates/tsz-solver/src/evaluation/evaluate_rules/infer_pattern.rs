@@ -24,6 +24,32 @@ use super::super::evaluate::TypeEvaluator;
 use super::infer_substitutor::InferSubstitutor;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    /// `&mut self` entry-point wrapping [`match_infer_pattern`] that
+    /// pre-populates [`Self::pattern_contravariant_infers`] for the given
+    /// extends pattern. The previous slot value is saved and restored so a
+    /// re-entrant top-level match (e.g., a constraint check that itself
+    /// invokes this wrapper for a different extends) gets its own snapshot.
+    /// Structural recursion through plain [`Self::match_infer_pattern`] keeps
+    /// reading the outer pattern's set — that is the variance the leaf
+    /// `bind_infer` merge needs.
+    ///
+    /// All conditional-evaluation call sites should go through this wrapper;
+    /// direct calls to `match_infer_pattern` are still safe but will fall
+    /// back to "covariant for every name" merging.
+    pub(crate) fn match_infer_pattern_with_variance(
+        &mut self,
+        source: TypeId,
+        pattern: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        let prev = self.pattern_contravariant_infers.take();
+        self.pattern_contravariant_infers = Some(self.collect_contravariant_infer_names(pattern));
+        let result = self.match_infer_pattern(source, pattern, bindings, visited, checker);
+        self.pattern_contravariant_infers = prev;
+        result
+    }
     /// Substitute infer bindings into a type.
     ///
     /// Replaces all `infer X` references with their bound values from the bindings map.
@@ -356,7 +382,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// Used when matching a union source against a pattern: infer variables in
     /// covariant positions merge via union, contravariant via intersection.
-    fn collect_contravariant_infer_names(&self, pattern: TypeId) -> FxHashSet<Atom> {
+    pub(crate) fn collect_contravariant_infer_names(&self, pattern: TypeId) -> FxHashSet<Atom> {
         let mut result = FxHashSet::default();
         self.collect_infer_names_in_params(pattern, &mut result);
         result
@@ -413,7 +439,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Bind an inferred type to an infer parameter.
     ///
-    /// Handles constraint checking and merging with existing bindings.
+    /// Handles constraint checking and merging with existing bindings:
+    /// when the same `infer X` name appears in multiple positions of a single
+    /// extends pattern, candidates are combined according to the position's
+    /// variance — covariant positions union, contravariant positions intersect.
+    /// The variance set is computed once at the outer `match_infer_pattern`
+    /// entry and read here via `pattern_contravariant_infers`.
     pub(crate) fn bind_infer(
         &self,
         info: &TypeParamInfo,
@@ -430,9 +461,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             inferred = filtered;
         }
 
-        if let Some(existing) = bindings.get(&info.name) {
-            return checker.is_subtype_of(inferred, *existing)
-                && checker.is_subtype_of(*existing, inferred);
+        if let Some(&existing) = bindings.get(&info.name) {
+            if existing == inferred {
+                return true;
+            }
+            // Callers that go through `match_infer_pattern_with_variance`
+            // populate the set; direct callers leave it `None` and fall back
+            // to the covariant union default.
+            let is_contravariant = self
+                .pattern_contravariant_infers
+                .as_ref()
+                .is_some_and(|set| set.contains(&info.name));
+            let merged = if is_contravariant {
+                self.interner().intersection2(existing, inferred)
+            } else {
+                self.interner().union2(existing, inferred)
+            };
+            bindings.insert(info.name, merged);
+            return true;
         }
 
         bindings.insert(info.name, inferred);
@@ -1131,12 +1177,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let mut merged = base.clone();
 
             // Determine which infer names appear in contravariant positions
-            // (function/callable parameters) of the pattern. For those, multiple
-            // candidates from union members should be intersected (not unioned).
-            // This is essential for `UnionToIntersection<U>`:
+            // (function/callable parameters) of the *local* pattern at this
+            // recursion level. For those, multiple candidates from union
+            // members should be intersected (not unioned). This is essential
+            // for `UnionToIntersection<U>`:
             //   (U extends any ? (k: U) => void : never) extends ((k: infer I) => void) ? I : never
-            // where `I` is in a contravariant (parameter) position, so candidates
-            // from each union member are intersected to produce `A & B`.
+            // where `I` is in a contravariant (parameter) position, so
+            // candidates from each union member are intersected to produce
+            // `A & B`. Conversely, when matching a union source (e.g.,
+            // `string | number`) against a leaf pattern `infer P` reached by
+            // recursion into a function parameter, the local pattern has no
+            // function subtree — the union must be preserved, not collapsed
+            // to intersection. Reading the outer pattern's variance here
+            // would conflate those two cases.
             let contravariant_infers = self.collect_contravariant_infer_names(pattern);
 
             for &member in members.iter() {
