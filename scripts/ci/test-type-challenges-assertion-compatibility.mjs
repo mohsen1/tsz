@@ -130,6 +130,11 @@ withTempDir((dir) => {
     classification: {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: {
+        sources: {
+          templates: { repository: "type", ref: "type-ref" },
+          testCases: { repository: "type", ref: "type-ref" },
+          solutions: { repository: "solutions", ref: "solutions-ref" },
+        },
         counts: {
           pairedSolutions: 2,
           generatedAssertions: 2,
@@ -257,6 +262,11 @@ withTempDir((dir) => {
   );
   assert.deepEqual(row.exit_codes, { tsc: [1], tsz: [0], tsgo: [] });
   assert.deepEqual(row.assertion_candidates, {
+    sources: {
+      templates: { repository: "type", ref: "type-ref" },
+      testCases: { repository: "type", ref: "type-ref" },
+      solutions: { repository: "solutions", ref: "solutions-ref" },
+    },
     paired_solutions: 2,
     generated_assertions: 2,
     tsc_diagnostic_free: 1,

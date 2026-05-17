@@ -344,6 +344,7 @@ const row = {
   ),
   peak_memory_bytes: null,
   assertion_candidates: {
+    sources: report.candidateManifest?.sources ?? null,
     paired_solutions: counts.pairedSolutions ?? null,
     generated_assertions: counts.generatedAssertions ?? null,
     tsc_diagnostic_free: tscCandidateDiagnostics.candidatesWithoutDiagnostics ?? null,
