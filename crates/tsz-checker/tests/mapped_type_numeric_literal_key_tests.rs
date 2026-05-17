@@ -248,6 +248,29 @@ fn unannotated_const_symbol_initializers_preserve_tuple_mapped_key_identity() {
 }
 
 #[test]
+fn generic_tuple_to_object_preserves_typeof_tuple_unique_symbol_keys() {
+    assert_no_errors_with_symbol_lib(
+        "TupleToObject<typeof tupleSymbol> preserves unique-symbol keys",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        const sym1 = Symbol(1);
+        const sym2 = Symbol(2);
+        const tupleSymbol = [sym1, sym2] as const;
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [Key in T[number]]: Key
+        };
+        type Expected = { [sym1]: typeof sym1; [sym2]: typeof sym2 };
+        type Case = Expect<Equal<TupleToObject<typeof tupleSymbol>, Expected>>;
+        "#,
+    );
+}
+
+#[test]
 fn shadowed_symbol_initializer_keeps_local_return_type_in_tuple_mapped_keys() {
     assert_no_errors(
         "shadowed Symbol() tuple element stays string-literal key",
