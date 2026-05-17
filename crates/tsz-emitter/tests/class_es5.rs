@@ -232,6 +232,45 @@ fn test_legacy_accessor_decorator_metadata_uses_setter_parameter_type() {
 }
 
 #[test]
+fn test_legacy_async_method_decorator_metadata_without_annotation_uses_promise() {
+    let source = r#"class A {
+        @dec async inferred() {}
+        @dec async explicitAny(): any { return 1; }
+    }"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut output = String::new();
+
+    if let Some(root_node) = parser.arena.get(root)
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(node) = parser.arena.get(stmt_idx)
+                && node.kind == syntax_kind_ext::CLASS_DECLARATION
+            {
+                let mut emitter = ClassES5Emitter::new(&parser.arena);
+                emitter.set_decorator_info(ClassDecoratorInfo {
+                    class_decorators: Vec::new(),
+                    has_member_decorators: true,
+                    emit_decorator_metadata: true,
+                });
+                output = emitter.emit_class(stmt_idx);
+                break;
+            }
+        }
+    }
+
+    assert!(
+        output.contains("__metadata(\"design:returntype\", Promise)"),
+        "Inferred async ES5 method metadata should use Promise.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__metadata(\"design:returntype\", Object)"),
+        "Explicit async `any` ES5 method metadata should serialize normally.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_class_with_extends() {
     let output = emit_class(
         r#"class Dog extends Animal {

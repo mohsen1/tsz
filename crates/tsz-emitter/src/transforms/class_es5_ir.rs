@@ -1308,6 +1308,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 Method {
                     parameters: NodeList,
                     return_type: NodeIndex,
+                    is_async: bool,
                 },
                 Accessor {
                     name: NodeIndex,
@@ -1328,6 +1329,9 @@ impl<'a> ES5ClassTransformer<'a> {
                     let meta = MemberMeta::Method {
                         parameters: method.parameters.clone(),
                         return_type: method.type_annotation,
+                        is_async: self
+                            .arena
+                            .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword),
                     };
                     (&method.modifiers, method.name, false, false, meta)
                 }
@@ -1419,10 +1423,13 @@ impl<'a> ES5ClassTransformer<'a> {
                     MemberMeta::Method {
                         parameters,
                         return_type,
+                        is_async,
                     } => {
                         let param_types = serialize_param_types(self.arena, parameters);
                         let ret_type = if return_type.is_some() {
                             serialize_type_for_metadata(self.arena, *return_type)
+                        } else if *is_async {
+                            "Promise".to_string()
                         } else {
                             "void 0".to_string()
                         };
