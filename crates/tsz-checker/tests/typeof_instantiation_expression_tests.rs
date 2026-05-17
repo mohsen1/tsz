@@ -1,7 +1,8 @@
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::test_utils::{
-    check_source_diagnostics, check_source_with_libs, diagnostic_count, load_default_lib_files,
+    check_source_diagnostics, check_source_with_libs, diagnostic_count,
+    diagnostic_messages_with_code, load_default_lib_files,
 };
 
 fn diagnostics_with_default_libs(source: &str) -> Vec<Diagnostic> {
@@ -375,5 +376,110 @@ type Result = RT<typeof transform<string>>;
         diagnostic_count(&diags, 2635),
         0,
         "Satisfied constraint+arity must not emit TS2635, got: {diags:?}"
+    );
+}
+
+// ── TS2635 message text: named callables display as symbol name ───────────────
+//
+// Rule: When a Callable type has a named symbol (lib interface like
+// ArrayConstructor, MapConstructor, etc.), TS2635 messages must display the
+// symbol name, NOT the structural callable form and NOT an applied alias like
+// "ArrayConstructor<string, number>".
+//
+// Anonymous user-defined callable types (no symbol) still display structurally.
+
+#[test]
+fn ts2635_named_callable_array_shows_symbol_name_in_message() {
+    let diags = diagnostics_with_default_libs(
+        r#"
+const r = Array<string, number>;
+"#,
+    );
+    let messages = diagnostic_messages_with_code(&diags, 2635);
+    assert_eq!(messages.len(), 1, "Expected one TS2635, got: {diags:?}");
+    assert!(
+        messages[0].contains("'ArrayConstructor'"),
+        "TS2635 for Array<string, number> must say 'ArrayConstructor', got: {}",
+        messages[0]
+    );
+}
+
+#[test]
+fn ts2635_named_callable_array_shows_symbol_name_with_typeof_trigger_in_file() {
+    // Regression: when `typeof Array<string, number>` appears elsewhere in the
+    // same file, tsz used to follow the display alias and emit the full
+    // structural callable form instead of "ArrayConstructor".
+    let diags = diagnostics_with_default_libs(
+        r#"
+const r = Array<string, number>;
+type T22 = typeof Array<string, number>;
+"#,
+    );
+    let messages = diagnostic_messages_with_code(&diags, 2635);
+    assert!(
+        !messages.is_empty(),
+        "Expected TS2635 diagnostics, got none"
+    );
+    for msg in &messages {
+        assert!(
+            msg.contains("'ArrayConstructor'"),
+            "Every TS2635 for Array<T...> must say 'ArrayConstructor' even when typeof Array<T...> appears in the same file, got: {}",
+            msg
+        );
+        assert!(
+            !msg.contains("new (length?: number) =>"),
+            "TS2635 must not emit the structural callable form, got: {}",
+            msg
+        );
+    }
+}
+
+#[test]
+fn ts2635_named_callable_map_shows_symbol_name_in_message() {
+    // Same rule applied to MapConstructor — proves this is not Array-specific.
+    let diags = diagnostics_with_default_libs(
+        r#"
+const m = Map<string, number, boolean>;
+type Trigger = typeof Map<string, number, boolean>;
+"#,
+    );
+    let messages = diagnostic_messages_with_code(&diags, 2635);
+    assert!(
+        !messages.is_empty(),
+        "Expected TS2635 diagnostics for Map<string, number, boolean>, got none"
+    );
+    for msg in &messages {
+        assert!(
+            msg.contains("'MapConstructor'"),
+            "TS2635 for Map<T, U, V> must say 'MapConstructor', got: {}",
+            msg
+        );
+        assert!(
+            !msg.contains("new <K, V>"),
+            "TS2635 must not emit the structural callable form for MapConstructor, got: {}",
+            msg
+        );
+    }
+}
+
+#[test]
+fn ts2635_anonymous_callable_still_shows_structural_form() {
+    // Anonymous overloaded functions (no symbol name) must still use the
+    // structural display — the named-symbol fast path must not affect them.
+    let diags = check_source_diagnostics(
+        r#"
+declare const multi: {
+    <T>(x: T): T;
+    <T>(x: T, n: number): T;
+};
+type Bad = typeof multi<string, number, boolean>;
+"#,
+    );
+    let messages = diagnostic_messages_with_code(&diags, 2635);
+    assert_eq!(messages.len(), 1, "Expected one TS2635, got: {diags:?}");
+    assert!(
+        messages[0].contains('<'),
+        "TS2635 for anonymous callable must show structural form with '<', got: {}",
+        messages[0]
     );
 }

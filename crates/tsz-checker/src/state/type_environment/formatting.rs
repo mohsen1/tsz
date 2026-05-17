@@ -295,6 +295,27 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> String {
+        // Named callables (lib interfaces like `ArrayConstructor`) must show their symbol name in
+        // TS2635 messages; display aliases set by `typeof Ctor<A, B>` would otherwise steer the
+        // formatter into the structural branch. Anonymous callables fall through unchanged.
+        if let Some(shape) =
+            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, type_id)
+            && let Some(sym_id) = shape.symbol
+            && let Some(symbol) = self.ctx.binder.symbols.get(sym_id)
+            // Exclude synthetic (`__…`) and quoted-property (`"foo-bar"`) names.
+            && !symbol.escaped_name.is_empty()
+            && !symbol.escaped_name.starts_with('"')
+            && !symbol.escaped_name.starts_with("__")
+        {
+            let raw = symbol.escaped_name.as_str();
+            // Class constructor callables display as "typeof ClassName" (tsc behavior).
+            if symbol.has_flags(tsz_binder::symbol_flags::CLASS)
+                && !shape.construct_signatures.is_empty()
+            {
+                return format!("typeof {raw}");
+            }
+            return raw.to_owned();
+        }
         let mut formatter =
             tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
                 .with_diagnostic_mode()
