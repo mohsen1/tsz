@@ -502,8 +502,8 @@ jobs:
           bash scripts/install.sh --version latest --dir "${install_dir}"
           "${install_dir}/tsz" --version
 
-  bench:
-    name: bench-${{ matrix.label }}
+  bench-prep-artifact:
+    name: bench-prep-artifact
     needs: [bench-prepare, bench-prepare-cloudbuild]
     if: >-
       always() &&
@@ -513,6 +513,72 @@ jobs:
         needs.bench-prepare-cloudbuild.outputs.should_run == 'true')) &&
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled')
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 130
+    outputs:
+      should_run: ${{ steps.ready.outputs.should_run }}
+    steps:
+      - id: ready
+        name: Confirm benchmark prep artifact should be staged
+        shell: bash
+        run: echo "should_run=true" >> "$GITHUB_OUTPUT"
+
+      - name: Download self-hosted prep artifact
+        if: needs.bench-prepare.outputs.should_run == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-prep
+          path: .
+
+      - name: Download Cloud Build prep artifact
+        if: needs.bench-prepare-cloudbuild.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          deadline=$((SECONDS + 7200))
+          while true; do
+            if gcloud storage cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
+              bench-prep.env >/dev/null 2>&1 && \
+              gcloud storage cp \
+                "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.tar" \
+                bench-prep.tar >/dev/null 2>&1; then
+              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+              # shellcheck disable=SC1091
+              source bench-prep.env
+              if [[ "${BENCH_TARGET_SHA:-}" == "${{ env.BENCH_TARGET_SHA }}" ]]; then
+                exit 0
+              fi
+              echo "Cloud Build prep artifact is for ${BENCH_TARGET_SHA:-unknown}; waiting for ${{ env.BENCH_TARGET_SHA }}."
+            fi
+
+            if (( SECONDS >= deadline )); then
+              echo "No finished Cloud Build benchmark prep artifact is available for ${{ env.BENCH_TARGET_SHA }}."
+              exit 1
+            fi
+
+            echo "Waiting for Cloud Build benchmark prep artifact..."
+            sleep 30
+          done
+
+      - name: Validate benchmark prep artifact
+        shell: bash
+        run: tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+
+      - name: Upload normalized benchmark prep artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-prep-ready
+          path: bench-prep.tar
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 1
+
+  bench:
+    name: bench-${{ matrix.label }}
+    needs: bench-prep-artifact
+    if: needs.bench-prep-artifact.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
@@ -573,7 +639,7 @@ jobs:
       - name: Download benchmark prep artifact
         uses: actions/download-artifact@v4
         with:
-          name: bench-prep
+          name: bench-prep-ready
           path: .
 
       - name: Unpack benchmark prep artifact
