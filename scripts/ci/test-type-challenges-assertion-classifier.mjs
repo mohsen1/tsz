@@ -180,6 +180,16 @@ withTempDir((dir) => {
   ]);
   assert.equal(report.compilers.tsz.status, "pass");
   assert.equal(report.compilers.tsz.exitCode, 0);
+  assert.deepEqual(report.comparison, {
+    status: "tsz-accepts-tsc-rejected",
+    tscStatus: "fail",
+    tszStatus: "pass",
+    errorCountDelta: -2,
+    byCodeDelta: [
+      { key: "TS2304", tsc: 1, tsz: 0, delta: -1 },
+      { key: "TS2344", tsc: 1, tsz: 0, delta: -1 },
+    ],
+  });
 });
 
 withTempDir((dir) => {
@@ -211,4 +221,62 @@ withTempDir((dir) => {
   assert.deepEqual(report.compilers.tsc.diagnostics.bySemanticFamily, []);
   assert.equal(report.compilers.tsz.status, "unavailable");
   assert.deepEqual(report.compilers.tsz.diagnostics.bySemanticFamily, []);
+  assert.deepEqual(report.comparison, {
+    status: "unavailable",
+    tscStatus: "unavailable",
+    tszStatus: "unavailable",
+    errorCountDelta: null,
+    byCodeDelta: [],
+  });
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+  const fakeTsc = path.join(dir, "fake-tsc.js");
+  const fakeTsz = path.join(dir, "fake-tsz.js");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: {},
+    entries: [],
+  });
+  writeExecutable(
+    fakeTsc,
+    ["#!/usr/bin/env node", "process.exit(0)", ""].join("\n"),
+  );
+  writeExecutable(
+    fakeTsz,
+    [
+      "#!/usr/bin/env node",
+      "console.error(\"assertions/three.ts(1,1): error TS2589: deep\")",
+      "console.error(\"assertions/three.ts(2,1): error TS2589: deep again\")",
+      "process.exit(1)",
+      "",
+    ].join("\n"),
+  );
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TYPE_CHALLENGES_ASSERTION_TSC_BIN: fakeTsc,
+      TSZ_BIN: fakeTsz,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const report = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.deepEqual(report.comparison, {
+    status: "tsz-rejects-tsc-accepted",
+    tscStatus: "pass",
+    tszStatus: "fail",
+    errorCountDelta: 2,
+    byCodeDelta: [{ key: "TS2589", tsc: 0, tsz: 2, delta: 2 }],
+  });
 });
