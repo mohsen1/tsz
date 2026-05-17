@@ -2051,6 +2051,34 @@ fn test_cjs_exported_namespace_uses_var_at_es5() {
 }
 
 #[test]
+fn invalid_namespace_static_var_and_function_modifiers_are_preserved() {
+    let source = r#"namespace N {
+    public var publicValue: number = 0;
+    static var staticValue: number = 1;
+    private function privateFn(x: string) { }
+    static function staticFn(x: string) { }
+}"#;
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("var publicValue = 0;"),
+        "Invalid access modifier on namespace var should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static var staticValue = 1;"),
+        "Invalid static modifier on namespace var should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function privateFn(x) { }"),
+        "Invalid access modifier on namespace function should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static function staticFn(x) { }"),
+        "Invalid static modifier on namespace function should be preserved.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_cjs_exported_namespace_reopen_declares_var_once_es5() {
     let source = r#"export namespace N {
     export class A {}

@@ -63,6 +63,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.should_emit_invalid_namespace_static_modifier(node, &func.modifiers) {
+            self.write("static ");
+        }
+
         if func.is_async {
             self.write("async ");
         }

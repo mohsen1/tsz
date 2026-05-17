@@ -877,6 +877,9 @@ impl<'a> Printer<'a> {
         if self.emit_async_generator_shadow_variable_statement(node) {
             return;
         }
+        if self.should_emit_invalid_namespace_static_modifier(node, &var_stmt.modifiers) {
+            self.write("static ");
+        }
         let is_accessor = self
             .arena
             .has_modifier(&var_stmt.modifiers, SyntaxKind::AccessorKeyword)
