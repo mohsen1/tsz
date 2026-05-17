@@ -1206,11 +1206,15 @@ run_conformance_aggregate() {
   local artifacts_dir=".conformance-shards"
   local using_artifacts=0
   if [[ -d "$artifacts_dir" ]]; then
-    # Flatten: each shard artifact lands at .conformance-shards/conformance-shard-N/conformance.json
+    # upload-artifact@v4 preserves the full workspace-relative path inside the artifact.
+    # The file is at .ci-metrics/conformance.json in the workspace, so after download it
+    # lands at conformance-shard-N/.ci-metrics/conformance.json (not conformance-shard-N/conformance.json).
+    # Use find with maxdepth to locate the file regardless of the subdirectory depth.
     local found=0
     for shard_dir in "$artifacts_dir"/conformance-shard-*/; do
       [[ -d "$shard_dir" ]] || continue
-      local json="$shard_dir/conformance.json"
+      local json
+      json="$(find "$shard_dir" -name "conformance.json" -maxdepth 4 2>/dev/null | head -1)"
       [[ -f "$json" ]] || continue
       local shard_name
       shard_name="$(basename "$shard_dir")"
@@ -1220,6 +1224,9 @@ run_conformance_aggregate() {
     if [[ "$found" -gt 0 ]]; then
       echo "Using ${found} GitHub Actions artifact shard results from ${artifacts_dir}/"
       using_artifacts=1
+    else
+      echo "warning: ${artifacts_dir}/ exists but no conformance.json files found; falling back to GCS" >&2
+      ls -la "$artifacts_dir"/ 2>/dev/null || true
     fi
   fi
 
