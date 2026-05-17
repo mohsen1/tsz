@@ -9,6 +9,7 @@ use crate::types::{
     CallableShapeId, MappedModifier, ObjectShapeId, PropertyInfo, TypeData, TypeId,
 };
 use crate::utils;
+use smallvec::SmallVec;
 
 pub(crate) fn property_is_readonly(
     interner: &dyn TypeDatabase,
@@ -257,8 +258,9 @@ pub fn contains_mapped_type_with_readonly_modifier(
     interner: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> bool {
-    let mut stack = vec![type_id];
-    let mut seen = Vec::new();
+    let mut stack: SmallVec<[TypeId; 8]> = SmallVec::new();
+    let mut seen: SmallVec<[TypeId; 8]> = SmallVec::new();
+    stack.push(type_id);
 
     while let Some(current) = stack.pop() {
         if current.is_intrinsic() || seen.contains(&current) {
