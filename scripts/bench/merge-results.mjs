@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { REQUIRED_COMPATIBILITY_FIELDS, REQUIRED_PROJECT_ROWS } from "./project-rows.mjs";
+import {
+  COMPILE_CANARY_PROJECT_ROWS,
+  REQUIRED_COMPATIBILITY_FIELDS,
+  REQUIRED_PROJECT_ROWS,
+} from "./project-rows.mjs";
 
 const [, , outFile, ...inputFiles] = process.argv;
 
@@ -36,30 +40,93 @@ const errorCases = results.filter((row) => row.status).length;
 const hyperfineExitCodesRequired = payloads.every(
   ({ payload }) => payload.validation?.hyperfine_exit_codes_required === true,
 );
+const runnerEnvironments = payloads
+  .map(({ file, payload }) => ({ file, environment: payload.runner_environment }))
+  .filter(({ environment }) => environment && typeof environment === "object");
+const runnerEnvironment = runnerEnvironments[0]?.environment || null;
+const runnerEnvironmentWarnings = validateRunnerEnvironmentConsistency(runnerEnvironments);
+
+const REQUIRED_PROJECT_ROW_SET = new Set(REQUIRED_PROJECT_ROWS);
+const PROJECT_COMPATIBILITY_ROW_SET = new Set([
+  ...REQUIRED_PROJECT_ROWS,
+  ...COMPILE_CANARY_PROJECT_ROWS,
+]);
 
 function hasProjectCompatibilityRows(rows) {
-  return rows.some((row) => REQUIRED_PROJECT_ROWS.includes(row?.name));
+  return rows.some((row) => PROJECT_COMPATIBILITY_ROW_SET.has(row?.name));
+}
+
+function runnerHardwareSignature(environment) {
+  return {
+    platform: environment?.platform || null,
+    arch: environment?.arch || null,
+    release: environment?.release || null,
+    cpu_count: environment?.cpu_count ?? null,
+    cpu_model: environment?.cpu_model || null,
+    total_memory_bytes: environment?.total_memory_bytes ?? null,
+    github_runner_os: environment?.github_actions?.runner_os || null,
+    github_runner_arch: environment?.github_actions?.runner_arch || null,
+    cloud_build_machine_type: environment?.cloud_build?.machine_type || null,
+  };
+}
+
+function validateRunnerEnvironmentConsistency(environments) {
+  if (environments.length <= 1) return [];
+
+  const baseline = runnerHardwareSignature(environments[0].environment);
+  const warnings = [];
+  for (const { file, environment } of environments.slice(1)) {
+    const current = runnerHardwareSignature(environment);
+    const mismatchedFields = Object.keys(baseline)
+      .filter((key) => baseline[key] !== current[key]);
+    if (mismatchedFields.length > 0) {
+      warnings.push({
+        file: path.basename(file),
+        mismatched_fields: mismatchedFields,
+        expected: baseline,
+        actual: current,
+      });
+    }
+  }
+  return warnings;
 }
 
 function validateProjectCompatibilityRows(rows) {
-  const projectRows = rows.filter((row) => REQUIRED_PROJECT_ROWS.includes(row?.name));
+  const projectRows = rows.filter((row) => PROJECT_COMPATIBILITY_ROW_SET.has(row?.name));
   if (projectRows.length === 0) return;
 
   const byName = new Map(projectRows.map((row) => [row.name, row]));
   const failures = [];
-  for (const name of REQUIRED_PROJECT_ROWS) {
-    const row = byName.get(name);
-    if (!row) {
-      failures.push(`${name}: missing project row`);
-      continue;
+  const seenNames = new Set();
+  const duplicateNames = new Set();
+
+  for (const row of projectRows) {
+    if (seenNames.has(row.name)) {
+      duplicateNames.add(row.name);
+    } else {
+      seenNames.add(row.name);
     }
+  }
+  for (const name of [...duplicateNames].sort()) {
+    failures.push(`${name}: duplicate project row`);
+  }
+
+  if (projectRows.some((row) => REQUIRED_PROJECT_ROW_SET.has(row.name))) {
+    for (const name of REQUIRED_PROJECT_ROWS) {
+      if (!byName.has(name)) {
+        failures.push(`${name}: missing project row`);
+      }
+    }
+  }
+
+  for (const row of projectRows) {
     if (!row.compatibility || typeof row.compatibility !== "object") {
-      failures.push(`${name}: missing compatibility object`);
+      failures.push(`${row.name}: missing compatibility object`);
       continue;
     }
     for (const field of REQUIRED_COMPATIBILITY_FIELDS) {
       if (!Object.prototype.hasOwnProperty.call(row.compatibility, field)) {
-        failures.push(`${name}: missing compatibility.${field}`);
+        failures.push(`${row.name}: missing compatibility.${field}`);
       }
     }
   }
@@ -83,7 +150,9 @@ const merged = {
   validation: {
     hyperfine_exit_codes_required: hyperfineExitCodesRequired,
     project_compatibility_required_fields: projectCompatibilityRequiredFields,
+    runner_environment_warnings: runnerEnvironmentWarnings,
   },
+  ...(runnerEnvironment ? { runner_environment: runnerEnvironment } : {}),
   quick_mode: payloads.every(({ payload }) => payload.quick_mode === true),
   filter: null,
   binaries: payloads.find(({ payload }) => payload.binaries)?.payload.binaries || {},

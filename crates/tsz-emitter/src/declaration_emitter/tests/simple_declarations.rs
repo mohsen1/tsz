@@ -1420,6 +1420,152 @@ const send = handlers => Promise.resolve(handlers);
 }
 
 #[test]
+fn test_js_exported_arrow_without_jsdoc_emits_function_declaration() {
+    let output = emit_js_dts_with_usage_analysis("export const id = (value) => value;");
+
+    assert!(
+        output.contains("export function id(value: any);"),
+        "Expected exported JS arrow variable to emit as a function declaration: {output}"
+    );
+    assert!(
+        !output.contains("export const id:"),
+        "Did not expect exported JS arrow variable to stay as a const function type: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_jsx_arrow_destructured_computed_param_uses_literal_key() {
+    let source = r#"
+const dynPropName = "data-dyn";
+export const ExampleFunctionalComponent = ({ "data-testid": dataTestId, [dynPropName]: dynProp }) => (
+    <>Hello</>
+);
+"#;
+    let mut parser = ParserState::new("test.jsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let (_decl_idx, decl) = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            parser
+                .arena
+                .get_variable_declaration(node)
+                .filter(|decl| {
+                    parser.arena.get_identifier_text(decl.name)
+                        == Some("ExampleFunctionalComponent")
+                })
+                .map(|decl| (NodeIndex(idx as u32), decl))
+        })
+        .expect("missing declaration");
+    let init_node = parser
+        .arena
+        .get(decl.initializer)
+        .expect("missing arrow initializer");
+    let func = parser
+        .arena
+        .get_function(init_node)
+        .expect("missing arrow function");
+    let param_idx = func.parameters.nodes[0];
+    let param = parser
+        .arena
+        .get(param_idx)
+        .and_then(|node| parser.arena.get_parameter(node))
+        .expect("missing parameter");
+    let pattern = parser
+        .arena
+        .get(param.name)
+        .and_then(|node| parser.arena.get_binding_pattern(node))
+        .expect("missing object binding pattern");
+    let computed_expr = parser
+        .arena
+        .get(pattern.elements.nodes[1])
+        .and_then(|node| parser.arena.get_binding_element(node))
+        .and_then(|element| parser.arena.get(element.property_name))
+        .and_then(|node| parser.arena.get_computed_property(node))
+        .map(|computed| computed.expression)
+        .expect("missing computed binding property");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let data_testid = interner.intern_string("data-testid");
+    let data_dyn = interner.intern_string("data-dyn");
+    let param_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![
+            PropertyInfo::new(data_testid, TypeId::ANY),
+            PropertyInfo::new(data_dyn, TypeId::ANY),
+        ],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+    let func_type = interner.function(FunctionShape::new(
+        vec![ParamInfo::required(
+            interner.intern_string("__0"),
+            param_type,
+        )],
+        TypeId::ANY,
+    ));
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache
+        .node_types
+        .insert(computed_expr.0, interner.literal_string("data-dyn"));
+    type_cache.node_types.insert(decl.initializer.0, func_type);
+
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.jsx".to_string());
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export function ExampleFunctionalComponent"),
+        "Expected exported JS arrow component to emit as a function declaration: {output}"
+    );
+    assert!(
+        output.contains("\"data-dyn\": any;"),
+        "Expected computed binding key to use its resolved literal property name: {output}"
+    );
+    assert!(
+        output.contains("declare const dynPropName: \"data-dyn\";"),
+        "Expected computed binding key declaration to remain nameable: {output}"
+    );
+    assert!(
+        output.contains("): JSX.Element;"),
+        "Expected concise JSX arrow return to emit JSX.Element: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_computed_param_key_does_not_emit_synthetic_duplicate() {
+    let output = emit_js_dts_with_usage_analysis(
+        "export const key = \"x\";\nexport const f = ({ [key]: value }) => value;\n",
+    );
+
+    assert!(
+        output.contains("export const key: \"x\";"),
+        "Expected exported computed key const to emit through the normal export path: {output}"
+    );
+    assert!(
+        output.contains("export function f({ [key]: value }"),
+        "Expected exported JS arrow variable to emit as a function using the exported computed key: {output}"
+    );
+    assert!(
+        output.contains("x: any;"),
+        "Expected computed binding key to resolve to the literal property name: {output}"
+    );
+    assert_eq!(
+        output.matches("const key:").count(),
+        1,
+        "Did not expect a duplicate synthetic local declaration for an already exported computed key: {output}"
+    );
+}
+
+#[test]
 fn test_js_multiline_typedef_before_variable_comment_is_preserved() {
     let source = r#"
 /**
@@ -6595,6 +6741,122 @@ foo.default = 2;
     assert!(
         output.contains("let _default: number;\n    export { _default as default };"),
         "Expected reserved expando property to use local alias plus export specifier: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_factory_namespace_alias_declaration_emits_after_namespace() {
+    let output = emit_js_dts(
+        r#"
+class Base {
+    constructor() {}
+}
+
+const BaseFactory = () => {
+    return new Base();
+};
+
+BaseFactory.Base = Base;
+module.exports = BaseFactory;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = BaseFactory;")
+        .expect("Expected CommonJS export assignment");
+    let factory_pos = output
+        .find("declare function BaseFactory")
+        .expect("Expected factory function declaration");
+    let namespace_pos = output
+        .find("declare namespace BaseFactory")
+        .expect("Expected merged namespace declaration");
+    let class_pos = output
+        .find("declare class Base")
+        .expect("Expected local class dependency declaration");
+
+    assert!(
+        export_pos < factory_pos && factory_pos < namespace_pos && namespace_pos < class_pos,
+        "Expected namespace alias dependency declaration to follow the namespace schedule: {output}"
+    );
+    assert!(
+        output.contains("export { Base };"),
+        "Expected namespace to export the local class alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_namespace_alias_jsdoc_function_declaration_emits_once_after_namespace() {
+    let output = emit_js_dts(
+        r#"
+function Root() {}
+
+/**
+ * @param {number} x
+ * @returns {number}
+ */
+function Member(x) {
+    return x;
+}
+
+Root.Member = Member;
+module.exports = Root;
+"#,
+    );
+
+    let namespace_pos = output
+        .find("declare namespace Root")
+        .expect("Expected merged namespace declaration");
+    let member_pos = output
+        .find("declare function Member")
+        .expect("Expected local function dependency declaration");
+
+    assert!(
+        namespace_pos < member_pos,
+        "Expected JSDoc alias dependency declaration to follow the namespace schedule: {output}"
+    );
+    assert_eq!(
+        output.matches("declare function Member").count(),
+        1,
+        "Expected JSDoc alias dependency declaration to emit once: {output}"
+    );
+    assert!(
+        output.contains("export { Member };"),
+        "Expected namespace to export the local function alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_expando_does_not_defer_unrelated_same_named_jsdoc_function() {
+    let output = emit_js_dts(
+        r#"
+function Root() {}
+
+/**
+ * @returns {string}
+ */
+function x() {
+    return "";
+}
+
+Root.x = 1;
+module.exports = Root;
+"#,
+    );
+
+    let function_pos = output
+        .find("declare function x")
+        .expect("Expected unrelated same-named function declaration");
+    let namespace_pos = output
+        .find("declare namespace Root")
+        .expect("Expected merged namespace declaration");
+
+    assert!(
+        function_pos < namespace_pos,
+        "Expected same-named non-alias JSDoc function to avoid namespace-alias deferral: {output}"
+    );
+    assert!(
+        output.contains("declare var x: number;"),
+        "Expected non-alias expando property declaration to remain a value declaration: {output}"
     );
 }
 

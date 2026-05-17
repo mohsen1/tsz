@@ -16,6 +16,9 @@ PROJECT_COMPATIBILITY_JSONL="${TSZ_PROJECT_COMPILE_COMPATIBILITY_JSONL:-$FIXTURE
 PROJECT_COMPATIBILITY_SUMMARY="${TSZ_PROJECT_COMPILE_COMPATIBILITY_SUMMARY:-$FIXTURE_ROOT/project-compatibility-summary.json}"
 FAILURES=0
 LAST_PEAK_RSS_BYTES=0
+TYPE_CHALLENGES_PROJECT_MANIFESTS_WRITTEN=0
+TYPE_CHALLENGES_SOLUTIONS_MANIFEST_WRITTEN=0
+TYPE_CHALLENGES_PAIRING_REPORT_WRITTEN=0
 
 # shellcheck source=scripts/bench/project-fixtures.sh
 source "$ROOT_DIR/scripts/bench/project-fixtures.sh"
@@ -26,6 +29,8 @@ if [[ ! -x "$TSZ_BIN" ]]; then
 fi
 
 mkdir -p "$FIXTURE_ROOT"
+rm -f "$FIXTURE_ROOT/type-challenges-readiness-pairing.json"
+rm -rf "$FIXTURE_ROOT/type-challenges-assertions"
 : > "$PROJECT_COMPATIBILITY_JSONL"
 
 run_with_timeout() {
@@ -271,9 +276,11 @@ write_kysely_config() {
 write_type_challenges_config() {
   local source_dir="$FIXTURE_ROOT/type-challenges"
   local compile_dir="$source_dir/.tsz-compile"
+  local manifest_json="$compile_dir/type-challenges-template-manifest.json"
+  local test_cases_manifest_json="$compile_dir/type-challenges-test-cases-manifest.json"
 
   rm -rf "$compile_dir"
-  mkdir -p "$compile_dir/questions" "$compile_dir/utils"
+  mkdir -p "$compile_dir/questions" "$compile_dir/test-cases/questions" "$compile_dir/utils"
 
   local template
   while IFS= read -r template; do
@@ -282,6 +289,29 @@ write_type_challenges_config() {
     cp "$template" "$compile_dir/$rel"
     printf '\nexport {};\n' >> "$compile_dir/$rel"
   done < <(find "$source_dir/questions" -maxdepth 2 -name template.ts | sort)
+
+  local test_cases
+  while IFS= read -r test_cases; do
+    local rel="${test_cases#"$source_dir"/}"
+    mkdir -p "$compile_dir/test-cases/$(dirname "$rel")"
+    cp "$test_cases" "$compile_dir/test-cases/$rel"
+  done < <(find "$source_dir/questions" -maxdepth 2 -name test-cases.ts | sort)
+
+  TYPE_CHALLENGES_REPO="$TYPE_CHALLENGES_REPO" \
+  TYPE_CHALLENGES_REF="$TYPE_CHALLENGES_REF" \
+  TYPE_CHALLENGES_EXPECTED_GENERATED="$TYPE_CHALLENGES_EXPECTED_GENERATED" \
+  node scripts/ci/type-challenges-template-manifest.mjs \
+    "$source_dir" \
+    "$compile_dir" \
+    "$manifest_json"
+
+  TYPE_CHALLENGES_REPO="$TYPE_CHALLENGES_REPO" \
+  TYPE_CHALLENGES_REF="$TYPE_CHALLENGES_REF" \
+  TYPE_CHALLENGES_EXPECTED_TEST_CASES="$TYPE_CHALLENGES_EXPECTED_TEST_CASES" \
+  node scripts/ci/type-challenges-test-cases-manifest.mjs \
+    "$source_dir" \
+    "$compile_dir/test-cases" \
+    "$test_cases_manifest_json"
 
   cp "$source_dir/utils/index.d.ts" "$compile_dir/utils/index.d.ts"
   cat > "$compile_dir/tsconfig.tsz-guard.json" <<'JSON'
@@ -308,12 +338,55 @@ write_type_challenges_config() {
   "include": ["questions/**/template.ts", "utils/index.d.ts"]
 }
 JSON
+
+  TYPE_CHALLENGES_PROJECT_MANIFESTS_WRITTEN=1
 }
 
 write_type_challenges_solutions_config() {
   tsz_write_type_challenges_solutions_config \
     "$FIXTURE_ROOT/type-challenges-solutions" \
     "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile"
+
+  TYPE_CHALLENGES_SOLUTIONS_MANIFEST_WRITTEN=1
+}
+
+write_type_challenges_pairing_report() {
+  local template_manifest="$FIXTURE_ROOT/type-challenges/.tsz-compile/type-challenges-template-manifest.json"
+  local test_cases_manifest="$FIXTURE_ROOT/type-challenges/.tsz-compile/type-challenges-test-cases-manifest.json"
+  local solutions_manifest="$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json"
+  local output="$FIXTURE_ROOT/type-challenges-readiness-pairing.json"
+
+  if [[ "$TYPE_CHALLENGES_PROJECT_MANIFESTS_WRITTEN" == "1" \
+    && "$TYPE_CHALLENGES_SOLUTIONS_MANIFEST_WRITTEN" == "1" \
+    && -f "$template_manifest" && -f "$test_cases_manifest" && -f "$solutions_manifest" ]]; then
+    node scripts/ci/type-challenges-pairing-report.mjs \
+      "$template_manifest" \
+      "$test_cases_manifest" \
+      "$solutions_manifest" \
+      "$output"
+    TYPE_CHALLENGES_PAIRING_REPORT_WRITTEN=1
+  else
+    rm -f "$output"
+  fi
+}
+
+write_type_challenges_assertion_candidates() {
+  local pairing_report="$FIXTURE_ROOT/type-challenges-readiness-pairing.json"
+  local type_challenges_compile_dir="$FIXTURE_ROOT/type-challenges/.tsz-compile"
+  local solutions_compile_dir="$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile"
+  local output_dir="$FIXTURE_ROOT/type-challenges-assertions"
+  local manifest="$output_dir/type-challenges-assertions-manifest.json"
+
+  if [[ "$TYPE_CHALLENGES_PAIRING_REPORT_WRITTEN" == "1" && -f "$pairing_report" ]]; then
+    node scripts/ci/type-challenges-assertion-candidates.mjs \
+      "$pairing_report" \
+      "$type_challenges_compile_dir" \
+      "$solutions_compile_dir" \
+      "$output_dir" \
+      "$manifest"
+  else
+    rm -rf "$output_dir"
+  fi
 }
 
 check_project() {
@@ -465,6 +538,9 @@ case "$PROJECT_SET" in
     exit 2
     ;;
 esac
+
+write_type_challenges_pairing_report
+write_type_challenges_assertion_candidates
 
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "Project compile failures: $FAILURES"

@@ -971,6 +971,44 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn decorator_metadata_async_method_without_annotation_returns_promise() {
+        let source = "declare const d: MethodDecorator;\nclass C {\n    @d\n    async inferred() {}\n    @d\n    async explicitAny(): any { return 1; }\n    @d\n    async explicitVoid(): void {}\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                emit_decorator_metadata: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains(
+                "__metadata(\"design:returntype\", Promise)\n], C.prototype, \"inferred\", null);"
+            ),
+            "Inferred async method metadata should use Promise.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "__metadata(\"design:returntype\", Object)\n], C.prototype, \"explicitAny\", null);"
+            ),
+            "Explicit async `any` annotation should serialize normally.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "__metadata(\"design:returntype\", void 0)\n], C.prototype, \"explicitVoid\", null);"
+            ),
+            "Explicit async `void` annotation should serialize normally.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn decorator_metadata_nolib_isolated_global_type_uses_typeof_guard() {
         let source = "declare var Decorate: PropertyDecorator;\nexport class B {\n    @Decorate\n    member: Map<string, number>;\n}\n";
 

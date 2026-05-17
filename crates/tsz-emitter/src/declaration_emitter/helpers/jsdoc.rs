@@ -103,7 +103,9 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(in crate::declaration_emitter) fn jsdoc_attaches_through_var_prefix(between: &str) -> bool {
-        let trimmed = between.trim();
+        let Some(trimmed) = Self::trim_jsdoc_attach_trivia(between) else {
+            return false;
+        };
         if trimmed.is_empty() {
             return true;
         }
@@ -129,6 +131,25 @@ impl<'a> DeclarationEmitter<'a> {
                     | "async"
             )
         })
+    }
+
+    fn trim_jsdoc_attach_trivia(mut text: &str) -> Option<&str> {
+        loop {
+            let trimmed = text.trim_start_matches(char::is_whitespace);
+            if let Some(rest) = trimmed.strip_prefix("//") {
+                let Some(line_end) = rest.find('\n') else {
+                    return Some("");
+                };
+                text = &rest[line_end + 1..];
+                continue;
+            }
+            if let Some(rest) = trimmed.strip_prefix("/*") {
+                let comment_end = rest.find("*/")?;
+                text = &rest[comment_end + 2..];
+                continue;
+            }
+            return Some(trimmed.trim_end());
+        }
     }
 
     pub(in crate::declaration_emitter) fn extract_jsdoc_type_expression(
@@ -2139,7 +2160,7 @@ impl<'a> DeclarationEmitter<'a> {
             .as_deref()
             .is_some_and(Self::jsdoc_has_function_signature_tags);
         let has_any_jsdoc = jsdoc.is_some();
-        if !has_jsdoc_tags && !is_export_equals_root && !has_any_jsdoc {
+        if !has_jsdoc_tags && !is_export_equals_root && !has_any_jsdoc && !is_exported {
             return false;
         }
 
@@ -2242,6 +2263,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        self.emit_js_function_computed_binding_key_declarations(&func.parameters);
         self.emit_js_function_like_class_if_needed(
             decl_name,
             &func.parameters,
@@ -2378,23 +2400,22 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
-            let mut rest = Self::trim_jsdoc_same_line_following_tags(rest.trim());
+            let mut rest = Self::trim_jsdoc_template_description(
+                Self::trim_jsdoc_same_line_following_tags(rest.trim()),
+            );
             if let Some((constraint, name_rest)) = Self::parse_jsdoc_braced_type_and_name(rest)
                 && let Some((name, remaining)) = Self::take_jsdoc_template_name(name_rest)
             {
                 let constraint = Self::normalize_jsdoc_type_text(constraint, false);
-                let name_key = name.to_string();
+                let name_str = Self::format_constrained_jsdoc_template_param(name, &constraint);
+                let name_key = Self::jsdoc_template_param_name_key(&name_str).to_string();
                 if seen.insert(name_key) {
-                    params.push(format!("{name} extends {constraint}"));
+                    params.push(name_str);
                 }
-                rest = remaining;
+                rest = Self::trim_jsdoc_template_description(remaining);
             }
 
-            for name in rest
-                .split([',', ' ', '\t'])
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            {
+            for name in Self::split_jsdoc_template_param_segments(rest) {
                 // Bracket-default form `@template [T=string]` declares type
                 // parameter `T` with default `string`. Without unwrapping the
                 // brackets, the verbatim segment `[T=string]` would be
@@ -2412,10 +2433,68 @@ impl<'a> DeclarationEmitter<'a> {
         params
     }
 
+    fn split_jsdoc_template_param_segments(text: &str) -> Vec<&str> {
+        let mut segments = Vec::new();
+        let mut start = None;
+        let mut bracket_depth = 0usize;
+
+        for (idx, ch) in text.char_indices() {
+            if start.is_none() {
+                if matches!(ch, ',' | ' ' | '\t') {
+                    continue;
+                }
+                start = Some(idx);
+            }
+
+            match ch {
+                '[' => bracket_depth += 1,
+                ']' if bracket_depth > 0 => bracket_depth -= 1,
+                ',' | ' ' | '\t' if bracket_depth == 0 => {
+                    if let Some(seg_start) = start.take() {
+                        let segment = text[seg_start..idx].trim();
+                        if !segment.is_empty() {
+                            segments.push(segment);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(seg_start) = start {
+            let segment = text[seg_start..].trim();
+            if !segment.is_empty() {
+                segments.push(segment);
+            }
+        }
+
+        segments
+    }
+
     fn trim_jsdoc_same_line_following_tags(text: &str) -> &str {
         text.find(" @")
             .map(|idx| text[..idx].trim_end())
             .unwrap_or(text)
+    }
+
+    fn trim_jsdoc_template_description(text: &str) -> &str {
+        for (idx, ch) in text.char_indices() {
+            if ch != '-' {
+                continue;
+            }
+            let before_is_boundary = text[..idx]
+                .chars()
+                .next_back()
+                .is_none_or(char::is_whitespace);
+            let after_is_boundary = text[idx + ch.len_utf8()..]
+                .chars()
+                .next()
+                .is_none_or(char::is_whitespace);
+            if before_is_boundary && after_is_boundary {
+                return text[..idx].trim_end();
+            }
+        }
+        text
     }
 
     /// Strip `[…]` from a `@template` segment and rewrite `T=default` as
@@ -2434,6 +2513,25 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn format_constrained_jsdoc_template_param(name: &str, constraint: &str) -> String {
+        let trimmed = name.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            let inner = &trimmed[1..trimmed.len() - 1];
+            let (name, default) = inner
+                .split_once('=')
+                .map(|(name, default)| {
+                    let default = default.trim();
+                    (
+                        name.trim(),
+                        if default.is_empty() { "any" } else { default },
+                    )
+                })
+                .unwrap_or_else(|| (inner.trim(), "any"));
+            return format!("{name} extends {constraint} = {default}");
+        }
+        format!("{trimmed} extends {constraint}")
+    }
+
     fn jsdoc_template_param_name_key(text: &str) -> &str {
         let trimmed = text.trim();
         let end = trimmed
@@ -2448,7 +2546,13 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let end = text.find([',', ' ', '\t']).unwrap_or(text.len());
+        let end = if text.starts_with('[') {
+            text.find(']')
+                .map(|idx| idx + 1)
+                .unwrap_or_else(|| text.find([',', ' ', '\t']).unwrap_or(text.len()))
+        } else {
+            text.find([',', ' ', '\t']).unwrap_or(text.len())
+        };
         let name = text[..end].trim();
         if name.is_empty() {
             return None;
@@ -3284,3 +3388,7 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 }
+
+#[cfg(test)]
+#[path = "jsdoc_tests.rs"]
+mod jsdoc_tests;

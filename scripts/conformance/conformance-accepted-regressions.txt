@@ -16,7 +16,6 @@ TypeScript/tests/cases/compiler/inDoesNotOperateOnPrimitiveTypes.ts
 TypeScript/tests/cases/compiler/inferenceFromParameterlessLambda.ts
 TypeScript/tests/cases/compiler/instantiationExpressionErrorNoCrash.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
-TypeScript/tests/cases/compiler/jsxComplexSignatureHasApplicabilityError.tsx
 TypeScript/tests/cases/compiler/jsxElementType.tsx
 TypeScript/tests/cases/compiler/jsxExcessPropsAndAssignability.tsx
 TypeScript/tests/cases/compiler/objectFreeze.ts
