@@ -91,8 +91,8 @@ pub(super) fn group_jsx_attrs(attrs: &[JsxAttrInfo]) -> Vec<AttrGroup> {
 
 /// Extract `@jsxImportSource <package>` from leading block comments.
 /// Mirrors tsc behavior: only block comments before any code are scanned, and
-/// the `@jsxImportSource` tag must be followed by a pragma boundary
-/// (whitespace or end-of-comment) — this rejects fake tags like
+/// the `@jsxImportSource` tag is ASCII-case-insensitive and must be followed by
+/// a pragma boundary (whitespace or end-of-comment) — this rejects fake tags like
 /// `@jsxImportSourcex preact` that would otherwise be misparsed as a real
 /// pragma with package `x`.
 pub(super) fn extract_jsx_import_source(source: &str) -> Option<String> {
@@ -109,24 +109,9 @@ pub(super) fn extract_jsx_import_source(source: &str) -> Option<String> {
             let comment_start = pos + 2;
             if let Some(end_offset) = text[comment_start..].find("*/") {
                 let comment_body = &text[comment_start..comment_start + end_offset];
-                let mut start = 0usize;
-                let mut after_idx: Option<usize> = None;
-                while let Some(rel) = comment_body[start..].find("@jsxImportSource") {
-                    let abs = start + rel;
-                    let after = abs + "@jsxImportSource".len();
-                    let body_bytes = comment_body.as_bytes();
-                    if after >= body_bytes.len()
-                        || (body_bytes[after] as char).is_ascii_whitespace()
-                    {
-                        after_idx = Some(after);
-                        break;
-                    }
-                    start = after;
-                    if start >= comment_body.len() {
-                        break;
-                    }
-                }
-                if let Some(after) = after_idx {
+                if let Some(after) =
+                    crate::jsx_pragmas::find_complete_pragma_tag(comment_body, "@jsxImportSource")
+                {
                     let pkg: String = comment_body[after..]
                         .trim_start()
                         .chars()

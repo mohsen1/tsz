@@ -69,7 +69,7 @@ fn is_pragma_boundary(body: &str, pos: usize) -> bool {
     pos >= bytes.len() || (bytes[pos] as char).is_ascii_whitespace()
 }
 
-fn find_complete_pragma_tag(body: &str, tag: &str) -> Option<usize> {
+pub(crate) fn find_complete_pragma_tag(body: &str, tag: &str) -> Option<usize> {
     let mut start = 0;
     while let Some(rel) = find_ascii_case_insensitive(&body[start..], tag) {
         let abs = start + rel;
@@ -180,12 +180,10 @@ fn classic_jsx_factory_roots_from_facts(
 }
 
 /// Extract the last valid `@jsxRuntime classic` or `@jsxRuntime automatic`
-/// pragma from block comments. Invalid prefix/value matches are ignored.
+/// pragma from block comments. The tag is ASCII-case-insensitive, while the
+/// runtime value remains case-sensitive. Invalid prefix/value matches are
+/// ignored.
 pub(crate) fn extract_jsx_runtime_pragma(source: &str) -> Option<JsxRuntimePragma> {
-    if !source.contains("@jsxRuntime") {
-        return None;
-    }
-
     let mut result = None;
     let bytes = source.as_bytes();
     let mut pos = 0;

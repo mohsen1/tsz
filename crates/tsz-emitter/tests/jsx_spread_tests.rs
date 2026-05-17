@@ -237,6 +237,60 @@ export const el = <h />;
     );
 }
 
+#[test]
+fn jsx_runtime_automatic_pragma_tag_is_case_insensitive() {
+    let source = r#"/* @jsxruntime automatic */
+export const el = <h />;
+"#;
+    let output = emit_jsx_with_printer_options(
+        source,
+        PrinterOptions {
+            jsx: JsxEmit::React,
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("const jsx_runtime_1 = require(\"react/jsx-runtime\");"),
+        "Lower-case @jsxruntime should synthesize the automatic JSX runtime import.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.el = (0, jsx_runtime_1.jsx)(\"h\", {});"),
+        "Lower-case @jsxruntime should select automatic JSX emit.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("React.createElement"),
+        "Lower-case @jsxruntime must suppress classic createElement output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn jsx_import_source_pragma_tag_is_case_insensitive() {
+    let source = r#"/* @jsximportsource preact */
+export const el = <h />;
+"#;
+    let output = emit_jsx_with_printer_options(
+        source,
+        PrinterOptions {
+            jsx: JsxEmit::ReactJsx,
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("const jsx_runtime_1 = require(\"preact/jsx-runtime\");"),
+        "Lower-case @jsximportsource should drive the automatic runtime package.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("require(\"react/jsx-runtime\")"),
+        "Recognized @jsximportsource preact must suppress the default React runtime import.\nOutput:\n{output}"
+    );
+}
+
 // =============================================================================
 // Spread flattening: {...{...a, ...b}} → ...a, ...b
 // =============================================================================
