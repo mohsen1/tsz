@@ -21,8 +21,8 @@ TypeScript/tests/cases/compiler/jsxElementType.tsx
 TypeScript/tests/cases/compiler/jsxExcessPropsAndAssignability.tsx
 TypeScript/tests/cases/compiler/objectFreeze.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
-TypeScript/tests/cases/compiler/ramdaToolsNoInfinite2.ts
 TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx
+TypeScript/tests/cases/compiler/relationalOperatorComparable.ts
 TypeScript/tests/cases/compiler/relationComplexityError.ts
 TypeScript/tests/cases/compiler/strictOptionalProperties1.ts
 TypeScript/tests/cases/compiler/styledComponentsInstantiaionLimitNotReached.ts
@@ -43,7 +43,6 @@ TypeScript/tests/cases/conformance/expressions/binaryOperators/instanceofOperato
 TypeScript/tests/cases/conformance/externalModules/typeOnly/importEquals2.ts
 TypeScript/tests/cases/conformance/externalModules/umd-augmentation-2.ts
 TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsTypedefAndLatebound.ts
-TypeScript/tests/cases/conformance/jsx/checkJsxChildrenProperty2.tsx
 TypeScript/tests/cases/conformance/jsx/tsxGenericAttributesType5.tsx
 TypeScript/tests/cases/conformance/jsx/tsxGenericAttributesType6.tsx
 TypeScript/tests/cases/conformance/node/esmModuleExports2.ts
