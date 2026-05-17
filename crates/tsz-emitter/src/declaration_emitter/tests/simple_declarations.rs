@@ -6599,6 +6599,46 @@ foo.default = 2;
 }
 
 #[test]
+fn test_js_commonjs_factory_namespace_alias_declaration_emits_after_namespace() {
+    let output = emit_js_dts(
+        r#"
+class Base {
+    constructor() {}
+}
+
+const BaseFactory = () => {
+    return new Base();
+};
+
+BaseFactory.Base = Base;
+module.exports = BaseFactory;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = BaseFactory;")
+        .expect("Expected CommonJS export assignment");
+    let factory_pos = output
+        .find("declare function BaseFactory")
+        .expect("Expected factory function declaration");
+    let namespace_pos = output
+        .find("declare namespace BaseFactory")
+        .expect("Expected merged namespace declaration");
+    let class_pos = output
+        .find("declare class Base")
+        .expect("Expected local class dependency declaration");
+
+    assert!(
+        export_pos < factory_pos && factory_pos < namespace_pos && namespace_pos < class_pos,
+        "Expected namespace alias dependency declaration to follow the namespace schedule: {output}"
+    );
+    assert!(
+        output.contains("export { Base };"),
+        "Expected namespace to export the local class alias: {output}"
+    );
+}
+
+#[test]
 fn test_js_reordered_accessor_comments_keep_backing_field_comment() {
     let output = emit_js_dts_with_usage_analysis(
         r#"

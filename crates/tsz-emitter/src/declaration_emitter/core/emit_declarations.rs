@@ -200,6 +200,16 @@ impl<'a> DeclarationEmitter<'a> {
         }
         self.js_namespace_export_aliases =
             self.collect_js_namespace_export_aliases(source_file, &self.js_export_equals_names);
+        self.js_deferred_namespace_alias_declarations = self
+            .collect_js_namespace_alias_declaration_statements(
+                source_file,
+                &self.js_namespace_export_aliases,
+            );
+        self.js_deferred_namespace_alias_declaration_stmts = self
+            .js_deferred_namespace_alias_declarations
+            .values()
+            .flat_map(|stmt_idxs| stmt_idxs.iter().copied())
+            .collect();
         let js_namespace_class_expando_declarations =
             self.collect_js_namespace_class_expando_declarations(source_file);
         let js_commonjs_expando_declarations = self
@@ -593,6 +603,13 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
         if self.js_class_static_member_stmts.contains(&stmt_idx) {
+            self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+        if self
+            .js_deferred_namespace_alias_declaration_stmts
+            .contains(&stmt_idx)
+        {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
             return;
         }
