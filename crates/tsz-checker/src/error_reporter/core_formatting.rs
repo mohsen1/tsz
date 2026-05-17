@@ -1,5 +1,4 @@
 //! Type formatting and diagnostic anchor helpers for error reporter.
-
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -7,15 +6,14 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     fn format_type_diagnostic_for_assignability_display(&mut self, type_id: TypeId) -> String {
+        let exact_optional = self.ctx.compiler_options.exact_optional_property_types;
         let mut formatter = self
             .ctx
             .create_diagnostic_type_formatter()
             .with_display_properties()
             .with_expand_scalar_mapped_alias_applications()
             .with_preserve_optional_parameter_surface_syntax(true)
-            .with_exact_optional_property_types(
-                self.ctx.compiler_options.exact_optional_property_types,
-            );
+            .with_exact_optional_property_types(exact_optional);
         formatter.format(type_id).into_owned()
     }
     fn format_type_diagnostic_widened_for_assignability_display(
@@ -29,7 +27,6 @@ impl<'a> CheckerState<'a> {
             .with_preserve_optional_parameter_surface_syntax(true);
         formatter.format(type_id).into_owned()
     }
-
     pub(crate) fn format_type_for_property_receiver_message(&mut self, type_id: TypeId) -> String {
         let mut formatter = self
             .ctx

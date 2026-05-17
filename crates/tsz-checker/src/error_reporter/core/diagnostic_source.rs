@@ -617,27 +617,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(in crate::error_reporter) fn format_declared_annotation_for_diagnostic(
-        &self,
-        annotation_text: &str,
-    ) -> String {
-        let mut formatted = annotation_text.trim().to_string();
-        formatted = Self::normalize_single_quoted_string_literal_types(&formatted);
-        if !self.ctx.compiler_options.exact_optional_property_types {
-            formatted = Self::add_undefined_to_optional_object_property_display(&formatted);
-        }
-        if self.ctx.compiler_options.exact_optional_property_types && formatted.contains("?:") {
-            formatted = Self::normalize_inline_object_type_literal_spacing(&formatted);
-        }
-        if formatted.contains(':') {
-            formatted = formatted.replace(" }", "; }");
-            while formatted.contains(";; }") {
-                formatted = formatted.replace(";; }", "; }");
-            }
-        }
-        formatted
-    }
-
     pub(crate) fn format_type_diagnostic_structural(&self, ty: TypeId) -> String {
         let mut formatter =
             tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
@@ -1823,18 +1802,6 @@ impl<'a> CheckerState<'a> {
         let annotation_text = self.declared_type_annotation_text_for_expression(expr_idx)?;
         Self::annotation_text_is_plain_type_reference(&annotation_text)
             .then(|| self.format_declared_annotation_for_diagnostic(&annotation_text))
-    }
-
-    fn annotation_text_is_plain_type_reference(annotation_text: &str) -> bool {
-        let text = annotation_text.trim();
-        !text.is_empty()
-            && text.split('.').all(|part| {
-                let mut chars = part.chars();
-                chars
-                    .next()
-                    .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphabetic())
-                    && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-            })
     }
 
     /// Returns `true` when `narrowed`'s union members are a strict subset of

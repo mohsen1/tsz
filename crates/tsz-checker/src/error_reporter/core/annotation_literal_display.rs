@@ -186,4 +186,39 @@ impl<'a> CheckerState<'a> {
 
         out
     }
+
+    pub(in crate::error_reporter) fn format_declared_annotation_for_diagnostic(
+        &self,
+        annotation_text: &str,
+    ) -> String {
+        let mut formatted = annotation_text.trim().to_string();
+        formatted = Self::normalize_single_quoted_string_literal_types(&formatted);
+        if !self.ctx.compiler_options.exact_optional_property_types {
+            formatted = Self::add_undefined_to_optional_object_property_display(&formatted);
+        }
+        if self.ctx.compiler_options.exact_optional_property_types && formatted.contains("?:") {
+            formatted = Self::normalize_inline_object_type_literal_spacing(&formatted);
+        }
+        if formatted.contains(':') {
+            formatted = formatted.replace(" }", "; }");
+            while formatted.contains(";; }") {
+                formatted = formatted.replace(";; }", "; }");
+            }
+        }
+        formatted
+    }
+
+    pub(in crate::error_reporter) fn annotation_text_is_plain_type_reference(
+        annotation_text: &str,
+    ) -> bool {
+        let text = annotation_text.trim();
+        !text.is_empty()
+            && text.split('.').all(|part| {
+                let mut chars = part.chars();
+                chars
+                    .next()
+                    .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphabetic())
+                    && chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+            })
+    }
 }
