@@ -429,7 +429,7 @@ jobs:
       - name: Publish latest channel release
         if: steps.cloudbuild-artifact.outputs.ready == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TARGET_SHA: ${{ steps.cloudbuild-artifact.outputs.target_sha }}
         shell: bash
         run: |
@@ -439,19 +439,126 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch --no-tags --depth=1 origin "${RELEASE_TARGET_SHA}"
 
-          gh release delete "${LATEST_TAG}" --cleanup-tag --yes || true
+          python3 <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          api = "https://api.github.com"
+          repo = os.environ["GITHUB_REPOSITORY"]
+          tag = os.environ["LATEST_TAG"]
+          token = os.environ["GITHUB_TOKEN"]
+
+          def github_json(method, path, body=None, allow_404=False, expect=None):
+              data = None
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {token}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              }
+              if body is not None:
+                  data = json.dumps(body).encode("utf-8")
+                  headers["Content-Type"] = "application/json"
+              req = urllib.request.Request(f"{api}{path}", data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      raw = resp.read()
+                      payload = json.loads(raw.decode("utf-8")) if raw else None
+                      if expect is not None and resp.status != expect:
+                          raise RuntimeError(f"{method} {path} returned {resp.status}, expected {expect}")
+                      return resp.status, payload
+              except urllib.error.HTTPError as exc:
+                  if allow_404 and exc.code == 404:
+                      return exc.code, None
+                  detail = exc.read().decode("utf-8", errors="replace")
+                  raise RuntimeError(f"{method} {path} failed with HTTP {exc.code}: {detail}") from exc
+
+          status, release = github_json(
+              "GET",
+              f"/repos/{repo}/releases/tags/{tag}",
+              allow_404=True,
+          )
+          if status == 200:
+              github_json("DELETE", f"/repos/{repo}/releases/{release['id']}", expect=204)
+          PY
           git tag -f "${LATEST_TAG}" "${RELEASE_TARGET_SHA}"
           git push origin "refs/tags/${LATEST_TAG}" --force
 
-          gh release create "${LATEST_TAG}" \
-            dist/tsz-${LATEST_TAG}-${LATEST_TARGET}.tar.gz \
-            dist/tsz-${LATEST_TAG}-${LATEST_TARGET}.tar.gz.sha256 \
-            dist/SHA256SUMS \
-            --title "latest" \
-            --target "${RELEASE_TARGET_SHA}" \
-            --prerelease \
-            --latest=false \
-            --notes "Daily PGO optimized tsz build for ${LATEST_TARGET}, built from ${RELEASE_TARGET_SHA}."
+          python3 <<'PY'
+          import json
+          import mimetypes
+          import os
+          import pathlib
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          api = "https://api.github.com"
+          repo = os.environ["GITHUB_REPOSITORY"]
+          tag = os.environ["LATEST_TAG"]
+          target = os.environ["LATEST_TARGET"]
+          sha = os.environ["RELEASE_TARGET_SHA"]
+          token = os.environ["GITHUB_TOKEN"]
+
+          def github_request(method, url_or_path, body=None, content_type="application/json", expect=None):
+              url = url_or_path if url_or_path.startswith("https://") else f"{api}{url_or_path}"
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {token}",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              }
+              data = body
+              if content_type == "application/json":
+                  data = json.dumps(body).encode("utf-8") if body is not None else None
+              if content_type:
+                  headers["Content-Type"] = content_type
+              if data is not None:
+                  headers["Content-Length"] = str(len(data))
+              req = urllib.request.Request(url, data=data, headers=headers, method=method)
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      raw = resp.read()
+                      payload = json.loads(raw.decode("utf-8")) if raw else None
+                      if expect is not None and resp.status != expect:
+                          raise RuntimeError(f"{method} {url} returned {resp.status}, expected {expect}")
+                      return resp.status, payload
+              except urllib.error.HTTPError as exc:
+                  detail = exc.read().decode("utf-8", errors="replace")
+                  raise RuntimeError(f"{method} {url} failed with HTTP {exc.code}: {detail}") from exc
+
+          _, release = github_request(
+              "POST",
+              f"/repos/{repo}/releases",
+              {
+                  "tag_name": tag,
+                  "target_commitish": sha,
+                  "name": "latest",
+                  "body": f"Daily PGO optimized tsz build for {target}, built from {sha}.",
+                  "prerelease": True,
+                  "make_latest": "false",
+              },
+              expect=201,
+          )
+          upload_url = release["upload_url"].split("{", 1)[0]
+          assets = [
+              pathlib.Path(f"dist/tsz-{tag}-{target}.tar.gz"),
+              pathlib.Path(f"dist/tsz-{tag}-{target}.tar.gz.sha256"),
+              pathlib.Path("dist/SHA256SUMS"),
+          ]
+          for asset in assets:
+              name = asset.name
+              content_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+              data = asset.read_bytes()
+              params = urllib.parse.urlencode({"name": name})
+              github_request(
+                  "POST",
+                  f"{upload_url}?{params}",
+                  data,
+                  content_type=content_type,
+                  expect=201,
+              )
+          PY
 
       - name: Smoke test latest installer
         if: steps.cloudbuild-artifact.outputs.ready == 'true'
