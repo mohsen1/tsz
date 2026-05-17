@@ -657,6 +657,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 continue;
             }
 
+            tracing::trace!(
+                i,
+                arg_type_id = arg_type.0,
+                arg_type_key = ?self.interner.lookup(arg_type),
+                target_type_id = target_type.0,
+                target_type_key = ?self.interner.lookup(target_type),
+                "compute_contextual_types Round1 loop"
+            );
+
             let Some((contextual_arg_type, contextual_target_type)) =
                 self.contextual_round1_arg_types(arg_type, target_type)
             else {
@@ -746,6 +755,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // 4. Fix variables with enough information from Round 1
+        {
+            let subst = infer_ctx.get_current_substitution();
+            tracing::trace!(
+                subst_keys = ?subst.map().keys().map(|a| self.interner.resolve_atom(*a)).collect::<Vec<_>>(),
+                "compute_contextual_types before fix_current_variables"
+            );
+        }
         let _ = infer_ctx.fix_current_variables_with(Some(|source, target| {
             self.checker.is_assignable_to(source, target)
         }));
@@ -864,6 +880,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 result_subst.insert(tp.name, placeholder_id);
             }
         }
+
+        tracing::trace!(
+            result_subst_keys = ?result_subst.map().keys().map(|a| self.interner.resolve_atom(*a)).collect::<Vec<_>>(),
+            result_subst_values = ?result_subst.map().values().map(|t| self.interner.lookup(*t)).collect::<Vec<_>>(),
+            "compute_contextual_types final result_subst"
+        );
 
         result_subst
     }

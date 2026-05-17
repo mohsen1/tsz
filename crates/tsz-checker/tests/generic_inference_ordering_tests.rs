@@ -184,3 +184,36 @@ foo(n => n.length, () => 'hi');
         "expected no errors when inferring T from parameterless lambda against interface Application; got: {diags:?}"
     );
 }
+
+/// Same pattern as `test_two_pass_direct_take_make_interface` but with a renamed
+/// type parameter (`V` instead of `T`) and different interface names (`Produce<V>`
+/// instead of `Make<T>`). Verifies the fix is structural, not name-specific.
+#[test]
+fn test_two_pass_renamed_type_param_interface_application_infers_v() {
+    let source = r#"
+interface Produce<V> { (): V; }
+function bar<V>(o: (n: V) => void, i: Produce<V>): void {}
+bar(n => n.length, () => 'hi');
+"#;
+    let diags = check_source_code_messages(source);
+    assert!(
+        diags.is_empty(),
+        "expected no errors for renamed type param V with Produce<V> interface; got: {diags:?}"
+    );
+}
+
+/// Same pattern with multiple type params and renamed variables to confirm
+/// the fix handles multi-param generics and different naming conventions.
+#[test]
+fn test_two_pass_multi_param_interface_application_infers_k() {
+    let source = r#"
+interface Emit<K> { (): K; }
+function baz<K, U>(o: (n: K) => U, i: Emit<K>): U { return null!; }
+baz(n => n.length, () => 'hi');
+"#;
+    let diags = check_source_code_messages(source);
+    assert!(
+        diags.is_empty(),
+        "expected no errors for multi-param generic with Emit<K> interface; got: {diags:?}"
+    );
+}
