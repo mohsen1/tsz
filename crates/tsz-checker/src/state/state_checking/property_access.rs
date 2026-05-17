@@ -6,8 +6,10 @@
 
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -49,7 +51,9 @@ impl<'a> CheckerState<'a> {
         }
 
         let declarations = symbol.declarations.clone();
-        for decl_idx in declarations {
+
+        // Pass 1: direct members (same-arena and cross-arena).
+        for &decl_idx in &declarations {
             if let Some(interface) = self
                 .ctx
                 .arena
@@ -93,6 +97,193 @@ impl<'a> CheckerState<'a> {
                         )
                     {
                         return Some(member_type);
+                    }
+                }
+            }
+        }
+
+        // Pass 2: inherited members via `extends` heritage clauses.
+        //
+        // When the solver's noop resolver can't evaluate a Lazy or Application
+        // type embedded inside an inherited member, property access on the merged
+        // interface type returns ANY.  This pass re-derives the member type by
+        // walking the AST heritage clauses and applying the type-arg substitution
+        // explicitly (matching what `merge_interface_heritage_types` does during
+        // type construction).
+        for &decl_idx in &declarations {
+            if let Some(found) =
+                self.recover_inherited_member_from_heritage(sym_id, decl_idx, prop_name)
+            {
+                return Some(found);
+            }
+        }
+
+        None
+    }
+
+    /// Collect `(expr_idx, type_arg_node_indices)` for every type listed in
+    /// `extends` clauses of the interface declaration at `decl_idx`.
+    ///
+    /// Returns only same-arena entries (base types declared in `arena`).
+    /// Cross-arena bases are handled separately via `declaration_arenas`.
+    fn collect_extends_entries(
+        arena: &tsz_parser::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Vec<(NodeIndex, Vec<NodeIndex>)> {
+        let Some(node) = arena.get(decl_idx) else {
+            return Vec::new();
+        };
+        let Some(interface) = arena.get_interface(node) else {
+            return Vec::new();
+        };
+        let Some(ref heritage_clauses) = interface.heritage_clauses else {
+            return Vec::new();
+        };
+
+        let mut entries = Vec::new();
+        for &clause_idx in &heritage_clauses.nodes {
+            let Some(clause_node) = arena.get(clause_idx) else {
+                continue;
+            };
+            let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                continue;
+            };
+            if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                continue;
+            }
+            for &type_idx in &heritage.types.nodes {
+                let Some(type_node) = arena.get(type_idx) else {
+                    continue;
+                };
+                let (expr_idx, arg_idxs) = if let Some(eta) = arena.get_expr_type_args(type_node) {
+                    (
+                        eta.expression,
+                        eta.type_arguments
+                            .as_ref()
+                            .map(|l| l.nodes.clone())
+                            .unwrap_or_default(),
+                    )
+                } else {
+                    (type_idx, Vec::new())
+                };
+                entries.push((expr_idx, arg_idxs));
+            }
+        }
+        entries
+    }
+
+    /// Find the member `prop_name` in the base interfaces of `decl_idx` via
+    /// its `extends` heritage clauses, and return the member type instantiated
+    /// with the actual type arguments.
+    fn recover_inherited_member_from_heritage(
+        &mut self,
+        derived_sym_id: SymbolId,
+        decl_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<TypeId> {
+        // Collect heritage entries without holding an arena borrow.
+        let entries = Self::collect_extends_entries(self.ctx.arena, decl_idx);
+
+        // Cross-arena: entries from arenas registered for this declaration.
+        let cross_entries: Vec<(NodeIndex, Vec<NodeIndex>)> = self
+            .ctx
+            .binder
+            .declaration_arenas
+            .get(&(derived_sym_id, decl_idx))
+            .map(|arenas| {
+                arenas
+                    .iter()
+                    .filter(|a| !std::ptr::eq(a.as_ref(), self.ctx.arena))
+                    .flat_map(|a| Self::collect_extends_entries(a.as_ref(), decl_idx))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for (expr_idx, arg_idxs) in entries.into_iter().chain(cross_entries) {
+            let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) else {
+                continue;
+            };
+
+            // Resolve type arguments, replacing Lazy references with their
+            // concrete types now that the derived interface is fully computed.
+            let type_args: Vec<TypeId> = arg_idxs
+                .iter()
+                .map(|&idx| {
+                    let raw = self.get_type_from_type_node(idx);
+                    self.resolve_lazy_type(raw)
+                })
+                .collect();
+
+            let base_type_params = self.get_type_params_for_symbol(base_sym_id);
+            let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+                self.ctx.types,
+                &base_type_params,
+                &type_args,
+            );
+
+            // Search for the member in the base interface's declarations.
+            let base_declarations = self
+                .get_cross_file_symbol(base_sym_id)
+                .map(|s| s.declarations.clone())
+                .unwrap_or_default();
+
+            for &base_decl_idx in &base_declarations {
+                // Same-arena path.
+                let found_same = {
+                    let node = self.ctx.arena.get(base_decl_idx);
+                    let iface = node.and_then(|n| self.ctx.arena.get_interface(n));
+                    iface.and_then(|iface| {
+                        iface.members.nodes.iter().copied().find(|&m| {
+                            Self::simple_member_name_in_arena(self.ctx.arena, m).as_deref()
+                                == Some(prop_name)
+                        })
+                    })
+                };
+                if let Some(member_idx) = found_same {
+                    let raw = self.get_type_of_interface_member_simple(member_idx);
+                    let instantiated = crate::query_boundaries::common::instantiate_type(
+                        self.ctx.types,
+                        raw,
+                        &substitution,
+                    );
+                    return Some(instantiated);
+                }
+
+                // Cross-arena path.
+                let cross_arenas = self
+                    .ctx
+                    .binder
+                    .declaration_arenas
+                    .get(&(base_sym_id, base_decl_idx))
+                    .cloned()
+                    .unwrap_or_default();
+                for arena in cross_arenas {
+                    let found_cross = {
+                        let node = arena.get(base_decl_idx);
+                        let iface = node.and_then(|n| arena.get_interface(n));
+                        iface.and_then(|iface| {
+                            iface.members.nodes.iter().copied().find(|&m| {
+                                Self::simple_member_name_in_arena(arena.as_ref(), m).as_deref()
+                                    == Some(prop_name)
+                            })
+                        })
+                    };
+                    if let Some(member_idx) = found_cross {
+                        let type_args_for_delegate = if type_args.is_empty() {
+                            None
+                        } else {
+                            Some(type_args.as_slice())
+                        };
+                        if let Some(member_type) = self
+                            .delegate_cross_arena_interface_member_simple_type(
+                                base_decl_idx,
+                                member_idx,
+                                arena.as_ref(),
+                                type_args_for_delegate,
+                            )
+                        {
+                            return Some(member_type);
+                        }
                     }
                 }
             }
