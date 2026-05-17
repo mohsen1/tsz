@@ -834,23 +834,23 @@ impl<'a> CheckerState<'a> {
                 .get_global_type_with_libs(name, &lib_binders)
         })
         .or_else(|| {
+            let all_binders = self
+                .ctx
+                .all_binders
+                .as_deref()
+                .map(|binders| binders.as_slice());
             let sym_id = resolve_name_to_lib_symbol(
                 name,
                 self.ctx.binder,
                 self.ctx.global_file_locals_index.as_deref(),
-                self.ctx
-                    .all_binders
-                    .as_ref()
-                    .map(|binders| binders.as_ref().as_slice()),
+                all_binders,
                 &self.ctx.lib_contexts,
             )?;
-            let symbol = self
+            let is_private = self
                 .get_cross_file_symbol(sym_id)
-                .or_else(|| self.ctx.binder.get_symbol(sym_id));
-            if symbol.is_some_and(|s| self.ctx.is_private_cross_file_type(s, name)) {
-                return None;
-            }
-            Some(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                .is_some_and(|s| self.ctx.is_private_cross_file_type(s, name));
+            (!is_private).then_some(sym_id)
         });
 
         let selected_symbol = selected_lib_symbol_for_name(&self.ctx, name, sym_id, &lib_binders);
@@ -1801,7 +1801,6 @@ mod integration_tests {
         let _codes =
             check_source_codes("async function run(): Promise<void> { console.log('done'); }");
     }
-
     #[test]
     fn promise_constructor_pattern_no_crash() {
         // new Promise() pattern exercises the constructor signature lowering
@@ -1809,21 +1808,18 @@ mod integration_tests {
             "let p = new Promise<number>((resolve, reject) => { resolve(1); });",
         );
     }
-
     #[test]
     fn promise_then_chain_no_crash() {
         // .then() method resolution exercises lib heritage merging
         let _codes =
             check_source_codes("declare let p: Promise<number>; let q = p.then(x => x + 1);");
     }
-
     #[test]
     fn promise_catch_no_crash() {
         let _codes = check_source_codes(
             "declare let p: Promise<number>; let q = p.catch(e => console.log(e));",
         );
     }
-
     #[test]
     fn promise_race_all_no_crash() {
         // Promise.race / Promise.all are static methods on the Promise constructor
@@ -1832,15 +1828,12 @@ mod integration_tests {
              let r = Promise.race([a, b]);",
         );
     }
-
     #[test]
     fn awaited_type_no_crash() {
         // Awaited<T> is a conditional type alias in lib
         let _codes = check_source_codes("type X = Awaited<Promise<number>>;");
     }
-
     // ---- lib ref lowering: generic utility types (behavioral) ----
-
     #[test]
     fn required_type_no_crash() {
         let _codes = check_source_codes("type R = Required<{ a?: number; b?: string }>;");
