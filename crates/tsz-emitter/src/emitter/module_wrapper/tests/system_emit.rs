@@ -720,6 +720,42 @@ fn system_top_level_using_env_hoists_before_later_nested_var() {
 }
 
 #[test]
+fn system_nested_top_level_var_declarations_emit_assignments() {
+    let source = "export function read() { return v; }\nfor (let x of []) {\n    let local = x;\n    var v = local;\n}\nfunction keepFunctionVar() {\n    if (true) {\n        var inner = 1;\n    }\n    return inner;\n}\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var v;"),
+        "System wrapper should hoist nested top-level var declarations to the module closure.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("let local = x;\n                v = local;"),
+        "Nested top-level var initializers should emit as assignments inside execute().\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var v = local;"),
+        "Nested top-level var declarations must not redeclare inside execute().\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var inner = 1;"),
+        "Var declarations inside nested function scopes should remain declarations.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_exported_object_binding_initializer_assigns_and_exports_hoisted_name() {
     let source = "export let { toString } = 1;\n{\n    let { toFixed } = 1;\n}\n";
 
