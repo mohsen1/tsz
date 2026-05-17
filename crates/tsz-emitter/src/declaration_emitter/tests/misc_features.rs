@@ -237,6 +237,69 @@ fn test_type_predicate_in_function() {
     );
 }
 
+#[test]
+fn test_exported_function_returning_declared_conditional_call_preserves_return_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export declare function pick<T>(value: T): T extends () => infer R ? R : never;
+export function wrap<T>(value: T) {
+    return pick(value);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare function wrap<T>(value: T): T extends () => infer R ? R : never;"
+        ),
+        "Expected exported function to reuse declared helper conditional return type: {output}"
+    );
+}
+
+#[test]
+fn test_exported_function_returning_mapped_infer_call_expands_alias_return_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export type Boxed<T> = { value: T extends number ? T : string };
+export declare function read<T>(value: T): T extends { [K in keyof Boxed<infer U>]: Boxed<infer U>[K] } ? U : never;
+export function unwrap<T>(value: T) {
+    return read(value);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare function unwrap<T>(value: T): T extends {\n    value: infer U extends number ? infer U : string;\n} ? U : never;"
+        ),
+        "Expected mapped alias helper return type to expand in declaration scope: {output}"
+    );
+}
+
+#[test]
+fn test_exported_function_returning_shadowed_helper_does_not_borrow_top_level_return_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export declare function pick<T>(value: T): T extends () => infer R ? R : never;
+export function wrap<T>(value: T) {
+    function pick(value: T) {
+        return pick(value);
+    }
+    return pick(value);
+}
+"#,
+    );
+
+    let wrap_decl = output
+        .lines()
+        .find(|line| line.starts_with("export declare function wrap"))
+        .unwrap_or_else(|| panic!("Expected exported wrap declaration: {output}"));
+    assert!(
+        !wrap_decl.contains("infer R"),
+        "Expected shadowed local helper call not to reuse top-level pick return type: {output}"
+    );
+}
+
 // =============================================================================
 // 19. Default Parameter Values (stripped)
 // =============================================================================
