@@ -184,6 +184,9 @@ pub struct DeclarationEmitter<'a> {
     /// Top-level JS `const Local = require("mod").Export` aliases used by
     /// exported inferred types and emitted as trailing import-equals aliases.
     pub(super) js_require_property_import_aliases: Vec<(String, String, String)>,
+    /// JS destructured bindings elided from a non-exporting `require("mod")`
+    /// declaration, used to elide same-file locals derived only from that import.
+    pub(super) js_elided_bare_require_binding_names: FxHashSet<String>,
     /// Deferred JS CommonJS `Root.prop = function(){}` statements re-emitted as
     /// top-level synthetic function declarations.
     /// The boolean marks whether the synthetic declaration should be exported.
