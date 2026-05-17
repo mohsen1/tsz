@@ -96,6 +96,9 @@ function validateCandidateManifest(manifest) {
   if (!Array.isArray(manifest.entries)) {
     fail("manifest entries must be an array");
   }
+  if (manifest.entries.length === 0) {
+    fail("manifest entries must include at least one assertion candidate");
+  }
 
   const counts = manifest.counts ?? {};
   const pairedSolutions =

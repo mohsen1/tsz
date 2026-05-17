@@ -366,23 +366,9 @@ withTempDir((dir) => {
       TSZ_BIN: "",
     },
   });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-
-  const report = JSON.parse(fs.readFileSync(output, "utf8"));
-  assert.equal(report.compilers.tsc.status, "unavailable");
-  assert.deepEqual(report.compilers.tsc.diagnostics.bySemanticFamily, []);
-  assert.equal(report.compilers.tsz.status, "unavailable");
-  assert.deepEqual(report.compilers.tsz.diagnostics.bySemanticFamily, []);
-  assert.deepEqual(report.comparison, {
-    status: "unavailable",
-    tscStatus: "unavailable",
-    tszStatus: "unavailable",
-    errorCountDelta: null,
-    diagnosticFreeCandidateDelta: null,
-    candidateFileComparison: null,
-    byCodeDelta: [],
-    bySemanticFamilyDelta: [],
-  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /entries must include at least one assertion candidate/);
+  assert.equal(fs.existsSync(output), false);
 });
 
 withTempDir((dir) => {
@@ -429,31 +415,9 @@ withTempDir((dir) => {
       TSZ_BIN: fakeTsz,
     },
   });
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-
-  const report = JSON.parse(fs.readFileSync(output, "utf8"));
-  assert.deepEqual(report.comparison, {
-    status: "tsz-rejects-tsc-accepted",
-    tscStatus: "pass",
-    tszStatus: "fail",
-    errorCountDelta: 2,
-    diagnosticFreeCandidateDelta: 0,
-    candidateFileComparison: {
-      totalCandidates: 0,
-      counts: {
-        bothAccepted: 0,
-        bothRejected: 0,
-        tscAcceptedTszRejected: 0,
-        tscRejectedTszAccepted: 0,
-      },
-      bothAccepted: [],
-      bothRejected: [],
-      tscAcceptedTszRejected: [],
-      tscRejectedTszAccepted: [],
-    },
-    byCodeDelta: [{ key: "TS2589", tsc: 0, tsz: 2, delta: 2 }],
-    bySemanticFamilyDelta: [{ key: "unknown", tsc: 0, tsz: 2, delta: 2 }],
-  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /entries must include at least one assertion candidate/);
+  assert.equal(fs.existsSync(output), false);
 });
 
 withTempDir((dir) => {
