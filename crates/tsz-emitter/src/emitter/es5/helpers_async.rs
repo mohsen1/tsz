@@ -292,25 +292,11 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn class_expression_statement_indent_level(&self, class_node: NodeIndex) -> u32 {
-        let mut current = class_node;
-        let mut indent_level = 0;
-
-        while let Some(ext) = self.arena.get_extended(current) {
-            let parent_idx = ext.parent;
-            if parent_idx.is_none() {
-                break;
-            }
-            let Some(parent) = self.arena.get(parent_idx) else {
-                break;
-            };
-            if parent.kind == syntax_kind_ext::BLOCK {
-                indent_level += 1;
-            }
-            current = parent_idx;
-        }
-
-        indent_level
+    fn current_statement_continuation_indent_level(&self) -> u32 {
+        self.writer
+            .indent_level()
+            .max(self.writer.current_line_visual_indent_level())
+            + 2
     }
 
     fn emit_es5_static_class_expression_comma(
@@ -329,8 +315,7 @@ impl<'a> Printer<'a> {
         } else {
             self.make_unique_name_hoisted()
         };
-        let continuation_indent_level =
-            self.class_expression_statement_indent_level(class_node) + 2;
+        let continuation_indent_level = self.current_statement_continuation_indent_level();
 
         if needs_parens {
             self.write("(");

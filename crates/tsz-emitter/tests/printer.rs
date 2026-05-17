@@ -1165,6 +1165,25 @@ fn nested_static_field_class_expression_uses_statement_depth_indent() {
 }
 
 #[test]
+fn static_field_class_expression_in_case_body_uses_case_body_indent() {
+    let source = "function f(x) {\n    switch (x) {\n        case 0:\n            var y = class { static a = x };\n    }\n}";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(
+            "            var y = (_a = /** @class */ (function () {\n                    function class_1() {"
+        ),
+        "Static-field class expression IIFE should indent from the case-body statement level.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn legacy_decorated_anonymous_default_class_static_field_sets_default_name() {
     use crate::context::emit::EmitContext;
     use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
