@@ -13,7 +13,6 @@ TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElabora
 TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
 TypeScript/tests/cases/compiler/excessivelyLargeTupleSpread.ts
 TypeScript/tests/cases/compiler/inDoesNotOperateOnPrimitiveTypes.ts
-TypeScript/tests/cases/compiler/inferParameterWithMethodCallInitializer.ts
 TypeScript/tests/cases/compiler/inferenceFromParameterlessLambda.ts
 TypeScript/tests/cases/compiler/instantiationExpressionErrorNoCrash.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts

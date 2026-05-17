@@ -26,6 +26,7 @@ export default function (eleventyConfig) {
     "../../artifacts/bench-vs-tsgo-github-latest.json",
     "../../artifacts/bench-vs-tsgo-gcs-latest.json",
     "../../artifacts/bench-vs-tsgo-latest.json",
+    "bench-snapshot.json",
   ];
   const latestBenchmarkArtifact = benchmarkArtifacts.find((file) => fs.existsSync(file));
   if (latestBenchmarkArtifact) {

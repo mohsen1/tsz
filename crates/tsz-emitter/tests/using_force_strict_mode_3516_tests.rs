@@ -281,6 +281,50 @@ export async function test() {
     );
 }
 
+#[test]
+fn es5_for_initializer_await_using_in_async_body_uses_disposable_region() {
+    let source = r#"
+async function main() {
+    for (await using d1 = { [Symbol.dispose]() {} },
+                    d2 = { async [Symbol.asyncDispose]() {} },
+                    d3 = null,
+                    d4 = undefined;;) {
+    }
+}
+"#;
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: ModuleKind::ESNext,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        output.contains("var env_1, d1, d2, d3, d4, e_1, result_1;"),
+        "For-initializer await-using declarations should hoist one disposable region.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _a, _b;"),
+        "Computed resource initializer temps should remain in a separate hoist group.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_c.trys.push([1, 2, 3, 6]);"),
+        "The for-initializer resource region should be planned in the async generator.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("d1 = __addDisposableResource(env_1, (_a = {},"),
+        "The first resource initializer should be registered before the loop body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("for (;;)"),
+        "The lowered loop should preserve the empty for header after resource registration.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("result_1 = __disposeResources(env_1);"),
+        "Async disposal should run from the planned finally region.\nOutput:\n{output}"
+    );
+}
+
 // Sanity: a regular script without using must NOT spontaneously add
 // "use strict" — that would be a regression from the existing default.
 #[test]
