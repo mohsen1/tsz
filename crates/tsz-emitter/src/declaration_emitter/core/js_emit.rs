@@ -3781,6 +3781,7 @@ impl<'a> DeclarationEmitter<'a> {
         &mut self,
         ident_idx: NodeIndex,
         type_id: Option<tsz_solver::types::TypeId>,
+        widened_literal_kind: Option<&'static str>,
     ) {
         let type_id = type_id
             .or_else(|| self.get_symbol_cached_type(ident_idx))
@@ -3788,7 +3789,13 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.get_type_via_symbol(ident_idx));
         self.write(": ");
         if let Some(type_id) = type_id {
-            self.write(&self.print_type_id(type_id));
+            if let Some(kind) = widened_literal_kind
+                && self.literal_type_can_widen_to_primitive_kind(type_id, kind)
+            {
+                self.write(kind);
+            } else {
+                self.write(&self.print_type_id(type_id));
+            }
         } else {
             self.write("any");
         }
@@ -3819,6 +3826,11 @@ impl<'a> DeclarationEmitter<'a> {
                 decl.initializer,
                 &[decl_idx, decl.name, decl.initializer],
             ),
+        );
+        let widened_literal_kind = self.flattened_array_binding_literal_widening_kind(
+            decl.name,
+            decl.type_annotation,
+            decl.initializer,
         );
         let annotation_type_texts = self
             .collect_flattened_binding_type_texts_from_annotation(decl.name, decl.type_annotation);
@@ -3857,11 +3869,127 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else {
-                self.emit_flattened_binding_type_annotation(ident_idx, type_id);
+                self.emit_flattened_binding_type_annotation(
+                    ident_idx,
+                    type_id,
+                    widened_literal_kind,
+                );
             }
         }
         self.write(";");
         self.write_line();
+    }
+
+    fn flattened_array_binding_literal_widening_kind(
+        &self,
+        pattern_idx: NodeIndex,
+        type_annotation: NodeIndex,
+        initializer: NodeIndex,
+    ) -> Option<&'static str> {
+        if type_annotation.is_some() {
+            return None;
+        }
+        if self
+            .arena
+            .get(pattern_idx)
+            .is_none_or(|node| node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN)
+        {
+            return None;
+        }
+        let pattern_node = self.arena.get(pattern_idx)?;
+        let pattern = self.arena.get_binding_pattern(pattern_node)?;
+        for &element_idx in &pattern.elements.nodes {
+            let Some(element_node) = self.arena.get(element_idx) else {
+                continue;
+            };
+            if element_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                && self
+                    .arena
+                    .get_binding_element(element_node)
+                    .is_some_and(|element| element.dot_dot_dot_token)
+            {
+                return None;
+            }
+        }
+        let initializer = self.skip_parenthesized_expression(initializer)?;
+        let initializer_node = self.arena.get(initializer)?;
+        if initializer_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+        let literal = self.arena.get_literal_expr(initializer_node)?;
+        let mut kind = None;
+        for &element_idx in &literal.elements.nodes {
+            let element_kind = self.literal_initializer_primitive_kind(element_idx)?;
+            if kind.is_some_and(|kind| kind != element_kind) {
+                return None;
+            }
+            kind = Some(element_kind);
+        }
+        kind
+    }
+
+    fn literal_initializer_primitive_kind(&self, expr_idx: NodeIndex) -> Option<&'static str> {
+        let node = self.arena.get(expr_idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
+                .arena
+                .get_parenthesized(node)
+                .and_then(|paren| self.literal_initializer_primitive_kind(paren.expression)),
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                Some("string")
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => Some("number"),
+            k if k == SyntaxKind::BigIntLiteral as u16 => Some("bigint"),
+            k if k == SyntaxKind::TrueKeyword as u16 || k == SyntaxKind::FalseKeyword as u16 => {
+                Some("boolean")
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.arena.get_unary_expr(node)?;
+                let operand = self.arena.get(unary.operand)?;
+                match (unary.operator, operand.kind) {
+                    (op, k)
+                        if (op == SyntaxKind::PlusToken as u16
+                            || op == SyntaxKind::MinusToken as u16)
+                            && k == SyntaxKind::NumericLiteral as u16 =>
+                    {
+                        Some("number")
+                    }
+                    (op, k)
+                        if op == SyntaxKind::MinusToken as u16
+                            && k == SyntaxKind::BigIntLiteral as u16 =>
+                    {
+                        Some("bigint")
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn literal_type_can_widen_to_primitive_kind(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        primitive_kind: &str,
+    ) -> bool {
+        let Some(interner) = self.type_interner else {
+            return false;
+        };
+        if let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id) {
+            return Self::literal_primitive_kind_text(&lit) == Some(primitive_kind);
+        }
+        let Some(union_id) = tsz_solver::visitor::union_list_id(interner, type_id) else {
+            return false;
+        };
+        let members = interner.type_list(union_id);
+        !members.is_empty()
+            && members.iter().all(|&member| {
+                tsz_solver::visitor::literal_value(interner, member)
+                    .and_then(|lit| Self::literal_primitive_kind_text(&lit))
+                    == Some(primitive_kind)
+            })
     }
 
     pub(in crate::declaration_emitter) fn emit_parameter_property_modifiers(
