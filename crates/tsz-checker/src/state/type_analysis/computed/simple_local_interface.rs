@@ -224,7 +224,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn is_simple_local_interface_fastpath_type(&mut self, type_idx: NodeIndex) -> bool {
+    fn is_simple_local_interface_fastpath_type(&self, type_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(type_idx) else {
             return false;
         };
@@ -281,11 +281,11 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        self.is_simple_local_interface_fastpath_type_reference(node)
+        self.is_simple_local_interface_primitive_type_reference(node)
     }
 
-    fn is_simple_local_interface_fastpath_type_reference(
-        &mut self,
+    fn is_simple_local_interface_primitive_type_reference(
+        &self,
         node: &tsz_parser::parser::node::Node,
     ) -> bool {
         if node.kind != syntax_kind_ext::TYPE_REFERENCE {
@@ -304,43 +304,23 @@ impl<'a> CheckerState<'a> {
         let Some(type_name_node) = self.ctx.arena.get(type_ref.type_name) else {
             return false;
         };
-        if let Some(ident) = self.ctx.arena.get_identifier(type_name_node) {
-            if matches!(
-                ident.escaped_text.as_str(),
-                "any"
-                    | "bigint"
-                    | "boolean"
-                    | "never"
-                    | "number"
-                    | "object"
-                    | "string"
-                    | "symbol"
-                    | "undefined"
-                    | "unknown"
-                    | "void"
-            ) {
-                return true;
-            }
-
-            return match self
-                .resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
-            {
-                TypeSymbolResolution::Type(sym_id) => {
-                    self.get_type_params_for_symbol(sym_id).is_empty()
-                }
-                TypeSymbolResolution::ValueOnly(_) | TypeSymbolResolution::NotFound => false,
-            };
-        }
-
-        if type_name_node.kind != syntax_kind_ext::QUALIFIED_NAME {
+        let Some(ident) = self.ctx.arena.get_identifier(type_name_node) else {
             return false;
-        }
-        match self.resolve_qualified_symbol_in_type_position(type_ref.type_name) {
-            TypeSymbolResolution::Type(sym_id) => {
-                self.get_type_params_for_symbol(sym_id).is_empty()
-            }
-            TypeSymbolResolution::ValueOnly(_) | TypeSymbolResolution::NotFound => false,
-        }
+        };
+        matches!(
+            ident.escaped_text.as_str(),
+            "any"
+                | "bigint"
+                | "boolean"
+                | "never"
+                | "number"
+                | "object"
+                | "string"
+                | "symbol"
+                | "undefined"
+                | "unknown"
+                | "void"
+        )
     }
 
     fn classify_simple_local_interface_non_primitive_annotation_kind(
