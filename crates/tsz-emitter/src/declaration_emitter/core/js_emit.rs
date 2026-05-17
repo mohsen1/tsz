@@ -2,6 +2,7 @@ use rustc_hash::FxHashSet;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_parser::parser::node::FunctionData;
 use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::{SyntaxKind, string_to_token, token_is_reserved_word};
@@ -3906,6 +3907,49 @@ impl<'a> DeclarationEmitter<'a> {
         let mut bindings = Vec::new();
         self.collect_typed_bindings_recursive(pattern_idx, source_type, &mut bindings);
         bindings
+    }
+
+    pub(in crate::declaration_emitter) fn record_js_elided_bare_require_binding_names(
+        &mut self,
+        pattern_idx: NodeIndex,
+    ) {
+        let bindings = self.collect_flattened_binding_entries(pattern_idx, None);
+        for (ident_idx, _) in bindings {
+            if let Some(name) = self.get_identifier_text(ident_idx) {
+                self.js_elided_bare_require_binding_names.insert(name);
+            }
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn initializer_references_js_elided_bare_require_binding(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        if self.js_elided_bare_require_binding_names.is_empty() || initializer.is_none() {
+            return false;
+        }
+        let mut seen = FxHashSet::default();
+        self.node_references_js_elided_bare_require_binding(initializer, &mut seen)
+    }
+
+    fn node_references_js_elided_bare_require_binding(
+        &self,
+        node_idx: NodeIndex,
+        seen: &mut FxHashSet<NodeIndex>,
+    ) -> bool {
+        if node_idx.is_none() || !seen.insert(node_idx) {
+            return false;
+        }
+        if self
+            .get_identifier_text(node_idx)
+            .is_some_and(|name| self.js_elided_bare_require_binding_names.contains(&name))
+        {
+            return true;
+        }
+        self.arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| self.node_references_js_elided_bare_require_binding(child_idx, seen))
     }
 
     fn collect_flattened_binding_type_texts_from_annotation(
