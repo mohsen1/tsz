@@ -176,6 +176,33 @@ withTempDir((dir) => {
 
 withTempDir((dir) => {
   const jsonl = path.join(dir, "compat.jsonl");
+  const diagnosticLines = Array.from(
+    { length: 25 },
+    (_, index) => `src/file-${index}.ts(1,1): error TS2322: mismatch ${index}`,
+  );
+  const result = spawnSync(process.execPath, [COMPAT_SCRIPT, "record"], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      COMPAT_JSONL_FILE: jsonl,
+      COMPAT_NAME: "many-diagnostics",
+      COMPAT_EXIT_CLASS: "nonzero exit",
+      COMPAT_DIAGNOSTIC_STATUS: "diagnostic mismatch",
+      COMPAT_DIAGNOSTIC_DELTA: diagnosticLines.join("\n"),
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const [row] = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  assert.equal(row.diagnostic_deltas.length, 20);
+  assert.equal(row.diagnostic_deltas[0], diagnosticLines[0]);
+  assert.equal(row.diagnostic_deltas[19], diagnosticLines[19]);
+  assert.equal(row.diagnostic_subsystems[0].count, 20);
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
   fs.writeFileSync(
     jsonl,
     [
