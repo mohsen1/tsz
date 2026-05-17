@@ -324,51 +324,14 @@ jobs:
             fi
           fi
 
-          async_args=(--async)
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" &&
-                "${{ inputs.publish_latest_pgo }}" != "true" ]]; then
-            async_args=()
-          fi
-
           gcloud builds submit \
-            "${async_args[@]}" \
+            --async \
             --project=tsz-ci \
             --region=us-central1 \
             --config=cloudbuild-bench-prepare.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}" \
             .
-
-      - name: Download Cloud Build prep artifact
-        if: github.event_name == 'workflow_dispatch' && !inputs.publish_latest_pgo
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          gcloud storage cp \
-            "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
-            bench-prep.env
-          gcloud storage cp \
-            "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.tar" \
-            bench-prep.tar
-          tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
-
-          # shellcheck disable=SC1091
-          source bench-prep.env
-          if [[ "${BENCH_TARGET_SHA:-}" != "${{ env.BENCH_TARGET_SHA }}" ]]; then
-            echo "Cloud Build prep artifact is for ${BENCH_TARGET_SHA:-unknown}; expected ${{ env.BENCH_TARGET_SHA }}."
-            exit 1
-          fi
-
-      - name: Upload benchmark prep artifact
-        if: github.event_name == 'workflow_dispatch' && !inputs.publish_latest_pgo
-        uses: actions/upload-artifact@v4
-        with:
-          name: bench-prep
-          path: bench-prep.tar
-          retention-days: 1
-          if-no-files-found: error
-          compression-level: 1
 
   publish-latest-pgo:
     name: publish-latest-pgo
