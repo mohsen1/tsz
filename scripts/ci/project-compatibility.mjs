@@ -227,6 +227,9 @@ function knownBlockersFrom({ exitClass, phase, diagnosticSubsystems, diagnosticC
   if (exitClass === "timeout") add("timeout during project check");
   if (exitClass === "oom") add("OOM or killed during project check");
   if (exitClass === "crash") add("compiler crash during project check");
+  if (exitClass === "fixture invalid") add("reference fixture invalid");
+  if (exitClass === "runner error") add("benchmark runner error");
+  if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
   if (phase && phase !== "check") add(`${phase} phase blocker`);
 
   for (const group of diagnosticSubsystems) {
@@ -255,6 +258,9 @@ function ownerTrackFrom({ exitClass, diagnosticSubsystems }) {
   if (exitClass === "timeout") return "Track 1 runtime/timeout triage";
   if (exitClass === "oom") return "Track 1 residency triage";
   if (exitClass === "crash") return "Track 1 crash triage";
+  if (exitClass === "fixture invalid") return "Track 1 project-corpus harness/config";
+  if (exitClass === "runner error") return "Track 1 benchmark runner";
+  if (exitClass === "tsz unavailable") return "Track 1 benchmark runner";
 
   const primary = diagnosticSubsystems[0]?.subsystem;
   return ownerTrackForSubsystem(primary) || "Track 1 triage";
@@ -385,7 +391,7 @@ function record() {
     exit_codes: {
       tsc: toExitCodes(process.env.COMPAT_TSC_EXIT_CODES),
       tsz: toExitCodes(process.env.COMPAT_TSZ_EXIT_CODES),
-      tsgo: [],
+      tsgo: toExitCodes(process.env.COMPAT_TSGO_EXIT_CODES),
     },
     files_reached: toNumber(process.env.COMPAT_FILES_REACHED),
     peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
