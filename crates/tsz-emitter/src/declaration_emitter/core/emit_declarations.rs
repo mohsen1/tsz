@@ -860,6 +860,12 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            && let Some(func) = self.arena.get_function(stmt_node)
+        {
+            self.emit_pending_js_export_equals_for_name(func.name);
+        }
+
         self.current_statement_jsdoc_chain =
             self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
         let jsdoc_chain = self.current_statement_jsdoc_chain.clone();
