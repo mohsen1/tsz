@@ -79,13 +79,24 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|(_, member_text, _)| member_text.clone())
             .collect::<FxHashSet<_>>();
         let mut emitted_keyword_export_alias = false;
-        for (member_name, member_text, initializer) in members {
+        let mut planned_members = Vec::with_capacity(members.len());
+        for (_member_name, member_text, initializer) in members {
             let (local_name, export_alias) = self.js_static_namespace_member_local_name(
                 &member_text,
                 &mut reserved_member_names,
                 emitted_keyword_export_alias,
             );
-            let emit_export = export_alias.is_none();
+            emitted_keyword_export_alias |= export_alias
+                .as_ref()
+                .is_some_and(|_| Self::is_js_static_reserved_binding_name(&member_text));
+            planned_members.push((initializer, local_name, export_alias));
+        }
+
+        let has_export_aliases = planned_members
+            .iter()
+            .any(|(_, _, export_alias)| export_alias.is_some());
+        for (initializer, local_name, export_alias) in planned_members {
+            let emit_export = export_alias.is_none() && has_export_aliases;
             if let Some(init_node) = self.arena.get(initializer) {
                 if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
                     || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
@@ -115,11 +126,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(&exported_name);
                 self.write(" };");
                 self.write_line();
-                emitted_keyword_export_alias |=
-                    Self::is_js_static_reserved_binding_name(&member_text);
             }
-
-            let _ = member_name;
         }
 
         self.decrease_indent();
