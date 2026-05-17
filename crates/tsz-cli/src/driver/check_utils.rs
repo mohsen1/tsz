@@ -1394,16 +1394,6 @@ pub(super) fn collect_no_check_parse_diagnostics_for_file(
         file_diagnostics.retain(|d| !is_checker_grammar_code_suppressed_in_js(d.code));
     }
 
-    if let Some(source) = arena.get_source_file_at(source_file) {
-        apply_ts_directive_suppression_with_unused_reporting(
-            file_name,
-            source.text.as_ref(),
-            &mut file_diagnostics,
-            false,
-            options.checker.emit_declarations && options.check_js && is_js,
-        );
-    }
-
     file_diagnostics
 }
 

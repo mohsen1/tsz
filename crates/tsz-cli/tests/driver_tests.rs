@@ -4139,6 +4139,72 @@ fn compile_no_check_no_emit_suppresses_unused_expect_error() {
 }
 
 #[test]
+fn compile_no_check_no_emit_expect_error_keeps_parse_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        "// @ts-expect-error\nconst broken = ;\n",
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.no_check = true;
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("main.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "expected --noCheck to keep TS1109 parse diagnostics despite @ts-expect-error, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::UNUSED_TS_EXPECT_ERROR_DIRECTIVE),
+        "expected --noCheck to skip unused @ts-expect-error diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    assert!(result.emitted_files.is_empty());
+}
+
+#[test]
+fn compile_no_check_no_emit_expect_error_keeps_js_grammar_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.js"),
+        "// @ts-expect-error\nlet x: number;\n",
+    );
+
+    let mut args = default_args();
+    args.allow_js = true;
+    args.check_js = true;
+    args.ignore_config = true;
+    args.no_check = true;
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("main.js")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES),
+        "expected --noCheck to keep TS8010 JS grammar diagnostics despite @ts-expect-error, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::UNUSED_TS_EXPECT_ERROR_DIRECTIVE),
+        "expected --noCheck to skip unused @ts-expect-error diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    assert!(result.emitted_files.is_empty());
+}
+
+#[test]
 fn compile_skip_lib_check_no_emit_declaration_project_is_parse_only() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
