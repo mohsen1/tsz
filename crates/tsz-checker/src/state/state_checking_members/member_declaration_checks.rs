@@ -400,7 +400,6 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(type_idx) else {
             return;
         };
-        let factory = self.ctx.types.factory();
 
         match node.kind {
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
