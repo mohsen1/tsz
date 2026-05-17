@@ -933,7 +933,7 @@ impl<'a> CheckerState<'a> {
     /// Walk `extends_type` collecting every `infer X` binding and push each as a
     /// provisional type parameter into `type_parameter_scope`. Returns save-state
     /// for `pop_infer_bindings`.
-    fn push_infer_bindings_from_extends(
+    pub(crate) fn push_infer_bindings_from_extends(
         &mut self,
         extends_type: NodeIndex,
     ) -> Vec<(String, Option<TypeId>)> {
