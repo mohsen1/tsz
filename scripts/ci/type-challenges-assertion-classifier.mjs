@@ -98,6 +98,10 @@ function validateCandidateManifest(manifest) {
   }
 
   const counts = manifest.counts ?? {};
+  const pairedSolutions =
+    manifest.fixture === "type-challenges-assertion-candidates"
+      ? requiredCount(counts.pairedSolutions, "pairedSolutions")
+      : optionalCount(counts.pairedSolutions, "pairedSolutions");
   const generatedAssertions =
     manifest.fixture === "type-challenges-assertion-candidates"
       ? requiredCount(counts.generatedAssertions, "generatedAssertions")
@@ -127,6 +131,11 @@ function validateCandidateManifest(manifest) {
           "assertionsMissingSolutionDeclarationReference",
         );
 
+  if (pairedSolutions !== null && pairedSolutions !== manifest.entries.length) {
+    fail(
+      `manifest counts.pairedSolutions (${pairedSolutions}) does not match entries length (${manifest.entries.length})`,
+    );
+  }
   if (generatedAssertions !== null && generatedAssertions !== manifest.entries.length) {
     fail(
       `manifest counts.generatedAssertions (${generatedAssertions}) does not match entries length (${manifest.entries.length})`,

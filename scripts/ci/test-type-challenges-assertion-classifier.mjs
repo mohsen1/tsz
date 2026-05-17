@@ -349,6 +349,7 @@ withTempDir((dir) => {
   writeJson(manifest, {
     fixture: "type-challenges-assertion-candidates",
     counts: {
+      pairedSolutions: 0,
       generatedAssertions: 0,
       assertionsReferencingSolutionDeclaration: 0,
       assertionsMissingSolutionDeclarationReference: 0,
@@ -397,6 +398,7 @@ withTempDir((dir) => {
   writeJson(manifest, {
     fixture: "type-challenges-assertion-candidates",
     counts: {
+      pairedSolutions: 0,
       generatedAssertions: 0,
       assertionsReferencingSolutionDeclaration: 0,
       assertionsMissingSolutionDeclarationReference: 0,
@@ -465,6 +467,7 @@ withTempDir((dir) => {
   writeJson(manifest, {
     fixture: "type-challenges-assertion-candidates",
     counts: {
+      pairedSolutions: 1,
       generatedAssertions: 1,
       assertionsReferencingSolutionDeclaration: 1,
       assertionsMissingSolutionDeclarationReference: 0,
@@ -498,6 +501,7 @@ withTempDir((dir) => {
   writeJson(manifest, {
     fixture: "type-challenges-assertion-candidates",
     counts: {
+      pairedSolutions: 2,
       generatedAssertions: 2,
       assertionsReferencingSolutionDeclaration: 1,
       assertionsMissingSolutionDeclarationReference: 1,
@@ -531,9 +535,44 @@ withTempDir((dir) => {
   writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
     compilerOptions: { noEmit: true },
   });
+  writeFile(path.join(candidates, "assertions", "one.ts"), "type One = true;\n");
   writeJson(manifest, {
     fixture: "type-challenges-assertion-candidates",
     counts: {
+      pairedSolutions: 2,
+      generatedAssertions: 1,
+      assertionsReferencingSolutionDeclaration: 1,
+      assertionsMissingSolutionDeclarationReference: 0,
+    },
+    entries: [
+      {
+        id: "one",
+        output: "assertions/one.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /counts\.pairedSolutions \(2\) does not match entries length \(1\)/);
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: {
+      pairedSolutions: 1,
       generatedAssertions: 1,
       assertionsReferencingSolutionDeclaration: 1,
       assertionsMissingSolutionDeclarationReference: 0,
@@ -567,6 +606,7 @@ withTempDir((dir) => {
   writeJson(manifest, {
     fixture: "type-challenges-assertion-candidates",
     counts: {
+      pairedSolutions: 1,
       assertionsReferencingSolutionDeclaration: 1,
       assertionsMissingSolutionDeclarationReference: 0,
     },
@@ -631,6 +671,7 @@ withTempDir((dir) => {
   writeJson(manifest, {
     fixture: "type-challenges-assertion-candidates",
     counts: {
+      pairedSolutions: 1,
       generatedAssertions: 1,
       assertionsReferencingSolutionDeclaration: 1,
     },
