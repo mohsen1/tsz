@@ -4123,18 +4123,25 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
-        if let Some(jsdoc) = self.function_like_jsdoc_for_node(jsdoc_anchor) {
-            self.emit_multiline_jsdoc_comment(&jsdoc);
-        }
-        self.write_indent();
-        self.write("constructor(");
-        self.emit_parameters_with_body(params, body_idx);
-        self.write(");");
-        self.write_line();
-
         let returns_new = self
             .get_identifier_text(name_idx)
             .is_some_and(|name| self.js_function_body_returns_new_named(body_idx, &name));
+        let is_export_equals_root = self.is_js_export_equals_name(name_idx);
+        let constructor_jsdoc = self.function_like_jsdoc_for_node(jsdoc_anchor);
+        let has_constructor_jsdoc = constructor_jsdoc
+            .as_deref()
+            .is_some_and(|jsdoc| jsdoc.contains("@constructor"));
+        if returns_new || has_constructor_jsdoc || is_export_equals_root {
+            if let Some(jsdoc) = constructor_jsdoc {
+                self.emit_multiline_jsdoc_comment(&jsdoc);
+            }
+            self.write_indent();
+            self.write("constructor(");
+            self.emit_parameters_with_body(params, body_idx);
+            self.write(");");
+            self.write_line();
+        }
+
         let mut declared_names = FxHashSet::default();
         for &member_idx in &prototype_members {
             if let Some(name_idx) = self.get_member_name_idx(member_idx)

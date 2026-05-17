@@ -3216,6 +3216,91 @@ export function Point(x, y) {
 }
 
 #[test]
+fn test_js_function_class_merge_omits_non_constructor_signature() {
+    let output = emit_js_dts(
+        r#"
+function C1() {
+    /**
+     * @param {number} x
+     * @param {number} y
+     * @returns {number}
+     */
+    this.prop = function (x, y) {
+        return x + y;
+    };
+}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+C1.prototype.method = function (x, y) {
+    return x + y;
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare function C1(): void;\ndeclare class C1 {"),
+        "Expected JS function plus prototype members to merge with a companion class: {output}"
+    );
+    assert!(
+        !output.contains("constructor();"),
+        "Expected companion class not to duplicate the already-emitted function signature as a constructor: {output}"
+    );
+    assert!(
+        output.contains("prop: (x: number, y: number) => number;")
+            && output.contains("method(x: number, y: number): number;"),
+        "Expected constructor-assigned and prototype members to remain in the companion class: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_static_expando_namespace_members_are_ambient_members() {
+    let output = emit_js_dts(
+        r#"
+function C1() {}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+C1.staticProp = function (x, y) {
+    return x + y;
+};
+
+class C2 {}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+C2.staticProp = function (x, y) {
+    return x + y;
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace C1 {\n    /**")
+            && output.contains("    function staticProp(x: number, y: number): number;\n}"),
+        "Expected function static expando to emit as an ambient namespace member: {output}"
+    );
+    assert!(
+        output.contains("declare namespace C2 {\n    /**")
+            && output.contains("    function staticProp(x: number, y: number): number;\n}"),
+        "Expected class static expando to emit as an ambient namespace member: {output}"
+    );
+    assert!(
+        !output.contains("export function staticProp"),
+        "Did not expect explicit export on ambient namespace members: {output}"
+    );
+}
+
+#[test]
 fn test_var_array_initializer_with_index_assignment_emits_valid_array_type() {
     // Regression: `var t = [1, 2, 3]; t[0] = 5;` previously emitted
     // `declare var t: {\n    : number[];` — invalid TypeScript, because
@@ -6589,8 +6674,8 @@ foo.default = 2;
     );
 
     assert!(
-        output.contains("declare namespace foo {\n    export let x: number;"),
-        "Expected ordinary expando property to be exported from merged namespace: {output}"
+        output.contains("declare namespace foo {\n    let x: number;"),
+        "Expected ordinary expando property to emit as an ambient namespace member: {output}"
     );
     assert!(
         output.contains("let _default: number;\n    export { _default as default };"),

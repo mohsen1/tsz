@@ -85,7 +85,6 @@ impl<'a> DeclarationEmitter<'a> {
                 &mut reserved_member_names,
                 emitted_keyword_export_alias,
             );
-            let emit_export = export_alias.is_none();
             if let Some(init_node) = self.arena.get(initializer) {
                 if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
                     || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
@@ -98,13 +97,13 @@ impl<'a> DeclarationEmitter<'a> {
                             &local_name,
                             func,
                             initializer,
-                            emit_export,
+                            false,
                         );
                     }
                 } else if let Some(type_text) =
                     self.js_namespace_value_member_type_text(initializer)
                 {
-                    self.emit_js_namespace_value_member_text(&local_name, &type_text, emit_export);
+                    self.emit_js_namespace_value_member_text(&local_name, &type_text, false);
                 }
             }
             if let Some((local_name, exported_name)) = export_alias {
