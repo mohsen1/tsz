@@ -218,3 +218,46 @@ withTempDir((dir) => {
   assert.notEqual(sourceResult.status, 0);
   assert.match(sourceResult.stderr, /unsafe manifest source path: \.\.\/alpha\.md/);
 });
+withTempDir((dir) => {
+  const compileDir = path.join(dir, "compile");
+  const manifestPath = path.join(compileDir, "type-challenges-solutions-manifest.json");
+  fs.mkdirSync(path.join(compileDir, "solutions"), { recursive: true });
+  fs.writeFileSync(path.join(compileDir, "solutions", "alpha.ts"), "type Alpha = string;\n");
+  fs.writeFileSync(path.join(compileDir, "solutions", "beta.ts"), "type Beta = string;\n");
+
+  const duplicateOutput = path.join(dir, "duplicate-output.tsv");
+  fs.writeFileSync(
+    duplicateOutput,
+    [
+      "output\tsource\tid\tlevel\ttitle",
+      "solutions/alpha.ts\ten/alpha.md\t1\teasy\tAlpha",
+      "solutions/alpha.ts\ten/beta.md\t2\teasy\tBeta",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const outputResult = runManifest(duplicateOutput, manifestPath);
+  assert.notEqual(outputResult.status, 0);
+  assert.match(
+    outputResult.stderr,
+    /duplicate Type Challenges solution output solutions\/alpha\.ts/,
+  );
+
+  const duplicateSource = path.join(dir, "duplicate-source.tsv");
+  fs.writeFileSync(
+    duplicateSource,
+    [
+      "output\tsource\tid\tlevel\ttitle",
+      "solutions/alpha.ts\ten/alpha.md\t1\teasy\tAlpha",
+      "solutions/beta.ts\ten/alpha.md\t2\teasy\tBeta",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  const sourceResult = runManifest(duplicateSource, manifestPath);
+  assert.notEqual(sourceResult.status, 0);
+  assert.match(
+    sourceResult.stderr,
+    /duplicate Type Challenges solution source en\/alpha\.md/,
+  );
+});
