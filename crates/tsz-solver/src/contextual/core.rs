@@ -186,11 +186,38 @@ impl<'a> ContextualTypeContext<'a> {
             let mut param_types: Vec<TypeId> = Vec::new();
             let mut has_callable_member = false;
 
+            // tsc excludes construct-only Function members when any callable member exists,
+            // so `ComponentClass<P> | StatelessComponent<P> | string` infers only from the
+            // call signature. Single lookup per member for both the callable check and the
+            // constructor filter.
+            let has_non_constructor_callable = members.iter().any(|&m| {
+                // TypeId::FUNCTION intrinsic is callable (not construct-only).
+                if m == TypeId::FUNCTION {
+                    return true;
+                }
+                match self.interner.lookup(m) {
+                    Some(TypeData::Function(func_id)) => {
+                        !self.interner.function_shape(func_id).is_constructor
+                    }
+                    Some(TypeData::Callable(_)) => true,
+                    _ => false,
+                }
+            });
+
             for &m in members.iter() {
-                // Check if this member is callable (has call signatures)
-                let is_callable = crate::type_queries::is_callable_type(self.interner, m);
+                let type_data = self.interner.lookup(m);
+                let is_callable = m == TypeId::FUNCTION
+                    || matches!(
+                        type_data,
+                        Some(TypeData::Callable(_) | TypeData::Function(_))
+                    );
                 if !is_callable {
-                    // Non-callable member — excluded from set S per spec
+                    continue;
+                }
+                if has_non_constructor_callable
+                    && let Some(TypeData::Function(func_id)) = type_data
+                    && self.interner.function_shape(func_id).is_constructor
+                {
                     continue;
                 }
                 has_callable_member = true;
