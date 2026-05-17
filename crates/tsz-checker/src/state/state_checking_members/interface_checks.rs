@@ -13,12 +13,15 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::{NodeList, syntax_kind_ext};
 use tsz_solver::{TypeId, TypeParamInfo};
 
+type TypeParameterScopeUpdates = Vec<(String, Option<TypeId>, bool)>;
+type PushedInterfaceTypeParameters = (Vec<TypeParamInfo>, TypeParameterScopeUpdates);
+
 impl<'a> CheckerState<'a> {
     fn push_interface_type_parameters(
         &mut self,
         iface_name: NodeIndex,
         type_parameters: &Option<NodeList>,
-    ) -> (Vec<TypeParamInfo>, Vec<(String, Option<TypeId>, bool)>) {
+    ) -> PushedInterfaceTypeParameters {
         let (mut params, updates) = self.push_type_parameters(type_parameters);
         let Some(merged_params) =
             self.merged_interface_type_parameters_for_scope(iface_name, &params)
