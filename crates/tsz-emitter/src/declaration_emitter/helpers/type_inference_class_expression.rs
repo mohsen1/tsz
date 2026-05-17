@@ -225,8 +225,7 @@ impl<'a> DeclarationEmitter<'a> {
             .copied()
             .any(|member_idx| self.class_member_is_static(member_idx));
         let force_object_form = !is_abstract && (base_type_text.is_some() || has_static_members);
-        let use_arrow_form =
-            (arrow_form && !force_object_form) || (is_abstract && !force_object_form);
+        let use_arrow_form = (arrow_form || is_abstract) && !force_object_form;
         let instance_indent = if use_arrow_form {
             self.indent_level + 1
         } else {
