@@ -94,6 +94,10 @@ name = "recursive_alias_resolution_tests"
 path = "tests/recursive_alias_resolution_tests.rs"
 
 [[test]]
+name = "recursive_intersection_assignability_tests"
+path = "tests/recursive_intersection_assignability_tests.rs"
+
+[[test]]
 name = "tuple_rest_array_canonicalization_tests"
 path = "tests/tuple_rest_array_canonicalization_tests.rs"
 
