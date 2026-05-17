@@ -908,3 +908,178 @@ class C {
         "Expected no errors for valid #field in expressions. Got: {errors:?}"
     );
 }
+
+// ============================================================
+// Private identifier names in generic classes
+// ============================================================
+
+/// The field type parameter `T` does not affect whether `#foo` is accessible —
+/// TS18013 fires regardless of the instantiation.
+#[test]
+fn test_ts18013_private_field_outside_generic_class() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C<T> {
+    #foo: T;
+    constructor(value: T) { this.#foo = value; }
+}
+declare let c: C<number>;
+c.#foo;
+"#,
+    );
+    let ts18013: Vec<_> = diagnostics.iter().filter(|d| d.code == 18013).collect();
+    assert_eq!(
+        ts18013.len(),
+        1,
+        "Expected exactly one TS18013 for accessing #foo outside generic class. Got: {diagnostics:?}"
+    );
+    assert!(
+        ts18013[0].message_text.contains("#foo") && ts18013[0].message_text.contains("'C'"),
+        "TS18013 must name the private field and its declaring class. Got: {:?}",
+        ts18013[0].message_text
+    );
+}
+
+/// Private field, method, and getter all emit TS18013 when accessed from outside
+/// a generic class — three distinct member kinds, one error each.
+#[test]
+fn test_ts18013_private_method_and_getter_outside_generic_class() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C<T> {
+    #foo: T;
+    #method(): T { return this.#foo; }
+    get #prop(): T { return this.#foo; }
+    constructor(value: T) { this.#foo = value; }
+}
+declare let c: C<number>;
+c.#foo;
+c.#method();
+c.#prop;
+"#,
+    );
+    let ts18013: Vec<_> = diagnostics.iter().filter(|d| d.code == 18013).collect();
+    assert_eq!(
+        ts18013.len(),
+        3,
+        "Expected three TS18013 errors for #foo, #method, and #prop outside generic class. Got: {diagnostics:?}"
+    );
+    for name in ["#foo", "#method", "#prop"] {
+        assert!(
+            ts18013.iter().any(|d| d.message_text.contains(name)),
+            "Expected a TS18013 mentioning {name}. Got: {ts18013:?}"
+        );
+    }
+}
+
+/// C<string> and C<number> are mutually incompatible when the private field type
+/// depends on the type parameter — both assignment directions must fail.
+#[test]
+fn test_ts2322_generic_class_private_field_type_mismatch() {
+    let diagnostics = collect_private_brand_diagnostics(
+        r#"
+class C<T> {
+    #foo: T;
+    constructor(value: T) { this.#foo = value; }
+}
+declare let cs: C<string>;
+declare let cn: C<number>;
+let n: C<number>;
+let s: C<string>;
+n = cs;
+s = cn;
+"#,
+    );
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        2,
+        "Expected two TS2322 errors (one per direction). Got: {diagnostics:?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .all(|d| d.message_text.contains("C<string>") && d.message_text.contains("C<number>")),
+        "Both TS2322 messages must mention both instantiations. Got: {ts2322:?}"
+    );
+}
+
+/// Generic private field type-checking works regardless of the type parameter name
+/// (`K`, `U`, `TValue`, etc.) — the rule is structural, not tied to the name `T`.
+#[test]
+fn test_ts2322_generic_private_field_independent_of_type_param_name() {
+    // Use K (not T) to prove the rule is not hardcoded to the conventional name.
+    test_private_brands(
+        r#"
+class Box<K> {
+    #value: K;
+    constructor(v: K) { this.#value = v; }
+}
+declare let bs: Box<string>;
+declare let bn: Box<number>;
+let x: Box<number>;
+let y: Box<string>;
+x = bs;
+y = bn;
+"#,
+        2,
+    );
+}
+
+/// Same instantiation (`C<string>` to `C<string>`) must be assignable.
+#[test]
+fn test_no_error_same_generic_instantiation_assignable() {
+    test_private_brands(
+        r#"
+class C<T> {
+    #foo: T;
+    constructor(value: T) { this.#foo = value; }
+}
+declare let a: C<string>;
+declare let b: C<string>;
+let x: C<string>;
+x = a;
+x = b;
+"#,
+        0,
+    );
+}
+
+/// Multiple private fields: incompatible type arguments for any field cause TS2322.
+#[test]
+fn test_ts2322_generic_class_multiple_private_members() {
+    test_private_brands(
+        r#"
+class Pair<A, B> {
+    #first: A;
+    #second: B;
+    constructor(a: A, b: B) { this.#first = a; this.#second = b; }
+}
+declare let psn: Pair<string, number>;
+declare let pns: Pair<number, string>;
+let x: Pair<string, number>;
+x = pns;
+"#,
+        1,
+    );
+}
+
+/// `Derived<T> extends Base<T>` — the subtype is assignable to the base type.
+#[test]
+fn test_generic_derived_class_extends_base_private_field() {
+    test_private_brands(
+        r#"
+class Base<T> {
+    #val: T;
+    constructor(v: T) { this.#val = v; }
+}
+class Derived<T> extends Base<T> {
+    constructor(v: T) { super(v); }
+}
+declare let d: Derived<number>;
+let b: Base<number>;
+b = d;
+"#,
+        0,
+    );
+}
