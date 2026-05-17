@@ -2,6 +2,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import {
+  normalizePath,
+  semanticFamiliesForFile,
+} from "./type-challenges-semantic-families.mjs";
 
 const [candidateDir, candidateManifestPath, outputPath] = process.argv.slice(2);
 
@@ -49,10 +53,6 @@ function diagnosticLines(output) {
   return output
     .split(/\r?\n/)
     .filter((line) => /\berror TS\d+:/.test(line));
-}
-
-function normalizePath(file) {
-  return file.split(/[\\/]+/).join("/");
 }
 
 function requiredRelativeManifestPath(value, label) {
@@ -248,73 +248,8 @@ function sortedCounts(map) {
     .map(([key, count]) => ({ key, count }));
 }
 
-const SEMANTIC_FAMILY_RULES = [
-  {
-    id: "template literal inference",
-    test: (text) =>
-      /`[^`]*\$\{/.test(text) || /\binfer\s+\w+\s+extends\s+string\b/.test(text),
-  },
-  {
-    id: "mapped/key-remapped types",
-    test: (text) =>
-      /\[\s*(?:readonly\s+)?[A-Za-z_$][\w$]*\s+in\s+/.test(text) ||
-      /\bas\s+keyof\b/.test(text),
-  },
-  {
-    id: "indexed access",
-    test: (text) =>
-      /\bkeyof\b/.test(text) || /[A-Za-z_$][\w$]*(?:<[^>\n]+>)?\s*\[[^\]\n]+\]/.test(text),
-  },
-  {
-    id: "tuple recursion",
-    test: (text) =>
-      /\[\s*(?:\.\.\.|infer\b)/.test(text) ||
-      /\binfer\s+\w+\s*,/.test(text) ||
-      /\.\.\.\s*[A-Za-z_$][\w$]*/.test(text),
-  },
-  {
-    id: "recursive conditionals",
-    test: (text) =>
-      /\bextends\b/.test(text) &&
-      (/\binfer\b/.test(text) || /\b[A-Za-z_$][\w$]*<[^>]+>/.test(text)),
-  },
-  {
-    id: "distributive conditionals",
-    test: (text) => /\b[A-Za-z_$][\w$]*\s+extends\s+/.test(text) && /\?/.test(text),
-  },
-  {
-    id: "inference cache/session behavior",
-    test: (text) => /\binfer\b/.test(text) || /<[^>]*\bextends\b/.test(text),
-  },
-];
-
 function familiesForDiagnosticFile(file, sourceCache) {
-  if (!file) {
-    return ["unknown"];
-  }
-
-  const normalized = normalizePath(file).replace(/^\.\//, "");
-  const candidatePath = path.resolve(candidateRoot, normalized);
-  if (
-    candidatePath !== candidateRoot &&
-    !candidatePath.startsWith(`${candidateRoot}${path.sep}`)
-  ) {
-    return ["unknown"];
-  }
-  if (!fs.existsSync(candidatePath)) {
-    return ["unknown"];
-  }
-
-  let source = sourceCache.get(candidatePath);
-  if (source === undefined) {
-    source = fs.readFileSync(candidatePath, "utf8");
-    sourceCache.set(candidatePath, source);
-  }
-
-  const families = SEMANTIC_FAMILY_RULES.filter((rule) => rule.test(source)).map(
-    (rule) => rule.id,
-  );
-  return families.length > 0 ? families : ["unclassified"];
+  return semanticFamiliesForFile(file, candidateRoot, sourceCache);
 }
 
 function summarizeCandidateSemanticFamilies(manifest) {
