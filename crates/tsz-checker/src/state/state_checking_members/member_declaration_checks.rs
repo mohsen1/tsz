@@ -26,7 +26,8 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1277: `const` modifier can only appear on a type parameter of a function, method, or class. Interfaces and type aliases are rejected.
+    /// TS1277: `const` modifier can only appear on a type parameter of a
+    /// function, method, or class. Interfaces and type aliases are rejected.
     pub(crate) fn check_const_type_parameter_on_non_function(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
@@ -58,8 +59,8 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1273: modifiers categorically invalid on a type parameter (public, private, protected, static, readonly, async, declare, abstract,
-    /// override, export, default, accessor). TS1274 is reserved for `in`/`out` in the wrong context.
+    /// TS1273: modifiers categorically invalid on a type parameter. TS1274 is
+    /// reserved for `in`/`out` in the wrong context.
     pub(crate) fn check_never_valid_type_parameter_modifiers(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
@@ -80,7 +81,6 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let kind = mod_node.kind;
-                    // Modifiers that can NEVER appear on any type parameter
                     let is_invalid = matches!(
                         kind,
                         x if x == SyntaxKind::PublicKeyword as u16
