@@ -16,6 +16,32 @@ if (!fs.existsSync(classificationPath)) {
 }
 
 const report = JSON.parse(fs.readFileSync(classificationPath, "utf8"));
+
+function fail(message) {
+  console.error(`error: ${message}`);
+  process.exit(1);
+}
+
+function validateReport(report) {
+  if (report?.fixture !== "type-challenges-assertion-classification") {
+    fail(`unexpected assertion classification fixture: ${report?.fixture || "<missing>"}`);
+  }
+  if (!report.compilers || typeof report.compilers !== "object") {
+    fail("assertion classification report is missing compilers");
+  }
+  if (!report.compilers.tsc || !report.compilers.tsz) {
+    fail("assertion classification report must include both tsc and tsz compiler results");
+  }
+  if (!report.comparison || typeof report.comparison !== "object") {
+    fail("assertion classification report is missing comparison");
+  }
+  if (!report.candidateManifest || typeof report.candidateManifest !== "object") {
+    fail("assertion classification report is missing candidateManifest");
+  }
+}
+
+validateReport(report);
+
 const tsc = report.compilers?.tsc || {};
 const tsz = report.compilers?.tsz || {};
 const comparison = report.comparison || {};
