@@ -377,9 +377,14 @@ impl<'a> CheckerState<'a> {
                         .get(annotation_node.pos as usize..annotation_node.end as usize)
                 {
                     let text = text.trim();
+                    // Skip numeric/bigint literal annotations (e.g. `2`, `1n`); only
+                    // pass through identifier-shaped annotations (e.g. `T`, `K`).
                     if text.len() <= 3
                         && text
+                            .starts_with(|c: char| c.is_ascii_alphabetic() || c == '_' || c == '$')
+                        && text
                             .chars()
+                            .skip(1)
                             .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
                     {
                         return Some(text.to_string());
