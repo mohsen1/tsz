@@ -130,7 +130,7 @@ fn type_reference_rejection_kind(
     classify_type_reference_rejection_symbol(symbol, has_type_arguments)
 }
 
-fn classify_type_reference_rejection_symbol(
+const fn classify_type_reference_rejection_symbol(
     symbol: &tsz_binder::Symbol,
     has_type_arguments: bool,
 ) -> DirectSourceFileTypeAliasTypeReferenceRejectionKind {
