@@ -78,6 +78,29 @@ withTempDir((dir) => {
 
 withTempDir((dir) => {
   const jsonl = path.join(dir, "compat.jsonl");
+  const result = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: jsonl,
+    COMPAT_NAME: "large-ts-repo",
+    COMPAT_EXIT_CLASS: "fixture invalid",
+    COMPAT_PHASE: "fixture setup",
+    COMPAT_DIAGNOSTIC_STATUS: "tsc fixture failed",
+    COMPAT_DIAGNOSTIC_DELTA: "tsc: fixture setup failed",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const [row] = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
+  assert.equal(row.state, "yellow");
+  assert.equal(row.first_failure_class, "reference fixture invalid");
+  assert.equal(row.owner_track, "Track 1 project-corpus harness/config");
+  assert.deepEqual(row.known_blockers, [
+    "reference fixture invalid",
+    "fixture setup phase blocker",
+    "uncoded diagnostic",
+  ]);
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
   const summary = path.join(dir, "summary.json");
   fs.writeFileSync(
     jsonl,
