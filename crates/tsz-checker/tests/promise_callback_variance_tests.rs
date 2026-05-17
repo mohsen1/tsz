@@ -17,7 +17,10 @@
 //! guard for the `inside_unreliable_application` shield introduced in the
 //! variance computation.
 
-use tsz_checker::test_utils::check_source_code_messages as diagnostics;
+use tsz_checker::context::{CheckerOptions, ScriptTarget};
+use tsz_checker::test_utils::{
+    check_source_code_messages as diagnostics, check_source_with_libs_code_messages, load_lib_files,
+};
 
 fn collect_codes(source: &str) -> Vec<u32> {
     diagnostics(source)
@@ -29,6 +32,29 @@ fn collect_codes(source: &str) -> Vec<u32> {
 
 fn collect_relevant_diagnostics(source: &str) -> Vec<(u32, String)> {
     diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect()
+}
+
+fn collect_relevant_diagnostics_with_libs(
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let lib_files = load_lib_files(&[
+        "es5.d.ts",
+        "es2015.d.ts",
+        "es2015.core.d.ts",
+        "es2015.collection.d.ts",
+        "es2015.iterable.d.ts",
+        "es2015.generator.d.ts",
+        "es2015.promise.d.ts",
+        "es2015.proxy.d.ts",
+        "es2015.reflect.d.ts",
+        "es2015.symbol.d.ts",
+        "es2015.symbol.wellknown.d.ts",
+    ]);
+    check_source_with_libs_code_messages(source, "test.ts", options, &lib_files)
         .into_iter()
         .filter(|(code, _)| *code != 2318)
         .collect()
@@ -55,6 +81,47 @@ b = a; // ERROR: Foo not <: Bar (missing y)
     assert!(
         codes.contains(&2322),
         "Expected TS2322 for `b = a` (MyPromise<Foo> -> MyPromise<Bar>), got {codes:?}"
+    );
+}
+
+#[test]
+fn promise_constraints_conformance_keeps_ts2322_over_complexity() {
+    let diags = collect_relevant_diagnostics_with_libs(
+        r#"
+interface Promise<T> {
+    then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+}
+
+interface CPromise<T extends { x: any; }> {
+    then<U extends { x: any; }>(cb: (x: T) => Promise<U>): Promise<U>;
+}
+
+interface Foo { x: any; }
+interface Bar { x: any; y: any; }
+
+var a: Promise<Foo>;
+declare var b: Promise<Bar>;
+a = b;
+b = a;
+
+var a2: CPromise<Foo>;
+declare var b2: CPromise<Bar>;
+a2 = b2;
+b2 = a2;
+"#,
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let codes = diags.iter().map(|(code, _)| *code).collect::<Vec<_>>();
+    assert!(
+        !codes.contains(&2859),
+        "promisesWithConstraints should not mask TS2322 with TS2859, got {diags:#?}"
+    );
+    assert!(
+        codes.iter().filter(|code| **code == 2322).count() == 2,
+        "promisesWithConstraints should retain TS2322 diagnostics, got {diags:#?}"
     );
 }
 

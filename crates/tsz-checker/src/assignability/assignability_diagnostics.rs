@@ -795,12 +795,38 @@ impl<'a> CheckerState<'a> {
             RelationRequest::assign(prepared_source, prepared_target).with_property_classification()
         };
         let outcome = self.execute_relation_request(&request);
-        let assignable = self.is_assignable_to(source, target);
-        // TS2859: if the solver hit its recursion/complexity limit during the check
-        // (including the constituent-count overflow guard in check_subtype_inner),
-        // emit "Excessive complexity comparing types" regardless of whether the
-        // relation technically succeeded or failed.
-        if self.ctx.relation_depth_exceeded.get() {
+        let same_application_base = self
+            .application_info_or_display_alias(request.source)
+            .zip(self.application_info_or_display_alias(request.target))
+            .is_some_and(|((source_base, _), (target_base, _))| {
+                self.application_bases_are_same_nominal_type(source_base, target_base)
+            })
+            || self.is_promise_like_application_pair(request.source, request.target);
+        let complex_same_application_without_failure =
+            outcome.depth_exceeded && outcome.failure.is_none() && same_application_base;
+        let same_application_arg_mismatch = if complex_same_application_without_failure {
+            self.application_info_or_display_alias(request.source)
+                .zip(self.application_info_or_display_alias(request.target))
+                .is_some_and(|((_, source_args), (_, target_args))| {
+                    source_args.len() == target_args.len()
+                        && source_args
+                            .iter()
+                            .copied()
+                            .zip(target_args.iter().copied())
+                            .any(|(source_arg, target_arg)| {
+                                !self.is_assignable_to(source_arg, target_arg)
+                            })
+                })
+        } else {
+            false
+        };
+        let assignable = outcome.related && !same_application_arg_mismatch;
+        // TS2859: if the canonical relation check hit its recursion/complexity
+        // limit before it could classify a concrete mismatch, emit "Excessive
+        // complexity comparing types". Do not run a second boolean relation
+        // pass here: that can hit a different complexity path and mask the
+        // structured TS2322 evidence captured in `outcome`.
+        if outcome.depth_exceeded && (outcome.failure.is_some() || !same_application_base) {
             let source_name = self.format_type_diagnostic(source);
             let target_name = self.format_type_diagnostic(target);
             self.error_at_node(
@@ -859,6 +885,12 @@ impl<'a> CheckerState<'a> {
                 display_source,
                 target,
                 diag_idx,
+            );
+            return false;
+        }
+        if complex_same_application_without_failure && !assignable {
+            self.diagnose_assignment_failure_with_relation_outcome(
+                source, target, diag_idx, &outcome,
             );
             return false;
         }

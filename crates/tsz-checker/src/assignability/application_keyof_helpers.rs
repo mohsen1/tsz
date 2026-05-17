@@ -27,7 +27,11 @@ impl<'a> CheckerState<'a> {
             .or_else(|| crate::query_boundaries::common::application_info(self.ctx.types, type_id))
     }
 
-    fn is_promise_like_application_pair(&mut self, source: TypeId, target: TypeId) -> bool {
+    pub(crate) fn is_promise_like_application_pair(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
         let Some((source_base, _)) = self.application_info_or_display_alias(source) else {
             return false;
         };
