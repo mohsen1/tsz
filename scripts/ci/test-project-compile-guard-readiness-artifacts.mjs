@@ -387,6 +387,70 @@ withTempDir((dir) => {
     `#!/usr/bin/env bash\ntouch ${JSON.stringify(tszTouched)}\nexit 0\n`,
     0o755,
   );
+  writeFile(
+    path.join(binDir, "tsc"),
+    "#!/usr/bin/env bash\nexit 0\n",
+    0o755,
+  );
+
+  const result = spawnSync("bash", [GUARD_SCRIPT], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TSZ_BIN: path.join(binDir, "tsz"),
+      TYPE_CHALLENGES_ASSERTION_TSC_BIN: path.join(binDir, "tsc"),
+      TYPE_CHALLENGES_SOLUTIONS_REPO: solutionsRepo,
+      TYPE_CHALLENGES_SOLUTIONS_REF: solutionsRef,
+      TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED: "1",
+      TSZ_PROJECT_COMPILE_FIXTURE_ROOT: fixtureRoot,
+      TSZ_PROJECT_COMPILE_SET: "canary",
+      TSZ_PROJECT_COMPILE_FILTER: "type-challenges-solutions-project",
+      TSZ_PROJECT_COMPILE_INCLUDE_GENERATED_APPS: "0",
+    },
+  });
+
+  assert.equal(result.status, 0, result.stdout || result.stderr);
+  assert.equal(fs.existsSync(tszTouched), true);
+
+  const rows = readJsonl(path.join(fixtureRoot, "project-compatibility.jsonl"));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, "type-challenges-solutions-project");
+  assert.equal(rows[0].state, "green");
+  assert.equal(rows[0].exit_class, "exit success");
+  assert.equal(rows[0].phase, "check");
+  assert.equal(rows[0].diagnostic_status, "none");
+  assert.deepEqual(rows[0].exit_codes.tsc, [0]);
+  assert.deepEqual(rows[0].exit_codes.tsz, [0]);
+});
+
+withTempDir((dir) => {
+  const solutionsRepo = path.join(dir, "solutions");
+  const fixtureRoot = path.join(dir, "fixture-root");
+  const binDir = path.join(dir, "bin");
+  const tszTouched = path.join(dir, "tsz-ran");
+
+  writeFile(
+    path.join(solutionsRepo, "en", "00014-easy-first.md"),
+    [
+      "id: 14",
+      "title: First",
+      "level: easy",
+      "",
+      "## Solution",
+      "```ts",
+      "type First<T extends unknown[]> = T[0]",
+      "```",
+      "",
+    ].join("\n"),
+  );
+  const solutionsRef = initRepo(solutionsRepo);
+
+  writeFile(
+    path.join(binDir, "tsz"),
+    `#!/usr/bin/env bash\ntouch ${JSON.stringify(tszTouched)}\nexit 0\n`,
+    0o755,
+  );
 
   const result = spawnSync("bash", [GUARD_SCRIPT], {
     cwd: ROOT,

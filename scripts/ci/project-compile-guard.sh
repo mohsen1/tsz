@@ -567,6 +567,7 @@ check_project() {
   local name="$1"
   local tsconfig="$2"
   local src_dir="${3:-$(dirname "$tsconfig")}"
+  local tsc_exit_codes="${4:-}"
   local log="$FIXTURE_ROOT/${name}.log"
   local file_count
   file_count="$(count_ts_files "$src_dir")"
@@ -596,7 +597,8 @@ check_project() {
       "$LAST_PEAK_RSS_BYTES" \
       "$rc" \
       "$tsconfig" \
-      "$src_dir"
+      "$src_dir" \
+      "$tsc_exit_codes"
     if [[ "$rc" -eq 124 ]]; then
       echo "error: ${name} timed out after ${PROJECT_TIMEOUT}s" >&2
     else
@@ -610,7 +612,7 @@ check_project() {
     return 0
   fi
 
-  record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count" "$LAST_PEAK_RSS_BYTES" "0" "$tsconfig" "$src_dir"
+  record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count" "$LAST_PEAK_RSS_BYTES" "0" "$tsconfig" "$src_dir" "$tsc_exit_codes"
   echo "${name} compiled successfully."
   echo "::endgroup::"
 }
@@ -693,7 +695,7 @@ if should_check_project "type-challenges-solutions-project"; then
   ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
   write_type_challenges_solutions_config
   if check_type_challenges_solutions_tsc_oracle; then
-    check_project "type-challenges-solutions-project" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/solutions"
+    check_project "type-challenges-solutions-project" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/solutions" "0"
   elif [[ "$ALLOW_FAILURES" == "1" ]]; then
     echo "::warning::type-challenges-solutions-project tsc oracle failed; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
   fi
