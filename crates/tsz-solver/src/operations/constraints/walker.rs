@@ -2006,8 +2006,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             .iter()
                             .any(|arg| self.type_contains_placeholder(*arg, var_map, visited))
                     });
+                    let expand_result = if has_placeholder_arg {
+                        self.checker.expand_type_alias_application(target)
+                    } else {
+                        None
+                    };
                     if has_placeholder_arg
-                        && let Some(expanded) = self.checker.expand_type_alias_application(target)
+                        && let Some(expanded) = expand_result
                         && expanded != target
                     {
                         // When the source is an Array/Tuple/String and the expanded

@@ -227,7 +227,14 @@ fn function_body_needs_contextual_return_type(state: &CheckerState, body_idx: No
     };
 
     if body_node.kind != syntax_kind_ext::BLOCK {
-        return expression_needs_contextual_return_type(state, body_idx);
+        // For expression bodies, use is_contextually_sensitive rather than the
+        // broader expression_needs_contextual_return_type. The latter returns true
+        // for literals, which incorrectly makes `() => 'hi'` context-sensitive and
+        // prevents it from contributing to Round 1 generic type inference.
+        // A parameterless function with a concrete body can always provide its type
+        // without context — only bodies that structurally require context (unannotated
+        // lambdas, sensitive nested expressions) should defer to Round 2.
+        return is_contextually_sensitive(state, body_idx);
     }
 
     // For block bodies, use the stricter `is_contextually_sensitive` check on return

@@ -1334,9 +1334,20 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::CALL_EXPRESSION || k == syntax_kind_ext::NEW_EXPRESSION => {
                 is_contextually_sensitive(self, idx)
             }
+            // Arrow functions and function expressions are context-sensitive only
+            // when they have unannotated parameters or a body whose return type
+            // depends on context (e.g., `n => n.length`, `() => []`).
+            // Parameterless functions with literal/concrete return bodies like
+            // `() => 'hi'` are NOT context-sensitive: their type is fixed
+            // regardless of the surrounding context, so they should participate
+            // in Round 1 generic inference rather than being deferred as
+            // placeholders. This matches tsc's `isContextSensitive` behavior.
             k if k == syntax_kind_ext::ARROW_FUNCTION
-                || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                || k == syntax_kind_ext::CLASS_EXPRESSION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                is_contextually_sensitive(self, idx)
+            }
+            k if k == syntax_kind_ext::CLASS_EXPRESSION
                 || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::CONDITIONAL_EXPRESSION

@@ -1291,9 +1291,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let subst =
                     TypeSubstitution::from_args(self.db, &base_shape.type_params, &app.args);
 
-                // Optimization: If no substitution is needed, return base as-is
+                // If no substitution is needed, return base as-is — but only when
+                // there are no application args to substitute. When the Application
+                // has args but the base shape has no type_params, the substitution
+                // is empty because the type parameters live at the interface/alias
+                // declaration level (not the call-signature level). In that case we
+                // cannot produce a correctly-instantiated shape, so return None and
+                // let callers (e.g. `contextual_round1_arg_types`) fall back to the
+                // constraint-walker path that uses `expand_type_alias_application`.
                 if subst.is_empty() {
-                    return Some(base_shape);
+                    if app.args.is_empty() {
+                        return Some(base_shape);
+                    }
+                    return None;
                 }
 
                 // 4. Instantiate the components of the function shape
