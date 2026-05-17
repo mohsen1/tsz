@@ -1368,6 +1368,17 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn external_declaration_body_uses_local_array_shadow(
+        arena: &NodeArena,
+        delegate_binder: &BinderState,
+        root: NodeIndex,
+    ) -> bool {
+        ["Array", "ReadonlyArray"].iter().any(|name| {
+            delegate_binder.file_locals.get(*name).is_some()
+                && Self::source_file_type_node_contains_identifier_name(arena, root, name)
+        })
+    }
+
     fn source_file_interface_declarations_are_direct_lowerable_with_seen<'b>(
         declarations: &[(NodeIndex, &'b NodeArena)],
         delegate_binder: &BinderState,
@@ -1584,6 +1595,15 @@ impl<'a> CheckerState<'a> {
         let decl_node = symbol_arena.get(decl_idx)?;
         let type_alias = symbol_arena.get_type_alias(decl_node)?;
         let type_param_names = Self::type_alias_type_param_names(symbol_arena, type_alias);
+        if direct_external_declaration_arena
+            && Self::external_declaration_body_uses_local_array_shadow(
+                symbol_arena,
+                delegate_binder,
+                type_alias.type_node,
+            )
+        {
+            return None;
+        }
         let body_is_direct_lowerable = if type_param_names.is_empty() {
             Self::source_file_type_node_is_scope_independent(symbol_arena, type_alias.type_node)
         } else {

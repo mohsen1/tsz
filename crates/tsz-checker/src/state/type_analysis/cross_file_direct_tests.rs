@@ -545,6 +545,7 @@ fn direct_source_file_type_alias_lowers_external_declaration_scope_independent_a
         r#"
                 export type ReactNode = unknown;
                 export type Box<T> = T[];
+                export type Names = Array<string>;
                 type Local = string;
                 export type Wrapped = Local;
             "#,
@@ -587,6 +588,17 @@ fn direct_source_file_type_alias_lowers_external_declaration_scope_independent_a
     assert_ne!(box_type, TypeId::ERROR);
     assert_eq!(box_params.len(), 1);
 
+    let names_sym = target_binder
+        .file_locals
+        .get("Names")
+        .expect("Names symbol");
+    let (names_type, names_params) = state
+        .direct_source_file_type_alias_result(names_sym, Some(1), false)
+        .expect("external declaration aliases may use the real global Array");
+    assert_ne!(names_type, TypeId::UNKNOWN);
+    assert_ne!(names_type, TypeId::ERROR);
+    assert!(names_params.is_empty());
+
     let wrapped_sym = target_binder
         .file_locals
         .get("Wrapped")
@@ -596,6 +608,56 @@ fn direct_source_file_type_alias_lowers_external_declaration_scope_independent_a
             .direct_source_file_type_alias_result(wrapped_sym, Some(1), false)
             .is_none(),
         "aliases that depend on sibling declarations need normal cross-file resolution",
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_external_declaration_local_array_shadows() {
+    let (target_arena, target_binder, types) = parse_bound_source_with_name(
+        "node_modules/pkg/index.d.ts",
+        r#"
+                export type Array<T> = { value: T };
+                export interface ReadonlyArray<T> { readonly value: T; }
+                export type Box = Array<string>;
+                export type ReadonlyBox = ReadonlyArray<string>;
+            "#,
+    );
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import type { Box } from 'pkg';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+
+    let box_sym = target_binder.file_locals.get("Box").expect("Box symbol");
+    assert!(
+        state
+            .direct_source_file_type_alias_result(box_sym, Some(1), false)
+            .is_none(),
+        "package-local Array declarations shadow the global Array type",
+    );
+
+    let readonly_box_sym = target_binder
+        .file_locals
+        .get("ReadonlyBox")
+        .expect("ReadonlyBox symbol");
+    assert!(
+        state
+            .direct_source_file_type_alias_result(readonly_box_sym, Some(1), false)
+            .is_none(),
+        "package-local ReadonlyArray declarations shadow the global ReadonlyArray type",
     );
 }
 
