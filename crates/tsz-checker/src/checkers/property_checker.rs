@@ -204,11 +204,13 @@ impl<'a> CheckerState<'a> {
                 Some(ClassMemberKind::FieldLike)
             )
         {
-            // When target < ES2022, useDefineForClassFields defaults to false and
-            // super.prop for non-method members just works — tsc emits no error.
-            // TS2855 only applies when useDefineForClassFields is effectively true
-            // (target >= ES2022 or explicit useDefineForClassFields: true).
-            if self.ctx.compiler_options.target.supports_es2022() {
+            if self.ctx.compiler_options.target.is_es5() {
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
+                    diagnostic_codes::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
+                );
+            } else {
                 use crate::diagnostics::format_message;
                 let display_name = self
                     .class_chain_member_kind_name_only(class_idx, property_name, false, true)
