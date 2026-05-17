@@ -12,6 +12,7 @@ const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const MERGE_SCRIPT = path.join(ROOT, "scripts", "bench", "merge-results.mjs");
 
 const REQUIRED_COMPATIBILITY_FIELDS = {
+  state: "green",
   exit_class: "exit success",
   first_failure_class: null,
   owner_track: null,

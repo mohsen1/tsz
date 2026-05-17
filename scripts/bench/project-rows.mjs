@@ -18,6 +18,7 @@ export const COMPILE_CANARY_PROJECT_ROWS = [
 ];
 
 export const REQUIRED_COMPATIBILITY_FIELDS = [
+  "state",
   "exit_class",
   "first_failure_class",
   "owner_track",
