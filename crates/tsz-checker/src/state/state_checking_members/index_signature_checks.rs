@@ -1817,7 +1817,11 @@ impl<'a> CheckerState<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::test_utils::check_source_diagnostics;
+    use crate::context::CheckerOptions;
+    use crate::test_utils::{
+        check_source_diagnostics, check_with_options, diagnostic_count, diagnostics_with_code,
+        has_diagnostic_code_message,
+    };
 
     #[test]
     fn ts2413_static_index_signature_number_not_assignable_to_string() {
@@ -1995,6 +1999,87 @@ class C {
                 .iter()
                 .map(|d| (d.code, &d.message_text))
                 .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ts2411_exact_optional_property_types_excludes_optional_declared_string() {
+        let diags = check_with_options(
+            r#"
+interface Test {
+    [key: string]: string;
+    foo?: string;
+    bar?: string | undefined;
+}
+"#,
+            CheckerOptions {
+                exact_optional_property_types: true,
+                strict_null_checks: true,
+                ..CheckerOptions::default()
+            },
+        );
+        assert_eq!(
+            diagnostic_count(&diags, 2411),
+            1,
+            "Expected exactly 1 TS2411 (for bar?: string | undefined), got: {:?}",
+            diagnostics_with_code(&diags, 2411)
+        );
+        assert!(
+            has_diagnostic_code_message(&diags, 2411, "'bar'"),
+            "TS2411 should be for 'bar', got: {:?}",
+            diagnostics_with_code(&diags, 2411)
+        );
+    }
+
+    #[test]
+    fn ts2411_exact_optional_property_types_with_renamed_optional() {
+        let diags = check_with_options(
+            r#"
+interface MyMap {
+    [key: string]: number;
+    count?: number;
+    value?: number | undefined;
+}
+"#,
+            CheckerOptions {
+                exact_optional_property_types: true,
+                strict_null_checks: true,
+                ..CheckerOptions::default()
+            },
+        );
+        assert_eq!(
+            diagnostic_count(&diags, 2411),
+            1,
+            "Expected exactly 1 TS2411 (for value?: number | undefined), got: {:?}",
+            diagnostics_with_code(&diags, 2411)
+        );
+        assert!(
+            has_diagnostic_code_message(&diags, 2411, "'value'"),
+            "TS2411 should be for 'value', got: {:?}",
+            diagnostics_with_code(&diags, 2411)
+        );
+    }
+
+    #[test]
+    fn ts2411_without_exact_optional_optional_prop_still_errors() {
+        let diags = check_with_options(
+            r#"
+interface Test {
+    [key: string]: string;
+    foo?: string;
+    bar?: string | undefined;
+}
+"#,
+            CheckerOptions {
+                strict_null_checks: true,
+                ..CheckerOptions::default()
+            },
+        );
+        assert_eq!(
+            diagnostic_count(&diags, 2411),
+            2,
+            "Expected 2 TS2411 (both foo and bar are incompatible without EOP), got: {:?}",
+            diagnostics_with_code(&diags, 2411)
         );
     }
 }
