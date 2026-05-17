@@ -6682,6 +6682,122 @@ foo.default = 2;
 }
 
 #[test]
+fn test_js_commonjs_factory_namespace_alias_declaration_emits_after_namespace() {
+    let output = emit_js_dts(
+        r#"
+class Base {
+    constructor() {}
+}
+
+const BaseFactory = () => {
+    return new Base();
+};
+
+BaseFactory.Base = Base;
+module.exports = BaseFactory;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = BaseFactory;")
+        .expect("Expected CommonJS export assignment");
+    let factory_pos = output
+        .find("declare function BaseFactory")
+        .expect("Expected factory function declaration");
+    let namespace_pos = output
+        .find("declare namespace BaseFactory")
+        .expect("Expected merged namespace declaration");
+    let class_pos = output
+        .find("declare class Base")
+        .expect("Expected local class dependency declaration");
+
+    assert!(
+        export_pos < factory_pos && factory_pos < namespace_pos && namespace_pos < class_pos,
+        "Expected namespace alias dependency declaration to follow the namespace schedule: {output}"
+    );
+    assert!(
+        output.contains("export { Base };"),
+        "Expected namespace to export the local class alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_namespace_alias_jsdoc_function_declaration_emits_once_after_namespace() {
+    let output = emit_js_dts(
+        r#"
+function Root() {}
+
+/**
+ * @param {number} x
+ * @returns {number}
+ */
+function Member(x) {
+    return x;
+}
+
+Root.Member = Member;
+module.exports = Root;
+"#,
+    );
+
+    let namespace_pos = output
+        .find("declare namespace Root")
+        .expect("Expected merged namespace declaration");
+    let member_pos = output
+        .find("declare function Member")
+        .expect("Expected local function dependency declaration");
+
+    assert!(
+        namespace_pos < member_pos,
+        "Expected JSDoc alias dependency declaration to follow the namespace schedule: {output}"
+    );
+    assert_eq!(
+        output.matches("declare function Member").count(),
+        1,
+        "Expected JSDoc alias dependency declaration to emit once: {output}"
+    );
+    assert!(
+        output.contains("export { Member };"),
+        "Expected namespace to export the local function alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_expando_does_not_defer_unrelated_same_named_jsdoc_function() {
+    let output = emit_js_dts(
+        r#"
+function Root() {}
+
+/**
+ * @returns {string}
+ */
+function x() {
+    return "";
+}
+
+Root.x = 1;
+module.exports = Root;
+"#,
+    );
+
+    let function_pos = output
+        .find("declare function x")
+        .expect("Expected unrelated same-named function declaration");
+    let namespace_pos = output
+        .find("declare namespace Root")
+        .expect("Expected merged namespace declaration");
+
+    assert!(
+        function_pos < namespace_pos,
+        "Expected same-named non-alias JSDoc function to avoid namespace-alias deferral: {output}"
+    );
+    assert!(
+        output.contains("declare var x: number;"),
+        "Expected non-alias expando property declaration to remain a value declaration: {output}"
+    );
+}
+
+#[test]
 fn test_js_reordered_accessor_comments_keep_backing_field_comment() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
