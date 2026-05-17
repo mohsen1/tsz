@@ -15,9 +15,7 @@ use super::type_node_helpers::{
     get_string_literal_from_type_index, is_type_query_in_non_flow_sensitive_signature_parameter,
     is_typeof_global_this_type_node,
 };
-use super::unique_symbol_arena::{
-    has_declared_unique_symbol_owner, is_unique_symbol_type_annotation_unwrapped,
-};
+use super::unique_symbol_arena::has_declared_unique_symbol_owner;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -1134,45 +1132,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 };
 
             if declared_type.is_none() {
-                let type_ann_idx = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
-                    let decl = symbol.value_declaration;
-                    if decl.is_none() {
-                        return None;
-                    }
-                    let decl_node = self.ctx.arena.get(decl)?;
-                    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
-                        if var_decl.type_annotation.is_some() {
-                            return Some(var_decl.type_annotation);
-                        }
-                    } else if decl_node.kind == syntax_kind_ext::PARAMETER {
-                        let param = self.ctx.arena.get_parameter(decl_node)?;
-                        if param.type_annotation.is_some() {
-                            return Some(param.type_annotation);
-                        }
-                    } else if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-                        && let Some(ext) = self.ctx.arena.get_extended(decl)
-                        && ext.parent.is_some()
-                        && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-                        && parent_node.kind == syntax_kind_ext::PARAMETER
-                    {
-                        let param = self.ctx.arena.get_parameter(parent_node)?;
-                        if param.name == decl && param.type_annotation.is_some() {
-                            return Some(param.type_annotation);
-                        }
-                    }
-                    None
-                });
-                if let Some(ann_idx) = type_ann_idx {
-                    if is_unique_symbol_type_annotation_unwrapped(self.ctx.arena, ann_idx) {
-                        declared_type = Some(self.ctx.types.unique_symbol(SymbolRef(sym_id.0)));
-                    } else {
-                        let resolved = self.check(ann_idx);
-                        if resolved != TypeId::ANY && resolved != TypeId::ERROR {
-                            declared_type = Some(resolved);
-                        }
-                    }
-                }
+                declared_type = self.declared_annotation_type_for_type_query_symbol(sym_id);
             }
 
             if let Some(declared_type) = declared_type

@@ -24,6 +24,14 @@ fn assert_no_errors(label: &str, source: &str) {
     );
 }
 
+fn assert_no_error_code(label: &str, source: &str, forbidden: u32) {
+    let diags = check_source_diagnostics(source);
+    assert!(
+        diags.iter().all(|d| d.code != forbidden),
+        "{label}: did not expect TS{forbidden}, got {diags:#?}"
+    );
+}
+
 #[test]
 fn original_repro_tuple_to_object_numeric_literal_keys() {
     assert_no_errors(
@@ -195,6 +203,62 @@ fn renamed_mapped_variable_preserves_multiple_unique_symbol_keys() {
         const secondValue: typeof second = r[second];
         const stringValue: "foo" = r.foo;
         "#,
+    );
+}
+
+#[test]
+fn static_readonly_unique_symbol_owner_preserves_mapped_key_identity() {
+    assert_no_errors(
+        "static readonly unique-symbol owner in generic tuple mapped key",
+        r#"
+        type Equal<X, Y> =
+          (<T>() => T extends X ? 1 : 2) extends
+          (<T>() => T extends Y ? 1 : 2) ? true : false;
+        type Expect<T extends true> = T;
+
+        class Keys {
+          static readonly one: unique symbol;
+        }
+
+        type TupleToObject<U extends readonly (string | number | symbol)[]> = {
+          [Key in U[number]]: Key
+        };
+        type Result = TupleToObject<readonly [typeof Keys.one, "foo"]>;
+        type Expected = { [Keys.one]: typeof Keys.one; foo: "foo" };
+        type Case = Expect<Equal<Result, Expected>>;
+
+        declare const r: Result;
+        const value: typeof Keys.one = r[Keys.one];
+        const literal: Result = { [Keys.one]: Keys.one, foo: "foo" };
+        "#,
+    );
+}
+
+#[test]
+fn parameter_unique_symbol_annotation_does_not_mint_distinct_typeof_identity() {
+    assert_no_error_code(
+        "parameters annotated as unique symbol are invalid owners",
+        r#"
+        function compare(first: unique symbol, second: unique symbol) {
+          type Same = typeof first extends typeof second ? true : false;
+          const same: Same = true;
+        }
+        "#,
+        2322,
+    );
+}
+
+#[test]
+fn let_unique_symbol_annotation_does_not_mint_distinct_typeof_identity() {
+    assert_no_error_code(
+        "let bindings annotated as unique symbol are invalid owners",
+        r#"
+        let first: unique symbol;
+        let second: unique symbol;
+        type Same = typeof first extends typeof second ? true : false;
+        const same: Same = true;
+        "#,
+        2322,
     );
 }
 
