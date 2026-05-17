@@ -717,6 +717,7 @@ impl<'a> CheckerState<'a> {
             && !protocol_method_interface
             && !allow_generic_actual_lib_direct_fallback(&name)
             && name == "IteratorObject"
+            && iterator_object_has_global_augmentations(&self.ctx)
         {
             return None;
         }

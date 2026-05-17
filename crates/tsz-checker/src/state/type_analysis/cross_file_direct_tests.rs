@@ -1209,6 +1209,71 @@ fn direct_actual_lib_symbol_type_handles_iterator_interfaces_with_params() {
 }
 
 #[test]
+fn direct_actual_lib_symbol_type_handles_plain_iterator_object_with_params() {
+    let lib_files = load_lib_files(&["es2015.iterable.d.ts"]);
+    let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+    let arena = Arc::new(parser.get_arena().clone());
+    let binder = Arc::new(binder);
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "fixture.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+
+    let iterator_object_sym_id = state
+        .ctx
+        .binder
+        .file_locals
+        .get("IteratorObject")
+        .expect("IteratorObject should resolve to a lib symbol");
+    let delegate_arena = state
+        .ctx
+        .binder
+        .symbol_arenas
+        .get(&iterator_object_sym_id)
+        .map(std::convert::AsRef::as_ref);
+    let (ty, params) = state
+        .direct_actual_lib_symbol_type(
+            iterator_object_sym_id,
+            CrossArenaSymbolMissSource::SymbolArena,
+            delegate_arena,
+            false,
+        )
+        .expect("unaugmented IteratorObject should lower through the direct lib path");
+
+    assert_ne!(
+        ty,
+        TypeId::UNKNOWN,
+        "IteratorObject should not lower to UNKNOWN"
+    );
+    assert_ne!(
+        ty,
+        TypeId::ERROR,
+        "IteratorObject should not lower to ERROR"
+    );
+    assert!(
+        !params.is_empty(),
+        "IteratorObject should preserve generic type parameters",
+    );
+}
+
+#[test]
 fn direct_actual_lib_symbol_type_allows_iterator_without_declaration_arena_proof() {
     let lib_files = load_lib_files(&["es2015.iterable.d.ts", "esnext.iterator.d.ts"]);
     let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());
