@@ -1170,6 +1170,13 @@ impl<'a> CheckerState<'a> {
         if target == TypeId::NEVER && self.generic_indexed_access_argument_surface(source) {
             return true;
         }
+        // TS2375 takes priority over any solver verdict: emit it before consulting
+        // is_assignable_to so that exactOptionalPropertyTypes mismatches are
+        // never downgraded to TS2345.
+        if self.has_exact_optional_property_mismatch(source, target) {
+            self.diagnose_assignment_failure_with_anchor(source, target, arg_idx);
+            return false;
+        }
         let checker_only_mismatch = self
             .checker_only_assignability_failure_reason(source, target)
             .is_some();

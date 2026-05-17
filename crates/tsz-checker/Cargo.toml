@@ -1317,5 +1317,9 @@ path = "tests/track8_debt_contract_tests.rs"
 name = "static_readonly_unique_symbol_tests"
 path = "tests/static_readonly_unique_symbol_tests.rs"
 
+[[test]]
+name = "ts2375_exact_optional_property_display_tests"
+path = "tests/ts2375_exact_optional_property_display_tests.rs"
+
 [lints]
 workspace = true

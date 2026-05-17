@@ -3105,9 +3105,10 @@ impl<'a> CheckerState<'a> {
                         && common::index_access_parts(self.ctx.types, actual).is_some_and(
                             |(_, index)| common::contains_type_parameters(self.ctx.types, index),
                         ))
-                    && self
+                    && (self
                         .checker_only_assignability_failure_reason(actual, expected)
                         .is_some()
+                        || self.has_exact_optional_property_mismatch(actual, expected))
                 {
                     result = CallResult::ArgumentTypeMismatch {
                         index,

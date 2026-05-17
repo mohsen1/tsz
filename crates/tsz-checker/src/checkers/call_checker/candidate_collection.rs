@@ -1513,6 +1513,48 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check exact-optional property mismatches on call arguments that are object literals.
+    ///
+    /// When `exactOptionalPropertyTypes` is enabled, the solver treats optional slots as
+    /// including `undefined` for the purpose of call resolution (so the call succeeds).
+    /// This post-resolution pass enforces the stricter rule: if the object literal
+    /// explicitly sets an optional property to `undefined` and the target type excludes
+    /// `undefined` for that property, emit TS2375 at the argument site.
+    pub(super) fn check_call_argument_exact_optional_properties<F>(
+        &mut self,
+        args: &[NodeIndex],
+        arg_types: &[TypeId],
+        mut expected_for_index: F,
+    ) where
+        F: FnMut(usize, usize) -> Option<TypeId>,
+    {
+        if !self.ctx.compiler_options.exact_optional_property_types {
+            return;
+        }
+        let arg_count = args.len();
+        for (i, &arg_idx) in args.iter().enumerate() {
+            let Some(expected) = expected_for_index(i, arg_count) else {
+                continue;
+            };
+            if expected == TypeId::ANY || expected == TypeId::UNKNOWN {
+                continue;
+            }
+            let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+                continue;
+            };
+            if arg_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+            let arg_type = arg_types
+                .get(i)
+                .copied()
+                .unwrap_or_else(|| self.get_type_of_node(arg_idx));
+            if self.has_exact_optional_property_mismatch(arg_type, expected) {
+                self.diagnose_assignment_failure_with_anchor(arg_type, expected, arg_idx);
+            }
+        }
+    }
+
     pub(super) fn validate_non_tuple_spreads_for_signature(
         &mut self,
         args: &[NodeIndex],

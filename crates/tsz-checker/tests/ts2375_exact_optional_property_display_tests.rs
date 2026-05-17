@@ -10,10 +10,10 @@
 //! types even with `exactOptionalPropertyTypes: true`. Fixed by
 //! `with_exact_optional_property_types(bool)` on `TypeFormatter`.
 
-use crate::context::CheckerOptions;
+use tsz_checker::context::CheckerOptions;
 
 fn check_with_options(source: &str, options: CheckerOptions) -> Vec<(u32, String)> {
-    crate::test_utils::check_with_options(source, options)
+    tsz_checker::test_utils::check_with_options(source, options)
         .into_iter()
         .map(|d| (d.code, d.message_text))
         .collect()
@@ -228,5 +228,99 @@ matchResult.groups["someVariable"].length;
             *code == 2532 && message.contains("Object is possibly 'undefined'")
         }),
         "expected TS2532 for noUncheckedIndexedAccess result before `.length`, got: {diags:#?}"
+    );
+}
+
+// ── Argument-position TS2375 tests ──────────────────────────────────────────
+//
+// When an object-literal argument contains `undefined` for an optional property
+// whose target type excludes `undefined` (exactOptionalPropertyTypes: true),
+// tsc emits TS2375 at the argument site rather than TS2345 on the whole call.
+
+/// Structural parameter target: `{ foo?: number }`.
+/// Passing `{ foo: undefined }` must yield TS2375, not TS2345.
+#[test]
+fn ts2375_at_argument_structural_target() {
+    let source = r#"
+function f(x: { foo?: number }): void {}
+f({ foo: undefined });
+"#;
+    let diags = check_strict_exact_optional(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2375),
+        "expected TS2375 at argument with structural exact-optional target; got: {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2345),
+        "must not emit TS2345 when TS2375 applies at argument site; got: {diags:#?}"
+    );
+}
+
+/// Named interface parameter target.
+/// Proves the fix is not tied to the structural-literal spelling of the target.
+#[test]
+fn ts2375_at_argument_named_interface_target() {
+    let source = r#"
+interface Options {
+    timeout?: number;
+}
+function g(opts: Options): void {}
+g({ timeout: undefined });
+"#;
+    let diags = check_strict_exact_optional(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2375),
+        "expected TS2375 at argument with named-interface exact-optional target; got: {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2345),
+        "must not emit TS2345 when TS2375 applies at argument site; got: {diags:#?}"
+    );
+}
+
+/// Different property name (`bar`) to prove the fix is not hardcoded to `foo`.
+#[test]
+fn ts2375_at_argument_different_property_name() {
+    let source = r#"
+function h(x: { bar?: string }): void {}
+h({ bar: undefined });
+"#;
+    let diags = check_strict_exact_optional(source);
+    assert!(
+        diags.iter().any(|(code, _)| *code == 2375),
+        "expected TS2375 for property 'bar'; fix must not be hardcoded to any property name; got: {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2345),
+        "must not emit TS2345 when TS2375 applies; got: {diags:#?}"
+    );
+}
+
+/// When the parameter type explicitly includes `undefined` (`foo?: T | undefined`),
+/// there is no exact-optional mismatch and no diagnostic should be emitted.
+#[test]
+fn ts2375_not_at_argument_when_target_explicitly_includes_undefined() {
+    let source = r#"
+function k(x: { foo?: number | undefined }): void {}
+k({ foo: undefined });
+"#;
+    let diags = check_strict_exact_optional(source);
+    assert!(
+        diags.is_empty(),
+        "no diagnostic when target property explicitly includes undefined; got: {diags:#?}"
+    );
+}
+
+/// Without `exactOptionalPropertyTypes`, the argument must be accepted (no TS2375).
+#[test]
+fn ts2375_not_at_argument_without_exact_optional_flag() {
+    let source = r#"
+function m(x: { foo?: number }): void {}
+m({ foo: undefined });
+"#;
+    let diags = check_strict_no_exact(source);
+    assert!(
+        diags.iter().all(|(code, _)| *code != 2375),
+        "TS2375 must not fire without exactOptionalPropertyTypes; got: {diags:#?}"
     );
 }

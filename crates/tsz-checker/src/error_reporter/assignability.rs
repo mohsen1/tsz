@@ -531,7 +531,7 @@ impl<'a> CheckerState<'a> {
 
     /// Internal helper that reports a detailed assignability failure using an
     /// already-resolved diagnostic anchor.
-    pub(super) fn diagnose_assignment_failure_with_anchor(
+    pub(crate) fn diagnose_assignment_failure_with_anchor(
         &mut self,
         source: TypeId,
         target: TypeId,

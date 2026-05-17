@@ -1245,7 +1245,9 @@ impl<'a> CheckerState<'a> {
 
         // When exactOptionalPropertyTypes is enabled and the failure is due to
         // exact optional property mismatch, don't elaborate per-property errors.
-        // The caller will emit a top-level TS2375 instead.
+        // TS2375 is emitted by the post-resolution check_call_argument_exact_optional_properties
+        // pass (for the call-succeeds path) or by check_argument_assignable_or_report
+        // (for the ArgumentTypeMismatch path). Bail out here to avoid incorrect TS2322s.
         let node_source_type = self.get_type_of_node(arg_idx);
         let source_type = source_type_override.unwrap_or(node_source_type);
         if self.has_exact_optional_property_mismatch(source_type, param_type) {
