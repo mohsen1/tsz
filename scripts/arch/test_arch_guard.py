@@ -1400,7 +1400,7 @@ class ArchGuardProjectDashboardRowTests(unittest.TestCase):
     The public compatibility dashboard must render every row the benchmark
     artifact expects or compile-canary CI tracks. This keeps
     `COMPATIBILITY_CORPUS_ROWS` from drifting behind
-    `EXPECTED_PROJECT_BENCHMARKS` / `COMPILE_CANARY_PROJECTS`.
+    `REQUIRED_PROJECT_ROWS` / `COMPILE_CANARY_PROJECT_ROWS`.
     """
 
     def setUp(self):
@@ -1408,15 +1408,15 @@ class ArchGuardProjectDashboardRowTests(unittest.TestCase):
 
     def _write_and_scan(self, body: str):
         with tempfile.TemporaryDirectory() as tmp:
-            path = pathlib.Path(tmp) / "benchmark_data.js"
+            path = pathlib.Path(tmp) / "project-rows.mjs"
             path.write_text(body, encoding="utf-8")
             return self.arch_guard.scan_project_dashboard_rows(path)
 
     def test_matching_expected_and_canary_rows_pass(self):
         body = """
-const EXPECTED_PROJECT_BENCHMARKS = ["utility-types-project"];
-const COMPILE_CANARY_PROJECTS = ["zod-project"];
-const COMPATIBILITY_CORPUS_ROWS = [
+const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["zod-project"];
+export const COMPATIBILITY_CORPUS_ROWS = [
   { name: "utility-types-project", label: "utility-types" },
   { name: "zod-project", label: "Zod" },
 ];
@@ -1425,9 +1425,9 @@ const COMPATIBILITY_CORPUS_ROWS = [
 
     def test_missing_dashboard_row_is_reported(self):
         body = """
-const EXPECTED_PROJECT_BENCHMARKS = ["utility-types-project"];
-const COMPILE_CANARY_PROJECTS = ["zod-project"];
-const COMPATIBILITY_CORPUS_ROWS = [
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["zod-project"];
+export const COMPATIBILITY_CORPUS_ROWS = [
   { name: "zod-project", label: "Zod" },
 ];
 """
@@ -1437,9 +1437,9 @@ const COMPATIBILITY_CORPUS_ROWS = [
 
     def test_stale_dashboard_row_is_reported(self):
         body = """
-const EXPECTED_PROJECT_BENCHMARKS = ["utility-types-project"];
-const COMPILE_CANARY_PROJECTS = [];
-const COMPATIBILITY_CORPUS_ROWS = [
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+export const COMPATIBILITY_CORPUS_ROWS = [
   { name: "utility-types-project", label: "utility-types" },
   { name: "removed-project", label: "removed" },
 ];
@@ -1450,9 +1450,9 @@ const COMPATIBILITY_CORPUS_ROWS = [
 
     def test_duplicate_dashboard_row_is_reported(self):
         body = """
-const EXPECTED_PROJECT_BENCHMARKS = ["utility-types-project"];
-const COMPILE_CANARY_PROJECTS = [];
-const COMPATIBILITY_CORPUS_ROWS = [
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+export const COMPATIBILITY_CORPUS_ROWS = [
   { name: "utility-types-project", label: "utility-types" },
   { name: "utility-types-project", label: "utility-types again" },
 ];

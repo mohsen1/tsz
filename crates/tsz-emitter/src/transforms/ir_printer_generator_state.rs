@@ -8,20 +8,26 @@ impl IRPrinter<'_> {
             "_a", "_b", "_c", "_d", "_e", "_f", "_g", "_h", "_i", "_j", "_k", "_l", "_m", "_n",
             "_o", "_p", "_q", "_r", "_s", "_t", "_u", "_v", "_w", "_x", "_y", "_z",
         ];
+        const RESERVED_TEMP_INDEXES: [usize; 2] = [8, 13];
 
         let max_hoisted_temp = hoisted_vars
             .iter()
             .filter_map(|name| {
                 let name = name.as_ref();
-                // `_i` is the canonical ES5 for-of index temp; `tsc` does not
-                // reserve every intervening `_a`..`_h` generator-state name for it.
-                if name == "_i" {
+                // `_i` and `_n` are dedicated `TempFlags` names in `tsc`'s
+                // temp allocator. They can appear in lowered loops, but they
+                // should not influence the ordinary generator-state name.
+                if name == "_i" || name == "_n" {
                     return None;
                 }
                 TEMP_NAMES.iter().position(|temp| *temp == name)
             })
             .max();
-        TEMP_NAMES[max_hoisted_temp.map_or(0, |idx| (idx + 1).min(TEMP_NAMES.len() - 1))]
+        let mut next_index = max_hoisted_temp.map_or(0, |idx| idx + 1);
+        while RESERVED_TEMP_INDEXES.contains(&next_index) && next_index + 1 < TEMP_NAMES.len() {
+            next_index += 1;
+        }
+        TEMP_NAMES[next_index.min(TEMP_NAMES.len() - 1)]
     }
 
     pub(super) fn rename_colliding_outer_generator_state(

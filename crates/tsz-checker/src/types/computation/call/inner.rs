@@ -856,9 +856,23 @@ impl<'a> CheckerState<'a> {
                 // Use the raw FunctionShape parameter types (which preserve type parameters)
                 // rather than ctx_helper.get_parameter_type_for_call (which may resolve
                 // through Lazy/Application types and lose type parameter information).
-                let excess_skip: Vec<bool> = {
+                let needs_generic_skip_state = args.iter().copied().any(|arg_idx| {
+                    self.ctx
+                        .arena
+                        .get(self.ctx.arena.skip_parenthesized_and_assertions(arg_idx))
+                        .is_some_and(|node| {
+                            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || node.kind == SyntaxKind::StringLiteral as u16
+                                || node.kind == SyntaxKind::NumericLiteral as u16
+                                || node.kind == SyntaxKind::BigIntLiteral as u16
+                                || node.kind == SyntaxKind::TrueKeyword as u16
+                                || node.kind == SyntaxKind::FalseKeyword as u16
+                                || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                        })
+                });
+                if needs_generic_skip_state {
                     let arg_count = args.len();
-                    (0..arg_count)
+                    let excess_skip: Vec<bool> = (0..arg_count)
                         .map(|i| {
                             // Check if the parameter type IS a bare type parameter (T),
                             // not just a complex type that contains type parameters
@@ -880,11 +894,11 @@ impl<'a> CheckerState<'a> {
                                 });
                             from_shape || from_ctx
                         })
-                        .collect()
-                };
-                let has_any_excess_skip = excess_skip.iter().any(|&s| s);
-                if has_any_excess_skip {
-                    self.ctx.generic_excess_skip = Some(excess_skip);
+                        .collect();
+                    let has_any_excess_skip = excess_skip.iter().any(|&s| s);
+                    if has_any_excess_skip {
+                        self.ctx.generic_excess_skip = Some(excess_skip);
+                    }
                 }
 
                 // Pre-compute which arguments are contextually sensitive to avoid borrowing self in closures.

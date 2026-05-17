@@ -419,6 +419,13 @@ pub enum IRNode {
         end_label: u32,
     },
 
+    /// `_a.trys.push([start, , finally, end])`
+    GeneratorTryPushFinally {
+        start_label: u32,
+        finally_label: u32,
+        end_label: u32,
+    },
+
     /// `if (condition) return [3 /*break*/, target_label];`
     /// Used in async state machines for conditional branching.
     IfBreak {
@@ -1093,6 +1100,7 @@ impl IRNode {
             | Self::GeneratorSent
             | Self::GeneratorLabel
             | Self::GeneratorTryPush { .. }
+            | Self::GeneratorTryPushFinally { .. }
             | Self::Raw(_)
             | Self::Comment { .. }
             | Self::TrailingComment(_)

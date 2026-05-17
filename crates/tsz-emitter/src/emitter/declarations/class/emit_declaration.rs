@@ -134,12 +134,7 @@ impl<'a> Printer<'a> {
                 es5_emitter.set_async_generator_inner_name_counts(
                     self.async_generator_inner_name_counts.clone(),
                 );
-                let blocked_disposable_names = self
-                    .file_identifiers
-                    .iter()
-                    .chain(self.generated_temp_names.iter())
-                    .cloned()
-                    .collect::<Vec<_>>();
+                let blocked_disposable_names = self.blocked_disposable_names_for_transform();
                 es5_emitter.set_disposable_env_context(
                     self.next_disposable_env_id,
                     blocked_disposable_names,
@@ -403,12 +398,7 @@ impl<'a> Printer<'a> {
             es5_emitter.set_async_generator_inner_name_counts(
                 self.async_generator_inner_name_counts.clone(),
             );
-            let blocked_disposable_names = self
-                .file_identifiers
-                .iter()
-                .chain(self.generated_temp_names.iter())
-                .cloned()
-                .collect::<Vec<_>>();
+            let blocked_disposable_names = self.blocked_disposable_names_for_transform();
             es5_emitter
                 .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
             es5_emitter.set_indent_level(self.writer.indent_level());
@@ -527,12 +517,7 @@ impl<'a> Printer<'a> {
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         es5_emitter
             .set_async_generator_inner_name_counts(self.async_generator_inner_name_counts.clone());
-        let blocked_disposable_names = self
-            .file_identifiers
-            .iter()
-            .chain(self.generated_temp_names.iter())
-            .cloned()
-            .collect::<Vec<_>>();
+        let blocked_disposable_names = self.blocked_disposable_names_for_transform();
         es5_emitter
             .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
         es5_emitter.set_indent_level(self.writer.indent_level() + 1);

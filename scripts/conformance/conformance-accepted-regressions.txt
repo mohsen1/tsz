@@ -8,8 +8,6 @@ TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection
 TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
 TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingTypeAlias2.ts
-TypeScript/tests/cases/compiler/decoratorWithUnderscoreMethod.ts
-TypeScript/tests/cases/compiler/decoratorsOnComputedProperties.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
@@ -53,6 +51,5 @@ TypeScript/tests/cases/conformance/node/esmModuleExports2.ts
 TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts
 TypeScript/tests/cases/conformance/types/intersection/recursiveIntersectionTypes.ts
 TypeScript/tests/cases/conformance/types/members/indexSignatures1.ts
-TypeScript/tests/cases/conformance/types/typeParameters/typeArgumentLists/instantiationExpressions.ts
 TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallToOverloadedMethodWithOverloadedArguments.ts
 TypeScript/tests/cases/conformance/types/unknown/unknownType2.ts

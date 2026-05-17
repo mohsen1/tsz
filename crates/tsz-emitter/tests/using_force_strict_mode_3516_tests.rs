@@ -210,6 +210,77 @@ export async function test(items: any[]) {
     );
 }
 
+#[test]
+fn es5_for_await_using_in_async_body_uses_planned_disposable_regions() {
+    let source = r#"
+async function main() {
+    for await (await using d1 of [{ async [Symbol.asyncDispose]() {} }, { [Symbol.dispose]() {} }, null, undefined]) {
+    }
+}
+"#;
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: ModuleKind::None,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        output.contains("var _a, _b, _c, d1_1, env_1, d1, e_1, result_1, e_2_1;"),
+        "The async for-await disposable region should hoist loop and resource locals together.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_j.trys.push([0, 10, 11, 16]);"),
+        "The outer async iterator cleanup should be planned in the generator state machine.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_j.trys.push([3, 4, 5, 8]);"),
+        "The inner await-using disposable region should be planned before printing.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("d1 = __addDisposableResource(env_1, d1_1, true);"),
+        "The loop resource should be registered through the disposable helper.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await using d1"),
+        "Raw await-using syntax must not leak into ES5 async function output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_for_await_missing_binding_keeps_disposable_names_global_across_temp_scopes() {
+    let source = r#"
+declare const x: any[];
+for await (await using of x);
+export async function test() {
+    for await (await using of x);
+}
+"#;
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: ModuleKind::ESNext,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        output.contains("var _e = __addDisposableResource(env_1, _e_1, true);"),
+        "The top-level malformed for-await should synthesize a missing binding resource.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _a, x_2, x_2_1, _b_1, env_2, _b, e_3, result_2, e_4_1;"),
+        "Disposable error names should account for outer temp-scope resource names.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_b = __addDisposableResource(env_2, _b_1, true);"),
+        "The nested async function should register the recovered binding in its planned region.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (e_4) throw e_4.error;"),
+        "The nested async iterator rethrow container should follow the skipped resource catch name.\nOutput:\n{output}"
+    );
+}
+
 // Sanity: a regular script without using must NOT spontaneously add
 // "use strict" — that would be a regression from the existing default.
 #[test]
