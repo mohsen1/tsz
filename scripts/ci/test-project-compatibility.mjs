@@ -53,7 +53,7 @@ withTempDir((dir) => {
   assert.equal(rows.length, 1);
   const row = rows[0];
   assert.equal(row.name, "sample-project");
-  assert.equal(row.state, "yellow");
+  assert.equal(row.state, "red");
   assert.equal(row.first_failure_class, "benchmark runner error");
   assert.deepEqual(row.known_blockers, ["benchmark runner error", "timing phase blocker", "relations-assignability"]);
   assert.deepEqual(row.exit_codes, { tsc: [0], tsz: [1, 124], tsgo: [0] });
@@ -106,6 +106,76 @@ withTempDir((dir) => {
 
 withTempDir((dir) => {
   const jsonl = path.join(dir, "compat.jsonl");
+  const cases = [
+    {
+      name: "clean",
+      exitClass: "exit success",
+      diagnosticStatus: "none",
+      expectedState: "green",
+    },
+    {
+      name: "diagnostic",
+      exitClass: "nonzero exit",
+      diagnosticStatus: "diagnostic mismatch or compiler error",
+      expectedState: "yellow",
+    },
+    {
+      name: "timeout",
+      exitClass: "timeout",
+      diagnosticStatus: "compiler timed out",
+      expectedState: "red",
+    },
+    {
+      name: "oom",
+      exitClass: "oom",
+      diagnosticStatus: "compiler OOM or killed",
+      expectedState: "red",
+    },
+    {
+      name: "crash",
+      exitClass: "crash",
+      diagnosticStatus: "compiler crashed",
+      expectedState: "red",
+    },
+    {
+      name: "fixture",
+      exitClass: "fixture invalid",
+      diagnosticStatus: "fixture invalid",
+      expectedState: "gray",
+    },
+    {
+      name: "missing-tsz",
+      exitClass: "tsz unavailable",
+      diagnosticStatus: "runner setup incomplete",
+      expectedState: "gray",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = spawnSync(process.execPath, [COMPAT_SCRIPT, "record"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        COMPAT_JSONL_FILE: jsonl,
+        COMPAT_NAME: testCase.name,
+        COMPAT_EXIT_CLASS: testCase.exitClass,
+        COMPAT_DIAGNOSTIC_STATUS: testCase.diagnosticStatus,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+  }
+
+  const rows = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  assert.equal(rows.length, cases.length);
+  for (const [index, testCase] of cases.entries()) {
+    assert.equal(rows[index].state, testCase.expectedState, testCase.name);
+  }
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
   fs.writeFileSync(
     jsonl,
     [
@@ -136,6 +206,6 @@ withTempDir((dir) => {
   assert.equal(summary.project_filter, "sample");
   assert.equal(summary.allow_failures, true);
   assert.equal(summary.failures, 1);
-  assert.deepEqual(summary.by_state, { green: 1, red: 1 });
+  assert.deepEqual(summary.by_state, { green: 1, yellow: 1 });
   assert.equal(summary.malformed_jsonl_lines, 1);
 });
