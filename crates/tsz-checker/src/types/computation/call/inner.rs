@@ -906,15 +906,16 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&arg| is_contextually_sensitive(self, arg))
                     .collect();
-                let suppress_generic_return_context = args
-                    .iter()
-                    .copied()
-                    .any(|arg| self.suppress_generic_return_context_for_arg(arg))
-                    || self.suppress_generic_return_context_for_direct_arg_overlap(
-                        &shape,
-                        args,
-                        contextual_type,
-                    );
+                let suppress_generic_return_context = contextual_type.is_some()
+                    && (args
+                        .iter()
+                        .copied()
+                        .any(|arg| self.suppress_generic_return_context_for_arg(arg))
+                        || self.suppress_generic_return_context_for_direct_arg_overlap(
+                            &shape,
+                            args,
+                            contextual_type,
+                        ));
                 let generic_inference_contextual_type = if suppress_generic_return_context {
                     None
                 } else {
