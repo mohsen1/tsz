@@ -100,6 +100,7 @@ impl BlockScopeState {
         let is_builtin_shadow = original_name == "arguments";
 
         let needs_rename = is_builtin_shadow
+            || self.reserved_names.contains(original_name)
             || if at_function_level {
                 // At function body level: only check the current function scope itself
                 // (for redeclarations within the same scope)
@@ -142,6 +143,9 @@ impl BlockScopeState {
         // Register in current scope
         if let Some(current_scope) = self.scope_stack.last_mut() {
             current_scope.insert(original_name.to_string(), emitted_name.clone());
+        }
+        if emitted_name != original_name {
+            self.reserved_names.insert(emitted_name.clone());
         }
 
         emitted_name
@@ -263,6 +267,7 @@ impl BlockScopeState {
         self.loop_counter = 0;
         self.reserved_names.clear();
         self.function_scope_marks.clear();
+        self.var_registrations.clear();
     }
 }
 
@@ -322,6 +327,24 @@ fn check_closure_capture(
                 }
                 // Check body
                 check_closure_capture(arena, func.body, loop_vars, info, true);
+            }
+        }
+
+        k if k == syntax_kind_ext::METHOD_DECLARATION => {
+            if let Some(method) = arena.get_method_decl(node) {
+                for &param_idx in &method.parameters.nodes {
+                    check_closure_capture(arena, param_idx, loop_vars, info, true);
+                }
+                check_closure_capture(arena, method.body, loop_vars, info, true);
+            }
+        }
+
+        k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+            if let Some(accessor) = arena.get_accessor(node) {
+                for &param_idx in &accessor.parameters.nodes {
+                    check_closure_capture(arena, param_idx, loop_vars, info, true);
+                }
+                check_closure_capture(arena, accessor.body, loop_vars, info, true);
             }
         }
 
