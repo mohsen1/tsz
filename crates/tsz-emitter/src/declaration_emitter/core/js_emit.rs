@@ -3827,7 +3827,7 @@ impl<'a> DeclarationEmitter<'a> {
                 &[decl_idx, decl.name, decl.initializer],
             ),
         );
-        let widened_literal_kind = self.flattened_array_binding_literal_widening_kind(
+        let widened_literal_kinds = self.collect_flattened_array_binding_literal_widening_kinds(
             decl.name,
             decl.type_annotation,
             decl.initializer,
@@ -3872,7 +3872,9 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_flattened_binding_type_annotation(
                     ident_idx,
                     type_id,
-                    widened_literal_kind,
+                    widened_literal_kinds
+                        .iter()
+                        .find_map(|(idx, kind)| (*idx == ident_idx).then_some(*kind)),
                 );
             }
         }
@@ -3880,52 +3882,73 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
     }
 
-    fn flattened_array_binding_literal_widening_kind(
+    fn collect_flattened_array_binding_literal_widening_kinds(
         &self,
         pattern_idx: NodeIndex,
         type_annotation: NodeIndex,
         initializer: NodeIndex,
-    ) -> Option<&'static str> {
+    ) -> Vec<(NodeIndex, &'static str)> {
         if type_annotation.is_some() {
-            return None;
+            return Vec::new();
         }
         if self
             .arena
             .get(pattern_idx)
             .is_none_or(|node| node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN)
         {
-            return None;
+            return Vec::new();
         }
-        let pattern_node = self.arena.get(pattern_idx)?;
-        let pattern = self.arena.get_binding_pattern(pattern_node)?;
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return Vec::new();
+        };
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return Vec::new();
+        };
+        let Some(initializer) = self.skip_parenthesized_expression(initializer) else {
+            return Vec::new();
+        };
+        let Some(initializer_node) = self.arena.get(initializer) else {
+            return Vec::new();
+        };
+        if initializer_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return Vec::new();
+        }
+        let Some(literal) = self.arena.get_literal_expr(initializer_node) else {
+            return Vec::new();
+        };
+
+        let mut kinds = Vec::new();
+        let mut initializer_index = 0usize;
+        let initializer_elements = literal.elements.nodes.clone();
         for &element_idx in &pattern.elements.nodes {
             let Some(element_node) = self.arena.get(element_idx) else {
                 continue;
             };
-            if element_node.kind == syntax_kind_ext::BINDING_ELEMENT
-                && self
-                    .arena
-                    .get_binding_element(element_node)
-                    .is_some_and(|element| element.dot_dot_dot_token)
+            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                initializer_index += 1;
+                continue;
+            }
+            if element_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+                continue;
+            }
+            let Some(element) = self.arena.get_binding_element(element_node) else {
+                continue;
+            };
+            if element.dot_dot_dot_token {
+                return Vec::new();
+            }
+            if self
+                .arena
+                .get(element.name)
+                .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+                && let Some(&initializer_element) = initializer_elements.get(initializer_index)
+                && let Some(kind) = self.literal_initializer_primitive_kind(initializer_element)
             {
-                return None;
+                kinds.push((element.name, kind));
             }
+            initializer_index += 1;
         }
-        let initializer = self.skip_parenthesized_expression(initializer)?;
-        let initializer_node = self.arena.get(initializer)?;
-        if initializer_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            return None;
-        }
-        let literal = self.arena.get_literal_expr(initializer_node)?;
-        let mut kind = None;
-        for &element_idx in &literal.elements.nodes {
-            let element_kind = self.literal_initializer_primitive_kind(element_idx)?;
-            if kind.is_some_and(|kind| kind != element_kind) {
-                return None;
-            }
-            kind = Some(element_kind);
-        }
-        kind
+        kinds
     }
 
     fn literal_initializer_primitive_kind(&self, expr_idx: NodeIndex) -> Option<&'static str> {

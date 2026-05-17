@@ -1404,6 +1404,7 @@ fn test_mutable_array_literal_binding_widens_homogeneous_literals() {
 let [hello, brave] = ["Hello", "Brave"];
 let [one, two] = [1, 2];
 let [yes, no] = [true, false];
+export let [ma, mb] = ["A", 1];
 "#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -1454,6 +1455,20 @@ let [yes, no] = [true, false];
                 rest: false,
             },
         ]),
+        interner.tuple(vec![
+            TupleElement {
+                type_id: interner.literal_string("A"),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.literal_number(1.0),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]),
     ];
 
     let mut type_cache = crate::type_cache_view::TypeCacheView::default();
@@ -1484,6 +1499,10 @@ let [yes, no] = [true, false];
     assert!(
         output.contains("declare let yes: boolean, no: boolean;"),
         "Expected mutable boolean array binding literals to widen: {output}"
+    );
+    assert!(
+        output.contains("export declare let ma: string, mb: number;"),
+        "Expected mutable mixed array binding literals to widen per binding: {output}"
     );
 }
 
@@ -1540,9 +1559,22 @@ fn variable_declarations_from_source(parser: &ParserState, root: NodeIndex) -> V
         .expect("missing source file");
     let mut declarations = Vec::new();
     for &stmt_idx in &source_file.statements.nodes {
+        let Some(stmt_node) = parser.arena.get(stmt_idx) else {
+            continue;
+        };
+        let variable_stmt_idx =
+            if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_DECLARATION {
+                parser
+                    .arena
+                    .get_export_decl(stmt_node)
+                    .map(|export| export.export_clause)
+                    .unwrap_or(stmt_idx)
+            } else {
+                stmt_idx
+            };
         let Some(stmt) = parser
             .arena
-            .get(stmt_idx)
+            .get(variable_stmt_idx)
             .and_then(|node| parser.arena.get_variable(node))
         else {
             continue;
