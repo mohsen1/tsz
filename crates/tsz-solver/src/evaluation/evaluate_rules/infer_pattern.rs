@@ -1361,10 +1361,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     current_source = peeled;
                 }
 
-                if self.application_pattern_required_property_miss(source, pattern_app_id) {
-                    return false;
-                }
-
                 // Fallback: Structural expansion
                 // Expand the pattern Application to its structural form and recurse
                 // This handles cases like: Reducer<infer S> matching a structural function type
@@ -1441,44 +1437,5 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             _ => checker.is_subtype_of(source, pattern),
         }
-    }
-
-    pub(crate) fn application_pattern_required_property_miss(
-        &self,
-        source: TypeId,
-        pattern_app_id: crate::types::TypeApplicationId,
-    ) -> bool {
-        let source_shape_id = match self.interner().lookup(source) {
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
-            _ => return false,
-        };
-        let source_shape = self.interner().object_shape(source_shape_id);
-        if source_shape.string_index.is_some() || source_shape.number_index.is_some() {
-            return false;
-        }
-
-        let pattern_app = self.interner().type_application(pattern_app_id);
-        let Some(TypeData::Lazy(def_id)) = self.interner().lookup(pattern_app.base) else {
-            return false;
-        };
-        let Some(pattern_body) = self.resolver().resolve_lazy(def_id, self.interner()) else {
-            return false;
-        };
-        let pattern_shape_id = match self.interner().lookup(pattern_body) {
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
-            _ => return false,
-        };
-        let pattern_shape = self.interner().object_shape(pattern_shape_id);
-
-        pattern_shape
-            .properties
-            .iter()
-            .filter(|prop| !prop.optional && !prop.is_symbol_named)
-            .any(|required| {
-                source_shape
-                    .properties
-                    .iter()
-                    .all(|source_prop| source_prop.name != required.name)
-            })
     }
 }
