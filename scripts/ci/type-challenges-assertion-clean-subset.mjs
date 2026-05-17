@@ -69,6 +69,21 @@ function validateInputs(candidateManifest, classification) {
     ...entry,
     output: normalizeManifestPath(entry?.output, `candidate manifest entries[${index}].output`),
   }));
+  const seenOutputs = new Set();
+  const duplicateOutputs = [];
+  for (const entry of entries) {
+    if (seenOutputs.has(entry.output)) {
+      duplicateOutputs.push(entry.output);
+    }
+    seenOutputs.add(entry.output);
+  }
+  if (duplicateOutputs.length > 0) {
+    fail(
+      `assertion candidate manifest entries must have unique output paths: ${[
+        ...new Set(duplicateOutputs),
+      ].sort().join(", ")}`,
+    );
+  }
   const generatedAssertions = candidateManifest.counts?.generatedAssertions;
   if (
     generatedAssertions !== undefined &&
