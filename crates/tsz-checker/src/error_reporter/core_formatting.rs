@@ -412,6 +412,30 @@ impl<'a> CheckerState<'a> {
                         })
                 });
         if let Some(application_display) = application_display {
+            // Case 1: ty is an Application that expands to a non-primitive intersection.
+            // Use the original Application TypeId (not application_display): Lazy args
+            // format as their names ("Entity"), while structural ObjectShape args would
+            // expand to "{ name: string; }".
+            if evaluated != ty
+                && crate::query_boundaries::common::is_non_primitive_intersection(
+                    self.ctx.types,
+                    evaluated,
+                )
+            {
+                return self.format_type_diagnostic_for_assignability_display(ty);
+            }
+            // Case 2: ty is already a non-primitive intersection carrying a display_alias
+            // back to an Application (application_display came via get_display_alias, not
+            // via type_application(display_ty) directly).
+            if application_display != display_ty
+                && crate::query_boundaries::common::is_non_primitive_intersection(
+                    self.ctx.types,
+                    display_ty,
+                )
+            {
+                return self.format_type_diagnostic_for_assignability_display(application_display);
+            }
+
             let normalized =
                 self.normalize_property_receiver_application_display_type(application_display);
             if self

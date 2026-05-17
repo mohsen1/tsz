@@ -1347,8 +1347,48 @@ impl<'a> CheckerState<'a> {
                 target_evaluated_for_intersection,
             )
         {
-            let src_str = self.format_type_diagnostic(source_type);
-            let tgt_str = if crate::query_boundaries::common::is_intersection_type(
+            // When source is (or evaluates to) a non-primitive intersection that
+            // came from a generic alias Application, route through
+            // `format_type_for_assignability_message` so Cases 1/2 in core_formatting
+            // can show the alias form instead of expanding structurally.
+            let source_evaluated = self.evaluate_type_for_assignability(source);
+            // Case A: source is an Application that evaluates to a non-primitive intersection.
+            let case_a = source_evaluated != source
+                && crate::query_boundaries::common::is_non_primitive_intersection(
+                    self.ctx.types,
+                    source_evaluated,
+                );
+            // Case B: source IS the intersection but carries a display_alias back to its
+            // Application (stored by evaluate_application_type when the alias was expanded).
+            let case_b = crate::query_boundaries::common::is_non_primitive_intersection(
+                self.ctx.types,
+                source,
+            ) && self
+                .ctx
+                .types
+                .get_display_alias(source)
+                .is_some_and(|alias| {
+                    crate::query_boundaries::common::type_application(self.ctx.types, alias)
+                        .is_some()
+                });
+            let src_str = if depth == 0 {
+                if case_a || case_b {
+                    self.format_type_for_assignability_message(source)
+                } else {
+                    self.format_type_for_diagnostic_role(
+                        source,
+                        DiagnosticTypeDisplayRole::AssignmentSource {
+                            target,
+                            anchor_idx: idx,
+                        },
+                    )
+                }
+            } else {
+                self.format_type_diagnostic(source_type)
+            };
+            let tgt_str = if depth == 0 {
+                self.format_assignability_type_for_message(target, source)
+            } else if crate::query_boundaries::common::is_intersection_type(
                 self.ctx.types,
                 target_evaluated_for_intersection,
             ) {
