@@ -1074,6 +1074,7 @@ impl<'a> IRPrinter<'a> {
                 initializer,
                 expression,
                 body,
+                multiline_body,
             } => {
                 self.write("for (");
                 self.emit_node(initializer);
@@ -1082,7 +1083,15 @@ impl<'a> IRPrinter<'a> {
                 self.write(" ");
                 self.emit_node(expression);
                 self.write(") ");
-                self.emit_node(body);
+                if *multiline_body && !matches!(&**body, IRNode::Block(_)) {
+                    self.write_line();
+                    self.increase_indent();
+                    self.write_indent();
+                    self.emit_node(body);
+                    self.decrease_indent();
+                } else {
+                    self.emit_node(body);
+                }
             }
             IRNode::WhileStatement { condition, body } => {
                 self.write("while (");
@@ -1169,12 +1178,19 @@ impl<'a> IRPrinter<'a> {
                 self.write(") ");
                 let force_multiline_empty =
                     self.current_class_iife_name.as_deref() == Some(&**name);
+                let previous_generator_state_name = self.generator_state_name;
+                if let Some(generator_state_name) =
+                    Self::generator_state_name_for_function_body(body)
+                {
+                    self.generator_state_name = generator_state_name;
+                }
                 self.emit_function_body_with_defaults(
                     parameters,
                     body,
                     *body_source_range,
                     force_multiline_empty,
                 );
+                self.generator_state_name = previous_generator_state_name;
                 if !self.remove_comments
                     && !self.suppress_function_trailing_extraction
                     && let Some(comment) = self.extract_trailing_comment_from_function(node)
