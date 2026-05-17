@@ -221,8 +221,7 @@ impl<'a> CheckerState<'a> {
         if !self.is_callback_like_argument(other_arg_idx) {
             return true;
         }
-        // Check if T appears in the return type of the callable signature of the
-        // param type. When it does, the callback's return value constrains T.
+        // T appearing in the callback's return type means the callback constrains T.
         if call_checker::get_contextual_signature(self.ctx.types, other_param_type).is_some_and(
             |other_callback| {
                 common::contains_type_parameter_named(
@@ -234,12 +233,10 @@ impl<'a> CheckerState<'a> {
         ) {
             return true;
         }
-        // Fallback for Application types (e.g. `Make<T>` where `Make<T> = () => T`)
-        // whose Lazy base cannot be resolved by the solver without a TypeEnvironment,
-        // causing `get_contextual_signature` to return `None`. When T appears in the
-        // Application's type arguments AND the callback's inferred return type is
-        // concrete (not unknown, void, null, or undefined), the callback return value
-        // constrains T, so T is evidenced by this argument.
+        // Fallback for Application types (e.g. `Make<T> = () => T`) whose Lazy base
+        // can't be resolved without a TypeEnvironment, so `get_contextual_signature`
+        // returns None. If T appears in the Application's args AND the callback's
+        // inferred return type is concrete, the callback still constrains T.
         let t_in_application_args = common::application_info(self.ctx.types, other_param_type)
             .is_some_and(|(_, args)| {
                 args.iter().any(|&a| {

@@ -227,31 +227,19 @@ fn function_body_needs_contextual_return_type(state: &CheckerState, body_idx: No
     };
 
     if body_node.kind != syntax_kind_ext::BLOCK {
-        // For expression bodies, use is_contextually_sensitive rather than the
-        // broader expression_needs_contextual_return_type. The latter returns true
-        // for literals, which incorrectly makes `() => 'hi'` context-sensitive and
-        // prevents it from contributing to Round 1 generic type inference.
-        // A parameterless function with a concrete body can always provide its type
-        // without context — only bodies that structurally require context (unannotated
-        // lambdas, sensitive nested expressions) should defer to Round 2.
+        // Expression bodies: use `is_contextually_sensitive` rather than the broader
+        // `expression_needs_contextual_return_type`, which flags literals and would
+        // incorrectly make `() => 'hi'` context-sensitive, preventing it from
+        // contributing to Round 1 generic inference.
         return is_contextually_sensitive(state, body_idx);
     }
 
-    // For block bodies, use the stricter `is_contextually_sensitive` check on return
-    // expressions rather than the broader `expression_needs_contextual_return_type`.
-    //
-    // tsc's `hasContextSensitiveReturnExpression` returns false for all block bodies.
-    // We can't go that far because our inference pipeline needs the two-pass flow
-    // for block-bodied functions returning context-sensitive expressions (e.g.,
-    // `() => { return a => a + 1 }` where `a` needs contextual type from outer generic).
-    //
-    // But `expression_needs_contextual_return_type` is too broad — it flags ALL object
-    // literals, array literals, and call expressions, even non-sensitive ones. This
-    // incorrectly makes methods like `state() { return { bar2: 1 }; }` context-sensitive,
-    // preventing them from contributing to Round 1 generic inference.
-    //
-    // The stricter check only flags truly context-sensitive return expressions
-    // (those with unannotated params, sensitive nested objects, etc.).
+    // Block bodies: tsc's `hasContextSensitiveReturnExpression` returns false for all
+    // block bodies, but our inference pipeline still needs the two-pass flow for
+    // blocks returning context-sensitive expressions (e.g. `() => { return a => a + 1 }`).
+    // Use the stricter `is_contextually_sensitive` on return expressions; the broader
+    // `expression_needs_contextual_return_type` would flag every object/array/call
+    // literal and block Round 1 inference for methods like `state() { return { bar2: 1 }; }`.
     let Some(block) = state.ctx.arena.get_block(body_node) else {
         return false;
     };

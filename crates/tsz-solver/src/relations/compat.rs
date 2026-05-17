@@ -2399,29 +2399,16 @@ impl<'a, R: TypeResolver> AssignabilityChecker for CompatChecker<'a, R> {
         use crate::type_queries::get_application_info;
 
         let (base, args) = get_application_info(self.interner, type_id)?;
-
-        // Only handle Lazy(DefId) bases (Ref is removed in Phase 4.2)
-        let def_id = match self.interner.lookup(base) {
-            Some(TypeData::Lazy(def_id)) => def_id,
-            _ => return None,
+        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(base) else {
+            return None;
         };
 
         let type_params = self.subtype.resolver.get_lazy_type_params(def_id)?;
-        tracing::trace!(
-            def_id = def_id.0,
-            type_params_len = type_params.len(),
-            args_len = args.len(),
-            "CompatChecker::expand_type_alias_application: params found"
-        );
         if type_params.is_empty() {
             return None;
         }
 
         let body = self.subtype.resolver.resolve_lazy(def_id, self.interner)?;
-        tracing::trace!(
-            body = ?body,
-            "CompatChecker::expand_type_alias_application: body resolved"
-        );
         if body == TypeId::ANY || body == TypeId::ERROR {
             return None;
         }
@@ -2429,15 +2416,15 @@ impl<'a, R: TypeResolver> AssignabilityChecker for CompatChecker<'a, R> {
         let subst = TypeSubstitution::from_args(self.interner, &type_params, &args);
         let instantiated = instantiate_type(self.interner, body, &subst);
         tracing::trace!(
-            instantiated = ?instantiated,
+            def_id = def_id.0,
+            type_params_len = type_params.len(),
+            args_len = args.len(),
+            ?body,
+            ?instantiated,
             same_as_input = (instantiated == type_id),
-            "CompatChecker::expand_type_alias_application: instantiated"
+            "CompatChecker::expand_type_alias_application",
         );
-        if instantiated == type_id {
-            None
-        } else {
-            Some(instantiated)
-        }
+        (instantiated != type_id).then_some(instantiated)
     }
 }
 

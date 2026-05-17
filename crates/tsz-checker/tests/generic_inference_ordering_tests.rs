@@ -4,6 +4,13 @@
 
 use tsz_checker::test_utils::check_source_code_messages;
 
+/// Assert that `source` produces no diagnostics, panicking with `context` if it does.
+#[track_caller]
+fn assert_no_errors(source: &str, context: &str) {
+    let diags = check_source_code_messages(source);
+    assert!(diags.is_empty(), "{context}; got: {diags:?}");
+}
+
 /// foo3<T,U>(x: T, cb: (a: T) => U, y: U)
 /// called as foo3(1, function(a) { return ''; }, 1)
 ///
@@ -46,16 +53,14 @@ var r8 = foo3(1, function (a) { return ''; }, 1);
 /// called as foo2(1, (a) => '') - no error, U=string
 #[test]
 fn test_foo2_no_y_no_error() {
-    let source = r#"
+    assert_no_errors(
+        r#"
 function foo2<T, U>(x: T, cb: (a: T) => U) {
     return cb(x);
 }
 var r4 = foo2(1, function(a) { return ''; });
-"#;
-    let diags = check_source_code_messages(source);
-    assert!(
-        diags.is_empty(),
-        "expected no errors for foo2, got: {diags:?}"
+"#,
+        "expected no errors for foo2",
     );
 }
 
@@ -64,46 +69,40 @@ var r4 = foo2(1, function(a) { return ''; });
 /// so that the context-sensitive `n => n.length` has n: string, not n: unknown.
 #[test]
 fn test_parameterless_lambda_direct_function_type_infers_t() {
-    let source = r#"
+    assert_no_errors(
+        r#"
 function foo2<T>(o: (n: T) => void, i: () => T): void {}
 foo2(n => n.length, () => 'hi');
-"#;
-    let diags = check_source_code_messages(source);
-    assert!(
-        diags.is_empty(),
-        "expected no errors when inferring T from parameterless lambda with direct fn type; got: {diags:?}"
+"#,
+        "expected no errors when inferring T from parameterless lambda with direct fn type",
     );
 }
 
 /// Simple case: infer T from `() => 'hi'` alone against interface `Make<T> { (): T }`
 #[test]
 fn test_parameterless_lambda_simple_interface_infers_t() {
-    let source = r#"
+    assert_no_errors(
+        r#"
 interface Make<T> { (): T; }
 function bar<T>(i: Make<T>): T { return null!; }
 var r = bar(() => 'hi');
-"#;
-    let diags = check_source_code_messages(source);
-    assert!(
-        diags.is_empty(),
-        "expected no errors for simple interface application inference; got: {diags:?}"
+"#,
+        "expected no errors for simple interface application inference",
     );
 }
 
 /// Verifies that T is inferred as string (not unknown) from `() => 'hi'` against `Make<T>`.
+/// If T is correctly inferred as string (widened from "hi"), then `x: string` is valid;
+/// if T = unknown, assigning the result to `string` would fail.
 #[test]
 fn test_parameterless_lambda_simple_interface_infers_correct_type() {
-    // If T is correctly inferred as string (widened from "hi"), then `x: string` is valid.
-    // If T = unknown, then assigning the result to string would fail.
-    let source = r#"
+    assert_no_errors(
+        r#"
 interface Make<T> { (): T; }
 function bar<T>(i: Make<T>): T { return null!; }
 const x: string = bar(() => 'hi');
-"#;
-    let diags = check_source_code_messages(source);
-    assert!(
-        diags.is_empty(),
-        "expected no errors - T should be string from () => 'hi' against Make<T>; got: {diags:?}"
+"#,
+        "expected no errors - T should be string from () => 'hi' against Make<T>",
     );
 }
 
@@ -111,44 +110,38 @@ const x: string = bar(() => 'hi');
 /// Isolates whether the issue is with interface Application in two-pass when Take<T> is direct.
 #[test]
 fn test_parameterless_lambda_mixed_direct_and_interface() {
-    let source = r#"
+    assert_no_errors(
+        r#"
 function foo<T>(o: (n: T) => void, i: () => T): void {}
 foo(n => n.length, () => 'hi');
-"#;
-    let diags = check_source_code_messages(source);
-    assert!(
-        diags.is_empty(),
-        "expected no errors for direct fn types; got: {diags:?}"
+"#,
+        "expected no errors for direct fn types",
     );
 }
 
 /// Mixed: Take interface for sensitive arg, direct function type for parameterless lambda.
 #[test]
 fn test_two_pass_take_interface_direct_make() {
-    let source = r#"
+    assert_no_errors(
+        r#"
 interface Take<T> { (n: T): void; }
 function foo<T>(o: Take<T>, i: () => T): void {}
 foo(n => n.length, () => 'hi');
-"#;
-    let diags = check_source_code_messages(source);
-    assert!(
-        diags.is_empty(),
-        "expected no errors for Take<T> interface + direct () => T; got: {diags:?}"
+"#,
+        "expected no errors for Take<T> interface + direct () => T",
     );
 }
 
 /// Mixed: direct sensitive arg, Make interface for parameterless lambda.
 #[test]
 fn test_two_pass_direct_take_make_interface() {
-    let source = r#"
+    assert_no_errors(
+        r#"
 interface Make<T> { (): T; }
 function foo<T>(o: (n: T) => void, i: Make<T>): void {}
 foo(n => n.length, () => 'hi');
-"#;
-    let diags = check_source_code_messages(source);
-    assert!(
-        diags.is_empty(),
-        "expected no errors for direct (n: T) => void + Make<T> interface; got: {diags:?}"
+"#,
+        "expected no errors for direct (n: T) => void + Make<T> interface",
     );
 }
 
@@ -156,15 +149,13 @@ foo(n => n.length, () => 'hi');
 /// This isolates whether the issue is interface-specific.
 #[test]
 fn test_two_pass_direct_take_make_type_alias() {
-    let source = r#"
+    assert_no_errors(
+        r#"
 type Make<T> = () => T;
 function foo<T>(o: (n: T) => void, i: Make<T>): void {}
 foo(n => n.length, () => 'hi');
-"#;
-    let diags = check_source_code_messages(source);
-    assert!(
-        diags.is_empty(),
-        "expected no errors for type alias Make<T> + direct callback; got: {diags:?}"
+"#,
+        "expected no errors for type alias Make<T> + direct callback",
     );
 }
 
@@ -172,16 +163,14 @@ foo(n => n.length, () => 'hi');
 /// This is the interface-wrapped version of the same inference.
 #[test]
 fn test_parameterless_lambda_interface_application_infers_t() {
-    let source = r#"
+    assert_no_errors(
+        r#"
 interface Make<T> { (): T; }
 interface Take<T> { (n: T): void; }
 function foo<T>(o: Take<T>, i: Make<T>) { }
 foo(n => n.length, () => 'hi');
-"#;
-    let diags = check_source_code_messages(source);
-    assert!(
-        diags.is_empty(),
-        "expected no errors when inferring T from parameterless lambda against interface Application; got: {diags:?}"
+"#,
+        "expected no errors when inferring T from parameterless lambda against interface Application",
     );
 }
 
@@ -190,15 +179,13 @@ foo(n => n.length, () => 'hi');
 /// instead of `Make<T>`). Verifies the fix is structural, not name-specific.
 #[test]
 fn test_two_pass_renamed_type_param_interface_application_infers_v() {
-    let source = r#"
+    assert_no_errors(
+        r#"
 interface Produce<V> { (): V; }
 function bar<V>(o: (n: V) => void, i: Produce<V>): void {}
 bar(n => n.length, () => 'hi');
-"#;
-    let diags = check_source_code_messages(source);
-    assert!(
-        diags.is_empty(),
-        "expected no errors for renamed type param V with Produce<V> interface; got: {diags:?}"
+"#,
+        "expected no errors for renamed type param V with Produce<V> interface",
     );
 }
 
@@ -206,14 +193,12 @@ bar(n => n.length, () => 'hi');
 /// the fix handles multi-param generics and different naming conventions.
 #[test]
 fn test_two_pass_multi_param_interface_application_infers_k() {
-    let source = r#"
+    assert_no_errors(
+        r#"
 interface Emit<K> { (): K; }
 function baz<K, U>(o: (n: K) => U, i: Emit<K>): U { return null!; }
 baz(n => n.length, () => 'hi');
-"#;
-    let diags = check_source_code_messages(source);
-    assert!(
-        diags.is_empty(),
-        "expected no errors for multi-param generic with Emit<K> interface; got: {diags:?}"
+"#,
+        "expected no errors for multi-param generic with Emit<K> interface",
     );
 }
