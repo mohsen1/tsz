@@ -1434,20 +1434,25 @@ impl<'a> CheckerState<'a> {
                 // initializers in type position, including binding element defaults).
                 let _ = self.get_type_from_type_node(node_idx);
 
-                // TS2370: Check that rest parameters have array types.
-                // This is needed because function/constructor types in type aliases
-                // don't go through the normal function declaration checking path.
-                //
-                // Push the function type's own type parameters into scope so that
-                // rest parameter annotations referencing them (e.g. `<L>(...args: L)`)
-                // resolve correctly instead of emitting a spurious TS2304.
-                // `get_type_from_function_type` pushes/pops these internally, so by
-                // the time we reach this sibling check the scope no longer contains
-                // the inner signature's type parameters.
+                // Clone before &mut self calls so the arena borrow is released.
                 if let Some(func_type) = self.ctx.arena.get_function_type(node) {
-                    let tp_updates =
-                        self.push_missing_name_type_parameters(&func_type.type_parameters);
-                    self.check_rest_parameter_types(&func_type.parameters.nodes);
+                    let type_parameters = func_type.type_parameters.clone();
+                    let param_nodes = func_type.parameters.nodes.clone();
+                    let return_type = func_type.type_annotation;
+                    let tp_updates = self.push_missing_name_type_parameters(&type_parameters);
+                    // TS2370: Check that rest parameters have array types.
+                    self.check_rest_parameter_types(&param_nodes);
+                    for &param_idx in &param_nodes {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                            && param.type_annotation != NodeIndex::NONE
+                        {
+                            self.check_type_node(param.type_annotation);
+                        }
+                    }
+                    if return_type != NodeIndex::NONE {
+                        self.check_type_node(return_type);
+                    }
                     self.pop_type_parameters(tp_updates);
                 }
             }
@@ -1763,6 +1768,23 @@ impl<'a> CheckerState<'a> {
                 {
                     for &arg in &args.nodes {
                         self.precompute_type_query_flow_types(arg);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                if let Some(func_type) = self.ctx.arena.get_function_type(node) {
+                    let param_nodes = func_type.parameters.nodes.clone();
+                    let return_type = func_type.type_annotation;
+                    for &param_idx in &param_nodes {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                            && param.type_annotation != NodeIndex::NONE
+                        {
+                            self.precompute_type_query_flow_types(param.type_annotation);
+                        }
+                    }
+                    if return_type != NodeIndex::NONE {
+                        self.precompute_type_query_flow_types(return_type);
                     }
                 }
             }

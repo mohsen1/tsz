@@ -1350,3 +1350,97 @@ const pages = pluck(book, "pages", (n) => n.toFixed());
         "Expected callback parameter for key \"age\" to be number, not T[keyof T]. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+// --- Tests for check_type_node visiting function/constructor return types and parameter types ---
+
+#[test]
+fn test_ts2536_in_function_type_return_position_emits_error() {
+    // tsc emits TS2536 for T[P] inside a function return type when P is not
+    // constrained to keyof T. The FUNCTION_TYPE handler in check_type_node
+    // must recurse into the return type annotation.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type F<T, K> = () => T[K];
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2536),
+        "TS2536 must be emitted for unconstrained T[K] in a function return type.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2536_in_constructor_type_return_position_emits_error() {
+    // Same structural rule for CONSTRUCTOR_TYPE: unconstrained T[K] in the
+    // return type must be flagged. Different type-parameter names to prove
+    // the fix is structural, not name-keyed.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Ctor<Obj, Key> = new () => Obj[Key];
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2536),
+        "TS2536 must be emitted for unconstrained Obj[Key] in a constructor return type.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2536_in_function_type_parameter_position_emits_error() {
+    // Unconstrained T[P] in a parameter type annotation must also be caught.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Cb<T, P> = (value: T[P]) => void;
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2536),
+        "TS2536 must be emitted for unconstrained T[P] in a function parameter type.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_no_ts2536_in_function_type_return_when_key_constrained() {
+    // When the key is constrained to keyof T, T[K] in the return type is valid
+    // and must not produce TS2536 (no false positive).
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Getter<T, K extends keyof T> = () => T[K];
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "TS2536 must not be emitted when key is constrained to keyof T.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_no_ts2536_in_function_type_param_when_key_constrained() {
+    // Constrained key in parameter type: valid, no TS2536.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Setter<Obj, Key extends keyof Obj> = (value: Obj[Key]) => void;
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "TS2536 must not be emitted for Obj[Key] in a parameter type when Key extends keyof Obj.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_ts2536_in_mapped_type_function_member_return_position() {
+    // T[P] inside a function member of a mapped type value: the check must
+    // descend into the function return type inside a mapped type template.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Accessors<T> = {
+    [K in keyof T]: () => T[K];
+};
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "TS2536 must not be emitted for T[K] inside a mapped type function member return when K iterates keyof T.\nActual: {diagnostics:#?}"
+    );
+}
