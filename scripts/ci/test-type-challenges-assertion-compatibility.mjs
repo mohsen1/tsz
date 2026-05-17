@@ -113,6 +113,14 @@ withTempDir((dir) => {
       comparison: {
         status: "tsz-accepts-tsc-rejected",
         diagnosticFreeCandidateDelta: 1,
+        candidateFileComparison: {
+          counts: {
+            bothAccepted: 1,
+            bothRejected: 0,
+            tscAcceptedTszRejected: 0,
+            tscRejectedTszAccepted: 1,
+          },
+        },
         bySemanticFamilyDelta: [{ key: "mapped/key-remapped types", delta: -1 }],
       },
     },
@@ -148,6 +156,10 @@ withTempDir((dir) => {
     tsc_with_diagnostics: 1,
     tsz_diagnostic_free: 2,
     diagnostic_free_candidate_delta: 1,
+    both_accepted: 1,
+    both_rejected: 0,
+    tsc_accepted_tsz_rejected: 0,
+    tsc_rejected_tsz_accepted: 1,
   });
 });
 
