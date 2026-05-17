@@ -1,4 +1,5 @@
 use super::super::{ModuleKind, Printer};
+use super::core::{CjsExportAssignmentValue, CjsExportVariableSchedule};
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::NodeList;
@@ -906,35 +907,10 @@ impl<'a> Printer<'a> {
                 // export const/let/var x = ...
                 k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                     if !self.ctx.module_state.has_export_assignment {
-                        // Try inline form: exports.x = initializer;
-                        // TSC emits this for simple single-binding declarations.
-                        if let Some(inline_decls) =
-                            self.try_collect_inline_cjs_exports(export.export_clause, clause_node)
+                        if let Some(schedule) = self
+                            .collect_cjs_export_variable_schedule(export.export_clause, clause_node)
                         {
-                            let decl_count = inline_decls.len();
-                            for (i, (decoded_name, emit_name, init_idx)) in
-                                inline_decls.iter().enumerate()
-                            {
-                                // Track that this variable was inlined (no local declaration).
-                                // Use decoded name for set tracking (matching uses decoded text).
-                                self.ctx
-                                    .module_state
-                                    .inlined_var_exports
-                                    .insert(decoded_name.clone());
-                                self.write("exports.");
-                                // Use emit_name to preserve unicode escapes in output.
-                                self.write(emit_name);
-                                self.write(" = ");
-                                // emit_identifier handles `x → exports.x` substitution
-                                // for inline-exported variable names automatically.
-                                self.emit(*init_idx);
-                                self.write(";");
-                                // Skip write_line() on the last declaration so the
-                                // caller can emit trailing comments before the newline.
-                                if i < decl_count - 1 {
-                                    self.write_line();
-                                }
-                            }
+                            self.emit_cjs_export_variable_schedule(&schedule);
                         } else if self.variable_stmt_has_binding_pattern(clause_node) {
                             // Destructuring exports lower into assignments that write
                             // directly to exports.
@@ -1463,28 +1439,48 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Emit an exported variable statement with destructuring binding patterns
-    /// as a CJS/AMD comma expression that directly assigns to `exports.*`.
-    ///
-    /// For `export const { x, ...rest } = expr;` with esnext target:
-    /// ```js
-    /// _a = expr, exports.x = _a.x, exports.rest = __rest(_a, ["x"]);
-    /// ```
-    ///
-    /// For `export const { x, ...rest } = expr;` with es5 target:
-    /// ```js
-    /// exports.x = (_a = expr, _a).x, exports.rest = __rest(_a, ["x"]);
-    /// ```
-    ///
-    /// For empty patterns like `export const {} = {};` with esnext target:
-    /// ```js
-    /// _a = {};
-    /// ```
-    ///
-    /// For empty patterns with es5 target:
-    /// ```js
-    /// exports._b = _a = {};
-    /// ```
+    /// Emit local declarations and the ordered `CommonJS` assignment statement
+    /// for a structurally planned exported variable declaration.
+    pub(in crate::emitter) fn emit_cjs_export_variable_schedule(
+        &mut self,
+        schedule: &CjsExportVariableSchedule,
+    ) {
+        for group in &schedule.local_groups {
+            self.write(group.keyword);
+            self.write(" ");
+            self.emit_comma_separated(&group.declarations);
+            self.write(";");
+            self.write_line();
+        }
+
+        for assignment in &schedule.assignments {
+            if matches!(&assignment.value, CjsExportAssignmentValue::Initializer(_)) {
+                self.ctx
+                    .module_state
+                    .inlined_var_exports
+                    .insert(assignment.decoded_name.clone());
+            }
+        }
+
+        for (idx, assignment) in schedule.assignments.iter().enumerate() {
+            if idx > 0 {
+                self.write(", ");
+            }
+            self.write("exports.");
+            self.write(&assignment.emit_name);
+            self.write(" = ");
+            match &assignment.value {
+                CjsExportAssignmentValue::Initializer(init_idx) => {
+                    self.emit(*init_idx);
+                }
+                CjsExportAssignmentValue::LocalName(local_name) => {
+                    self.write(local_name);
+                }
+            }
+        }
+        self.write(";");
+    }
+
     /// Check if a `VARIABLE_STATEMENT` has any destructuring binding patterns.
     pub(in crate::emitter) fn variable_stmt_has_binding_pattern(
         &self,
@@ -1518,6 +1514,8 @@ impl<'a> Printer<'a> {
         false
     }
 
+    /// Emit an exported variable statement with destructuring binding patterns
+    /// as a `CJS`/`AMD` comma expression that directly assigns to `exports.*`.
     pub(in crate::emitter) fn emit_cjs_destructuring_export(
         &mut self,
         clause_node: &tsz_parser::parser::node::Node,

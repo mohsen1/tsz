@@ -1466,6 +1466,40 @@ fn plain_class_expression_var_export_uses_split_assignment() {
 }
 
 #[test]
+fn mixed_cjs_export_var_class_expression_keeps_ordered_assignment_schedule() {
+    let source = r#"declare function side(label: string): string;
+export var a = side("a"), C = class {}, b = side("b");
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let local_class = output
+        .find("var C = class {")
+        .expect("Plain class expression should be emitted as a local binding");
+    let export_assignments = output
+        .find(r#"exports.a = side("a"), exports.C = C, exports.b = side("b");"#)
+        .expect("Mixed export var declarators should share an ordered export assignment statement");
+
+    assert!(
+        local_class < export_assignments,
+        "Local class binding should be scheduled before the export assignment list.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(r#"var a = side("a"), C = class"#),
+        "Inlineable declarators should not be forced into a full local declaration fallback.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn transformed_class_expression_var_export_emits_inline_assignment() {
     let source = "export var noPrivates = class {\n    static getTags() { }\n    tags() { }\n    private static ps = -1;\n    private p = 12;\n};\n";
     let (parser, root) = parse_test_source(source);

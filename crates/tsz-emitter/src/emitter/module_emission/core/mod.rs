@@ -7,9 +7,46 @@ use crate::transforms::emit_utils;
 use crate::transforms::private_fields_es5::is_private_identifier;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::node::{Node, NodeAccess};
+use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
+
+#[derive(Default)]
+pub(in crate::emitter) struct CjsExportVariableSchedule {
+    pub local_groups: Vec<CjsExportLocalDeclGroup>,
+    pub assignments: Vec<CjsExportAssignment>,
+}
+
+pub(in crate::emitter) struct CjsExportLocalDeclGroup {
+    pub keyword: &'static str,
+    pub declarations: Vec<NodeIndex>,
+}
+
+pub(in crate::emitter) struct CjsExportAssignment {
+    pub decoded_name: String,
+    pub emit_name: String,
+    pub value: CjsExportAssignmentValue,
+}
+
+pub(in crate::emitter) enum CjsExportAssignmentValue {
+    Initializer(NodeIndex),
+    LocalName(String),
+}
+
+fn cjs_export_decl_list_keyword(node: &Node) -> Option<&'static str> {
+    let flags = node.flags as u32;
+    if flags & node_flags::USING != 0 {
+        return None;
+    }
+    if flags & node_flags::CONST != 0 {
+        Some("const")
+    } else if flags & node_flags::LET != 0 {
+        Some("let")
+    } else {
+        Some("var")
+    }
+}
 
 impl<'a> Printer<'a> {
     /// Emit a module specifier, rewriting extension if rewriteRelativeImportExtensions is set.
@@ -1143,27 +1180,27 @@ impl<'a> Printer<'a> {
         names
     }
 
-    /// Try to collect inline CJS export info for a variable statement.
-    /// Returns `Some(vec of (decoded_name, emit_name, initializer_idx))` if all
-    /// declarators are simple identifier bindings and at least one initializer can
-    /// be emitted inline. Initializer-less declarations are skipped because the
-    /// CJS preamble already emits their `exports.x = void 0` forward declaration.
-    /// Returns None for destructuring or non-inlineable initializers, which fall
-    /// back to split form.
-    ///
-    /// `decoded_name` is the semantic name (for set tracking/matching).
-    /// `emit_name` preserves unicode escapes from the source to match tsc output.
-    pub(in crate::emitter) fn try_collect_inline_cjs_exports(
+    /// Build a `CommonJS` export schedule for a variable statement whose declarators
+    /// can be lowered structurally. Initializer-less declarations are skipped
+    /// because the `CJS` preamble already emits their `exports.x = void 0` forward
+    /// declaration. Destructuring and unsupported declaration-list kinds return
+    /// `None` so callers can use the existing fallback paths.
+    pub(in crate::emitter) fn collect_cjs_export_variable_schedule(
         &self,
         _node_idx: NodeIndex,
         node: &Node,
-    ) -> Option<Vec<(String, String, NodeIndex)>> {
+    ) -> Option<CjsExportVariableSchedule> {
         let var_stmt = self.arena.get_variable(node)?;
-        let mut result = Vec::new();
+        let mut schedule = CjsExportVariableSchedule::default();
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let decl_list_node = self.arena.get(decl_list_idx)?;
             let decl_list = self.arena.get_variable(decl_list_node)?;
+            let keyword = cjs_export_decl_list_keyword(decl_list_node)?;
+            let mut local_group = CjsExportLocalDeclGroup {
+                keyword,
+                declarations: Vec::new(),
+            };
 
             for &decl_idx in &decl_list.declarations.nodes {
                 let decl_node = self.arena.get(decl_idx)?;
@@ -1189,31 +1226,44 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
-                // tsc uses split form (const x = val; exports.x = x;) for
-                // arrow functions, function expressions, and plain class
-                // expressions. Class expressions that really lower to a comma
-                // expression can be emitted directly as `exports.x = (...)`.
-                if let Some(init_node) = self.arena.get(decl.initializer) {
-                    let k = init_node.kind;
-                    let is_class_initializer = self.arena.get_class(init_node).is_some();
-                    if k == syntax_kind_ext::ARROW_FUNCTION
-                        || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                        || (is_class_initializer
-                            && !self
-                                .class_expression_export_initializer_can_inline(decl.initializer))
-                    {
-                        return None;
-                    }
+                let initializer = decl.initializer;
+                if self.cjs_export_initializer_needs_local_binding(initializer) {
+                    local_group.declarations.push(decl_idx);
+                    schedule.assignments.push(CjsExportAssignment {
+                        decoded_name,
+                        emit_name: emit_name.clone(),
+                        value: CjsExportAssignmentValue::LocalName(emit_name),
+                    });
+                } else {
+                    schedule.assignments.push(CjsExportAssignment {
+                        decoded_name,
+                        emit_name,
+                        value: CjsExportAssignmentValue::Initializer(initializer),
+                    });
                 }
+            }
 
-                result.push((decoded_name, emit_name, decl.initializer));
+            if !local_group.declarations.is_empty() {
+                schedule.local_groups.push(local_group);
             }
         }
 
-        if result.is_empty() {
+        if schedule.assignments.is_empty() {
             return None;
         }
-        Some(result)
+        Some(schedule)
+    }
+
+    fn cjs_export_initializer_needs_local_binding(&self, initializer: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        let k = init_node.kind;
+        let is_class_initializer = self.arena.get_class(init_node).is_some();
+        k == syntax_kind_ext::ARROW_FUNCTION
+            || k == syntax_kind_ext::FUNCTION_EXPRESSION
+            || (is_class_initializer
+                && !self.class_expression_export_initializer_can_inline(initializer))
     }
 
     fn class_expression_export_initializer_can_inline(&self, class_idx: NodeIndex) -> bool {
