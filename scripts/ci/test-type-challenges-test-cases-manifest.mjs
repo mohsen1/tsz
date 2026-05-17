@@ -38,7 +38,6 @@ function writeTestCases(root, rel) {
 withTempDir((dir) => {
   writeTestCases(dir, "questions/00013-warm-hello-world/test-cases.ts");
   writeTestCases(dir, "questions/00189-easy-awaited/test-cases.ts");
-  writeTestCases(dir, "questions/custom-shape/test-cases.ts");
 
   const manifestPath = path.join(
     dir,
@@ -60,7 +59,7 @@ withTempDir((dir) => {
         ...process.env,
         TYPE_CHALLENGES_REPO: "https://example.invalid/type-challenges.git",
         TYPE_CHALLENGES_REF: "fixture-ref",
-        TYPE_CHALLENGES_EXPECTED_TEST_CASES: "3",
+        TYPE_CHALLENGES_EXPECTED_TEST_CASES: "2",
       },
     },
   );
@@ -71,8 +70,8 @@ withTempDir((dir) => {
   assert.equal(manifest.source.repository, "https://example.invalid/type-challenges.git");
   assert.equal(manifest.source.ref, "fixture-ref");
   assert.equal(manifest.source.path, "questions/**/test-cases.ts");
-  assert.equal(manifest.expectedGenerated, 3);
-  assert.equal(manifest.generated, 3);
+  assert.equal(manifest.expectedGenerated, 2);
+  assert.equal(manifest.generated, 2);
   assert.deepEqual(
     manifest.entries.map((entry) => [
       entry.source,
@@ -83,7 +82,32 @@ withTempDir((dir) => {
     [
       ["questions/00013-warm-hello-world/test-cases.ts", "13", "warm", "hello-world"],
       ["questions/00189-easy-awaited/test-cases.ts", "189", "easy", "awaited"],
-      ["questions/custom-shape/test-cases.ts", null, "unknown", "custom-shape"],
     ],
   );
+});
+
+withTempDir((dir) => {
+  writeTestCases(dir, "questions/custom-shape/test-cases.ts");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      MANIFEST_SCRIPT,
+      path.join(dir, "source"),
+      path.join(dir, "compile"),
+      path.join(dir, "compile", "type-challenges-test-cases-manifest.json"),
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        TYPE_CHALLENGES_REPO: "https://example.invalid/type-challenges.git",
+        TYPE_CHALLENGES_REF: "fixture-ref",
+        TYPE_CHALLENGES_EXPECTED_TEST_CASES: "1",
+      },
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unparseable challenge directory/);
 });

@@ -105,3 +105,32 @@ tsz_write_type_challenges_solutions_config ${shellQuote(sourceDir)} ${shellQuote
   );
   assert.ok(fs.existsSync(path.join(compileDir, "tsconfig.tsz-guard.json")));
 });
+
+withTempDir((dir) => {
+  const sourceDir = path.join(dir, "source");
+  const compileDir = path.join(dir, "compile");
+  fs.mkdirSync(path.join(sourceDir, "en"), { recursive: true });
+
+  writeSolution(sourceDir, "custom.md", {
+    id: "custom-shape",
+    title: "Custom Challenge",
+    level: "easy",
+    fence: "ts",
+    declaration: "type Custom = string;",
+  });
+
+  const script = `
+set -euo pipefail
+TYPE_CHALLENGES_SOLUTIONS_REPO=https://example.invalid/type-challenges-solutions.git
+TYPE_CHALLENGES_SOLUTIONS_REF=fixture-ref
+TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED=1
+source ${shellQuote(PROJECT_FIXTURES)}
+tsz_write_type_challenges_solutions_config ${shellQuote(sourceDir)} ${shellQuote(compileDir)}
+`;
+  const result = spawnSync("bash", ["-c", script], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unparseable challenge id/);
+});
