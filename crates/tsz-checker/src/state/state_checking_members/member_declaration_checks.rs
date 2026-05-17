@@ -531,7 +531,7 @@ impl<'a> CheckerState<'a> {
                     // TS2838: Check that duplicate infer type params have identical constraints
                     self.check_infer_constraint_consistency(cond.extends_type);
 
-                    // Collect infer type parameters from extends_type and add them to scope for true_type
+                    // Collect infer type parameters from extends_type and add them to scope for true_type.
                     let infer_params = self.collect_infer_type_parameters(cond.extends_type);
                     let infer_constraints: Vec<Option<TypeId>> = infer_params
                         .iter()

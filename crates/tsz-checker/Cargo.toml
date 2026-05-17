@@ -1134,6 +1134,10 @@ name = "template_literal_union_separator_tests"
 path = "tests/template_literal_union_separator_tests.rs"
 
 [[test]]
+name = "template_literal_infer_type_arg_tests"
+path = "tests/template_literal_infer_type_arg_tests.rs"
+
+[[test]]
 name = "object_element_access_diagnostics_tests"
 path = "tests/object_element_access_diagnostics_tests.rs"
 

@@ -947,7 +947,19 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(idx) else {
                 continue;
             };
-            if node.kind == syntax_kind_ext::INFER_TYPE {
+            if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE {
+                if let Some(tlt) = self.ctx.arena.get_template_literal_type(node) {
+                    for &span_idx in &tlt.template_spans.nodes {
+                        if let Some(span_node) = self.ctx.arena.get(span_idx)
+                            && let Some(span) = self.ctx.arena.get_template_span(span_node)
+                            && let Some(expr_node) = self.ctx.arena.get(span.expression)
+                            && expr_node.kind == syntax_kind_ext::INFER_TYPE
+                        {
+                            span_infer_nodes.insert(span.expression);
+                        }
+                    }
+                }
+            } else if node.kind == syntax_kind_ext::INFER_TYPE {
                 if let Some(infer_data) = self.ctx.arena.get_infer_type(node) {
                     if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
                         && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
@@ -959,10 +971,7 @@ impl<'a> CheckerState<'a> {
                             infer_names.push(name);
                         }
                     }
-                    // The constraint of `infer X extends Constraint` may itself
-                    // contain `infer Y extends C2`; tsc binds those nested names
-                    // in the true branch too. Descend into the type-parameter
-                    // subtree to pick them up.
+                    // `infer X extends Constraint` may nest further `infer Y`; descend.
                     stack.push(infer_data.type_parameter);
                 }
                 continue;

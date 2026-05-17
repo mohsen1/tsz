@@ -1011,6 +1011,46 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Collect names of `infer X` variables that are direct span expressions
+    /// in a template-literal-type within `extends_type`. Those positions
+    /// implicitly constrain `X` to `string` per tsc's inference rules.
+    pub(crate) fn collect_template_span_infer_names(
+        &self,
+        extends_type: NodeIndex,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut result = rustc_hash::FxHashSet::default();
+        let mut stack = vec![extends_type];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE {
+                if let Some(tlt) = self.ctx.arena.get_template_literal_type(node) {
+                    for &span_idx in &tlt.template_spans.nodes {
+                        if let Some(span_node) = self.ctx.arena.get(span_idx)
+                            && let Some(span) = self.ctx.arena.get_template_span(span_node)
+                            && let Some(expr_node) = self.ctx.arena.get(span.expression)
+                            && expr_node.kind == syntax_kind_ext::INFER_TYPE
+                            && let Some(infer) = self.ctx.arena.get_infer_type(expr_node)
+                            && let Some(tp_node) = self.ctx.arena.get(infer.type_parameter)
+                            && let Some(tp) = self.ctx.arena.get_type_parameter(tp_node)
+                            && let Some(name_node) = self.ctx.arena.get(tp.name)
+                            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                        {
+                            result.insert(ident.escaped_text.clone());
+                        }
+                    }
+                }
+                // Spans were accessed directly above; no need to descend into children.
+                continue;
+            }
+            for child_idx in self.ctx.arena.get_children(idx) {
+                stack.push(child_idx);
+            }
+        }
+        result
+    }
+
     // Section 40: Node and Name Utilities
     // ------------------------------------
 
