@@ -1810,3 +1810,7 @@ mod tests;
 #[cfg(test)]
 #[path = "cross_file_direct_cached_base_tests.rs"]
 mod cached_base_tests;
+
+#[cfg(test)]
+#[path = "cross_file_direct_cache_tests.rs"]
+mod cache_tests;
