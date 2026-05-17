@@ -1025,3 +1025,115 @@ fn export_default_interface_plus_type_identifier_both_get_ts2528() {
             .collect::<Vec<_>>()
     );
 }
+
+// ─── Issue #6052: re-export + module augmentation false-positive ──────────────
+//
+// When a file re-exports an interface (with or without rename) from module M,
+// and also declares `declare module M { interface X {...} }` to augment it,
+// tsz was incorrectly emitting TS2300 ("Duplicate identifier") because the
+// targeted-augmentation check surfaced M's export-surface declaration and
+// compared it against the local import/re-export alias.  tsc accepts all of
+// these patterns.
+
+fn check_two_module_files(source_src: &str, consumer_src: &str) -> Vec<u32> {
+    tsz_checker::test_utils::check_multi_file(
+        &[("source.ts", source_src), ("consumer.ts", consumer_src)],
+        "consumer.ts",
+        CheckerOptions {
+            strict: true,
+            no_lib: true,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|d| d.code)
+    .collect()
+}
+
+/// `import type { X }` + `declare module` augmenting the same interface: no TS2300.
+#[test]
+fn import_alias_plus_module_augmentation_no_ts2300() {
+    let source = "export interface User { id: number; name: string; }";
+    // Two name spellings (T / U) to prove the fix is structural, not tied to a
+    // specific identifier.
+    for consumer in &[
+        // Original name
+        r#"import type { User } from "./source";
+declare module "./source" { interface User { email?: string; } }
+const u: User = { id: 1, name: "x", email: "a@b.com" };"#,
+        // Renamed import
+        r#"import type { User as U } from "./source";
+declare module "./source" { interface User { email?: string; } }
+const u: U = { id: 1, name: "x" };"#,
+    ] {
+        let codes = check_two_module_files(source, consumer);
+        assert!(
+            !codes.contains(&2300),
+            "Expected no TS2300, got codes: {codes:?}\nconsumer:\n{consumer}"
+        );
+    }
+}
+
+/// `export {{ X as Y }} from "M"` + `declare module "M"` augmenting X: no TS2300.
+#[test]
+fn reexport_rename_plus_module_augmentation_no_ts2300() {
+    let source = "export interface User { id: number; }";
+    // Vary the iteration-variable name to confirm it's structural.
+    for consumer in &[
+        r#"import type { User } from "./source";
+export { User as MyUser } from "./source";
+declare module "./source" { interface User { email?: string; } }"#,
+        r#"import type { User } from "./source";
+export { User as ExportedUser } from "./source";
+declare module "./source" { interface User { role: string; } }"#,
+    ] {
+        let codes = check_two_module_files(source, consumer);
+        assert!(
+            !codes.contains(&2300),
+            "Expected no TS2300, got codes: {codes:?}\nconsumer:\n{consumer}"
+        );
+    }
+}
+
+/// `export {{ X }} from "M"` (no rename) + `declare module "M"`: no TS2300.
+#[test]
+fn reexport_no_rename_plus_module_augmentation_no_ts2300() {
+    let source = "export interface Widget { id: number; }";
+    let consumer = r#"import type { Widget } from "./source";
+export { Widget } from "./source";
+declare module "./source" { interface Widget { label: string; } }"#;
+    let codes = check_two_module_files(source, consumer);
+    assert!(
+        !codes.contains(&2300),
+        "Expected no TS2300, got codes: {codes:?}"
+    );
+}
+
+/// `import {{ X }}` (value import) + `declare module`: no TS2300.
+#[test]
+fn value_import_plus_module_augmentation_no_ts2300() {
+    let source = "export interface Config { timeout: number; }";
+    let consumer = r#"import { Config } from "./source";
+declare module "./source" { interface Config { retries?: number; } }
+const c: Config = { timeout: 5000 };"#;
+    let codes = check_two_module_files(source, consumer);
+    assert!(
+        !codes.contains(&2300),
+        "Expected no TS2300, got codes: {codes:?}"
+    );
+}
+
+/// Two interfaces with the same name across files still merge correctly (positive case).
+/// Augmenting an interface in a target module with another interface is valid.
+#[test]
+fn two_interfaces_across_files_still_merge() {
+    let source = "export interface Plugin { name: string; }";
+    let consumer = r#"import type { Plugin } from "./source";
+declare module "./source" { interface Plugin { version: string; } }
+const p: Plugin = { name: "x", version: "1" };"#;
+    let codes = check_two_module_files(source, consumer);
+    assert!(
+        !codes.contains(&2300),
+        "Interface+interface module augmentation must not produce TS2300; got: {codes:?}"
+    );
+}

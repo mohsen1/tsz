@@ -1202,14 +1202,28 @@ impl<'a> CheckerState<'a> {
                     // Keep the dedicated cross-file interface-member conflict pass
                     // above responsible for property-vs-method mismatches instead of
                     // collapsing benign interface merges into TS2300 here.
-                    if (decl_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation
-                        || other_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation)
-                        && (((decl_flags & symbol_flags::INTERFACE) != 0
-                            && (other_flags & symbol_flags::INTERFACE) != 0)
-                            || ((decl_flags & symbol_flags::FUNCTION) != 0
-                                && (other_flags & symbol_flags::FUNCTION) != 0))
+                    if decl_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation
+                        || other_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation
                     {
-                        continue;
+                        let both_interface = (decl_flags & symbol_flags::INTERFACE) != 0
+                            && (other_flags & symbol_flags::INTERFACE) != 0;
+                        let both_function = (decl_flags & symbol_flags::FUNCTION) != 0
+                            && (other_flags & symbol_flags::FUNCTION) != 0;
+                        if both_interface || both_function {
+                            continue;
+                        }
+                        // Import/re-export aliases point to the target module's surface — not new declarations.
+                        let (local_idx, local_flags) = if decl_is_local {
+                            (decl_idx, decl_flags)
+                        } else {
+                            (other_idx, other_flags)
+                        };
+                        if (local_flags & symbol_flags::ALIAS) != 0
+                            && (self.is_import_alias_node(local_idx)
+                                || self.is_reexport_specifier(local_idx))
+                        {
+                            continue;
+                        }
                     }
 
                     // Check for function overloads

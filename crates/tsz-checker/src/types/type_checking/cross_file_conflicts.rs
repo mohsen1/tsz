@@ -361,6 +361,10 @@ impl<'a> CheckerState<'a> {
             let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) else {
                 continue;
             };
+            // Re-exports reference the target module's surface, not new local declarations.
+            if export_decl.module_specifier.is_some() {
+                continue;
+            }
             let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) else {
                 continue;
             };
@@ -394,17 +398,13 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                if self
-                    .module_augmentation_conflict_declarations_for_current_file(&export_name)
-                    .is_empty()
-                {
+                let conflict_decls =
+                    self.module_augmentation_conflict_declarations_for_current_file(&export_name);
+                if conflict_decls.is_empty() {
                     continue;
                 }
 
-                // Skip function declarations - they can merge across module augmentation.
-                // Check if any of the conflict declarations for this export name are functions.
-                let conflict_decls =
-                    self.module_augmentation_conflict_declarations_for_current_file(&export_name);
+                // Functions can merge across module augmentation.
                 let has_function_merge =
                     conflict_decls.iter().any(|(_decl_idx, flags, _, _, _)| {
                         (*flags & tsz_binder::symbol_flags::FUNCTION) != 0
