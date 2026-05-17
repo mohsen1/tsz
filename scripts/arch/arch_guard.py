@@ -641,8 +641,8 @@ LSP_FEATURE_METHOD_COUNT_CHECKS = [
 
 PROJECT_DASHBOARD_ROW_CHECKS = [
     (
-        "Project corpus dashboard: expected project rows must be visible (Track 1)",
-        ROOT / "crates" / "tsz-website" / "src" / "_data" / "benchmark_data.js",
+        "Project corpus dashboard: shared project row manifest must cover dashboard rows (Track 1)",
+        ROOT / "scripts" / "bench" / "project-rows.mjs",
     ),
 ]
 
@@ -1071,9 +1071,9 @@ def scan_speculation_guard_struct_count(
 
 
 def extract_js_array_strings(text: str, const_name: str) -> Optional[list[str]]:
-    """Extract string literals from a simple `const NAME = [...]` JS array."""
+    """Extract string literals from a simple JS `NAME = [...]` array."""
     match = re.search(
-        rf"\bconst\s+{re.escape(const_name)}\s*=\s*\[(?P<body>.*?)\]\s*;",
+        rf"\b(?:export\s+)?const\s+{re.escape(const_name)}\s*=\s*\[(?P<body>.*?)\]\s*;",
         text,
         re.DOTALL,
     )
@@ -1085,7 +1085,7 @@ def extract_js_array_strings(text: str, const_name: str) -> Optional[list[str]]:
 def extract_project_dashboard_row_names(text: str) -> Optional[list[str]]:
     """Extract `name` fields from `COMPATIBILITY_CORPUS_ROWS` objects."""
     match = re.search(
-        r"\bconst\s+COMPATIBILITY_CORPUS_ROWS\s*=\s*\[(?P<body>.*?)\]\s*;",
+        r"\b(?:export\s+)?const\s+COMPATIBILITY_CORPUS_ROWS\s*=\s*\[(?P<body>.*?)\]\s*;",
         text,
         re.DOTALL,
     )
@@ -1097,9 +1097,9 @@ def extract_project_dashboard_row_names(text: str) -> Optional[list[str]]:
 def scan_project_dashboard_rows(path: pathlib.Path) -> list[str]:
     """Ensure every expected project benchmark row is present in the dashboard.
 
-    `benchmark_data.js` has two separate row inventories:
+    `scripts/bench/project-rows.mjs` owns the shared row inventories:
 
-    - `EXPECTED_PROJECT_BENCHMARKS` / `COMPILE_CANARY_PROJECTS` define the
+    - `REQUIRED_PROJECT_ROWS` / `COMPILE_CANARY_PROJECT_ROWS` define the
       project rows that must exist as benchmark/CI compatibility records.
     - `COMPATIBILITY_CORPUS_ROWS` defines the rows rendered by the public
       project compatibility dashboard.
@@ -1112,17 +1112,17 @@ def scan_project_dashboard_rows(path: pathlib.Path) -> list[str]:
         return [f"{relative_path(path)}:0 benchmark data file is missing"]
 
     text = path.read_text(encoding="utf-8", errors="ignore")
-    expected = extract_js_array_strings(text, "EXPECTED_PROJECT_BENCHMARKS")
-    canary = extract_js_array_strings(text, "COMPILE_CANARY_PROJECTS")
+    expected = extract_js_array_strings(text, "REQUIRED_PROJECT_ROWS")
+    canary = extract_js_array_strings(text, "COMPILE_CANARY_PROJECT_ROWS")
     dashboard = extract_project_dashboard_row_names(text)
     rel = relative_path(path)
     hits: list[str] = []
 
     if expected is None:
-        hits.append(f"{rel}:0 missing EXPECTED_PROJECT_BENCHMARKS array")
+        hits.append(f"{rel}:0 missing REQUIRED_PROJECT_ROWS array")
         expected = []
     if canary is None:
-        hits.append(f"{rel}:0 missing COMPILE_CANARY_PROJECTS array")
+        hits.append(f"{rel}:0 missing COMPILE_CANARY_PROJECT_ROWS array")
         canary = []
     if dashboard is None:
         hits.append(f"{rel}:0 missing COMPATIBILITY_CORPUS_ROWS array")

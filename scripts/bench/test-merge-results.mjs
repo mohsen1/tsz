@@ -5,20 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { REQUIRED_PROJECT_ROWS } from "./project-rows.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const MERGE_SCRIPT = path.join(ROOT, "scripts", "bench", "merge-results.mjs");
-const REQUIRED_PROJECT_ROWS = [
-  "utility-types-project",
-  "ts-essentials-project",
-  "rxjs-project",
-  "type-fest-project",
-  "vite-vanilla-ts-app",
-  "nextjs-fresh-app",
-  "nextjs",
-  "large-ts-repo",
-];
 
 const REQUIRED_COMPATIBILITY_FIELDS = {
   exit_class: "exit success",

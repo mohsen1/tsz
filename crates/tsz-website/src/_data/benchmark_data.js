@@ -2,6 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { marked } from "marked";
+import {
+  COMPILE_CANARY_PROJECT_ROWS,
+  COMPATIBILITY_CORPUS_ROWS,
+  REQUIRED_PROJECT_ROWS,
+} from "../../../../scripts/bench/project-rows.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 
@@ -251,111 +256,11 @@ function missingCompatibilityMetadata(row) {
 
 const TINY_BENCHMARK_MAX_LINES = 200;
 
-const EXPECTED_PROJECT_BENCHMARKS = [
-  "large-ts-repo",
-  "utility-types-project",
-  "ts-essentials-project",
-  "nextjs",
-  "nextjs-fresh-app",
-  "vite-vanilla-ts-app",
-  "rxjs-project",
-  "type-fest-project",
-];
-
-const COMPILE_CANARY_PROJECTS = [
-  "ts-toolbelt-project",
-  "zod-project",
-  "kysely-project",
-  "type-challenges-project",
-  "type-challenges-solutions-project",
-];
-
-const COMPATIBILITY_CORPUS_ROWS = [
-  {
-    name: "utility-types-project",
-    label: "utility-types",
-    owner: "Tracks 1, 2, 5",
-    family: "baseline utility mapped/conditional surface",
-  },
-  {
-    name: "rxjs-project",
-    label: "RxJS",
-    owner: "Tracks 1, 3, 7, 10",
-    family: "observable/subject generics, module identity, generated config pressure",
-  },
-  {
-    name: "kysely-project",
-    label: "Kysely",
-    owner: "Tracks 2, 3, 5, 6",
-    family: "contextual generics, guards, indexed/property access",
-  },
-  {
-    name: "zod-project",
-    label: "Zod",
-    owner: "Tracks 2, 3, 4, 7",
-    family: "recursive conditionals, object guards, class/generic identity",
-  },
-  {
-    name: "ts-toolbelt-project",
-    label: "ts-toolbelt",
-    owner: "Tracks 2, 3",
-    family: "recursive type evaluation pressure",
-  },
-  {
-    name: "type-fest-project",
-    label: "type-fest",
-    owner: "Tracks 2, 3, 5",
-    family: "mapped/conditional/key-space utility surface",
-  },
-  {
-    name: "ts-essentials-project",
-    label: "ts-essentials",
-    owner: "Tracks 2, 3, 5",
-    family: "utility types plus recursive JSON shapes",
-  },
-  {
-    name: "large-ts-repo",
-    label: "large-ts-repo",
-    owner: "Tracks 1, 7, 10",
-    family: "residency/runtime/project graph stress",
-  },
-  {
-    name: "nextjs-fresh-app",
-    label: "generated Next app",
-    owner: "Tracks 1, 7, 9",
-    family: "generated app-router dependency/config sanity",
-  },
-  {
-    name: "vite-vanilla-ts-app",
-    label: "generated Vite app",
-    owner: "Tracks 1, 7, 9",
-    family: "generated app dependency/config sanity",
-  },
-  {
-    name: "type-challenges-project",
-    label: "type-challenges",
-    owner: "Tracks 2, 3, 5",
-    family: "advanced type-level challenge templates",
-  },
-  {
-    name: "type-challenges-solutions-project",
-    label: "type-challenges solutions",
-    owner: "Tracks 2, 3, 5",
-    family: "advanced type-level solved challenge programs",
-  },
-  {
-    name: "nextjs",
-    label: "Next.js full project",
-    owner: "Tracks 1, 7, 9",
-    family: "module graph plus generated app dependencies",
-  },
-];
-
 function withExpectedProjectRows(results) {
   const rows = Array.isArray(results) ? results.slice() : [];
   const existingNames = new Set(rows.map((row) => row?.name).filter(Boolean));
 
-  for (const name of EXPECTED_PROJECT_BENCHMARKS) {
+  for (const name of REQUIRED_PROJECT_ROWS) {
     if (existingNames.has(name)) continue;
     rows.push({
       name,
@@ -371,7 +276,7 @@ function withExpectedProjectRows(results) {
     });
   }
 
-  for (const name of COMPILE_CANARY_PROJECTS) {
+  for (const name of COMPILE_CANARY_PROJECT_ROWS) {
     if (existingNames.has(name)) continue;
     rows.push({
       name,
