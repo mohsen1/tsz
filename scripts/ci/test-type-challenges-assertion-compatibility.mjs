@@ -57,10 +57,30 @@ function runCompatibility({ dir, classification }) {
   return readRows(outFile)[0];
 }
 
+function runCompatibilityRaw({ dir, classification }) {
+  const candidateDir = path.join(dir, "type-challenges-assertions");
+  const classificationPath = path.join(candidateDir, "classification.json");
+  const outFile = path.join(dir, "project-compatibility.jsonl");
+  writeJson(classificationPath, classification);
+
+  return {
+    outFile,
+    result: spawnSync(
+      process.execPath,
+      [SCRIPT, classificationPath, candidateDir, outFile, dir],
+      {
+        cwd: ROOT,
+        encoding: "utf8",
+      },
+    ),
+  };
+}
+
 withTempDir((dir) => {
   const row = runCompatibility({
     dir,
     classification: {
+      fixture: "type-challenges-assertion-classification",
       candidateManifest: {
         counts: {
           pairedSolutions: 2,
@@ -135,6 +155,7 @@ withTempDir((dir) => {
   const row = runCompatibility({
     dir,
     classification: {
+      fixture: "type-challenges-assertion-classification",
       candidateManifest: { counts: { generatedAssertions: 1 } },
       compilers: {
         tsc: {
@@ -187,6 +208,7 @@ withTempDir((dir) => {
   const row = runCompatibility({
     dir,
     classification: {
+      fixture: "type-challenges-assertion-classification",
       candidateManifest: { counts: { generatedAssertions: 1 } },
       compilers: {
         tsc: {
@@ -221,4 +243,36 @@ withTempDir((dir) => {
   assert.equal(row.diagnostic_status, "none");
   assert.equal(row.first_failure_class, null);
   assert.deepEqual(row.known_blockers, []);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "stale-classification",
+      candidateManifest: { counts: { generatedAssertions: 1 } },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unexpected assertion classification fixture/);
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: { generatedAssertions: 1 } },
+      compilers: { tsc: { status: "pass" } },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /must include both tsc and tsz compiler results/);
+  assert.equal(fs.existsSync(outFile), false);
 });
