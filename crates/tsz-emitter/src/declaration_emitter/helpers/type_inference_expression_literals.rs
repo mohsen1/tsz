@@ -366,7 +366,8 @@ impl<'a> DeclarationEmitter<'a> {
             };
 
             let type_text = self
-                .direct_value_reference_typeof_text(value_idx)
+                .local_function_declaration_identifier_type_text(value_idx)
+                .or_else(|| self.direct_value_reference_typeof_text(value_idx))
                 .or_else(|| {
                     self.preferred_object_member_initializer_type_text(value_idx, depth + 1)
                 })?;

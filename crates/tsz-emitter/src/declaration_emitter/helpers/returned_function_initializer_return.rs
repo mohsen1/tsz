@@ -54,6 +54,20 @@ impl<'a> DeclarationEmitter<'a> {
                 inner_type_param_renames,
             ) {
                 type_text
+            } else if return_node.kind == SyntaxKind::Identifier as u16 {
+                self.function_scope_identifier_type_text(
+                    outer_func,
+                    inner_func,
+                    return_expr,
+                    inner_type_param_renames,
+                )?
+            } else if return_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                self.source_function_return_object_literal_type_text(
+                    outer_func,
+                    inner_func,
+                    inner_type_param_renames,
+                    return_expr,
+                )?
             } else {
                 if return_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
                     return None;
@@ -86,6 +100,68 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             Some(return_text)
         }
+    }
+
+    fn source_function_return_object_literal_type_text(
+        &self,
+        outer_func: &tsz_parser::parser::node::FunctionData,
+        inner_func: &tsz_parser::parser::node::FunctionData,
+        inner_type_param_renames: &[(String, String)],
+        object_idx: NodeIndex,
+    ) -> Option<String> {
+        let object_node = self.arena.get(object_idx)?;
+        let object = self.arena.get_literal_expr(object_node)?;
+        let mut names_in_scope = outer_func
+            .type_parameters
+            .as_ref()
+            .map(|type_params| self.collect_type_param_names(type_params))
+            .unwrap_or_default();
+        for (_, renamed) in inner_type_param_renames {
+            if !names_in_scope.contains(renamed) {
+                names_in_scope.push(renamed.clone());
+            }
+        }
+
+        let mut members = Vec::new();
+        for &member_idx in &object.elements.nodes {
+            let member_node = self.arena.get(member_idx)?;
+            let name_idx = self.object_literal_member_name_idx(member_node)?;
+            let name_text = self.object_literal_member_name_text(name_idx)?;
+            if name_text.is_empty() || name_text == ":" {
+                return None;
+            }
+            let value_idx = if let Some(data) = self.arena.get_shorthand_property(member_node) {
+                data.name
+            } else {
+                self.arena.get_property_assignment(member_node)?.initializer
+            };
+
+            let type_text = self
+                .function_declaration_identifier_type_text(
+                    value_idx,
+                    Some(inner_func),
+                    &names_in_scope,
+                    inner_type_param_renames,
+                )
+                .or_else(|| {
+                    self.preferred_object_member_initializer_type_text(value_idx, 1)
+                        .map(|text| {
+                            Self::rename_type_text_identifiers(&text, inner_type_param_renames)
+                        })
+                })?;
+            members.push(Self::format_object_member_type_text(
+                &name_text, &type_text, 1,
+            ));
+        }
+
+        let member_indent = "        ";
+        let closing_indent = "    ";
+        let formatted_members = members
+            .iter()
+            .map(|member| Self::format_object_member_entry(member_indent, member))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some(format!("{{\n{formatted_members}\n{closing_indent}}}"))
     }
 
     fn returned_call_expression_type_text_from_outer_parameter(

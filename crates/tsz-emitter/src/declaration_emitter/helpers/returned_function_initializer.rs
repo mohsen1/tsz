@@ -61,6 +61,92 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    pub(in crate::declaration_emitter) fn local_function_declaration_identifier_type_text(
+        &self,
+        identifier_idx: NodeIndex,
+    ) -> Option<String> {
+        let outer_func = self.enclosing_function_data(identifier_idx)?;
+        let outer_type_param_names = outer_func
+            .type_parameters
+            .as_ref()
+            .map(|type_params| self.collect_type_param_names(type_params))
+            .unwrap_or_default();
+        self.function_declaration_identifier_type_text(
+            identifier_idx,
+            Some(outer_func),
+            &outer_type_param_names,
+            &[],
+        )
+    }
+
+    pub(in crate::declaration_emitter) fn function_declaration_identifier_type_text(
+        &self,
+        identifier_idx: NodeIndex,
+        outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        outer_type_param_names: &[String],
+        type_param_renames: &[(String, String)],
+    ) -> Option<String> {
+        let identifier_name = self.identifier_text_or_source(identifier_idx)?;
+        if let Some(func_idx) = outer_func
+            .and_then(|func| self.local_function_declaration_in_body(func.body, &identifier_name))
+        {
+            let func_node = self.arena.get(func_idx)?;
+            let func = self.arena.get_function(func_node)?;
+            let type_text = self.source_nested_function_type_text(
+                outer_func,
+                func_idx,
+                func,
+                outer_type_param_names,
+            )?;
+            return Some(Self::rename_type_text_identifiers(
+                &type_text,
+                type_param_renames,
+            ));
+        }
+
+        let sym_id = self.value_reference_symbol(identifier_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+
+        let func_idx = symbol
+            .declarations
+            .iter()
+            .copied()
+            .find_map(|decl_idx| self.function_declaration_from_symbol_decl(decl_idx))?;
+        let func_node = self.arena.get(func_idx)?;
+        let func = self.arena.get_function(func_node)?;
+        let type_text = self.source_nested_function_type_text(
+            outer_func,
+            func_idx,
+            func,
+            outer_type_param_names,
+        )?;
+        Some(Self::rename_type_text_identifiers(
+            &type_text,
+            type_param_renames,
+        ))
+    }
+
+    fn local_function_declaration_in_body(
+        &self,
+        body_idx: NodeIndex,
+        name: &str,
+    ) -> Option<NodeIndex> {
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        for &stmt_idx in &block.statements.nodes {
+            let stmt_node = self.arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                continue;
+            }
+            let func = self.arena.get_function(stmt_node)?;
+            if self.identifier_text_or_source(func.name).as_deref() == Some(name) {
+                return Some(stmt_idx);
+            }
+        }
+        None
+    }
+
     fn type_query_identifier_name(type_text: &str) -> Option<String> {
         let start = type_text.find("typeof ")? + "typeof ".len();
         let rest = &type_text[start..];
@@ -207,6 +293,38 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
+    fn function_declaration_from_symbol_decl(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = decl_idx;
+        for _ in 0..8 {
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && self.arena.get_function(node).is_some()
+            {
+                return Some(current);
+            }
+            current = self.arena.parent_of(current)?;
+        }
+        None
+    }
+
+    fn enclosing_function_data(
+        &self,
+        from_idx: NodeIndex,
+    ) -> Option<&tsz_parser::parser::node::FunctionData> {
+        let mut current = from_idx;
+        while let Some(parent_idx) = self.arena.parent_of(current) {
+            let node = self.arena.get(parent_idx)?;
+            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+            {
+                return self.arena.get_function(node);
+            }
+            current = parent_idx;
+        }
+        None
+    }
+
     fn source_function_initializer_type_text(
         &self,
         outer_func: &tsz_parser::parser::node::FunctionData,
@@ -233,10 +351,14 @@ impl<'a> DeclarationEmitter<'a> {
         inner_func: &tsz_parser::parser::node::FunctionData,
         outer_type_param_names: &[String],
     ) -> Option<String> {
-        let outer_type_param_names = outer_func
-            .and_then(|func| func.type_parameters.as_ref())
-            .map(|type_params| self.collect_type_param_names(type_params))
-            .unwrap_or_else(|| outer_type_param_names.to_vec());
+        let mut outer_type_param_names = outer_type_param_names.to_vec();
+        if let Some(type_params) = outer_func.and_then(|func| func.type_parameters.as_ref()) {
+            for name in self.collect_type_param_names(type_params) {
+                if !outer_type_param_names.contains(&name) {
+                    outer_type_param_names.push(name);
+                }
+            }
+        }
         let inner_type_params = inner_func.type_parameters.as_ref();
         let inner_renames = inner_type_params.map_or_else(Vec::new, |type_params| {
             self.shadowed_function_type_param_renames(type_params, &outer_type_param_names)
