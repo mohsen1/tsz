@@ -1164,7 +1164,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// `keyof_constraint_guard` until the chain terminates. This ensures that
     /// a cycle like `Lazy(A) → Lazy(B) → Lazy(A)` is detected when `A` is
     /// re-entered while it is still in the guard's visited set. The depth cap
-    /// (TypeEvaluation profile: 100) also limits the chain length.
+    /// (`TypeEvaluation` profile: depth 100) also limits the chain length.
     fn evaluate_keyof_or_constraint(&mut self, constraint: TypeId) -> TypeId {
         let mut current = constraint;
         let mut entered: Vec<TypeId> = Vec::new();
