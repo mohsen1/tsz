@@ -5,6 +5,12 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
+struct SourceFunctionSignatureText {
+    type_params_text: String,
+    params_text: String,
+    return_text: String,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn async_returned_function_initializer_promise_type_text(
         &self,
@@ -87,15 +93,12 @@ impl<'a> DeclarationEmitter<'a> {
         type_param_renames: &[(String, String)],
     ) -> Option<String> {
         let identifier_name = self.identifier_text_or_source(identifier_idx)?;
-        if let Some(func_idx) = outer_func
-            .and_then(|func| self.local_function_declaration_in_body(func.body, &identifier_name))
+        if let Some(func_decls) = outer_func
+            .and_then(|func| self.local_function_declarations_in_body(func.body, &identifier_name))
         {
-            let func_node = self.arena.get(func_idx)?;
-            let func = self.arena.get_function(func_node)?;
-            let type_text = self.source_nested_function_type_text(
+            let type_text = self.function_declaration_type_text_from_declarations(
+                &func_decls,
                 outer_func,
-                func_idx,
-                func,
                 outer_type_param_names,
             )?;
             return Some(Self::rename_type_text_identifiers(
@@ -108,17 +111,19 @@ impl<'a> DeclarationEmitter<'a> {
         let binder = self.binder?;
         let symbol = binder.symbols.get(sym_id)?;
 
-        let func_idx = symbol
+        let func_decls = symbol
             .declarations
             .iter()
             .copied()
-            .find_map(|decl_idx| self.function_declaration_from_symbol_decl(decl_idx))?;
-        let func_node = self.arena.get(func_idx)?;
-        let func = self.arena.get_function(func_node)?;
-        let type_text = self.source_nested_function_type_text(
+            .filter_map(|decl_idx| self.function_declaration_from_symbol_decl(decl_idx))
+            .collect::<Vec<_>>();
+        if func_decls.is_empty() {
+            return None;
+        }
+
+        let type_text = self.function_declaration_type_text_from_declarations(
+            &func_decls,
             outer_func,
-            func_idx,
-            func,
             outer_type_param_names,
         )?;
         Some(Self::rename_type_text_identifiers(
@@ -127,13 +132,53 @@ impl<'a> DeclarationEmitter<'a> {
         ))
     }
 
-    fn local_function_declaration_in_body(
+    fn function_declaration_type_text_from_declarations(
+        &self,
+        func_decls: &[NodeIndex],
+        outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        outer_type_param_names: &[String],
+    ) -> Option<String> {
+        let overload_decls = func_decls
+            .iter()
+            .copied()
+            .filter(|&func_idx| {
+                self.arena
+                    .get(func_idx)
+                    .and_then(|node| self.arena.get_function(node))
+                    .is_some_and(|func| func.body.is_none())
+            })
+            .collect::<Vec<_>>();
+        if !overload_decls.is_empty() {
+            return self.source_nested_function_overload_set_type_text(
+                outer_func,
+                &overload_decls,
+                outer_type_param_names,
+            );
+        }
+
+        let func_idx = func_decls
+            .iter()
+            .copied()
+            .find(|&func_idx| {
+                self.arena
+                    .get(func_idx)
+                    .and_then(|node| self.arena.get_function(node))
+                    .is_some_and(|func| func.body.is_some())
+            })
+            .or_else(|| func_decls.first().copied())?;
+        let func_node = self.arena.get(func_idx)?;
+        let func = self.arena.get_function(func_node)?;
+        self.source_nested_function_type_text(outer_func, func_idx, func, outer_type_param_names)
+    }
+
+    fn local_function_declarations_in_body(
         &self,
         body_idx: NodeIndex,
         name: &str,
-    ) -> Option<NodeIndex> {
+    ) -> Option<Vec<NodeIndex>> {
         let body_node = self.arena.get(body_idx)?;
         let block = self.arena.get_block(body_node)?;
+        let mut declarations = Vec::new();
         for &stmt_idx in &block.statements.nodes {
             let stmt_node = self.arena.get(stmt_idx)?;
             if stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
@@ -141,10 +186,10 @@ impl<'a> DeclarationEmitter<'a> {
             }
             let func = self.arena.get_function(stmt_node)?;
             if self.identifier_text_or_source(func.name).as_deref() == Some(name) {
-                return Some(stmt_idx);
+                declarations.push(stmt_idx);
             }
         }
-        None
+        (!declarations.is_empty()).then_some(declarations)
     }
 
     fn type_query_identifier_name(type_text: &str) -> Option<String> {
@@ -351,6 +396,78 @@ impl<'a> DeclarationEmitter<'a> {
         inner_func: &tsz_parser::parser::node::FunctionData,
         outer_type_param_names: &[String],
     ) -> Option<String> {
+        let signature = self.source_nested_function_signature_text(
+            outer_func,
+            inner_idx,
+            inner_func,
+            outer_type_param_names,
+        )?;
+        Some(format!(
+            "{}({}) => {}",
+            signature.type_params_text, signature.params_text, signature.return_text
+        ))
+    }
+
+    fn source_nested_function_call_signature_text(
+        &self,
+        outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        inner_idx: NodeIndex,
+        inner_func: &tsz_parser::parser::node::FunctionData,
+        outer_type_param_names: &[String],
+    ) -> Option<String> {
+        let signature = self.source_nested_function_signature_text(
+            outer_func,
+            inner_idx,
+            inner_func,
+            outer_type_param_names,
+        )?;
+        Some(format!(
+            "{}({}): {}",
+            signature.type_params_text, signature.params_text, signature.return_text
+        ))
+    }
+
+    fn source_nested_function_overload_set_type_text(
+        &self,
+        outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        overload_decls: &[NodeIndex],
+        outer_type_param_names: &[String],
+    ) -> Option<String> {
+        let signatures = overload_decls
+            .iter()
+            .copied()
+            .map(|func_idx| {
+                let func_node = self.arena.get(func_idx)?;
+                let func = self.arena.get_function(func_node)?;
+                self.source_nested_function_call_signature_text(
+                    outer_func,
+                    func_idx,
+                    func,
+                    outer_type_param_names,
+                )
+            })
+            .collect::<Option<Vec<_>>>()?;
+        if signatures.is_empty() {
+            return None;
+        }
+
+        let mut text = String::from("{");
+        for signature in signatures {
+            text.push_str("\n        ");
+            text.push_str(&signature);
+            text.push(';');
+        }
+        text.push_str("\n    }");
+        Some(text)
+    }
+
+    fn source_nested_function_signature_text(
+        &self,
+        outer_func: Option<&tsz_parser::parser::node::FunctionData>,
+        inner_idx: NodeIndex,
+        inner_func: &tsz_parser::parser::node::FunctionData,
+        outer_type_param_names: &[String],
+    ) -> Option<SourceFunctionSignatureText> {
         let mut outer_type_param_names = outer_type_param_names.to_vec();
         if let Some(type_params) = outer_func.and_then(|func| func.type_parameters.as_ref()) {
             for name in self.collect_type_param_names(type_params) {
@@ -405,9 +522,11 @@ impl<'a> DeclarationEmitter<'a> {
             &inner_renames,
         )?;
 
-        Some(format!(
-            "{type_params_text}({params_text}) => {return_text}"
-        ))
+        Some(SourceFunctionSignatureText {
+            type_params_text,
+            params_text,
+            return_text,
+        })
     }
 
     pub(in crate::declaration_emitter) fn direct_returned_function_expression_type_text(

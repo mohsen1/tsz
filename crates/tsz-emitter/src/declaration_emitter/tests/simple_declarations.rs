@@ -798,6 +798,33 @@ function foo<T>(v: T) {
 }
 
 #[test]
+fn test_returned_object_literal_local_function_overloads_preserve_signatures() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function foo() {
+    function a(x: string): string;
+    function a(x: number): number;
+    function a(x: string | number) { return x; }
+
+    return { a };
+}
+"#,
+    );
+
+    let expected = r#"declare function foo(): {
+    a: {
+        (x: string): string;
+        (x: number): number;
+    };
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected returned overloaded local function declarations to preserve every overload signature: {output}"
+    );
+}
+
+#[test]
 fn test_destructured_binding_comments_are_preserved_before_flattened_name() {
     let output = emit_dts(
         r#"
