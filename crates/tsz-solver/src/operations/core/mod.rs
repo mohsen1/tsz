@@ -8,6 +8,7 @@
 
 pub(crate) mod call_evaluator;
 mod call_resolution;
+mod correlated_identity;
 
 pub(crate) use call_evaluator::MAX_CONSTRAINT_STEPS;
 pub use call_evaluator::*;
