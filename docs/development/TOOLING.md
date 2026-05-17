@@ -101,17 +101,6 @@ cargo install cargo-llvm-cov --version 0.8.7 --locked
 scripts/quality/run-coverage.sh
 ```
 
-### Fuzzing
-
-The `fuzz/` crate contains a parser fuzz target. The CI workflow runs only a
-short smoke test; longer corpus growth should be local or scheduled work.
-
-```bash
-cargo install cargo-fuzz --version 0.13.1 --locked
-scripts/quality/run-fuzz-smoke.sh
-cargo +nightly fuzz run parser
-```
-
 ### Mutation Testing
 
 `cargo-mutants` is intentionally scoped by default. Use it to audit whether

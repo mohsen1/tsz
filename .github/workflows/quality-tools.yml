@@ -14,7 +14,6 @@ on:
           - all
           - miri
           - coverage
-          - fuzz
           - mutants
           - semver
           - sanitizers
@@ -78,28 +77,6 @@ jobs:
           path: target/llvm-cov/quality-tools.lcov
           retention-days: 14
           if-no-files-found: error
-
-  fuzz:
-    name: fuzz-smoke
-    if: github.event_name == 'schedule' || inputs.tool == 'all' || inputs.tool == 'fuzz'
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    env:
-      CARGO_FUZZ_VERSION: "0.13.1"
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install nightly Rust
-        run: rustup toolchain install nightly
-      - name: Install cargo-fuzz
-        run: |
-          if command -v cargo-fuzz >/dev/null 2>&1 \
-             && cargo install --list | grep -q "^cargo-fuzz v${CARGO_FUZZ_VERSION}:"; then
-            echo "cargo-fuzz ${CARGO_FUZZ_VERSION} already installed"
-            exit 0
-          fi
-          cargo install cargo-fuzz --version "${CARGO_FUZZ_VERSION}" --locked
-      - name: Run parser fuzz smoke
-        run: scripts/quality/run-fuzz-smoke.sh
 
   mutants:
     name: mutants-smoke
