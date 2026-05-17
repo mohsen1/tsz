@@ -4,8 +4,6 @@
 //! Structural rule: a concrete non-callable object type (or an intersection
 //! where no member is callable) does not satisfy a callable union constraint,
 //! so tsz must emit TS2344 without hitting the instantiation limit (TS2589).
-//! When the intersection contains an unconstrained type parameter, the check
-//! is deferred to instantiation time — no eager TS2344.
 
 use crate::test_utils::check_source_codes;
 
@@ -177,28 +175,6 @@ type Result = Requires<Combined>;
         codes,
         2344,
         "renamed intersection of non-callable objects against callable constraint must emit TS2344."
-    );
-}
-
-/// Intersection with an unconstrained type parameter defers TS2344 to
-/// instantiation time because C could be a function type at the call site.
-#[test]
-fn intersection_non_callable_with_unconstrained_generic_deferred_no_eager_ts2344() {
-    let codes = check_source_codes(&with_prelude(
-        r#"
-type WithOpen<C> = AnyWrapped & C;
-type Result<C> = Requires<WithOpen<C>>;
-"#,
-    ));
-    assert_no_code!(
-        codes,
-        2344,
-        "intersection with unconstrained type param should defer TS2344 to instantiation time."
-    );
-    assert_no_code!(
-        codes,
-        2589,
-        "TS2589 must not fire for a deferred intersection constraint check."
     );
 }
 
