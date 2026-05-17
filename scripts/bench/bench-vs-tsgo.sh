@@ -2306,6 +2306,31 @@ is_benchmark_selected() {
     echo "$name" | grep -qE "$FILTER"
 }
 
+filter_matches_any() {
+    if [ -z "$FILTER" ]; then
+        return 0
+    fi
+
+    local name
+    for name in "$@"; do
+        if echo "$name" | grep -qE "$FILTER"; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+use_quick_subset_for() {
+    if [ "$QUICK_MODE" != true ]; then
+        return 1
+    fi
+
+    # If an explicit filter does not match the quick representative, keep the
+    # quick run counts but scan the full candidate list so exact filters work.
+    filter_matches_any "$@"
+}
+
 should_run_compile_canary_project() {
     if [ -n "$FILTER" ]; then
         return 0
@@ -2488,7 +2513,7 @@ run_utility_types_benchmarks() {
     local lib_args="--lib dom,es2017"
 
     local files
-    if [ "$QUICK_MODE" = true ]; then
+    if use_quick_subset_for "utility-types/index.ts"; then
         files=("src/index.ts")
     else
         files=(
@@ -2539,7 +2564,7 @@ run_ts_toolbelt_benchmarks() {
     local lib_args="--lib esnext,dom"
 
     local files
-    if [ "$QUICK_MODE" = true ]; then
+    if use_quick_subset_for "ts-toolbelt/Iteration/Iteration.ts"; then
         files=("sources/Iteration/Iteration.ts")
     else
         files=(
@@ -2589,7 +2614,7 @@ run_ts_essentials_benchmarks() {
     local lib_args="--lib es2018"
 
     local files
-    if [ "$QUICK_MODE" = true ]; then
+    if use_quick_subset_for "ts-essentials/paths.ts"; then
         files=("lib/paths/index.ts")
     else
         files=(
