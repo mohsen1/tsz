@@ -16,7 +16,8 @@ mod caches;
 mod compiler_options;
 mod cross_file_delegation_cache;
 pub use caches::{
-    NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache, TypeReferenceValidationCaches,
+    EnvEvalCache, NarrowableIdentifierCache, NodeTypeCache, SymbolNameCandidatesCache,
+    SymbolTypeCache, TypeReferenceValidationCaches,
 };
 pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;
@@ -391,9 +392,8 @@ pub struct CheckerContext<'a> {
     /// different members from the same nested namespace.
     pub nested_namespace_candidates_cache: RefCell<NestedNamespaceCandidatesCache>,
 
-    /// Per-checker cache for same-name symbol candidates across the current binder
-    /// and all cross-file binders.
-    pub symbol_name_candidates_cache: RefCell<FxHashMap<String, Vec<SymbolId>>>,
+    /// Per-checker caches for name lookups tied to the active binder/arena.
+    pub symbol_name_candidates_cache: RefCell<SymbolNameCandidatesCache>,
 
     /// True once `nested_namespace_candidates_cache` has been populated for every
     /// nested namespace export name visible across all binders.
@@ -620,7 +620,7 @@ pub struct CheckerContext<'a> {
     ///
     /// The cache also preserves whether evaluation exceeded the solver recursion
     /// limit so follow-up validation passes can still surface TS2589 from a cache hit.
-    pub(crate) env_eval_cache: RefCell<FxHashMap<TypeId, EnvEvalCacheEntry>>,
+    pub(crate) env_eval_cache: RefCell<EnvEvalCache>,
 
     /// Cache class symbol -> class declaration node lookups used in inheritance queries.
     /// Stores misses as `None` to avoid repeated declaration scans on hot paths.

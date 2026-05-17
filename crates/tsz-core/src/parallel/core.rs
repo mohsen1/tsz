@@ -1088,17 +1088,54 @@ pub fn load_lib_files_for_binding_strict(
     // file #81 of 87 and becomes the critical-path bottleneck.
     file_contents.sort_by_key(|b| std::cmp::Reverse(b.1.len()));
 
-    // Parse and bind all lib files in parallel using the global rayon pool.
-    // The global pool threads are already warm (no thread creation overhead).
-    #[cfg(not(target_arch = "wasm32"))]
-    ensure_rayon_global_pool();
-
-    let results: Vec<Result<Arc<lib_loader::LibFile>>> = maybe_parallel_into!(file_contents)
-        .map(|(file_name, source_text)| parse_and_bind_lib_file(file_name, source_text))
-        .collect();
+    let results = parse_and_bind_lib_files(file_contents);
 
     // Collect results, propagating any parse errors
     results.into_iter().collect()
+}
+
+fn parse_and_bind_lib_files(
+    file_contents: Vec<(String, String)>,
+) -> Vec<Result<Arc<lib_loader::LibFile>>> {
+    #[cfg(target_arch = "wasm32")]
+    {
+        return file_contents
+            .into_iter()
+            .map(|(file_name, source_text)| parse_and_bind_lib_file(file_name, source_text))
+            .collect();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let worker_count = std::thread::available_parallelism()
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(1)
+            .min(8)
+            .min(file_contents.len().max(1));
+        if worker_count <= 1 {
+            return file_contents
+                .into_iter()
+                .map(|(file_name, source_text)| parse_and_bind_lib_file(file_name, source_text))
+                .collect();
+        }
+
+        match rayon::ThreadPoolBuilder::new()
+            .num_threads(worker_count)
+            .stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES)
+            .build()
+        {
+            Ok(pool) => pool.install(|| {
+                file_contents
+                    .into_par_iter()
+                    .map(|(file_name, source_text)| parse_and_bind_lib_file(file_name, source_text))
+                    .collect()
+            }),
+            Err(_) => file_contents
+                .into_par_iter()
+                .map(|(file_name, source_text)| parse_and_bind_lib_file(file_name, source_text))
+                .collect(),
+        }
+    }
 }
 
 /// Clone lib files into fresh checker-only binders using the already-loaded source text.

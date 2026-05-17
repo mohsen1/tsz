@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::node::NodeAccess;
 
@@ -193,11 +194,48 @@ impl<'a> CheckerContext<'a> {
             return false;
         }
 
-        self.arena.nodes.iter().enumerate().any(|(idx, _)| {
-            let decl_idx = tsz_parser::NodeIndex(idx as u32);
-            !self.is_global_augmentation_declaration(name, self.arena, decl_idx)
-                && self.type_declaration_name_matches(self.arena, decl_idx, name)
-        })
+        if let Some(cached_names) = self
+            .symbol_name_candidates_cache
+            .borrow()
+            .same_file_type_declaration_names
+            .as_ref()
+        {
+            return cached_names.contains(name);
+        }
+
+        let names: FxHashSet<String> = self
+            .arena
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, _)| {
+                let decl_idx = tsz_parser::NodeIndex(idx as u32);
+                let decl_name = self.type_declaration_name_text(self.arena, decl_idx)?;
+                (!self.is_global_augmentation_declaration(decl_name, self.arena, decl_idx))
+                    .then(|| decl_name.to_string())
+            })
+            .collect();
+        let exists = names.contains(name);
+
+        self.symbol_name_candidates_cache
+            .borrow_mut()
+            .same_file_type_declaration_names = Some(names);
+        exists
+    }
+
+    fn type_declaration_name_text<'arena>(
+        &self,
+        arena: &'arena tsz_parser::parser::NodeArena,
+        decl_idx: tsz_parser::parser::NodeIndex,
+    ) -> Option<&'arena str> {
+        let node = arena.get(decl_idx)?;
+        let name_node = arena
+            .get_interface(node)
+            .map(|decl| decl.name)
+            .or_else(|| arena.get_type_alias(node).map(|decl| decl.name))
+            .or_else(|| arena.get_class(node).map(|decl| decl.name))
+            .or_else(|| arena.get_enum(node).map(|decl| decl.name))?;
+        arena.get_identifier_text(name_node)
     }
 
     fn type_declaration_name_matches(
@@ -206,16 +244,7 @@ impl<'a> CheckerContext<'a> {
         decl_idx: tsz_parser::parser::NodeIndex,
         name: &str,
     ) -> bool {
-        let Some(node) = arena.get(decl_idx) else {
-            return false;
-        };
-        let name_node = arena
-            .get_interface(node)
-            .map(|decl| decl.name)
-            .or_else(|| arena.get_type_alias(node).map(|decl| decl.name))
-            .or_else(|| arena.get_class(node).map(|decl| decl.name))
-            .or_else(|| arena.get_enum(node).map(|decl| decl.name));
-        name_node.is_some_and(|name_node| arena.get_identifier_text(name_node) == Some(name))
+        self.type_declaration_name_text(arena, decl_idx) == Some(name)
     }
 
     /// Check if the Promise constructor VALUE is available.

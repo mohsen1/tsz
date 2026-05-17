@@ -7,6 +7,21 @@ impl<'a> CheckerContext<'a> {
         crate::query_boundaries::common::contains_lazy_def_id(self.types, type_id, def_id)
     }
 
+    fn env_eval_cache_deps(&self, key: TypeId, result: TypeId) -> Vec<tsz_solver::DefId> {
+        let mut deps = Vec::new();
+        for def_id in crate::query_boundaries::common::collect_lazy_def_ids(self.types, key)
+            .into_iter()
+            .chain(crate::query_boundaries::common::collect_lazy_def_ids(
+                self.types, result,
+            ))
+        {
+            if !deps.contains(&def_id) {
+                deps.push(def_id);
+            }
+        }
+        deps
+    }
+
     pub(crate) fn lookup_env_eval_cache(&self, type_id: TypeId) -> Option<EnvEvalCacheEntry> {
         self.env_eval_cache.borrow().get(&type_id).copied()
     }
@@ -25,12 +40,14 @@ impl<'a> CheckerContext<'a> {
         result: TypeId,
         depth_exceeded: bool,
     ) {
+        let deps = self.env_eval_cache_deps(type_id, result);
         self.env_eval_cache.borrow_mut().insert(
             type_id,
             EnvEvalCacheEntry {
                 result,
                 depth_exceeded,
             },
+            deps,
         );
     }
 
@@ -40,13 +57,18 @@ impl<'a> CheckerContext<'a> {
         result: TypeId,
         depth_exceeded: bool,
     ) {
-        self.env_eval_cache
-            .borrow_mut()
-            .entry(type_id)
-            .or_insert(EnvEvalCacheEntry {
+        if self.lookup_env_eval_cache(type_id).is_some() {
+            return;
+        }
+        let deps = self.env_eval_cache_deps(type_id, result);
+        self.env_eval_cache.borrow_mut().entry_or_insert(
+            type_id,
+            EnvEvalCacheEntry {
                 result,
                 depth_exceeded,
-            });
+            },
+            deps,
+        );
     }
 
     pub(crate) fn clear_env_eval_cache(&self) {
@@ -54,9 +76,9 @@ impl<'a> CheckerContext<'a> {
     }
 
     pub(crate) fn clear_type_evaluation_caches_for_def(&self, def_id: tsz_solver::DefId) {
-        self.env_eval_cache.borrow_mut().retain(|&key, value| {
-            !self.type_mentions_def(key, def_id) && !self.type_mentions_def(value.result, def_id)
-        });
+        self.env_eval_cache
+            .borrow_mut()
+            .remove_entries_for_def(def_id);
         self.narrowing_cache
             .resolve_cache
             .borrow_mut()
@@ -86,7 +108,6 @@ impl<'a> CheckerContext<'a> {
             return;
         }
 
-        let mut cache = self.env_eval_cache.borrow_mut();
         for (k, v) in entries {
             if k != v
                 && !k.is_intrinsic()
@@ -108,10 +129,15 @@ impl<'a> CheckerContext<'a> {
                 {
                     continue;
                 }
-                cache.entry(k).or_insert(EnvEvalCacheEntry {
-                    result: v,
-                    depth_exceeded: false,
-                });
+                let deps = self.env_eval_cache_deps(k, v);
+                self.env_eval_cache.borrow_mut().entry_or_insert(
+                    k,
+                    EnvEvalCacheEntry {
+                        result: v,
+                        depth_exceeded: false,
+                    },
+                    deps,
+                );
             }
         }
     }

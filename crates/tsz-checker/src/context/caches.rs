@@ -1,7 +1,100 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
 use tsz_binder::SymbolId;
-use tsz_solver::TypeId;
+use tsz_solver::{DefId, TypeId};
+
+use super::EnvEvalCacheEntry;
+
+/// Checker-local environment-evaluation cache with reverse `Lazy(DefId)` deps.
+#[derive(Debug, Default)]
+pub struct EnvEvalCache {
+    entries: FxHashMap<TypeId, EnvEvalCacheEntry>,
+    key_deps: FxHashMap<TypeId, Vec<DefId>>,
+    dep_to_keys: FxHashMap<DefId, FxHashSet<TypeId>>,
+}
+
+impl EnvEvalCache {
+    pub fn get(&self, type_id: &TypeId) -> Option<&EnvEvalCacheEntry> {
+        self.entries.get(type_id)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&TypeId, &EnvEvalCacheEntry)> {
+        self.entries.iter()
+    }
+
+    pub fn insert(&mut self, type_id: TypeId, entry: EnvEvalCacheEntry, deps: Vec<DefId>) {
+        self.remove_key_deps(type_id);
+        self.entries.insert(type_id, entry);
+        self.record_key_deps(type_id, deps);
+    }
+
+    pub fn entry_or_insert(&mut self, type_id: TypeId, entry: EnvEvalCacheEntry, deps: Vec<DefId>) {
+        if self.entries.contains_key(&type_id) {
+            return;
+        }
+        self.entries.insert(type_id, entry);
+        self.record_key_deps(type_id, deps);
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.key_deps.clear();
+        self.dep_to_keys.clear();
+    }
+
+    pub fn remove_entries_for_def(&mut self, def_id: DefId) {
+        let Some(keys) = self.dep_to_keys.remove(&def_id) else {
+            return;
+        };
+        for key in keys {
+            if self.entries.remove(&key).is_some() {
+                self.remove_key_deps(key);
+            }
+        }
+    }
+
+    fn record_key_deps(&mut self, type_id: TypeId, deps: Vec<DefId>) {
+        if deps.is_empty() {
+            return;
+        }
+        for &def_id in &deps {
+            self.dep_to_keys.entry(def_id).or_default().insert(type_id);
+        }
+        self.key_deps.insert(type_id, deps);
+    }
+
+    fn remove_key_deps(&mut self, type_id: TypeId) {
+        let Some(deps) = self.key_deps.remove(&type_id) else {
+            return;
+        };
+        for def_id in deps {
+            if let Some(keys) = self.dep_to_keys.get_mut(&def_id) {
+                keys.remove(&type_id);
+                if keys.is_empty() {
+                    self.dep_to_keys.remove(&def_id);
+                }
+            }
+        }
+    }
+}
+
+/// File-local name lookup caches used by cross-file/module resolution.
+#[derive(Debug, Default)]
+pub struct SymbolNameCandidatesCache {
+    pub candidates: FxHashMap<String, Vec<SymbolId>>,
+    pub same_file_type_declaration_names: Option<FxHashSet<String>>,
+}
+
+impl SymbolNameCandidatesCache {
+    pub fn clear(&mut self) {
+        self.candidates.clear();
+        self.same_file_type_declaration_names = None;
+    }
+}
 
 /// Checker-local memos for type-reference argument validation.
 #[derive(Debug, Default)]

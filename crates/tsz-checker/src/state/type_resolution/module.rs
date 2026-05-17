@@ -2362,6 +2362,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .symbol_name_candidates_cache
                 .borrow()
+                .candidates
                 .get(name)
                 .cloned()
             {
@@ -2387,6 +2388,7 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .symbol_name_candidates_cache
                 .borrow_mut()
+                .candidates
                 .insert(name.to_string(), result.clone());
             result
         };

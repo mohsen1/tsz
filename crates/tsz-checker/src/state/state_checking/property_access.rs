@@ -355,6 +355,28 @@ impl<'a> CheckerState<'a> {
         Some(member_type)
     }
 
+    fn recover_non_generic_lazy_interface_member_type(
+        &mut self,
+        original_object_type: TypeId,
+        prop_name: &str,
+    ) -> Option<TypeId> {
+        let def_id =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, original_object_type)?;
+        if self.ctx.definition_store.get_kind(def_id)? != tsz_solver::def::DefKind::Interface {
+            return None;
+        }
+        if !self
+            .ctx
+            .definition_store
+            .get_type_params(def_id)
+            .unwrap_or_default()
+            .is_empty()
+        {
+            return None;
+        }
+        self.recover_lazy_interface_member_type(original_object_type, prop_name)
+    }
+
     fn mapped_constraint_accepts_property_name(&self, constraint: TypeId, prop_name: &str) -> bool {
         use crate::query_boundaries::{assignability, common, property_access};
 
@@ -547,6 +569,15 @@ impl<'a> CheckerState<'a> {
         // can't be resolved there. Resolve them here using the checker's environment.
         let object_type = self.resolve_type_query_type(object_type);
         let original_object_type = object_type;
+        if let Some(member_type) =
+            self.recover_non_generic_lazy_interface_member_type(original_object_type, prop_name)
+        {
+            return tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: member_type,
+                write_type: None,
+                from_index_signature: false,
+            };
+        }
 
         // Ensure preconditions are ready in the environment for non-trivial
         // property-access inputs. Already-resolved/function-like inputs don't
