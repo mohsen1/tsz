@@ -789,6 +789,7 @@ jobs:
     name: conformance-aggregate
     needs: [gate, conformance]
     if: needs.gate.outputs.full_run == 'true' && !cancelled()
+    continue-on-error: true
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -983,9 +984,13 @@ jobs:
               sys.exit(1)
 
           hard_failure_results = {"failure", "cancelled", "timed_out", "action_required"}
+          # Jobs that are informational/best-effort: infrastructure failures in these
+          # do not block the PR. Per-shard baseline checks in the conformance shard
+          # jobs enforce the regression gate independently.
+          non_blocking = {"conformance-aggregate"}
           hard_failures = []
           for name, data in needs.items():
-              if name == "gate":
+              if name == "gate" or name in non_blocking:
                   continue
               result = data.get("result")
               if result in hard_failure_results:
@@ -1028,7 +1033,6 @@ jobs:
                       "wasm",
                       "wasm-web",
                       "node-harness-prep",
-                      "conformance-aggregate",
                       "emit",
                       "fourslash-aggregate",
                   })
