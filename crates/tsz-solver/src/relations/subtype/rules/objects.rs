@@ -476,10 +476,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Check optional compatibility
-        // Optional in source can't satisfy required in target
-        if source.optional && !target.optional {
-            // Trace: Optional property cannot satisfy required property
+        // Without exactOptionalPropertyTypes, optional_property_type() widens `T` to
+        // `T | undefined`, making {a?: T} subtype-compatible with {a: T | undefined} naturally.
+        // Gate the early-out on the flag so the type comparison below handles standard mode.
+        if source.optional && !target.optional && self.exact_optional_property_types {
             if let Some(tracer) = &mut self.tracer
                 && !tracer.on_mismatch_dyn(
                     crate::diagnostics::SubtypeFailureReason::OptionalPropertyRequired {
@@ -1121,8 +1121,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::False;
                 }
 
-                // Check optional compatibility
-                if sp.optional && !t_prop.optional {
+                // Check optional compatibility (see check_property_compatibility for rationale)
+                if sp.optional && !t_prop.optional && self.exact_optional_property_types {
                     return SubtypeResult::False;
                 }
                 // NOTE: TypeScript allows readonly source to satisfy mutable target

@@ -192,6 +192,9 @@ mod nuia_write_index_signature_emits_ts2322_tests;
 #[path = "../tests/optional_param_display_tests.rs"]
 mod optional_param_display_tests;
 #[cfg(test)]
+#[path = "../tests/optional_property_subtype_compatibility_tests.rs"]
+mod optional_property_subtype_compatibility_tests;
+#[cfg(test)]
 #[path = "../tests/optional_property_target_undefined_display_tests.rs"]
 mod optional_property_target_undefined_display_tests;
 #[cfg(test)]
