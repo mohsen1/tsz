@@ -533,12 +533,24 @@ impl<'a> CheckerState<'a> {
 
                     // Collect infer type parameters from extends_type and add them to scope for true_type
                     let infer_params = self.collect_infer_type_parameters(cond.extends_type);
+                    let infer_constraints: Vec<Option<TypeId>> = infer_params
+                        .iter()
+                        .map(|name| {
+                            self.effective_infer_constraint_from_extends_type(
+                                cond.extends_type,
+                                name,
+                            )
+                        })
+                        .collect();
+                    let factory = self.ctx.types.factory();
                     let mut param_bindings = Vec::new();
-                    for param_name in &infer_params {
+                    for (param_name, &constraint) in
+                        infer_params.iter().zip(infer_constraints.iter())
+                    {
                         let atom = self.ctx.types.intern_string(param_name);
                         let type_id = factory.type_param(tsz_solver::TypeParamInfo {
                             name: atom,
-                            constraint: None,
+                            constraint,
                             default: None,
                             is_const: false,
                         });
@@ -1878,8 +1890,7 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Whether `name_idx` is the IDENTIFIER node `intrinsic` directly inside a
-    /// `TypeReference` that forms the entire body of a `TypeAliasDeclaration`.
+    /// Whether `name_idx` is `intrinsic` in a full type-alias `TypeReference` body.
     /// In that position tsc treats `intrinsic` as a keyword and reports TS2795
     /// (or accepts it for the four built-in string mapping aliases) — name
     /// resolution must not also fire TS2304.
@@ -1912,8 +1923,7 @@ impl<'a> CheckerState<'a> {
         parent_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
     }
 
-    /// Check if a type node subtree contains a circular reference to any type
-    /// currently being resolved (i.e., present in `symbol_resolution_set`).
+    /// Check if a type node subtree references any resolving type.
     /// Used to detect TS2577 "Return type annotation circularly references itself".
     fn type_node_contains_circular_reference(&self, type_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(type_idx) else {
