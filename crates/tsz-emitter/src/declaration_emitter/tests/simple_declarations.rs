@@ -162,6 +162,36 @@ export namespace Query {
 }
 
 #[test]
+fn test_named_exported_namespace_retains_private_module_interface_dependency() {
+    let source = r#"
+export { Query as PublicQuery };
+interface Private {
+    value: string;
+}
+
+namespace Query {
+    export function f(x: Private): Private {
+        return x;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export { Query as PublicQuery };"),
+        "Expected aliased named namespace export to remain public: {output}"
+    );
+    assert!(
+        output.contains("interface Private"),
+        "Expected private interface to remain when named-exported namespace references it: {output}"
+    );
+    assert!(
+        output.contains("function f(x: Private): Private;"),
+        "Expected named-exported namespace member to keep its private dependency reference: {output}"
+    );
+}
+
+#[test]
 fn test_throw_only_unannotated_returns_void() {
     let source = r#"
 export function f() {
