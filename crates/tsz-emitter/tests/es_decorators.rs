@@ -357,6 +357,81 @@ fn test_class_decorator_static_private_method_is_externalized() {
         !output.contains("static #foo()"),
         "Original static private method must not remain in the class body.\nOutput:\n{output}"
     );
+    assert!(
+        !output.contains("static get #foo()"),
+        "Unreferenced static private method should not need a wrapper.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_class_decorator_static_private_method_reference_keeps_wrapper() {
+    let source = "\
+@dec
+class C {
+    static #foo() { return 1; }
+    static bar() { return this.#foo(); }
+}";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("static { _C_foo = function _C_foo() { return 1; }; }"),
+        "Expected static private method implementation to be externalized.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static get #foo() { return _C_foo; }"),
+        "Expected wrapper getter so this.#foo() still resolves.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static bar() { return this.#foo(); }"),
+        "Expected caller to keep its private-name access against the wrapper.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_class_decorator_static_private_method_self_reference_keeps_wrapper() {
+    let source = "\
+@dec
+class C {
+    static #foo() { return this.#foo(); }
+}";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("static { _C_foo = function _C_foo() { return this.#foo(); }; }"),
+        "Expected self-referential implementation to stay externalized.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static get #foo() { return _C_foo; }"),
+        "Expected wrapper getter for the self-reference target.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_class_decorator_static_private_method_temp_renamed_when_user_binding_collides() {
+    let source = "\
+@dec
+class C {
+    static value = _C_foo;
+    static #foo() {}
+}";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("var _C_foo_1;"),
+        "Expected static private method temp to be renamed around user references.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _C_foo;"),
+        "Generated temp must not keep the colliding name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static { _C_foo_1 = function _C_foo_1() { }; }"),
+        "Expected externalized implementation to use the hygienic temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static value = _C_foo;"),
+        "User reference must stay unchanged.\nOutput:\n{output}"
+    );
 }
 
 #[test]

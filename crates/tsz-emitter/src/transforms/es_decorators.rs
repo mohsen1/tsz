@@ -5,7 +5,7 @@
 //! For ES2022+ targets, uses static initializer blocks.
 
 use rustc_hash::FxHashMap;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -200,6 +200,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     class_data,
                     &class_name,
                     &decorated_members,
+                    class_span_text,
                 )
             } else {
                 Vec::new()
@@ -793,11 +794,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 .filter(|m| m.kind == MemberKind::Accessor)
                 .map(|m| m.member_idx)
                 .collect();
-        let class_decorator_static_private_method_idx_set: std::collections::HashSet<NodeIndex> =
-            class_decorator_static_private_methods
-                .iter()
-                .map(|info| info.member_idx)
-                .collect();
+        let class_decorator_static_private_method_map: std::collections::HashMap<
+            NodeIndex,
+            &ClassDecoratorStaticPrivateMethodInfo,
+        > = class_decorator_static_private_methods
+            .iter()
+            .map(|info| (info.member_idx, info))
+            .collect();
         let field_infos = self.collect_decorated_field_info(decorated_members, computed_key_vars);
         let auto_accessor_infos =
             self.collect_decorated_auto_accessor_info(decorated_members, computed_key_vars);
@@ -899,7 +902,6 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     && node.kind != syntax_kind_ext::SEMICOLON_CLASS_ELEMENT
                     && (fields_in_class_body || !decorated_field_idx_set.contains(idx))
                     && !plain_static_field_idx_set.contains(idx)
-                    && !class_decorator_static_private_method_idx_set.contains(idx)
             })
             .map(|(i, _)| i)
             .collect();
@@ -910,6 +912,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
             if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
                 if let Some(output) = &constructor_output {
                     out.push_str(output);
+                }
+                continue;
+            }
+            if let Some(info) = class_decorator_static_private_method_map.get(&member_idx) {
+                if info.needs_wrapper {
+                    out.push_str(&format!(
+                        "{indent}static get {}() {{ return {}; }}\n",
+                        info.member_name, info.temp_var
+                    ));
                 }
                 continue;
             }
@@ -2705,6 +2716,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         class_data: &tsz_parser::parser::node::ClassData,
         class_name: &str,
         decorated_members: &[DecoratedMember],
+        class_span_text: &str,
     ) -> Vec<ClassDecoratorStaticPrivateMethodInfo> {
         let decorated_member_indices: std::collections::HashSet<NodeIndex> = decorated_members
             .iter()
@@ -2736,15 +2748,22 @@ impl<'a> TC39DecoratorEmitter<'a> {
             let Some(private_name) = self.arena.get_identifier(name_node) else {
                 continue;
             };
-            let private_name = private_name.escaped_text.trim_start_matches('#');
+            let member_name = private_name.escaped_text.to_string();
+            let private_name = member_name.trim_start_matches('#');
             let temp_base = if class_name.is_empty() {
                 "class".to_string()
             } else {
                 class_name.to_string()
             };
-            let temp_var = format!("_{temp_base}_{private_name}");
+            let temp_var =
+                hygienic_temp_name(&format!("_{temp_base}_{private_name}"), class_span_text);
+            let needs_wrapper = self
+                .node_tree_contains_private_identifier(method.body, &member_name)
+                || self.class_body_references_private_name(class_data, member_idx, &member_name);
             result.push(ClassDecoratorStaticPrivateMethodInfo {
                 member_idx,
+                member_name,
+                needs_wrapper,
                 function_name: temp_var.clone(),
                 temp_var,
                 params: self.parameter_list_text(&method.parameters),
@@ -2752,6 +2771,35 @@ impl<'a> TC39DecoratorEmitter<'a> {
             });
         }
         result
+    }
+
+    fn class_body_references_private_name(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+        owner_member_idx: NodeIndex,
+        private_name: &str,
+    ) -> bool {
+        class_data.members.nodes.iter().any(|&member_idx| {
+            member_idx != owner_member_idx
+                && self.node_tree_contains_private_identifier(member_idx, private_name)
+        })
+    }
+
+    fn node_tree_contains_private_identifier(&self, root: NodeIndex, private_name: &str) -> bool {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = self.arena.get(idx) else {
+                continue;
+            };
+            if node.kind == SyntaxKind::PrivateIdentifier as u16
+                && let Some(ident) = self.arena.get_identifier(node)
+                && ident.escaped_text == private_name
+            {
+                return true;
+            }
+            stack.extend(self.arena.get_children(idx));
+        }
+        false
     }
 
     fn get_field_initializer_text(&self, member_idx: NodeIndex) -> String {

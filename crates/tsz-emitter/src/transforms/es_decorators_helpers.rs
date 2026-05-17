@@ -155,6 +155,8 @@ pub(super) struct DecoratedAutoAccessorInfo {
 
 pub(super) struct ClassDecoratorStaticPrivateMethodInfo {
     pub(super) member_idx: NodeIndex,
+    pub(super) member_name: String,
+    pub(super) needs_wrapper: bool,
     pub(super) temp_var: String,
     pub(super) function_name: String,
     pub(super) params: String,
