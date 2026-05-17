@@ -170,6 +170,104 @@ fn test_node_modules_types_entry_uses_bare_package_specifier() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+#[cfg(unix)]
+#[test]
+fn test_symlinked_workspace_dependency_uses_declared_package_specifier() {
+    let root = std::env::temp_dir().join(format!(
+        "tsz-emitter-symlinked-workspace-dep-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let package_a = root.join("workspace/packageA");
+    let package_c = root.join("workspace/packageC");
+    std::fs::create_dir_all(&package_a).expect("create package A");
+    std::fs::create_dir_all(package_c.join("node_modules")).expect("create package C");
+    std::fs::write(package_a.join("index.d.ts"), "export declare class Foo {}")
+        .expect("write package A declaration");
+    std::fs::write(
+        package_c.join("package.json"),
+        r#"{"private":true,"dependencies":{"package-a":"file:../packageA"}}"#,
+    )
+    .expect("write package C package json");
+    std::os::unix::fs::symlink(&package_a, package_c.join("node_modules/package-a"))
+        .expect("create package symlink");
+
+    let arena = tsz_parser::parser::node::NodeArena::default();
+    let emitter = DeclarationEmitter::new(&arena);
+    let specifier = emitter
+        .package_specifier_for_symlinked_dependency_path(
+            package_c
+                .join("index.ts")
+                .to_str()
+                .expect("current path utf8"),
+            package_a
+                .join("index.d.ts")
+                .to_str()
+                .expect("source path utf8"),
+        )
+        .expect("package specifier");
+
+    assert_eq!(specifier, "package-a");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_symlinked_workspace_dependency_uses_exported_subpath() {
+    let root = std::env::temp_dir().join(format!(
+        "tsz-emitter-symlinked-workspace-subpath-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    let package_a = root.join("workspace/packageA");
+    let package_c = root.join("workspace/packageC");
+    std::fs::create_dir_all(&package_a).expect("create package A");
+    std::fs::create_dir_all(package_c.join("node_modules")).expect("create package C");
+    std::fs::write(package_a.join("foo.d.ts"), "export declare class Foo {}")
+        .expect("write package A declaration");
+    std::fs::write(
+        package_a.join("package.json"),
+        r#"{"name":"package-a","exports":{"./cls":"./foo.js"}}"#,
+    )
+    .expect("write package A package json");
+    std::fs::write(
+        package_c.join("package.json"),
+        r#"{"private":true,"dependencies":{"package-a":"file:../packageA"}}"#,
+    )
+    .expect("write package C package json");
+    std::os::unix::fs::symlink(&package_a, package_c.join("node_modules/package-a"))
+        .expect("create package symlink");
+
+    let arena = tsz_parser::parser::node::NodeArena::default();
+    let emitter = DeclarationEmitter::new(&arena);
+    let specifier = emitter
+        .package_specifier_for_symlinked_dependency_path(
+            package_c
+                .join("index.ts")
+                .to_str()
+                .expect("current path utf8"),
+            package_a
+                .join("foo.d.ts")
+                .to_str()
+                .expect("source path utf8"),
+        )
+        .expect("package specifier");
+
+    assert_eq!(specifier, "package-a/cls");
+
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn test_zero_arg_return_type_import_wrapper_unwraps_to_import_type() {
+    let type_text = r#"ReturnType<() => import("package-a/cls").Foo>"#;
+    let unwrapped = DeclarationEmitter::unwrap_return_type_zero_arg_import_type(type_text)
+        .expect("expected import return wrapper to unwrap");
+
+    assert_eq!(unwrapped, r#"import("package-a/cls").Foo"#);
+}
+
 #[test]
 fn test_static_super_method_call_preserves_return_type() {
     let output = emit_dts_with_binding(
