@@ -769,6 +769,75 @@ impl<'a> DeclarationEmitter<'a> {
         aliases
     }
 
+    pub(crate) fn collect_js_namespace_alias_declaration_statements(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+        js_export_equals_names: &FxHashSet<String>,
+    ) -> FxHashMap<String, Vec<NodeIndex>> {
+        if !self.source_file_is_js(source_file) {
+            return FxHashMap::default();
+        }
+
+        let commonjs_root = if js_export_equals_names.len() == 1 {
+            js_export_equals_names.iter().next().map(String::as_str)
+        } else {
+            None
+        };
+
+        let mut declarations_by_local_name: FxHashMap<String, Vec<NodeIndex>> =
+            FxHashMap::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let local_name = match stmt_node.kind {
+                k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                    .arena
+                    .get_class(stmt_node)
+                    .and_then(|class| self.get_identifier_text(class.name)),
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                    .arena
+                    .get_function(stmt_node)
+                    .and_then(|func| self.get_identifier_text(func.name)),
+                _ => None,
+            };
+            let Some(local_name) = local_name else {
+                continue;
+            };
+            declarations_by_local_name
+                .entry(local_name)
+                .or_default()
+                .push(stmt_idx);
+        }
+        if declarations_by_local_name.is_empty() {
+            return FxHashMap::default();
+        }
+
+        let mut declarations: FxHashMap<String, Vec<NodeIndex>> = FxHashMap::default();
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some((root_name, _export_name, local_name, _use_import_alias)) =
+                self.js_namespace_export_alias_for_statement(stmt_idx, commonjs_root)
+            else {
+                continue;
+            };
+            if local_name == root_name {
+                continue;
+            }
+            let Some(local_declaration_stmts) = declarations_by_local_name.get(&local_name) else {
+                continue;
+            };
+
+            let root_declarations = declarations.entry(root_name).or_default();
+            for &local_declaration_stmt in local_declaration_stmts {
+                if !root_declarations.contains(&local_declaration_stmt) {
+                    root_declarations.push(local_declaration_stmt);
+                }
+            }
+        }
+
+        declarations
+    }
+
     pub(crate) fn collect_js_namespace_class_expando_declarations(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
@@ -2960,6 +3029,28 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("}");
         self.write_line();
+        self.emit_deferred_js_namespace_alias_declarations_for_name(&name);
+    }
+
+    fn emit_deferred_js_namespace_alias_declarations_for_name(&mut self, root_name: &str) {
+        let Some(stmt_idxs) = self
+            .js_deferred_namespace_alias_declarations
+            .get(root_name)
+            .cloned()
+        else {
+            return;
+        };
+
+        for stmt_idx in stmt_idxs {
+            if self
+                .js_deferred_namespace_alias_declaration_stmts
+                .remove(&stmt_idx)
+            {
+                self.emit_statement(stmt_idx);
+                self.js_deferred_namespace_alias_declaration_stmts
+                    .insert(stmt_idx);
+            }
+        }
     }
 
     /// Emit hoisted `export default <Identifier>;` statements at the top of a JS
