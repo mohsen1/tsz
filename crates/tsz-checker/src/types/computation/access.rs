@@ -1533,14 +1533,7 @@ impl<'a> CheckerState<'a> {
             use_index_signature_check = false;
         }
 
-        // MAPPED TYPE GENERIC INDEXED ACCESS
-        // When the pre-resolution object type is (or resolves to) a mapped type and the
-        // index is a generic type parameter, produce an IndexAccess(Mapped, T) and let
-        // the solver's evaluator handle template substitution via
-        // try_mapped_type_param_substitution. This avoids the eager mapped-type expansion
-        // in resolve_type_for_property_access which destroys the template relationship
-        // needed for generic indexed access (e.g., `handlers[key]` where `handlers` has
-        // type `{ [T in keyof M]?: (p: T) => void }` and `key: K extends keyof M`).
+        // Preserve mapped/generic key correlation through solver IndexAccess evaluation.
         if result_type.is_none()
             && crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
         {
@@ -1931,14 +1924,8 @@ impl<'a> CheckerState<'a> {
             if is_expando_write {
                 result_type = TypeId::ANY;
             }
-            // Suppress TS7053 for expando reads with unique symbol keys on function
-            // types. When `func[symKey]` where symKey is a const Symbol() variable
-            // and `func[symKey] = value` was assigned as an expando property, tsc
-            // does not emit TS7053 on the read side either.
-            // We check: (a) read context, (b) function type, (c) unique symbol index,
-            // (d) the object has ANY unique-symbol expando properties recorded by the
-            // binder. This avoids depending on exact SymbolId matching (which can
-            // fail due to lib-merge rewriting the binder's symbol arena).
+            // Suppress TS7053 for expando reads with unique-symbol keys when the
+            // callable already has binder-recorded unique-symbol expando writes.
             let is_expando_symbol_read = !skip_flow_narrowing
                 && !is_namespace_object
                 && crate::query_boundaries::common::is_function_type(
