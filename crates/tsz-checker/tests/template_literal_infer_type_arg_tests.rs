@@ -229,3 +229,40 @@ export {};
         "non-template infer errors in type arg",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Nested template-literal infer constraint: `${infer K extends `${infer V}`}`
+// V is a direct span of the INNER template, so it also gets string constraint.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn nested_template_infer_constraint_inner_as_mapped_key() {
+    assert_no_ts2322(
+        r#"
+type Box<T> = { v: T };
+type Nested<S extends string> =
+  S extends `${infer Outer extends `${infer Inner}`}`
+    ? Box<{ [P in Inner]: string }>
+    : never;
+type R = Nested<"ab">;
+export {};
+"#,
+        "nested template infer constraint – Inner as mapped key in type arg",
+    );
+}
+
+#[test]
+fn nested_template_infer_constraint_outer_and_inner_both_in_type_args() {
+    assert_no_ts2322(
+        r#"
+type Pair<A, B> = { a: A; b: B };
+type NestedPair<S extends string> =
+  S extends `${infer Outer extends `${infer Inner}`}`
+    ? Pair<{ [P in Outer]: number }, { [P in Inner]: string }>
+    : never;
+type R = NestedPair<"ab">;
+export {};
+"#,
+        "nested template infer constraint – both Outer and Inner in type args",
+    );
+}
