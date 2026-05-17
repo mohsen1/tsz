@@ -420,7 +420,8 @@ write_type_challenges_assertion_classification() {
 
   if [[ -f "$manifest" ]]; then
     ensure_type_challenges_assertion_tsc
-    node scripts/ci/type-challenges-assertion-classifier.mjs \
+    TSZ_BIN="$TSZ_BIN" \
+      node scripts/ci/type-challenges-assertion-classifier.mjs \
       "$candidate_dir" \
       "$manifest" \
       "$output"
@@ -432,7 +433,8 @@ write_type_challenges_assertion_classification() {
       "$clean_manifest"
     if [[ -f "$clean_manifest" ]] \
       && node -e 'const fs = require("fs"); const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.exit(Number(manifest.counts?.tscAcceptedAssertions || 0) > 0 ? 0 : 1)' "$clean_manifest"; then
-      node scripts/ci/type-challenges-assertion-classifier.mjs \
+      TSZ_BIN="$TSZ_BIN" \
+        node scripts/ci/type-challenges-assertion-classifier.mjs \
         "$clean_dir" \
         "$clean_manifest" \
         "$clean_output"
