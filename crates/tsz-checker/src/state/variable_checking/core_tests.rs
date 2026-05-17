@@ -1490,7 +1490,11 @@ mod ts2502_alias_prior_decl_tests {
 
 #[cfg(test)]
 mod function_type_nested_check_tests {
-    use crate::test_utils::{check_source_diagnostics, diagnostic_count};
+    use crate::context::CheckerOptions;
+    use crate::test_utils::{
+        check_source_diagnostics, check_source_with_libs, diagnostic_codes, diagnostic_count,
+        load_default_lib_files,
+    };
 
     /// TS2536 inside a function return type must be reported.
     /// Rule: tsc validates all nested type nodes in function/constructor return
@@ -1631,6 +1635,63 @@ mod function_type_nested_check_tests {
             diagnostic_count(&diags, 2536),
             0,
             "Expected no TS2536 for inner generic <K extends keyof T = keyof T>(x: T[K]) => T[K]"
+        );
+    }
+
+    #[test]
+    fn merged_interface_function_constraints_keep_returntype_valid() {
+        let libs = load_default_lib_files();
+        for source in [
+            r#"
+                export namespace ns {
+                    interface Function<T extends (...args: any) => any> {
+                        throttle(): Function<T>;
+                    }
+                    interface Function<T> {
+                        unary(): Function<() => ReturnType<T>>;
+                    }
+                }
+            "#,
+            r#"
+                export namespace ns {
+                    interface Function<T> {
+                        unary(): Function<() => ReturnType<T>>;
+                    }
+                    interface Function<T extends (...args: any) => any> {
+                        throttle(): Function<T>;
+                    }
+                }
+            "#,
+        ] {
+            let diags = check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs);
+            assert_eq!(
+                diagnostic_codes(&diags),
+                Vec::<u32>::new(),
+                "expected merged interface function constraints to stay valid, got {diags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mapped_type_inference_from_apparent_type_keeps_only_assignment_error() {
+        let source = r#"
+            type Obj = {
+                [s: string]: number;
+            };
+
+            type foo = <T>(target: { [K in keyof T]: T[K] }) => void;
+            type bar = <U extends string[]>(source: { [K in keyof U]: Obj[K] }) => void;
+
+            declare let f: foo;
+            declare let b: bar;
+            b = f;
+        "#;
+
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_codes(&diags),
+            vec![2322],
+            "expected only the assignment error, got {diags:?}"
         );
     }
 }
