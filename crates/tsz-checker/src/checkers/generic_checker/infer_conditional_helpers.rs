@@ -127,12 +127,40 @@ impl<'a> CheckerState<'a> {
 
         if node.kind == syntax_kind_ext::INFER_TYPE
             && let Some(infer_data) = self.ctx.arena.get_infer_type(node)
-            && self.infer_type_param_has_name_for_constraint_probe(infer_data, name)
-            && let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
-            && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
-            && tp_data.constraint != NodeIndex::NONE
         {
-            constraints.push(self.get_type_from_type_node(tp_data.constraint));
+            if self.infer_type_param_has_name_for_constraint_probe(infer_data, name)
+                && let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
+                && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
+                && tp_data.constraint != NodeIndex::NONE
+            {
+                constraints.push(self.get_type_from_type_node(tp_data.constraint));
+                return;
+            }
+            self.collect_infer_constraints_from_extends_type(
+                infer_data.type_parameter,
+                name,
+                constraints,
+            );
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_PARAMETER
+            && let Some(type_param) = self.ctx.arena.get_type_parameter(node)
+        {
+            if type_param.constraint != NodeIndex::NONE {
+                self.collect_infer_constraints_from_extends_type(
+                    type_param.constraint,
+                    name,
+                    constraints,
+                );
+            }
+            if type_param.default != NodeIndex::NONE {
+                self.collect_infer_constraints_from_extends_type(
+                    type_param.default,
+                    name,
+                    constraints,
+                );
+            }
             return;
         }
 

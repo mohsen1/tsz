@@ -970,6 +970,16 @@ impl<'a> CheckerState<'a> {
                     stack.push(infer_data.type_parameter);
                 }
                 continue;
+            } else if node.kind == syntax_kind_ext::TYPE_PARAMETER {
+                if let Some(type_param) = self.ctx.arena.get_type_parameter(node) {
+                    if type_param.constraint != NodeIndex::NONE {
+                        stack.push(type_param.constraint);
+                    }
+                    if type_param.default != NodeIndex::NONE {
+                        stack.push(type_param.default);
+                    }
+                }
+                continue;
             }
             for child in self.ctx.arena.get_children(idx) {
                 stack.push(child);
