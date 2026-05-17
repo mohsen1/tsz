@@ -46,11 +46,17 @@ function manifest(
     expectedGenerated: entries.length,
     generated: entries.length,
     entries: entries.map(({ id, level = "medium", slug = `case-${id}`, source }) => {
+      const extra = extraEntryFields({ id, level, slug, source });
+      const defaultDeclarations = sourcePath === "en/*.md" &&
+        !Object.prototype.hasOwnProperty.call(extra, "declarations")
+        ? { declarations: [`Solution${id}`] }
+        : {};
       return {
         output: source,
         source,
         challenge: { id, level, slug },
-        ...extraEntryFields({ id, level, slug, source }),
+        ...defaultDeclarations,
+        ...extra,
       };
     }),
     ...manifestOverrides,
@@ -403,6 +409,47 @@ withTempDir((dir) => {
   );
   assert.equal(result.status, 1);
   assert.match(result.stderr, /template manifest has no entries/);
+  assert.ok(!fs.existsSync(output));
+});
+
+withTempDir((dir) => {
+  const templates = path.join(dir, "templates.json");
+  const testCases = path.join(dir, "test-cases.json");
+  const solutions = path.join(dir, "solutions.json");
+  const output = path.join(dir, "pairing.json");
+
+  writeJson(
+    templates,
+    manifest("questions/**/template.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/template.ts" },
+    ]),
+  );
+  writeJson(
+    testCases,
+    manifest("questions/**/test-cases.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/test-cases.ts" },
+    ]),
+  );
+  writeJson(
+    solutions,
+    manifest(
+      "en/*.md",
+      [{ id: "13", source: "en/hello-world.md" }],
+      () => ({ declarations: [] }),
+    ),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, output],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /solution manifest entry has no declarations/);
+  assert.match(result.stderr, /en\/hello-world\.md/);
   assert.ok(!fs.existsSync(output));
 });
 
