@@ -80,6 +80,9 @@ or otherwise proven absent from timing profiles.
 Use the narrowest command that answers the question:
 
 - `scripts/bench/perf-hotspots.sh --quick` for hot family checks.
+  The default hotspot set includes the release-visible `ts-toolbelt-project`
+  recursive type-evaluation row so #7378 work can measure the current project
+  gap without running the full dashboard.
 - `scripts/bench/bench-vs-tsgo.sh --filter '<fixture>'` for project or
   library fixture checks.
 - `scripts/ci/project-compile-guard.sh` for CI-style project compile guards.
