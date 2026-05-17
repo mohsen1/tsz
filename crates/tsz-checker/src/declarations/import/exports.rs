@@ -4,6 +4,25 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 
 impl<'a> CheckerState<'a> {
+    fn is_direct_user_export_from_file(
+        &self,
+        binder: &tsz_binder::BinderState,
+        sym_id: tsz_binder::SymbolId,
+        file_idx: usize,
+    ) -> bool {
+        if binder.lib_symbol_ids.contains(&sym_id) {
+            return false;
+        }
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        if !symbol.is_exported || symbol.import_module.is_some() {
+            return false;
+        }
+        symbol.decl_file_idx == file_idx as u32
+            || (self.ctx.no_lib() && symbol.decl_file_idx == u32::MAX)
+    }
+
     /// Check for conflicting wildcard re-exports in a file.
     ///
     /// When a file has multiple `export * from` / `export type * from` declarations
@@ -184,14 +203,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Check direct exported file locals. After Phase 2 stamping, user symbols
-        // have their file's decl_file_idx set; lib/synthetic symbols retain u32::MAX,
-        // so `== file_idx` cleanly excludes both cross-file and lib symbols.
+        // Check direct exported file locals. Lib-backed program binders stamp
+        // user symbols with their file index; noLib test contexts can still
+        // carry unstamped user symbols, so allow u32::MAX only there.
         if let Some(sym_id) = target_binder.file_locals.get(export_name)
-            && let Some(symbol) = target_binder.symbols.get(sym_id)
-            && symbol.is_exported
-            && symbol.import_module.is_none()
-            && symbol.decl_file_idx == file_idx as u32
+            && self.is_direct_user_export_from_file(target_binder, sym_id, file_idx)
         {
             return Some(file_idx);
         }
@@ -228,13 +244,7 @@ impl<'a> CheckerState<'a> {
         // Direct exports from module_exports (populated during binding, pre-merge)
         if let Some(exports) = self.ctx.module_exports_for_module(binder, &file_name) {
             for (name, &sym_id) in exports.iter() {
-                // Skip lib/global symbols merged from lib.d.ts.
-                if binder.lib_symbol_ids.contains(&sym_id)
-                    || binder
-                        .symbols
-                        .get(sym_id)
-                        .is_some_and(|s| s.decl_file_idx == u32::MAX)
-                {
+                if !self.is_direct_user_export_from_file(binder, sym_id, file_idx) {
                     continue;
                 }
                 names.insert(name.to_string());
@@ -249,13 +259,7 @@ impl<'a> CheckerState<'a> {
             if binder.lib_symbol_ids.contains(&sym_id) {
                 continue;
             }
-            let Some(symbol) = binder.symbols.get(sym_id) else {
-                continue;
-            };
-            if !symbol.is_exported
-                || symbol.import_module.is_some()
-                || symbol.decl_file_idx != file_idx as u32
-            {
+            if !self.is_direct_user_export_from_file(binder, sym_id, file_idx) {
                 continue;
             }
             names.insert(name.to_string());
