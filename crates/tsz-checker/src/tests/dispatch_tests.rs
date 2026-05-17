@@ -3083,6 +3083,61 @@ class Bar<T> {
 }
 
 #[test]
+fn inherited_generic_class_field_this_method_aliases_use_declared_base_chain() {
+    // A generic base class field initializer can be checked while constructing
+    // a derived class instance whose inheritance graph edge is not populated yet.
+    // The initializer's `this.method` lookup still needs to recover members
+    // declared on the base class through the declared `extends` chain.
+    let diags = check_source_diagnostics(
+        r#"
+interface BaseDef { tag?: string }
+type BaseAny = Base<any, any, any>;
+interface WrapperDef<T extends BaseAny> extends BaseDef { schema: T }
+
+abstract class Base<Output, Def extends BaseDef = BaseDef, Input = Output> {
+    readonly _output!: Output;
+    readonly _input!: Input;
+    readonly _def!: Def;
+
+    abstract parse(data: unknown): Output;
+
+    first(value: unknown): Output {
+        return this.parse(value);
+    }
+    firstAlias = this.first;
+
+    second<Func extends (arg: Output) => unknown>(check: Func): Wrapper<BaseAny> {
+        return null as any;
+    }
+    secondAlias = this.second;
+}
+
+class Wrapper<T extends BaseAny> extends Base<unknown, WrapperDef<T>, unknown> {
+    parse(data: unknown): unknown {
+        return data;
+    }
+}
+
+class Text extends Base<string> {
+    parse(data: unknown): string {
+        return String(data);
+    }
+}
+
+type UseWrapper = Wrapper<Text>;
+type UseText = Text;
+"#,
+    );
+    let ts2339 = diagnostics_with_code(&diags, 2339);
+    assert_eq!(
+        ts2339.len(),
+        0,
+        "Expected no TS2339 for inherited field aliases, got: {:?}",
+        diagnostic_messages(&ts2339)
+    );
+}
+
+#[test]
 fn getter_returning_this_no_false_ts2339() {
     // When a class getter returns `this` without an explicit type annotation,
     // the inferred return type must be the polymorphic `ThisType` — not the

@@ -35,7 +35,7 @@ impl<'a> CheckerState<'a> {
         receiver_type: TypeId,
     ) -> Option<(NodeIndex, bool)> {
         let (class_idx, class_sym) = self.current_class_member_initializer_context(expression)?;
-        if self.property_access_receiver_symbol(receiver_type) != Some(class_sym)
+        if !self.property_access_receiver_targets_class(receiver_type, class_sym)
             && !self.asserted_this_receiver_targets_current_class(expression, class_sym)
         {
             return None;
@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        self.property_access_receiver_symbol(receiver_type) == Some(class_sym)
+        self.property_access_receiver_targets_class(receiver_type, class_sym)
     }
 
     pub(crate) fn property_access_receiver_symbol(
@@ -97,6 +97,36 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::application_info(self.ctx.types, type_id)
                 .and_then(|(base, _)| self.ctx.resolve_type_to_symbol_id(base))
         })
+    }
+
+    fn property_access_receiver_targets_class(
+        &self,
+        receiver_type: TypeId,
+        class_sym: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(receiver_sym) = self.property_access_receiver_symbol(receiver_type) else {
+            return false;
+        };
+        receiver_sym == class_sym
+            || self
+                .ctx
+                .inheritance_graph
+                .is_derived_from(receiver_sym, class_sym)
+            || self.property_access_receiver_declared_extends_class(receiver_sym, class_sym)
+    }
+
+    fn property_access_receiver_declared_extends_class(
+        &self,
+        receiver_sym: tsz_binder::SymbolId,
+        class_sym: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(receiver_idx) = self.get_class_declaration_from_symbol(receiver_sym) else {
+            return false;
+        };
+        let Some(class_idx) = self.get_class_declaration_from_symbol(class_sym) else {
+            return false;
+        };
+        self.is_class_derived_from(receiver_idx, class_idx)
     }
 
     fn current_class_member_initializer_context(
@@ -143,7 +173,7 @@ impl<'a> CheckerState<'a> {
                     let assertion_expression = assertion.expression;
                     let assertion_type_node = assertion.type_node;
                     let assertion_type = self.get_type_from_type_node(assertion_type_node);
-                    if self.property_access_receiver_symbol(assertion_type) != Some(class_sym) {
+                    if !self.property_access_receiver_targets_class(assertion_type, class_sym) {
                         return false;
                     }
                     saw_assertion = true;
