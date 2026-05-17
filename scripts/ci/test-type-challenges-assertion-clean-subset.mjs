@@ -150,6 +150,83 @@ withTempDir((dir) => {
 
   writeFile(path.join(candidateDir, "utils", "index.d.ts"), "export {};\n");
   writeJson(candidateManifestPath, {
+    fixture: "stale-candidates",
+    counts: { generatedAssertions: 0 },
+    entries: [],
+  });
+  writeJson(classificationPath, {
+    fixture: "type-challenges-assertion-classification",
+    compilers: {
+      tsc: { status: "pass", candidateDiagnostics: { filesWithoutDiagnostics: [] } },
+      tsz: { status: "pass" },
+    },
+    comparison: { status: "both-pass" },
+  });
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, candidateDir, candidateManifestPath, classificationPath, outputDir, subsetManifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unexpected assertion candidate manifest fixture/);
+  assert.equal(fs.existsSync(subsetManifestPath), false);
+});
+
+withTempDir((dir) => {
+  const candidateDir = path.join(dir, "candidates");
+  const outputDir = path.join(dir, "clean");
+  const candidateManifestPath = path.join(candidateDir, "type-challenges-assertions-manifest.json");
+  const classificationPath = path.join(candidateDir, "type-challenges-assertions-classification.json");
+  const subsetManifestPath = path.join(outputDir, "type-challenges-assertions-tsc-clean-manifest.json");
+
+  writeFile(path.join(candidateDir, "utils", "index.d.ts"), "export {};\n");
+  writeJson(candidateManifestPath, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: { generatedAssertions: 1 },
+    entries: [{ id: "escape", output: "../outside.ts" }],
+  });
+  writeJson(classificationPath, {
+    fixture: "type-challenges-assertion-classification",
+    compilers: {
+      tsc: {
+        status: "pass",
+        candidateDiagnostics: {
+          filesWithoutDiagnostics: ["../outside.ts"],
+          filesWithDiagnostics: [],
+        },
+      },
+      tsz: { status: "pass" },
+    },
+    comparison: { status: "both-pass" },
+  });
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, candidateDir, candidateManifestPath, classificationPath, outputDir, subsetManifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /must stay inside the assertion candidate directory/);
+  assert.equal(fs.existsSync(subsetManifestPath), false);
+  assert.equal(fs.existsSync(path.join(dir, "outside.ts")), false);
+});
+
+withTempDir((dir) => {
+  const candidateDir = path.join(dir, "candidates");
+  const outputDir = path.join(dir, "clean");
+  const candidateManifestPath = path.join(candidateDir, "type-challenges-assertions-manifest.json");
+  const classificationPath = path.join(candidateDir, "type-challenges-assertions-classification.json");
+  const subsetManifestPath = path.join(outputDir, "type-challenges-assertions-tsc-clean-manifest.json");
+
+  writeFile(path.join(candidateDir, "utils", "index.d.ts"), "export {};\n");
+  writeJson(candidateManifestPath, {
     fixture: "type-challenges-assertion-candidates",
     sources: {},
     counts: { generatedAssertions: 1 },

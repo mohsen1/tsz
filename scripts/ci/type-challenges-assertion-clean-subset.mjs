@@ -27,6 +27,67 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+function fail(message) {
+  console.error(`error: ${message}`);
+  process.exit(1);
+}
+
+function normalizeManifestPath(value, label) {
+  if (typeof value !== "string" || value.trim() === "") {
+    fail(`${label} must be a non-empty relative path`);
+  }
+  const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
+  if (
+    path.isAbsolute(value) ||
+    normalized === "" ||
+    normalized === "." ||
+    normalized.split("/").includes("..")
+  ) {
+    fail(`${label} must stay inside the assertion candidate directory: ${value}`);
+  }
+  if (!normalized.startsWith("assertions/")) {
+    fail(`${label} must be under assertions/: ${normalized}`);
+  }
+  return normalized;
+}
+
+function validateInputs(candidateManifest, classification) {
+  if (candidateManifest?.fixture !== "type-challenges-assertion-candidates") {
+    fail(`unexpected assertion candidate manifest fixture: ${candidateManifest?.fixture || "<missing>"}`);
+  }
+  if (!Array.isArray(candidateManifest.entries)) {
+    fail("assertion candidate manifest entries must be an array");
+  }
+  if (classification?.fixture !== "type-challenges-assertion-classification") {
+    fail(`unexpected assertion classification fixture: ${classification?.fixture || "<missing>"}`);
+  }
+  if (!classification.compilers?.tsc) {
+    fail("assertion classification must include a tsc compiler result");
+  }
+
+  const entries = candidateManifest.entries.map((entry, index) => ({
+    ...entry,
+    output: normalizeManifestPath(entry?.output, `candidate manifest entries[${index}].output`),
+  }));
+  const generatedAssertions = candidateManifest.counts?.generatedAssertions;
+  if (
+    generatedAssertions !== undefined &&
+    (!Number.isInteger(generatedAssertions) || generatedAssertions !== entries.length)
+  ) {
+    fail(
+      `candidate manifest counts.generatedAssertions (${generatedAssertions}) does not match entries length (${entries.length})`,
+    );
+  }
+
+  return {
+    candidateManifest: {
+      ...candidateManifest,
+      entries,
+    },
+    classification,
+  };
+}
+
 function copyRequiredFile(from, to, label) {
   if (!fs.existsSync(from)) {
     console.error(`error: ${label} does not exist: ${from}`);
@@ -36,8 +97,10 @@ function copyRequiredFile(from, to, label) {
   fs.copyFileSync(from, to);
 }
 
-const candidateManifest = readJson(candidateManifestPath);
-const classification = readJson(classificationPath);
+const {
+  candidateManifest,
+  classification,
+} = validateInputs(readJson(candidateManifestPath), readJson(classificationPath));
 const tsc = classification.compilers?.tsc ?? {};
 const tscCandidateDiagnostics = tsc.candidateDiagnostics ?? {};
 const tscAcceptedFileList = Array.isArray(tscCandidateDiagnostics.filesWithoutDiagnostics)
