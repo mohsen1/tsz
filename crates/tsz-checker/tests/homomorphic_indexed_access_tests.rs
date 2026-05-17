@@ -222,3 +222,98 @@ fn local_required_unrelated_shape_emits_ts2536() {
         "Local Required with unrelated body must still emit TS2536: {diags:?}"
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Recursive conditional utility types (DeepRequired / DeepPartial patterns)
+// ──────────────────────────────────────────────────────────────────────────
+
+/// DeepRequired<T>[K] where K in keyof T must not emit TS2536.
+/// Structural rule: a recursive conditional whose true-branch is a homomorphic
+/// mapped type over keyof T and whose false-branch is T itself preserves
+/// keyof F<T> = keyof T.
+#[test]
+fn deep_required_mapped_key_no_ts2536() {
+    let diags = check_es5(
+        "type DeepRequired<T> = T extends object ? { [P in keyof T]-?: DeepRequired<T[P]> } : T;\n\
+         type Test<T> = { [K in keyof T]: DeepRequired<T>[K] };",
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "DeepRequired<T>[K] where K in keyof T must not emit TS2536: {diags:?}"
+    );
+}
+
+/// DeepPartial<T>[K] — same structural rule, optional modifier variant.
+#[test]
+fn deep_partial_mapped_key_no_ts2536() {
+    let diags = check_es5(
+        "type DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T;\n\
+         type Test<T> = { [K in keyof T]: DeepPartial<T>[K] };",
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "DeepPartial<T>[K] where K in keyof T must not emit TS2536: {diags:?}"
+    );
+}
+
+/// DeepReadonly<T>[K] — readonly modifier variant.
+#[test]
+fn deep_readonly_mapped_key_no_ts2536() {
+    let diags = check_es5(
+        "type DeepReadonly<T> = T extends object ? { readonly [P in keyof T]: DeepReadonly<T[P]> } : T;\n\
+         type Test<T> = { [K in keyof T]: DeepReadonly<T>[K] };",
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "DeepReadonly<T>[K] where K in keyof T must not emit TS2536: {diags:?}"
+    );
+}
+
+/// Renamed type parameter (U instead of T) must work — not name-sensitive.
+#[test]
+fn deep_required_renamed_param_no_ts2536() {
+    let diags = check_es5(
+        "type DeepReq<U> = U extends object ? { [Q in keyof U]-?: DeepReq<U[Q]> } : U;\n\
+         type Test<V> = { [J in keyof V]: DeepReq<V>[J] };",
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "DeepReq<V>[J] with renamed params must not emit TS2536: {diags:?}"
+    );
+}
+
+/// Concrete instantiation of DeepRequired must not emit TS2536 or type errors.
+#[test]
+fn deep_required_concrete_no_errors() {
+    let diags = check_es5(
+        r#"type DeepRequired<T> = T extends object ? { [P in keyof T]-?: DeepRequired<T[P]> } : T;
+type Test<T> = { [K in keyof T]: DeepRequired<T>[K] };
+type Obj = { a: number; b?: string };
+type Result = Test<Obj>;"#,
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "Concrete DeepRequired use must not emit TS2536: {diags:?}"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Deferred conditional types: tsc defers TS2536 to instantiation time
+// ──────────────────────────────────────────────────────────────────────────
+
+/// When the true-branch is an unrelated fixed type, tsz (like tsc) defers
+/// the check to instantiation time because the conditional is still generic.
+/// No TS2536 should be emitted at the generic definition level.
+#[test]
+fn conditional_deferred_unrelated_branch_no_ts2536_at_generic_level() {
+    // tsc defers indexed access on deferred conditional types — the error
+    // (if any) is reported at the concrete instantiation site, not here.
+    let diags = check_es5(
+        "type Fixed<T> = T extends object ? { x: number } : T;\n\
+         type Test<T> = { [K in keyof T]: Fixed<T>[K] };",
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "Fixed<T>[K] with generic T must not emit TS2536 at the generic level (tsc defers): {diags:?}"
+    );
+}

@@ -1403,6 +1403,9 @@ impl<'a> CheckerState<'a> {
                     || crate::query_boundaries::common::is_conditional_type(self.ctx.types, ty)
                     || crate::query_boundaries::common::is_generic_application(self.ctx.types, ty)
                     || crate::query_boundaries::common::is_index_access_type(self.ctx.types, ty)
+                    // A deferred KeyOf wrapping a generic/conditional operand cannot be
+                    // statically verified — treat it as unresolved and defer to instantiation.
+                    || crate::query_boundaries::common::is_keyof_type(self.ctx.types, ty)
             };
             let mut is_deferred_index_type = |ty: TypeId| -> bool {
                 ty == TypeId::ERROR
