@@ -1566,17 +1566,20 @@ impl<'a> CheckerState<'a> {
                 record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
                 return None;
             }
-        } else if (!allow_complex_declarations
-            && (has_unsupported_computed_names || (has_heritage && !builtin_lib_declaration_arena)))
-            || (builtin_lib_declaration_arena
+        } else {
+            let unsupported_shape = !allow_complex_declarations
+                && (has_unsupported_computed_names
+                    || (has_heritage && !builtin_lib_declaration_arena));
+            let unsafe_builtin_heritage = builtin_lib_declaration_arena
                 && has_heritage
                 && self.interface_declarations_have_unsafe_builtin_heritage_base(
                     &declarations,
                     &symbol.escaped_name,
-                ))
-        {
-            record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
-            return None;
+                );
+            if unsupported_shape || unsafe_builtin_heritage {
+                record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
+                return None;
+            }
         }
 
         let def_id = self.ctx.get_or_create_def_id(sym_id);

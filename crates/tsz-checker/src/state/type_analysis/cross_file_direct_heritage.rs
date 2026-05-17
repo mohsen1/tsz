@@ -127,13 +127,11 @@ impl<'a> CheckerState<'a> {
                     else {
                         return true;
                     };
+                    // Direct lowering may inspect a derived lib interface while
+                    // one of its bases is still being merged. Heritage merging
+                    // owns cycle handling, so this guard only rejects bases that
+                    // cannot be resolved through the same builtin-lib path.
                     base_name == self_name
-                        || self.ctx.lib_heritage_in_progress.contains(&base_name)
-                        || self
-                            .ctx
-                            .lib_type_resolution_cache
-                            .get(&base_name)
-                            .is_some_and(Option::is_none)
                         || self.builtin_heritage_base_requires_fallback(&base_name)
                 })
             })
@@ -145,7 +143,10 @@ impl<'a> CheckerState<'a> {
         if normalized.contains('.') {
             return true;
         }
-        if self.lib_name_locally_augmented(normalized) {
+        if normalized == "Array"
+            || normalized.starts_with("Intl.")
+            || self.lib_name_has_local_augmentation(normalized)
+        {
             return true;
         }
         let Some(sym_id) = self.resolve_lib_symbol_by_name(normalized) else {
