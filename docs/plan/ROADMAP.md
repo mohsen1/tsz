@@ -41,6 +41,12 @@ successfully check real projects that `tsc` accepts. Rounded percentages are
 communication aids only; release planning uses exact numerators, denominators,
 and failure-family counts.
 
+The exact conformance snapshot does not by itself mean the conformance runway
+is fully retired. `scripts/conformance/conformance-accepted-regressions.txt`
+remains a separate gate-strictness artifact and must be kept empty or
+explicitly justified by current CI evidence before agents treat conformance
+cleanup as complete.
+
 ## Evidence From Current Audit
 
 This section is intentionally short and current. Replace it when a fresher audit
