@@ -688,6 +688,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(members) = union_list_id(self.interner, resolved_target) {
             let members = self.interner.type_list(members);
+            let application_shaped_comparison = application_id(self.interner, source).is_some()
+                || application_id(self.interner, target).is_some();
             let source_members = union_list_id(self.interner, resolved_source)
                 .map(|list_id| self.interner.type_list(list_id).as_ref().to_vec())
                 .unwrap_or_else(|| vec![resolved_source]);
@@ -710,11 +712,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         _ => None,
                     };
                     if let Some(property_name) = missing_property {
-                        return Some(SubtypeFailureReason::MissingProperty {
-                            property_name,
-                            source_type: source,
-                            target_type: target,
-                        });
+                        if application_shaped_comparison {
+                            return Some(SubtypeFailureReason::MissingProperty {
+                                property_name,
+                                source_type: source,
+                                target_type: target,
+                            });
+                        }
+                        break;
                     }
                 }
             }
