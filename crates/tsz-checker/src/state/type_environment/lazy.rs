@@ -345,6 +345,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Evaluate a type with symbol resolution (Lazy types resolved to their concrete types).
+    ///
+    /// Wrapped with `stacker::maybe_grow()` to prevent stack overflow when resolving
+    /// long Lazy alias chains (e.g., a chain of re-exported type aliases across modules).
     pub(crate) fn evaluate_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
         // Cycle guard: evaluate_type_with_resolution → prune_impossible_object_union_members_with_env
         // → object_member_has_impossible_required_property_with_env → evaluate_type_with_resolution
@@ -354,7 +357,9 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.type_resolution_visiting.insert(type_id) {
             return type_id;
         }
-        let result = self.evaluate_type_with_resolution_inner(type_id);
+        let result = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.evaluate_type_with_resolution_inner(type_id)
+        });
         self.ctx.type_resolution_visiting.remove(&type_id);
         result
     }

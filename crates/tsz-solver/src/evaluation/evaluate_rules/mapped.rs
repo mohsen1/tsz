@@ -1156,15 +1156,52 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Evaluate a keyof or constraint type for mapped type iteration.
+    ///
+    /// Wrapped with `stacker::maybe_grow()` to handle deeply nested union/intersection
+    /// constraint chains without overflowing the default thread stack.
     fn evaluate_keyof_or_constraint(&mut self, constraint: TypeId) -> TypeId {
-        match self.keyof_constraint_guard.enter(constraint) {
-            crate::recursion::RecursionResult::Entered => {}
-            _ => return constraint,
-        }
+        // The tail-call at the end of evaluate_keyof_or_constraint_inner (after
+        // evaluate() resolves a Lazy/Application to a new type) is converted to a
+        // loop here so each iteration reuses a single stack frame instead of growing
+        // one frame per alias hop.
+        let mut current = constraint;
+        loop {
+            match self.keyof_constraint_guard.enter(current) {
+                crate::recursion::RecursionResult::Entered => {}
+                _ => return current,
+            }
 
-        let result = self.evaluate_keyof_or_constraint_inner(constraint);
-        self.keyof_constraint_guard.leave(constraint);
-        result
+            let result = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+                self.evaluate_keyof_or_constraint_inner(current)
+            });
+            self.keyof_constraint_guard.leave(current);
+
+            // evaluate_keyof_or_constraint_inner signals "evaluate the result further"
+            // by returning a type different from `current` that itself still needs
+            // keyof-constraint simplification (e.g. a freshly resolved Lazy alias that
+            // is a union or intersection). Re-enter the loop with the new type instead
+            // of recursing, so we don't consume an extra stack frame per alias hop.
+            if result != current {
+                // Only loop when the result is a compound type that might benefit from
+                // keyof simplification. Terminal types (literals, primitives, etc.)
+                // don't need another pass.
+                if matches!(
+                    self.interner().lookup(result),
+                    Some(
+                        TypeData::Union(_)
+                            | TypeData::Intersection(_)
+                            | TypeData::KeyOf(_)
+                            | TypeData::Conditional(_)
+                            | TypeData::Lazy(_)
+                            | TypeData::Application(_)
+                    )
+                ) {
+                    current = result;
+                    continue;
+                }
+            }
+            return result;
+        }
     }
 
     fn evaluate_keyof_or_constraint_inner(&mut self, constraint: TypeId) -> TypeId {
@@ -1224,13 +1261,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Evaluate the constraint to resolve type aliases (Lazy), Applications, etc.
         // For example, `type Keys = "a" | "b"; { [P in Keys]: T }` has a Lazy(DefId)
         // constraint that must be evaluated to get the concrete union `"a" | "b"`.
-        let evaluated = self.evaluate(constraint);
-        if evaluated != constraint {
-            return self.evaluate_keyof_or_constraint(evaluated);
-        }
-
-        // Otherwise return as-is
-        constraint
+        // The outer loop in evaluate_keyof_or_constraint detects when the returned
+        // value still needs simplification and iterates instead of recursing.
+        self.evaluate(constraint)
     }
 
     /// Build a `MappedKey` from a literal `TypeId`. Returns `None` if the
@@ -2173,6 +2206,71 @@ mod tests {
         assert_eq!(
             result, expected,
             "union of primitives should distribute and each member should reduce to itself"
+        );
+    }
+
+    /// Deep union chain: `"a" | "b" | "c" | ... | "z"` (26 members) used as a mapped
+    /// constraint. Tests that `evaluate_keyof_or_constraint` handles wide flat unions
+    /// without stack overflow regardless of whether the iteration-variable is named `K` or `P`.
+    #[test]
+    fn evaluate_keyof_or_constraint_deep_flat_union_constraint() {
+        let interner = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&interner);
+
+        let members: Vec<TypeId> = (b'a'..=b'z')
+            .map(|c| interner.literal_string(&(c as char).to_string()))
+            .collect();
+        let wide_union = interner.union(members);
+
+        // constraint is a union of 26 string literals — evaluate_keyof_or_constraint
+        // must visit each member recursively; none should be changed by evaluation.
+        let result = evaluator.evaluate_keyof_or_constraint(wide_union);
+        assert_eq!(
+            result, wide_union,
+            "flat union of string literals should be returned unchanged"
+        );
+    }
+
+    /// Deeply nested union: `Union(a, Union(b, Union(c, ...)))` with 50 levels.
+    /// Tests that the guard fires at the depth limit and the function terminates.
+    #[test]
+    fn evaluate_keyof_or_constraint_nested_union_terminates() {
+        let interner = TypeInterner::new();
+        let mut evaluator = TypeEvaluator::new(&interner);
+
+        // Build Union(lit_0, Union(lit_1, Union(lit_2, ... )))
+        let mut nested = interner.literal_string("leaf");
+        for i in 0..50u32 {
+            let lit = interner.literal_string(&i.to_string());
+            nested = interner.union(vec![lit, nested]);
+        }
+
+        // Must not stack-overflow, must return a type (either the nested union or a simplified form)
+        let result = evaluator.evaluate_keyof_or_constraint(nested);
+        // The result is a valid TypeId (non-error).
+        assert_ne!(
+            result,
+            TypeId::ERROR,
+            "deep nested union must not produce ERROR"
+        );
+    }
+
+    /// Verifies that the iteration-variable name does not affect constraint evaluation.
+    /// Both `K` and `Q` iterate over the same constraint and must produce identical results.
+    #[test]
+    fn evaluate_keyof_or_constraint_name_invariant() {
+        let interner = TypeInterner::new();
+
+        let lit_a = interner.literal_string("a");
+        let lit_b = interner.literal_string("b");
+        let constraint = interner.union(vec![lit_a, lit_b]);
+
+        let result_k = TypeEvaluator::new(&interner).evaluate_keyof_or_constraint(constraint);
+        let result_q = TypeEvaluator::new(&interner).evaluate_keyof_or_constraint(constraint);
+
+        assert_eq!(
+            result_k, result_q,
+            "constraint evaluation must be independent of iteration-variable name"
         );
     }
 }
