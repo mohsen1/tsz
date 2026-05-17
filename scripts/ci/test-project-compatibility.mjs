@@ -101,6 +101,105 @@ withTempDir((dir) => {
 
 withTempDir((dir) => {
   const jsonl = path.join(dir, "compat.jsonl");
+  const cases = [
+    {
+      name: "keyspace",
+      diagnostic: "src/index.ts(1,1): error TS7053: Element implicitly has an 'any' type.",
+      ownerTrack: "Track 5 keyspace/property/indexed access",
+    },
+    {
+      name: "flow",
+      diagnostic: "src/index.ts(2,1): error TS18048: 'value' is possibly 'undefined'.",
+      ownerTrack: "Track 6 flow/narrowing",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = runProjectCompatibility(["record"], {
+      COMPAT_JSONL_FILE: jsonl,
+      COMPAT_NAME: testCase.name,
+      COMPAT_EXIT_CLASS: "nonzero exit",
+      COMPAT_DIAGNOSTIC_STATUS: "diagnostic mismatch",
+      COMPAT_DIAGNOSTIC_DELTA: testCase.diagnostic,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+  }
+
+  const rows = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
+  assert.equal(rows.length, cases.length);
+  for (const [index, testCase] of cases.entries()) {
+    assert.equal(rows[index].owner_track, testCase.ownerTrack);
+  }
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const cases = [
+    {
+      name: "clean",
+      exitClass: "exit success",
+      diagnosticStatus: "none",
+      expectedState: "green",
+    },
+    {
+      name: "diagnostic",
+      exitClass: "nonzero exit",
+      diagnosticStatus: "diagnostic mismatch or compiler error",
+      expectedState: "yellow",
+    },
+    {
+      name: "timeout",
+      exitClass: "timeout",
+      diagnosticStatus: "compiler timed out",
+      expectedState: "red",
+    },
+    {
+      name: "oom",
+      exitClass: "oom",
+      diagnosticStatus: "compiler OOM or killed",
+      expectedState: "red",
+    },
+    {
+      name: "crash",
+      exitClass: "crash",
+      diagnosticStatus: "compiler crashed",
+      expectedState: "red",
+    },
+    {
+      name: "fixture",
+      exitClass: "fixture invalid",
+      diagnosticStatus: "fixture invalid",
+      expectedState: "gray",
+    },
+    {
+      name: "missing-tsz",
+      exitClass: "tsz unavailable",
+      diagnosticStatus: "runner setup incomplete",
+      expectedState: "gray",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = runProjectCompatibility(["record"], {
+      COMPAT_JSONL_FILE: jsonl,
+      COMPAT_NAME: testCase.name,
+      COMPAT_EXIT_CLASS: testCase.exitClass,
+      COMPAT_DIAGNOSTIC_STATUS: testCase.diagnosticStatus,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+  }
+
+  const rows = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
+  assert.equal(rows.length, cases.length);
+  for (const [index, testCase] of cases.entries()) {
+    assert.equal(rows[index].state, testCase.expectedState, testCase.name);
+  }
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
   const summary = path.join(dir, "summary.json");
   fs.writeFileSync(
     jsonl,
