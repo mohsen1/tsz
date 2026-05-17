@@ -522,7 +522,7 @@ run_lint() {
   cargo fmt --all --check || return $?
   scripts/arch/check-workspace-metadata.sh || return $?
   scripts/check-crate-root-files.sh || return $?
-  node scripts/ci/test-project-compatibility.mjs || return $?
+  node scripts/bench/test-project-rows.mjs || return $?
   node scripts/bench/test-merge-results.mjs || return $?
   node scripts/bench/test-perf-hotspots.mjs || return $?
   node scripts/bench/test-tsgo-winner-report.mjs || return $?
