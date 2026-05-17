@@ -54,17 +54,20 @@ fn ts2741_anchor_skips_nested_paren_satisfies_in_arrow_concise_body() {
 }
 
 #[test]
-fn block_body_arrow_return_type_mismatch_anchors_return_statement() {
+fn block_body_arrow_return_type_mismatch_anchors_returned_expression() {
+    // tsc anchors TS2322 at the returned expression (`null`), not the `return`
+    // keyword. The keyword is only the syntactic introducer; the failing type
+    // lives in the expression.
     let source = "const f = <T>(x: T): T => { return null; };";
     let diagnostics = diagnostics_with_spans(source);
     let diag = diagnostics
         .iter()
         .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .expect("expected TS2322");
-    let return_start = source.find("return").expect("expected return keyword") as u32;
+    let null_start = source.find("null").expect("null in source") as u32;
     assert_eq!(
-        diag.start, return_start,
-        "TS2322 for block-body arrow return mismatch should anchor at `return`: {diag:?}"
+        diag.start, null_start,
+        "TS2322 for block-body arrow return mismatch should anchor at `null` (the expression): {diag:?}"
     );
 }
 

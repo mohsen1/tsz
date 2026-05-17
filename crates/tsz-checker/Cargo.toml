@@ -1309,5 +1309,9 @@ path = "tests/track8_debt_contract_tests.rs"
 name = "static_readonly_unique_symbol_tests"
 path = "tests/static_readonly_unique_symbol_tests.rs"
 
+[[test]]
+name = "return_statement_diagnostic_anchor_tests"
+path = "tests/return_statement_diagnostic_anchor_tests.rs"
+
 [lints]
 workspace = true
