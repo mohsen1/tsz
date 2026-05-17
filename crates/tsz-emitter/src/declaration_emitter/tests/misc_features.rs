@@ -1450,6 +1450,28 @@ const value = empty || fallback;
 }
 
 #[test]
+fn test_short_circuit_reference_respects_annotated_widened_surface() {
+    let output = emit_dts_with_binding(
+        r#"
+const a: "a" = "a";
+const b: "b" = "b";
+const c: "c" = "c";
+let ab: string = a || b;
+export const y = ab || c;
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const y: string;"),
+        "Expected referenced annotated short-circuit declarations to expose their declared surface: {output}"
+    );
+    assert!(
+        !output.contains("export declare const y: \"a\" | \"b\" | \"c\";"),
+        "Annotated referenced declarations must not be expanded through their initializer: {output}"
+    );
+}
+
+#[test]
 fn test_nullish_coalescing_drops_nullish_left_from_dts_union() {
     let output = emit_dts_with_binding(
         r#"
