@@ -39,15 +39,33 @@ function readRows(file) {
     .map((line) => JSON.parse(line));
 }
 
-function runCompatibility({ dir, classification }) {
+function runCompatibility({ dir, classification, cleanSubsetManifest = null, cleanSubsetClassification = null }) {
   const candidateDir = path.join(dir, "type-challenges-assertions");
   const classificationPath = path.join(candidateDir, "classification.json");
+  const cleanSubsetDir = path.join(dir, "type-challenges-assertions-tsc-clean");
+  const cleanSubsetManifestPath = path.join(cleanSubsetDir, "manifest.json");
+  const cleanSubsetClassificationPath = path.join(cleanSubsetDir, "classification.json");
   const outFile = path.join(dir, "project-compatibility.jsonl");
   writeJson(classificationPath, classification);
+  if (cleanSubsetManifest) {
+    writeJson(cleanSubsetManifestPath, cleanSubsetManifest);
+  }
+  if (cleanSubsetClassification) {
+    writeJson(cleanSubsetClassificationPath, cleanSubsetClassification);
+  }
 
   const result = spawnSync(
     process.execPath,
-    [SCRIPT, classificationPath, candidateDir, outFile, dir],
+    [
+      SCRIPT,
+      classificationPath,
+      candidateDir,
+      outFile,
+      dir,
+      cleanSubsetManifest ? cleanSubsetManifestPath : "",
+      cleanSubsetClassification ? cleanSubsetClassificationPath : "",
+      cleanSubsetDir,
+    ],
     {
       cwd: ROOT,
       encoding: "utf8",
@@ -116,6 +134,28 @@ withTempDir((dir) => {
         bySemanticFamilyDelta: [{ key: "mapped/key-remapped types", delta: -1 }],
       },
     },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      counts: {
+        totalCandidates: 2,
+        tscAcceptedAssertions: 1,
+        tscRejectedAssertions: 1,
+      },
+      entries: [{ id: "two", output: "assertions/two.ts" }],
+    },
+    cleanSubsetClassification: {
+      fixture: "type-challenges-assertion-classification",
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: { candidatesWithoutDiagnostics: 1 },
+        },
+        tsz: {
+          status: "pass",
+          candidateDiagnostics: { candidatesWithoutDiagnostics: 1 },
+        },
+      },
+    },
   });
 
   assert.equal(row.name, "type-challenges-assertion-candidates");
@@ -148,6 +188,17 @@ withTempDir((dir) => {
     tsc_with_diagnostics: 1,
     tsz_diagnostic_free: 2,
     diagnostic_free_candidate_delta: 1,
+    tsc_clean_subset: {
+      manifest_path: "type-challenges-assertions-tsc-clean/manifest.json",
+      classification_path: "type-challenges-assertions-tsc-clean/classification.json",
+      tsconfig_path: "type-challenges-assertions-tsc-clean/tsconfig.tsz-guard.json",
+      generated_assertions: 1,
+      rejected_from_full_corpus: 1,
+      tsc_status: "pass",
+      tsz_status: "pass",
+      tsc_diagnostic_free: 1,
+      tsz_diagnostic_free: 1,
+    },
   });
 });
 
@@ -275,4 +326,61 @@ withTempDir((dir) => {
   assert.equal(result.status, 1);
   assert.match(result.stderr, /must include both tsc and tsz compiler results/);
   assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const row = runCompatibility({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: { counts: { generatedAssertions: 0 } },
+      compilers: {
+        tsc: {
+          status: "unavailable",
+          exitCode: null,
+          diagnostics: { firstErrors: [], byCode: [] },
+          candidateDiagnostics: {
+            totalCandidates: 0,
+            candidatesWithDiagnostics: null,
+            candidatesWithoutDiagnostics: null,
+            filesWithDiagnostics: [],
+          },
+        },
+        tsz: {
+          status: "unavailable",
+          exitCode: null,
+          candidateDiagnostics: {
+            candidatesWithoutDiagnostics: null,
+          },
+        },
+      },
+      comparison: {
+        status: "unavailable",
+        diagnosticFreeCandidateDelta: null,
+        bySemanticFamilyDelta: [],
+      },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      counts: {
+        totalCandidates: 0,
+        tscAcceptedAssertions: 0,
+        tscRejectedAssertions: null,
+      },
+      entries: [],
+    },
+  });
+
+  assert.equal(row.state, "gray");
+  assert.deepEqual(row.assertion_candidates.tsc_clean_subset, {
+    manifest_path: "type-challenges-assertions-tsc-clean/manifest.json",
+    classification_path: null,
+    tsconfig_path: "type-challenges-assertions-tsc-clean/tsconfig.tsz-guard.json",
+    generated_assertions: 0,
+    rejected_from_full_corpus: null,
+    tsc_status: null,
+    tsz_status: null,
+    tsc_diagnostic_free: null,
+    tsz_diagnostic_free: null,
+  });
 });
