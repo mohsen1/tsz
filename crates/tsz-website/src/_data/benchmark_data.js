@@ -1910,6 +1910,7 @@ export function getProjectCompatibilityDashboard() {
         parts.push(`${label}: ${fmt(Number(value))}`);
       }
     };
+    addCount("paired solutions", candidates.paired_solutions);
     addCount("assertions generated", candidates.generated_assertions);
     addCount("tsc clean", candidates.tsc_diagnostic_free);
     addCount("tsz clean", candidates.tsz_diagnostic_free);
