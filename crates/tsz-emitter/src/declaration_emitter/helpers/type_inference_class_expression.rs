@@ -385,10 +385,8 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(self_name) = self.get_identifier_text(class.name) {
             let elided_instance_members =
                 Self::elide_class_expression_self_name(&instance_members, &self_name);
-            let nested_instance = format!(
-                "{{\n{}\n    }}",
-                Self::reindent_multiline_text(&elided_instance_members, 2)
-            );
+            let closing_indent = "    ".repeat((self.indent_level + 1) as usize);
+            let nested_instance = format!("{{\n{elided_instance_members}\n{closing_indent}}}");
             instance_members = elided_instance_members;
             static_members = Self::replace_class_expression_self_name(
                 &static_members,
@@ -470,14 +468,6 @@ impl<'a> DeclarationEmitter<'a> {
         let ident = |b: u8| b == b'_' || b == b'$' || b.is_ascii_alphanumeric();
         start.checked_sub(1).is_none_or(|idx| !ident(bytes[idx]))
             && bytes.get(end).is_none_or(|b| !ident(*b))
-    }
-
-    fn reindent_multiline_text(text: &str, extra_levels: usize) -> String {
-        let prefix = "    ".repeat(extra_levels);
-        text.lines()
-            .map(|line| format!("{prefix}{line}"))
-            .collect::<Vec<_>>()
-            .join("\n")
     }
 
     fn class_expression_extends_parameter_instance_members(
