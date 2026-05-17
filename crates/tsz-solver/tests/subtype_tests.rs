@@ -6884,7 +6884,7 @@ fn test_mapped_type_key_remap_optional_remove_subtyping() {
     let required_b = interner.object(vec![PropertyInfo::new(prop_b.name, TypeId::NUMBER)]);
     let optional_b = interner.object(vec![PropertyInfo::opt(prop_b.name, TypeId::NUMBER)]);
 
-    assert!(!checker.is_subtype_of(mapped, required_b));
+    assert!(checker.is_subtype_of(mapped, required_b));
     assert!(checker.is_subtype_of(mapped, optional_b));
 }
 
