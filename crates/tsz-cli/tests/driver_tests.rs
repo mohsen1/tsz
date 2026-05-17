@@ -10002,17 +10002,10 @@ export * from './services/user-service';
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
 
-    // TODO: After the module augmentation lazy resolution change (2e96c99c2),
-    // global `escape` spuriously leaks into module re-exports causing TS2308.
-    // Filter out these known false positives until the root cause is fixed.
-    let real_diagnostics: Vec<_> = result
-        .diagnostics
-        .iter()
-        .filter(|d| !(d.code == 2308 && d.message_text.contains("escape")))
-        .collect();
     assert!(
-        real_diagnostics.is_empty(),
-        "Expected no diagnostics, got: {real_diagnostics:?}"
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got: {:?}",
+        result.diagnostics
     );
 
     // Verify all output files exist
@@ -13274,6 +13267,80 @@ export * from "./math";
 }
 
 #[test]
+fn wildcard_reexport_collision_emits_ts2308() {
+    // When two modules both export the same name and a third does `export * from` both,
+    // TS2308 must be reported. Verify the rule is structural and not name-sensitive
+    // by testing with two different exported names.
+    for exported_name in ["value", "result"] {
+        let temp = TempDir::new().expect("temp dir");
+        let base = &temp.path;
+
+        write_file(
+            &base.join("tsconfig.json"),
+            r#"{"compilerOptions":{"module":"commonjs","noEmit":true},"include":["*.ts"]}"#,
+        );
+        write_file(
+            &base.join("a.ts"),
+            &format!("export const {exported_name} = 1;\n"),
+        );
+        write_file(
+            &base.join("b.ts"),
+            &format!("export const {exported_name} = 2;\n"),
+        );
+        write_file(
+            &base.join("index.ts"),
+            "export * from './a';\nexport * from './b';\n",
+        );
+
+        let args = default_args();
+        let result = compile(&args, base).expect("compile should succeed");
+
+        assert!(
+            result.diagnostics.iter().any(|d| d.code == 2308),
+            "Expected TS2308 for collision on '{exported_name}', got: {:?}",
+            result.diagnostics
+        );
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|d| !d.message_text.contains("escape")),
+            "Global lib symbol 'escape' must not appear in TS2308 diagnostics"
+        );
+    }
+}
+
+#[test]
+fn wildcard_reexport_no_collision_no_ts2308() {
+    // Three modules with disjoint exports, all star-re-exported from an index.
+    // Global lib symbols like `escape` must not cause spurious TS2308 diagnostics
+    // even though they are visible in every file's scope.
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{"compilerOptions":{"module":"commonjs","noEmit":true},"include":["*.ts"]}"#,
+    );
+    write_file(&base.join("a.ts"), "export const alpha = 1;\n");
+    write_file(&base.join("b.ts"), "export const beta = 2;\n");
+    write_file(&base.join("c.ts"), "export const gamma = 3;\n");
+    write_file(
+        &base.join("index.ts"),
+        "export * from './a';\nexport * from './b';\nexport * from './c';\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics for non-colliding star re-exports, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn compile_module_chained_reexports() {
     // Test chained re-exports: A re-exports from B which re-exports from C
     let temp = TempDir::new().expect("temp dir");
@@ -15659,15 +15726,7 @@ var m: typeof moduleA = i;
 
     let args = default_args();
     let result = compile(&args, base).expect("compile should succeed");
-    // TODO: After the module augmentation lazy resolution change (2e96c99c2),
-    // global `escape` spuriously leaks into module exports causing TS2741.
-    // Filter out this known false positive until the root cause is fixed.
-    let mut codes: Vec<u32> = result
-        .diagnostics
-        .iter()
-        .filter(|d| !(d.code == 2741 && d.message_text.contains("escape")))
-        .map(|d| d.code)
-        .collect();
+    let mut codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
     codes.sort_unstable();
 
     assert_eq!(
