@@ -1592,6 +1592,14 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Mirror tsc's `isUntypedFunctionCall`: a decorator typed as the
+        // global `Function` interface has no explicit call signatures but is
+        // treated as callable. Without this fallback, a class decorator
+        // factory returning `Function` would produce a spurious TS1238.
+        let Some(resolved) = self.prepare_decorator_callee(resolved) else {
+            return;
+        };
+
         // Check if the decorator type is callable.
         // TypeData::Function has a single call signature (function declarations/expressions).
         // TypeData::Callable has overloaded call/construct signatures (interfaces).

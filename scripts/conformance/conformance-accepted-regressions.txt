@@ -8,8 +8,6 @@ TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection
 TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
 TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingTypeAlias2.ts
-TypeScript/tests/cases/compiler/decoratorWithUnderscoreMethod.ts
-TypeScript/tests/cases/compiler/decoratorsOnComputedProperties.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
