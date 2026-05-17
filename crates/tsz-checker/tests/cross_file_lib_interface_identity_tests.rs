@@ -127,6 +127,27 @@ const n: Node = div;
 }
 
 #[test]
+fn imported_div_element_stays_assignable_after_imported_html_element_is_used_first() {
+    let exporter = r#"
+export const html: HTMLElement;
+export const div: HTMLDivElement;
+"#;
+    let consumer = r#"
+import { html, div } from "./component";
+const first: Element = html;
+const he: HTMLElement = div;
+const e: Element = div;
+const n: Node = div;
+"#;
+
+    let codes = compile_codes(
+        &[("component.d.ts", exporter), ("main.ts", consumer)],
+        "main.ts",
+    );
+    assert!(codes.is_empty(), "Diagnostics: {codes:?}");
+}
+
+#[test]
 fn imported_element_through_namespace_reexport_is_assignable_to_node() {
     let leaf = "export const blogPost: Element;";
     let reexporter = r#"export * as mod from "./component";"#;

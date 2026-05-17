@@ -815,7 +815,15 @@ impl<'a> CheckerState<'a> {
         else {
             return true;
         };
-        Self::interface_declarations_have_heritage(&declarations)
+        if !Self::interface_declarations_have_heritage(&declarations) {
+            return false;
+        }
+        self.ctx
+            .lib_type_resolution_cache
+            .get(normalized)
+            .copied()
+            .flatten()
+            .is_none_or(|cached| !self.cached_lib_type_is_usable(normalized, Some(cached)))
     }
 
     fn computed_property_name_is_well_known_symbol(arena: &NodeArena, name_idx: NodeIndex) -> bool {
