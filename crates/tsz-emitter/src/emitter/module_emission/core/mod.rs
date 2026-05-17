@@ -34,7 +34,7 @@ pub(in crate::emitter) enum CjsExportAssignmentValue {
     LocalName(String),
 }
 
-fn cjs_export_decl_list_keyword(node: &Node) -> Option<&'static str> {
+const fn cjs_export_decl_list_keyword(node: &Node) -> Option<&'static str> {
     let flags = node.flags as u32;
     if flags & node_flags::USING != 0 {
         return None;
