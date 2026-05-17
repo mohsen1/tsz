@@ -60,6 +60,20 @@ function parseRequiredChallenge(segment, source) {
   return challenge;
 }
 
+function validateUniqueChallengeIds(entries) {
+  const seen = new Map();
+  for (const entry of entries) {
+    const previous = seen.get(entry.challenge.id);
+    if (previous) {
+      console.error(
+        `error: duplicate Type Challenges template challenge id ${entry.challenge.id}: ${previous} and ${entry.source}`,
+      );
+      process.exit(1);
+    }
+    seen.set(entry.challenge.id, entry.source);
+  }
+}
+
 const questionsDir = path.join(sourceDir, "questions");
 if (!fs.existsSync(questionsDir)) {
   console.error(`error: Type Challenges questions directory not found: ${questionsDir}`);
@@ -92,6 +106,8 @@ if (entries.length === 0) {
   console.error(`error: no Type Challenges template sources found under ${questionsDir}`);
   process.exit(1);
 }
+
+validateUniqueChallengeIds(entries);
 
 if (entries.length !== expectedGenerated) {
   console.error(
