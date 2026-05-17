@@ -4,11 +4,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const SCRIPT = path.join(ROOT, "scripts", "bench", "tsgo-winner-report.mjs");
+const BENCH_WORKFLOW = path.join(ROOT, ".github", "workflows", "bench.yml");
+const GH_PAGES_WORKFLOW = path.join(ROOT, ".github", "workflows", "gh-pages.yml");
+const WEBSITE_ELEVENTY = path.join(ROOT, "crates", "tsz-website", ".eleventy.js");
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-tsgo-winner-report-"));
@@ -23,6 +26,8 @@ function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
+
+const { createTsgoWinnerReport } = await import(pathToFileURL(SCRIPT));
 
 withTempDir((dir) => {
   const input = path.join(dir, "bench.json");
@@ -140,4 +145,104 @@ withTempDir((dir) => {
       worst_row: "vite-vanilla-ts-app",
     },
   ]);
+
+  const importedReport = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
+  assert.equal(importedReport.totals.green_tsgo_winners, 3);
+  assert.equal(importedReport.worst.name, "ts-toolbelt-project");
+});
+
+const benchWorkflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");
+assert.match(
+  benchWorkflow,
+  /node scripts\/bench\/tsgo-winner-report\.mjs\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results\.json"\s+\\\s*\n\s+"\$GITHUB_WORKSPACE\/bench-results-tsgo-winners\.json"/,
+  "bench workflow should generate the green tsgo winner report from merged results",
+);
+assert.match(
+  benchWorkflow,
+  /bench-results\.json\s*\n\s+bench-results-tsgo-winners\.json/,
+  "merged benchmark artifact should upload the green tsgo winner report",
+);
+assert.match(
+  benchWorkflow,
+  /bench-runs\/\$\{TIMESTAMP\}\.tsgo-winners\.json/,
+  "benchmark publish step should write timestamped green tsgo winner reports",
+);
+assert.match(
+  benchWorkflow,
+  /bench-runs\/latest\.tsgo-winners\.json/,
+  "benchmark publish step should write latest green tsgo winner reports",
+);
+assert.match(
+  benchWorkflow,
+  /JSON\.parse\(fs\.readFileSync\("bench-results-tsgo-winners\.json", "utf8"\)\)/,
+  "severe benchmark alert should read the generated green tsgo winner report",
+);
+assert.match(
+  benchWorkflow,
+  /row\.semantic_owner_family \|\| "n\/a"/,
+  "severe benchmark alert should include semantic owner family from the winner report",
+);
+
+const ghPagesWorkflow = fs.readFileSync(GH_PAGES_WORKFLOW, "utf8");
+assert.match(
+  ghPagesWorkflow,
+  /mv artifacts\/bench-results-tsgo-winners\.json artifacts\/bench-vs-tsgo-github-latest\.tsgo-winners\.json/,
+  "GitHub Pages workflow should preserve the downloaded green tsgo winner report",
+);
+assert.match(
+  ghPagesWorkflow,
+  /rm -f artifacts\/bench-results\.json artifacts\/bench-results-tsgo-winners\.json/,
+  "GitHub Pages workflow should drop stale winner reports when benchmark data is stale or empty",
+);
+
+const eleventyConfig = fs.readFileSync(WEBSITE_ELEVENTY, "utf8");
+assert.match(
+  eleventyConfig,
+  /latestBenchmarkArtifact\?\.replace\(\s*\/\\\.json\$\/,\s*"\.tsgo-winners\.json",\s*\)/,
+  "website should derive the green tsgo winner artifact path from the selected benchmark data",
+);
+assert.match(
+  eleventyConfig,
+  /"benchmark-data\/latest\.tsgo-winners\.json"/,
+  "website should publish the green tsgo winner report beside benchmark-data/latest.json",
+);
+assert.match(
+  eleventyConfig,
+  /createTsgoWinnerReport\(benchmarkData, latestBenchmarkArtifact\)/,
+  "website should synthesize the green tsgo winner report when the selected benchmark has no prebuilt report",
+);
+
+withTempDir((dir) => {
+  const script = [
+    "import assert from 'node:assert/strict';",
+    "import fs from 'node:fs';",
+    "import path from 'node:path';",
+    "import configure from './.eleventy.js';",
+    "const callbacks = [];",
+    "const passthrough = [];",
+    "configure({",
+    "  addPassthroughCopy(copy) { passthrough.push(copy); },",
+    "  addWatchTarget() {},",
+    "  setServerOptions() {},",
+    "  on(event, callback) { if (event === 'eleventy.after') callbacks.push(callback); },",
+    "});",
+    "assert.ok(passthrough.some((copy) => copy['bench-snapshot.json'] === 'benchmark-data/latest.json'));",
+    "fs.mkdirSync(process.env.TSZ_TEST_DIST, { recursive: true });",
+    "for (const callback of callbacks) callback({ dir: { output: process.env.TSZ_TEST_DIST } });",
+    "const reportPath = path.join(process.env.TSZ_TEST_DIST, 'benchmark-data', 'latest.tsgo-winners.json');",
+    "const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));",
+    "assert.equal(report.worst.name, 'ts-toolbelt-project');",
+    "assert.equal(report.totals.green_tsgo_winners, 6);",
+    "",
+  ].join("\n");
+
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    cwd: path.join(ROOT, "crates", "tsz-website"),
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TSZ_TEST_DIST: path.join(dir, "dist"),
+    },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
 });
