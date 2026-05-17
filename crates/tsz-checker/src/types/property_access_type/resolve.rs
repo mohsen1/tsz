@@ -1672,6 +1672,48 @@ impl<'a> CheckerState<'a> {
             if object_type_for_access == TypeId::ERROR {
                 return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
             }
+            if !skip_flow_narrowing
+                && !enum_instance_like_access
+                && !hidden_qualified_namespace_member
+                && let Some(module_name) =
+                    self.ctx.namespace_module_names.get(&object_type).cloned()
+            {
+                let surface = self
+                    .resolve_js_export_surface_for_module(
+                        &module_name,
+                        Some(self.ctx.current_file_idx),
+                    )
+                    .or_else(|| {
+                        self.ctx
+                            .module_specifiers
+                            .get(&(self.ctx.current_file_idx as u32))
+                            .is_some_and(|current_name| current_name == &module_name)
+                            .then(|| self.resolve_js_export_surface(self.ctx.current_file_idx))
+                    });
+                if let Some(surface) = surface
+                    && let Some(direct_export_type) = surface.direct_export_type
+                {
+                    let direct_type_for_access =
+                        self.resolve_type_for_property_access(direct_export_type);
+                    match self
+                        .resolve_property_access_with_env(direct_type_for_access, property_name)
+                    {
+                        PropertyAccessResult::Success { type_id, .. }
+                        | PropertyAccessResult::PossiblyNullOrUndefined {
+                            property_type: Some(type_id),
+                            ..
+                        } => {
+                            return self.finalize_property_access_result(
+                                idx,
+                                type_id,
+                                skip_flow_narrowing,
+                                false,
+                            );
+                        }
+                        _ => {}
+                    }
+                }
+            }
             // In write context (skip_flow_narrowing), skip this shortcut:
             // resolve_namespace_value_member returns the symbol's read type, which
             // doesn't account for divergent getter/setter types. The full property
