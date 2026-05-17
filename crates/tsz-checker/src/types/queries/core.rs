@@ -1285,18 +1285,32 @@ impl<'a> CheckerState<'a> {
                 .is_some()
     }
 
+    pub(crate) fn computed_property_expression_unique_symbol_type(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let sym_ref = self.computed_identifier_unique_symbol_property_ref(expr_idx)?;
+        Some(self.ctx.types.unique_symbol(sym_ref))
+    }
+
     fn computed_identifier_unique_symbol_property_ref(
         &self,
         expr_idx: NodeIndex,
     ) -> Option<SymbolRef> {
         let expr_node = self.ctx.arena.get(expr_idx)?;
-        let ident = self.ctx.arena.get_identifier(expr_node)?;
+        if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            let paren = self.ctx.arena.get_parenthesized(expr_node)?;
+            return self.computed_identifier_unique_symbol_property_ref(paren.expression);
+        }
 
-        let mut sym_id = self
-            .ctx
-            .binder
-            .resolve_identifier(self.ctx.arena, expr_idx)
-            .or_else(|| self.ctx.binder.file_locals.get(&ident.escaped_text))?;
+        let mut sym_id = if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
+            self.ctx
+                .binder
+                .resolve_identifier(self.ctx.arena, expr_idx)
+                .or_else(|| self.ctx.binder.file_locals.get(&ident.escaped_text))?
+        } else {
+            self.resolve_qualified_symbol(expr_idx)?
+        };
         let mut hops = 0usize;
         while hops < 32 {
             hops += 1;
@@ -1356,6 +1370,11 @@ impl<'a> CheckerState<'a> {
             {
                 decl_idx = parent.unwrap_or(NodeIndex::NONE);
                 node = parent_node;
+            } else if let Some(parent_node) = parent.and_then(|idx| arena.get(idx))
+                && parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+            {
+                decl_idx = parent.unwrap_or(NodeIndex::NONE);
+                node = parent_node;
             }
         }
 
@@ -1372,6 +1391,21 @@ impl<'a> CheckerState<'a> {
                     var_decl.type_annotation,
                 ))
                 || self.is_global_symbol_factory_call_initializer(arena, var_decl.initializer);
+        }
+
+        if node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+            let Some(prop) = arena.get_property_decl(node) else {
+                return false;
+            };
+            return prop.type_annotation.is_some()
+                && crate::types_domain::unique_symbol_arena::is_unique_symbol_type_annotation_unwrapped(
+                    arena,
+                    prop.type_annotation,
+                )
+                && crate::types_domain::unique_symbol_arena::has_declared_unique_symbol_owner(
+                    arena,
+                    prop.type_annotation,
+                );
         }
 
         false

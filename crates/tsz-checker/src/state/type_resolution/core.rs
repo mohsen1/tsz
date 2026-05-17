@@ -234,6 +234,9 @@ impl<'a> CheckerState<'a> {
                         .get(&type_query_idx.0)
                         .copied()
                         .filter(|&type_id| type_id != TypeId::ANY && type_id != TypeId::ERROR)
+                        .or_else(|| {
+                            self.computed_property_expression_unique_symbol_type(expr_name_idx)
+                        })
                 };
                 let computed_name_resolver =
                     |expr_idx: NodeIndex| self.computed_property_expression_name_atom(expr_idx);
@@ -975,6 +978,9 @@ impl<'a> CheckerState<'a> {
                         .get(&type_query_idx.0)
                         .copied()
                         .filter(|&type_id| type_id != TypeId::ANY && type_id != TypeId::ERROR)
+                        .or_else(|| {
+                            self.computed_property_expression_unique_symbol_type(expr_name_idx)
+                        })
                 };
                 let computed_name_resolver =
                     |expr_idx: NodeIndex| self.computed_property_expression_name_atom(expr_idx);
