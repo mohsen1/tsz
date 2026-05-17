@@ -462,6 +462,10 @@ name = "ts2353_generic_constraint_excess_property_tests"
 path = "tests/ts2353_generic_constraint_excess_property_tests.rs"
 
 [[test]]
+name = "ts2365_relational_operator_type_param_tests"
+path = "tests/ts2365_relational_operator_type_param_tests.rs"
+
+[[test]]
 name = "ts2677_intersection_predicate_tests"
 path = "tests/ts2677_intersection_predicate_tests.rs"
 

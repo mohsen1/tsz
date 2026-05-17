@@ -370,19 +370,44 @@ impl<'a> CheckerState<'a> {
                 if node.kind == syntax_kind_ext::PARAMETER
                     && let Some(parameter) = self.ctx.arena.get_parameter(node)
                     && parameter.type_annotation.is_some()
-                    && let Some(annotation_node) = self.ctx.arena.get(parameter.type_annotation)
-                    && let Some(source) = self.ctx.arena.source_files.first()
-                    && let Some(text) = source
-                        .text
-                        .get(annotation_node.pos as usize..annotation_node.end as usize)
                 {
-                    let text = text.trim();
-                    if text.len() <= 3
-                        && text
-                            .chars()
-                            .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+                    let annotation_idx = parameter.type_annotation;
+                    // When the annotation is a type parameter reference, tsc displays the
+                    // widened/constrained type in operator error messages, not the parameter name.
+                    let type_name_idx = self
+                        .ctx
+                        .arena
+                        .get(annotation_idx)
+                        .and_then(|an| self.ctx.arena.get_type_ref(an))
+                        .map(|tr| tr.type_name);
+                    let is_type_param = if let Some(name_idx) = type_name_idx {
+                        if let TypeSymbolResolution::Type(sym_id) = self
+                            .resolve_identifier_symbol_in_type_position_without_tracking(name_idx)
+                        {
+                            self.ctx.binder.get_symbol(sym_id).is_some_and(|sym| {
+                                sym.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER)
+                            })
+                        } else {
+                            false
+                        }
+                    } else {
+                        false
+                    };
+                    if !is_type_param
+                        && let Some(annotation_node) = self.ctx.arena.get(annotation_idx)
+                        && let Some(source) = self.ctx.arena.source_files.first()
+                        && let Some(text) = source
+                            .text
+                            .get(annotation_node.pos as usize..annotation_node.end as usize)
                     {
-                        return Some(text.to_string());
+                        let text = text.trim();
+                        if text.len() <= 3
+                            && text
+                                .chars()
+                                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+                        {
+                            return Some(text.to_string());
+                        }
                     }
                 }
                 let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
