@@ -1228,6 +1228,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
+        // Fast path for correlated mapped identity readers before the expensive
+        // per-member resolution loop. The fallback below reaches the same result
+        // after collecting one failure per member; this structural proof lets
+        // `{ [K in keyof T]: (value: T[K]) => T[K] }[K]` keep the `T[K]`
+        // correlation without first materializing all those failures.
+        if let Some(ref combined) = combined
+            && combined.param_types.contains(&TypeId::NEVER)
+            && arg_types
+                .iter()
+                .any(|&arg_type| self.is_generic_correlated_union_call_arg(arg_type))
+            && let Some(correlated_return) =
+                self.correlated_identity_union_call_return(&members, arg_types)
+        {
+            return CallResult::Success(correlated_return);
+        }
+
         // Phase 2: Per-member resolution for argument type checking.
         // This avoids over-constraining via intersection when tsc would reduce the union.
         let compatibility = if combined.is_some() {
