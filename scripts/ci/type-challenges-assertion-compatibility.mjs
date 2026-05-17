@@ -170,19 +170,41 @@ if (cleanSubsetClassification) {
   ) {
     fail("tsc-clean assertion classification is missing candidateManifest");
   }
+  if (
+    cleanSubsetClassification.candidateManifest.fixture !==
+    "type-challenges-assertions-tsc-clean"
+  ) {
+    fail(
+      `unexpected tsc-clean assertion classification candidate manifest fixture: ${
+        cleanSubsetClassification.candidateManifest.fixture || "<missing>"
+      }`,
+    );
+  }
   validateCandidateManifestSources(cleanSubsetClassification.candidateManifest);
 }
 if (cleanSubsetManifest && cleanSubsetClassification) {
   const acceptedAssertions = cleanSubsetManifest.counts.tscAcceptedAssertions;
+  const cleanCounts = cleanSubsetManifest.counts;
+  const classificationCounts = cleanSubsetClassification.candidateManifest?.counts || {};
   const generatedAssertions =
-    cleanSubsetClassification.candidateManifest?.counts?.generatedAssertions;
+    classificationCounts.tscAcceptedAssertions;
   if (
-    Number.isInteger(generatedAssertions) &&
+    !Number.isInteger(generatedAssertions) ||
     generatedAssertions !== acceptedAssertions
   ) {
     fail(
-      `tsc-clean assertion classification generatedAssertions (${generatedAssertions}) does not match manifest tscAcceptedAssertions (${acceptedAssertions})`,
+      `tsc-clean assertion classification tscAcceptedAssertions (${generatedAssertions}) does not match manifest tscAcceptedAssertions (${acceptedAssertions})`,
     );
+  }
+  for (const field of [
+    "tscAcceptedAssertionsReferencingSolutionDeclaration",
+    "tscAcceptedAssertionsMissingSolutionDeclarationReference",
+  ]) {
+    if (classificationCounts[field] !== cleanCounts[field]) {
+      fail(
+        `tsc-clean assertion classification counts.${field} (${classificationCounts[field]}) does not match manifest counts.${field} (${cleanCounts[field]})`,
+      );
+    }
   }
   for (const compiler of ["tsc", "tsz"]) {
     const totalCandidates =
