@@ -60,6 +60,36 @@ fn dash_inside_default_is_not_description_separator() {
 }
 
 #[test]
+fn bracket_default_preserves_spaced_type_text() {
+    let jsdoc = "@template [T=string | number] - default is a union";
+
+    assert_eq!(
+        DeclarationEmitter::parse_jsdoc_template_params(jsdoc),
+        vec!["T = string | number"]
+    );
+}
+
+#[test]
+fn constrained_bracket_default_preserves_spaced_type_text() {
+    let jsdoc = "@template {string | number} [T=string | number] - default is a union";
+
+    assert_eq!(
+        DeclarationEmitter::parse_jsdoc_template_params(jsdoc),
+        vec!["T extends string | number = string | number"]
+    );
+}
+
+#[test]
+fn bracket_default_segment_can_be_followed_by_another_param() {
+    let jsdoc = "@template [T=string | number], U - default is a union";
+
+    assert_eq!(
+        DeclarationEmitter::parse_jsdoc_template_params(jsdoc),
+        vec!["T = string | number", "U"]
+    );
+}
+
+#[test]
 fn jsdoc_type_attaches_through_trailing_line_comment() {
     assert!(DeclarationEmitter::jsdoc_attaches_through_var_prefix(
         " // explanation\nconst "

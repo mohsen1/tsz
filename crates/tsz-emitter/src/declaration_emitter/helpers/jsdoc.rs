@@ -2414,11 +2414,7 @@ impl<'a> DeclarationEmitter<'a> {
                 rest = Self::trim_jsdoc_template_description(remaining);
             }
 
-            for name in rest
-                .split([',', ' ', '\t'])
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            {
+            for name in Self::split_jsdoc_template_param_segments(rest) {
                 // Bracket-default form `@template [T=string]` declares type
                 // parameter `T` with default `string`. Without unwrapping the
                 // brackets, the verbatim segment `[T=string]` would be
@@ -2434,6 +2430,44 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         params
+    }
+
+    fn split_jsdoc_template_param_segments(text: &str) -> Vec<&str> {
+        let mut segments = Vec::new();
+        let mut start = None;
+        let mut bracket_depth = 0usize;
+
+        for (idx, ch) in text.char_indices() {
+            if start.is_none() {
+                if matches!(ch, ',' | ' ' | '\t') {
+                    continue;
+                }
+                start = Some(idx);
+            }
+
+            match ch {
+                '[' => bracket_depth += 1,
+                ']' if bracket_depth > 0 => bracket_depth -= 1,
+                ',' | ' ' | '\t' if bracket_depth == 0 => {
+                    if let Some(seg_start) = start.take() {
+                        let segment = text[seg_start..idx].trim();
+                        if !segment.is_empty() {
+                            segments.push(segment);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(seg_start) = start {
+            let segment = text[seg_start..].trim();
+            if !segment.is_empty() {
+                segments.push(segment);
+            }
+        }
+
+        segments
     }
 
     fn trim_jsdoc_same_line_following_tags(text: &str) -> &str {
@@ -2511,7 +2545,13 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let end = text.find([',', ' ', '\t']).unwrap_or(text.len());
+        let end = if text.starts_with('[') {
+            text.find(']')
+                .map(|idx| idx + 1)
+                .unwrap_or_else(|| text.find([',', ' ', '\t']).unwrap_or(text.len()))
+        } else {
+            text.find([',', ' ', '\t']).unwrap_or(text.len())
+        };
         let name = text[..end].trim();
         if name.is_empty() {
             return None;
