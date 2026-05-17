@@ -49,7 +49,7 @@
 //! The thin wrapper in `async_es5.rs` uses this transformer with `IRPrinter`
 //! to emit JavaScript strings.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use crate::transforms::class_es5_ir::ES5ClassTransformer;
 use crate::transforms::helpers::HelpersNeeded;
@@ -157,6 +157,7 @@ pub struct AsyncES5Transformer<'a> {
     /// `__asyncGenerator`.
     pub(crate) async_generator_mode: bool,
     temp_var_counter: Cell<u32>,
+    blocked_temp_names: RefCell<FxHashSet<String>>,
     disposable_env_counter: Cell<u32>,
     blocked_disposable_env_names: FxHashSet<String>,
     generated_disposable_env_names: Vec<String>,
@@ -182,6 +183,7 @@ impl<'a> AsyncES5Transformer<'a> {
             generator_mode: false,
             async_generator_mode: false,
             temp_var_counter: Cell::new(0),
+            blocked_temp_names: RefCell::new(FxHashSet::default()),
             disposable_env_counter: Cell::new(1),
             blocked_disposable_env_names: FxHashSet::default(),
             generated_disposable_env_names: Vec::new(),
@@ -237,14 +239,18 @@ impl<'a> AsyncES5Transformer<'a> {
     }
 
     pub(super) fn generate_hoisted_temp(&self) -> String {
-        let counter = self.temp_var_counter.get();
-        let name = if counter < 26 {
-            format!("_{}", (b'a' + counter as u8) as char)
-        } else {
-            format!("_{counter}")
-        };
-        self.temp_var_counter.set(counter + 1);
-        name
+        loop {
+            let counter = self.temp_var_counter.get();
+            let name = if counter < 26 {
+                format!("_{}", (b'a' + counter as u8) as char)
+            } else {
+                format!("_{counter}")
+            };
+            self.temp_var_counter.set(counter + 1);
+            if self.blocked_temp_names.borrow_mut().insert(name.clone()) {
+                return name;
+            }
+        }
     }
 
     pub(super) fn set_temp_var_counter(&self, counter: u32) {
@@ -253,6 +259,35 @@ impl<'a> AsyncES5Transformer<'a> {
 
     pub const fn temp_var_counter(&self) -> u32 {
         self.temp_var_counter.get()
+    }
+
+    fn reset_temp_name_reservations(&self, body_idx: NodeIndex) {
+        let mut blocked_names = Vec::new();
+        self.collect_body_binding_names(body_idx, &mut blocked_names);
+        *self.blocked_temp_names.borrow_mut() = blocked_names.into_iter().collect();
+    }
+
+    fn fresh_reserved_name(&self, preferred: impl Into<String>) -> String {
+        let preferred = preferred.into();
+        if self
+            .blocked_temp_names
+            .borrow_mut()
+            .insert(preferred.clone())
+        {
+            return preferred;
+        }
+        let mut suffix = 1u32;
+        loop {
+            let candidate = format!("{preferred}_{suffix}");
+            if self
+                .blocked_temp_names
+                .borrow_mut()
+                .insert(candidate.clone())
+            {
+                return candidate;
+            }
+            suffix += 1;
+        }
     }
 
     pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
@@ -757,6 +792,7 @@ impl<'a> AsyncES5Transformer<'a> {
         _has_await: bool,
         skipped_statements: &[NodeIndex],
     ) -> Vec<IRGeneratorCase> {
+        self.reset_temp_name_reservations(body_idx);
         let mut cases = Vec::new();
         let mut current_statements = Vec::new();
         let mut current_label = self.state.next_label();
@@ -1014,7 +1050,6 @@ impl<'a> AsyncES5Transformer<'a> {
                 self.process_using_variable_statement_in_region(
                     stmt_idx,
                     &env_name,
-                    using_async,
                     current_statements,
                 );
             } else {
@@ -1274,7 +1309,6 @@ impl<'a> AsyncES5Transformer<'a> {
         &mut self,
         stmt_idx: NodeIndex,
         env_name: &str,
-        region_async: bool,
         current_statements: &mut Vec<IRNode>,
     ) {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -1290,8 +1324,6 @@ impl<'a> AsyncES5Transformer<'a> {
             if (decl_list_node.flags as u32 & node_flags::USING) == 0 {
                 continue;
             }
-            let using_async =
-                region_async || node_flags::is_await_using(decl_list_node.flags as u32);
             let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
                 continue;
             };
@@ -1299,7 +1331,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 self.process_using_variable_declaration_in_region(
                     decl_idx,
                     env_name,
-                    using_async,
+                    node_flags::is_await_using(decl_list_node.flags as u32),
                     current_statements,
                 );
             }
@@ -1377,9 +1409,10 @@ impl<'a> AsyncES5Transformer<'a> {
 
         let env_id = self.disposable_env_counter.get();
         let (env_name, error_name, result_name) = self.next_disposable_env_names();
-        let index_name = "_i".to_string();
+        let index_name = self.fresh_reserved_name("_i");
         let array_name = self.for_of_iterable_temp_name(for_in_of.expression, env_id);
-        let value_temp_name = format!("{}_{}", using_info.binding_name, env_id);
+        let value_temp_name =
+            self.fresh_reserved_name(format!("{}_{}", using_info.binding_name, env_id));
 
         for name in [
             &index_name,
@@ -1583,7 +1616,7 @@ impl<'a> AsyncES5Transformer<'a> {
         {
             let name = super::emit_utils::identifier_text_or_empty(self.arena, expression);
             if !name.is_empty() {
-                return format!("{name}_{env_id}");
+                return self.fresh_reserved_name(format!("{name}_{env_id}"));
             }
         }
         self.generate_hoisted_temp()

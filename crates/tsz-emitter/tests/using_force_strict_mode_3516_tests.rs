@@ -138,6 +138,78 @@ export async function test() {
     );
 }
 
+#[test]
+fn es5_async_mixed_using_region_keeps_registration_async_flag_per_declaration() {
+    let source = r#"
+export async function test() {
+    using sync = { [Symbol.dispose]() {} };
+    await using asyncRes = { async [Symbol.asyncDispose]() {} };
+}
+"#;
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: ModuleKind::ESNext,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        output.contains("sync = __addDisposableResource(env_1,"),
+        "The sync resource should be registered in the disposable region.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("sync = __addDisposableResource(env_1, (_a = {}, _a[Symbol.dispose] = function () { }, _a), false);"),
+        "Plain `using` must keep the per-resource async flag false even when the region awaits disposal.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("asyncRes = __addDisposableResource(env_1,"),
+        "`await using` should still register the async resource.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("true);"),
+        "`await using` must pass true to __addDisposableResource.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, result_1];"),
+        "The mixed region must still await async disposal at the region level.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_async_for_of_await_using_temps_avoid_source_bindings() {
+    let source = r#"
+export async function test(items: any[]) {
+    var _i, items_1, x_1;
+    for (await using x of items) {
+        await work(x);
+    }
+}
+"#;
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: ModuleKind::ESNext,
+        ..Default::default()
+    };
+    let output = parse_lower_emit(source, opts);
+
+    assert!(
+        output.contains("var _i, items_1, x_1, _i_1, items_1_1, x_1_1, env_1, x, e_1, result_1;"),
+        "Generated loop temps should avoid source bindings in the async body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_i_1 = 0, items_1_1 = items"),
+        "The for-of index and iterable temps should use collision-free names.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x_1_1 = items_1_1[_i_1];"),
+        "The per-iteration resource temp should avoid the source x_1 binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = __addDisposableResource(env_1, x_1_1, true);"),
+        "The source binding should receive the registered resource value.\nOutput:\n{output}"
+    );
+}
+
 // Sanity: a regular script without using must NOT spontaneously add
 // "use strict" — that would be a regression from the existing default.
 #[test]
