@@ -117,6 +117,25 @@ fn type_reference_rejection_kind(
     let Some(symbol) = delegate_binder.get_symbol(sym_id) else {
         return Kind::UnresolvedIdentifier;
     };
+    if symbol.flags & symbol_flags::ALIAS != 0 {
+        if let Some(resolved_sym_id) = delegate_binder.resolve_import_symbol(sym_id)
+            && resolved_sym_id != sym_id
+            && let Some(resolved_symbol) = delegate_binder.get_symbol(resolved_sym_id)
+        {
+            return classify_type_reference_rejection_symbol(resolved_symbol, has_type_arguments);
+        }
+        return Kind::LocalAliasSymbol;
+    }
+
+    classify_type_reference_rejection_symbol(symbol, has_type_arguments)
+}
+
+fn classify_type_reference_rejection_symbol(
+    symbol: &tsz_binder::Symbol,
+    has_type_arguments: bool,
+) -> DirectSourceFileTypeAliasTypeReferenceRejectionKind {
+    use DirectSourceFileTypeAliasTypeReferenceRejectionKind as Kind;
+
     if symbol.flags & symbol_flags::TYPE_ALIAS != 0 {
         return if has_type_arguments {
             Kind::LocalTypeAliasWithArguments

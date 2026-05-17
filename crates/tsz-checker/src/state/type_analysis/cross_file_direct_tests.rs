@@ -5,8 +5,11 @@ use crate::state::CheckerState;
 use crate::test_utils::load_lib_files;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
-use tsz_binder::BinderState;
-use tsz_common::perf_counters::{CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome};
+use tsz_binder::{BinderState, SymbolTable, symbol_flags};
+use tsz_common::perf_counters::{
+    CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome,
+    DirectSourceFileTypeAliasTypeReferenceRejectionKind,
+};
 use tsz_parser::parser::{ParserState, syntax_kind_ext};
 use tsz_solver::TypeId;
 use tsz_solver::def::DefinitionStore;
@@ -789,6 +792,57 @@ fn direct_source_file_type_alias_rejects_complex_generic_typeof_and_self_referen
             .direct_source_file_type_alias_result(loop_sym, Some(2), true,)
             .is_none(),
         "self references need the child-checker circularity path",
+    );
+}
+
+#[test]
+fn source_file_alias_type_reference_attribution_resolves_import_alias_target() {
+    let mut parser = ParserState::new("fixture.ts".to_string(), "type Box = Alias;".to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena().clone();
+    let source_file = arena
+        .get_source_file_at(root)
+        .expect("source file should parse");
+    let alias_body = source_file
+        .statements
+        .nodes
+        .iter()
+        .copied()
+        .find_map(|idx| {
+            arena
+                .get(idx)
+                .and_then(|node| arena.get_type_alias(node))
+                .map(|alias| alias.type_node)
+        })
+        .expect("type alias body");
+
+    let mut binder = BinderState::new();
+    let target_sym = binder
+        .symbols
+        .alloc(symbol_flags::TYPE_ALIAS, "Target".to_string());
+    let alias_sym = binder
+        .symbols
+        .alloc(symbol_flags::ALIAS, "Alias".to_string());
+    let alias_symbol = binder.symbols.get_mut(alias_sym).expect("alias symbol");
+    alias_symbol.import_module = Some("./target".to_string());
+    alias_symbol.import_name = Some("Target".to_string());
+    binder.file_locals.set("Alias".to_string(), alias_sym);
+    let mut exports = SymbolTable::new();
+    exports.set("Target".to_string(), target_sym);
+    Arc::make_mut(&mut binder.module_exports).insert("./target".to_string(), exports);
+
+    let kind =
+        super::super::source_alias_attribution::source_file_type_alias_type_reference_rejection_kind(
+            &arena,
+            &binder,
+            alias_body,
+            &[],
+        );
+
+    assert_eq!(
+        kind,
+        DirectSourceFileTypeAliasTypeReferenceRejectionKind::LocalTypeAliasNoArguments,
+        "import aliases should be bucketed by resolved type target shape",
     );
 }
 
