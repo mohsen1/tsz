@@ -1160,10 +1160,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Wrapped with `stacker::maybe_grow()` to handle deeply nested union/intersection
     /// constraint chains without overflowing the default thread stack.
     fn evaluate_keyof_or_constraint(&mut self, constraint: TypeId) -> TypeId {
-        // The tail-call at the end of evaluate_keyof_or_constraint_inner (after
-        // evaluate() resolves a Lazy/Application to a new type) is converted to a
-        // loop here so each iteration reuses a single stack frame instead of growing
-        // one frame per alias hop.
         let mut current = constraint;
         loop {
             match self.keyof_constraint_guard.enter(current) {
@@ -1176,16 +1172,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             });
             self.keyof_constraint_guard.leave(current);
 
-            // evaluate_keyof_or_constraint_inner signals "evaluate the result further"
-            // by returning a type different from `current` that itself still needs
-            // keyof-constraint simplification (e.g. a freshly resolved Lazy alias that
-            // is a union or intersection). Re-enter the loop with the new type instead
-            // of recursing, so we don't consume an extra stack frame per alias hop.
-            if result != current {
-                // Only loop when the result is a compound type that might benefit from
-                // keyof simplification. Terminal types (literals, primitives, etc.)
-                // don't need another pass.
-                if matches!(
+            if result != current
+                && matches!(
                     self.interner().lookup(result),
                     Some(
                         TypeData::Union(_)
@@ -1195,10 +1183,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             | TypeData::Lazy(_)
                             | TypeData::Application(_)
                     )
-                ) {
-                    current = result;
-                    continue;
-                }
+                )
+            {
+                current = result;
+                continue;
             }
             return result;
         }
@@ -1261,8 +1249,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Evaluate the constraint to resolve type aliases (Lazy), Applications, etc.
         // For example, `type Keys = "a" | "b"; { [P in Keys]: T }` has a Lazy(DefId)
         // constraint that must be evaluated to get the concrete union `"a" | "b"`.
-        // The outer loop in evaluate_keyof_or_constraint detects when the returned
-        // value still needs simplification and iterates instead of recursing.
         self.evaluate(constraint)
     }
 
