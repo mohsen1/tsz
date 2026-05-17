@@ -475,6 +475,35 @@ withTempDir((dir) => {
     dir,
     classification: {
       fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      counts: {
+        totalCandidates: 1,
+        tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
+        tscRejectedAssertions: 0,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /counts\.tscAcceptedAssertionsReferencingSolutionDeclaration must be an integer/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
       candidateManifest: { counts: candidateCounts(1) },
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
       comparison: { status: "match" },
@@ -564,6 +593,8 @@ withTempDir((dir) => {
       counts: {
         totalCandidates: 1,
         tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
         tscRejectedAssertions: 0,
       },
       entries: [{ output: "assertions/00001-easy-pick.ts" }],
@@ -595,6 +626,8 @@ withTempDir((dir) => {
       counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 2,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 1,
         tscRejectedAssertions: 0,
       },
       entries: [{ output: "assertions/00001-easy-pick.ts" }],
@@ -653,6 +686,8 @@ withTempDir((dir) => {
       counts: {
         totalCandidates: 3,
         tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
         tscRejectedAssertions: 1,
       },
       entries: [{ output: "assertions/00001-easy-pick.ts" }],
@@ -678,6 +713,8 @@ withTempDir((dir) => {
       counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
         tscRejectedAssertions: 1,
       },
       entries: [{ output: "assertions/00001-easy-pick.ts" }],
@@ -703,6 +740,8 @@ withTempDir((dir) => {
       counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
         tscRejectedAssertions: 1,
       },
       entries: [{ output: "assertions/00001-easy-pick.ts" }],
@@ -735,6 +774,8 @@ withTempDir((dir) => {
       counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
         tscRejectedAssertions: 1,
       },
       entries: [{ output: "assertions/00001-easy-pick.ts" }],
@@ -774,6 +815,8 @@ withTempDir((dir) => {
       counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
         tscRejectedAssertions: 1,
       },
       entries: [{ output: "assertions/00001-easy-pick.ts" }],
@@ -833,6 +876,8 @@ withTempDir((dir) => {
       counts: {
         totalCandidates: 0,
         tscAcceptedAssertions: 0,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 0,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
         tscRejectedAssertions: null,
       },
       entries: [],
