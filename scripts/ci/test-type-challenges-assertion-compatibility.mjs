@@ -281,6 +281,7 @@ withTempDir((dir) => {
           candidateDiagnostics: { candidatesWithoutDiagnostics: 1 },
         },
       },
+      comparison: { status: "match" },
     },
   });
 
@@ -808,6 +809,44 @@ withTempDir((dir) => {
     },
     cleanSubsetClassification: {
       fixture: "type-challenges-assertion-classification",
+      candidateManifest: cleanCandidateManifest(),
+      compilers: {
+        tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 1 } },
+        tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 1 } },
+      },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc-clean assertion classification report is missing comparison/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      counts: {
+        totalCandidates: 2,
+        tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
+        tscRejectedAssertions: 1,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+    cleanSubsetClassification: {
+      fixture: "type-challenges-assertion-classification",
       candidateManifest: cleanCandidateManifest({
         totalCandidates: 2,
         tscAcceptedAssertions: 2,
@@ -819,6 +858,7 @@ withTempDir((dir) => {
         tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 2 } },
         tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 2 } },
       },
+      comparison: { status: "match" },
     },
   });
 
@@ -863,6 +903,7 @@ withTempDir((dir) => {
         tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 1 } },
         tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 2 } },
       },
+      comparison: { status: "match" },
     },
   });
 

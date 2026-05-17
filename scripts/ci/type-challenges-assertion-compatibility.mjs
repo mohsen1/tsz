@@ -181,6 +181,12 @@ if (cleanSubsetClassification) {
     );
   }
   validateCandidateManifestSources(cleanSubsetClassification.candidateManifest);
+  if (
+    !cleanSubsetClassification.comparison ||
+    typeof cleanSubsetClassification.comparison !== "object"
+  ) {
+    fail("tsc-clean assertion classification report is missing comparison");
+  }
 }
 if (cleanSubsetManifest && cleanSubsetClassification) {
   const acceptedAssertions = cleanSubsetManifest.counts.tscAcceptedAssertions;
