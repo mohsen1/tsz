@@ -515,7 +515,7 @@ INDEPENDENT_PIPELINE_CHECKS = [
 ]
 
 # Pin the count of non-test source files that import `tsz_solver` outside the
-# solver/checker boundary (architecture health metric 3 in
+# solver/checker boundary (architecture health metric 7 in
 # `docs/plan/ROADMAP.md`).  The checker crate contains the canonical
 # `query_boundaries` modules and is the one architecturally allowed consumer
 # of solver internals; every other crate (`tsz-cli`, `tsz-core`, `tsz-lsp`,
@@ -531,13 +531,13 @@ INDEPENDENT_PIPELINE_CHECKS = [
 # Each entry: (description, search_roots, exclude_path_prefixes, max_imports).
 SOLVER_IMPORT_COUNT_CHECKS = [
     (
-        "Frontend/emitter boundary: direct tsz_solver imports outside solver/checker (architecture health metric 3)",
+        "Frontend/emitter boundary: direct tsz_solver imports outside solver/checker (architecture health metric 7)",
         [ROOT / "crates"],
         (
             "crates/tsz-solver/",
             "crates/tsz-checker/",
         ),
-        39,
+        36,
     ),
 ]
 
@@ -604,7 +604,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\bformat_type(?:_diagnostic)?\s*\([^\n]*"
             r"(?:\.contains\s*\(|\.starts_with\s*\(|\.ends_with\s*\(|\.as_str\s*\(\))"
         ),
-        5,
+        3,
     ),
     (
         "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
