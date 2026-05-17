@@ -1,6 +1,8 @@
 //! Fallback expression type lookup helpers for declaration type inference.
 
 use super::super::DeclarationEmitter;
+use serde_json::Value;
+use std::path::{Path, PathBuf};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -354,6 +356,188 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => None,
         }
+    }
+
+    pub(crate) fn json_require_call_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let module_specifier = self.bare_require_call_module_specifier(expr_idx)?;
+        if !module_specifier.ends_with(".json") {
+            return None;
+        }
+
+        let json_path = self.resolve_json_require_path(&module_specifier)?;
+        let json_text = std::fs::read_to_string(json_path).ok()?;
+        let json_text = Self::strip_json_comments_and_trailing_commas(&json_text);
+        let value = serde_json::from_str::<Value>(&json_text).ok()?;
+        Some(Self::json_value_declaration_type_text(
+            &value,
+            self.indent_level,
+        ))
+    }
+
+    fn resolve_json_require_path(&self, module_specifier: &str) -> Option<PathBuf> {
+        let current_path = Path::new(self.current_file_path.as_deref()?);
+        let base_dir = current_path.parent()?;
+        let candidate = base_dir.join(module_specifier);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        None
+    }
+
+    fn json_value_declaration_type_text(value: &Value, depth: u32) -> String {
+        match value {
+            Value::Null => "null".to_string(),
+            Value::Bool(_) => "boolean".to_string(),
+            Value::Number(_) => "number".to_string(),
+            Value::String(_) => "string".to_string(),
+            Value::Array(items) => {
+                let mut element_types = Vec::new();
+                for item in items {
+                    let item_type = Self::json_value_declaration_type_text(item, depth);
+                    if !element_types.iter().any(|existing| existing == &item_type) {
+                        element_types.push(item_type);
+                    }
+                }
+                if element_types.is_empty() {
+                    "any[]".to_string()
+                } else if element_types.len() == 1 {
+                    format!("{}[]", element_types[0])
+                } else {
+                    format!("({})[]", element_types.join(" | "))
+                }
+            }
+            Value::Object(map) => {
+                if map.is_empty() {
+                    return "{}".to_string();
+                }
+
+                let member_indent = "    ".repeat((depth + 1) as usize);
+                let closing_indent = "    ".repeat(depth as usize);
+                let mut text = String::from("{\n");
+                for (key, value) in map {
+                    text.push_str(&member_indent);
+                    text.push_str(&Self::json_property_name_text(key));
+                    text.push_str(": ");
+                    text.push_str(&Self::json_value_declaration_type_text(value, depth + 1));
+                    text.push_str(";\n");
+                }
+                text.push_str(&closing_indent);
+                text.push('}');
+                text
+            }
+        }
+    }
+
+    fn json_property_name_text(key: &str) -> String {
+        let mut chars = key.chars();
+        let Some(first) = chars.next() else {
+            return "\"\"".to_string();
+        };
+        let valid_start = first == '_' || first == '$' || first.is_ascii_alphabetic();
+        let valid_rest = chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric());
+        if valid_start && valid_rest {
+            key.to_string()
+        } else {
+            serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string())
+        }
+    }
+
+    fn strip_json_comments_and_trailing_commas(text: &str) -> String {
+        let mut without_comments = String::with_capacity(text.len());
+        let mut chars = text.chars().peekable();
+        let mut in_string = false;
+        let mut escaped = false;
+        while let Some(ch) = chars.next() {
+            if in_string {
+                without_comments.push(ch);
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+
+            if ch == '"' {
+                in_string = true;
+                without_comments.push(ch);
+                continue;
+            }
+
+            if ch == '/' {
+                match chars.peek().copied() {
+                    Some('/') => {
+                        chars.next();
+                        for next in chars.by_ref() {
+                            if next == '\n' {
+                                without_comments.push('\n');
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                    Some('*') => {
+                        chars.next();
+                        let mut prev = '\0';
+                        for next in chars.by_ref() {
+                            if prev == '*' && next == '/' {
+                                break;
+                            }
+                            prev = next;
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+
+            without_comments.push(ch);
+        }
+
+        let chars: Vec<char> = without_comments.chars().collect();
+        let mut result = String::with_capacity(chars.len());
+        let mut index = 0usize;
+        in_string = false;
+        escaped = false;
+        while index < chars.len() {
+            let ch = chars[index];
+            if in_string {
+                result.push(ch);
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    in_string = false;
+                }
+                index += 1;
+                continue;
+            }
+
+            if ch == '"' {
+                in_string = true;
+                result.push(ch);
+                index += 1;
+                continue;
+            }
+
+            if ch == ',' {
+                let mut lookahead = index + 1;
+                while lookahead < chars.len() && chars[lookahead].is_whitespace() {
+                    lookahead += 1;
+                }
+                if lookahead < chars.len() && matches!(chars[lookahead], '}' | ']') {
+                    index += 1;
+                    continue;
+                }
+            }
+
+            result.push(ch);
+            index += 1;
+        }
+        result
     }
 
     fn conditional_unique_symbol_union_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
