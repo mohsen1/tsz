@@ -463,6 +463,27 @@ type Trigger = typeof Map<string, number, boolean>;
 }
 
 #[test]
+fn ts2635_generic_named_callable_keeps_instantiated_type_args() {
+    let diags = check_source_diagnostics(
+        r#"
+interface Box<T> {
+    <U>(value: U): U;
+}
+
+declare const box: Box<number>;
+const x = box<string, number>;
+"#,
+    );
+    let messages = diagnostic_messages_with_code(&diags, 2635);
+    assert_eq!(messages.len(), 1, "Expected one TS2635, got: {diags:?}");
+    assert!(
+        messages[0].contains("'Box<number>'"),
+        "TS2635 for instantiated generic callable must keep type arguments, got: {}",
+        messages[0]
+    );
+}
+
+#[test]
 fn ts2635_anonymous_callable_still_shows_structural_form() {
     // Anonymous overloaded functions (no symbol name) must still use the
     // structural display — the named-symbol fast path must not affect them.
