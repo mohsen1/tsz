@@ -6,11 +6,10 @@ on:
     branches: [main]
     types: [completed]
   schedule:
-    # Keep tsz.dev/benchmarks fresh from a scheduled benchmark run while the
-    # release crons only build and publish the daily latest PGO installer asset.
+    # Daily latest PGO release: submit the Cloud Build prep first, then publish
+    # the finished artifact without fanning out benchmark shards.
     - cron: '0 3 * * *'
     - cron: '0 5 * * *'
-    - cron: '0 15 * * *'
   workflow_dispatch:
     inputs:
       publish_latest_pgo:
