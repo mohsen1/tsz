@@ -326,15 +326,17 @@ impl<'a> CheckerState<'a> {
         // so the formatter can display `Dictionary<string>` instead of the
         // expanded `{ [index: string]: string; }`.
         //
-        // For concrete args: always store (safe, no conflation risk).
+        // For concrete args: store unless the result is one of the
+        // application's own structural arguments. Identity-style helper
+        // aliases must not repaint that argument for unrelated comparisons.
         // For generic args: only store when the result is a Conditional or
         // IndexAccess type. These types are structurally unique per alias
         // (unlike Mapped/Object types which can collide with built-in aliases
         // like Record, Partial, Pick, Omit due to interning dedup).
         if result != type_id {
-            let has_param_args = if let Some(app) = query::application_info(self.ctx.types, type_id)
-            {
-                app.1.iter().any(|&arg| {
+            let app_info = query::application_info(self.ctx.types, type_id);
+            let has_param_args = if let Some((_, args)) = &app_info {
+                args.iter().any(|&arg| {
                     crate::query_boundaries::common::contains_type_parameters(
                         self.ctx.types.as_type_database(),
                         arg,
@@ -351,7 +353,19 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types.as_type_database(),
                     result,
                 );
-            if !has_param_args || is_safe_for_generic_alias {
+            let result_is_non_empty_object = query::object_shape(self.ctx.types, result)
+                .is_some_and(|shape| {
+                    !shape.properties.is_empty()
+                        || shape.string_index.is_some()
+                        || shape.number_index.is_some()
+                });
+            let result_is_application_arg = app_info.is_some_and(|(_, args)| {
+                args.iter()
+                    .any(|&arg| arg == result || self.evaluate_type_with_resolution(arg) == result)
+            });
+            if (!has_param_args || is_safe_for_generic_alias)
+                && !(result_is_application_arg && result_is_non_empty_object)
+            {
                 self.ctx.types.store_display_alias(result, type_id);
             }
         }
