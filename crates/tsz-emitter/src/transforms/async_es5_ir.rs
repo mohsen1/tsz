@@ -1437,10 +1437,7 @@ impl<'a> AsyncES5Transformer<'a> {
         });
         current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
             IRNode::id(value_temp_name.clone()),
-            IRNode::elem(
-                IRNode::id(array_name.clone()),
-                IRNode::id(index_name.clone()),
-            ),
+            IRNode::elem(IRNode::id(array_name), IRNode::id(index_name.clone())),
         ))));
         current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
             IRNode::id(env_name.clone()),
