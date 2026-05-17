@@ -9,6 +9,16 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// True when `text` looks like a TypeScript type-parameter annotation name
+/// (identifier ≤ 3 chars, starting with a letter/`_`/`$`).
+fn looks_like_type_param_annotation(text: &str) -> bool {
+    text.len() <= 3
+        && text.starts_with(|ch: char| ch == '_' || ch == '$' || ch.is_ascii_alphabetic())
+        && text
+            .chars()
+            .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
+}
+
 impl<'a> CheckerState<'a> {
     /// Report TS2351: "This expression is not constructable. Type 'X' has no construct signatures."
     /// This is for `new` expressions where the expression type has no construct signatures.
@@ -377,11 +387,7 @@ impl<'a> CheckerState<'a> {
                         .get(annotation_node.pos as usize..annotation_node.end as usize)
                 {
                     let text = text.trim();
-                    if text.len() <= 3
-                        && text
-                            .chars()
-                            .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-                    {
+                    if looks_like_type_param_annotation(text) {
                         return Some(text.to_string());
                     }
                 }
