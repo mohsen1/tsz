@@ -1,3 +1,6 @@
+//! Display and anchoring regression tests split out of the main assignment
+//! checker test module.
+
 use super::diagnostics_for;
 
 #[test]
