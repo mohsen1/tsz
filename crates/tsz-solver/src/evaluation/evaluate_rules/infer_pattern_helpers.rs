@@ -9,6 +9,7 @@
 //! - Union type patterns
 //! - Template literal patterns
 
+use crate::instantiation::application::ApplicationEvaluator;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     CallableShapeId, FunctionShape, FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShapeId,
@@ -1825,6 +1826,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
                 true
+            }
+            Some(TypeData::Application(_)) => {
+                // The pattern Application was already expanded to this Object shape by the caller;
+                // expand the source Application too so property-level infer bindings can match.
+                let evaluator = ApplicationEvaluator::new(self.interner(), self.resolver());
+                let expanded_source = evaluator.evaluate_or_original(source);
+                if expanded_source != source {
+                    self.match_infer_object_pattern(
+                        expanded_source,
+                        pattern_shape_id,
+                        pattern,
+                        bindings,
+                        visited,
+                        checker,
+                    )
+                } else {
+                    false
+                }
             }
             _ => false,
         }

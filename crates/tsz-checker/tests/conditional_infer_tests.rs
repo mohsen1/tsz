@@ -2644,3 +2644,77 @@ fn equal_any_then_is_union_no_cross_contamination() {
         "Equal<any,X> then IsUnion cross-contamination",
     );
 }
+
+// =============================================================================
+// Issue #6374: Application-source infer matching via structural expansion
+//
+// Rule: When `source` is `Application(A, args)` and the pattern is
+// `Application(B, infers)` where A structurally extends B (but A != B),
+// the infer variables in B's pattern should be bound by expanding both
+// sides to their structural forms and matching property-by-property.
+//
+// Concrete case: Promise<X> extends PromiseLike<infer U> → U = X.
+// =============================================================================
+
+#[test]
+fn promiselike_infer_unwraps_promise_application() {
+    // type Awaited2<T> = T extends PromiseLike<infer U> ? Awaited2<U> : T;
+    // type A = Awaited2<Promise<string>>;  // should be string
+    let source = r#"
+type Awaited2<T> = T extends PromiseLike<infer U> ? Awaited2<U> : T;
+type A = Awaited2<Promise<string>>;
+const _a: A = "hello";
+export {};
+"#;
+    assert_no_ts2322(source, "Awaited2<Promise<string>> = string");
+}
+
+#[test]
+fn promiselike_infer_unwraps_nested_promise_application() {
+    // tsc: Awaited2<Promise<Promise<string>>> = string
+    let source = r#"
+type Awaited2<T> = T extends PromiseLike<infer U> ? Awaited2<U> : T;
+type A = Awaited2<Promise<Promise<string>>>;
+const _a: A = "nested";
+export {};
+"#;
+    assert_no_ts2322(source, "Awaited2<Promise<Promise<string>>> = string");
+}
+
+#[test]
+fn promiselike_infer_terminates_on_non_promise() {
+    // When T does not extend PromiseLike, the result is T itself.
+    let source = r#"
+type Awaited2<T> = T extends PromiseLike<infer U> ? Awaited2<U> : T;
+type N = Awaited2<number>;
+const _n: N = 42;
+type S = Awaited2<string>;
+const _s: S = "hello";
+export {};
+"#;
+    assert_no_ts2322(source, "Awaited2<non-promise> = identity");
+}
+
+#[test]
+fn promiselike_infer_with_renamed_type_param() {
+    // Verifies the fix is not tied to the name 'U' or 'T'.
+    let source = r#"
+type Unwrap<X> = X extends PromiseLike<infer Inner> ? Unwrap<Inner> : X;
+type A = Unwrap<Promise<number>>;
+const _a: A = 42;
+export {};
+"#;
+    assert_no_ts2322(source, "Unwrap with renamed params unwraps Promise<number>");
+}
+
+#[test]
+fn promiselike_infer_bound_to_complex_type() {
+    // The infer variable should bind to any type arg, including objects and unions.
+    let source = r#"
+type Extract<T> = T extends PromiseLike<infer U> ? U : never;
+type A = Extract<Promise<{ x: number; y: string }>>;
+const _a: A = { x: 1, y: "hello" };
+export {};
+"#;
+    assert_no_ts2322(source, "Extract PromiseLike<infer U> from Promise<object>");
+}
