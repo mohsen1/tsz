@@ -353,14 +353,9 @@ impl<'a> CheckerState<'a> {
                     }
                     return TypeId::NUMBER;
                 }
-
-                // TS18046: unary +/- on unknown is not allowed (strictNullChecks only)
                 if operand_type == TypeId::UNKNOWN && self.error_is_of_type_unknown(unary.operand) {
                     return TypeId::ERROR;
                 }
-
-                // TS18050: unary +/- on literal null/undefined keywords.
-                // tsc emits this regardless of strictNullChecks.
                 if self.is_literal_null_or_undefined_node(unary.operand) {
                     let cause = if let Some(node) = self.ctx.arena.get(unary.operand)
                         && node.kind == tsz_scanner::SyntaxKind::NullKeyword as u16
@@ -372,8 +367,6 @@ impl<'a> CheckerState<'a> {
                     self.emit_nullish_operand_error(unary.operand, cause);
                     return TypeId::NUMBER;
                 }
-
-                // TS2469: unary +/- on symbol types
                 {
                     let evaluator =
                         crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
@@ -398,10 +391,6 @@ impl<'a> CheckerState<'a> {
                         return TypeId::NUMBER;
                     }
                 }
-
-                // TS2736: unary + cannot be applied to bigint types.
-                // JavaScript throws at runtime for +bigint, so tsc rejects it.
-                // Unary - on bigint IS valid (-1n === -(1n)).
                 if k == SyntaxKind::PlusToken as u16
                     && operand_type != TypeId::ANY
                     && operand_type != TypeId::ERROR
@@ -410,9 +399,16 @@ impl<'a> CheckerState<'a> {
                 {
                     let display_type =
                         self.operator_surface_type_for_expression(unary.operand, operand_type);
-                    let type_str = self
-                        .operator_type_parameter_annotation_text_for_expression(unary.operand)
-                        .unwrap_or_else(|| self.format_type_for_operator_display(display_type));
+                    let type_str = if crate::query_boundaries::common::type_param_info(
+                        self.ctx.types,
+                        display_type,
+                    )
+                    .is_some()
+                    {
+                        self.format_type(display_type)
+                    } else {
+                        self.format_type_for_operator_display(display_type)
+                    };
                     let message = format_message(
                         diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
                         &["+", &type_str],

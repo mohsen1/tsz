@@ -5,6 +5,7 @@ TypeScript/tests/cases/compiler/builtinIterator.ts
 TypeScript/tests/cases/compiler/complexRecursiveCollections.ts
 TypeScript/tests/cases/compiler/computedPropertyBindingElementDeclarationNoCrash1.ts
 TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts
+TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
 TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts
 TypeScript/tests/cases/compiler/declarationEmitUsingTypeAlias2.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts

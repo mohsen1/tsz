@@ -92,6 +92,21 @@ function fn2<K, V>(k: K, v: V): boolean {
     assert_types_in_message(&msgs, "'K'", "'V'");
 }
 
+#[test]
+fn relational_bigint_capable_type_param_annotation_uses_type_name_not_raw_text() {
+    let source = r#"
+function fnBig<T extends bigint | boolean>(a: T, b: number): boolean {
+    return a < b;
+}
+"#;
+    let msgs = relational_messages(source);
+    assert!(
+        !msgs.is_empty(),
+        "expected at least one TS2365 for bigint-capable T < number"
+    );
+    assert_types_in_message(&msgs, "'T'", "'number'");
+}
+
 /// Short type alias (≤3 chars) as annotation: formatter resolves the alias to
 /// its expanded type. Regression guard: the old code sliced raw AST annotation
 /// bytes — after the parser node-span fix that would silently return the alias

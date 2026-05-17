@@ -3,7 +3,6 @@
 use super::fingerprint_policy::DiagnosticRenderRequest;
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
-use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -305,36 +304,101 @@ impl<'a> CheckerState<'a> {
             && let Some(sym_id) = self.resolve_identifier_symbol(idx)
         {
             let declared = self.get_type_of_symbol(sym_id);
-            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                && let Some(decl_idx) = symbol.primary_declaration()
-                && let Some(parameter_idx) = self.ctx.arena.get(decl_idx).and_then(|decl_node| {
-                    if decl_node.kind == syntax_kind_ext::PARAMETER {
-                        Some(decl_idx)
-                    } else {
-                        self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
+            let parameter_declaration = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
+                for decl_idx in symbol.all_declarations() {
+                    let mut current = decl_idx;
+                    for _ in 0..=16 {
+                        let Some(node) = self.ctx.arena.get(current) else {
+                            break;
+                        };
+                        if node.kind == syntax_kind_ext::PARAMETER
+                            && let Some(parameter) = self.ctx.arena.get_parameter(node)
+                            && parameter.type_annotation.is_some()
+                        {
+                            return Some((current, parameter.type_annotation));
+                        }
+                        let Some(parent) =
+                            self.ctx.arena.get_extended(current).map(|ext| ext.parent)
+                        else {
+                            break;
+                        };
+                        if parent.is_none() {
+                            break;
+                        }
+                        current = parent;
                     }
-                })
-                && let Some(decl_node) = self.ctx.arena.get(parameter_idx)
-                && let Some(parameter) = self.ctx.arena.get_parameter(decl_node)
-                && parameter.type_annotation.is_some()
-                && let Some(annotation_node) = self.ctx.arena.get(parameter.type_annotation)
-                && let Some(type_ref) = self.ctx.arena.get_type_ref(annotation_node)
-                && let TypeSymbolResolution::Type(annotation_sym_id) =
-                    self.resolve_identifier_symbol_in_type_position(type_ref.type_name)
-                && self
+                }
+                None
+            });
+            if let Some((parameter_idx, type_annotation)) = parameter_declaration
+                && let Some(annotation_node) = self.ctx.arena.get(type_annotation)
+                && let annotation_name = self
                     .ctx
-                    .binder
-                    .get_symbol(annotation_sym_id)
-                    .is_some_and(|symbol| {
-                        symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER)
+                    .arena
+                    .get_type_ref(annotation_node)
+                    .map_or(type_annotation, |type_ref| type_ref.type_name)
+                && let Some(type_name) = self
+                    .ctx
+                    .arena
+                    .get_identifier_at(annotation_name)
+                    .map(|identifier| identifier.escaped_text.as_str())
+                && let Some(function_data) = self
+                    .ctx
+                    .arena
+                    .get_extended(parameter_idx)
+                    .map(|ext| ext.parent)
+                    .filter(|parent| parent.is_some())
+                    .and_then(|mut current| {
+                        for _ in 0..=16 {
+                            let node = self.ctx.arena.get(current)?;
+                            if let Some(function_data) = self.ctx.arena.get_function(node) {
+                                return Some(function_data);
+                            }
+                            let parent = self.ctx.arena.get_extended(current)?.parent;
+                            if parent.is_none() {
+                                return None;
+                            }
+                            current = parent;
+                        }
+                        None
                     })
+                && let Some(type_parameters) = function_data.type_parameters.as_ref()
             {
-                let annotation_type = self.get_type_of_symbol(annotation_sym_id);
-                if crate::query_boundaries::common::type_param_info(self.ctx.types, annotation_type)
-                    .is_some()
-                    && self.operator_operand_may_include_bigint(annotation_type)
-                {
-                    return annotation_type;
+                for &type_parameter_idx in &type_parameters.nodes {
+                    let Some(type_parameter_node) = self.ctx.arena.get(type_parameter_idx) else {
+                        continue;
+                    };
+                    let Some(type_parameter) =
+                        self.ctx.arena.get_type_parameter(type_parameter_node)
+                    else {
+                        continue;
+                    };
+                    if self
+                        .ctx
+                        .arena
+                        .get_identifier_at(type_parameter.name)
+                        .is_none_or(|identifier| identifier.escaped_text != type_name)
+                    {
+                        continue;
+                    }
+                    let constraint = if type_parameter.constraint.is_some() {
+                        Some(self.get_type_from_type_node(type_parameter.constraint))
+                    } else {
+                        None
+                    };
+                    let surface = self
+                        .ctx
+                        .types
+                        .factory()
+                        .type_param(tsz_solver::TypeParamInfo {
+                            name: self.ctx.types.intern_string(type_name),
+                            constraint,
+                            default: None,
+                            is_const: false,
+                        });
+                    if self.operator_operand_may_include_bigint(surface) {
+                        return surface;
+                    }
                 }
             }
             if declared != TypeId::ERROR
@@ -345,57 +409,6 @@ impl<'a> CheckerState<'a> {
             }
         }
         fallback
-    }
-
-    pub(crate) fn operator_type_parameter_annotation_text_for_expression(
-        &self,
-        idx: NodeIndex,
-    ) -> Option<String> {
-        if self
-            .ctx
-            .arena
-            .get(idx)
-            .is_none_or(|node| node.kind != SyntaxKind::Identifier as u16)
-        {
-            return None;
-        }
-        let sym_id = self.resolve_identifier_symbol_without_tracking(idx)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        for decl_idx in symbol.all_declarations() {
-            let mut current = decl_idx;
-            for _ in 0..=2 {
-                let Some(node) = self.ctx.arena.get(current) else {
-                    break;
-                };
-                if node.kind == syntax_kind_ext::PARAMETER
-                    && let Some(parameter) = self.ctx.arena.get_parameter(node)
-                    && parameter.type_annotation.is_some()
-                    && let Some(annotation_node) = self.ctx.arena.get(parameter.type_annotation)
-                    && let Some(source) = self.ctx.arena.source_files.first()
-                    && let Some(text) = source
-                        .text
-                        .get(annotation_node.pos as usize..annotation_node.end as usize)
-                {
-                    let text = text.trim();
-                    if text.len() <= 3
-                        && text
-                            .chars()
-                            .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-                    {
-                        return Some(text.to_string());
-                    }
-                }
-                let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
-                else {
-                    break;
-                };
-                if parent.is_none() {
-                    break;
-                }
-                current = parent;
-            }
-        }
-        None
     }
 
     /// Emit errors for binary operator type mismatches.
@@ -624,12 +637,27 @@ impl<'a> CheckerState<'a> {
             // (e.g., Enum → number), losing the enum identity. tsc displays enum
             // names (e.g., 'E') in operator error messages, not the base type.
             (
-                self.widen_type_for_operator_display(left_surface),
-                self.widen_type_for_operator_display(right_surface),
+                if crate::query_boundaries::common::type_param_info(self.ctx.types, left_surface)
+                    .is_some()
+                {
+                    left_surface
+                } else {
+                    self.widen_type_for_operator_display(left_surface)
+                },
+                if crate::query_boundaries::common::type_param_info(self.ctx.types, right_surface)
+                    .is_some()
+                {
+                    right_surface
+                } else {
+                    self.widen_type_for_operator_display(right_surface)
+                },
             )
         };
         let mut format_operand = |diag| {
-            if is_number_bigint_mix || is_unsigned_shift_bigint_mix {
+            if is_number_bigint_mix
+                || is_unsigned_shift_bigint_mix
+                || crate::query_boundaries::common::type_param_info(self.ctx.types, diag).is_some()
+            {
                 self.format_type(diag)
             } else {
                 self.format_type_for_operator_display(diag)
