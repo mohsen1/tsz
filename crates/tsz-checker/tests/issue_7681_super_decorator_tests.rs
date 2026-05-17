@@ -13,7 +13,7 @@
 //! The conformance fixture still fails in CI under full TypeScript-lib
 //! resolution (a follow-up path beyond the structural skip rule pinned
 //! here), so it remains in `conformance-accepted-regressions.txt`; these
-//! unit tests guard the in_decorator skip rule in `find_enclosing_class`
+//! unit tests guard the `in_decorator` skip rule in `find_enclosing_class`
 //! independently of that follow-up.
 
 use tsz_checker::test_utils::{
