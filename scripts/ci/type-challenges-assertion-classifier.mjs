@@ -446,6 +446,55 @@ function deltaCounts(left, right, keyField = "key", countField = "count") {
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || a.key.localeCompare(b.key));
 }
 
+function intersectSorted(left, right) {
+  const rightSet = new Set(right);
+  return left.filter((file) => rightSet.has(file)).sort();
+}
+
+function compareCandidateFiles(tsc, tsz) {
+  const tscDiagnostics = tsc.candidateDiagnostics;
+  const tszDiagnostics = tsz.candidateDiagnostics;
+  if (
+    !tscDiagnostics ||
+    !tszDiagnostics ||
+    tscDiagnostics.candidatesWithDiagnostics === null ||
+    tszDiagnostics.candidatesWithDiagnostics === null
+  ) {
+    return null;
+  }
+
+  const bothAccepted = intersectSorted(
+    tscDiagnostics.filesWithoutDiagnostics,
+    tszDiagnostics.filesWithoutDiagnostics,
+  );
+  const bothRejected = intersectSorted(
+    tscDiagnostics.filesWithDiagnostics,
+    tszDiagnostics.filesWithDiagnostics,
+  );
+  const tscAcceptedTszRejected = intersectSorted(
+    tscDiagnostics.filesWithoutDiagnostics,
+    tszDiagnostics.filesWithDiagnostics,
+  );
+  const tscRejectedTszAccepted = intersectSorted(
+    tscDiagnostics.filesWithDiagnostics,
+    tszDiagnostics.filesWithoutDiagnostics,
+  );
+
+  return {
+    totalCandidates: tscDiagnostics.totalCandidates,
+    counts: {
+      bothAccepted: bothAccepted.length,
+      bothRejected: bothRejected.length,
+      tscAcceptedTszRejected: tscAcceptedTszRejected.length,
+      tscRejectedTszAccepted: tscRejectedTszAccepted.length,
+    },
+    bothAccepted,
+    bothRejected,
+    tscAcceptedTszRejected,
+    tscRejectedTszAccepted,
+  };
+}
+
 function compareCompilers(tsc, tsz) {
   if (!tsc.available || !tsz.available) {
     return {
@@ -454,6 +503,7 @@ function compareCompilers(tsc, tsz) {
       tszStatus: tsz.status,
       errorCountDelta: null,
       diagnosticFreeCandidateDelta: null,
+      candidateFileComparison: null,
       byCodeDelta: [],
       bySemanticFamilyDelta: [],
     };
@@ -482,6 +532,7 @@ function compareCompilers(tsc, tsz) {
         ? null
         : tsz.candidateDiagnostics.candidatesWithoutDiagnostics -
           tsc.candidateDiagnostics.candidatesWithoutDiagnostics,
+    candidateFileComparison: compareCandidateFiles(tsc, tsz),
     byCodeDelta: deltaCounts(tsc.diagnostics.byCode, tsz.diagnostics.byCode),
     bySemanticFamilyDelta: deltaCounts(
       tsc.diagnostics.bySemanticFamily,

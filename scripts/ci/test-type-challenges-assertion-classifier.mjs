@@ -208,6 +208,19 @@ withTempDir((dir) => {
     tszStatus: "pass",
     errorCountDelta: -2,
     diagnosticFreeCandidateDelta: 2,
+    candidateFileComparison: {
+      totalCandidates: 2,
+      counts: {
+        bothAccepted: 0,
+        bothRejected: 0,
+        tscAcceptedTszRejected: 0,
+        tscRejectedTszAccepted: 2,
+      },
+      bothAccepted: [],
+      bothRejected: [],
+      tscAcceptedTszRejected: [],
+      tscRejectedTszAccepted: ["assertions/one.ts", "assertions/two.ts"],
+    },
     byCodeDelta: [
       { key: "TS2304", tsc: 1, tsz: 0, delta: -1 },
       { key: "TS2344", tsc: 1, tsz: 0, delta: -1 },
@@ -264,6 +277,7 @@ withTempDir((dir) => {
     tszStatus: "unavailable",
     errorCountDelta: null,
     diagnosticFreeCandidateDelta: null,
+    candidateFileComparison: null,
     byCodeDelta: [],
     bySemanticFamilyDelta: [],
   });
@@ -321,6 +335,19 @@ withTempDir((dir) => {
     tszStatus: "fail",
     errorCountDelta: 2,
     diagnosticFreeCandidateDelta: 0,
+    candidateFileComparison: {
+      totalCandidates: 0,
+      counts: {
+        bothAccepted: 0,
+        bothRejected: 0,
+        tscAcceptedTszRejected: 0,
+        tscRejectedTszAccepted: 0,
+      },
+      bothAccepted: [],
+      bothRejected: [],
+      tscAcceptedTszRejected: [],
+      tscRejectedTszAccepted: [],
+    },
     byCodeDelta: [{ key: "TS2589", tsc: 0, tsz: 2, delta: 2 }],
     bySemanticFamilyDelta: [{ key: "unknown", tsc: 0, tsz: 2, delta: 2 }],
   });
