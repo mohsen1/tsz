@@ -88,6 +88,96 @@ impl<'a> CheckerState<'a> {
                             })
                     });
                 }
+                // AST-based outer mapped type walk (scope-independent).
+                //
+                // When the inner mapped type `[P in K]` has a simple-name constraint like
+                // `K`, walk the AST upward from the current mapped type to find the outer
+                // mapped type that defines `K` as its iteration variable. If that outer
+                // mapped type constrains `K` to `keyof T` for our object, the index is
+                // valid regardless of whether `K` is currently in type_parameter_scope.
+                //
+                // This handles nested mapped types in type-argument positions (e.g.
+                // `Pair<{ [P in K]: T[P] }, ...>` inside `{ [K in keyof T]: ... }`) where
+                // validate_type_args_against_params runs check_type_node on the inner
+                // mapped type before the outer MAPPED_TYPE handler pushes K into scope.
+                if let Some(constraint_ref_name) = self.simple_type_reference_name(tp.constraint) {
+                    let mut outer_cur = self.ctx.arena.parent_of(parent_idx);
+                    for _ in 0..8 {
+                        let Some(outer_idx) = outer_cur else { break };
+                        let Some(outer_node) = self.ctx.arena.get(outer_idx) else {
+                            break;
+                        };
+                        if outer_node.kind == syntax_kind_ext::MAPPED_TYPE {
+                            let Some(outer_mapped) = self.ctx.arena.get_mapped_type(outer_node)
+                            else {
+                                break;
+                            };
+                            let Some(outer_tp_node) =
+                                self.ctx.arena.get(outer_mapped.type_parameter)
+                            else {
+                                break;
+                            };
+                            let Some(outer_tp) = self.ctx.arena.get_type_parameter(outer_tp_node)
+                            else {
+                                break;
+                            };
+                            let Some(outer_name_node) = self.ctx.arena.get(outer_tp.name) else {
+                                break;
+                            };
+                            let Some(outer_ident) = self.ctx.arena.get_identifier(outer_name_node)
+                            else {
+                                break;
+                            };
+                            if outer_ident.escaped_text == constraint_ref_name
+                                && outer_tp.constraint != tsz_parser::parser::NodeIndex::NONE
+                            {
+                                let Some(outer_c_node) = self.ctx.arena.get(outer_tp.constraint)
+                                else {
+                                    break;
+                                };
+                                // Direct `keyof T` constraint on the outer mapped type.
+                                if let Some(outer_type_op) =
+                                    self.ctx.arena.get_type_operator(outer_c_node)
+                                    && outer_type_op.operator == SyntaxKind::KeyOfKeyword as u16
+                                {
+                                    if self.mapped_keyof_target_matches_object(
+                                        outer_type_op.type_node,
+                                        object_node_idx,
+                                        object_type,
+                                        object_type_for_check,
+                                    ) {
+                                        return true;
+                                    }
+                                }
+                                // Semantic fallback for expression/alias outer constraints.
+                                let outer_c_type =
+                                    self.get_type_from_type_node(outer_tp.constraint);
+                                if outer_c_type != tsz_solver::TypeId::ERROR
+                                    && outer_c_type != tsz_solver::TypeId::UNKNOWN
+                                {
+                                    let outer_c_eval = self.evaluate_type_with_env(outer_c_type);
+                                    let keyof_obj = self.ctx.types.factory().keyof(object_type);
+                                    if self.is_assignable_to(outer_c_eval, keyof_obj)
+                                        || self.is_keyof_for_current_object(
+                                            outer_c_eval,
+                                            object_type,
+                                            object_type_for_check,
+                                        )
+                                        || self.is_keyof_for_current_object(
+                                            outer_c_type,
+                                            object_type,
+                                            object_type_for_check,
+                                        )
+                                    {
+                                        return true;
+                                    }
+                                }
+                                break; // found the definition; did not satisfy check
+                            }
+                        }
+                        outer_cur = self.ctx.arena.parent_of(outer_idx);
+                    }
+                }
                 // Semantic fallback for alias/type-expression constraints
                 // (e.g. `optionalKeys<T>`, `Extract<keyof T, string>`).
                 if crate::query_boundaries::common::is_type_parameter_like(
@@ -111,6 +201,42 @@ impl<'a> CheckerState<'a> {
                         object_type_for_check,
                     ) {
                         return true;
+                    }
+                    // Follow the constraint chain transitively (P → K → keyof T).
+                    // When the mapped-key constraint is itself a type parameter whose own
+                    // constraint resolves to `keyof T`, the chain P→K→keyof T must be
+                    // recognised so that `{ [P in K]: T[P] }` inside a type-argument
+                    // position does not emit a false TS2536.
+                    let mut chain = constraint_type;
+                    for _ in 0..4 {
+                        let Some(next) = crate::query_boundaries::common::type_parameter_constraint(
+                            self.ctx.types,
+                            chain,
+                        ) else {
+                            break;
+                        };
+                        let next_eval = self.evaluate_type_with_env(next);
+                        if self.is_keyof_for_current_object(
+                            next_eval,
+                            object_type,
+                            object_type_for_check,
+                        ) || self.is_keyof_for_current_object(
+                            next,
+                            object_type,
+                            object_type_for_check,
+                        ) {
+                            return true;
+                        }
+                        if self.is_assignable_to(next_eval, keyof_object_param) {
+                            return true;
+                        }
+                        if !crate::query_boundaries::common::is_type_parameter_like(
+                            self.ctx.types,
+                            next_eval,
+                        ) {
+                            break;
+                        }
+                        chain = next_eval;
                     }
                 }
                 return false;

@@ -316,3 +316,85 @@ fn conditional_unrelated_true_branch_emits_ts2536() {
         "Fixed<T>[K] with unrelated true-branch must emit TS2536 (parity with tsc): {diags:?}"
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Nested mapped type in type-argument position (issue #6562)
+//
+// Structural rule: when `{ [P in K]: T[P] }` appears inside a type argument
+// where K is the iteration variable of an enclosing `[K in keyof T]` mapped
+// type, the chain P → K → keyof T must be recognised and TS2536 suppressed.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Simple two-argument wrapper — both mapped-body variants must be accepted.
+#[test]
+fn nested_mapped_in_type_arg_simple_wrapper_no_ts2536() {
+    let diags = check_es5(
+        r#"type Wrap<A, B> = [A, B];
+type Test<T> = {
+  [K in keyof T]-?: Wrap<
+    { [P in K]: T[P] },
+    { -readonly [Q in K]: T[Q] }
+  > extends any ? K : never;
+}[keyof T];"#,
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "{{[P in K]: T[P]}} in Wrap<> type arg must not emit TS2536: {diags:?}"
+    );
+}
+
+/// Higher-order conditional (Equal pattern) — the original issue #6562 repro.
+#[test]
+fn nested_mapped_in_higher_order_conditional_no_ts2536() {
+    let diags = check_es5(
+        r#"type IsIdentical<X, Y> = (<T>() => T extends X ? 1 : 2) extends (<T>() => T extends Y ? 1 : 2) ? true : false;
+type PickMutable<T> = {
+  [K in keyof T]-?: IsIdentical<
+    { [P in K]: T[P] },
+    { -readonly [P in K]: T[P] }
+  > extends true ? K : never;
+}[keyof T];"#,
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "{{[P in K]: T[P]}} in higher-order conditional must not emit TS2536: {diags:?}"
+    );
+}
+
+/// Renamed iteration variables (outer J, inner X and Y) — names must not matter.
+#[test]
+fn nested_mapped_renamed_vars_no_ts2536() {
+    let diags = check_es5(
+        r#"type Pair<A, B> = { fst: A; snd: B };
+type Test<T> = {
+  [J in keyof T]-?: Pair<
+    { [X in J]: T[X] },
+    { readonly [Y in J]?: T[Y] }
+  >;
+};"#,
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "Renamed outer/inner vars must not emit TS2536: {diags:?}"
+    );
+}
+
+/// Negative: inner mapped iterates over unrelated key space — TS2536 must fire.
+#[test]
+fn nested_mapped_unrelated_key_space_still_emits_ts2536() {
+    let diags = check_es5(
+        r#"interface A { x: number; }
+interface B { y: string; }
+type Wrap<A, B> = [A, B];
+type Test<T> = {
+  [K in keyof T]: Wrap<
+    { [P in keyof A]: B[P] },
+    K
+  >;
+};"#,
+    );
+    assert!(
+        !ts2536(&diags).is_empty(),
+        "B[P] where P extends keyof A but B ≠ A must still emit TS2536: {diags:?}"
+    );
+}
