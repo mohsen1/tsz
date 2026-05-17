@@ -456,31 +456,12 @@ impl<'a> CheckerState<'a> {
             let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
                 return true;
             };
-            if !self.ctx.binder.is_external_module()
-                || self.is_in_declare_namespace_or_module(idx)
-                || self.ctx.symbol_is_from_lib(sym_id)
-                || symbol.is_umd_export
-                || symbol.decl_file_idx == u32::MAX
-                || symbol.decl_file_idx == self.ctx.current_file_idx as u32
-                || symbol.has_any_flags(symbol_flags::VALUE)
-            {
+            if self.is_in_declare_namespace_or_module(idx) || self.ctx.symbol_is_from_lib(sym_id) {
                 return true;
             }
-            let Some(owner_binder) = self.ctx.get_binder_for_file(symbol.decl_file_idx as usize)
-            else {
-                return true;
-            };
-            let owner_is_declaration_file = self
+            !self
                 .ctx
-                .get_arena_for_file(symbol.decl_file_idx)
-                .source_files
-                .first()
-                .is_some_and(|sf| sf.is_declaration_file);
-            owner_is_declaration_file
-                || !owner_binder.is_external_module()
-                || owner_binder
-                    .global_augmentations
-                    .contains_key(symbol.escaped_name.as_str())
+                .is_private_cross_file_type(symbol, symbol.escaped_name.as_str())
         });
 
         trace!(
@@ -597,7 +578,7 @@ impl<'a> CheckerState<'a> {
                     //    diagnostic paths such as the class initializer
                     //    TS2663 detector rely on resolving these here so
                     //    they can emit a more specific diagnostic).
-                    let is_cross_module_private = !self.ctx.symbol_is_from_lib(sym_id)
+                    let is_cross_module_private_value = !self.ctx.symbol_is_from_lib(sym_id)
                         && !symbol.is_umd_export
                         && symbol.decl_file_idx != u32::MAX
                         && symbol.decl_file_idx != self.ctx.current_file_idx as u32
@@ -615,8 +596,9 @@ impl<'a> CheckerState<'a> {
                             .first()
                             .is_some_and(|sf| sf.is_declaration_file);
                     let is_private_external_module_type = identifier_is_type_position
-                        && !symbol.has_any_flags(symbol_flags::VALUE)
-                        && is_cross_module_private;
+                        && !self.is_in_declare_namespace_or_module(idx)
+                        && !self.ctx.symbol_is_from_lib(sym_id)
+                        && self.ctx.is_private_cross_file_type(symbol, name);
                     // Reject cross-module values that the consuming file
                     // never imports — exported or not. tsc emits TS2304
                     // for `leaked.toFixed()` in `b.ts` when `b.ts` does
@@ -629,7 +611,7 @@ impl<'a> CheckerState<'a> {
                     // hierarchy rather than this raw cross-file lookup.
                     let is_private_external_module_value = !identifier_is_type_position
                         && symbol.has_any_flags(symbol_flags::VALUE)
-                        && is_cross_module_private;
+                        && is_cross_module_private_value;
                     if is_private_external_module_type || is_private_external_module_value {
                         return false;
                     }
@@ -1141,31 +1123,9 @@ impl<'a> CheckerState<'a> {
             let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) else {
                 return false;
             };
-            if !self.ctx.binder.is_external_module()
-                || self.is_in_declare_namespace_or_module(idx)
-                || self.ctx.symbol_is_from_lib(sym_id)
-                || symbol.is_umd_export
-                || symbol.decl_file_idx == u32::MAX
-                || symbol.decl_file_idx == self.ctx.current_file_idx as u32
-                || symbol.has_any_flags(symbol_flags::VALUE)
-            {
-                return false;
-            }
-            let Some(owner_binder) = self.ctx.get_binder_for_file(symbol.decl_file_idx as usize)
-            else {
-                return false;
-            };
-            let owner_is_declaration_file = self
-                .ctx
-                .get_arena_for_file(symbol.decl_file_idx)
-                .source_files
-                .first()
-                .is_some_and(|sf| sf.is_declaration_file);
-            if owner_is_declaration_file {
-                return false;
-            }
-            owner_binder.is_external_module()
-                && !owner_binder.global_augmentations.contains_key(name)
+            !self.is_in_declare_namespace_or_module(idx)
+                && !self.ctx.symbol_is_from_lib(sym_id)
+                && self.ctx.is_private_cross_file_type(symbol, name)
         };
         if let Some(local_sym_id) =
             self.ctx

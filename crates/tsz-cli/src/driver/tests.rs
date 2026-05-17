@@ -1066,6 +1066,79 @@ fn test_compile_project_mapped_unimported_constraint_variant_names() {
     );
 }
 
+#[test]
+fn test_compile_project_script_keeps_unimported_external_module_type_alias_unresolved() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2015",
+    "declaration": true
+  },
+  "files": ["Helpers.ts", "consumer.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("Helpers.ts"),
+        "export type Hidden = string;\n",
+    )
+    .expect("write Helpers.ts");
+    fs::write(dir.path().join("consumer.ts"), "let x: Hidden;\n").expect("write consumer.ts");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_NAME && diag.message_text.contains("Hidden")
+        }),
+        "Expected TS2304 for script consumer of unimported external-module type alias, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_compile_project_dts_module_alias_requires_import() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "target": "es2015",
+    "declaration": true
+  },
+  "files": ["helpers.d.ts", "consumer.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("helpers.d.ts"),
+        "export type Hidden = string;\n",
+    )
+    .expect("write helpers.d.ts");
+    fs::write(dir.path().join("consumer.ts"), "export let x: Hidden;\n")
+        .expect("write consumer.ts");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    assert!(
+        result.diagnostics.iter().any(|diag| {
+            diag.code == diagnostic_codes::CANNOT_FIND_NAME && diag.message_text.contains("Hidden")
+        }),
+        "Expected TS2304 for unimported exported alias from .d.ts module, got: {:?}",
+        result.diagnostics
+    );
+}
+
 // Variant: when the constraint type IS imported, no TS2304 must be produced.
 #[test]
 fn test_compile_project_mapped_imported_constraint_no_ts2304() {

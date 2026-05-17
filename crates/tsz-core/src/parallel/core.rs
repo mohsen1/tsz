@@ -3905,10 +3905,13 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
                                 | crate::binder::symbol_flags::NAMESPACE_MODULE)
                             != 0
                     });
+                    let is_exported_declaration_type = is_declaration_file
+                        && sym_info.is_some_and(|s| s.is_exported)
+                        && !has_value
+                        && !is_module_decl;
                     let is_global_augmentation = result.global_augmentations.contains_key(name);
                     let is_truly_global = (!is_alias
-                        && (!result.is_external_module
-                            || is_declaration_file
+                        && ((!result.is_external_module && !is_exported_declaration_type)
                             || has_value
                             || is_module_decl))
                         || is_umd

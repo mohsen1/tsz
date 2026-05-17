@@ -21,20 +21,11 @@ impl CheckerContext<'_> {
         symbol: &tsz_binder::Symbol,
         name: &str,
     ) -> bool {
-        if !self.binder.is_external_module()
-            || symbol.is_umd_export
+        if symbol.is_umd_export
             || symbol.decl_file_idx == u32::MAX
             || symbol.decl_file_idx == self.current_file_idx as u32
             || symbol.has_any_flags(tsz_binder::symbol_flags::VALUE)
         {
-            return false;
-        }
-        let owner_is_decl = self
-            .get_arena_for_file(symbol.decl_file_idx)
-            .source_files
-            .first()
-            .is_some_and(|sf| sf.is_declaration_file);
-        if owner_is_decl {
             return false;
         }
         self.file_idx_is_external_module(symbol.decl_file_idx)
