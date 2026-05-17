@@ -47,6 +47,10 @@ pub struct AstToIr<'a> {
     /// Static block recovery mode where bare `await` identifiers are emitted
     /// as recovered `yield` tokens, matching `tsc` downlevel emit.
     emit_await_as_yield: bool,
+    /// Do not attach trailing comments that begin at or after this source
+    /// position. Used when converting statements inside a method/accessor body
+    /// so comments after the body closing brace stay on the descriptor.
+    trailing_comment_limit: Cell<Option<u32>>,
 }
 
 impl<'a> AstToIr<'a> {
@@ -67,6 +71,7 @@ impl<'a> AstToIr<'a> {
             dynamic_import_promise_counter: Cell::new(1),
             module_kind: ModuleKind::None,
             emit_await_as_yield: false,
+            trailing_comment_limit: Cell::new(None),
         }
     }
 
@@ -105,6 +110,11 @@ impl<'a> AstToIr<'a> {
 
     pub const fn with_await_as_yield(mut self, enabled: bool) -> Self {
         self.emit_await_as_yield = enabled;
+        self
+    }
+
+    pub fn with_trailing_comment_limit(self, limit: Option<u32>) -> Self {
+        self.trailing_comment_limit.set(limit);
         self
     }
 
@@ -241,7 +251,16 @@ impl<'a> AstToIr<'a> {
         let Some(source_text) = self.source_text else {
             return statement;
         };
+        if let Some(comment_text) = self.included_trailing_line_comment(node, source_text) {
+            return IRNode::Sequence(vec![
+                statement,
+                IRNode::TrailingComment(comment_text.into()),
+            ]);
+        }
         for comment in crate::emitter::get_trailing_comment_ranges(source_text, node.end as usize) {
+            if !self.comment_starts_before_limit(comment.pos) {
+                continue;
+            }
             let gap_start = (node.end as usize).min(source_text.len());
             let gap_end = (comment.pos as usize).min(source_text.len());
             if gap_start > gap_end
@@ -267,6 +286,10 @@ impl<'a> AstToIr<'a> {
             .map_or(source_text.len(), |offset| line_start + offset);
         let line = &source_text[line_start..line_end];
         if let Some(comment_start) = Self::attached_line_comment_start(node.kind, line) {
+            let comment_pos = line_start + comment_start;
+            if !self.comment_starts_before_limit(comment_pos as u32) {
+                return statement;
+            }
             let comment_text = &line[comment_start..];
             return IRNode::Sequence(vec![
                 statement,
@@ -274,6 +297,55 @@ impl<'a> AstToIr<'a> {
             ]);
         }
         statement
+    }
+
+    fn included_trailing_line_comment(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+        source_text: &str,
+    ) -> Option<String> {
+        let node_start = (node.pos as usize).min(source_text.len());
+        let node_end = self
+            .trailing_comment_limit
+            .get()
+            .map_or(node.end as usize, |limit| {
+                (limit as usize).min(node.end as usize)
+            })
+            .min(source_text.len());
+        if node_start >= node_end {
+            return None;
+        }
+
+        let mut scan_end = node_end;
+        while scan_end > node_start {
+            let Some(ch) = source_text[..scan_end].chars().next_back() else {
+                break;
+            };
+            if !ch.is_whitespace() {
+                break;
+            }
+            scan_end -= ch.len_utf8();
+        }
+        if node_start >= scan_end {
+            return None;
+        }
+
+        let line_start = source_text[..scan_end]
+            .rfind(['\n', '\r'])
+            .map_or(node_start, |offset| (offset + 1).max(node_start));
+        let line = &source_text[line_start..scan_end];
+        let comment_start = Self::line_comment_start(line)?;
+        let comment_pos = line_start + comment_start;
+        if comment_pos < node_start || !self.comment_starts_before_limit(comment_pos as u32) {
+            return None;
+        }
+        Some(line[comment_start..].trim_end().to_string())
+    }
+
+    fn comment_starts_before_limit(&self, comment_pos: u32) -> bool {
+        self.trailing_comment_limit
+            .get()
+            .is_none_or(|limit| comment_pos < limit)
     }
 
     fn attached_line_comment_start(node_kind: u16, line_suffix: &str) -> Option<usize> {
@@ -2200,21 +2272,34 @@ impl<'a> AstToIr<'a> {
 #[cfg(test)]
 mod tests {
     use super::AstToIr;
+    use tsz_parser::parser::syntax_kind_ext;
 
     #[test]
     fn attached_line_comment_start_allows_statement_trailing_comments() {
-        assert_eq!(AstToIr::attached_line_comment_start(" // ok"), Some(1));
-        assert_eq!(AstToIr::attached_line_comment_start("; // ok"), Some(2));
+        assert_eq!(
+            AstToIr::attached_line_comment_start(syntax_kind_ext::VARIABLE_STATEMENT, " // ok"),
+            Some(1)
+        );
+        assert_eq!(
+            AstToIr::attached_line_comment_start(syntax_kind_ext::VARIABLE_STATEMENT, "; // ok"),
+            Some(2)
+        );
     }
 
     #[test]
     fn attached_line_comment_start_rejects_comments_after_parent_delimiters() {
         assert_eq!(
-            AstToIr::attached_line_comment_start(" } // not inner"),
+            AstToIr::attached_line_comment_start(
+                syntax_kind_ext::VARIABLE_STATEMENT,
+                " } // not inner",
+            ),
             None
         );
         assert_eq!(
-            AstToIr::attached_line_comment_start(" }) // not inner"),
+            AstToIr::attached_line_comment_start(
+                syntax_kind_ext::VARIABLE_STATEMENT,
+                " }) // not inner",
+            ),
             None
         );
     }
