@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { REQUIRED_PROJECT_ROWS } from "./project-rows.mjs";
+import { COMPILE_CANARY_PROJECT_ROWS, REQUIRED_PROJECT_ROWS } from "./project-rows.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -106,6 +106,23 @@ withTempDir((dir) => {
   const result = runMerge(dir, rows);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /rxjs-project: missing compatibility\.peak_memory_bytes/);
+});
+
+withTempDir((dir) => {
+  const result = runMerge(dir, [projectRow(COMPILE_CANARY_PROJECT_ROWS[0])]);
+  assert.equal(result.status, 0, result.stderr);
+  const merged = JSON.parse(fs.readFileSync(result.output, "utf8"));
+  assert.equal(merged.validation.project_compatibility_required_fields, true);
+});
+
+withTempDir((dir) => {
+  const { diagnostic_subsystems: _diagnosticSubsystems, ...compatibility } = REQUIRED_COMPATIBILITY_FIELDS;
+  const result = runMerge(dir, [projectRow(COMPILE_CANARY_PROJECT_ROWS[0], compatibility)]);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    new RegExp(`${COMPILE_CANARY_PROJECT_ROWS[0]}: missing compatibility\\.diagnostic_subsystems`),
+  );
 });
 
 withTempDir((dir) => {
