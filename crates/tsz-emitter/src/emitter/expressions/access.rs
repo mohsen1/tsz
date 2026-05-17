@@ -145,6 +145,10 @@ impl<'a> Printer<'a> {
         if self.in_system_execute_body
             && let Some(expr_node) = self.arena.get(access.expression)
             && expr_node.kind == tsz_scanner::SyntaxKind::ImportKeyword as u16
+            && self
+                .get_identifier_text_opt(access.name_or_argument)
+                .as_deref()
+                == Some("meta")
         {
             self.write("context_1");
             self.write_dot_token(access.expression);
