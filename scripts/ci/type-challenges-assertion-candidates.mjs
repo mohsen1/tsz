@@ -91,6 +91,50 @@ function ensurePairingReportShape(report) {
   }
 }
 
+function requiredString(value, label) {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+
+  console.error(`error: Type Challenges pairing report has missing ${label}`);
+  process.exit(1);
+}
+
+function ensureRelativePath(value, label) {
+  const text = requiredString(value, label);
+  const segments = text.split(/[\\/]+/);
+  if (!path.isAbsolute(text) && !segments.includes("..")) {
+    return text;
+  }
+
+  console.error(
+    `error: Type Challenges pairing report ${label} must be a relative path: ${text}`,
+  );
+  process.exit(1);
+}
+
+function solutionDeclarations(pair, index) {
+  const declarations = pair?.solution?.declarations;
+  if (!Array.isArray(declarations)) {
+    console.error(
+      `error: Type Challenges pairing report pair ${index} has no solution declarations array`,
+    );
+    process.exit(1);
+  }
+
+  const names = declarations.filter(
+    (name) => typeof name === "string" && name.length > 0,
+  );
+  if (names.length === declarations.length && names.length > 0) {
+    return names;
+  }
+
+  console.error(
+    `error: Type Challenges pairing report pair ${index} has no solution declarations`,
+  );
+  process.exit(1);
+}
+
 function candidateFileName(pair) {
   const sourceBase = path
     .basename(pair.solution.source ?? pair.solution.output, path.extname(pair.solution.source ?? ""))
@@ -100,9 +144,73 @@ function candidateFileName(pair) {
   return `${id}-${base}.ts`;
 }
 
+function validatePairs(pairs) {
+  const ids = new Set();
+  const outputs = new Set();
+
+  return pairs.map((pair, index) => {
+    const id = requiredString(pair?.id, `pairedSolutions[${index}].id`);
+    if (ids.has(id)) {
+      console.error(`error: duplicate Type Challenges paired solution id ${id}`);
+      process.exit(1);
+    }
+    ids.add(id);
+
+    const normalized = {
+      ...pair,
+      id,
+      solution: {
+        ...pair?.solution,
+        output: ensureRelativePath(
+          pair?.solution?.output,
+          `pairedSolutions[${index}].solution.output`,
+        ),
+        source: ensureRelativePath(
+          pair?.solution?.source,
+          `pairedSolutions[${index}].solution.source`,
+        ),
+        declarations: solutionDeclarations(pair, index),
+      },
+      template: {
+        ...pair?.template,
+        output: ensureRelativePath(
+          pair?.template?.output,
+          `pairedSolutions[${index}].template.output`,
+        ),
+        source: ensureRelativePath(
+          pair?.template?.source,
+          `pairedSolutions[${index}].template.source`,
+        ),
+      },
+      testCase: {
+        ...pair?.testCase,
+        output: ensureRelativePath(
+          pair?.testCase?.output,
+          `pairedSolutions[${index}].testCase.output`,
+        ),
+        source: ensureRelativePath(
+          pair?.testCase?.source,
+          `pairedSolutions[${index}].testCase.source`,
+        ),
+      },
+    };
+
+    const output = path.join("assertions", candidateFileName(normalized));
+    if (outputs.has(output)) {
+      console.error(
+        `error: duplicate Type Challenges assertion candidate output ${output}`,
+      );
+      process.exit(1);
+    }
+    outputs.add(output);
+
+    return normalized;
+  });
+}
+
 const report = readJson(pairingReportPath);
 ensurePairingReportShape(report);
-const pairs = report.pairedSolutions ?? [];
+const pairs = validatePairs(report.pairedSolutions ?? []);
 fs.rmSync(outputDir, { recursive: true, force: true });
 fs.mkdirSync(path.join(outputDir, "assertions"), { recursive: true });
 fs.mkdirSync(path.join(outputDir, "utils"), { recursive: true });

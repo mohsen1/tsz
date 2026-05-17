@@ -54,7 +54,10 @@ function basePairingReport(overrides = {}) {
           source: "en/easy-first.md",
           declarations: ["First"],
         },
-        template: { output: "questions/00014-easy-first/template.ts" },
+        template: {
+          output: "questions/00014-easy-first/template.ts",
+          source: "questions/00014-easy-first/template.ts",
+        },
         testCase: {
           output: "questions/00014-easy-first/test-cases.ts",
           source: "questions/00014-easy-first/test-cases.ts",
@@ -67,7 +70,10 @@ function basePairingReport(overrides = {}) {
           source: "en/easy-awaited.md",
           declarations: ["Awaited"],
         },
-        template: { output: "questions/00189-easy-awaited/template.ts" },
+        template: {
+          output: "questions/00189-easy-awaited/template.ts",
+          source: "questions/00189-easy-awaited/template.ts",
+        },
         testCase: {
           output: "questions/00189-easy-awaited/test-cases.ts",
           source: "questions/00189-easy-awaited/test-cases.ts",
@@ -235,5 +241,147 @@ withTempDir((dir) => {
   );
   assert.equal(result.status, 1);
   assert.match(result.stderr, /missing templates source metadata/);
+  assert.equal(fs.existsSync(manifestPath), false);
+});
+
+withTempDir((dir) => {
+  const pairingPath = path.join(dir, "pairing.json");
+  const outputDir = path.join(dir, "assertions");
+  const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
+  writeJson(
+    pairingPath,
+    basePairingReport({
+      pairedSolutions: [
+        {
+          id: "14",
+          solution: {
+            output: "solutions/easy-first.ts",
+            source: "en/easy-first.md",
+            declarations: [],
+          },
+          template: {
+            output: "questions/00014-easy-first/template.ts",
+            source: "questions/00014-easy-first/template.ts",
+          },
+          testCase: {
+            output: "questions/00014-easy-first/test-cases.ts",
+            source: "questions/00014-easy-first/test-cases.ts",
+          },
+        },
+      ],
+      counts: { pairedSolutions: 1 },
+    }),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, pairingPath, dir, dir, outputDir, manifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /pair 0 has no solution declarations/);
+  assert.equal(fs.existsSync(manifestPath), false);
+});
+
+withTempDir((dir) => {
+  const pairingPath = path.join(dir, "pairing.json");
+  const outputDir = path.join(dir, "assertions");
+  const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
+  writeJson(
+    pairingPath,
+    basePairingReport({
+      pairedSolutions: [
+        {
+          id: "14",
+          solution: {
+            output: "../solutions/easy-first.ts",
+            source: "en/easy-first.md",
+            declarations: ["First"],
+          },
+          template: {
+            output: "questions/00014-easy-first/template.ts",
+            source: "questions/00014-easy-first/template.ts",
+          },
+          testCase: {
+            output: "questions/00014-easy-first/test-cases.ts",
+            source: "questions/00014-easy-first/test-cases.ts",
+          },
+        },
+      ],
+      counts: { pairedSolutions: 1 },
+    }),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, pairingPath, dir, dir, outputDir, manifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /solution\.output must be a relative path/);
+  assert.equal(fs.existsSync(manifestPath), false);
+});
+
+withTempDir((dir) => {
+  const pairingPath = path.join(dir, "pairing.json");
+  const outputDir = path.join(dir, "assertions");
+  const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
+  writeJson(
+    pairingPath,
+    basePairingReport({
+      pairedSolutions: [
+        {
+          id: "14",
+          solution: {
+            output: "solutions/easy-first.ts",
+            source: "en/easy-first.md",
+            declarations: ["First"],
+          },
+          template: {
+            output: "questions/00014-easy-first/template.ts",
+            source: "questions/00014-easy-first/template.ts",
+          },
+          testCase: {
+            output: "questions/00014-easy-first/test-cases.ts",
+            source: "questions/00014-easy-first/test-cases.ts",
+          },
+        },
+        {
+          id: "14!",
+          solution: {
+            output: "solutions/easy-first-alias.ts",
+            source: "en/easy-first.md",
+            declarations: ["FirstAlias"],
+          },
+          template: {
+            output: "questions/00014-easy-first/template.ts",
+            source: "questions/00014-easy-first/template.ts",
+          },
+          testCase: {
+            output: "questions/00014-easy-first/test-cases.ts",
+            source: "questions/00014-easy-first/test-cases.ts",
+          },
+        },
+      ],
+      counts: { pairedSolutions: 2 },
+    }),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, pairingPath, dir, dir, outputDir, manifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /duplicate Type Challenges assertion candidate output/);
   assert.equal(fs.existsSync(manifestPath), false);
 });
