@@ -135,6 +135,22 @@ function solutionDeclarations(pair, index) {
   process.exit(1);
 }
 
+function ensureChallengeId(entry, expectedId, label) {
+  const actualId = entry?.challenge?.id;
+  if (String(actualId) === expectedId) {
+    return entry.challenge;
+  }
+
+  console.error(
+    [
+      `error: Type Challenges pairing report ${label} challenge id mismatch`,
+      `expected: ${expectedId}`,
+      `actual: ${actualId == null ? "<missing>" : String(actualId)}`,
+    ].join("\n"),
+  );
+  process.exit(1);
+}
+
 function candidateFileName(pair) {
   const sourceBase = path
     .basename(pair.solution.source ?? pair.solution.output, path.extname(pair.solution.source ?? ""))
@@ -161,6 +177,11 @@ function validatePairs(pairs) {
       id,
       solution: {
         ...pair?.solution,
+        challenge: ensureChallengeId(
+          pair?.solution,
+          id,
+          `pairedSolutions[${index}].solution`,
+        ),
         output: ensureRelativePath(
           pair?.solution?.output,
           `pairedSolutions[${index}].solution.output`,
@@ -173,6 +194,11 @@ function validatePairs(pairs) {
       },
       template: {
         ...pair?.template,
+        challenge: ensureChallengeId(
+          pair?.template,
+          id,
+          `pairedSolutions[${index}].template`,
+        ),
         output: ensureRelativePath(
           pair?.template?.output,
           `pairedSolutions[${index}].template.output`,
@@ -184,6 +210,11 @@ function validatePairs(pairs) {
       },
       testCase: {
         ...pair?.testCase,
+        challenge: ensureChallengeId(
+          pair?.testCase,
+          id,
+          `pairedSolutions[${index}].testCase`,
+        ),
         output: ensureRelativePath(
           pair?.testCase?.output,
           `pairedSolutions[${index}].testCase.output`,
