@@ -35,6 +35,49 @@ function writeJson(file, value) {
   writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+function basePairingReport(overrides = {}) {
+  return {
+    fixture: "type-challenges-readiness-pairing",
+    sources: {
+      templates: { repository: "type", ref: "type-ref" },
+      testCases: { repository: "type", ref: "type-ref" },
+      solutions: { repository: "solutions", ref: "solutions-ref" },
+    },
+    counts: {
+      pairedSolutions: 2,
+    },
+    pairedSolutions: [
+      {
+        id: "14",
+        solution: {
+          output: "solutions/easy-first.ts",
+          source: "en/easy-first.md",
+          declarations: ["First"],
+        },
+        template: { output: "questions/00014-easy-first/template.ts" },
+        testCase: {
+          output: "questions/00014-easy-first/test-cases.ts",
+          source: "questions/00014-easy-first/test-cases.ts",
+        },
+      },
+      {
+        id: "189",
+        solution: {
+          output: "solutions/easy-awaited.ts",
+          source: "en/easy-awaited.md",
+          declarations: ["Awaited"],
+        },
+        template: { output: "questions/00189-easy-awaited/template.ts" },
+        testCase: {
+          output: "questions/00189-easy-awaited/test-cases.ts",
+          source: "questions/00189-easy-awaited/test-cases.ts",
+        },
+      },
+    ],
+    ...overrides,
+  };
+}
+
 withTempDir((dir) => {
   const typeCompile = path.join(dir, "type-challenges", ".tsz-compile");
   const solutionsCompile = path.join(
@@ -79,42 +122,7 @@ withTempDir((dir) => {
     "import type { Equal, Expect } from '@type-challenges/utils'\ntype cases = [Expect<Equal<MyAwaited<Promise<string>>, string>>]\n",
   );
 
-  writeJson(pairingPath, {
-    fixture: "type-challenges-readiness-pairing",
-    sources: {
-      templates: { repository: "type", ref: "type-ref" },
-      testCases: { repository: "type", ref: "type-ref" },
-      solutions: { repository: "solutions", ref: "solutions-ref" },
-    },
-    pairedSolutions: [
-      {
-        id: "14",
-        solution: {
-          output: "solutions/easy-first.ts",
-          source: "en/easy-first.md",
-          declarations: ["First"],
-        },
-        template: { output: "questions/00014-easy-first/template.ts" },
-        testCase: {
-          output: "questions/00014-easy-first/test-cases.ts",
-          source: "questions/00014-easy-first/test-cases.ts",
-        },
-      },
-      {
-        id: "189",
-        solution: {
-          output: "solutions/easy-awaited.ts",
-          source: "en/easy-awaited.md",
-          declarations: ["Awaited"],
-        },
-        template: { output: "questions/00189-easy-awaited/template.ts" },
-        testCase: {
-          output: "questions/00189-easy-awaited/test-cases.ts",
-          source: "questions/00189-easy-awaited/test-cases.ts",
-        },
-      },
-    ],
-  });
+  writeJson(pairingPath, basePairingReport());
 
   const result = spawnSync(
     process.execPath,
@@ -155,4 +163,77 @@ withTempDir((dir) => {
   assert.match(firstCandidate, /Expect<Equal<First<\[1, 2\]>, 1>>/);
   assert.ok(fs.existsSync(path.join(outputDir, "tsconfig.tsz-guard.json")));
   assert.ok(fs.existsSync(path.join(outputDir, "utils", "index.d.ts")));
+});
+
+withTempDir((dir) => {
+  const pairingPath = path.join(dir, "pairing.json");
+  const outputDir = path.join(dir, "assertions");
+  const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
+  writeJson(pairingPath, basePairingReport({ fixture: "stale-pairing" }));
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, pairingPath, dir, dir, outputDir, manifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unexpected Type Challenges pairing report fixture/);
+  assert.equal(fs.existsSync(manifestPath), false);
+});
+
+withTempDir((dir) => {
+  const pairingPath = path.join(dir, "pairing.json");
+  const outputDir = path.join(dir, "assertions");
+  const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
+  writeJson(
+    pairingPath,
+    basePairingReport({
+      counts: {
+        pairedSolutions: 1,
+      },
+    }),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, pairingPath, dir, dir, outputDir, manifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /pairing report count metadata is inconsistent/);
+  assert.equal(fs.existsSync(manifestPath), false);
+});
+
+withTempDir((dir) => {
+  const pairingPath = path.join(dir, "pairing.json");
+  const outputDir = path.join(dir, "assertions");
+  const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
+  writeJson(
+    pairingPath,
+    basePairingReport({
+      sources: {
+        templates: { repository: "type", ref: "" },
+        testCases: { repository: "type", ref: "type-ref" },
+        solutions: { repository: "solutions", ref: "solutions-ref" },
+      },
+    }),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, pairingPath, dir, dir, outputDir, manifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /missing templates source metadata/);
+  assert.equal(fs.existsSync(manifestPath), false);
 });
