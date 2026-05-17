@@ -10,6 +10,8 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const SCRIPT = path.join(ROOT, "scripts", "bench", "tsgo-winner-report.mjs");
 const BENCH_WORKFLOW = path.join(ROOT, ".github", "workflows", "bench.yml");
+const GH_PAGES_WORKFLOW = path.join(ROOT, ".github", "workflows", "gh-pages.yml");
+const WEBSITE_ELEVENTY = path.join(ROOT, "crates", "tsz-website", ".eleventy.js");
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-tsgo-winner-report-"));
@@ -173,4 +175,28 @@ assert.match(
   benchWorkflow,
   /row\.semantic_owner_family \|\| "n\/a"/,
   "severe benchmark alert should include semantic owner family from the winner report",
+);
+
+const ghPagesWorkflow = fs.readFileSync(GH_PAGES_WORKFLOW, "utf8");
+assert.match(
+  ghPagesWorkflow,
+  /mv artifacts\/bench-results-tsgo-winners\.json artifacts\/bench-vs-tsgo-github-latest\.tsgo-winners\.json/,
+  "GitHub Pages workflow should preserve the downloaded green tsgo winner report",
+);
+assert.match(
+  ghPagesWorkflow,
+  /rm -f artifacts\/bench-results\.json artifacts\/bench-results-tsgo-winners\.json/,
+  "GitHub Pages workflow should drop stale winner reports when benchmark data is stale or empty",
+);
+
+const eleventyConfig = fs.readFileSync(WEBSITE_ELEVENTY, "utf8");
+assert.match(
+  eleventyConfig,
+  /latestBenchmarkArtifact\?\.replace\(\s*\/\\\.json\$\/,\s*"\.tsgo-winners\.json",\s*\)/,
+  "website should derive the green tsgo winner artifact path from the selected benchmark data",
+);
+assert.match(
+  eleventyConfig,
+  /"benchmark-data\/latest\.tsgo-winners\.json"/,
+  "website should publish the green tsgo winner report beside benchmark-data/latest.json",
 );

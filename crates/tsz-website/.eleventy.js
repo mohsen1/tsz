@@ -34,6 +34,15 @@ export default function (eleventyConfig) {
       [latestBenchmarkArtifact]: "benchmark-data/latest.json",
     });
   }
+  const latestWinnerArtifact = latestBenchmarkArtifact?.replace(
+    /\.json$/,
+    ".tsgo-winners.json",
+  );
+  if (latestWinnerArtifact && fs.existsSync(latestWinnerArtifact)) {
+    eleventyConfig.addPassthroughCopy({
+      [latestWinnerArtifact]: "benchmark-data/latest.tsgo-winners.json",
+    });
+  }
 
   eleventyConfig.setServerOptions({
     watch: ["static/playground-app.js", "static/playground-app.js.map"],
