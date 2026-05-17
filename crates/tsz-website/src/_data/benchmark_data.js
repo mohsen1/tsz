@@ -14,6 +14,53 @@ function fmt(n) {
   return Number(n).toLocaleString("en-US");
 }
 
+function formatUtcTimestamp(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function formatMemory(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return `${(value / (1024 ** 3)).toFixed(1)} GiB RAM`;
+}
+
+function runnerEnvironmentSummary(data) {
+  const parts = [];
+  const generatedAt = formatUtcTimestamp(data?.generated_at);
+  if (generatedAt) parts.push(`Generated ${generatedAt}`);
+
+  const env = data?.runner_environment;
+  if (!env || typeof env !== "object") {
+    parts.push("runner hardware metadata unavailable for this artifact");
+    return parts.join(" · ");
+  }
+
+  const platform = [env.platform, env.arch].filter(Boolean).join("/");
+  if (platform) parts.push(platform);
+  if (env.cpu_count) {
+    const cpuModel = env.cpu_model ? ` ${env.cpu_model}` : "";
+    parts.push(`${env.cpu_count} CPU${env.cpu_count === 1 ? "" : "s"}${cpuModel}`);
+  }
+  const memory = formatMemory(env.total_memory_bytes);
+  if (memory) parts.push(memory);
+  if (env.github_actions?.runner_os || env.github_actions?.runner_arch) {
+    const runner = [
+      env.github_actions.runner_os,
+      env.github_actions.runner_arch,
+    ].filter(Boolean).join("/");
+    parts.push(`GitHub Actions ${runner}`);
+  } else if (env.ci) {
+    parts.push("CI runner");
+  }
+  if (env.cloud_build?.machine_type) {
+    parts.push(`Cloud Build ${env.cloud_build.machine_type}`);
+  }
+
+  return parts.join(" · ");
+}
+
 function formatDurationMs(value, fractionDigits = 0) {
   const ms = Number(value);
   if (!Number.isFinite(ms)) return "";
@@ -504,12 +551,13 @@ function loadBenchmarks() {
   const ciLatest = [
     "bench-vs-tsgo-github-latest.json",
     "bench-vs-tsgo-gcs-latest.json",
+    "bench-results.json",
   ].map((file) => path.join(artifactsDir, file));
   const artifactFiles = (() => {
     try {
       const localArtifacts = fs.readdirSync(artifactsDir)
         .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
-        .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json"].includes(file))
+        .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json", "bench-results.json"].includes(file))
         .sort()
         .reverse()
         .map((file) => path.join(artifactsDir, file));
@@ -1795,6 +1843,12 @@ export function getBenchmarkCharts() {
 
 export function getBenchmarkMicroCharts() {
   return generateCharts(loadBenchmarks(), "micro");
+}
+
+export function getBenchmarkEnvironmentSummary() {
+  const summary = runnerEnvironmentSummary(loadBenchmarks());
+  if (!summary) return "";
+  return `<p class="bench-runner-meta">${escapeHtml(summary)}</p>`;
 }
 
 export function getProjectCompatibilityDashboard() {

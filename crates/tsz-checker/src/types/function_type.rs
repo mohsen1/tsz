@@ -222,6 +222,7 @@ impl<'a> CheckerState<'a> {
         let mut param_types: Vec<Option<TypeId>> = Vec::new();
         let mut destructuring_context_param_types: Vec<Option<TypeId>> = Vec::new();
         let mut this_type = None;
+        let mut pushed_this_type = false;
         let this_atom = self.ctx.types.intern_string("this");
         let closure_already_checked =
             is_closure && self.ctx.implicit_any_checked_closures.contains(&idx);
@@ -1087,6 +1088,13 @@ impl<'a> CheckerState<'a> {
                 if is_this_param {
                     if this_type.is_none() {
                         this_type = Some(type_id);
+                        // Push early so subsequent parameter defaults (e.g. `a = this.method()`)
+                        // see the correct `this` type when `enclosing_class` isn't set.
+                        if !is_arrow_function && param.type_annotation.is_some() {
+                            self.ctx.this_type_stack.push(type_id);
+                            self.ctx.function_owned_this_stack.push(idx);
+                            pushed_this_type = true;
+                        }
                     }
                     param_types.push(None);
                     destructuring_context_param_types.push(None);
@@ -1533,14 +1541,11 @@ impl<'a> CheckerState<'a> {
 
         let implicit_this = implicit_this.map(|tt| self.resolve_lazy_type(tt));
 
-        let mut pushed_this_type_early = false;
-        if let Some(tt) = implicit_this {
+        // Push `this` unless we already did so early from an explicit `this:` annotation.
+        if !pushed_this_type && let Some(tt) = implicit_this {
             self.ctx.this_type_stack.push(tt);
             self.ctx.function_owned_this_stack.push(idx);
-            pushed_this_type_early = true;
-            // Track closures with contextual this types.
-            // Any non-None implicit_this for a closure comes from a contextual source
-            // (parameter type with this, JS constructor, prototype owner, or prototype assignment).
+            pushed_this_type = true;
             if is_closure {
                 self.ctx.closures_with_contextual_this_type.insert(idx);
             }
@@ -1603,8 +1608,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     (false, false, NodeIndex::NONE)
                 };
-            // this_type was already pushed early (before parameter initializer checks)
-
             // Push contextual yield type EARLY (before infer_return_type_from_body)
             // so yield expressions get contextual typing during inference.
             // Also extract return and next types from contextual Generator<Y, R, N>.
@@ -2587,7 +2590,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Pop this_type that was pushed before parameter initializer checks
-        if pushed_this_type_early {
+        if pushed_this_type {
             self.ctx.this_type_stack.pop();
             self.ctx.function_owned_this_stack.pop();
         }

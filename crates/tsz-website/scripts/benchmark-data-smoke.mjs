@@ -5,6 +5,7 @@ import path from "node:path";
 
 const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "tsz-benchmark-data-"));
 const artifact = path.join(tmpDir, "bench-vs-tsgo-test.json");
+const failedOnlyArtifact = path.join(tmpDir, "bench-vs-tsgo-failed-only.json");
 
 const fixtureSource = `type Variant =
   | { kind: "a"; value: string }
@@ -53,6 +54,31 @@ await fs.writeFile(artifact, `${JSON.stringify({
   ],
 }, null, 2)}\n`, "utf8");
 
+await fs.writeFile(failedOnlyArtifact, `${JSON.stringify({
+  generated_at: "2026-05-16T00:00:00.000Z",
+  benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
+  validation: {
+    hyperfine_exit_codes_required: true,
+  },
+  results: [
+    {
+      name: "rxjs-project",
+      lines: 12000,
+      kb: 900,
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+      status: "diagnostic mismatch",
+      compatibility: {
+        exit_class: "diagnostic mismatch",
+        phase: "check",
+        diagnostic_status: "diagnostic mismatch",
+        diagnostic_deltas: ["TS2322 example"],
+      },
+    },
+  ],
+}, null, 2)}\n`, "utf8");
+
 process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = artifact;
 
 try {
@@ -90,6 +116,12 @@ try {
   assert.match(charts, /Compile canaries and incomplete project timings/);
   assert.match(charts, /type-challenges project/);
   assert.match(charts, /type-challenges solutions project/);
+
+  process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = failedOnlyArtifact;
+  const failedOnlyCharts = getBenchmarkCharts();
+  assert.doesNotMatch(failedOnlyCharts, /No benchmark data/i);
+  assert.match(failedOnlyCharts, /Compile canaries and incomplete project timings/);
+  assert.match(failedOnlyCharts, /RxJS project/);
 
   const slugs = new Map();
   for (const page of pages) {

@@ -177,7 +177,7 @@ impl ParserState {
         // Parse return type (supports type predicates: param is T)
         let type_annotation = self.parse_return_type();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_function_type(
             syntax_kind_ext::FUNCTION_TYPE,
@@ -210,7 +210,7 @@ impl ParserState {
         // Parse return type (supports type predicates: param is T)
         let type_annotation = self.parse_return_type();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_function_type(
             syntax_kind_ext::FUNCTION_TYPE,
@@ -245,7 +245,7 @@ impl ParserState {
         self.parse_expected(SyntaxKind::EqualsGreaterThanToken);
         let type_annotation = self.parse_return_type();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         // Use ConstructorType kind - reuse FunctionTypeData since structure is the same
         self.arena.add_function_type(

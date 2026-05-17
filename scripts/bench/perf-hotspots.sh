@@ -18,11 +18,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 BENCH_SCRIPT="$PROJECT_ROOT/scripts/bench/bench-vs-tsgo.sh"
 
-# Focus on the current requested losers.
+# Focus on the current requested losers. Keep the release-visible
+# ts-toolbelt project row here so recursive type-evaluation work can measure
+# the #7378 gap without running the full benchmark dashboard.
 # In --quick mode bench-vs-tsgo only emits reduced-size representatives for the
 # same hotspot families, so the default filter must track those quick labels.
-DEFAULT_FILTER_FULL='^(DeepPartial optional-chain N=400|Shallow optional-chain N=400|200 union members|200 generic functions|Constraint conflicts N=200|200 classes)$'
-DEFAULT_FILTER_QUICK='^(DeepPartial optional-chain N=50|Shallow optional-chain N=50|50 generic functions|100 classes|Constraint conflicts N=30)$'
+DEFAULT_FILTER_FULL='^(DeepPartial optional-chain N=400|Shallow optional-chain N=400|200 union members|200 generic functions|Constraint conflicts N=200|200 classes|ts-toolbelt-project)$'
+DEFAULT_FILTER_QUICK='^(DeepPartial optional-chain N=50|Shallow optional-chain N=50|50 generic functions|100 classes|Constraint conflicts N=30|ts-toolbelt-project)$'
 FILTER=""
 JSON_FILE="$PROJECT_ROOT/artifacts/perf/hotspots-$(date +%Y%m%d-%H%M%S).json"
 QUICK_MODE=false

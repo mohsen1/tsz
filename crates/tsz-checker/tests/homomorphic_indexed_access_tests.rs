@@ -222,3 +222,97 @@ fn local_required_unrelated_shape_emits_ts2536() {
         "Local Required with unrelated body must still emit TS2536: {diags:?}"
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Recursive conditional utility types (DeepRequired / DeepPartial patterns)
+//
+// Structural rule: when a generic alias body is `T extends C ? A : B` and
+// each branch shares the source argument's key space (identity, or a
+// non-remapped mapped type whose constraint is `keyof T`), `keyof F<T>` =
+// `keyof T`. So `F<T>[K]` with `K in keyof T` must not emit TS2536.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn deep_required_mapped_key_no_ts2536() {
+    let diags = check_es5(
+        "type DeepRequired<T> = T extends object ? { [P in keyof T]-?: DeepRequired<T[P]> } : T;\n\
+         type Test<T> = { [K in keyof T]: DeepRequired<T>[K] };",
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "DeepRequired<T>[K] where K in keyof T must not emit TS2536: {diags:?}"
+    );
+}
+
+#[test]
+fn deep_partial_mapped_key_no_ts2536() {
+    let diags = check_es5(
+        "type DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T;\n\
+         type Test<T> = { [K in keyof T]: DeepPartial<T>[K] };",
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "DeepPartial<T>[K] where K in keyof T must not emit TS2536: {diags:?}"
+    );
+}
+
+#[test]
+fn deep_readonly_mapped_key_no_ts2536() {
+    let diags = check_es5(
+        "type DeepReadonly<T> = T extends object ? { readonly [P in keyof T]: DeepReadonly<T[P]> } : T;\n\
+         type Test<T> = { [K in keyof T]: DeepReadonly<T>[K] };",
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "DeepReadonly<T>[K] where K in keyof T must not emit TS2536: {diags:?}"
+    );
+}
+
+/// Renamed parameters prove the rule is structural, not keyed on identifier spelling.
+#[test]
+fn deep_required_renamed_param_no_ts2536() {
+    let diags = check_es5(
+        "type DeepReq<U> = U extends object ? { [Q in keyof U]-?: DeepReq<U[Q]> } : U;\n\
+         type Test<V> = { [J in keyof V]: DeepReq<V>[J] };",
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "DeepReq<V>[J] with renamed params must not emit TS2536: {diags:?}"
+    );
+}
+
+#[test]
+fn deep_required_concrete_no_errors() {
+    let diags = check_es5(
+        r#"type DeepRequired<T> = T extends object ? { [P in keyof T]-?: DeepRequired<T[P]> } : T;
+type Test<T> = { [K in keyof T]: DeepRequired<T>[K] };
+type Obj = { a: number; b?: string };
+type Result = Test<Obj>;"#,
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "Concrete DeepRequired use must not emit TS2536: {diags:?}"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Negative cases: conditional bodies whose branches do NOT share keyof T
+// must still emit TS2536 — tsc reports these at the generic definition
+// level because the solver cannot prove keyof F<T> = keyof T.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Verified against `tsc 6.0.3 --noEmit`: this exact shape emits
+/// `TS2536: Type 'K' cannot be used to index type 'Fixed<T>'.`
+/// The solver-side branch proof must reject this (true-branch is `{ x: number }`,
+/// whose keyof is `"x"`, not `keyof T`), and the checker must not defer it.
+#[test]
+fn conditional_unrelated_true_branch_emits_ts2536() {
+    let diags = check_es5(
+        "type Fixed<T> = T extends object ? { x: number } : T;\n\
+         type Test<T> = { [K in keyof T]: Fixed<T>[K] };",
+    );
+    assert!(
+        !ts2536(&diags).is_empty(),
+        "Fixed<T>[K] with unrelated true-branch must emit TS2536 (parity with tsc): {diags:?}"
+    );
+}

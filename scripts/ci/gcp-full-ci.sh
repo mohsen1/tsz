@@ -508,6 +508,11 @@ run_lint() {
   scripts/arch/check-workspace-metadata.sh || return $?
   scripts/check-crate-root-files.sh || return $?
   node scripts/bench/test-merge-results.mjs || return $?
+  node scripts/bench/test-perf-hotspots.mjs || return $?
+  node scripts/ci/test-type-challenges-pairing-report.mjs || return $?
+  node scripts/ci/test-type-challenges-template-manifest.mjs || return $?
+  node scripts/ci/test-type-challenges-test-cases-manifest.mjs || return $?
+  node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
   # Use the dedicated ci-lint profile (debug=false, incremental=false,
   # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
   # — separate cache key from .target/debug so dev incrementals on a

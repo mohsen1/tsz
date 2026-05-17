@@ -1308,6 +1308,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 Method {
                     parameters: NodeList,
                     return_type: NodeIndex,
+                    async_returns_promise: bool,
                 },
                 Accessor {
                     name: NodeIndex,
@@ -1325,9 +1326,21 @@ impl<'a> ES5ClassTransformer<'a> {
                     if !method.body.is_some() {
                         continue;
                     }
+                    let has_async_modifier = self
+                        .arena
+                        .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
+                    let has_generator_asterisk = method.asterisk_token
+                        || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                            self.source_text,
+                            member_node.pos,
+                            self.arena
+                                .get(method.body)
+                                .map_or(member_node.end, |body| body.pos),
+                        );
                     let meta = MemberMeta::Method {
                         parameters: method.parameters.clone(),
                         return_type: method.type_annotation,
+                        async_returns_promise: has_async_modifier && !has_generator_asterisk,
                     };
                     (&method.modifiers, method.name, false, false, meta)
                 }
@@ -1419,10 +1432,13 @@ impl<'a> ES5ClassTransformer<'a> {
                     MemberMeta::Method {
                         parameters,
                         return_type,
+                        async_returns_promise,
                     } => {
                         let param_types = serialize_param_types(self.arena, parameters);
                         let ret_type = if return_type.is_some() {
                             serialize_type_for_metadata(self.arena, *return_type)
+                        } else if *async_returns_promise {
+                            "Promise".to_string()
                         } else {
                             "void 0".to_string()
                         };
