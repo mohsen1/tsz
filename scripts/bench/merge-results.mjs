@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { REQUIRED_COMPATIBILITY_FIELDS, REQUIRED_PROJECT_ROWS } from "./project-rows.mjs";
 
 const [, , outFile, ...inputFiles] = process.argv;
 
@@ -35,32 +36,6 @@ const errorCases = results.filter((row) => row.status).length;
 const hyperfineExitCodesRequired = payloads.every(
   ({ payload }) => payload.validation?.hyperfine_exit_codes_required === true,
 );
-
-const REQUIRED_PROJECT_ROWS = [
-  "utility-types-project",
-  "ts-essentials-project",
-  "rxjs-project",
-  "type-fest-project",
-  "vite-vanilla-ts-app",
-  "nextjs-fresh-app",
-  "nextjs",
-  "large-ts-repo",
-];
-
-const REQUIRED_COMPATIBILITY_FIELDS = [
-  "exit_class",
-  "phase",
-  "last_successful_phase",
-  "diagnostic_status",
-  "diagnostic_deltas",
-  "diagnostic_subsystems",
-  "known_blockers",
-  "exit_codes",
-  "files_reached",
-  "peak_memory_bytes",
-  "emit_status",
-  "dts_status",
-];
 
 function hasProjectCompatibilityRows(rows) {
   return rows.some((row) => REQUIRED_PROJECT_ROWS.includes(row?.name));
