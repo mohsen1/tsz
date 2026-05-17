@@ -92,7 +92,9 @@ withTempDir((dir) => {
     fakeTsc,
     [
       "#!/usr/bin/env node",
-      "console.error(\"assertions/one.ts(1,1): error TS2344: mismatch\")",
+      `console.error(${JSON.stringify(
+        `${path.join(candidates, "assertions", "one.ts")}(1,1): error TS2344: mismatch`,
+      )})`,
       "console.error(\"assertions/two.ts(2,3): error TS2304: missing\")",
       "process.exit(1)",
       "",
@@ -113,8 +115,8 @@ withTempDir((dir) => {
     encoding: "utf8",
     env: {
       ...process.env,
-      TYPE_CHALLENGES_ASSERTION_TSC_BIN: fakeTsc,
-      TSZ_BIN: fakeTsz,
+      TYPE_CHALLENGES_ASSERTION_TSC_BIN: path.relative(ROOT, fakeTsc),
+      TSZ_BIN: path.relative(ROOT, fakeTsz),
       TYPE_CHALLENGES_ASSERTION_CLASSIFIER_TIMEOUT_MS: "5000",
     },
   });
@@ -155,6 +157,13 @@ withTempDir((dir) => {
     { key: "assertions/one.ts", count: 1 },
     { key: "assertions/two.ts", count: 1 },
   ]);
+  assert.deepEqual(report.compilers.tsc.candidateDiagnostics, {
+    totalCandidates: 2,
+    candidatesWithDiagnostics: 2,
+    candidatesWithoutDiagnostics: 0,
+    filesWithDiagnostics: ["assertions/one.ts", "assertions/two.ts"],
+    filesWithoutDiagnostics: [],
+  });
   assert.deepEqual(
     report.compilers.tsc.diagnostics.bySemanticFamily.map((entry) => [
       entry.family,
@@ -178,16 +187,35 @@ withTempDir((dir) => {
     "--pretty",
     "false",
   ]);
+  assert.equal(path.isAbsolute(report.compilers.tsc.command[0]), true);
+  assert.equal(path.isAbsolute(report.compilers.tsz.command[0]), true);
   assert.equal(report.compilers.tsz.status, "pass");
   assert.equal(report.compilers.tsz.exitCode, 0);
+  assert.deepEqual(report.compilers.tsz.candidateDiagnostics, {
+    totalCandidates: 2,
+    candidatesWithDiagnostics: 0,
+    candidatesWithoutDiagnostics: 2,
+    filesWithDiagnostics: [],
+    filesWithoutDiagnostics: ["assertions/one.ts", "assertions/two.ts"],
+  });
   assert.deepEqual(report.comparison, {
     status: "tsz-accepts-tsc-rejected",
     tscStatus: "fail",
     tszStatus: "pass",
     errorCountDelta: -2,
+    diagnosticFreeCandidateDelta: 2,
     byCodeDelta: [
       { key: "TS2304", tsc: 1, tsz: 0, delta: -1 },
       { key: "TS2344", tsc: 1, tsz: 0, delta: -1 },
+    ],
+    bySemanticFamilyDelta: [
+      { key: "template literal inference", tsc: 2, tsz: 0, delta: -2 },
+      { key: "distributive conditionals", tsc: 1, tsz: 0, delta: -1 },
+      { key: "indexed access", tsc: 1, tsz: 0, delta: -1 },
+      { key: "inference cache/session behavior", tsc: 1, tsz: 0, delta: -1 },
+      { key: "mapped/key-remapped types", tsc: 1, tsz: 0, delta: -1 },
+      { key: "recursive conditionals", tsc: 1, tsz: 0, delta: -1 },
+      { key: "tuple recursion", tsc: 1, tsz: 0, delta: -1 },
     ],
   });
 });
@@ -226,7 +254,9 @@ withTempDir((dir) => {
     tscStatus: "unavailable",
     tszStatus: "unavailable",
     errorCountDelta: null,
+    diagnosticFreeCandidateDelta: null,
     byCodeDelta: [],
+    bySemanticFamilyDelta: [],
   });
 });
 
@@ -277,6 +307,8 @@ withTempDir((dir) => {
     tscStatus: "pass",
     tszStatus: "fail",
     errorCountDelta: 2,
+    diagnosticFreeCandidateDelta: 0,
     byCodeDelta: [{ key: "TS2589", tsc: 0, tsz: 2, delta: 2 }],
+    bySemanticFamilyDelta: [{ key: "unknown", tsc: 0, tsz: 2, delta: 2 }],
   });
 });

@@ -24,7 +24,7 @@ function executableOrNull(file) {
   }
   try {
     fs.accessSync(file, fs.constants.X_OK);
-    return file;
+    return path.resolve(file);
   } catch {
     return null;
   }
@@ -50,6 +50,18 @@ function normalizePath(file) {
   return file.split(/[\\/]+/).join("/");
 }
 
+function normalizeDiagnosticFile(file) {
+  const normalized = normalizePath(file).replace(/^\.\//, "");
+  const resolved = path.resolve(candidateRoot, normalized);
+  if (
+    resolved === candidateRoot ||
+    resolved.startsWith(`${candidateRoot}${path.sep}`)
+  ) {
+    return path.relative(candidateRoot, resolved).split(path.sep).join("/");
+  }
+  return normalized;
+}
+
 function parseDiagnostic(line) {
   const match = /^(.*?)(?:\((\d+),(\d+)\))?: error (TS\d+): (.*)$/.exec(line);
   if (!match) {
@@ -65,7 +77,7 @@ function parseDiagnostic(line) {
 
   return {
     raw: line,
-    file: match[1] ? normalizePath(match[1]) : null,
+    file: match[1] ? normalizeDiagnosticFile(match[1]) : null,
     line: match[2] ? Number(match[2]) : null,
     column: match[3] ? Number(match[3]) : null,
     code: match[4],
@@ -270,13 +282,47 @@ function runCompiler(label, bin, tsconfig, timeoutMs) {
   };
 }
 
-function countsByKey(counts) {
-  return new Map((counts ?? []).map((entry) => [entry.key, entry.count]));
+function withCandidateDiagnostics(result, manifest) {
+  const outputs = (manifest.entries ?? [])
+    .map((entry) => entry.output)
+    .filter(Boolean);
+  const diagnosticFiles = new Set(
+    (result.diagnostics?.byFile ?? []).map((entry) => entry.key),
+  );
+
+  if (!result.available || result.diagnostics?.errorCount === null) {
+    return {
+      ...result,
+      candidateDiagnostics: {
+        totalCandidates: outputs.length,
+        candidatesWithDiagnostics: null,
+        candidatesWithoutDiagnostics: null,
+        filesWithDiagnostics: [],
+      },
+    };
+  }
+
+  const filesWithDiagnostics = outputs.filter((output) => diagnosticFiles.has(output));
+  const filesWithoutDiagnostics = outputs.filter((output) => !diagnosticFiles.has(output));
+  return {
+    ...result,
+    candidateDiagnostics: {
+      totalCandidates: outputs.length,
+      candidatesWithDiagnostics: filesWithDiagnostics.length,
+      candidatesWithoutDiagnostics: filesWithoutDiagnostics.length,
+      filesWithDiagnostics,
+      filesWithoutDiagnostics,
+    },
+  };
 }
 
-function deltaCounts(left, right) {
-  const leftCounts = countsByKey(left);
-  const rightCounts = countsByKey(right);
+function countsByKey(counts, keyField = "key", countField = "count") {
+  return new Map((counts ?? []).map((entry) => [entry[keyField], entry[countField]]));
+}
+
+function deltaCounts(left, right, keyField = "key", countField = "count") {
+  const leftCounts = countsByKey(left, keyField, countField);
+  const rightCounts = countsByKey(right, keyField, countField);
   const keys = new Set([...leftCounts.keys(), ...rightCounts.keys()]);
 
   return [...keys]
@@ -297,7 +343,9 @@ function compareCompilers(tsc, tsz) {
       tscStatus: tsc.status,
       tszStatus: tsz.status,
       errorCountDelta: null,
+      diagnosticFreeCandidateDelta: null,
       byCodeDelta: [],
+      bySemanticFamilyDelta: [],
     };
   }
 
@@ -318,7 +366,19 @@ function compareCompilers(tsc, tsz) {
     tszStatus: tsz.status,
     errorCountDelta:
       tscErrorCount === null || tszErrorCount === null ? null : tszErrorCount - tscErrorCount,
+    diagnosticFreeCandidateDelta:
+      tsc.candidateDiagnostics?.candidatesWithoutDiagnostics === null ||
+      tsz.candidateDiagnostics?.candidatesWithoutDiagnostics === null
+        ? null
+        : tsz.candidateDiagnostics.candidatesWithoutDiagnostics -
+          tsc.candidateDiagnostics.candidatesWithoutDiagnostics,
     byCodeDelta: deltaCounts(tsc.diagnostics.byCode, tsz.diagnostics.byCode),
+    bySemanticFamilyDelta: deltaCounts(
+      tsc.diagnostics.bySemanticFamily,
+      tsz.diagnostics.bySemanticFamily,
+      "family",
+      "errorCount",
+    ),
   };
 }
 
@@ -339,8 +399,14 @@ if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
 
 const tszBin = executableOrNull(process.env.TSZ_BIN);
 const tscBin = discoverTscBin();
-const tscResult = runCompiler("tsc", tscBin, tsconfig, timeoutMs);
-const tszResult = runCompiler("tsz", tszBin, tsconfig, timeoutMs);
+const tscResult = withCandidateDiagnostics(
+  runCompiler("tsc", tscBin, tsconfig, timeoutMs),
+  manifest,
+);
+const tszResult = withCandidateDiagnostics(
+  runCompiler("tsz", tszBin, tsconfig, timeoutMs),
+  manifest,
+);
 
 const report = {
   fixture: "type-challenges-assertion-classification",
