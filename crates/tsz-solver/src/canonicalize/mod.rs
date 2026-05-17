@@ -227,6 +227,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 
                 TypeData::Function(shape_id) => {
                     let shape = self.interner.function_shape(shape_id);
+                    let mut changed = false;
 
                     // Enter new scope if this function has type parameters (alpha-equivalence)
                     let pushed_scope = if !shape.type_params.is_empty() {
@@ -239,18 +240,27 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     };
 
                     // Canonicalize this_type if present
-                    let c_this_type = shape.this_type.map(|t| self.canonicalize(t));
+                    let c_this_type = shape.this_type.map(|t| {
+                        let c = self.canonicalize(t);
+                        changed |= c != t;
+                        c
+                    });
                     // Canonicalize return type
                     let c_return_type = self.canonicalize(shape.return_type);
+                    changed |= c_return_type != shape.return_type;
                     // Canonicalize parameter types
                     let c_params: Vec<crate::types::ParamInfo> = shape
                         .params
                         .iter()
-                        .map(|p| crate::types::ParamInfo {
-                            name: p.name,
-                            type_id: self.canonicalize(p.type_id),
-                            optional: p.optional,
-                            rest: p.rest,
+                        .map(|p| {
+                            let type_id = self.canonicalize(p.type_id);
+                            changed |= type_id != p.type_id;
+                            crate::types::ParamInfo {
+                                name: p.name,
+                                type_id,
+                                optional: p.optional,
+                                rest: p.rest,
+                            }
                         })
                         .collect();
 
@@ -258,45 +268,64 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                     let c_type_params: Vec<crate::types::TypeParamInfo> = shape
                         .type_params
                         .iter()
-                        .map(|tp| crate::types::TypeParamInfo {
-                            name: tp.name,
-                            constraint: tp.constraint.map(|c| self.canonicalize(c)),
-                            default: tp.default.map(|d| self.canonicalize(d)),
-                            is_const: tp.is_const,
+                        .map(|tp| {
+                            let constraint = tp.constraint.map(|c| {
+                                let canonical = self.canonicalize(c);
+                                changed |= canonical != c;
+                                canonical
+                            });
+                            let default = tp.default.map(|d| {
+                                let canonical = self.canonicalize(d);
+                                changed |= canonical != d;
+                                canonical
+                            });
+                            crate::types::TypeParamInfo {
+                                name: tp.name,
+                                constraint,
+                                default,
+                                is_const: tp.is_const,
+                            }
                         })
                         .collect();
 
                     // Canonicalize type predicate (if it has a type_id)
-                    let c_type_predicate =
-                        shape
-                            .type_predicate
-                            .as_ref()
-                            .map(|pred| crate::types::TypePredicate {
-                                asserts: pred.asserts,
-                                target: pred.target,
-                                type_id: pred.type_id.map(|t| self.canonicalize(t)),
-                                parameter_index: pred.parameter_index,
-                            });
+                    let c_type_predicate = shape.type_predicate.map(|pred| {
+                        let type_id = pred.type_id.map(|t| {
+                            let c = self.canonicalize(t);
+                            changed |= c != t;
+                            c
+                        });
+                        crate::types::TypePredicate {
+                            asserts: pred.asserts,
+                            target: pred.target,
+                            type_id,
+                            parameter_index: pred.parameter_index,
+                        }
+                    });
 
                     // Pop scope
                     if pushed_scope {
                         self.param_stack.pop();
                     }
 
-                    let new_shape = crate::types::FunctionShape {
-                        type_params: c_type_params,
-                        params: c_params,
-                        this_type: c_this_type,
-                        return_type: c_return_type,
-                        type_predicate: c_type_predicate,
-                        is_constructor: shape.is_constructor,
-                        is_method: shape.is_method,
-                    };
+                    if changed {
+                        let new_shape = crate::types::FunctionShape {
+                            type_params: c_type_params,
+                            params: c_params,
+                            this_type: c_this_type,
+                            return_type: c_return_type,
+                            type_predicate: c_type_predicate,
+                            is_constructor: shape.is_constructor,
+                            is_method: shape.is_method,
+                        };
 
-                    self.interner.function(new_shape)
+                        self.interner.function(new_shape)
+                    } else {
+                        type_id
+                    }
                 }
 
-                TypeData::Callable(shape_id) => self.canonicalize_callable(shape_id),
+                TypeData::Callable(shape_id) => self.canonicalize_callable(type_id, shape_id),
 
                 // Task #39: Mapped type canonicalization for alpha-equivalence
                 // When comparing mapped types over type parameters (deferred), we need
@@ -601,7 +630,8 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
     fn canonicalize_signature(
         &mut self,
         sig: &crate::types::CallSignature,
-    ) -> crate::types::CallSignature {
+    ) -> (crate::types::CallSignature, bool) {
+        let mut changed = false;
         // Enter new scope if this signature has type parameters (alpha-equivalence)
         let pushed_scope = if !sig.type_params.is_empty() {
             let param_names: Vec<Atom> = sig.type_params.iter().map(|p| p.name).collect();
@@ -612,20 +642,29 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         };
 
         // Canonicalize this_type if present
-        let c_this_type = sig.this_type.map(|t| self.canonicalize(t));
+        let c_this_type = sig.this_type.map(|t| {
+            let c = self.canonicalize(t);
+            changed |= c != t;
+            c
+        });
 
         // Canonicalize return type
         let c_return_type = self.canonicalize(sig.return_type);
+        changed |= c_return_type != sig.return_type;
 
         // Canonicalize parameter types
         let c_params: Vec<crate::types::ParamInfo> = sig
             .params
             .iter()
-            .map(|p| crate::types::ParamInfo {
-                name: p.name,
-                type_id: self.canonicalize(p.type_id),
-                optional: p.optional,
-                rest: p.rest,
+            .map(|p| {
+                let type_id = self.canonicalize(p.type_id);
+                changed |= type_id != p.type_id;
+                crate::types::ParamInfo {
+                    name: p.name,
+                    type_id,
+                    optional: p.optional,
+                    rest: p.rest,
+                }
             })
             .collect();
 
@@ -633,57 +672,89 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
         let c_type_params: Vec<crate::types::TypeParamInfo> = sig
             .type_params
             .iter()
-            .map(|tp| crate::types::TypeParamInfo {
-                name: tp.name,
-                constraint: tp.constraint.map(|c| self.canonicalize(c)),
-                default: tp.default.map(|d| self.canonicalize(d)),
-                // Preserve other fields as-is
-                is_const: tp.is_const,
+            .map(|tp| {
+                let constraint = tp.constraint.map(|c| {
+                    let canonical = self.canonicalize(c);
+                    changed |= canonical != c;
+                    canonical
+                });
+                let default = tp.default.map(|d| {
+                    let canonical = self.canonicalize(d);
+                    changed |= canonical != d;
+                    canonical
+                });
+                crate::types::TypeParamInfo {
+                    name: tp.name,
+                    constraint,
+                    default,
+                    // Preserve other fields as-is
+                    is_const: tp.is_const,
+                }
             })
             .collect();
 
         // Canonicalize type predicate (if it has a type_id)
-        let c_type_predicate =
-            sig.type_predicate
-                .as_ref()
-                .map(|pred| crate::types::TypePredicate {
-                    asserts: pred.asserts,
-                    target: pred.target,
-                    type_id: pred.type_id.map(|t| self.canonicalize(t)),
-                    parameter_index: pred.parameter_index,
-                });
+        let c_type_predicate = sig.type_predicate.map(|pred| {
+            let type_id = pred.type_id.map(|t| {
+                let c = self.canonicalize(t);
+                changed |= c != t;
+                c
+            });
+            crate::types::TypePredicate {
+                asserts: pred.asserts,
+                target: pred.target,
+                type_id,
+                parameter_index: pred.parameter_index,
+            }
+        });
 
         // Pop scope
         if pushed_scope {
             self.param_stack.pop();
         }
 
-        crate::types::CallSignature {
-            type_params: c_type_params,
-            params: c_params,
-            this_type: c_this_type,
-            return_type: c_return_type,
-            type_predicate: c_type_predicate,
-            is_method: sig.is_method,
-        }
+        (
+            crate::types::CallSignature {
+                type_params: c_type_params,
+                params: c_params,
+                this_type: c_this_type,
+                return_type: c_return_type,
+                type_predicate: c_type_predicate,
+                is_method: sig.is_method,
+            },
+            changed,
+        )
     }
 
     /// Canonicalize a callable type (overloaded functions).
-    fn canonicalize_callable(&mut self, shape_id: crate::types::CallableShapeId) -> TypeId {
+    fn canonicalize_callable(
+        &mut self,
+        type_id: TypeId,
+        shape_id: crate::types::CallableShapeId,
+    ) -> TypeId {
         let shape = self.interner.callable_shape(shape_id);
+        let mut changed = false;
 
         // Canonicalize all call signatures (order matters for overload resolution)
         let c_call_signatures: Vec<crate::types::CallSignature> = shape
             .call_signatures
             .iter()
-            .map(|sig| self.canonicalize_signature(sig))
+            .map(|sig| {
+                let (sig, sig_changed) = self.canonicalize_signature(sig);
+                changed |= sig_changed;
+                sig
+            })
             .collect();
 
         // Canonicalize all construct signatures
         let c_construct_signatures: Vec<crate::types::CallSignature> = shape
             .construct_signatures
             .iter()
-            .map(|sig| self.canonicalize_signature(sig))
+            .map(|sig| {
+                let (sig, sig_changed) = self.canonicalize_signature(sig);
+                changed |= sig_changed;
+                sig
+            })
             .collect();
 
         // Canonicalize properties
@@ -692,12 +763,18 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
             let mut new_prop = prop.clone();
             new_prop.type_id = self.canonicalize(prop.type_id);
             new_prop.write_type = self.canonicalize(prop.write_type);
+            changed |= new_prop.type_id != prop.type_id || new_prop.write_type != prop.write_type;
             new_props.push(new_prop);
         }
 
         // Canonicalize index signatures
         let new_string_index = self.canonicalize_index_signature(&shape.string_index);
         let new_number_index = self.canonicalize_index_signature(&shape.number_index);
+        changed |= new_string_index != shape.string_index || new_number_index != shape.number_index;
+
+        if !changed {
+            return type_id;
+        }
 
         let new_shape = crate::types::CallableShape {
             call_signatures: c_call_signatures,

@@ -342,6 +342,7 @@ fn canonicalize_function_type() {
 
     let result = canon.canonicalize(func);
     // Function with only primitive types should be the same
+    assert_eq!(result, func);
     if let Some(TypeData::Function(shape_id)) = interner.lookup(result) {
         let shape = interner.function_shape(shape_id);
         assert_eq!(shape.return_type, TypeId::NUMBER);
@@ -493,6 +494,38 @@ fn canonicalize_function_type_params_name_preserved_in_shape() {
         "Functions with different type param names have different canonical forms \
          (name is preserved in function shapes, unlike mapped types)"
     );
+}
+
+#[test]
+fn canonicalize_callable_with_primitive_signature_preserves_identity() {
+    let interner = TypeInterner::new();
+    let env = TypeEnvironment::new();
+    let mut canon = Canonicalizer::new(&interner, &env);
+
+    use crate::types::{CallSignature, CallableShape, ParamInfo};
+    let callable = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature {
+            type_params: vec![],
+            params: vec![ParamInfo {
+                name: Some(interner.intern_string("value")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            }],
+            this_type: None,
+            return_type: TypeId::NUMBER,
+            type_predicate: None,
+            is_method: false,
+        }],
+        construct_signatures: vec![],
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    assert_eq!(canon.canonicalize(callable), callable);
 }
 
 // ===================================================================
