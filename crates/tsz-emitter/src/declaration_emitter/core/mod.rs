@@ -149,6 +149,12 @@ pub struct DeclarationEmitter<'a> {
     /// are emitted near the trailing alias group to match declaration transform
     /// ordering for JS enum syntax.
     pub(super) js_deferred_local_export_enum_statements: FxHashSet<NodeIndex>,
+    /// JS interface declarations exported by local `export { ... }` clauses.
+    /// These are emitted near the trailing alias group to match declaration
+    /// transform ordering for JS-recovered interface syntax.
+    pub(super) js_deferred_local_export_interface_statements: FxHashSet<NodeIndex>,
+    /// Local `export { ... }` clauses consumed by deferred JS interface emit.
+    pub(super) js_skipped_local_export_interface_exports: FxHashSet<NodeIndex>,
     /// JS local renamed export declarations emitted as one trailing alias group.
     pub(super) js_local_export_aliases: Vec<NodeIndex>,
     /// JS local renamed export declarations skipped at their source position.

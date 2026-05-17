@@ -157,6 +157,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_deferred_named_export_statements = deferred_named_exports;
         self.js_deferred_local_export_enum_statements =
             self.collect_js_local_export_enum_statements(source_file);
+        let (deferred_interface_statements, skipped_interface_exports) =
+            self.collect_js_local_export_interface_statements(source_file);
+        self.js_deferred_local_export_interface_statements = deferred_interface_statements;
+        self.js_skipped_local_export_interface_exports = skipped_interface_exports;
         let (local_export_aliases, skipped_local_export_aliases) =
             self.collect_js_local_export_aliases(source_file);
         self.js_local_export_aliases = local_export_aliases;
@@ -464,6 +468,12 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             if self
+                .js_deferred_local_export_interface_statements
+                .contains(&stmt_idx)
+            {
+                continue;
+            }
+            if self
                 .js_named_export_equals_class_expression(stmt_idx)
                 .is_some()
                 || self
@@ -509,6 +519,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_trailing_top_level_jsdoc_type_aliases(source_file);
         self.emit_js_require_property_import_aliases();
         self.emit_deferred_js_local_export_enum_statements(source_file);
+        self.emit_deferred_js_local_export_interface_statements(source_file);
         self.emit_js_local_export_aliases();
         self.emit_js_cjs_export_aliases();
         if !self.source_is_js_file

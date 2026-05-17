@@ -2266,6 +2266,72 @@ export { x, f };
 }
 
 #[test]
+fn test_js_named_export_interface_folds_into_declaration() {
+    let source = r#"
+interface G {}
+export { G };
+interface HH {}
+export { HH as H };
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export interface G"),
+        "Expected same-name JS interface export to fold into the declaration: {output}"
+    );
+    assert!(
+        output.contains("interface HH"),
+        "Expected renamed interface alias to keep its local declaration: {output}"
+    );
+    assert!(
+        output.contains("export { HH as H };"),
+        "Expected renamed interface alias to remain in the grouped export aliases: {output}"
+    );
+    assert!(
+        !output.contains("export { G"),
+        "Did not expect a redundant same-name export alias for G: {output}"
+    );
+}
+
+#[test]
+fn test_js_interface_recovery_orders_construct_call_then_members() {
+    let source = r#"
+export interface C<T, U> {
+    field: T & U;
+    (): number;
+    (x: T): U;
+    new (): string;
+    new (x: T): U;
+    method(): number;
+    optMethod?(): number;
+}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let construct_pos = output
+        .find("new (): string;")
+        .unwrap_or_else(|| panic!("missing construct signature: {output}"));
+    let call_pos = output
+        .find("(): number;")
+        .unwrap_or_else(|| panic!("missing call signature: {output}"));
+    let field_pos = output
+        .find("field: T & U;")
+        .unwrap_or_else(|| panic!("missing field: {output}"));
+    let method_pos = output
+        .find("method(): number;")
+        .unwrap_or_else(|| panic!("missing method: {output}"));
+
+    assert!(
+        construct_pos < call_pos && call_pos < field_pos && field_pos < method_pos,
+        "Expected JS interface recovery to order construct signatures, call signatures, then source-order members: {output}"
+    );
+    assert!(
+        !output.contains("optMethod"),
+        "Expected optional JS recovered interface methods to be omitted like tsc: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_export_function_preserves_jsdoc_signature_at_export_position() {
     let output = emit_js_dts(
         r#"
