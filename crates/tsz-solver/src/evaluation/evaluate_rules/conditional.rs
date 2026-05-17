@@ -33,7 +33,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             _ => return type_id,
         };
 
-        let shape = self.interner().object_shape(shape_id).clone();
+        let shape = self.interner().object_shape(shape_id);
+        let flags = shape.flags;
+        let symbol = shape.symbol;
         let mut changed = false;
         let mut properties = shape.properties.clone();
         for prop in &mut properties {
@@ -64,15 +66,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if with_index {
             self.interner().object_with_index(ObjectShape {
-                flags: shape.flags,
+                flags,
                 properties,
                 string_index,
                 number_index,
-                symbol: shape.symbol,
+                symbol,
             })
         } else {
             self.interner()
-                .object_with_flags_and_symbol(properties, shape.flags, shape.symbol)
+                .object_with_flags_and_symbol(properties, flags, symbol)
         }
     }
 
