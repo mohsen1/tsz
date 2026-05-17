@@ -417,6 +417,11 @@ impl<'a> CheckerState<'a> {
             // format as their names ("Entity"), while structural ObjectShape args would
             // expand to "{ name: string; }".
             if evaluated != ty
+                && crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
+                    self.ctx.types,
+                    &self.ctx.definition_store,
+                    ty,
+                )
                 && crate::query_boundaries::common::is_non_primitive_intersection(
                     self.ctx.types,
                     evaluated,
@@ -428,6 +433,11 @@ impl<'a> CheckerState<'a> {
             // back to an Application (application_display came via get_display_alias, not
             // via type_application(display_ty) directly).
             if application_display != display_ty
+                && crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
+                    self.ctx.types,
+                    &self.ctx.definition_store,
+                    application_display,
+                )
                 && crate::query_boundaries::common::is_non_primitive_intersection(
                     self.ctx.types,
                     display_ty,

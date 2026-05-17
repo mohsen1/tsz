@@ -141,6 +141,30 @@ e = b;
 }
 
 #[test]
+fn ts2322_does_not_rewrite_plain_intersection_to_recursive_alias_source() {
+    let source = r#"
+type Chain<Item> = Item & { tail: Chain<Item> };
+interface Base { id: number; }
+interface Extended extends Base { label: string; }
+declare var b: Base & { tail: Chain<Base> };
+declare var e: Chain<Extended>;
+e = b;
+"#;
+    let diags = check_source_diagnostics(source);
+    let ts2322 = diags.iter().find(|d| d.code == 2322);
+    assert!(ts2322.is_some(), "expected TS2322, got: {diags:?}");
+    let msg = &ts2322.unwrap().message_text;
+    assert!(
+        msg.contains("Base & { tail: Chain<Base>; }"),
+        "plain intersection source should keep its structural display, got: {msg}"
+    );
+    assert!(
+        !msg.contains("Type 'Chain<Base>' is not assignable"),
+        "plain intersection source must not be rewritten to the recursive alias application, got: {msg}"
+    );
+}
+
+#[test]
 fn recursive_intersection_renamed_links_preserve_shape_rule() {
     let source = r#"
 type Chain<Item> = Item & { child: Chain<Item> };

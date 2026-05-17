@@ -1354,6 +1354,11 @@ impl<'a> CheckerState<'a> {
             let source_evaluated = self.evaluate_type_for_assignability(source);
             // Case A: source is an Application that evaluates to a non-primitive intersection.
             let case_a = source_evaluated != source
+                && crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
+                    self.ctx.types,
+                    &self.ctx.definition_store,
+                    source,
+                )
                 && crate::query_boundaries::common::is_non_primitive_intersection(
                     self.ctx.types,
                     source_evaluated,
@@ -1368,8 +1373,11 @@ impl<'a> CheckerState<'a> {
                 .types
                 .get_display_alias(source)
                 .is_some_and(|alias| {
-                    crate::query_boundaries::common::type_application(self.ctx.types, alias)
-                        .is_some()
+                    crate::query_boundaries::recursive_alias::is_recursive_type_alias_application(
+                        self.ctx.types,
+                        &self.ctx.definition_store,
+                        alias,
+                    )
                 });
             let src_str = if depth == 0 {
                 if case_a || case_b {

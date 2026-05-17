@@ -69,25 +69,13 @@ impl<'a> CheckerState<'a> {
         let annotation_text = self.declared_type_annotation_text_for_expression(expr_idx)?;
         if annotation_text.contains('<')
             && let Some(annotation_name) = Self::generic_alias_name_from_display(&annotation_text)
+            && Self::generic_alias_name_from_display(source_display) == Some(annotation_name)
             && Self::generic_alias_name_from_display(target_display) == Some(annotation_name)
         {
-            if Self::generic_alias_name_from_display(source_display) == Some(annotation_name) {
-                // Source display IS the alias (or its structural expansion).
-                if source_display.contains(" & ") || source_display.contains('{') {
-                    return Some(self.format_declared_annotation_for_diagnostic(&annotation_text));
-                }
-                return Some(source_display.to_string());
-            }
-            // Structural rule: when a generic Application alias (e.g. `LinkedList<Entity>`)
-            // evaluates to a non-primitive intersection, the checker may pass the evaluated
-            // intersection as the source type for display.  The intersection form
-            // (e.g. `Entity & { next: LinkedList<Entity>; }`) is the structural expansion of
-            // the alias annotation.  When annotation and target share the same alias name but
-            // the source shows the expanded form (contains ` & `), rewrite the source to the
-            // annotation form so that both sides display as alias application syntax.
-            if source_display.contains(" & ") && !source_display.contains("=>") {
+            if source_display.contains(" & ") || source_display.contains('{') {
                 return Some(self.format_declared_annotation_for_diagnostic(&annotation_text));
             }
+            return Some(source_display.to_string());
         }
         if !source_display.contains(" extends ")
             && !source_display.contains("infer ")
