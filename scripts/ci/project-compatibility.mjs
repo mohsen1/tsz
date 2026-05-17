@@ -101,6 +101,9 @@ function knownBlockersFrom({ exitClass, phase, diagnosticSubsystems, diagnosticC
   if (exitClass === "timeout") add("timeout during project check");
   if (exitClass === "oom") add("OOM or killed during project check");
   if (exitClass === "crash") add("compiler crash during project check");
+  if (exitClass === "fixture invalid") add("reference fixture invalid");
+  if (exitClass === "runner error") add("benchmark runner error");
+  if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
   if (phase && phase !== "check") add(`${phase} phase blocker`);
 
   for (const group of diagnosticSubsystems) {
@@ -256,9 +259,9 @@ function record() {
     reduced_repro_path: repro.reduced_repro_path,
     repro,
     exit_codes: {
-      tsc: [],
+      tsc: toExitCodes(process.env.COMPAT_TSC_EXIT_CODES),
       tsz: toExitCodes(process.env.COMPAT_TSZ_EXIT_CODES),
-      tsgo: [],
+      tsgo: toExitCodes(process.env.COMPAT_TSGO_EXIT_CODES),
     },
     files_reached: toNumber(process.env.COMPAT_FILES_REACHED),
     peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
