@@ -141,12 +141,7 @@ pub(crate) fn exit_refs_resolution_scope() {
 }
 
 impl<'a> CheckerState<'a> {
-    fn evaluate_type_with_env_impl(
-        &mut self,
-        type_id: TypeId,
-        use_cache: bool,
-        allow_root_cache_lookup: bool,
-    ) -> TypeId {
+    fn evaluate_type_with_env_impl(&mut self, type_id: TypeId, use_cache: bool) -> TypeId {
         use crate::query_boundaries::state::type_environment::{
             contains_infer_types_db, contains_type_query_db, evaluate_type_with_cache,
         };
@@ -155,10 +150,7 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        if use_cache
-            && allow_root_cache_lookup
-            && let Some(cached) = self.ctx.lookup_env_eval_cache(type_id)
-        {
+        if use_cache && let Some(cached) = self.ctx.lookup_env_eval_cache(type_id) {
             if cached.depth_exceeded {
                 self.ctx.depth_exceeded.set(true);
             }
@@ -600,15 +592,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn evaluate_type_with_env(&mut self, type_id: TypeId) -> TypeId {
-        self.evaluate_type_with_env_impl(type_id, true, true)
-    }
-
-    /// Evaluate while reusing and persisting intermediate environment cache entries,
-    /// but always walk the requested root. This is useful for diagnostic probes
-    /// that must observe side effects such as union-complexity flags for the root
-    /// expression, while still avoiding repeated expansion of shared subgraphs.
-    pub(crate) fn evaluate_type_with_env_cached_probe(&mut self, type_id: TypeId) -> TypeId {
-        self.evaluate_type_with_env_impl(type_id, true, false)
+        self.evaluate_type_with_env_impl(type_id, true)
     }
 
     /// Resolve `TypeQuery` symbols in a type into the type environment.
@@ -636,7 +620,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn evaluate_type_with_env_uncached(&mut self, type_id: TypeId) -> TypeId {
-        self.evaluate_type_with_env_impl(type_id, false, false)
+        self.evaluate_type_with_env_impl(type_id, false)
     }
 
     /// Evaluate a type for TS2589 detection at type alias definition sites.

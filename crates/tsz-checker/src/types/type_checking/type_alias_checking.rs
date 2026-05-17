@@ -244,7 +244,7 @@ impl<'a> CheckerState<'a> {
         let body_evaluation_too_complex = if has_deferred_self_reference || has_type_params {
             false
         } else {
-            let _ = self.evaluate_type_with_env_cached_probe(body_type);
+            let _ = self.evaluate_type_with_env_uncached(body_type);
             self.ctx.types.take_union_too_complex()
         };
         if body_type != TypeId::ERROR
