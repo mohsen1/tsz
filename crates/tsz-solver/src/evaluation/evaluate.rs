@@ -2473,7 +2473,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Visit a lazy type reference: Lazy(DefId)
     fn visit_lazy(&mut self, def_id: DefId, original_type_id: TypeId) -> TypeId {
         if let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner) {
-            if crate::visitor::contains_lazy_def_id(self.interner, resolved, def_id) {
+            if matches!(self.interner.lookup(resolved), Some(TypeData::Union(_)))
+                && crate::visitor::contains_lazy_def_id(self.interner, resolved, def_id)
+            {
                 return original_type_id;
             }
 
