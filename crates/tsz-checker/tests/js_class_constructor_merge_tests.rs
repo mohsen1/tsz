@@ -194,3 +194,54 @@ class Conestoga extends Wagon {
         "Expected no false TS2304/TS2339 or second.ts TS2507 for script-global constructor bases, got: {false_cross_file_errors:?}\nAll diagnostics: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn cross_file_namespace_prototype_object_literals_preserve_constructor_identity() {
+    let diagnostics = check_project(&[
+        (
+            "prototypePropertyAssignmentMergeAcrossFiles2.js",
+            r#"
+var Ns = {};
+Ns.One = function() {};
+Ns.Two = function() {};
+
+Ns.One.prototype = {
+    ok() {},
+};
+Ns.Two.prototype = {};
+"#,
+        ),
+        (
+            "other.js",
+            r#"
+/**
+ * @type {Ns.One}
+ */
+var one = undefined;
+one.wat;
+/**
+ * @type {Ns.Two}
+ */
+var two = undefined;
+two.wat;
+"#,
+        ),
+    ]);
+
+    let other_codes = diagnostics
+        .iter()
+        .find(|(file_name, _)| file_name == "other.js")
+        .map(|(_, codes)| codes.as_slice())
+        .expect("other.js diagnostics");
+
+    assert_eq!(
+        other_codes.iter().filter(|&&code| code == 2322).count(),
+        2,
+        "Expected two TS2322 diagnostics for assigning undefined to the cross-file prototype constructors, got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        other_codes.iter().filter(|&&code| code == 2339).count(),
+        2,
+        "Expected two TS2339 diagnostics for missing properties on the preserved constructor identities, got: {diagnostics:#?}"
+    );
+}
