@@ -45,6 +45,20 @@ pub(crate) fn compute_conditional_expression_type(
     )
 }
 
+/// Compute the result type of a conditional expression with resolver-aware
+/// subtype reduction for lazy class/interface branch types.
+pub(crate) fn compute_conditional_expression_type_with_resolver<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    condition: TypeId,
+    true_type: TypeId,
+    false_type: TypeId,
+    resolver: Option<&R>,
+) -> TypeId {
+    tsz_solver::expression_ops::compute_conditional_expression_type_with_resolver(
+        db, condition, true_type, false_type, resolver,
+    )
+}
+
 /// Compute the best common type from a list of element types.
 pub(crate) fn compute_best_common_type<R: TypeResolver>(
     db: &dyn TypeDatabase,
@@ -64,6 +78,17 @@ pub(crate) fn compute_best_common_type_cached<R: TypeResolver>(
     resolver: Option<&R>,
 ) -> TypeId {
     tsz_solver::expression_ops::compute_best_common_type_cached(db, query_db, types, resolver)
+}
+
+/// Return an input type that is a supertype of every candidate, if one exists.
+/// This is resolver-aware subtype reduction without BCT literal widening or
+/// fallback union construction.
+pub(crate) fn input_supertype_candidate<R: TypeResolver>(
+    db: &dyn TypeDatabase,
+    types: &[TypeId],
+    resolver: Option<&R>,
+) -> Option<TypeId> {
+    tsz_solver::expression_ops::input_supertype_candidate(db, types, resolver)
 }
 
 /// Check whether a contextual type is suitable for template literal narrowing.

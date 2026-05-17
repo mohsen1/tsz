@@ -5,6 +5,7 @@
 //! and checking for explicit `any` assertion returns.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::type_computation::core as expr_ops;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -766,7 +767,8 @@ impl<'a> CheckerState<'a> {
             return_types.retain(|&t| t != TypeId::ERROR);
         }
 
-        factory.union(return_types)
+        expr_ops::input_supertype_candidate(self.ctx.types, &return_types, Some(&self.ctx))
+            .unwrap_or_else(|| factory.union(return_types))
     }
 
     /// Resolve a Lazy class type to a `TypeQuery` (constructor/value-position type).

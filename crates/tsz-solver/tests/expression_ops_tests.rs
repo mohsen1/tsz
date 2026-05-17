@@ -36,6 +36,24 @@ impl TypeResolver for EnumParentResolver {
     }
 }
 
+struct LazyTypeResolver {
+    lazy_map: FxHashMap<DefId, TypeId>,
+}
+
+impl TypeResolver for LazyTypeResolver {
+    fn resolve_ref(
+        &self,
+        _symbol: crate::types::SymbolRef,
+        _interner: &dyn TypeDatabase,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    fn resolve_lazy(&self, def_id: DefId, _interner: &dyn TypeDatabase) -> Option<TypeId> {
+        self.lazy_map.get(&def_id).copied()
+    }
+}
+
 // =========================================================================
 // Conditional Expression Tests
 // =========================================================================
@@ -66,6 +84,124 @@ fn test_conditional_different_branches() {
     // Result should be a union type (not equal to either branch)
     assert_ne!(result, TypeId::STRING);
     assert_ne!(result, TypeId::NUMBER);
+}
+
+#[test]
+fn test_conditional_resolver_reduces_lazy_subtype_branch() {
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let name_x = interner.intern_string("x");
+    let name_y = interner.intern_string("y");
+
+    let base_def = DefId(1);
+    let derived_def = DefId(2);
+    let base = interner.lazy(base_def);
+    let derived = interner.lazy(derived_def);
+    let base_shape = interner.object(vec![PropertyInfo::new(name_x, TypeId::STRING)]);
+    let derived_shape = interner.object(vec![
+        PropertyInfo::new(name_x, TypeId::STRING),
+        PropertyInfo::new(name_y, TypeId::NUMBER),
+    ]);
+    let resolver = LazyTypeResolver {
+        lazy_map: FxHashMap::from_iter([(base_def, base_shape), (derived_def, derived_shape)]),
+    };
+
+    let without_resolver =
+        compute_conditional_expression_type(&interner, TypeId::BOOLEAN, derived, base);
+    assert_ne!(
+        without_resolver, base,
+        "plain union reduction cannot resolve lazy class/interface branches"
+    );
+
+    let result = compute_conditional_expression_type_with_resolver(
+        &interner,
+        TypeId::BOOLEAN,
+        derived,
+        base,
+        Some(&resolver),
+    );
+    assert_eq!(result, base);
+
+    let reversed = compute_conditional_expression_type_with_resolver(
+        &interner,
+        TypeId::BOOLEAN,
+        base,
+        derived,
+        Some(&resolver),
+    );
+    assert_eq!(reversed, base);
+}
+
+#[test]
+fn test_input_supertype_candidate_finds_lazy_base_candidate() {
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let name_x = interner.intern_string("x");
+    let name_y = interner.intern_string("y");
+    let name_z = interner.intern_string("z");
+
+    let base_def = DefId(1);
+    let left_def = DefId(2);
+    let right_def = DefId(3);
+    let base = interner.lazy(base_def);
+    let left = interner.lazy(left_def);
+    let right = interner.lazy(right_def);
+    let base_shape = interner.object(vec![PropertyInfo::new(name_x, TypeId::STRING)]);
+    let left_shape = interner.object(vec![
+        PropertyInfo::new(name_x, TypeId::STRING),
+        PropertyInfo::new(name_y, TypeId::NUMBER),
+    ]);
+    let right_shape = interner.object(vec![
+        PropertyInfo::new(name_x, TypeId::STRING),
+        PropertyInfo::new(name_z, TypeId::BOOLEAN),
+    ]);
+    let resolver = LazyTypeResolver {
+        lazy_map: FxHashMap::from_iter([
+            (base_def, base_shape),
+            (left_def, left_shape),
+            (right_def, right_shape),
+        ]),
+    };
+
+    let result = input_supertype_candidate(&interner, &[left, right, base], Some(&resolver));
+    assert_eq!(result, Some(base));
+
+    let sibling_result = input_supertype_candidate(&interner, &[left, right], Some(&resolver));
+    assert_eq!(sibling_result, None);
+}
+
+#[test]
+fn test_conditional_resolver_keeps_unrelated_lazy_siblings() {
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let name_x = interner.intern_string("x");
+    let name_y = interner.intern_string("y");
+
+    let left_def = DefId(1);
+    let right_def = DefId(2);
+    let left = interner.lazy(left_def);
+    let right = interner.lazy(right_def);
+    let left_shape = interner.object(vec![PropertyInfo::new(name_x, TypeId::STRING)]);
+    let right_shape = interner.object(vec![PropertyInfo::new(name_y, TypeId::NUMBER)]);
+    let resolver = LazyTypeResolver {
+        lazy_map: FxHashMap::from_iter([(left_def, left_shape), (right_def, right_shape)]),
+    };
+
+    let result = compute_conditional_expression_type_with_resolver(
+        &interner,
+        TypeId::BOOLEAN,
+        left,
+        right,
+        Some(&resolver),
+    );
+    let members =
+        crate::type_queries::get_union_members(&interner, result).expect("expected a union type");
+    assert_eq!(members.len(), 2);
+    assert!(members.contains(&left));
+    assert!(members.contains(&right));
 }
 
 #[test]
@@ -513,6 +649,46 @@ fn test_bct_unique_required_fields_prove_subtype_reduction_noop() {
     assert!(members.contains(&a));
     assert!(members.contains(&b));
     assert!(members.contains(&c));
+}
+
+#[test]
+fn test_bct_unique_required_fields_skip_tournament_and_subtype_cache() {
+    use crate::caches::query_cache::QueryCache;
+    use crate::types::PropertyInfo;
+
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let shared = interner.intern_string("shared");
+
+    let mut types = Vec::new();
+    for index in 0..16 {
+        let unique = interner.intern_string(&format!("unique_{index}"));
+        types.push(interner.object(vec![
+            PropertyInfo::new(shared, TypeId::STRING),
+            PropertyInfo::new(unique, TypeId::NUMBER),
+        ]));
+    }
+
+    let before = db.statistics();
+    let result = crate::expression_ops::compute_best_common_type_cached::<NoopResolver>(
+        &interner,
+        Some(&db),
+        &types,
+        None,
+    );
+    let after = db.statistics();
+
+    assert_eq!(
+        after.subtype_reduction_cache_misses, before.subtype_reduction_cache_misses,
+        "unique required fields should prove the result before subtype-reduction cache probing"
+    );
+
+    let members =
+        crate::type_queries::get_union_members(&interner, result).expect("expected a union type");
+    assert_eq!(members.len(), types.len());
+    for ty in types {
+        assert!(members.contains(&ty), "expected candidate {ty:?} in union");
+    }
 }
 
 #[test]

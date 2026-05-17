@@ -263,11 +263,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Use Solver API for type computation (Solver-First architecture)
-        expr_ops::compute_conditional_expression_type(
+        expr_ops::compute_conditional_expression_type_with_resolver(
             self.ctx.types,
             condition_type,
             when_true,
             when_false,
+            Some(&self.ctx),
         )
     }
 

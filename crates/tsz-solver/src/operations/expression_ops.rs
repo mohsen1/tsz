@@ -10,7 +10,7 @@ use crate::TypeResolver;
 use crate::caches::db::QueryDatabase;
 use crate::caches::subtype_reduction_cache::SubtypeReductionKey;
 use crate::is_subtype_of;
-use crate::relations::subtype::SubtypeChecker;
+use crate::relations::subtype::{NoopResolver, SubtypeChecker};
 use crate::types::{
     IntrinsicKind, ObjectFlags, PropertyInfo, TemplateSpan, TypeData, TypeId, Visibility,
 };
@@ -35,6 +35,20 @@ pub fn compute_conditional_expression_type(
     condition: TypeId,
     true_type: TypeId,
     false_type: TypeId,
+) -> TypeId {
+    compute_conditional_expression_type_with_resolver::<NoopResolver>(
+        interner, condition, true_type, false_type, None,
+    )
+}
+
+/// Computes the result type of a conditional expression using a resolver-aware
+/// subtype-reduction step for class/interface/lazy branch types.
+pub fn compute_conditional_expression_type_with_resolver<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    condition: TypeId,
+    true_type: TypeId,
+    false_type: TypeId,
+    resolver: Option<&R>,
 ) -> TypeId {
     // Handle error propagation
     if condition == TypeId::ERROR {
@@ -85,7 +99,57 @@ pub fn compute_conditional_expression_type(
         return interner.union_preserve_members(vec![true_type, false_type]);
     }
 
+    if let Some(resolver) = resolver
+        && let Some(candidate) =
+            input_supertype_candidate(interner, &[true_type, false_type], Some(resolver))
+    {
+        return candidate;
+    }
+
     interner.union2(true_type, false_type)
+}
+
+/// Returns an input candidate that is a supertype of every candidate, if one
+/// exists. This is the subtype-reduction part of TypeScript's common-type
+/// inference without literal widening, fresh-object normalization, or fallback
+/// union construction.
+pub fn input_supertype_candidate<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    types: &[TypeId],
+    resolver: Option<&R>,
+) -> Option<TypeId> {
+    if types.is_empty() {
+        return None;
+    }
+
+    let mut best = types[0];
+    if let Some(resolver) = resolver {
+        let mut checker = SubtypeChecker::with_resolver(interner, resolver);
+        for &candidate in &types[1..] {
+            checker.guard.reset();
+            if checker.is_subtype_of(best, candidate) {
+                best = candidate;
+            }
+        }
+        let is_supertype = types.iter().all(|&ty| {
+            checker.guard.reset();
+            checker.is_subtype_of(ty, best)
+        });
+        is_supertype.then_some(best)
+    } else {
+        let mut checker = SubtypeChecker::new(interner);
+        for &candidate in &types[1..] {
+            checker.guard.reset();
+            if checker.is_subtype_of(best, candidate) {
+                best = candidate;
+            }
+        }
+        let is_supertype = types.iter().all(|&ty| {
+            checker.guard.reset();
+            checker.is_subtype_of(ty, best)
+        });
+        is_supertype.then_some(best)
+    }
 }
 
 fn contains_unique_symbol(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -732,6 +796,14 @@ pub fn compute_best_common_type_cached<R: TypeResolver>(
         non_nullish != TypeId::NEVER
     });
     if has_nullable_member && has_non_nullable_member {
+        return interner.union(widened);
+    }
+
+    // If every object-like candidate carries a required public primitive-like
+    // field that no other candidate has, no candidate can be a supertype of
+    // another. That proves both the tournament and fallback subtype reduction
+    // are no-ops, so return the unreduced union directly.
+    if subtype_reduction_proven_noop_by_unique_required_fields(interner, &widened) {
         return interner.union(widened);
     }
 
