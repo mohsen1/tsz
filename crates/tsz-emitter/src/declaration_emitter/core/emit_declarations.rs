@@ -1322,86 +1322,19 @@ impl<'a> DeclarationEmitter<'a> {
                             }
                         }
                     }
+                } else if func_body.is_some() {
+                    let _ = self.emit_body_inferred_function_return_type(
+                        func_idx, func, func_body, func_name,
+                    );
                 }
             } else if func_body.is_some() {
-                if self.body_returns_void(func_body) {
-                    self.write(": void");
-                } else if let Some(type_text) =
-                    self.async_returned_function_initializer_promise_type_text(func, func_body)
-                {
-                    self.write(": ");
-                    self.write(&type_text);
-                } else if let Some(return_text) = self.function_body_return_hint(func, func_body).0
-                {
-                    let (return_text, _) =
-                        self.function_return_type_text_for_declaration_scope(func, &return_text);
-                    if let Some(name_text) = self.get_identifier_text(func_name)
-                        && let Some(name_node) = self.arena.get(func_name)
-                        && let Some(file_path) = self.current_file_path.clone()
-                    {
-                        if let Some(func_type_id) = self
-                            .get_node_type_or_names(&[func_name])
-                            .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name))
-                        {
-                            self.check_non_portable_type_references(
-                                func_type_id,
-                                &name_text,
-                                &file_path,
-                                name_node.pos,
-                                name_node.end - name_node.pos,
-                            );
-                        }
-                        let _ = self.emit_non_portable_import_type_text_diagnostics(
-                            &return_text,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
-                    }
-                    self.write(": ");
-                    self.write(&return_text);
-                }
+                let _ = self
+                    .emit_body_inferred_function_return_type(func_idx, func, func_body, func_name);
             }
         } else if func_body.is_some() {
             // No type cache available, but we can infer from the body
-            if self.body_returns_void(func_body) {
-                self.write(": void");
-            } else if let Some(type_text) =
-                self.async_returned_function_initializer_promise_type_text(func, func_body)
-            {
-                self.write(": ");
-                self.write(&type_text);
-            } else if let Some(return_text) = self.function_body_return_hint(func, func_body).0 {
-                let (return_text, _) =
-                    self.function_return_type_text_for_declaration_scope(func, &return_text);
-                if let Some(name_text) = self.get_identifier_text(func_name)
-                    && let Some(name_node) = self.arena.get(func_name)
-                    && let Some(file_path) = self.current_file_path.clone()
-                {
-                    if let Some(func_type_id) = self
-                        .get_node_type_or_names(&[func_name])
-                        .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name))
-                    {
-                        self.check_non_portable_type_references(
-                            func_type_id,
-                            &name_text,
-                            &file_path,
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                        );
-                    }
-                    let _ = self.emit_non_portable_import_type_text_diagnostics(
-                        &return_text,
-                        &name_text,
-                        &file_path,
-                        name_node.pos,
-                        name_node.end - name_node.pos,
-                    );
-                }
-                self.write(": ");
-                self.write(&return_text);
-            }
+            let _ =
+                self.emit_body_inferred_function_return_type(func_idx, func, func_body, func_name);
         }
 
         self.write(";");
@@ -1430,6 +1363,60 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(body_node) = self.arena.get(func_body) {
             self.skip_comments_in_node(body_node.pos, body_node.end);
         }
+    }
+
+    pub(in crate::declaration_emitter) fn emit_body_inferred_function_return_type(
+        &mut self,
+        func_idx: NodeIndex,
+        func: &tsz_parser::parser::node::FunctionData,
+        func_body: NodeIndex,
+        func_name: NodeIndex,
+    ) -> bool {
+        if self.body_returns_void(func_body) {
+            self.write(": void");
+            return true;
+        }
+
+        if let Some(type_text) =
+            self.async_returned_function_initializer_promise_type_text(func, func_body)
+        {
+            self.write(": ");
+            self.write(&type_text);
+            return true;
+        }
+
+        let Some(return_text) = self.function_body_return_hint(func, func_body).0 else {
+            return false;
+        };
+        let (return_text, _) =
+            self.function_return_type_text_for_declaration_scope(func, &return_text);
+        if let Some(name_text) = self.get_identifier_text(func_name)
+            && let Some(name_node) = self.arena.get(func_name)
+            && let Some(file_path) = self.current_file_path.clone()
+        {
+            if let Some(func_type_id) = self
+                .get_node_type_or_names(&[func_name])
+                .or_else(|| self.get_type_via_symbol_for_func(func_idx, func_name))
+            {
+                self.check_non_portable_type_references(
+                    func_type_id,
+                    &name_text,
+                    &file_path,
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                );
+            }
+            let _ = self.emit_non_portable_import_type_text_diagnostics(
+                &return_text,
+                &name_text,
+                &file_path,
+                name_node.pos,
+                name_node.end - name_node.pos,
+            );
+        }
+        self.write(": ");
+        self.write(&return_text);
+        true
     }
 
     pub(crate) fn emit_class_declaration(&mut self, class_idx: NodeIndex) {
