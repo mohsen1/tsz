@@ -51,6 +51,17 @@ function parseChallenge(segment) {
   };
 }
 
+function parseRequiredChallenge(segment, source) {
+  const challenge = parseChallenge(segment);
+  if (challenge.id == null) {
+    console.error(
+      `error: Type Challenges test-case source has an unparseable challenge directory: ${source}`,
+    );
+    process.exit(1);
+  }
+  return challenge;
+}
+
 const questionsDir = path.join(sourceDir, "questions");
 if (!fs.existsSync(questionsDir)) {
   console.error(`error: Type Challenges questions directory not found: ${questionsDir}`);
@@ -68,11 +79,13 @@ const entries = walkTestCases(questionsDir)
       process.exit(1);
     }
 
-    const challengeDir = path.basename(path.dirname(testCasesPath));
     return {
       output,
       source,
-      challenge: parseChallenge(challengeDir),
+      challenge: parseRequiredChallenge(
+        path.basename(path.dirname(testCasesPath)),
+        source,
+      ),
     };
   })
   .sort((left, right) => left.source.localeCompare(right.source));

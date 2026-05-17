@@ -51,6 +51,16 @@ function readDeclarationNames(outputPath) {
   return names;
 }
 
+function parseRequiredChallengeId(id, source) {
+  if (!/^\d+$/.test(id)) {
+    console.error(
+      `error: Type Challenges solution source has an unparseable challenge id: ${source}`,
+    );
+    process.exit(1);
+  }
+  return id.replace(/^0+/, "") || "0";
+}
+
 const entries = lines
   .filter((line) => line.length > 0)
   .map((line, index) => {
@@ -78,7 +88,7 @@ const entries = lines
       output,
       source,
       challenge: {
-        id,
+        id: parseRequiredChallengeId(id, source),
         level,
         title,
       },
