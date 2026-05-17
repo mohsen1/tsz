@@ -3,11 +3,12 @@
 use crate::query_boundaries::common::contains_type_parameters;
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_binder::symbol_flags;
+use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::{SyntaxKind, keyword_to_text_static};
-use tsz_solver::TypeId;
+use tsz_solver::{SymbolRef, TypeId};
 
 /// Extract a property name from a non-computed property name node.
 ///
@@ -1115,6 +1116,11 @@ impl<'a> CheckerState<'a> {
 
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             let computed = self.ctx.arena.get_computed_property(name_node)?;
+            if let Some(sym_ref) =
+                self.computed_identifier_unique_symbol_property_ref(computed.expression)
+            {
+                return Some(format!("__unique_{}", sym_ref.0));
+            }
             // Preserve literal types so that `const k = 'foo'` (no `as const`)
             // still resolves to the literal `"foo"` rather than widening to `string`.
             let prev = self.ctx.preserve_literal_types;
@@ -1254,6 +1260,175 @@ impl<'a> CheckerState<'a> {
         } else {
             None
         }
+    }
+
+    pub(crate) fn computed_property_expression_name_atom(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<Atom> {
+        if let Some(symbol_name) = self.get_symbol_property_name_from_expr(expr_idx) {
+            return Some(self.ctx.types.intern_string(&symbol_name));
+        }
+
+        let sym_ref = self.computed_identifier_unique_symbol_property_ref(expr_idx)?;
+        Some(
+            self.ctx
+                .types
+                .intern_string(&format!("__unique_{}", sym_ref.0)),
+        )
+    }
+
+    pub(crate) fn computed_property_expression_is_symbol_named(&self, expr_idx: NodeIndex) -> bool {
+        self.get_symbol_property_name_from_expr(expr_idx).is_some()
+            || self
+                .computed_identifier_unique_symbol_property_ref(expr_idx)
+                .is_some()
+    }
+
+    fn computed_identifier_unique_symbol_property_ref(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<SymbolRef> {
+        let expr_node = self.ctx.arena.get(expr_idx)?;
+        let ident = self.ctx.arena.get_identifier(expr_node)?;
+
+        let mut sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, expr_idx)
+            .or_else(|| self.ctx.binder.file_locals.get(&ident.escaped_text))?;
+        let mut hops = 0usize;
+        while hops < 32 {
+            hops += 1;
+            let Some(next) = self.ctx.binder.resolve_import_symbol(sym_id) else {
+                break;
+            };
+            if next == sym_id {
+                break;
+            }
+            sym_id = next;
+        }
+
+        self.symbol_has_declared_unique_symbol_property_ref(sym_id)
+            .then_some(SymbolRef(sym_id.0))
+    }
+
+    fn symbol_has_declared_unique_symbol_property_ref(&self, sym_id: tsz_binder::SymbolId) -> bool {
+        let Some(symbol) = self.get_symbol_from_any_binder(sym_id) else {
+            return false;
+        };
+        let file_idx = symbol.decl_file_idx;
+        let owner_binder = self
+            .ctx
+            .get_binder_for_file(file_idx as usize)
+            .unwrap_or(self.ctx.binder);
+
+        symbol.all_declarations().into_iter().any(|decl_idx| {
+            let mut candidate_arenas: Vec<&NodeArena> = Vec::new();
+            if let Some(arenas) = owner_binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                candidate_arenas.extend(arenas.iter().map(std::convert::AsRef::as_ref));
+            }
+            if let Some(symbol_arena) = owner_binder.symbol_arenas.get(&sym_id) {
+                candidate_arenas.push(symbol_arena.as_ref());
+            }
+            if std::ptr::eq(owner_binder, self.ctx.binder) {
+                candidate_arenas.push(self.ctx.arena);
+            }
+
+            candidate_arenas.into_iter().any(|arena| {
+                self.declaration_has_declared_unique_symbol_property_ref(arena, decl_idx)
+            })
+        })
+    }
+
+    fn declaration_has_declared_unique_symbol_property_ref(
+        &self,
+        arena: &NodeArena,
+        mut decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(mut node) = arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::Identifier as u16 {
+            let parent = arena.get_extended(decl_idx).map(|ext| ext.parent);
+            if let Some(parent_node) = parent.and_then(|idx| arena.get(idx))
+                && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            {
+                decl_idx = parent.unwrap_or(NodeIndex::NONE);
+                node = parent_node;
+            }
+        }
+
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let Some(var_decl) = arena.get_variable_declaration(node) else {
+                return false;
+            };
+            if !arena.is_const_variable_declaration(decl_idx) {
+                return false;
+            }
+            return (var_decl.type_annotation.is_some()
+                && crate::types_domain::unique_symbol_arena::is_unique_symbol_type_annotation_unwrapped(
+                    arena,
+                    var_decl.type_annotation,
+                ))
+                || self.is_global_symbol_factory_call_initializer(arena, var_decl.initializer);
+        }
+
+        false
+    }
+
+    fn is_global_symbol_factory_call_initializer(
+        &self,
+        arena: &NodeArena,
+        init_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(init_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return false;
+        }
+        let Some(call) = arena.get_call_expr(node) else {
+            return false;
+        };
+        self.is_global_symbol_factory_callee(arena, call.expression)
+    }
+
+    fn is_global_symbol_factory_callee(&self, arena: &NodeArena, callee_idx: NodeIndex) -> bool {
+        let Some(callee_node) = arena.get(callee_idx) else {
+            return false;
+        };
+        if let Some(ident) = arena.get_identifier(callee_node) {
+            if ident.escaped_text != "Symbol" || !std::ptr::eq(arena, self.ctx.arena) {
+                return false;
+            }
+            return self
+                .ctx
+                .binder
+                .resolve_identifier(self.ctx.arena, callee_idx)
+                .or_else(|| self.ctx.binder.file_locals.get("Symbol"))
+                .or_else(|| {
+                    self.ctx
+                        .lib_contexts
+                        .iter()
+                        .find_map(|ctx| ctx.binder.file_locals.get("Symbol"))
+                })
+                .is_some_and(|sym_id| {
+                    self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                        || self.ctx.symbol_is_from_lib(sym_id)
+                });
+        }
+
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return false;
+        }
+        let Some(access) = arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        let Some(name) = arena.get_identifier_text(access.name_or_argument) else {
+            return false;
+        };
+        name == "for" && self.is_global_symbol_factory_callee(arena, access.expression)
     }
 
     pub(crate) fn is_symbol_property_name(&mut self, name_idx: NodeIndex) -> bool {
