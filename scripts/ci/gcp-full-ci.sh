@@ -332,6 +332,21 @@ ensure_host_tools() {
   nproc
 }
 
+ensure_gcs_auth() {
+  # Set GOOGLE_APPLICATION_CREDENTIALS from SCCACHE_GCS_KEY_JSON when the
+  # caller hasn't gone through setup_sccache (e.g. conformance shards that
+  # skip Rust compilation).  gsutil respects GOOGLE_APPLICATION_CREDENTIALS,
+  # so without this the upload/download falls back to the Cloud Run metadata
+  # server, which is intermittently unavailable on self-hosted runners.
+  if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" && -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+    local key_file="/tmp/sccache-gcs-key.json"
+    printf '%s' "$SCCACHE_GCS_KEY_JSON" > "$key_file"
+    chmod 600 "$key_file"
+    export GOOGLE_APPLICATION_CREDENTIALS="$key_file"
+    echo "gcs-auth: using service account key from SCCACHE_GCS_KEY_JSON"
+  fi
+}
+
 setup_sccache() {
   if command -v sccache >/dev/null 2>&1; then
     echo "sccache $(sccache --version 2>&1 | head -1) already available"
@@ -1127,6 +1142,7 @@ run_conformance() {
     local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
     local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
     if [[ -n "$bucket" && "$run_key" != "unknown" ]] && command -v gsutil >/dev/null 2>&1; then
+      ensure_gcs_auth
       gsutil -q cp "$METRICS_DIR/conformance.json" \
         "${bucket%/}/conformance-runs/${run_key}/shard-${shard_index}.json" 2>/dev/null \
         && echo "Uploaded shard result: shard-${shard_index}.json" \
@@ -1184,6 +1200,7 @@ run_conformance_aggregate() {
   local tmp_dir
   tmp_dir="$(mktemp -d)"
 
+  ensure_gcs_auth
   echo "Downloading shard results from ${prefix}/shard-*.json ..."
   if ! gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
     echo "error: failed to download shard results from GCS" >&2

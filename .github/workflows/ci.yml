@@ -750,6 +750,7 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3, 4, 5]
     env:
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
       _TSZ_CI_CONFORMANCE_SHARD_INDEX: ${{ matrix.shard }}
       _TSZ_CI_CONFORMANCE_SHARD_COUNT: 6
       TSZ_CI_CONFORMANCE_SHARDS: 6
@@ -779,6 +780,7 @@ jobs:
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
       GITHUB_SHA: ${{ github.sha }}
       _TSZ_CI_CONFORMANCE_SHARD_COUNT: 6
       TSZ_CI_CONFORMANCE_SHARDS: 6
