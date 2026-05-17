@@ -424,7 +424,6 @@ impl<'a> Printer<'a> {
             .iter()
             .any(|&b| b == b'\n' || b == b'\r')
         {
-            self.write_line();
             let (_, _, had_trailing_newline) =
                 self.emit_comments_in_range(from_pos, dot_pos, true, false);
             had_trailing_newline
@@ -1478,6 +1477,22 @@ mod tests {
         assert!(
             output.contains(".filter((obj) => obj) // keep with body"),
             "Trailing comments on concise arrow body expressions should stay with the body before the outer call closes.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn property_access_own_line_comment_before_dot_uses_single_newline() {
+        let output = emit_es6(
+            "const result = values.map((arr) => arr\n    // keep with arr\n    .filter((obj) => obj));\n",
+        );
+
+        assert!(
+            output.contains("arr\n    // keep with arr\n    .filter((obj) => obj)"),
+            "Own-line comments before a member-access dot should keep exactly the source line break before the dot.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("arr\n\n    // keep with arr"),
+            "Property-access comment emission should not pre-write a newline and replay the same leading trivia.\nOutput:\n{output}"
         );
     }
 
