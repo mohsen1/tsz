@@ -5,6 +5,18 @@ on:
     workflows: [CI]
     branches: [main]
     types: [completed]
+  schedule:
+    # Daily latest PGO release: submit the Cloud Build prep first, then publish
+    # the finished artifact without fanning out benchmark shards.
+    - cron: '0 3 * * *'
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+    inputs:
+      publish_latest_pgo:
+        description: "Publish the latest PGO channel asset from this run"
+        required: false
+        default: false
+        type: boolean
 
 # Do not use workflow-level concurrency here. A queued workflow run would start
 # after the active benchmark finishes and benchmark an old "next" commit. The
