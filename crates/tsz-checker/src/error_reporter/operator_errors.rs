@@ -377,7 +377,16 @@ impl<'a> CheckerState<'a> {
                         .get(annotation_node.pos as usize..annotation_node.end as usize)
                 {
                     let text = text.trim();
+                    // Only match type-parameter-like annotations (valid identifier start:
+                    // letter, _, or $). Numeric literals such as `2` or `42` start with a
+                    // digit and are NOT type parameters; returning their text raw would
+                    // produce messages like "types 'boolean' and '2'" instead of the
+                    // correctly widened "types 'boolean' and 'number'".
                     if text.len() <= 3
+                        && text
+                            .chars()
+                            .next()
+                            .is_some_and(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphabetic())
                         && text
                             .chars()
                             .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
