@@ -234,7 +234,12 @@ withTempDir((dir) => {
   });
   writeJson(manifest, {
     fixture: "type-challenges-assertion-candidates",
-    counts: {},
+    counts: {
+      generatedAssertions: 0,
+      assertionsReferencingSolutionDeclaration: 0,
+      assertionsMissingSolutionDeclarationReference: 0,
+    },
+    entries: [],
   });
 
   const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
@@ -276,7 +281,11 @@ withTempDir((dir) => {
   });
   writeJson(manifest, {
     fixture: "type-challenges-assertion-candidates",
-    counts: {},
+    counts: {
+      generatedAssertions: 0,
+      assertionsReferencingSolutionDeclaration: 0,
+      assertionsMissingSolutionDeclarationReference: 0,
+    },
     entries: [],
   });
   writeExecutable(
@@ -315,4 +324,105 @@ withTempDir((dir) => {
     byCodeDelta: [{ key: "TS2589", tsc: 0, tsz: 2, delta: 2 }],
     bySemanticFamilyDelta: [{ key: "unknown", tsc: 0, tsz: 2, delta: 2 }],
   });
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: {
+      generatedAssertions: 1,
+      assertionsReferencingSolutionDeclaration: 1,
+      assertionsMissingSolutionDeclarationReference: 0,
+    },
+    entries: [
+      {
+        id: "escape",
+        output: "../outside.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /must be a relative path inside the candidate directory/);
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeFile(path.join(candidates, "assertions", "one.ts"), "type One = true;\n");
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: {
+      generatedAssertions: 2,
+      assertionsReferencingSolutionDeclaration: 1,
+      assertionsMissingSolutionDeclarationReference: 1,
+    },
+    entries: [
+      {
+        id: "one",
+        output: "assertions/one.ts",
+      },
+      {
+        id: "one-copy",
+        output: "assertions/one.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /duplicate assertion candidate output/);
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: {
+      generatedAssertions: 1,
+      assertionsReferencingSolutionDeclaration: 1,
+      assertionsMissingSolutionDeclarationReference: 0,
+    },
+    entries: [
+      {
+        id: "missing",
+        output: "assertions/missing.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /does not exist inside candidate directory/);
+  assert.equal(fs.existsSync(output), false);
 });
