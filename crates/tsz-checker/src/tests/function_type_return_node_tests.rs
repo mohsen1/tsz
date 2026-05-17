@@ -7,6 +7,23 @@ fn diagnostic_codes(source: &str) -> Vec<u32> {
         .collect()
 }
 
+fn count_code(codes: &[u32], code: u32) -> usize {
+    codes.iter().filter(|&&observed| observed == code).count()
+}
+
+fn assert_single_ts2536_without_ts2322(codes: &[u32], context: &str) {
+    assert_eq!(
+        count_code(codes, 2536),
+        1,
+        "expected exactly one TS2536 {context}, got: {codes:?}"
+    );
+    assert_eq!(
+        count_code(codes, 2322),
+        0,
+        "inner constrained type parameter should not add TS2322 {context}, got: {codes:?}"
+    );
+}
+
 #[test]
 fn function_type_return_annotation_checks_shadowed_indexed_access() {
     let codes = diagnostic_codes(
@@ -17,10 +34,7 @@ type Test<T> = {
 "#,
     );
 
-    assert!(
-        codes.contains(&2536),
-        "expected TS2536 in function type return annotation, got: {codes:?}"
-    );
+    assert_single_ts2536_without_ts2322(&codes, "in function type return annotation");
 }
 
 #[test]
@@ -33,10 +47,7 @@ type Renamed<T> = {
 "#,
     );
 
-    assert!(
-        codes.contains(&2536),
-        "expected TS2536 independent of type parameter names, got: {codes:?}"
-    );
+    assert_single_ts2536_without_ts2322(&codes, "independent of type parameter names");
 }
 
 #[test]
@@ -49,10 +60,7 @@ type Param<T> = {
 "#,
     );
 
-    assert!(
-        codes.contains(&2536),
-        "expected TS2536 in function type parameter annotation, got: {codes:?}"
-    );
+    assert_single_ts2536_without_ts2322(&codes, "in function type parameter annotation");
 }
 
 #[test]
@@ -65,10 +73,7 @@ type Ctor<T> = {
 "#,
     );
 
-    assert!(
-        codes.contains(&2536),
-        "expected TS2536 in constructor type return annotation, got: {codes:?}"
-    );
+    assert_single_ts2536_without_ts2322(&codes, "in constructor type return annotation");
 }
 
 #[test]
@@ -81,8 +86,14 @@ type Ok<T> = {
 "#,
     );
 
-    assert!(
-        !codes.contains(&2536),
+    assert_eq!(
+        count_code(&codes, 2536),
+        0,
         "outer mapped key should remain valid in function type return annotation, got: {codes:?}"
+    );
+    assert_eq!(
+        count_code(&codes, 2322),
+        0,
+        "outer mapped key should not produce TS2322, got: {codes:?}"
     );
 }

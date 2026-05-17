@@ -1,6 +1,3 @@
-//! Indexed access type validation (`T[K]`), including `keyof`-compat checks
-//! and TS2536 diagnostics for invalid index constraints.
-
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -10,9 +7,9 @@ use tsz_solver::TypeId;
 mod indexed_access_helpers;
 
 use indexed_access_helpers::{
-    indexed_access_object_alias_application_exceeds_depth, is_broad_index_type,
-    remapped_mapped_type_template_index_should_report_ts2536, same_object_key_space,
-    same_type_param_name,
+    generic_constrained_index, indexed_access_object_alias_application_exceeds_depth,
+    is_broad_index_type, remapped_mapped_type_template_index_should_report_ts2536,
+    same_object_key_space, same_type_param_name,
 };
 
 impl<'a> CheckerState<'a> {
@@ -1177,6 +1174,12 @@ impl<'a> CheckerState<'a> {
         if !self.is_assignable_to(index_type_for_check, keyof_object) {
             if let Some((wants_string, wants_number)) =
                 self.get_index_key_kind(index_type_for_check)
+                && !generic_constrained_index(
+                    self.ctx.types,
+                    object_type_for_check,
+                    index_type,
+                    index_constraint,
+                )
                 && self.is_element_indexable(object_type_for_check, wants_string, wants_number)
             {
                 return;
