@@ -1890,6 +1890,12 @@ impl<'a> Printer<'a> {
                         .has_modifier(&t.modifiers, SyntaxKind::ExportKeyword)
                 })
             }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                self.arena.get_import_decl(node).is_some_and(|i| {
+                    self.arena
+                        .has_modifier(&i.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
             _ => false,
         }
     }
@@ -1925,6 +1931,12 @@ impl<'a> Printer<'a> {
                     // (namespace alias, not a module indicator)
                     k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                         if let Some(import_data) = self.arena.get_import_decl(node) {
+                            if self
+                                .arena
+                                .has_modifier(&import_data.modifiers, SyntaxKind::ExportKeyword)
+                            {
+                                return true;
+                            }
                             if import_data.module_specifier.is_none() {
                                 // require(nonStringLiteral) — specifier failed to parse
                                 // as string literal, but the `import` keyword still

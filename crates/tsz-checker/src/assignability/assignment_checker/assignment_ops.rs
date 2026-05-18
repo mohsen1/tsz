@@ -954,11 +954,9 @@ impl<'a> CheckerState<'a> {
             false
         };
         // Only suppress assignability for named property readonly (TS2540).
-        // For element access (index signatures, TS2542), tsc still checks type compatibility.
-        let left_node = self.ctx.arena.get(left_idx);
-        let is_element_access =
-            left_node.is_some_and(|n| n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION);
-        let suppress_for_readonly = is_readonly_target && !is_element_access;
+        // For readonly index signatures (TS2542), tsc still checks type compatibility.
+        let suppress_for_readonly =
+            is_readonly_target && self.readonly_assignment_suppresses_type_mismatch(left_idx);
 
         if !is_const && self.error_top_level_js_this_computed_element_assignment(left_idx) {
             return right_type;

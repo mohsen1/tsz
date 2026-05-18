@@ -11,6 +11,7 @@ fn transform_and_print(source: &str) -> String {
         && let Some(&func_idx) = source_file.statements.nodes.first()
     {
         let mut transformer = AsyncES5Transformer::new(&parser.arena);
+        transformer.set_source_text(source);
         let ir = transformer.transform_async_function(func_idx);
         IRPrinter::emit_to_string(&ir)
     } else {
@@ -46,6 +47,7 @@ fn transform_generator_and_print(source: &str) -> String {
         && let Some(&func_idx) = source_file.statements.nodes.first()
     {
         let mut transformer = AsyncES5Transformer::new(&parser.arena);
+        transformer.set_source_text(source);
         let ir = transformer.transform_generator_function(func_idx);
         IRPrinter::emit_to_string(&ir)
     } else {
@@ -93,6 +95,28 @@ fn test_async_with_await() {
     assert!(output.contains("switch (_a.label)"), "Should have switch");
     assert!(output.contains("[4 /*yield*/"), "Should have yield");
     assert!(output.contains("_a.sent()"), "Should call _a.sent()");
+}
+
+#[test]
+fn test_async_if_then_await_else_uses_resume_before_else_label() {
+    let output = transform_and_print(
+        "async function test(skip: boolean) { if (!skip) { await 1 } else { throw Error('test') } }",
+    );
+
+    assert!(
+        output.contains("if (!!skip) return [3 /*break*/, 2];"),
+        "The initial branch should jump over the then-resume case into the else case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 1:")
+            && output.contains("_a.sent();")
+            && output.contains("return [3 /*break*/, 3];"),
+        "The then branch should resume at case 1 before jumping to the final case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2: throw Error('test');"),
+        "The else branch should start after the then resume case.\nOutput:\n{output}"
+    );
 }
 
 #[test]
