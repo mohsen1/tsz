@@ -172,6 +172,14 @@ if (cleanSubsetManifest) {
       "tsc-clean assertion manifest counts.tscAcceptedAssertionsMissingSolutionDeclarationReference must be an integer",
     );
   }
+  if (!Number.isInteger(rejectedAssertions)) {
+    fail(
+      "tsc-clean assertion manifest counts.tscRejectedAssertions must be an integer",
+    );
+  }
+  if (!Number.isInteger(totalCandidates)) {
+    fail("tsc-clean assertion manifest counts.totalCandidates must be an integer");
+  }
   if (
     acceptedReferencingSolutionDeclaration + acceptedMissingSolutionDeclarationReference !==
       acceptedAssertions
@@ -180,11 +188,7 @@ if (cleanSubsetManifest) {
       `tsc-clean assertion manifest declaration-reference counts (${acceptedReferencingSolutionDeclaration} + ${acceptedMissingSolutionDeclarationReference}) do not match tscAcceptedAssertions (${acceptedAssertions})`,
     );
   }
-  if (
-    Number.isInteger(rejectedAssertions) &&
-    Number.isInteger(totalCandidates) &&
-    acceptedAssertions + rejectedAssertions !== totalCandidates
-  ) {
+  if (acceptedAssertions + rejectedAssertions !== totalCandidates) {
     fail(
       `tsc-clean assertion manifest accepted/rejected counts (${acceptedAssertions} + ${rejectedAssertions}) do not match totalCandidates (${totalCandidates})`,
     );
