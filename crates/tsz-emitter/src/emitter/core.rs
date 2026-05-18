@@ -314,8 +314,8 @@ pub struct Printer<'a> {
     /// Emit `void 0` for missing initializers during recovery.
     pub(crate) emit_missing_initializer_as_void_0: bool,
 
-    /// Function depth whose loop body should reset initializerless lexical bindings.
-    pub(crate) loop_body_missing_initializer_function_depth: Option<u32>,
+    /// Function depth whose ES5 lexical block should reset initializerless bindings.
+    pub(crate) lexical_block_missing_initializer_function_depth: Option<u32>,
 
     /// Current declaration list is being printed in a `for` header.
     pub(crate) in_for_initializer: bool,
@@ -1097,7 +1097,7 @@ impl<'a> Printer<'a> {
             transforms: TransformContext::new(), // Empty by default, can be set later
             emit_plan,
             emit_missing_initializer_as_void_0: false,
-            loop_body_missing_initializer_function_depth: None,
+            lexical_block_missing_initializer_function_depth: None,
             in_for_initializer: false,
             source_text: None,
             jsx_pragmas: crate::jsx_pragmas::JsxPragmaFacts::default(),
