@@ -558,6 +558,13 @@ impl TypeEnvironment {
 
     /// Set the shared `DefinitionStore` for fallback `DefKind` lookups.
     pub fn set_definition_store(&mut self, store: Arc<DefinitionStore>) {
+        if self
+            .definition_store
+            .as_ref()
+            .is_some_and(|s| Arc::ptr_eq(s, &store))
+        {
+            return;
+        }
         self.definition_store = Some(store);
         self.bump_generation();
     }
