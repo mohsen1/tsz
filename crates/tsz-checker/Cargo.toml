@@ -894,6 +894,10 @@ name = "large_union_index_merge_regression_tests"
 path = "tests/large_union_index_merge_regression_tests.rs"
 
 [[test]]
+name = "global_augmentation_lib_interface_merge_tests"
+path = "tests/global_augmentation_lib_interface_merge_tests.rs"
+
+[[test]]
 name = "ts2451_type_only_namespace_merge_tests"
 path = "tests/ts2451_type_only_namespace_merge_tests.rs"
 
