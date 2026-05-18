@@ -9,7 +9,6 @@
 //! Related conformance test:
 //! `genericCallToOverloadedMethodWithOverloadedArguments.ts`
 
-use std::sync::Arc;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::{check_source_with_libs, load_default_lib_files};
 
@@ -18,7 +17,7 @@ fn diag_code_messages(source: &str) -> Vec<(u32, String)> {
     assert!(!libs.is_empty(), "default lib files must be available");
     check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs)
         .into_iter()
-        .map(|d| (d.code, d.message_text.clone()))
+        .map(|d| (d.code, d.message_text))
         .collect()
 }
 
