@@ -3,7 +3,9 @@
 //! These tests verify that the complete chain (parse -> lower -> print) produces
 //! correct ES5 output for destructuring, class, and async transforms.
 
-use crate::emitter::ModuleKind;
+use crate::context::emit::EmitContext;
+use crate::emitter::{ModuleKind, Printer as EmitPrinter, PrinterOptions};
+use crate::lowering::LoweringPass;
 use crate::output::printer::{PrintOptions, lower_and_print};
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
@@ -38,12 +40,21 @@ fn emit_es5_with_module(source: &str, module: ModuleKind) -> String {
 fn emit_es5_with_comments(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    lower_and_print(&parser.arena, root, PrintOptions::es5()).code
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+    let mut printer = EmitPrinter::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
 }
 
 #[test]
 fn async_es5_for_loop_captured_let_with_await_uses_loop_generator() {
-    let output = emit_es5(
+    let output = emit_es5_with_comments(
         "async function f() {\n\
              var ar = [];\n\
              for (let i = 0; i < 1; i++) {\n\
@@ -741,6 +752,32 @@ class Derived extends Base {
         !output.contains("function inner() {\n            _super.prototype.publicFunc.call(this);")
             && !output.contains("return _super.prototype.publicFunc.call(this); }"),
         "Nested non-arrow functions must not inherit the enclosing method's instance super base.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_class_super_assignment_function_comment_stays_after_assignment() {
+    let output = emit_es5(
+        r#"
+class Base {
+    m1(a) { return ""; }
+}
+class Derived extends Base {
+    fn() {
+        super.m1 = function (a) { return ""; }; // kept
+        super.value = 0;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("_super.prototype.m1 = function (a) { return \"\"; };"),
+        "Super function assignment should keep the nested function body compact.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return \"\"; // kept"),
+        "Trailing comment after the assignment must not be attached to the nested return.\nOutput:\n{output}"
     );
 }
 
