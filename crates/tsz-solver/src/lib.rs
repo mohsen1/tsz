@@ -212,7 +212,11 @@ pub use caches::query_cache::{
 pub use canonicalize::Canonicalizer;
 pub use classes::inheritance::InheritanceGraph;
 pub use contextual::{ContextualTypeContext, apply_contextual_type, rest_argument_element_type};
-pub use def::*;
+pub use def::{
+    ContentAddressedDefIds, DefId, DefKind, DefinitionInfo, DefinitionStore, EnumMemberValue,
+    FileChange, FileChangeSet, InvalidationSummary, StoreStatistics, diff_fingerprints,
+    incremental, resolver,
+};
 pub use diagnostics::SubtypeFailureReason;
 pub use diagnostics::builders::{
     DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
