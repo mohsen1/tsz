@@ -752,6 +752,136 @@ fn system_exported_object_binding_initializer_assigns_and_exports_hoisted_name()
 }
 
 #[test]
+fn system_recovered_if_initializerless_export_var_hoists_and_erases_body() {
+    let source = "if (true)\nexport const cssExports: CssExports;\nexport default cssExports;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var cssExports;"),
+        "System wrapper should hoist the recovered exported binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (true) { }"),
+        "Initializerless recovered export body should erase to an empty block.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"default\", cssExports);"),
+        "Default export should read the hoisted local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.cssExports = ;"),
+        "System output should not fall through to invalid CommonJS assignment syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_recovered_if_initialized_export_var_uses_system_export_binding() {
+    let source = "if (true)\nexport var value = 1;\nexport default value;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var value;"),
+        "System wrapper should hoist the recovered initialized export binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"value\", value = 1);"),
+        "Recovered initialized export should use the System live-binding writer.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.value = 1"),
+        "System execute output should not use the CommonJS export object.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_recovered_if_empty_export_binding_uses_planned_temp() {
+    let source = "if (true)\nexport const {} = value;\nexport default value;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _a, _b;"),
+        "Recovered exported empty binding should hoist both planned temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"_b\", _b = _a = value);"),
+        "Recovered exported empty binding should use the planned export temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_recovered_if_object_rest_export_uses_planned_temp() {
+    let source =
+        "if (true)\nexport const { x, ...rest } = { x: 'x', y: 'y' };\nexport default x;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ESNext,
+            no_emit_helpers: true,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _a, x, rest;"),
+        "Recovered exported object-rest binding should hoist the planned source temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = { x: 'x', y: 'y' }, exports_1(\"x\", x = _a.x), exports_1(\"rest\", rest = __rest(_a, [\"x\"]));"),
+        "Recovered exported object-rest binding should reuse the planned source temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("{ x, ...rest } ="),
+        "System output should not emit a raw recovered object-rest assignment pattern.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_object_binding_initializer_assigns_hoisted_name() {
     let source = "let { toString } = 1;\n{\n    let { toFixed } = 1;\n}\nexport {};\n";
 

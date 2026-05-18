@@ -652,16 +652,28 @@ impl<'a> Printer<'a> {
             }
             k if k == syntax_kind_ext::IF_STATEMENT => {
                 if let Some(if_stmt) = self.arena.get_if_statement(node) {
-                    self.collect_system_nested_top_level_var_hoisted_names(
+                    if !self.collect_system_recovered_exported_variable_names(
                         if_stmt.then_statement,
                         names,
                         seen,
-                    );
-                    self.collect_system_nested_top_level_var_hoisted_names(
+                    ) {
+                        self.collect_system_nested_top_level_var_hoisted_names(
+                            if_stmt.then_statement,
+                            names,
+                            seen,
+                        );
+                    }
+                    if !self.collect_system_recovered_exported_variable_names(
                         if_stmt.else_statement,
                         names,
                         seen,
-                    );
+                    ) {
+                        self.collect_system_nested_top_level_var_hoisted_names(
+                            if_stmt.else_statement,
+                            names,
+                            seen,
+                        );
+                    }
                 }
             }
             k if k == syntax_kind_ext::FOR_STATEMENT
@@ -788,6 +800,58 @@ impl<'a> Printer<'a> {
             return false;
         };
 
+        for name in self.collect_variable_names_from_node(variable_node) {
+            if !name.is_empty() && seen.insert(name.clone()) {
+                names.push(name);
+            }
+        }
+        true
+    }
+
+    fn collect_system_recovered_exported_variable_names(
+        &mut self,
+        stmt_idx: NodeIndex,
+        names: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+    ) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        let variable_node = if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                return false;
+            };
+            if !self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            {
+                return false;
+            }
+            stmt_node
+        } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                return false;
+            };
+            if export_decl.module_specifier.is_some() || export_decl.is_default_export {
+                return false;
+            }
+            let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                return false;
+            };
+            if clause_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                return false;
+            }
+            clause_node
+        } else {
+            return false;
+        };
+
+        self.collect_system_empty_binding_temps_from_variable_statement(
+            variable_node,
+            true,
+            names,
+            seen,
+        );
         for name in self.collect_variable_names_from_node(variable_node) {
             if !name.is_empty() && seen.insert(name.clone()) {
                 names.push(name);

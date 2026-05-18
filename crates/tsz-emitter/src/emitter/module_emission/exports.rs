@@ -906,6 +906,10 @@ impl<'a> Printer<'a> {
             match clause_node.kind {
                 // export const/let/var x = ...
                 k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    if self.in_system_execute_body {
+                        self.emit_system_variable_initializers(clause_node);
+                        return;
+                    }
                     if !self.ctx.module_state.has_export_assignment {
                         if let Some(schedule) = self
                             .collect_cjs_export_variable_schedule(export.export_clause, clause_node)
