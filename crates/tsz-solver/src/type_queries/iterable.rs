@@ -189,10 +189,24 @@ pub fn classify_for_of_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> F
         TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
             ForOfElementKind::Readonly(inner)
         }
+        TypeData::TypeParameter(info) | TypeData::Infer(info)
+            if generic_constraint_is_array_like(db, info.constraint) =>
+        {
+            ForOfElementKind::Array(db.index_access(type_id, TypeId::NUMBER))
+        }
         // String literals iterate to produce `string`
         TypeData::Literal(crate::LiteralValue::String(_)) => ForOfElementKind::String,
         _ => ForOfElementKind::Other,
     }
+}
+
+fn generic_constraint_is_array_like(db: &dyn TypeDatabase, constraint: Option<TypeId>) -> bool {
+    let Some(constraint) = constraint else {
+        return false;
+    };
+
+    crate::type_queries::data::get_array_element_type(db, constraint).is_some()
+        || crate::type_queries::data::get_tuple_elements(db, constraint).is_some()
 }
 
 #[cfg(test)]

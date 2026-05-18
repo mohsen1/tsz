@@ -45,6 +45,20 @@ fn should_preserve_contextual_application_shape(
     false
 }
 
+fn inferred_args_are_contextual_type_param_constraints(
+    db: &dyn tsz_solver::TypeDatabase,
+    inferred_args: &[TypeId],
+    contextual_args: &[TypeId],
+) -> bool {
+    inferred_args
+        .iter()
+        .zip(contextual_args.iter())
+        .all(|(&inferred, &contextual)| {
+            crate::query_boundaries::common::type_parameter_constraint(db, contextual)
+                == Some(inferred)
+        })
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) const fn should_suppress_weak_key_arg_mismatch(
         &mut self,
@@ -1550,10 +1564,22 @@ impl<'a> CheckerState<'a> {
                         && result_base == ctx_base
                         && result_args.len() == ctx_args.len()
                         && !result_args.is_empty()
-                        && result_args.iter().all(|&arg| arg == TypeId::UNKNOWN)
+                        && (result_args.iter().all(|&arg| arg == TypeId::UNKNOWN)
+                            || inferred_args_are_contextual_type_param_constraints(
+                                self.ctx.types,
+                                &result_args,
+                                &ctx_args,
+                            ))
                         && ctx_args
                             .iter()
                             .any(|&arg| arg != TypeId::UNKNOWN && arg != TypeId::ERROR)
+                    {
+                        return_type = contextual_type;
+                    }
+                    if self.contextual_application_matches_new_target(
+                        new_expr.expression,
+                        contextual_type,
+                    ) && !self.is_assignable_to(return_type, contextual_type)
                     {
                         return_type = contextual_type;
                     }

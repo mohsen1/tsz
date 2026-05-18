@@ -664,6 +664,25 @@ fn for_of_no_infer_unwraps_via_readonly_arm() {
 }
 
 #[test]
+fn for_of_generic_array_constraint_preserves_indexed_element() {
+    let interner = TypeInterner::new();
+    let arr = interner.array(TypeId::STRING);
+    let readonly_arr = interner.readonly_type(arr);
+    let tp = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("Items"),
+        constraint: Some(readonly_arr),
+        default: None,
+        is_const: false,
+    });
+    let expected = interner.index_access(tp, TypeId::NUMBER);
+
+    match classify_for_of_element_type(&interner, tp) {
+        ForOfElementKind::Array(elem) => assert_eq!(elem, expected),
+        other => panic!("expected generic indexed array element, got {other:?}"),
+    }
+}
+
+#[test]
 fn for_of_string_literal_returns_string_kind() {
     let interner = TypeInterner::new();
     let lit = interner.literal_string("hello");

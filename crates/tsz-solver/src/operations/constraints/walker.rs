@@ -445,6 +445,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 return;
             }
         }
+        if let Some(TypeData::Application(_)) = target_key {
+            let resolved = self.checker.evaluate_type(target);
+            if resolved != target
+                && with_placeholder_visited(|visited| {
+                    self.type_contains_placeholder(resolved, var_map, visited)
+                })
+            {
+                self.constrain_types(ctx, var_map, source, resolved, priority);
+                return;
+            }
+        }
 
         // Recurse structurally
         let source_key = self.interner.lookup(source);

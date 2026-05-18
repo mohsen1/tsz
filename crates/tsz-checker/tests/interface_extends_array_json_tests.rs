@@ -592,3 +592,111 @@ const it: IterableIterator<number, string> = [1][Symbol.iterator]();
         "Expected TS2322 for incompatible IterableIterator return type. Got: {diags:#?}"
     );
 }
+
+/// For-of over a generic array-like value preserves the correlated `T[number]`
+/// element, rather than falling back to the declared array constraint's element.
+#[test]
+fn for_of_generic_array_constraint_preserves_literal_element() {
+    let libs = website_libs();
+    if libs.is_empty() {
+        return;
+    }
+    let source = r#"
+function first<TItems extends readonly { readonly id: string }[]>(items: TItems) {
+  for (const item of items) {
+    return item;
+  }
+  throw new Error('empty');
+}
+declare const items: readonly [{ readonly id: 'a'; readonly extra: 1 }];
+const got: { readonly id: 'a'; readonly extra: 1 } = first(items);
+"#;
+    let diags = check_with_lib(source, libs);
+    assert!(
+        diags.is_empty(),
+        "Expected for-of over generic array constraint to preserve T[number]. Got: {diags:#?}"
+    );
+}
+
+/// Exported helper aliases can make tsz evaluate the generic constraint before
+/// the constructor body. The loop variable must still be `TPlugins[number]`.
+#[test]
+fn exported_plugin_registry_constructor_for_of_preserves_generic_element() {
+    let libs = website_libs();
+    if libs.is_empty() {
+        return;
+    }
+    let source = r#"
+export type Brand<T, Tag extends string> = T & { readonly __brand: Tag };
+type Keep<T> = [T][T extends any ? 0 : never];
+export type DeepReadonlyMap<T> = T extends (...args: any[]) => unknown
+  ? T
+  : T extends readonly [infer Head, ...infer Tail]
+    ? readonly [DeepReadonlyMap<Head>, ...{ [K in keyof Tail]: DeepReadonlyMap<Tail[K]> }]
+    : T extends ReadonlyArray<infer U>
+      ? ReadonlyArray<DeepReadonlyMap<U>>
+      : T extends object
+        ? { readonly [K in keyof T]: DeepReadonlyMap<T[K]> }
+        : T;
+export type ReplacePrefix<TRecord extends Record<PropertyKey, unknown>, Prefix extends string> = {
+  [K in keyof TRecord as K extends `${Prefix}${infer Rest}` ? Rest : never]: TRecord[K];
+};
+export type StripLeading<T extends string> = T extends `_${infer Tail}` ? Tail : T;
+export type RegistryTemplate<T extends string> = `@recovery/${T}`;
+export type PluginName<T extends string> = RegistryTemplate<T>;
+export interface RegistryPlugin<
+  TName extends string,
+  TInput,
+  TOutput,
+  TTag extends PluginName<TName> = PluginName<TName>
+> {
+  readonly id: Brand<TTag, 'plugin-id'>;
+  readonly supports: readonly string[];
+}
+export class Registry<TPlugins extends readonly RegistryPlugin<string, any, any, any>[]> {
+  constructor(plugins: Keep<TPlugins>) {
+    for (const plugin of plugins) {
+      const same: TPlugins[number] = plugin;
+      plugin.id;
+      same.id;
+    }
+  }
+}
+"#;
+    let diags = check_with_lib(source, libs);
+    assert!(
+        diags.is_empty(),
+        "Expected exported registry constructor to type loop variable as TPlugins[number]. Got: {diags:#?}"
+    );
+}
+
+/// A contextual `new C(value)` should keep the surrounding generic argument
+/// when bare constructor inference falls back to that argument's constraint.
+#[test]
+fn contextual_new_preserves_generic_class_argument_from_constraint_fallback() {
+    let libs = website_libs();
+    if libs.is_empty() {
+        return;
+    }
+    let source = r#"
+type Keep<T> = [T][T extends any ? 0 : never];
+interface Item { readonly id: string; }
+class Registry<TItems extends readonly Item[]> {
+  constructor(items: Keep<TItems>) {}
+  get<TId extends TItems[number]['id']>(id: TId): Extract<TItems[number], { id: TId }> | undefined {
+    return undefined;
+  }
+}
+class Session<TItems extends readonly Item[]> {
+  private readonly registry: Registry<TItems>;
+  constructor(items: TItems) {
+    this.registry = new Registry(items);
+  }
+}
+"#;
+    let diags = check_with_lib(source, libs);
+    assert!(
+        diags.is_empty(),
+        "Expected contextual new expression to preserve Registry<TItems>. Got: {diags:#?}"
+    );
+}
