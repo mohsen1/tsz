@@ -2098,6 +2098,24 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+        // `S[T1]` vs `S[T2]` where T1/T2 are distinct type parameters
+        // collapses to the same evaluated shape (the constraint), so the
+        // structural pipeline loses the IndexAccess form before it can
+        // produce the TS2322 + TS5075 elaboration chain. Detect the
+        // mismatch on the unevaluated inputs and surface it directly.
+        if let Some(reason) =
+            crate::query_boundaries::assignability::index_access_pair_distinct_type_param_keys_failure_reason(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                source,
+                target,
+            )
+        {
+            return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+                weak_union_violation: false,
+                failure_reason: Some(reason),
+            };
+        }
         let (prepared_source, prepared_target) = self.prepare_assignability_inputs(source, target);
 
         // Keep failure analysis on the same relation boundary as `is_assignable_to`

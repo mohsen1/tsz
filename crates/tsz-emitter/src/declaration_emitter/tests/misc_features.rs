@@ -1685,6 +1685,95 @@ export let [ma, mb] = ["A", 1];
 }
 
 #[test]
+fn test_short_circuit_const_literal_variables_preserve_literal_union() {
+    let output = emit_dts_with_binding(
+        r#"
+const string: "string" = "string";
+const number: "number" = "number";
+const boolean: "boolean" = "boolean";
+
+const stringOrNumber = string || number;
+const stringOrBoolean = string || boolean;
+const booleanOrNumber = number || boolean;
+const stringOrBooleanOrNumber = stringOrBoolean || number;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const stringOrNumber: \"string\" | \"number\";"),
+        "Expected `||` over literal-typed consts to preserve both arms: {output}"
+    );
+    assert!(
+        output.contains("declare const stringOrBoolean: \"string\" | \"boolean\";"),
+        "Expected `||` to preserve string and boolean literal arms: {output}"
+    );
+    assert!(
+        output.contains("declare const booleanOrNumber: \"number\" | \"boolean\";"),
+        "Expected `||` to preserve source declaration order for operands: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare const stringOrBooleanOrNumber: \"string\" | \"number\" | \"boolean\";"
+        ),
+        "Expected chained `||` to merge prior literal unions in declaration order: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_drops_falsy_left_literal_from_dts_union() {
+    let output = emit_dts_with_binding(
+        r#"
+const empty: "" = "";
+const fallback: "fallback" = "fallback";
+const value = empty || fallback;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value: \"fallback\";"),
+        "Expected `||` declaration inference to exclude a known-falsy left literal: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_reference_respects_annotated_widened_surface() {
+    let output = emit_dts_with_binding(
+        r#"
+const a: "a" = "a";
+const b: "b" = "b";
+const c: "c" = "c";
+let ab: string = a || b;
+export const y = ab || c;
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const y: string;"),
+        "Expected referenced annotated short-circuit declarations to expose their declared surface: {output}"
+    );
+    assert!(
+        !output.contains("export declare const y: \"a\" | \"b\" | \"c\";"),
+        "Annotated referenced declarations must not be expanded through their initializer: {output}"
+    );
+}
+
+#[test]
+fn test_nullish_coalescing_drops_nullish_left_from_dts_union() {
+    let output = emit_dts_with_binding(
+        r#"
+const maybe: "value" | undefined = undefined as any;
+const fallback: "fallback" = "fallback";
+const value = maybe ?? fallback;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value: \"value\" | \"fallback\";"),
+        "Expected `??` declaration inference to remove nullish left arms and keep fallback: {output}"
+    );
+}
+
+#[test]
 fn test_const_asserted_array_literal_binding_preserves_literals() {
     let source = r#"let [hello, brave] = ["Hello", "Brave"] as const;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

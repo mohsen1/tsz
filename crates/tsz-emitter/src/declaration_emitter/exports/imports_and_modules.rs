@@ -2359,7 +2359,9 @@ impl<'a> DeclarationEmitter<'a> {
                 // Inline JSDoc comment before type parameter
                 self.emit_inline_parameter_comment(param_node.pos);
 
-                // Emit variance/const modifiers (in, out, const)
+                // Emit type-parameter modifiers as parsed. `public` is not a
+                // valid variance modifier, but tsc preserves it in declaration
+                // emit when recovering from invalid type-parameter syntax.
                 if let Some(ref mods) = param.modifiers {
                     for &mod_idx in &mods.nodes {
                         if let Some(mod_node) = self.arena.get(mod_idx) {
@@ -2367,6 +2369,9 @@ impl<'a> DeclarationEmitter<'a> {
                                 k if k == SyntaxKind::InKeyword as u16 => self.write("in "),
                                 k if k == SyntaxKind::OutKeyword as u16 => self.write("out "),
                                 k if k == SyntaxKind::ConstKeyword as u16 => self.write("const "),
+                                k if k == SyntaxKind::PublicKeyword as u16 => {
+                                    self.write("public ");
+                                }
                                 _ => {}
                             }
                         }
@@ -2768,6 +2773,8 @@ impl<'a> DeclarationEmitter<'a> {
                             // encodes Promise<T>, so the modifier is redundant.
                         }
                         k if k == SyntaxKind::AccessorKeyword as u16 => self.write("accessor "),
+                        k if k == SyntaxKind::InKeyword as u16 => self.write("in "),
+                        k if k == SyntaxKind::OutKeyword as u16 => self.write("out "),
                         k if k == SyntaxKind::DeclareKeyword as u16 => {
                             // tsc strips `declare` from class members in .d.ts — it is
                             // only meaningful at the top-level statement level

@@ -827,6 +827,15 @@ impl<'a> LoweringPass<'a> {
                         if self.ctx.needs_es2022_lowering && self.class_has_private_members(class) {
                             self.mark_class_helpers(export_decl.export_clause, heritage);
                         }
+                        let target_supports_native_decorators = self.ctx.options.target
+                            == ScriptTarget::ESNext
+                            && self.ctx.options.use_define_for_class_fields;
+                        if !self.ctx.options.legacy_decorators
+                            && !target_supports_native_decorators
+                            && self.class_has_decorators(class)
+                        {
+                            self.mark_tc39_decorator_helpers(class);
+                        }
                         TransformDirective::CommonJSExportDefaultExpr
                     };
                     self.transforms.insert(export_decl.export_clause, directive);
@@ -907,6 +916,7 @@ impl<'a> LoweringPass<'a> {
         let mut directives = Vec::new();
         if self.ctx.target_es5 {
             if func.is_async {
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 if func.asterisk_token {
                     self.mark_async_generator_helpers();
                 } else {
@@ -915,12 +925,10 @@ impl<'a> LoweringPass<'a> {
                 directives.push(TransformDirective::ES5AsyncFunction { function_node });
             } else if func.asterisk_token {
                 self.transforms.helpers_mut().generator = true;
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 directives.push(TransformDirective::ES5GeneratorFunction { function_node });
             } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-                // Mark rest helper if parameters have rest
-                if self.function_parameters_need_rest_helper(&func.parameters) {
-                    self.transforms.helpers_mut().mark_rest();
-                }
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 directives.push(TransformDirective::ES5FunctionParameters { function_node });
             }
         } else if func.is_async
@@ -934,9 +942,7 @@ impl<'a> LoweringPass<'a> {
                 self.mark_async_helpers();
             }
         } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-            if self.function_parameters_need_rest_helper(&func.parameters) {
-                self.transforms.helpers_mut().mark_rest();
-            }
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             directives.push(TransformDirective::ES5FunctionParameters { function_node });
         }
 
@@ -1062,28 +1068,7 @@ impl<'a> LoweringPass<'a> {
             self.transforms.helpers_mut().set_function_name = true;
         }
         if has_tc39_decorators {
-            let needs_prop_key = self.class_has_computed_decorated_member(class);
-            let needs_set_function_name = self.class_has_private_decorated_member(class);
-            // __setFunctionName is needed when there are class-level decorators
-            // AND we're in ES2015 mode (IIFE pattern with __setFunctionName call).
-            // In ES2022+ mode, it's not used for class decorators.
-            let needs_class_set_fn_name = (self.ctx.target_es5 || self.ctx.needs_es2022_lowering)
-                && class.modifiers.as_ref().is_some_and(|mods| {
-                    mods.nodes.iter().any(|&mod_idx| {
-                        self.arena
-                            .get(mod_idx)
-                            .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-                    })
-                });
-            let helpers = self.transforms.helpers_mut();
-            helpers.es_decorate = true;
-            helpers.run_initializers = true;
-            if needs_prop_key {
-                helpers.prop_key = true;
-            }
-            if needs_set_function_name || needs_class_set_fn_name {
-                helpers.set_function_name = true;
-            }
+            self.mark_tc39_decorator_helpers(class);
         }
 
         // Determine the base transform
@@ -1290,15 +1275,14 @@ impl<'a> LoweringPass<'a> {
             } else {
                 self.mark_async_helpers();
             }
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             TransformDirective::ES5AsyncFunction { function_node: idx }
         } else if self.ctx.target_es5 && func.asterisk_token {
             self.transforms.helpers_mut().generator = true;
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             TransformDirective::ES5GeneratorFunction { function_node: idx }
         } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-            // Mark rest helper if parameters have rest
-            if self.function_parameters_need_rest_helper(&func.parameters) {
-                self.transforms.helpers_mut().mark_rest();
-            }
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             TransformDirective::ES5FunctionParameters { function_node: idx }
         } else {
             TransformDirective::Identity
@@ -1620,6 +1604,7 @@ impl<'a> LoweringPass<'a> {
             if arrow.is_async {
                 self.mark_async_helpers();
             }
+            self.mark_function_parameter_transform_helpers(&arrow.parameters);
 
             // If this arrow function captures lexical `this`, increment the
             // capture level so that nested `this` references get substituted.
@@ -1655,9 +1640,7 @@ impl<'a> LoweringPass<'a> {
         } else if !arrow.is_async
             && self.function_parameters_need_body_prologue_transform(&arrow.parameters)
         {
-            if self.function_parameters_need_rest_helper(&arrow.parameters) {
-                self.transforms.helpers_mut().rest = true;
-            }
+            self.mark_function_parameter_transform_helpers(&arrow.parameters);
             self.transforms.insert(
                 idx,
                 TransformDirective::ES5FunctionParameters { function_node: idx },
@@ -1720,6 +1703,9 @@ impl<'a> LoweringPass<'a> {
                 self.visit(mod_idx);
             }
             self.transforms.helpers_mut().decorate = prev_decorate;
+        }
+        if ctor.body.is_some() {
+            self.mark_function_parameter_transform_helpers(&ctor.parameters);
         }
         for &param_idx in &ctor.parameters.nodes {
             self.visit(param_idx);
@@ -1936,6 +1922,7 @@ impl<'a> LoweringPass<'a> {
 
         if self.ctx.target_es5 {
             if func.is_async {
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 if func.asterisk_token {
                     self.mark_async_generator_helpers();
                 } else {
@@ -1947,14 +1934,13 @@ impl<'a> LoweringPass<'a> {
                 );
             } else if func.asterisk_token {
                 self.transforms.helpers_mut().generator = true;
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 self.transforms.insert(
                     idx,
                     TransformDirective::ES5GeneratorFunction { function_node: idx },
                 );
             } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-                if self.function_parameters_need_rest_helper(&func.parameters) {
-                    self.transforms.helpers_mut().mark_rest();
-                }
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 self.transforms.insert(
                     idx,
                     TransformDirective::ES5FunctionParameters { function_node: idx },
@@ -1972,9 +1958,7 @@ impl<'a> LoweringPass<'a> {
                 self.mark_async_helpers();
             }
         } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-            if self.function_parameters_need_rest_helper(&func.parameters) {
-                self.transforms.helpers_mut().mark_rest();
-            }
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             self.transforms.insert(
                 idx,
                 TransformDirective::ES5FunctionParameters { function_node: idx },
