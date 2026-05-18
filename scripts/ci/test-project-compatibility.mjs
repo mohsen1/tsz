@@ -107,6 +107,29 @@ withTempDir((dir) => {
 
 withTempDir((dir) => {
   const jsonl = path.join(dir, "compat.jsonl");
+  const manifestDir = path.join(dir, "clean-manifest.json");
+  const classificationDir = path.join(dir, "clean-classification.json");
+  fs.mkdirSync(manifestDir, { recursive: true });
+  fs.mkdirSync(classificationDir, { recursive: true });
+
+  const result = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: jsonl,
+    COMPAT_NAME: "type-challenges-assertions-tsc-clean",
+    COMPAT_EXIT_CLASS: "success",
+    COMPAT_PHASE: "check",
+    COMPAT_DIAGNOSTIC_STATUS: "no diagnostics",
+    COMPAT_TYPE_CHALLENGES_CLEAN_MANIFEST: manifestDir,
+    COMPAT_TYPE_CHALLENGES_CLEAN_CLASSIFICATION: classificationDir,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const [row] = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  assert.equal(row.name, "type-challenges-assertions-tsc-clean");
+  assert.equal(row.assertion_clean_subset, undefined);
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
   const cases = [
     {
       name: "keyspace",

@@ -363,6 +363,7 @@ function readRows(input) {
 
 function readOptionalJson(file) {
   if (!file || !fs.existsSync(file)) return null;
+  if (!fs.statSync(file).isFile()) return null;
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
