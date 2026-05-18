@@ -470,12 +470,12 @@ impl<'a> Printer<'a> {
             (matches!(self.ctx.options.module, ModuleKind::None) || is_es_module_output)
                 && is_file_module
                 && self.file_contains_namespace_export_import_alias(&source.statements);
-        let needs_use_strict_always = self.ctx.options.always_strict
-            && !has_module_wrapper_stmt
-            && self.ctx.original_module_kind.is_none()
-            && !(is_es_module_output && is_file_module)
-            && !preserves_es_namespace_import_export
-            && !jsx_will_add_esm_imports;
+        let suppresses_always_strict = has_module_wrapper_stmt
+            || self.ctx.original_module_kind.is_some()
+            || (is_es_module_output && is_file_module)
+            || preserves_es_namespace_import_export
+            || jsx_will_add_esm_imports;
+        let needs_use_strict_always = self.ctx.options.always_strict && !suppresses_always_strict;
         // moduleDetection=legacy: a non-module file under module=System still
         // emits a top-level "use strict" because System modules are strict.
         // Without legacy, the file would either be a module wrapped in
