@@ -671,6 +671,194 @@ withTempDir((dir) => {
     dir,
     classification: {
       fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: {
+        tsc: {
+          status: "pass",
+          diagnostics: {
+            bySemanticFamily: [
+              {
+                family: "mapped/key-remapped types",
+                errorCount: 1,
+                files: ["C:/tmp/assertions/one.ts"],
+              },
+            ],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc\.diagnostics\.bySemanticFamily\[0\]\.files\[0\] must stay inside the assertion candidate directory/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: {
+        tsc: {
+          status: "pass",
+          diagnostics: {
+            bySemanticFamily: [
+              {
+                family: "mapped/key-remapped types",
+                errorCount: -1,
+                files: ["assertions/one.ts"],
+              },
+            ],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc\.diagnostics\.bySemanticFamily\[0\]\.errorCount must be a non-negative integer/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
+      compilers: {
+        tsc: {
+          status: "pass",
+          diagnostics: {
+            bySemanticFamily: [
+              {
+                family: "mapped/key-remapped types",
+                errorCount: 1,
+                files: ["assertions/one.ts"],
+              },
+              {
+                family: "mapped/key-remapped types",
+                errorCount: 1,
+                files: ["assertions/two.ts"],
+              },
+            ],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc\.diagnostics\.bySemanticFamily contains duplicate families: mapped\/key-remapped types/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: {
+        tsc: {
+          status: "pass",
+          diagnostics: {
+            byFile: [{ key: "C:/tmp/assertions/one.ts", count: 1 }],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc\.diagnostics\.byFile\[0\]\.key must stay inside the assertion candidate directory/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
+      compilers: {
+        tsc: {
+          status: "pass",
+          diagnostics: {
+            byFile: [
+              { key: "assertions/one.ts", count: 1 },
+              { key: "./assertions/one.ts", count: 1 },
+            ],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc\.diagnostics\.byFile contains duplicate files: assertions\/one\.ts/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: {
+        tsc: {
+          status: "pass",
+          diagnostics: {
+            byFile: [{ key: "assertions/one.ts", count: -1 }],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc\.diagnostics\.byFile\[0\]\.count must be a non-negative integer/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(2),
       compilers: {
         tsc: {
@@ -762,6 +950,71 @@ withTempDir((dir) => {
   assert.match(
     result.stderr,
     /candidateFileComparison\.bothAccepted does not match compiler candidate diagnostic file lists: expected <none>, actual assertions\/one\.ts/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "both-pass" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
+      counts: {
+        totalCandidates: 1,
+        tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
+        tscRejectedAssertions: 0,
+      },
+      entries: [{ output: "../outside.ts" }],
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc-clean assertion manifest entries\[0\]\.output must stay inside the assertion candidate directory/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "both-pass" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
+      counts: {
+        totalCandidates: 2,
+        tscAcceptedAssertions: 2,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 2,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
+        tscRejectedAssertions: 0,
+      },
+      entries: [
+        { output: "assertions/00001-easy-pick.ts" },
+        { output: "./assertions/00001-easy-pick.ts" },
+      ],
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc-clean assertion manifest entries contain duplicate outputs: assertions\/00001-easy-pick\.ts/,
   );
   assert.equal(fs.existsSync(outFile), false);
 });
@@ -2029,6 +2282,70 @@ withTempDir((dir) => {
   assert.match(
     result.stderr,
     /tsc candidateDiagnostics\.byCandidate\[0\]\.file must stay inside the assertion candidate directory/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 1,
+            candidatesWithDiagnostics: 1,
+            candidatesWithoutDiagnostics: 0,
+            filesWithDiagnostics: ["C:/tmp/assertions/one.ts"],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc candidateDiagnostics\.filesWithDiagnostics\[0\] must stay inside the assertion candidate directory/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: {
+        status: "both-pass",
+        candidateFileComparison: {
+          totalCandidates: 1,
+          counts: {
+            bothAccepted: 1,
+            bothRejected: 0,
+            tscAcceptedTszRejected: 0,
+            tscRejectedTszAccepted: 0,
+          },
+          bothAccepted: ["assertions/./one.ts"],
+          bothRejected: [],
+          tscAcceptedTszRejected: [],
+          tscRejectedTszAccepted: [],
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /candidateFileComparison\.bothAccepted\[0\] must stay inside the assertion candidate directory/,
   );
   assert.equal(fs.existsSync(outFile), false);
 });

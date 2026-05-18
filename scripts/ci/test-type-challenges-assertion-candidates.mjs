@@ -148,7 +148,14 @@ withTempDir((dir) => {
     "import type { Equal, Expect } from '@type-challenges/utils'\ntype cases = [Expect<Equal<MyAwaited<Promise<string>>, string>>]\n",
   );
 
-  writeJson(pairingPath, basePairingReport());
+  const report = basePairingReport();
+  report.pairedSolutions[0].solution.output = ".\\solutions\\easy-first.ts";
+  report.pairedSolutions[0].solution.source = ".\\en\\easy-first.md";
+  report.pairedSolutions[0].template.output = "./questions/00014-easy-first/template.ts";
+  report.pairedSolutions[0].template.source = ".\\questions\\00014-easy-first\\template.ts";
+  report.pairedSolutions[0].testCase.output = ".\\questions\\00014-easy-first\\test-cases.ts";
+  report.pairedSolutions[0].testCase.source = "./questions/00014-easy-first/test-cases.ts";
+  writeJson(pairingPath, report);
 
   const result = spawnSync(
     process.execPath,
@@ -172,12 +179,34 @@ withTempDir((dir) => {
     manifest.entries.map((entry) => [
       entry.id,
       entry.output,
+      entry.solution.output,
+      entry.solution.source,
+      entry.template.output,
+      entry.testCase.output,
       entry.assertion.referencedSolutionDeclarations,
       entry.assertion.hasReferencedSolutionDeclaration,
     ]),
     [
-      ["14", "assertions/14-easy-first.ts", ["First"], true],
-      ["189", "assertions/189-easy-awaited.ts", [], false],
+      [
+        "14",
+        "assertions/14-easy-first.ts",
+        "solutions/easy-first.ts",
+        "en/easy-first.md",
+        "questions/00014-easy-first/template.ts",
+        "questions/00014-easy-first/test-cases.ts",
+        ["First"],
+        true,
+      ],
+      [
+        "189",
+        "assertions/189-easy-awaited.ts",
+        "solutions/easy-awaited.ts",
+        "en/easy-awaited.md",
+        "questions/00189-easy-awaited/template.ts",
+        "questions/00189-easy-awaited/test-cases.ts",
+        [],
+        false,
+      ],
     ],
   );
 
@@ -434,6 +463,55 @@ withTempDir((dir) => {
           id: "14",
           solution: {
             output: "../solutions/easy-first.ts",
+            source: "en/easy-first.md",
+            challenge: { id: "14", level: "easy", slug: "first" },
+            declarations: ["First"],
+          },
+          template: {
+            output: "questions/00014-easy-first/template.ts",
+            source: "questions/00014-easy-first/template.ts",
+            challenge: { id: "14", level: "easy", slug: "first" },
+          },
+          testCase: {
+            output: "questions/00014-easy-first/test-cases.ts",
+            source: "questions/00014-easy-first/test-cases.ts",
+            challenge: { id: "14", level: "easy", slug: "first" },
+          },
+        },
+      ],
+      counts: {
+        pairedSolutions: 1,
+        solutionsMissingTemplates: 0,
+        solutionsMissingTestCases: 0,
+      },
+    }),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, pairingPath, dir, dir, outputDir, manifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /solution\.output must be a relative path/);
+  assert.equal(fs.existsSync(manifestPath), false);
+});
+
+withTempDir((dir) => {
+  const pairingPath = path.join(dir, "pairing.json");
+  const outputDir = path.join(dir, "assertions");
+  const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
+  writeJson(
+    pairingPath,
+    basePairingReport({
+      pairedSolutions: [
+        {
+          id: "14",
+          solution: {
+            output: "C:\\solutions\\easy-first.ts",
             source: "en/easy-first.md",
             challenge: { id: "14", level: "easy", slug: "first" },
             declarations: ["First"],

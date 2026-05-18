@@ -60,11 +60,16 @@ function requiredRelativeManifestPath(value, label) {
     fail(`manifest ${label} must be a non-empty relative path`);
   }
   const normalized = normalizePath(value).replace(/^\.\//, "");
+  const segments = normalized.split("/");
   if (
     path.isAbsolute(value) ||
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:(?:\/|$)/.test(normalized) ||
     normalized === "" ||
     normalized === "." ||
-    normalized.split("/").includes("..")
+    segments.includes("") ||
+    segments.includes(".") ||
+    segments.includes("..")
   ) {
     fail(`manifest ${label} must be a relative path inside the candidate directory: ${value}`);
   }

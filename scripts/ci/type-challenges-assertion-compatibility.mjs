@@ -115,11 +115,16 @@ function validateCandidateOutputPath(value, label) {
     fail(`${label} must be a non-empty relative path`);
   }
   const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
+  const segments = normalized.split("/");
   if (
     path.isAbsolute(value) ||
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:(?:\/|$)/.test(normalized) ||
     normalized === "" ||
     normalized === "." ||
-    normalized.split("/").includes("..")
+    segments.includes("") ||
+    segments.includes(".") ||
+    segments.includes("..")
   ) {
     fail(`${label} must stay inside the assertion candidate directory: ${value}`);
   }
@@ -307,6 +312,18 @@ if (cleanSubsetManifest) {
   const cleanSubsetEntries = cleanSubsetManifest.entries;
   if (!Array.isArray(cleanSubsetEntries)) {
     fail("tsc-clean assertion manifest entries must be an array");
+  }
+  const cleanSubsetOutputs = cleanSubsetEntries.map((entry, index) =>
+    validateCandidateOutputPath(
+      entry?.output,
+      `tsc-clean assertion manifest entries[${index}].output`,
+    ),
+  );
+  const duplicateCleanSubsetOutputs = duplicatedValues(cleanSubsetOutputs);
+  if (duplicateCleanSubsetOutputs.length > 0) {
+    fail(
+      `tsc-clean assertion manifest entries contain duplicate outputs: ${duplicateCleanSubsetOutputs.join(", ")}`,
+    );
   }
   const cleanSubsetCounts = cleanSubsetManifest.counts;
   const acceptedAssertions = cleanSubsetCounts.tscAcceptedAssertions;
@@ -623,6 +640,70 @@ for (const [compiler, result] of [
     if (duplicateCodes.length > 0) {
       fail(
         `assertion classification ${compiler}.diagnostics.byCode contains duplicate codes: ${duplicateCodes.join(", ")}`,
+      );
+    }
+  }
+  if (diagnostics.byFile !== null && diagnostics.byFile !== undefined) {
+    if (!Array.isArray(diagnostics.byFile)) {
+      fail(`assertion classification ${compiler}.diagnostics.byFile must be an array`);
+    }
+    const files = diagnostics.byFile.map((entry, index) => {
+      const file = validateCandidateOutputPath(
+        entry?.key,
+        `assertion classification ${compiler}.diagnostics.byFile[${index}].key`,
+      );
+      if (!Number.isInteger(entry.count) || entry.count < 0) {
+        fail(
+          `assertion classification ${compiler}.diagnostics.byFile[${index}].count must be a non-negative integer`,
+        );
+      }
+      return file;
+    });
+    const duplicateFiles = duplicatedValues(files);
+    if (duplicateFiles.length > 0) {
+      fail(
+        `assertion classification ${compiler}.diagnostics.byFile contains duplicate files: ${duplicateFiles.join(", ")}`,
+      );
+    }
+  }
+  if (diagnostics.bySemanticFamily !== null && diagnostics.bySemanticFamily !== undefined) {
+    if (!Array.isArray(diagnostics.bySemanticFamily)) {
+      fail(`assertion classification ${compiler}.diagnostics.bySemanticFamily must be an array`);
+    }
+    const families = diagnostics.bySemanticFamily.map((entry, index) => {
+      if (typeof entry?.family !== "string" || entry.family.trim() === "") {
+        fail(
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].family must be a non-empty string`,
+        );
+      }
+      if (!Number.isInteger(entry.errorCount) || entry.errorCount < 0) {
+        fail(
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].errorCount must be a non-negative integer`,
+        );
+      }
+      if (!Array.isArray(entry.files)) {
+        fail(
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].files must be an array`,
+        );
+      }
+      const files = entry.files.map((file, fileIndex) =>
+        validateCandidateOutputPath(
+          file,
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].files[${fileIndex}]`,
+        ),
+      );
+      const duplicateFiles = duplicatedValues(files);
+      if (duplicateFiles.length > 0) {
+        fail(
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].files contains duplicate files: ${duplicateFiles.join(", ")}`,
+        );
+      }
+      return entry.family;
+    });
+    const duplicateFamilies = duplicatedValues(families);
+    if (duplicateFamilies.length > 0) {
+      fail(
+        `assertion classification ${compiler}.diagnostics.bySemanticFamily contains duplicate families: ${duplicateFamilies.join(", ")}`,
       );
     }
   }
