@@ -385,56 +385,281 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// covariant positions merge via union, contravariant via intersection.
     pub(crate) fn collect_contravariant_infer_names(&self, pattern: TypeId) -> FxHashSet<Atom> {
         let mut result = FxHashSet::default();
-        self.collect_infer_names_in_params(pattern, &mut result);
+        let mut visited = FxHashSet::default();
+        self.collect_infer_names_by_variance(pattern, false, &mut result, &mut visited);
         result
     }
 
-    /// Recursively find `Infer` nodes inside function/callable parameter types.
-    fn collect_infer_names_in_params(&self, ty: TypeId, out: &mut FxHashSet<Atom>) {
+    /// Recursively walk a pattern type and collect `infer` names reached under
+    /// a contravariant edge. The traversal mirrors the structural surfaces that
+    /// `match_infer_pattern` can descend through; function/callable parameters
+    /// flip polarity, while object properties, tuple/array elements, returns,
+    /// and generic arguments preserve it.
+    fn collect_infer_names_by_variance(
+        &self,
+        ty: TypeId,
+        contravariant: bool,
+        out: &mut FxHashSet<Atom>,
+        visited: &mut FxHashSet<(TypeId, bool)>,
+    ) {
+        if ty.is_intrinsic() || !visited.insert((ty, contravariant)) {
+            return;
+        }
+
         match self.interner().lookup(ty) {
+            Some(TypeData::Infer(info)) => {
+                if contravariant {
+                    out.insert(info.name);
+                }
+            }
+            Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
+                for &member in self.interner().type_list(members).iter() {
+                    self.collect_infer_names_by_variance(member, contravariant, out, visited);
+                }
+            }
+            Some(TypeData::Array(elem)) => {
+                self.collect_infer_names_by_variance(elem, contravariant, out, visited);
+            }
+            Some(TypeData::Tuple(elements)) => {
+                for elem in self.interner().tuple_list(elements).iter() {
+                    self.collect_infer_names_by_variance(elem.type_id, contravariant, out, visited);
+                }
+            }
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner().object_shape(shape_id);
+                for prop in &shape.properties {
+                    self.collect_infer_names_by_variance(prop.type_id, contravariant, out, visited);
+                    self.collect_infer_names_by_variance(
+                        prop.write_type,
+                        contravariant,
+                        out,
+                        visited,
+                    );
+                }
+                if let Some(index) = &shape.string_index {
+                    self.collect_infer_names_by_variance(
+                        index.key_type,
+                        contravariant,
+                        out,
+                        visited,
+                    );
+                    self.collect_infer_names_by_variance(
+                        index.value_type,
+                        contravariant,
+                        out,
+                        visited,
+                    );
+                }
+                if let Some(index) = &shape.number_index {
+                    self.collect_infer_names_by_variance(
+                        index.key_type,
+                        contravariant,
+                        out,
+                        visited,
+                    );
+                    self.collect_infer_names_by_variance(
+                        index.value_type,
+                        contravariant,
+                        out,
+                        visited,
+                    );
+                }
+            }
             Some(TypeData::Function(fn_id)) => {
                 let shape = self.interner().function_shape(fn_id);
+                for param_info in &shape.type_params {
+                    self.collect_infer_names_in_type_param(param_info, contravariant, out, visited);
+                }
                 for param in &shape.params {
-                    self.collect_all_infer_names(param.type_id, out);
+                    self.collect_infer_names_by_variance(
+                        param.type_id,
+                        !contravariant,
+                        out,
+                        visited,
+                    );
+                }
+                if let Some(this_type) = shape.this_type {
+                    self.collect_infer_names_by_variance(this_type, !contravariant, out, visited);
+                }
+                self.collect_infer_names_by_variance(
+                    shape.return_type,
+                    contravariant,
+                    out,
+                    visited,
+                );
+                if let Some(predicate) = shape.type_predicate
+                    && let Some(predicate_type) = predicate.type_id
+                {
+                    self.collect_infer_names_by_variance(
+                        predicate_type,
+                        contravariant,
+                        out,
+                        visited,
+                    );
                 }
             }
             Some(TypeData::Callable(callable_id)) => {
                 let shape = self.interner().callable_shape(callable_id);
                 for sig in &shape.call_signatures {
-                    for param in &sig.params {
-                        self.collect_all_infer_names(param.type_id, out);
-                    }
+                    self.collect_infer_names_in_signature(sig, contravariant, out, visited);
                 }
                 for sig in &shape.construct_signatures {
-                    for param in &sig.params {
-                        self.collect_all_infer_names(param.type_id, out);
+                    self.collect_infer_names_in_signature(sig, contravariant, out, visited);
+                }
+                for prop in &shape.properties {
+                    self.collect_infer_names_by_variance(prop.type_id, contravariant, out, visited);
+                    self.collect_infer_names_by_variance(
+                        prop.write_type,
+                        contravariant,
+                        out,
+                        visited,
+                    );
+                }
+                if let Some(index) = &shape.string_index {
+                    self.collect_infer_names_by_variance(
+                        index.key_type,
+                        contravariant,
+                        out,
+                        visited,
+                    );
+                    self.collect_infer_names_by_variance(
+                        index.value_type,
+                        contravariant,
+                        out,
+                        visited,
+                    );
+                }
+                if let Some(index) = &shape.number_index {
+                    self.collect_infer_names_by_variance(
+                        index.key_type,
+                        contravariant,
+                        out,
+                        visited,
+                    );
+                    self.collect_infer_names_by_variance(
+                        index.value_type,
+                        contravariant,
+                        out,
+                        visited,
+                    );
+                }
+            }
+            Some(TypeData::TypeParameter(info)) => {
+                self.collect_infer_names_in_type_param(&info, contravariant, out, visited);
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner().type_application(app_id);
+                self.collect_infer_names_by_variance(app.base, contravariant, out, visited);
+                for &arg in &app.args {
+                    self.collect_infer_names_by_variance(arg, contravariant, out, visited);
+                }
+            }
+            Some(TypeData::Conditional(cond_id)) => {
+                let cond = self.interner().get_conditional(cond_id);
+                self.collect_infer_names_by_variance(cond.check_type, contravariant, out, visited);
+                self.collect_infer_names_by_variance(
+                    cond.extends_type,
+                    contravariant,
+                    out,
+                    visited,
+                );
+                self.collect_infer_names_by_variance(cond.true_type, contravariant, out, visited);
+                self.collect_infer_names_by_variance(cond.false_type, contravariant, out, visited);
+            }
+            Some(TypeData::Mapped(mapped_id)) => {
+                let mapped = self.interner().get_mapped(mapped_id);
+                self.collect_infer_names_in_type_param(
+                    &mapped.type_param,
+                    contravariant,
+                    out,
+                    visited,
+                );
+                self.collect_infer_names_by_variance(
+                    mapped.constraint,
+                    contravariant,
+                    out,
+                    visited,
+                );
+                if let Some(name_type) = mapped.name_type {
+                    self.collect_infer_names_by_variance(name_type, contravariant, out, visited);
+                }
+                self.collect_infer_names_by_variance(mapped.template, contravariant, out, visited);
+            }
+            Some(TypeData::IndexAccess(obj, idx)) => {
+                self.collect_infer_names_by_variance(obj, contravariant, out, visited);
+                self.collect_infer_names_by_variance(idx, contravariant, out, visited);
+            }
+            Some(
+                TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner),
+            ) => {
+                self.collect_infer_names_by_variance(inner, contravariant, out, visited);
+            }
+            Some(TypeData::TemplateLiteral(spans)) => {
+                for span in self.interner().template_list(spans).iter() {
+                    if let TemplateSpan::Type(inner) = span {
+                        self.collect_infer_names_by_variance(*inner, contravariant, out, visited);
                     }
                 }
             }
-            _ => {}
+            Some(TypeData::StringIntrinsic { type_arg, .. }) => {
+                self.collect_infer_names_by_variance(type_arg, contravariant, out, visited);
+            }
+            Some(TypeData::Enum(_, member_type)) => {
+                self.collect_infer_names_by_variance(member_type, contravariant, out, visited);
+            }
+            Some(
+                TypeData::Intrinsic(_)
+                | TypeData::Literal(_)
+                | TypeData::Lazy(_)
+                | TypeData::Recursive(_)
+                | TypeData::BoundParameter(_)
+                | TypeData::TypeQuery(_)
+                | TypeData::UniqueSymbol(_)
+                | TypeData::ThisType
+                | TypeData::ModuleNamespace(_)
+                | TypeData::UnresolvedTypeName(_)
+                | TypeData::Error,
+            )
+            | None => {}
         }
     }
 
-    /// Collect all `Infer` names reachable from `ty` (any variance).
-    fn collect_all_infer_names(&self, ty: TypeId, out: &mut FxHashSet<Atom>) {
-        match self.interner().lookup(ty) {
-            Some(TypeData::Infer(info)) => {
-                out.insert(info.name);
-            }
-            Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
-                for &m in self.interner().type_list(members).iter() {
-                    self.collect_all_infer_names(m, out);
-                }
-            }
-            Some(TypeData::Array(elem)) => {
-                self.collect_all_infer_names(elem, out);
-            }
-            Some(TypeData::Tuple(elements)) => {
-                for elem in self.interner().tuple_list(elements).iter() {
-                    self.collect_all_infer_names(elem.type_id, out);
-                }
-            }
-            _ => {}
+    fn collect_infer_names_in_signature(
+        &self,
+        sig: &crate::types::CallSignature,
+        contravariant: bool,
+        out: &mut FxHashSet<Atom>,
+        visited: &mut FxHashSet<(TypeId, bool)>,
+    ) {
+        for param_info in &sig.type_params {
+            self.collect_infer_names_in_type_param(param_info, contravariant, out, visited);
+        }
+        for param in &sig.params {
+            self.collect_infer_names_by_variance(param.type_id, !contravariant, out, visited);
+        }
+        if let Some(this_type) = sig.this_type {
+            self.collect_infer_names_by_variance(this_type, !contravariant, out, visited);
+        }
+        self.collect_infer_names_by_variance(sig.return_type, contravariant, out, visited);
+        if let Some(predicate) = sig.type_predicate
+            && let Some(predicate_type) = predicate.type_id
+        {
+            self.collect_infer_names_by_variance(predicate_type, contravariant, out, visited);
+        }
+    }
+
+    fn collect_infer_names_in_type_param(
+        &self,
+        info: &TypeParamInfo,
+        contravariant: bool,
+        out: &mut FxHashSet<Atom>,
+        visited: &mut FxHashSet<(TypeId, bool)>,
+    ) {
+        if let Some(constraint) = info.constraint {
+            self.collect_infer_names_by_variance(constraint, contravariant, out, visited);
+        }
+        if let Some(default) = info.default {
+            self.collect_infer_names_by_variance(default, contravariant, out, visited);
         }
     }
 

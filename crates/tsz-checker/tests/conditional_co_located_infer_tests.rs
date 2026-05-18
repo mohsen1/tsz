@@ -271,6 +271,52 @@ fn mixed_variance_same_name_intersects_param_and_return() {
     );
 }
 
+#[test]
+fn mixed_variance_nested_object_intersects_parameter_and_property() {
+    let source = r#"
+        type MixedObj<T> = T extends { f: (x: infer U) => void; y: infer U } ? U : never;
+        type R = MixedObj<{ f: (x: string) => void; y: "hi" }>;
+        const ok: R = "hi";
+        const bad: R = "other" as string;
+    "#;
+    assert_eq!(
+        ts2322_count(source),
+        1,
+        "expected nested object mixed variance to reject a bare string, got: {:#?}",
+        diags(source)
+    );
+}
+
+#[test]
+fn mixed_variance_nested_tuple_intersects_parameter_and_element() {
+    let source = r#"
+        type MixedTuple<T> = T extends [(x: infer U) => void, infer U] ? U : never;
+        type R = MixedTuple<[(x: string) => void, "hi"]>;
+        const ok: R = "hi";
+        const bad: R = "other" as string;
+    "#;
+    assert_eq!(
+        ts2322_count(source),
+        1,
+        "expected nested tuple mixed variance to reject a bare string, got: {:#?}",
+        diags(source)
+    );
+}
+
+#[test]
+fn purely_covariant_nested_object_still_unions() {
+    expect_no_ts2322(
+        r#"
+        type NestedCov<T> = T extends { left: { value: infer U }; right: infer U } ? U : never;
+        type R = NestedCov<{ left: { value: string }; right: number }>;
+        const s: R = "x";
+        const n: R = 42;
+        export {};
+        "#,
+        "purely covariant nested object still unions",
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Optional + co-located covariant: exercises the partial-substitution path
 // when constraint filtering on an optional prop produces no surviving type.
