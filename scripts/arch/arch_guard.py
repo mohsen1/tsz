@@ -138,6 +138,16 @@ FILE_LINE_LIMIT_CHECKS = [
         ROOT / "crates" / "tsz-core" / "src" / "lib.rs",
         500,
     ),
+    (
+        "Checker query boundary: common quarantine must not grow (#8225)",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "query_boundaries"
+        / "common.rs",
+        1996,
+    ),
 ]
 
 # Pin field counts on giant coordination structs so workstream-4 (Checker
@@ -298,6 +308,22 @@ ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
         ],
         ("crates/tsz-checker/src/query_boundaries/",),
         0,
+    ),
+]
+
+# Pin direct checker call sites into `query_boundaries::common`, the broad
+# compatibility/quarantine barrel tracked by #8225. Existing sites are
+# tolerated as migration debt; new checker code should prefer a narrower
+# request-shaped boundary module, or intentionally bump this cap.
+#
+# Each entry:
+#   (description, search_roots, exclude_path_prefixes, max_references).
+QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
+    (
+        "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
+        [ROOT / "crates" / "tsz-checker" / "src"],
+        ("crates/tsz-checker/src/query_boundaries/",),
+        3428,
     ),
 ]
 
@@ -731,6 +757,10 @@ _ROOT_SOLVER_COMPUTATION_IMPORT_PATTERN = re.compile(
     + r")\b"
 )
 
+_QUERY_BOUNDARY_COMMON_REFERENCE_PATTERN = re.compile(
+    r"\b(?:crate::)?query_boundaries::common::"
+)
+
 # Architecture health metric 5: snapshot-rollback call site count.
 #
 # Matches CheckerContext rollback methods, snapshot restorers, and
@@ -871,6 +901,63 @@ def scan_root_solver_computation_import_count(
             f"query boundaries: {len(matching_lines)} (cap {max_references}; "
             f"bump cap intentionally, or route the new site through a named "
             f"solver facade / checker query-boundary helper — #8204)"
+        )
+        return hits
+    return []
+
+
+def scan_query_boundary_common_reference_count(
+    search_roots: list[pathlib.Path],
+    exclude_path_prefixes: tuple[str, ...],
+    max_references: int,
+) -> list[str]:
+    """Count direct references to the broad `query_boundaries::common` barrel.
+
+    #8225 tracks turning `query_boundaries` from migration quarantine into
+    request-shaped APIs. Existing checker callers are tolerated as baseline
+    debt, but new production references outside `query_boundaries/` should use
+    a narrower boundary module or deliberately update this cap.
+    """
+    matching_lines: list[tuple[str, int]] = []
+    for base in search_roots:
+        if not base.exists():
+            continue
+        paths = [base] if base.is_file() else base.rglob("*.rs")
+        for path in paths:
+            try:
+                rel_to_root = path.relative_to(ROOT).as_posix()
+            except ValueError:
+                rel_to_root = path.relative_to(base).as_posix()
+            parts = set(rel_to_root.split("/"))
+            if EXCLUDE_DIRS.intersection(parts):
+                continue
+            if "tests" in parts or "benches" in parts:
+                continue
+            if is_test_file(rel_to_root):
+                continue
+            if any(rel_to_root.startswith(prefix) for prefix in exclude_path_prefixes):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                if line.lstrip().startswith("//"):
+                    continue
+                if _QUERY_BOUNDARY_COMMON_REFERENCE_PATTERN.search(line):
+                    matching_lines.append((rel_to_root, line_no))
+
+    matching_lines.sort()
+    if len(matching_lines) > max_references:
+        hits = [
+            f"direct query_boundaries::common reference #{i + 1}: {rel}:{line_no}"
+            for i, (rel, line_no) in enumerate(matching_lines)
+        ]
+        hits.append(
+            f"total direct query_boundaries::common references outside "
+            f"query_boundaries: {len(matching_lines)} (cap {max_references}; "
+            f"bump cap intentionally, or route the new site through a narrower "
+            f"request-shaped boundary - #8225)"
         )
         return hits
     return []
@@ -2200,6 +2287,19 @@ def main() -> int:
         max_references,
     ) in ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS:
         hits = scan_root_solver_computation_import_count(
+            search_roots, exclude_path_prefixes, max_references
+        )
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for (
+        name,
+        search_roots,
+        exclude_path_prefixes,
+        max_references,
+    ) in QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS:
+        hits = scan_query_boundary_common_reference_count(
             search_roots, exclude_path_prefixes, max_references
         )
         total_hits += len(hits)
