@@ -364,6 +364,13 @@ for (const [compiler, result] of [
   ["tsz", tsz],
 ]) {
   validateCompilerStatus(result.status, `assertion classification ${compiler}`);
+  if (
+    result.exitCode !== null &&
+    result.exitCode !== undefined &&
+    !Number.isInteger(result.exitCode)
+  ) {
+    fail(`assertion classification ${compiler} exitCode must be an integer when present`);
+  }
 }
 if (!Number.isInteger(counts.pairedSolutions)) {
   fail("assertion classification candidateManifest.counts.pairedSolutions must be an integer");
