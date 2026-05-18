@@ -260,7 +260,9 @@ pub use operations::{
     get_contextual_signature_with_compat_checker,
 };
 pub use relations::compat::{AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider};
-pub use relations::judge::*;
+pub use relations::judge::{
+    CallableKind, DefaultJudge, IterableKind, Judge, JudgeConfig, PropertyResult, TruthinessKind,
+};
 pub use relations::lawyer::AnyPropagationRules;
 pub use relations::relation_queries::*;
 pub use relations::subtype::{
