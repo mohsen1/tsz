@@ -1,18 +1,13 @@
-//! Resolver Integration tests for `module_resolver`.
-//!
-//! Integration tests that exercise `ModuleResolver::resolve()`
-//! against real temp-file fixtures: relative paths, directory index,
-//! `.tsx` / `.d.ts` resolution, `package.json` main/types entries,
-//! bare specifier walk-up, `rootDirs` overlay, JSON imports, and the
-//! basic resolver-creation + missing-file paths.
-//!
-//! Setup uses the shared `super::fixtures::TempFixture` builder; see
-//! `super::fixtures` for the pattern this replaces.
+//! `ModuleResolver::resolve()` end-to-end against real temp-file fixtures:
+//! relative paths, directory index, `.tsx` / `.d.ts` resolution,
+//! `package.json` `main`/`types` entries, bare specifier walk-up,
+//! `rootDirs` overlay, JSON imports, and the basic resolver-creation +
+//! missing-file paths.
 
 use std::fs;
 
 use super::super::*;
-use super::fixtures::{TempFixture, bundler_resolver, node_resolver, resolver_with};
+use super::fixtures::TempFixture;
 
 #[test]
 fn test_module_resolver_creation() {
@@ -27,7 +22,7 @@ fn test_resolver_relative_ts_file() {
     fixture.write("main.ts", "import { foo } from './utils';");
     fixture.write("utils.ts", "export const foo = 42;");
 
-    let mut resolver = node_resolver();
+    let mut resolver = ModuleResolver::node_resolver();
     let result = resolver.resolve("./utils", &dir.join("main.ts"), Span::new(0, 10));
 
     match result {
@@ -48,7 +43,7 @@ fn test_resolver_clear_cache_drops_file_existence_entries() {
     let containing_file = fixture.write("main.ts", "import { foo } from './utils';");
     let dependency = fixture.join("utils.ts");
 
-    let mut resolver = node_resolver();
+    let mut resolver = ModuleResolver::node_resolver();
     let missing = resolver.resolve("./utils", &containing_file, Span::new(0, 10));
     assert!(
         matches!(missing, Err(ResolutionFailure::NotFound { .. })),
@@ -74,7 +69,10 @@ fn test_resolver_explicit_dts_import_probes_sibling_implementation() {
     fixture.write("b.mts", "export {};");
     fixture.write("c.cts", "export = {};");
 
-    let mut resolver = bundler_resolver();
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        ..Default::default()
+    });
 
     let dts = resolver
         .resolve("./a.d.ts", &dir.join("types.d.ts"), Span::new(15, 25))
@@ -102,7 +100,7 @@ fn test_resolver_relative_tsx_file() {
     fixture.write("app.ts", "");
     fixture.write("Button.tsx", "export default function Button() {}");
 
-    let mut resolver = node_resolver();
+    let mut resolver = ModuleResolver::node_resolver();
     let result = resolver.resolve("./Button", &dir.join("app.ts"), Span::new(0, 10));
 
     if let Ok(module) = result {
@@ -115,11 +113,10 @@ fn test_resolver_relative_tsx_file() {
 fn test_resolver_index_file() {
     let fixture = TempFixture::new();
     let dir = fixture.path();
-    fixture.mkdir("utils");
     fixture.write("main.ts", "");
     fixture.write("utils/index.ts", "export const foo = 42;");
 
-    let mut resolver = node_resolver();
+    let mut resolver = ModuleResolver::node_resolver();
     let result = resolver.resolve("./utils", &dir.join("main.ts"), Span::new(0, 10));
 
     if let Ok(module) = result {
@@ -132,13 +129,15 @@ fn test_resolver_index_file() {
 fn test_resolver_dot_and_trailing_slash_prefer_directory_index() {
     let fixture = TempFixture::new();
     let dir = fixture.path();
-    fixture.mkdir("a/b");
     fixture.write("a.ts", "export default { a: 0 };");
     fixture.write("a/index.ts", "export default { aIndex: 0 };");
     fixture.write("a/test.ts", "import value from '.';");
     fixture.write("a/b/test.ts", "import value from '..';");
 
-    let mut resolver = bundler_resolver();
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        ..Default::default()
+    });
 
     let dot = resolver
         .resolve(".", &dir.join("a").join("test.ts"), Span::new(0, 1))
@@ -182,7 +181,7 @@ fn test_resolver_dts_file() {
     fixture.write("main.ts", "");
     fixture.write("types.d.ts", "export interface Foo {}");
 
-    let mut resolver = node_resolver();
+    let mut resolver = ModuleResolver::node_resolver();
     let result = resolver.resolve("./types", &dir.join("main.ts"), Span::new(0, 10));
 
     if let Ok(module) = result {
@@ -198,7 +197,7 @@ fn test_resolver_jsx_without_jsx_option_errors() {
     fixture.write("app.ts", "import jsx from './jsx';");
     fixture.write("jsx.jsx", "export default 1;");
 
-    let mut resolver = resolver_with(ResolvedCompilerOptions {
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
         allow_js: true,
         jsx: None,
         // Use Node resolution so allowJs is respected (Classic never resolves .jsx)
@@ -219,7 +218,7 @@ fn test_resolver_tsx_without_jsx_option_errors() {
     fixture.write("app.ts", "import tsx from './tsx';");
     fixture.write("tsx.tsx", "export default 1;");
 
-    let mut resolver = resolver_with(ResolvedCompilerOptions {
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
         jsx: None,
         // Use Node resolution so .tsx files are found (Classic also finds .tsx, but be explicit)
         module_resolution: Some(ModuleResolutionKind::Node),
@@ -239,7 +238,7 @@ fn test_json_import_without_resolve_json_module() {
     fixture.write("app.ts", "import data from './data.json';");
     fixture.write("data.json", "{\"value\": 42}");
 
-    let mut resolver = resolver_with(ResolvedCompilerOptions {
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
         resolve_json_module: false, // JSON modules disabled
         ..Default::default()
     });
@@ -258,7 +257,7 @@ fn test_extensionless_json_import_does_not_resolve_with_resolve_json_module() {
     fixture.write("app.ts", "import data = require('./data');");
     fixture.write("data.json", "{\"value\": 42}");
 
-    let mut resolver = resolver_with(ResolvedCompilerOptions {
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
         resolve_json_module: true,
         module_resolution: Some(ModuleResolutionKind::Node),
         ..Default::default()
@@ -284,7 +283,7 @@ fn test_resolver_package_main_with_unknown_extension() {
         r#"{ "main": "normalize.css" }"#,
     );
 
-    let mut resolver = node_resolver();
+    let mut resolver = ModuleResolver::node_resolver();
     let result = resolver.resolve("normalize.css", &dir.join("app.ts"), Span::new(0, 10));
     assert!(
         result.is_ok(),
@@ -300,7 +299,7 @@ fn test_resolver_package_types_with_unknown_extension_is_ignored() {
     fixture.write("node_modules/foo/foo.js", "module.exports = {};");
     fixture.write("node_modules/foo/package.json", r#"{ "types": "foo.js" }"#);
 
-    let mut resolver = node_resolver();
+    let mut resolver = ModuleResolver::node_resolver();
     let result = resolver.resolve("foo", &dir.join("app.ts"), Span::new(0, 10));
     assert!(
         result.is_err(),
@@ -316,7 +315,7 @@ fn test_resolver_package_types_js_without_allow_js_is_ignored() {
     fixture.write("node_modules/foo/foo.js", "module.exports = {};");
     fixture.write("node_modules/foo/package.json", r#"{ "types": "foo.js" }"#);
 
-    let mut resolver = node_resolver();
+    let mut resolver = ModuleResolver::node_resolver();
     let result = resolver.resolve("foo", &dir.join("app.ts"), Span::new(0, 10));
     assert!(
         result.is_err(),
@@ -337,7 +336,7 @@ fn test_resolver_package_without_package_json_uses_index_file() {
         "export const x: number;",
     );
 
-    let mut resolver = node_resolver();
+    let mut resolver = ModuleResolver::node_resolver();
     let result = resolver.resolve("whatever", &dir.join("index.ts"), Span::new(0, 10));
 
     let resolved = result.expect("package without package.json should resolve via index");
@@ -354,7 +353,7 @@ fn test_resolver_bare_specifier_from_node_modules_package_finds_sibling_package(
     fixture.write("node_modules/baz/index.d.ts", "export { T } from \"foo\";");
     fixture.write("node_modules/foo/index.d.ts", "export type T = number;");
 
-    let mut resolver = node_resolver();
+    let mut resolver = ModuleResolver::node_resolver();
     let result = resolver.resolve(
         "foo",
         &dir.join("node_modules").join("baz").join("index.d.ts"),
@@ -386,7 +385,7 @@ fn test_resolver_invalid_types_field_falls_back_to_main_declaration() {
         }"#,
     );
 
-    let mut resolver = node_resolver();
+    let mut resolver = ModuleResolver::node_resolver();
     let result = resolver.resolve("csv-parse", &dir.join("app.ts"), Span::new(0, 10));
 
     let resolved = result.expect("invalid package.json types field should be ignored");
@@ -416,7 +415,7 @@ fn test_resolver_empty_types_field_uses_types_versions() {
         }"#,
     );
 
-    let mut resolver = resolver_with(ResolvedCompilerOptions {
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
         module_resolution: Some(ModuleResolutionKind::Node),
         types_versions_compiler_version: Some("3.1.0".to_string()),
         ..Default::default()
@@ -463,7 +462,7 @@ fn test_resolver_relative_directory_applies_types_versions() {
         r#"export * from "../";"#,
     );
 
-    let mut resolver = resolver_with(ResolvedCompilerOptions {
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
         module_resolution: Some(ModuleResolutionKind::Node),
         types_versions_compiler_version: Some("3.1.0-dev".to_string()),
         ..Default::default()
@@ -501,7 +500,7 @@ fn test_resolver_relative_import_uses_root_dirs_overlay() {
     fixture.write("src/main.ts", "import './generated';");
     fixture.write("generated/generated.ts", "export const generated = 'ok';");
 
-    let mut resolver = resolver_with(ResolvedCompilerOptions {
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
         module_resolution: Some(ModuleResolutionKind::Node),
         root_dirs: vec![dir.join("src"), dir.join("generated")],
         ..Default::default()
@@ -544,7 +543,7 @@ declare module "ext/other" { export const b: "ts3.1 b"; }"#,
         }"#,
     );
 
-    let mut resolver = resolver_with(ResolvedCompilerOptions {
+    let mut resolver = ModuleResolver::new(&ResolvedCompilerOptions {
         module_resolution: Some(ModuleResolutionKind::Node),
         types_versions_compiler_version: Some("6.0.1".to_string()),
         ..Default::default()
@@ -568,7 +567,7 @@ fn test_resolver_missing_file() {
     let dir = fixture.path();
     fixture.write("main.ts", "");
 
-    let mut resolver = node_resolver();
+    let mut resolver = ModuleResolver::node_resolver();
     let result = resolver.resolve("./nonexistent", &dir.join("main.ts"), Span::new(0, 10));
 
     assert!(result.is_err(), "Missing file should produce error");
