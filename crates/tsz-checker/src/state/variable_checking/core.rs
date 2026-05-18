@@ -1792,7 +1792,8 @@ impl<'a> CheckerState<'a> {
             // If it was, any ERROR in the cache is from earlier resolution (e.g., use-before-def),
             // not from circular detection during this declaration's initializer processing.
             let sym_already_cached = self.ctx.symbol_types.contains_key(&sym_id);
-            let var_decl_snap = self.ctx.snapshot_diagnostics();
+            let var_decl_snap =
+                crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
             let mut final_type = compute_final_type(self);
             // Check if get_type_of_symbol cached ERROR specifically DURING compute_final_type.
             // This happens when the initializer (directly or indirectly) references the variable,
@@ -2198,7 +2199,7 @@ impl<'a> CheckerState<'a> {
                 && !is_direct_deferred_initializer
             {
                 self.suppress_circular_initializer_relation_diagnostics(
-                    &var_decl_snap,
+                    var_decl_snap,
                     var_decl.initializer,
                 );
                 final_type = TypeId::ANY;
