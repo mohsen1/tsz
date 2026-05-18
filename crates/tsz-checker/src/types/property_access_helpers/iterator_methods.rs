@@ -53,45 +53,53 @@ impl<'a> CheckerState<'a> {
     }
 
     fn synthesized_array_iterator_return_type(&mut self, return_arg: TypeId) -> Option<TypeId> {
-        // The canonical ArrayIterator lazy body can be populated from the
-        // es2015-only declaration before the es2025 iterator-helper augmentation
-        // is resolved. IteratorObject carries the helper members, so synthesize
-        // from that resolved body and stamp the result with ArrayIterator for
-        // display and assignability.
-        let (iterator_name, iterator_type) =
-            if let Some(iterator_type) = self.resolve_lib_type_by_name("IteratorObject") {
-                ("IteratorObject", Some(iterator_type))
-            } else if let Some(iterator_type) = self.resolve_lib_type_by_name("IterableIterator") {
-                ("IterableIterator", Some(iterator_type))
-            } else {
-                ("IterableIterator", None)
-            };
+        if let Some(iterator_base) = self
+            .resolve_entity_name_text_to_def_id_for_lowering("ArrayIterator")
+            .map(|def_id| self.ctx.types.lazy(def_id))
+        {
+            let array_iterator = self.ctx.types.application(iterator_base, vec![return_arg]);
 
-        if let Some(iterator_type) = iterator_type {
-            let instantiated = self.instantiate_synthesized_iterator_type(
-                iterator_name,
+            // The canonical ArrayIterator lazy body can be populated from the
+            // es2015-only declaration before the es2025 iterator-helper augmentation
+            // is resolved. IteratorObject carries the helper members, while the
+            // ArrayIterator application preserves the yielded type argument for
+            // assignability checks.
+            if let Some(iterator_type) = self.resolve_lib_type_by_name("IteratorObject") {
+                let iterator_object = self.instantiate_synthesized_iterator_type(
+                    "IteratorObject",
+                    iterator_type,
+                    return_arg,
+                );
+                if let Some(array_iterator_sym) = self.ctx.binder.file_locals.get("ArrayIterator")
+                    && let Some(shape) = object_shape_for_type(self.ctx.types, iterator_object)
+                {
+                    let stamped_object = self.ctx.types.factory().object_with_index(ObjectShape {
+                        flags: shape.flags,
+                        properties: shape.properties.clone(),
+                        string_index: shape.string_index,
+                        number_index: shape.number_index,
+                        symbol: Some(array_iterator_sym),
+                    });
+                    return Some(
+                        self.ctx
+                            .types
+                            .intersection(vec![array_iterator, stamped_object]),
+                    );
+                }
+            }
+
+            Some(array_iterator)
+        } else if let Some(iterator_type) = self.resolve_lib_type_by_name("IterableIterator") {
+            Some(self.instantiate_synthesized_iterator_type(
+                "IterableIterator",
                 iterator_type,
                 return_arg,
-            );
-            if iterator_name == "IteratorObject"
-                && let Some(array_iterator_sym) = self.ctx.binder.file_locals.get("ArrayIterator")
-                && let Some(shape) = object_shape_for_type(self.ctx.types, instantiated)
-            {
-                Some(self.ctx.types.factory().object_with_index(ObjectShape {
-                    flags: shape.flags,
-                    properties: shape.properties.clone(),
-                    string_index: shape.string_index,
-                    number_index: shape.number_index,
-                    symbol: Some(array_iterator_sym),
-                }))
-            } else {
-                Some(instantiated)
-            }
+            ))
         } else {
             let iterator_base = self
-                .resolve_entity_name_text_to_def_id_for_lowering(iterator_name)
-                .map(|def_id| self.ctx.types.lazy(def_id))?;
-            Some(self.ctx.types.application(iterator_base, vec![return_arg]))
+                .resolve_entity_name_text_to_def_id_for_lowering("IterableIterator")
+                .map(|def_id| self.ctx.types.lazy(def_id));
+            iterator_base.map(|base| self.ctx.types.application(base, vec![return_arg]))
         }
     }
 

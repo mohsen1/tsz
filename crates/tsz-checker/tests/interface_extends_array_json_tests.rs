@@ -524,3 +524,71 @@ const arr2: JSONValue = [1, 2, 3];
         "Expected array literals to be assignable to JSONValue with website libs. Got: {diags:#?}"
     );
 }
+
+/// Built-in `ArrayIterator<T>` is assignable to `IterableIterator<T>` even after
+/// recursive conditional/mapped aliases have exercised generic lib state.
+#[test]
+fn array_iterator_assignable_to_iterable_iterator_after_recursive_alias() {
+    let libs = website_libs();
+    if libs.is_empty() {
+        return;
+    }
+    let source = r#"
+type Keep<T> = [T][T extends any ? 0 : never];
+export type DeepReadonlyMap<T> = T extends (...args: any[]) => unknown
+  ? T
+  : T extends readonly [infer Head, ...infer Tail]
+    ? readonly [DeepReadonlyMap<Head>, ...{ [K in keyof Tail]: DeepReadonlyMap<Tail[K]> }]
+    : T extends ReadonlyArray<infer U>
+      ? ReadonlyArray<DeepReadonlyMap<U>>
+      : T extends object
+        ? { readonly [K in keyof T]: DeepReadonlyMap<T[K]> }
+        : T;
+type Brand<T, Tag extends string> = T & { readonly __brand: Tag };
+type PluginName<T extends string> = `@recovery/${T}`;
+interface RegistryPlugin<
+  TName extends string,
+  TInput,
+  TOutput,
+  TTag extends PluginName<TName> = PluginName<TName>
+> {
+  readonly id: Brand<TTag, 'plugin-id'>;
+  readonly supports: readonly string[];
+}
+class Registry<TPlugins extends readonly RegistryPlugin<string, any, any, any>[]> {
+  #byId = new Map<string, TPlugins[number]>();
+  #ordered: TPlugins[number][] = [];
+  constructor(plugins: Keep<TPlugins>) {
+    for (const plugin of plugins) this.#byId.set(plugin.id, plugin);
+    this.#ordered = [...plugins];
+  }
+  [Symbol.iterator](): IterableIterator<TPlugins[number]> {
+    return this.#ordered[Symbol.iterator]();
+  }
+}
+"#;
+    let diags = check_with_lib(source, libs);
+    let errors = ts2322(&diags);
+    assert!(
+        errors.is_empty(),
+        "Expected ArrayIterator<T> to be assignable to IterableIterator<T>. Got: {diags:#?}"
+    );
+}
+
+/// Extra iterator return type arguments must still be checked structurally.
+#[test]
+fn array_iterator_not_assignable_to_incompatible_iterable_iterator_return() {
+    let libs = website_libs();
+    if libs.is_empty() {
+        return;
+    }
+    let source = r#"
+const it: IterableIterator<number, string> = [1][Symbol.iterator]();
+"#;
+    let diags = check_with_lib(source, libs);
+    let errors = ts2322(&diags);
+    assert!(
+        !errors.is_empty(),
+        "Expected TS2322 for incompatible IterableIterator return type. Got: {diags:#?}"
+    );
+}

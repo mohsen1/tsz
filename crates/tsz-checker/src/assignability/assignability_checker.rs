@@ -9,7 +9,9 @@ use crate::query_boundaries::assignability::{
     is_assignable_with_overrides, is_relation_cacheable, is_type_parameter_like,
     keyof_object_properties, map_compound_members,
 };
-use crate::query_boundaries::common::{collect_lazy_def_ids, collect_type_queries};
+use crate::query_boundaries::common::{
+    collect_lazy_def_ids, collect_type_queries, intersection_members,
+};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
 use tracing::trace;
@@ -18,10 +20,73 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::NarrowingContext;
-use tsz_solver::TypeId;
+use tsz_solver::{DefId, NarrowingContext, TypeId};
 
 impl<'a> CheckerState<'a> {
+    fn array_iterator_application_yield_arg(
+        &self,
+        type_id: TypeId,
+        array_iterator_def: DefId,
+    ) -> Option<TypeId> {
+        if let Some((Some(source_def), source_args)) =
+            crate::query_boundaries::checkers::generic::application_base_def_and_args(
+                self.ctx.types,
+                type_id,
+            )
+            && source_def == array_iterator_def
+        {
+            return source_args.first().copied();
+        }
+
+        if let Some(members) = intersection_members(self.ctx.types, type_id) {
+            return members.into_iter().find_map(|member| {
+                self.array_iterator_application_yield_arg(member, array_iterator_def)
+            });
+        }
+
+        None
+    }
+
+    fn is_array_iterator_application_assignable_to_iterable_iterator(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let Some(array_iterator_def) = self.ctx.actual_lib_def_id_for_bare_name("ArrayIterator")
+        else {
+            return false;
+        };
+        let Some(iterable_iterator_def) =
+            self.ctx.actual_lib_def_id_for_bare_name("IterableIterator")
+        else {
+            return false;
+        };
+
+        let Some((Some(target_def), target_args)) =
+            crate::query_boundaries::checkers::generic::application_base_def_and_args(
+                self.ctx.types,
+                target,
+            )
+        else {
+            return false;
+        };
+
+        if target_def != iterable_iterator_def {
+            return false;
+        }
+
+        let Some(source_yield) =
+            self.array_iterator_application_yield_arg(source, array_iterator_def)
+        else {
+            return false;
+        };
+        let Some(&target_yield) = target_args.first() else {
+            return false;
+        };
+
+        source_yield == target_yield || self.is_assignable_to(source_yield, target_yield)
+    }
+
     pub(crate) fn callable_has_own_generic_signatures(&self, type_id: TypeId) -> bool {
         if let Some(shape) =
             crate::query_boundaries::common::function_shape_for_type(self.ctx.types, type_id)
@@ -2081,6 +2146,14 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.is_nested_same_wrapper_application_assignment(source, target) {
+            return true;
+        }
+
+        // Built-in iterator heritage shortcut: `ArrayIterator<T>` extends the
+        // iterable iterator protocol for the same yielded type. Check this
+        // before structural expansion so cached lib iterator object shapes
+        // cannot erase the source/target type argument relationship.
+        if self.is_array_iterator_application_assignable_to_iterable_iterator(source, target) {
             return true;
         }
 
