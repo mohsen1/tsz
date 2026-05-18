@@ -8,6 +8,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     pub(crate) fn value_property_type_query(&self, expr_name: NodeIndex) -> Option<TypeId> {
@@ -84,7 +85,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
             let mut type_id = {
                 let env = self.ctx.type_environment.borrow();
-                tsz_solver::TypeResolver::resolve_type_query(
+                TypeResolver::resolve_type_query(
                     &*env,
                     tsz_solver::SymbolRef(sym_id.0),
                     self.ctx.types,

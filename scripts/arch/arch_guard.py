@@ -3,384 +3,75 @@ import pathlib
 import re
 import argparse
 import json
+import shlex
+import subprocess
 import sys
+import tomllib
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+POLICY_PATH = pathlib.Path(__file__).resolve().parent / "arch_guard_policy.toml"
 
-CHECKS = [
-    (
-        "Production code must not branch on conformance fixture identity",
-        ROOT / "crates",
-        re.compile(
-            r"\bTSZ_CONFORMANCE_TEST\b"
-            r"|\bconformance_test_name\b"
-            r"|\btest_path\.contains\s*\("
-            r"|False Positive Suppressions"
-        ),
-        {
-            "exclude_dirs": {"conformance", "tests"},
-            "exclude_test_files": True,
-            "ignore_comment_lines": True,
-        },
-    ),
-    (
-        "Root boundary: no tsz_solver module re-export alias",
-        ROOT / "src",
-        re.compile(r"\bpub\s+use\s+tsz_solver\s+as\s+solver\s*;"),
-        {},
-    ),
-    (
-        "Root boundary: no direct TypeKey internal usage in production code",
-        ROOT / "src",
-        re.compile(r"\btsz_solver::TypeKey\b|\btsz_solver::types::TypeKey\b|\bTypeKey::"),
-        {"exclude_dirs": {"tests"}, "ignore_comment_lines": True},
-    ),
-    (
-        "Checker boundary: direct lookup() outside query boundaries/tests",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"\.lookup\s*\("),
-        {
-            "exclude_dirs": {"query_boundaries", "tests"},
-            "exclude_files": {
-                # These files use .lookup() in tracing::trace! macros for debug output only
-                "crates/tsz-checker/src/types/computation/complex.rs",
-                # Pre-existing: class member lookup in class_checker
-                "crates/tsz-checker/src/classes/class_checker.rs",
-                "crates/tsz-checker/src/classes/class_checker_compat.rs",
-                # Pre-existing: property access lookup
-                "crates/tsz-checker/src/checkers/property_checker.rs",
-                "crates/tsz-checker/src/state/state_checking/property.rs",
-                # Pre-existing: type computation access lookup
-                "crates/tsz-checker/src/types/computation/access.rs",
-                # Pre-existing baseline debt
-                "crates/tsz-checker/src/types/property_access_type/resolve.rs",
-                "crates/tsz-checker/src/types/class_type/core.rs",
-                "crates/tsz-checker/src/types/queries/lib_resolution.rs",
-                "crates/tsz-checker/src/context/cross_file_query.rs",
-            },
-        },
-    ),
-    (
-        "Checker legacy surface must stay removed",
-        ROOT / "crates" / "tsz-checker" / "src",
-        re.compile(
-            r"\bmod\s+types\s*;"
-            r"|\bpub\s+mod\s+types\s*;"
-            r"|\bpub\s+mod\s+arena\s*;"
-            r"|\bpub\s+use\s+arena::TypeArena\b"
-        ),
-        {
-            "exclude_dirs": {"tests", "jsdoc"},
-        },
-    ),
-    (
-        "Checker boundary: direct TypeKey inspection outside query boundaries/tests",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"^\s*(match|if let|if matches!|matches!\().*TypeKey::"),
-        {"exclude_dirs": {"query_boundaries", "tests"}},
-    ),
-    (
-        "Checker boundary: direct TypeKey import/intern usage",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(
-            r"\buse\s+tsz_solver::.*TypeKey"
-            r"|\bintern\(\s*TypeKey::"
-            r"|\bintern\(\s*tsz_solver::TypeKey::"
-            r"|\bTypeKey::"
-        ),
-        {"exclude_dirs": {"tests"}, "ignore_comment_lines": True},
-    ),
-    (
-        "Checker boundary: direct solver internal imports",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"\btsz_solver::types::"),
-        {
-            "exclude_dirs": {"tests"},
-            "exclude_files": {
-                # Pre-existing baseline debt
-                "crates/tsz-checker/src/query_boundaries/class.rs",
-                "crates/tsz-checker/src/query_boundaries/property_access.rs",
-            },
-        },
-    ),
-    (
-        "Checker boundary: ObjectFlags must not be imported (use ObjectShape builder methods)",
-        ROOT / "crates" / "tsz-checker" / "src",
-        re.compile(r"\buse\s+tsz_solver::.*ObjectFlags\b|\bObjectFlags::"),
-        {
-            "exclude_dirs": {"tests"},
-            "ignore_comment_lines": True,
-            # Pre-existing: type_environment uses ObjectFlags for const enum checks
-            # namespace_checker creates enum namespace objects with ENUM_NAMESPACE flag
-            "exclude_files": {
-                "crates/tsz-checker/src/state/type_environment/core.rs",
-                "crates/tsz-checker/src/declarations/namespace_checker.rs",
-                # Pre-existing baseline debt
-                "crates/tsz-checker/src/query_boundaries/common.rs",
-                "crates/tsz-checker/src/types/property_access_augmentation.rs",
-                "crates/tsz-checker/src/types/class_type/core.rs",
-            },
-        },
-    ),
-    (
-        "Checker boundary: direct solver relation queries outside query boundaries/tests",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"\btsz_solver::(is_subtype_of|is_assignable_to)\s*\("),
-        {
-            "exclude_dirs": {"query_boundaries", "tests"},
-            "exclude_files": set(),
-            "ignore_comment_lines": True,
-        },
-    ),
-    (
-        "Checker boundary: direct CallEvaluator usage outside query boundaries/tests",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"\btsz_solver::CallEvaluator\b|\bCallEvaluator::new\s*\("),
-        {"exclude_dirs": {"query_boundaries", "tests"}, "ignore_comment_lines": True},
-    ),
-    (
-        "Checker boundary: direct CompatChecker construction outside query boundaries/tests",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"\bCompatChecker::new\s*\(|\bCompatChecker::with_resolver\s*\("),
-        {"exclude_dirs": {"query_boundaries", "tests"}, "ignore_comment_lines": True},
-    ),
-    (
-        "Checker query boundary: call_checker must not construct CompatChecker directly",
-        ROOT / "crates" / "tsz-checker" / "src" / "query_boundaries",
-        re.compile(r"\bCompatChecker::with_resolver\s*\("),
-        {
-            "exclude_files": {
-                "crates/tsz-checker/src/query_boundaries/assignability.rs",
-            },
-            "ignore_comment_lines": True,
-        },
-    ),
-    (
-        "Checker query boundary: call_checker must not use concrete CallEvaluator<CompatChecker>",
-        ROOT / "crates" / "tsz-checker" / "src" / "query_boundaries",
-        re.compile(r"\bCallEvaluator::<\s*tsz_solver::CompatChecker\s*>::"),
-        {"ignore_comment_lines": True},
-    ),
-    (
-        "Checker boundary: raw interner access",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"\.intern\s*\("),
-        {"exclude_dirs": {"tests"}},
-    ),
-    # union2/intersection2 are semantically equivalent to union()/intersection()
-    # — just optimized two-argument versions. They are part of the public solver
-    # TypeDatabase API and safe to use from the checker.
-    # (
-    #     "Checker boundary: deprecated two-arg intersection/union constructors",
-    #     ROOT / "crates" / "tsz-checker",
-    #     re.compile(r"\.intersection2\s*\(|\.union2\s*\("),
-    #     {"exclude_dirs": {"tests"}},
-    # ),
-    (
-        "Code quality: no bare .unwrap() in checker production code (use .expect())",
-        ROOT / "crates" / "tsz-checker" / "src",
-        re.compile(r"\.unwrap\(\)"),
-        {
-            "exclude_dirs": {"tests"},
-            "ignore_comment_lines": True,
-            "exclude_test_files": True,  # Skip *_tests.rs files
-        },
-    ),
-    (
-        "Code quality: no bare .unwrap() in solver production code (use .expect())",
-        ROOT / "crates" / "tsz-solver" / "src",
-        re.compile(r"\.unwrap\(\)"),
-        {
-            "exclude_dirs": {"tests"},
-            "ignore_comment_lines": True,
-            "exclude_test_files": True,
-            # Inline #[cfg(test)] modules at the bottom of these files
-            "exclude_files": {
-                "crates/tsz-solver/src/type_queries/flow.rs",
-                # Inline/adjacent test modules under src/
-                "crates/tsz-solver/src/type_queries/data/tests.rs",
-            },
-        },
-    ),
-    (
-        "Code quality: no bare .unwrap() in binder production code (use .expect())",
-        ROOT / "crates" / "tsz-binder" / "src",
-        re.compile(r"\.unwrap\(\)"),
-        {
-            "exclude_dirs": {"tests"},
-            "ignore_comment_lines": True,
-            "exclude_test_files": True,
-            # state/tests.rs is a #[path = "tests.rs"] test module
-            "exclude_files": {
-                "crates/tsz-binder/src/state/tests.rs",
-            },
-        },
-    ),
-    (
-        "Solver dependency direction freeze",
-        ROOT / "crates" / "tsz-solver",
-        re.compile(r"\btsz_parser::\b|\btsz_checker::\b"),
-        {"exclude_dirs": {"tests"}},
-    ),
-    (
-        "Binder dependency direction freeze",
-        ROOT / "crates" / "tsz-binder",
-        re.compile(r"\btsz_solver::\b"),
-        {"exclude_dirs": {"tests"}, "ignore_comment_lines": True},
-    ),
-    (
-        "Emitter dependency direction freeze",
-        ROOT / "crates" / "tsz-emitter",
-        re.compile(r"\btsz_checker::\b"),
-        {"exclude_dirs": {"tests"}},
-    ),
-    (
-        "Emitter boundary: direct TypeKey import/match",
-        ROOT / "crates" / "tsz-emitter",
-        re.compile(r"\bTypeKey::|\buse\s+tsz_solver::.*TypeKey"),
-        {"exclude_dirs": {"tests"}, "ignore_comment_lines": True},
-    ),
-    (
-        "Emitter boundary: direct lookup() on solver interner",
-        ROOT / "crates" / "tsz-emitter",
-        re.compile(r"\.lookup\s*\("),
-        {
-            "exclude_dirs": {"tests"},
-            "exclude_files": {
-                # Pre-existing baseline debt
-                "crates/tsz-emitter/src/declaration_emitter/helpers/mod.rs",
-                "crates/tsz-emitter/src/declaration_emitter/helpers/type_printing.rs",
-            },
-        },
-    ),
-    (
-        "Non-solver crates must not depend on TypeKey internals",
-        ROOT / "crates",
-        re.compile(r"\buse\s+tsz_solver::.*TypeKey|\bTypeKey::"),
-        {"exclude_dirs": {"tsz-solver", "tests"}, "ignore_comment_lines": True},
-    ),
-    # --- WASM compatibility rules ---
-    # Crates compiled to WASM: all except tsz-cli and conformance.
-    # std::time::Instant panics at runtime on wasm32-unknown-unknown (no clock);
-    # use web_time::Instant which is a drop-in replacement on all platforms.
-    (
-        "WASM compat: std::time::Instant banned in WASM-compiled crates (use web_time::Instant)",
-        ROOT / "crates",
-        re.compile(
-            r"\buse\s+std::time::Instant\b"
-            r"|\buse\s+std::time::\{[^}]*\bInstant\b"
-            r"|\bstd::time::Instant::"
-        ),
-        {
-            "exclude_dirs": {"tsz-cli", "tsz-core", "conformance", "tests"},
-            "ignore_comment_lines": True,
-        },
-    ),
-    # std::time::SystemTime also panics on wasm32-unknown-unknown.
-    (
-        "WASM compat: std::time::SystemTime banned in WASM-compiled crates",
-        ROOT / "crates",
-        re.compile(
-            r"\buse\s+std::time::SystemTime\b"
-            r"|\buse\s+std::time::\{[^}]*\bSystemTime\b"
-            r"|\bstd::time::SystemTime::"
-        ),
-        {
-            "exclude_dirs": {"tsz-cli", "tsz-core", "conformance", "tests"},
-            "ignore_comment_lines": True,
-        },
-    ),
-    (
-        "Non-solver/non-lowering crates must not inspect TypeData internals in production code",
-        ROOT / "crates",
-        re.compile(r"\buse\s+tsz_solver::.*TypeData\b|\bTypeData::"),
-        {
-            "exclude_dirs": {"tsz-solver", "tsz-lowering", "tsz-core", "tests"},
-            "exclude_files": {
-                # query_boundaries is the canonical boundary layer — TypeData
-                # matching here is intentional and architecturally correct.
-                "crates/tsz-checker/src/query_boundaries/state/type_environment.rs",
-                "crates/tsz-checker/src/query_boundaries/class.rs",
-                "crates/tsz-checker/src/query_boundaries/type_rewrite.rs",
-                # Pre-existing baseline debt
-                "crates/tsz-checker/src/types/class_type/core.rs",
-                "crates/tsz-emitter/src/declaration_emitter/helpers/mod.rs",
-                "crates/tsz-emitter/src/declaration_emitter/helpers/type_printing.rs",
-                "crates/tsz-lsp/src/signature_help.rs",
-            },
-            "ignore_comment_lines": True,
-        },
-    ),
-    (
-        "Core boundary: wasm bindings must stay in current wasm surface files",
-        ROOT / "crates" / "tsz-core" / "src",
-        re.compile(r"\bwasm_bindgen\b|\bserde_wasm_bindgen\b|\bJsValue\b"),
-        {
-            "exclude_dirs": {"tests"},
-            "exclude_files": {
-                # Transitional baseline: core lib exports the wasm API today.
-                "crates/tsz-core/src/lib.rs",
-                # Explicit wasm API module surface.
-                "crates/tsz-core/src/api/wasm/code_actions.rs",
-                "crates/tsz-core/src/api/wasm/compiler_options.rs",
-                "crates/tsz-core/src/api/wasm/core_utils.rs",
-                "crates/tsz-core/src/api/wasm/parser.rs",
-                "crates/tsz-core/src/api/wasm/program.rs",
-                "crates/tsz-core/src/api/wasm/program_results.rs",
-                "crates/tsz-core/src/api/wasm/transforms.rs",
-            },
-            "ignore_comment_lines": True,
-        },
-    ),
-    (
-        "LSP boundary: direct lookup() on solver interner",
-        ROOT / "crates" / "tsz-lsp",
-        re.compile(r"\.lookup\s*\("),
-        {"exclude_dirs": {"tests"}, "exclude_files": {
-            # file_id_allocator.lookup() is not a solver interner lookup
-            "crates/tsz-lsp/src/project/core.rs",
-            # Pre-existing baseline debt
-            "crates/tsz-lsp/src/signature_help.rs",
-        }},
-    ),
-    (
-        "Checker test boundary: no direct solver internal type inspection in integration tests",
-        ROOT / "crates" / "tsz-checker" / "tests",
-        re.compile(r"\btsz_solver::types::|\bTypeData::|\buse\s+tsz_solver::TypeData\b"),
-        {"exclude_files": {"crates/tsz-checker/tests/architecture_contract_tests.rs"}},
-    ),
-    (
-        "Checker test boundary: no direct solver internal type inspection in src tests",
-        ROOT / "crates" / "tsz-checker" / "src" / "tests",
-        re.compile(r"\btsz_solver::types::|\bTypeData::|\buse\s+tsz_solver::TypeData\b"),
-        {
-            "exclude_files": {
-                "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
-            },
-            "ignore_comment_lines": True,
-        },
-    ),
-]
 
-MANIFEST_CHECKS = [
-    (
-        "Emitter manifest dependency freeze",
-        ROOT / "crates" / "tsz-emitter" / "Cargo.toml",
-        re.compile(r"^\s*tsz-checker\s*=", re.MULTILINE),
-    ),
-    (
-        "Binder manifest dependency freeze",
-        ROOT / "crates" / "tsz-binder" / "Cargo.toml",
-        re.compile(r"^\s*tsz-solver\s*=", re.MULTILINE),
-    ),
-    (
-        "Checker manifest: legacy type arena feature must stay removed",
-        ROOT / "crates" / "tsz-checker" / "Cargo.toml",
-        re.compile(r"^\s*legacy-type-arena\s*=", re.MULTILINE),
-    ),
-]
+def _build_excludes(entry: dict) -> dict:
+    excludes: dict = {}
+    if entry.get("exclude_dirs") is not None:
+        excludes["exclude_dirs"] = set(entry["exclude_dirs"])
+    if entry.get("exclude_files") is not None:
+        excludes["exclude_files"] = set(entry["exclude_files"])
+    if entry.get("exclude_test_files"):
+        excludes["exclude_test_files"] = True
+    if entry.get("ignore_comment_lines"):
+        excludes["ignore_comment_lines"] = True
+    return excludes
+
+
+def _parse_pattern_checks(data: dict) -> list[tuple[str, pathlib.Path, re.Pattern, dict]]:
+    return [
+        (entry["name"], ROOT / entry["base"], re.compile(entry["pattern"]), _build_excludes(entry))
+        for entry in data.get("pattern_checks", [])
+    ]
+
+
+def _parse_manifest_checks(data: dict) -> list[tuple[str, pathlib.Path, re.Pattern]]:
+    return [
+        (entry["name"], ROOT / entry["file"], re.compile(entry["pattern"], re.MULTILINE))
+        for entry in data.get("manifest_checks", [])
+    ]
+
+
+def _load_pattern_checks(
+    policy_path: pathlib.Path = POLICY_PATH,
+) -> list[tuple[str, pathlib.Path, re.Pattern, dict]]:
+    """Load [[pattern_checks]] entries from the declarative policy TOML."""
+    with policy_path.open("rb") as f:
+        return _parse_pattern_checks(tomllib.load(f))
+
+
+def _load_manifest_checks(
+    policy_path: pathlib.Path = POLICY_PATH,
+) -> list[tuple[str, pathlib.Path, re.Pattern]]:
+    """Load [[manifest_checks]] entries from the declarative policy TOML.
+
+    Patterns are compiled with ``re.MULTILINE`` so ``^`` and ``$`` match
+    at line boundaries within Cargo.toml files.
+    """
+    with policy_path.open("rb") as f:
+        return _parse_manifest_checks(tomllib.load(f))
+
+
+def _load_all_checks(
+    policy_path: pathlib.Path = POLICY_PATH,
+) -> tuple[list[tuple[str, pathlib.Path, re.Pattern, dict]], list[tuple[str, pathlib.Path, re.Pattern]]]:
+    """Parse the policy TOML once and return both check lists."""
+    with policy_path.open("rb") as f:
+        data = tomllib.load(f)
+    return _parse_pattern_checks(data), _parse_manifest_checks(data)
+
+
+CHECKS, MANIFEST_CHECKS = _load_all_checks()
 
 LINE_LIMIT_CHECKS = [
     (
@@ -466,6 +157,21 @@ STRUCT_FIELD_COUNT_CHECKS = [
     ),
 ]
 
+# Pin the size of the solver's full database capability trait while #8205
+# splits it into narrower storage/config/provenance traits.  The live count is
+# tolerated as baseline debt, but new methods must either land on a narrower
+# trait or deliberately bump this cap with a roadmap/issue explanation.
+#
+# Each entry: (description, file_path, trait_name, max_methods).
+TRAIT_METHOD_COUNT_CHECKS = [
+    (
+        "Solver boundary: TypeDatabase method count (#8205)",
+        ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
+        "TypeDatabase",
+        97,
+    ),
+]
+
 VALID_CHECKER_CONTEXT_LIFETIMES = {
     "ProgramStable",
     "WorkerReusable",
@@ -541,6 +247,28 @@ SOLVER_IMPORT_COUNT_CHECKS = [
     ),
 ]
 
+# Pin the count of flat root-level solver computation API references outside
+# the approved checker query-boundary layer. Existing references are
+# transitional compatibility debt from `tsz_solver::*` root re-exports; new
+# references should go through a named solver facade, a checker
+# `query_boundaries` helper, or intentionally bump this cap.
+#
+# Each entry:
+#   (description, search_roots, exclude_path_prefixes, max_references).
+ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
+    (
+        "Solver API boundary: flat root computation imports outside query boundaries (#8204)",
+        [
+            ROOT / "crates" / "tsz-checker" / "src",
+            ROOT / "crates" / "tsz-emitter" / "src",
+            ROOT / "crates" / "tsz-lsp" / "src",
+            ROOT / "crates" / "tsz-cli" / "src",
+        ],
+        ("crates/tsz-checker/src/query_boundaries/",),
+        0,
+    ),
+]
+
 SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS = [
     (
         "Checker speculation boundary: snapshot-rollback call sites outside speculation.rs (architecture health metric 5)",
@@ -589,7 +317,7 @@ REGEX_LINE_COUNT_CHECKS = [
         "Checker diagnostic boundary: source_text.contains decisions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
-        37,
+        36,
     ),
     (
         "Checker diagnostic boundary: file-name/path substring decisions (Track 10)",
@@ -611,6 +339,86 @@ REGEX_LINE_COUNT_CHECKS = [
         [ROOT / "crates" / "tsz-emitter" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
         3,
+    ),
+    (
+        "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
+        re.compile(r"^pub use (?:[A-Za-z_][A-Za-z0-9_]*::)+\*;"),
+        12,
+    ),
+    (
+        "Checker relation boundary: raw diagnostic assignability predicates (#8227)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "assignability"
+            / "assignability_diagnostics.rs",
+            ROOT / "crates" / "tsz-checker" / "src" / "error_reporter",
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "jsx",
+        ],
+        re.compile(
+            r"\b(?:self|self\.ctx\.types|self\.interner)"
+            r"\.is_assignable_to(?:_[A-Za-z0-9_]+)?\s*\("
+        ),
+        136,
+    ),
+    (
+        "Checker relation boundary: diagnostic-local RelationRequest constructors (#8227)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "assignability"
+            / "assignability_diagnostics.rs",
+            ROOT / "crates" / "tsz-checker" / "src" / "error_reporter",
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "jsx",
+        ],
+        re.compile(r"\bRelationRequest::[A-Za-z_][A-Za-z0-9_]*\s*\("),
+        0,
+    ),
+]
+
+# Track 10 performance guardrail: branch-local `visited.clone()` traversal
+# clones are a known scale-cliff risk for graph predicates.  Existing sites are
+# pinned by file plus statement text so normal line movement does not churn the
+# guard, while new clone sites must either replace an existing one with a
+# memoized/worklist traversal or extend this allowlist intentionally.
+BRANCH_LOCAL_VISITED_CLONE_CHECKS = [
+    (
+        "Performance boundary: branch-local visited.clone() graph traversal sites (Track 10)",
+        [
+            ROOT / "crates" / "tsz-checker" / "src",
+            ROOT / "crates" / "tsz-lsp" / "src",
+        ],
+        (
+            (
+                "crates/tsz-checker/src/flow/control_flow/typeof_exclusions.rs",
+                "let mut branch_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-checker/src/state/type_environment/lazy.rs",
+                "let mut branch_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-checker/src/state/type_resolution/module.rs",
+                "let mut inner_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-checker/src/types/queries/type_only.rs",
+                "let mut exists_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-checker/src/types/queries/type_only.rs",
+                "let mut type_only_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-lsp/src/completions/member.rs",
+                "let mut member_visited = visited.clone();",
+            ),
+        ),
     ),
 ]
 
@@ -645,6 +453,60 @@ PROJECT_DASHBOARD_ROW_CHECKS = [
         ROOT / "scripts" / "bench" / "project-rows.mjs",
     ),
 ]
+
+PROJECT_FIXTURE_SOURCE_CHECKS = [
+    (
+        "Project corpus fixtures: pinned rows must record fixture source refs (Track 1)",
+        ROOT / "scripts" / "bench" / "project-rows.mjs",
+        ROOT / "scripts" / "bench" / "project-fixtures.sh",
+    ),
+]
+
+PROJECT_INCLUSION_POLICY_CHECKS = [
+    (
+        "Project corpus inclusion: row manifest must match compile guard and benchmark rows (Track 1)",
+        ROOT / "scripts" / "bench" / "project-rows.mjs",
+        ROOT / "scripts" / "ci" / "project-compile-guard.sh",
+        ROOT / "scripts" / "bench" / "bench-vs-tsgo.sh",
+    ),
+]
+
+PROJECT_CONFIG_WRITER_CHECKS = [
+    (
+        "Project corpus config shape: shared rows must use shared config writers (Track 1)",
+        ROOT / "scripts" / "bench" / "project-fixtures.sh",
+        ROOT / "scripts" / "ci" / "project-compile-guard.sh",
+        ROOT / "scripts" / "bench" / "bench-vs-tsgo.sh",
+    ),
+]
+
+PROJECT_CONFIG_WRITERS = {
+    "utility-types-project": "tsz_write_utility_types_config",
+    "ts-toolbelt-project": "tsz_write_ts_toolbelt_config",
+    "ts-essentials-project": "tsz_write_ts_essentials_config",
+    "rxjs-project": "tsz_write_rxjs_config",
+    "type-fest-project": "tsz_write_type_fest_config",
+    "zod-project": "tsz_write_zod_config",
+    "kysely-project": "tsz_write_kysely_config",
+    "nextjs": "tsz_write_nextjs_config",
+}
+
+GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE = {
+    "vite-vanilla-ts-app",
+    "nextjs-fresh-app",
+}
+
+COMPILE_GUARD_ONLY_PROJECT_ROWS = {
+    "type-challenges-project",
+    "type-challenges-solutions-project",
+    "type-challenges-assertion-candidates",
+    "type-challenges-assertions-tsc-clean",
+}
+
+BENCHMARK_ONLY_PROJECT_ROWS = {
+    "nextjs",
+    "large-ts-repo",
+}
 
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
@@ -782,6 +644,61 @@ _SOLVER_IMPORT_PATTERN = re.compile(
     r"\buse\s+tsz_solver(?:::|\s*;|\s+as\b)|\bextern\s+crate\s+tsz_solver\b"
 )
 
+ROOT_SOLVER_COMPUTATION_API_SYMBOLS = (
+    "AnyPropagationMode",
+    "AnyPropagationRules",
+    "are_types_structurally_identical",
+    "AssignabilityChecker",
+    "BinaryOpEvaluator",
+    "BinaryOpResult",
+    "CallEvaluator",
+    "CallResult",
+    "CompatChecker",
+    "ContextualTypeContext",
+    "evaluate_type",
+    "get_contextual_signature",
+    "get_contextual_signature_cached",
+    "get_contextual_signature_cached_with_compat_checker",
+    "get_contextual_signature_for_arity",
+    "get_contextual_signature_for_arity_cached",
+    "get_contextual_signature_for_arity_cached_with_compat_checker",
+    "get_contextual_signature_for_arity_with_compat_checker",
+    "get_contextual_signature_with_compat_checker",
+    "infer_generic_function",
+    "instantiate_function_with_type_args",
+    "instantiate_generic",
+    "instantiate_type",
+    "instantiate_type_cached",
+    "instantiate_type_params_to_constraints",
+    "instantiate_type_preserving",
+    "instantiate_type_preserving_cached",
+    "instantiate_type_preserving_meta",
+    "instantiate_type_preserving_meta_cached",
+    "instantiate_type_with_depth_status",
+    "instantiate_type_with_infer",
+    "instantiate_type_with_infer_cached",
+    "is_subtype_of",
+    "rest_argument_element_type",
+    "SubtypeChecker",
+    "SubtypeResult",
+    "substitute_this_type",
+    "substitute_this_type_at_return_position",
+    "substitute_this_type_cached",
+    "TypeEnvironment",
+    "TypeInstantiator",
+    "TypeResolver",
+    "TypeSubstitution",
+)
+
+_ROOT_SOLVER_COMPUTATION_IMPORT_PATTERN = re.compile(
+    r"\btsz_solver::(?:"
+    + "|".join(re.escape(symbol) for symbol in ROOT_SOLVER_COMPUTATION_API_SYMBOLS)
+    + r")\b"
+    + r"|\buse\s+tsz_solver::\{[^\n}]*\b(?:"
+    + "|".join(re.escape(symbol) for symbol in ROOT_SOLVER_COMPUTATION_API_SYMBOLS)
+    + r")\b"
+)
+
 # Architecture health metric 5: snapshot-rollback call site count.
 #
 # Matches CheckerContext rollback methods, snapshot restorers, and
@@ -865,6 +782,63 @@ def scan_solver_import_count(
             f"{len(importing_files)} (cap {max_imports}; bump cap intentionally "
             f"and update ROADMAP.md, or route the consumer through the compiler "
             f"service shell or `tsz_checker::query_boundaries` — workstream 3)"
+        )
+        return hits
+    return []
+
+
+def scan_root_solver_computation_import_count(
+    search_roots: list[pathlib.Path],
+    exclude_path_prefixes: tuple[str, ...],
+    max_references: int,
+) -> list[str]:
+    """Count flat `tsz_solver` computation API references in production code.
+
+    This ratchets #8204's compatibility debt: the solver crate still exposes
+    computation symbols from its root for legacy callers, but new production
+    code should route through named facades or the checker query-boundary
+    layer. Test files are excluded, and `exclude_path_prefixes` marks approved
+    boundary modules such as `crates/tsz-checker/src/query_boundaries/`.
+    """
+    matching_lines: list[tuple[str, int]] = []
+    for base in search_roots:
+        if not base.exists():
+            continue
+        for path in base.rglob("*.rs"):
+            try:
+                rel_to_root = path.relative_to(ROOT).as_posix()
+            except ValueError:
+                rel_to_root = path.relative_to(base).as_posix()
+            parts = set(rel_to_root.split("/"))
+            if EXCLUDE_DIRS.intersection(parts):
+                continue
+            if "tests" in parts or "benches" in parts:
+                continue
+            if is_test_file(rel_to_root):
+                continue
+            if any(rel_to_root.startswith(prefix) for prefix in exclude_path_prefixes):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                if line.lstrip().startswith("//"):
+                    continue
+                if _ROOT_SOLVER_COMPUTATION_IMPORT_PATTERN.search(line):
+                    matching_lines.append((rel_to_root, line_no))
+
+    matching_lines.sort()
+    if len(matching_lines) > max_references:
+        hits = [
+            f"flat solver computation API reference #{i + 1}: {rel}:{line_no}"
+            for i, (rel, line_no) in enumerate(matching_lines)
+        ]
+        hits.append(
+            f"total flat root solver computation API references outside "
+            f"query boundaries: {len(matching_lines)} (cap {max_references}; "
+            f"bump cap intentionally, or route the new site through a named "
+            f"solver facade / checker query-boundary helper — #8204)"
         )
         return hits
     return []
@@ -1094,6 +1068,76 @@ def extract_project_dashboard_row_names(text: str) -> Optional[list[str]]:
     return re.findall(r'\bname:\s*"([^"]+)"', match.group("body"))
 
 
+def extract_project_row_definitions(text: str) -> Optional[list[dict[str, Optional[str]]]]:
+    """Extract project row metadata from `PROJECT_ROW_DEFINITIONS`.
+
+    The architecture guard intentionally stays lightweight and avoids executing
+    project scripts. This parser only reads the scalar fields needed by the
+    Track 1 drift checks.
+    """
+    match = re.search(
+        r"\b(?:export\s+)?const\s+PROJECT_ROW_DEFINITIONS\s*=\s*\[(?P<body>.*?)\]\s*;",
+        text,
+        re.DOTALL,
+    )
+    if match is None:
+        return None
+
+    rows: list[dict[str, Optional[str]]] = []
+    for object_match in re.finditer(r"\{(?P<object>.*?)\}", match.group("body"), re.DOTALL):
+        body = object_match.group("object")
+        name_match = re.search(r'\bname:\s*"([^"]+)"', body)
+        if name_match is None:
+            continue
+
+        row: dict[str, Optional[str]] = {"name": name_match.group(1)}
+        for field in ("benchmark_set", "guard_set"):
+            field_match = re.search(rf'\b{field}:\s*(?:"([^"]+)"|null)', body)
+            if field_match is None:
+                row[field] = None
+            else:
+                row[field] = field_match.group(1)
+        rows.append(row)
+
+    return rows
+
+
+def project_rows_by_field(
+    definitions: Optional[list[dict[str, Optional[str]]]],
+    field: str,
+    value: str,
+) -> list[str]:
+    if definitions is None:
+        return []
+    return [row["name"] for row in definitions if row.get(field) == value and row.get("name")]
+
+
+def project_row_names(definitions: Optional[list[dict[str, Optional[str]]]]) -> list[str]:
+    if definitions is None:
+        return []
+    return [row["name"] for row in definitions if row.get("name")]
+
+
+def project_required_rows(
+    text: str,
+    definitions: Optional[list[dict[str, Optional[str]]]],
+) -> Optional[list[str]]:
+    rows = extract_js_array_strings(text, "REQUIRED_PROJECT_ROWS")
+    if rows is not None:
+        return rows
+    return project_rows_by_field(definitions, "benchmark_set", "required") or None
+
+
+def project_compile_canary_rows(
+    text: str,
+    definitions: Optional[list[dict[str, Optional[str]]]],
+) -> Optional[list[str]]:
+    rows = extract_js_array_strings(text, "COMPILE_CANARY_PROJECT_ROWS")
+    if rows is not None:
+        return rows
+    return project_rows_by_field(definitions, "guard_set", "canary") or None
+
+
 def scan_project_dashboard_rows(path: pathlib.Path) -> list[str]:
     """Ensure every expected project benchmark row is present in the dashboard.
 
@@ -1112,9 +1156,12 @@ def scan_project_dashboard_rows(path: pathlib.Path) -> list[str]:
         return [f"{relative_path(path)}:0 benchmark data file is missing"]
 
     text = path.read_text(encoding="utf-8", errors="ignore")
-    expected = extract_js_array_strings(text, "REQUIRED_PROJECT_ROWS")
-    canary = extract_js_array_strings(text, "COMPILE_CANARY_PROJECT_ROWS")
+    definitions = extract_project_row_definitions(text)
+    expected = project_required_rows(text, definitions)
+    canary = project_compile_canary_rows(text, definitions)
     dashboard = extract_project_dashboard_row_names(text)
+    if dashboard is None:
+        dashboard = project_row_names(definitions) or None
     rel = relative_path(path)
     hits: list[str] = []
 
@@ -1146,6 +1193,246 @@ def scan_project_dashboard_rows(path: pathlib.Path) -> list[str]:
     return hits
 
 
+def extract_project_fixture_source_case_names(text: str) -> Optional[list[str]]:
+    """Extract row names handled by `tsz_project_fixture_sources`."""
+    match = re.search(
+        r"\btsz_project_fixture_sources\s*\(\)\s*\{(?P<body>.*?)^\}",
+        text,
+        re.DOTALL | re.MULTILINE,
+    )
+    if match is None:
+        return None
+
+    names: list[str] = []
+    for line in match.group("body").splitlines():
+        case_match = re.match(r"^\s*([A-Za-z0-9_.-]+(?:\|[A-Za-z0-9_.-]+)*)\)\s*$", line)
+        if case_match is None:
+            continue
+        names.extend(case_match.group(1).split("|"))
+    return names
+
+
+def emitted_project_fixture_sources(
+    fixture_path: pathlib.Path,
+    row_name: str,
+) -> tuple[list[tuple[str, str, str]], Optional[str]]:
+    """Run `tsz_project_fixture_sources` and validate emitted metadata lines."""
+    command = (
+        "set -euo pipefail; "
+        f"source {shlex.quote(str(fixture_path))}; "
+        f"tsz_project_fixture_sources {shlex.quote(row_name)}"
+    )
+    try:
+        result = subprocess.run(
+            ["bash", "-c", command],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return [], f"could not run fixture source metadata for {row_name}: {exc}"
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        suffix = f": {detail}" if detail else ""
+        return [], f"could not run fixture source metadata for {row_name}{suffix}"
+
+    sources: list[tuple[str, str, str]] = []
+    for line_number, raw_line in enumerate(result.stdout.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        fields = [field.strip() for field in line.split("|")]
+        if len(fields) != 3 or any(field == "" for field in fields):
+            return (
+                [],
+                f"malformed fixture source metadata for {row_name} line {line_number}: {line}",
+            )
+        sources.append((fields[0], fields[1], fields[2]))
+
+    if not sources:
+        return [], f"empty fixture source metadata for {row_name}"
+
+    return sources, None
+
+
+def scan_project_fixture_sources(
+    row_path: pathlib.Path,
+    fixture_path: pathlib.Path,
+) -> list[str]:
+    """Ensure pinned project rows have fixture source/ref metadata.
+
+    `scripts/bench/project-rows.mjs` owns the public project row inventory.
+    `scripts/bench/project-fixtures.sh` owns the pinned external fixture refs
+    and exposes `tsz_project_fixture_sources` so benchmark/CI compatibility
+    rows carry reproducibility metadata.
+    """
+    hits: list[str] = []
+    row_rel = relative_path(row_path)
+    fixture_rel = relative_path(fixture_path)
+
+    if not row_path.exists():
+        return [f"{row_rel}:0 project row manifest is missing"]
+    if not fixture_path.exists():
+        return [f"{fixture_rel}:0 project fixture metadata file is missing"]
+
+    row_text = row_path.read_text(encoding="utf-8", errors="ignore")
+    definitions = extract_project_row_definitions(row_text)
+    required = project_required_rows(row_text, definitions)
+    canary = project_compile_canary_rows(row_text, definitions)
+    if required is None:
+        hits.append(f"{row_rel}:0 missing REQUIRED_PROJECT_ROWS array")
+        required = []
+    if canary is None:
+        hits.append(f"{row_rel}:0 missing COMPILE_CANARY_PROJECT_ROWS array")
+        canary = []
+
+    fixture_text = fixture_path.read_text(encoding="utf-8", errors="ignore")
+    source_cases = extract_project_fixture_source_case_names(fixture_text)
+    if source_cases is None:
+        hits.append(f"{fixture_rel}:0 missing tsz_project_fixture_sources function")
+        source_cases = []
+
+    expected_rows = sorted(
+        (set(required) | set(canary)) - GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE,
+    )
+    expected_set = set(expected_rows)
+    source_set = set(source_cases)
+
+    for name in expected_rows:
+        if name not in source_set:
+            hits.append(f"{fixture_rel}:0 missing fixture source metadata for {name}")
+            continue
+        _, error = emitted_project_fixture_sources(fixture_path, name)
+        if error is not None:
+            hits.append(f"{fixture_rel}:0 {error}")
+
+    for name in sorted(source_set - expected_set):
+        hits.append(f"{fixture_rel}:0 stale fixture source metadata for {name}")
+
+    duplicates = sorted({name for name in source_cases if source_cases.count(name) > 1})
+    for name in duplicates:
+        hits.append(f"{fixture_rel}:0 duplicate fixture source metadata for {name}")
+
+    return hits
+
+
+def extract_project_compile_guard_rows(text: str) -> list[str]:
+    """Extract row names routed through `should_check_project`."""
+    return [
+        name
+        for name in re.findall(r'\bshould_check_project\s+"([^"]+)"', text)
+        if not name.startswith("$")
+    ]
+
+
+def extract_project_benchmark_rows(text: str) -> list[str]:
+    """Extract project row names registered in the benchmark runner."""
+    return re.findall(r'\brun_isolated\s+"([^"]+)"\s+run_[A-Za-z0-9_]+_benchmarks', text)
+
+
+def scan_project_inclusion_policy(
+    row_path: pathlib.Path,
+    compile_guard_path: pathlib.Path,
+    bench_path: pathlib.Path,
+) -> list[str]:
+    """Ensure project row inventories match the shell inclusion policies."""
+    hits: list[str] = []
+    row_rel = relative_path(row_path)
+    compile_rel = relative_path(compile_guard_path)
+    bench_rel = relative_path(bench_path)
+
+    if not row_path.exists():
+        return [f"{row_rel}:0 project row manifest is missing"]
+    if not compile_guard_path.exists():
+        return [f"{compile_rel}:0 project compile guard is missing"]
+    if not bench_path.exists():
+        return [f"{bench_rel}:0 benchmark runner is missing"]
+
+    row_text = row_path.read_text(encoding="utf-8", errors="ignore")
+    definitions = extract_project_row_definitions(row_text)
+    required = project_required_rows(row_text, definitions)
+    canary = project_compile_canary_rows(row_text, definitions)
+    if required is None:
+        hits.append(f"{row_rel}:0 missing REQUIRED_PROJECT_ROWS array")
+        required = []
+    if canary is None:
+        hits.append(f"{row_rel}:0 missing COMPILE_CANARY_PROJECT_ROWS array")
+        canary = []
+
+    manifest_rows = sorted(set(required) | set(canary))
+
+    compile_text = compile_guard_path.read_text(encoding="utf-8", errors="ignore")
+    compile_rows = extract_project_compile_guard_rows(compile_text)
+    if 'for name in "${TSZ_COMPILE_GUARD_REQUIRED_ROWS[@]}"' in compile_text:
+        compile_rows.extend(project_rows_by_field(definitions, "guard_set", "required"))
+    if 'for name in "${TSZ_COMPILE_GUARD_CANARY_ROWS[@]}"' in compile_text:
+        compile_rows.extend(project_rows_by_field(definitions, "guard_set", "canary"))
+    compile_set = set(compile_rows)
+    manifest_set = set(manifest_rows)
+    expected_compile_rows = sorted(set(manifest_rows) - BENCHMARK_ONLY_PROJECT_ROWS)
+    expected_compile_set = set(expected_compile_rows)
+    for name in expected_compile_rows:
+        if name not in compile_set:
+            hits.append(f"{compile_rel}:0 missing project compile guard inclusion for {name}")
+    for name in sorted(compile_set - expected_compile_set):
+        hits.append(f"{compile_rel}:0 stale project compile guard inclusion for {name}")
+
+    bench_text = bench_path.read_text(encoding="utf-8", errors="ignore")
+    bench_rows = extract_project_benchmark_rows(bench_text)
+    bench_set = set(bench_rows)
+    expected_bench_rows = sorted(manifest_set - COMPILE_GUARD_ONLY_PROJECT_ROWS)
+    expected_bench_set = set(expected_bench_rows)
+    for name in expected_bench_rows:
+        if name not in bench_set:
+            hits.append(f"{bench_rel}:0 missing project benchmark inclusion for {name}")
+
+    return hits
+
+
+def scan_project_config_writers(
+    fixture_path: pathlib.Path,
+    compile_guard_path: pathlib.Path,
+    bench_path: pathlib.Path,
+) -> list[str]:
+    """Ensure shared project rows use shared config writer functions."""
+    hits: list[str] = []
+    fixture_rel = relative_path(fixture_path)
+    compile_rel = relative_path(compile_guard_path)
+    bench_rel = relative_path(bench_path)
+
+    if not fixture_path.exists():
+        return [f"{fixture_rel}:0 project fixture metadata file is missing"]
+    if not compile_guard_path.exists():
+        return [f"{compile_rel}:0 project compile guard is missing"]
+    if not bench_path.exists():
+        return [f"{bench_rel}:0 benchmark runner is missing"]
+
+    fixture_text = fixture_path.read_text(encoding="utf-8", errors="ignore")
+    compile_text = compile_guard_path.read_text(encoding="utf-8", errors="ignore")
+    bench_text = bench_path.read_text(encoding="utf-8", errors="ignore")
+
+    for row, writer in sorted(PROJECT_CONFIG_WRITERS.items()):
+        if not re.search(rf"\b{re.escape(writer)}\s*\(\)", fixture_text):
+            hits.append(f"{fixture_rel}:0 missing shared config writer {writer} for {row}")
+
+        if row not in BENCHMARK_ONLY_PROJECT_ROWS and not re.search(
+            rf"\b{re.escape(writer)}\b",
+            compile_text,
+        ):
+            hits.append(f"{compile_rel}:0 {row} does not use shared config writer {writer}")
+
+        if row not in COMPILE_GUARD_ONLY_PROJECT_ROWS and not re.search(
+            rf"\b{re.escape(writer)}\b",
+            bench_text,
+        ):
+            hits.append(f"{bench_rel}:0 {row} does not use shared config writer {writer}")
+
+    return hits
+
+
 def scan_regex_line_count(
     search_roots: list[pathlib.Path],
     pattern: re.Pattern[str],
@@ -1161,11 +1448,12 @@ def scan_regex_line_count(
     for base in search_roots:
         if not base.exists():
             continue
-        for path in base.rglob("*.rs"):
+        paths = [base] if base.is_file() else base.rglob("*.rs")
+        for path in paths:
             try:
                 rel_to_root = path.relative_to(ROOT).as_posix()
             except ValueError:
-                rel_to_root = path.relative_to(base).as_posix()
+                rel_to_root = path.name if base.is_file() else path.relative_to(base).as_posix()
             parts = set(rel_to_root.split("/"))
             if EXCLUDE_DIRS.intersection(parts):
                 continue
@@ -1198,6 +1486,62 @@ def scan_regex_line_count(
     return []
 
 
+VISITED_CLONE_PATTERN = re.compile(r"\bvisited\.clone\s*\(")
+
+
+def scan_branch_local_visited_clones(
+    search_roots: list[pathlib.Path],
+    allowlist: tuple[tuple[str, str], ...],
+) -> list[str]:
+    """Report new branch-local `visited.clone()` traversal sites.
+
+    The allowlist key is `(relative path, stripped line)`, counted with
+    multiplicity.  That keeps this guard stable across nearby line edits while
+    still catching duplicate clone branches in an existing file.
+    """
+    allowed_counts = Counter(allowlist)
+    seen_counts: Counter[tuple[str, str]] = Counter()
+    hits: list[str] = []
+
+    for base in search_roots:
+        if not base.exists():
+            continue
+        for path in base.rglob("*.rs"):
+            try:
+                rel_to_root = path.relative_to(ROOT).as_posix()
+            except ValueError:
+                rel_to_root = path.relative_to(base).as_posix()
+            parts = set(rel_to_root.split("/"))
+            if EXCLUDE_DIRS.intersection(parts):
+                continue
+            if "tests" in parts or "benches" in parts:
+                continue
+            if is_test_file(rel_to_root):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                stripped = line.strip()
+                if stripped.startswith("//"):
+                    continue
+                if not VISITED_CLONE_PATTERN.search(stripped):
+                    continue
+
+                key = (rel_to_root, stripped)
+                seen_counts[key] += 1
+                if seen_counts[key] <= allowed_counts[key]:
+                    continue
+                hits.append(
+                    f"{rel_to_root}:{line_no} new branch-local visited.clone() "
+                    "traversal site; use memoized DP/worklists/SCCs/bitsets "
+                    "or extend the Track 10 allowlist intentionally"
+                )
+
+    return hits
+
+
 def scan_struct_field_count(
     path: pathlib.Path, struct_name: str, max_fields: int
 ) -> list[str]:
@@ -1223,6 +1567,35 @@ def scan_struct_field_count(
         return [
             f"{rel}:struct {struct_name} has {field_count} fields "
             f"(cap {max_fields}; bump cap intentionally and update ROADMAP.md)"
+        ]
+    return []
+
+
+def scan_trait_method_count(
+    path: pathlib.Path, trait_name: str, max_methods: int
+) -> list[str]:
+    """Count method declarations in `pub trait <trait_name>`.
+
+    This is a cheap architecture metric for broad capability traits.  It counts
+    every `fn name...` declaration in the trait body, including default-method
+    bodies, because both expand the capability surface exposed to algorithms.
+    Comments are stripped first so doc examples or commented-out signatures do
+    not affect the ratchet.
+    """
+    if not path.exists():
+        return []
+    rel = relative_path(path)
+    body = find_trait_body(path, trait_name)
+    if body is None:
+        return [f"{rel}:0 trait {trait_name!r} not found"]
+
+    method_count = len(extract_trait_method_names_from_body(body))
+
+    if method_count > max_methods:
+        return [
+            f"{rel}:trait {trait_name} has {method_count} methods "
+            f"(cap {max_methods}; split onto a narrower trait or bump cap "
+            f"intentionally and update #8205)"
         ]
     return []
 
@@ -1260,8 +1633,39 @@ def find_struct_body(path: pathlib.Path, struct_name: str):
     return stripped[body_start:body_end]
 
 
+def find_trait_body(path: pathlib.Path, trait_name: str):
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    stripped = strip_rust_comments(text)
+    header_pattern = re.compile(
+        rf"\bpub\s+trait\s+{re.escape(trait_name)}\b[^{{]*\{{",
+        re.MULTILINE,
+    )
+    match = header_pattern.search(stripped)
+    if match is None:
+        return None
+
+    body_start = match.end()
+    depth = 1
+    body_end = body_start
+    for i in range(body_start, len(stripped)):
+        ch = stripped[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                body_end = i
+                break
+    return stripped[body_start:body_end]
+
+
 STRUCT_FIELD_PATTERN = re.compile(
     r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?P<name>[a-z_][a-zA-Z0-9_]*)\s*:"
+)
+
+TRAIT_METHOD_PATTERN = re.compile(
+    r"^\s*(?:async\s+|unsafe\s+|const\s+)?fn\s+"
+    r"(?P<name>[a-zA-Z_][a-zA-Z0-9_]*)\s*[<(]"
 )
 
 
@@ -1269,6 +1673,15 @@ def extract_struct_field_names_from_body(body: str) -> list[str]:
     names = []
     for line in body.splitlines():
         match = STRUCT_FIELD_PATTERN.match(line)
+        if match:
+            names.append(match.group("name"))
+    return names
+
+
+def extract_trait_method_names_from_body(body: str) -> list[str]:
+    names = []
+    for line in body.splitlines():
+        match = TRAIT_METHOD_PATTERN.match(line)
         if match:
             names.append(match.group("name"))
     return names
@@ -1694,6 +2107,12 @@ def main() -> int:
         if hits:
             failures.append((name, hits))
 
+    for name, path, trait_name, max_methods in TRAIT_METHOD_COUNT_CHECKS:
+        hits = scan_trait_method_count(path, trait_name, max_methods)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
     for (
         name,
         struct_path,
@@ -1730,6 +2149,19 @@ def main() -> int:
         name,
         search_roots,
         exclude_path_prefixes,
+        max_references,
+    ) in ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS:
+        hits = scan_root_solver_computation_import_count(
+            search_roots, exclude_path_prefixes, max_references
+        )
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for (
+        name,
+        search_roots,
+        exclude_path_prefixes,
         max_files,
     ) in SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS:
         hits = scan_snapshot_rollback_file_count(
@@ -1757,8 +2189,32 @@ def main() -> int:
         if hits:
             failures.append((name, hits))
 
+    for name, row_path, fixture_path in PROJECT_FIXTURE_SOURCE_CHECKS:
+        hits = scan_project_fixture_sources(row_path, fixture_path)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, row_path, compile_guard_path, bench_path in PROJECT_INCLUSION_POLICY_CHECKS:
+        hits = scan_project_inclusion_policy(row_path, compile_guard_path, bench_path)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, fixture_path, compile_guard_path, bench_path in PROJECT_CONFIG_WRITER_CHECKS:
+        hits = scan_project_config_writers(fixture_path, compile_guard_path, bench_path)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
     for name, search_roots, pattern, max_lines in REGEX_LINE_COUNT_CHECKS:
         hits = scan_regex_line_count(search_roots, pattern, max_lines)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, search_roots, allowlist in BRANCH_LOCAL_VISITED_CLONE_CHECKS:
+        hits = scan_branch_local_visited_clones(search_roots, allowlist)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))

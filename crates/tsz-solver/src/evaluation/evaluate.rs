@@ -14,6 +14,11 @@
 use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
 use crate::def::{DefId, DefKind};
+use crate::diagnostics::display_provenance::{
+    self, AliasApplicationPriority, AliasApplicationProvenance,
+    FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
+};
+use crate::evaluation::request::EvaluationRequest;
 use crate::instantiation::instantiate::instantiate_generic;
 use crate::relations::subtype::{NoopResolver, TypeResolver};
 #[cfg(test)]
@@ -58,6 +63,9 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// deep and possibly infinite" behavior. Unlike a set-based cycle detector, this
     /// permits legitimate bounded recursion where each expansion converges.
     def_depth: FxHashMap<DefId, u32>,
+    /// Number of currently active `DefId` expansions at or above the threshold
+    /// that turns a structural recursion bailout into a real TS2589 failure.
+    real_instantiation_depth_count: u32,
     /// When true, suppress `this` type substitution during Lazy type evaluation.
     /// Used during intersection evaluation to prevent premature `this` binding to
     /// individual members instead of the full intersection type.
@@ -165,6 +173,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
                 crate::recursion::RecursionProfile::TypeEvaluation,
             ),
             def_depth: FxHashMap::default(),
+            real_instantiation_depth_count: 0,
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
             contains_infer_cache: FxHashMap::default(),
@@ -212,6 +221,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// near `def_depth ≈ 50`.
     const REAL_INSTANTIATION_BAILOUT_THRESHOLD: u32 = 40;
 
+    fn increment_def_depth(&mut self, def_id: DefId) -> bool {
+        let depth = self.def_depth.entry(def_id).or_insert(0);
+        if *depth >= Self::MAX_DEF_DEPTH {
+            return false;
+        }
+
+        let was_real_instantiation_depth = *depth >= Self::REAL_INSTANTIATION_BAILOUT_THRESHOLD;
+        *depth += 1;
+        if !was_real_instantiation_depth && *depth >= Self::REAL_INSTANTIATION_BAILOUT_THRESHOLD {
+            self.real_instantiation_depth_count += 1;
+        }
+        true
+    }
+
+    fn decrement_def_depth(&mut self, def_id: DefId) {
+        if let Some(depth) = self.def_depth.get_mut(&def_id) {
+            let was_real_instantiation_depth = *depth >= Self::REAL_INSTANTIATION_BAILOUT_THRESHOLD;
+            *depth = depth.saturating_sub(1);
+            if was_real_instantiation_depth && *depth < Self::REAL_INSTANTIATION_BAILOUT_THRESHOLD {
+                self.real_instantiation_depth_count =
+                    self.real_instantiation_depth_count.saturating_sub(1);
+            }
+        }
+    }
+
+    #[inline]
+    const fn has_real_instantiation_depth(&self) -> bool {
+        self.real_instantiation_depth_count > 0
+    }
+
     /// Create a new evaluator with a custom resolver.
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
         TypeEvaluator {
@@ -227,6 +266,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 crate::recursion::RecursionProfile::TypeEvaluation,
             ),
             def_depth: FxHashMap::default(),
+            real_instantiation_depth_count: 0,
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
             contains_infer_cache: FxHashMap::default(),
@@ -307,6 +347,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.cache.clear();
         self.guard.reset();
         self.def_depth.clear();
+        self.real_instantiation_depth_count = 0;
+    }
+
+    /// Evaluate a normalized request, applying option-sensitive configuration
+    /// before consulting this evaluator's local cache.
+    pub fn evaluate_request(&mut self, request: EvaluationRequest) -> TypeId {
+        self.set_no_unchecked_indexed_access(request.no_unchecked_indexed_access());
+        self.evaluate(request.type_id())
     }
 
     // =========================================================================
@@ -598,8 +646,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // real runaway (escalate) or just the structural cost of legitimate
                 // finite recursion like the type-challenges `Permutation<U>` /
                 // `Combination<U>` patterns (silently leave `type_id` opaque).
-                let max_def_depth = self.def_depth.values().copied().max().unwrap_or(0);
-                if max_def_depth >= Self::REAL_INSTANTIATION_BAILOUT_THRESHOLD {
+                if self.has_real_instantiation_depth() {
                     self.cache.insert(type_id, TypeId::ERROR);
                     return TypeId::ERROR;
                 }
@@ -722,12 +769,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             //   type TrimRight<S> = S extends `${infer R} ` ? TrimRight<R> : S;
             // which need multiple re-entries of the same DefId to converge.
             // =======================================================================
-            let depth = self.def_depth.entry(def_id).or_insert(0);
-            if *depth >= Self::MAX_DEF_DEPTH {
+            if !self.increment_def_depth(def_id) {
                 self.guard.mark_exceeded();
                 return TypeId::ERROR;
             }
-            *depth += 1;
 
             // Try to get the type parameters for this DefId
             let type_params = self.resolver.get_lazy_type_params(def_id);
@@ -771,9 +816,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if let Some(cached) =
                     db.lookup_application_eval_cache(def_id, &app.args, no_unchecked)
                 {
-                    if let Some(d) = self.def_depth.get_mut(&def_id) {
-                        *d = d.saturating_sub(1);
-                    }
+                    self.decrement_def_depth(def_id);
                     return cached;
                 }
             }
@@ -790,9 +833,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // original `Application` opaque so later evaluator passes
                     // (with a populated body) can expand it correctly.
                     if resolved == TypeId::UNKNOWN {
-                        if let Some(d) = self.def_depth.get_mut(&def_id) {
-                            *d = d.saturating_sub(1);
-                        }
+                        self.decrement_def_depth(def_id);
                         return original_type_id;
                     }
                     // Pre-expand type arguments that are TypeQuery or Application.
@@ -841,9 +882,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             no_unchecked_indexed_access,
                         )
                     {
-                        if let Some(d) = self.def_depth.get_mut(&def_id) {
-                            *d = d.saturating_sub(1);
-                        }
+                        self.decrement_def_depth(def_id);
                         return cached;
                     }
 
@@ -896,9 +935,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                         resolved_arg,
                                     );
                                 }
-                                if let Some(d) = self.def_depth.get_mut(&def_id) {
-                                    *d = d.saturating_sub(1);
-                                }
+                                self.decrement_def_depth(def_id);
                                 return resolved_arg;
                             }
                             // Objectish<any>: identity homomorphic mapped type with `any` arg
@@ -941,9 +978,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                         result,
                                     );
                                 }
-                                if let Some(d) = self.def_depth.get_mut(&def_id) {
-                                    *d = d.saturating_sub(1);
-                                }
+                                self.decrement_def_depth(def_id);
                                 return result;
                             }
                         }
@@ -1060,9 +1095,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             no_unchecked_indexed_access,
                         )
                     {
-                        if let Some(d) = self.def_depth.get_mut(&def_id) {
-                            *d = d.saturating_sub(1);
-                        }
+                        self.decrement_def_depth(def_id);
                         return cached;
                     }
 
@@ -1118,9 +1151,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.apparent_conditional_branch = _saved_apparent;
 
             // Decrement per-DefId depth after evaluation
-            if let Some(d) = self.def_depth.get_mut(&def_id) {
-                *d = d.saturating_sub(1);
-            }
+            self.decrement_def_depth(def_id);
 
             // Store reverse mapping for diagnostic display: when the evaluated
             // result differs from the original Application, record the mapping
@@ -1202,7 +1233,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.interner.lookup(display_origin),
                             Some(TypeData::Application(_))
                         )
-                        && self.interner.get_display_alias(result).is_some();
+                        && display_provenance::display_alias(self.interner, result).is_some();
                     if !skip_type_alias_repaint && !keep_existing_conditional_branch_alias {
                         if prefer_application_display_alias
                             || (self.expand_application_display_alias_args
@@ -1211,10 +1242,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     Some(TypeData::Application(_))
                                 ))
                         {
-                            self.interner
-                                .store_display_alias_preferring_application(result, display_origin);
+                            display_provenance::record_alias_application(
+                                self.interner,
+                                AliasApplicationProvenance {
+                                    evaluated: result,
+                                    application: display_origin,
+                                },
+                                AliasApplicationPriority::PreferApplication,
+                            );
                         } else {
-                            self.interner.store_display_alias(result, display_origin);
+                            display_provenance::record_alias_application(
+                                self.interner,
+                                AliasApplicationProvenance {
+                                    evaluated: result,
+                                    application: display_origin,
+                                },
+                                AliasApplicationPriority::PreserveExisting,
+                            );
                         }
                     }
 
@@ -1231,8 +1275,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             Some(crate::types::TypeData::Application(_))
                         )
                     {
-                        self.interner
-                            .store_display_alias(original_type_id, branch_app);
+                        display_provenance::record_alias_application(
+                            self.interner,
+                            AliasApplicationProvenance {
+                                evaluated: original_type_id,
+                                application: branch_app,
+                            },
+                            AliasApplicationPriority::PreserveExisting,
+                        );
                     }
                 }
             }
@@ -1306,8 +1356,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return;
         }
 
-        self.interner
-            .store_display_alias_preferring_application(instantiated, original_type_id);
+        display_provenance::record_alias_application(
+            self.interner,
+            AliasApplicationProvenance {
+                evaluated: instantiated,
+                application: original_type_id,
+            },
+            AliasApplicationPriority::PreferApplication,
+        );
     }
 
     fn is_recursive_type_alias_application(&self, type_id: TypeId) -> bool {
@@ -1424,8 +1480,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if !Self::is_structural_display_alias_result(self.interner, evaluated) {
             return;
         }
-        self.interner
-            .store_display_alias_preferring_application(evaluated, original_type_id);
+        display_provenance::record_alias_application(
+            self.interner,
+            AliasApplicationProvenance {
+                evaluated,
+                application: original_type_id,
+            },
+            AliasApplicationPriority::PreferApplication,
+        );
     }
 
     fn is_structural_display_alias_result(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -1952,7 +2014,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             original_members,
         );
         if !display_vec.is_empty() {
-            self.interner.store_display_properties(result, display_vec);
+            display_provenance::record_fresh_object_literal_display(
+                self.interner,
+                FreshObjectLiteralDisplayProvenance {
+                    type_id: result,
+                    properties: display_vec,
+                },
+            );
         }
     }
 
@@ -1978,7 +2046,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.simplify_union_members(&mut evaluated_members);
 
         let result = self.interner.union(evaluated_members.clone());
-        self.interner.store_union_origin(result, evaluated_members);
+        display_provenance::record_union_origin(
+            self.interner,
+            UnionOriginProvenance {
+                union_type_id: result,
+                origin_members: evaluated_members,
+            },
+        );
         result
     }
 
@@ -2422,7 +2496,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     )
                 );
                 if operand_is_named {
-                    self.interner().store_display_alias(result, keyof_type);
+                    display_provenance::record_alias_application(
+                        self.interner(),
+                        AliasApplicationProvenance {
+                            evaluated: result,
+                            application: keyof_type,
+                        },
+                        AliasApplicationPriority::PreserveExisting,
+                    );
                 }
             }
         }
@@ -2782,8 +2863,16 @@ pub fn evaluate_index_access_with_options(
 
 /// Convenience function for full type evaluation
 pub fn evaluate_type(interner: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    evaluate_type_with_request(interner, EvaluationRequest::new(type_id))
+}
+
+/// Convenience function for full type evaluation with explicit request options.
+pub fn evaluate_type_with_request(
+    interner: &dyn TypeDatabase,
+    request: EvaluationRequest,
+) -> TypeId {
     let mut evaluator = TypeEvaluator::new(interner);
-    evaluator.evaluate(type_id)
+    evaluator.evaluate_request(request)
 }
 
 /// Convenience function for evaluating mapped types

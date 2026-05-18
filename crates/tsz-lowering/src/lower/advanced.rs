@@ -554,6 +554,22 @@ impl<'a> TypeLowering<'a> {
                 }
             }
 
+            // Module resolution requires &mut self (checker state); pick up the
+            // checker's pre-resolved result before falling through to the generic lowering.
+            if let Some(resolver) = self.import_type_resolver
+                && self.has_import_call_in_type_name(data.type_name)
+                && let Some(resolved) = resolver(data.type_name)
+            {
+                if let Some(args) = &data.type_arguments
+                    && !args.nodes.is_empty()
+                {
+                    let type_args: Vec<TypeId> =
+                        args.nodes.iter().map(|&i| self.lower_type(i)).collect();
+                    return self.interner.application(resolved, type_args);
+                }
+                return resolved;
+            }
+
             // For now, just lower the type name as an identifier
             let base_type = self.lower_type(data.type_name);
             self.apply_type_reference_arguments(
@@ -656,6 +672,59 @@ impl<'a> TypeLowering<'a> {
                 .unresolved_type_name(self.interner.intern_string(&name));
         }
         TypeId::ERROR
+    }
+
+    /// Returns `true` when `type_name_idx` is or starts with an `import()` `CALL_EXPRESSION`.
+    ///
+    /// Covers:
+    /// - `import("./m")` — `type_name_idx` is directly a `CALL_EXPRESSION` whose callee is `import`
+    /// - `import("./m").Foo` — `type_name_idx` is a `QUALIFIED_NAME` chain whose leftmost leaf is such a call
+    ///
+    /// Plain identifiers are O(1) false.
+    fn has_import_call_in_type_name(&self, type_name_idx: NodeIndex) -> bool {
+        const MAX_IMPORT_CHAIN_DEPTH: usize = 64;
+        let Some(node) = self.arena.get(type_name_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                let Some(call) = self.arena.get_call_expr(node) else {
+                    return false;
+                };
+                let Some(callee) = self.arena.get(call.expression) else {
+                    return false;
+                };
+                callee.kind == SyntaxKind::ImportKeyword as u16
+            }
+            k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                let mut current = type_name_idx;
+                for _ in 0..MAX_IMPORT_CHAIN_DEPTH {
+                    let Some(n) = self.arena.get(current) else {
+                        return false;
+                    };
+                    match n.kind {
+                        k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                            let Some(qn) = self.arena.get_qualified_name(n) else {
+                                return false;
+                            };
+                            current = qn.left;
+                        }
+                        k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                            let Some(call) = self.arena.get_call_expr(n) else {
+                                return false;
+                            };
+                            let Some(callee) = self.arena.get(call.expression) else {
+                                return false;
+                            };
+                            return callee.kind == SyntaxKind::ImportKeyword as u16;
+                        }
+                        _ => return false,
+                    }
+                }
+                false // depth limit reached
+            }
+            _ => false,
+        }
     }
 
     /// Lower an identifier as a type (simple type reference)

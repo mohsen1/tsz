@@ -11,6 +11,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeSubstitution;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn check_class_index_signature_compatibility(
@@ -19,7 +20,7 @@ impl<'a> CheckerState<'a> {
         base_class: &tsz_parser::parser::node::ClassData,
         derived_class_name: &str,
         base_class_name: &str,
-        substitution: &tsz_solver::TypeSubstitution,
+        substitution: &TypeSubstitution,
         mut class_extends_error_reported: bool,
     ) {
         use crate::query_boundaries::common::instantiate_type;

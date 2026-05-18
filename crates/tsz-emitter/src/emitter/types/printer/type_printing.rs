@@ -1090,17 +1090,17 @@ impl<'a> TypePrinter<'a> {
             );
         }
 
-        // Collect all signatures (call + construct)
-        let mut parts = Vec::new();
-
+        let mut signature_parts = Vec::new();
         for sig in &callable.call_signatures {
-            parts.push(self.print_call_signature(sig, false, false));
+            signature_parts.push(self.print_call_signature(sig, false, false));
         }
         for sig in &callable.construct_signatures {
-            parts.push(self.print_call_signature(sig, true, callable.is_abstract));
+            signature_parts.push(self.print_call_signature(sig, true, callable.is_abstract));
         }
 
-        // Add index signatures (tsc emits these before properties)
+        let mut member_parts = Vec::new();
+
+        // Add index signatures (tsc emits these before properties).
         if let Some(ref idx) = callable.number_index {
             let readonly = if idx.readonly { "readonly " } else { "" };
             let param = idx
@@ -1108,7 +1108,7 @@ impl<'a> TypePrinter<'a> {
                 .map(|a| self.resolve_atom(a))
                 .unwrap_or_else(|| "x".to_string());
             let widened = self.widen_synthesized_method_return_type(idx.value_type);
-            parts.push(format!(
+            member_parts.push(format!(
                 "{}[{}: number]: {}",
                 readonly,
                 param,
@@ -1122,7 +1122,7 @@ impl<'a> TypePrinter<'a> {
                 .map(|a| self.resolve_atom(a))
                 .unwrap_or_else(|| "x".to_string());
             let widened = self.widen_synthesized_method_return_type(idx.value_type);
-            parts.push(format!(
+            member_parts.push(format!(
                 "{}[{}: string]: {}",
                 readonly,
                 param,
@@ -1140,18 +1140,18 @@ impl<'a> TypePrinter<'a> {
             if prop.is_method
                 && let Some(method_str) = self.print_property_as_method(prop, callable.symbol)
             {
-                parts.push(method_str);
+                member_parts.push(method_str);
                 continue;
             }
 
             if let Some(accessors) = self.print_property_as_accessors(prop) {
-                parts.extend(accessors);
+                member_parts.extend(accessors);
                 continue;
             }
 
             let readonly = if prop.readonly { "readonly " } else { "" };
             let optional = if prop.optional { "?" } else { "" };
-            parts.push(format!(
+            member_parts.push(format!(
                 "{}{}{}: {}",
                 readonly,
                 self.declaration_property_name_text(prop),
@@ -1160,11 +1160,30 @@ impl<'a> TypePrinter<'a> {
             ));
         }
 
+        if callable.is_abstract
+            && callable.call_signatures.is_empty()
+            && callable.construct_signatures.len() == 1
+            && !member_parts.is_empty()
+        {
+            let constructor_type = self.print_construct_signature_arrow(
+                &callable.construct_signatures[0],
+                callable.is_abstract,
+            );
+            let member_type = self.format_type_literal_parts(&member_parts);
+            return format!("({constructor_type}) & {member_type}");
+        }
+
+        let mut parts = signature_parts;
+        parts.extend(member_parts);
+
         if parts.is_empty() {
             return "{}".to_string();
         }
 
-        // Multi-line format when indent context is set
+        self.format_type_literal_parts(&parts)
+    }
+
+    fn format_type_literal_parts(&self, parts: &[String]) -> String {
         if let Some(indent) = self.indent_level {
             let member_indent = "    ".repeat((indent + 1) as usize);
             let closing_indent = "    ".repeat(indent as usize);
@@ -1382,6 +1401,16 @@ impl<'a> TypePrinter<'a> {
             .properties
             .iter()
             .any(|property| !self.property_is_hidden_in_declaration_shape(property));
+
+        if callable.is_abstract
+            && callable.call_signatures.is_empty()
+            && callable.construct_signatures.len() == 1
+            && (has_properties
+                || callable.string_index.is_some()
+                || callable.number_index.is_some())
+        {
+            return true;
+        }
 
         callable.symbol.is_none()
             && !has_properties
@@ -1977,6 +2006,14 @@ impl<'a> TypePrinter<'a> {
     }
 
     pub(crate) fn intersection_member_priority(&self, type_id: TypeId) -> u8 {
+        if let Some(app_id) = visitor::application_id(self.interner, type_id) {
+            let app = self.interner.type_application(app_id);
+            if self.type_reference_base_is_nameable(app.base) {
+                return 0;
+            }
+            return 1;
+        }
+
         if visitor::type_param_info(self.interner, type_id).is_some() {
             return 2;
         }
@@ -2001,10 +2038,38 @@ impl<'a> TypePrinter<'a> {
             if let Some(sym_id) = shape.symbol {
                 return u8::from(self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id));
             }
-            return 0;
+            return 1;
         }
 
         1
+    }
+
+    fn type_reference_base_is_nameable(&self, type_id: TypeId) -> bool {
+        if let Some(def_id) = visitor::lazy_def_id(self.interner, type_id)
+            && let Some(cache) = self.type_cache
+        {
+            if let Some(&sym_id) = cache.def_to_symbol.get(&def_id) {
+                return self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id);
+            }
+            return cache.def_to_name.contains_key(&def_id);
+        }
+
+        if let Some(sym_ref) = visitor::type_query_symbol(self.interner, type_id) {
+            let sym_id = SymbolId(sym_ref.0);
+            return self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id);
+        }
+
+        if let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) {
+            let callable = self.interner.callable_shape(callable_id);
+            return callable.symbol.is_some_and(|sym_id| {
+                self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id)
+            });
+        }
+
+        visitor::object_shape_id(self.interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(self.interner, type_id))
+            .and_then(|shape_id| self.interner.object_shape(shape_id).symbol)
+            .is_some_and(|sym_id| self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id))
     }
 
     pub(crate) fn print_enum(&self, def_id: tsz_solver::def::DefId, _members_id: TypeId) -> String {
