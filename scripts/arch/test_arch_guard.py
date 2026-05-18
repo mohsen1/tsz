@@ -2003,5 +2003,108 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
             )
 
 
+class ArchGuardVisitedCloneTests(unittest.TestCase):
+    """Cover Track 10 branch-local `visited.clone()` traversal guardrails."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _make_tree(self, files: dict[str, str]):
+        tmp = tempfile.mkdtemp()
+        root = pathlib.Path(tmp)
+        for rel, content in files.items():
+            full = root / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        return root
+
+    def _registered_check(self):
+        for entry in self.arch_guard.BRANCH_LOCAL_VISITED_CLONE_CHECKS:
+            name, search_roots, allowlist = entry
+            if "visited.clone()" in name:
+                return name, search_roots, allowlist
+        self.fail("visited.clone() performance guard is missing")
+
+    def test_flags_new_branch_local_clone_site(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/flow/new_predicate.rs": (
+                    "fn walk(visited: Vec<u32>) {\n"
+                    "    let mut branch_visited = visited.clone();\n"
+                    "}\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_branch_local_visited_clones([root], ())
+        self.assertEqual(len(hits), 1, f"unexpected hits: {hits!r}")
+        self.assertIn("new_predicate.rs:2", hits[0])
+        self.assertIn("memoized DP", hits[0])
+
+    def test_allows_pinned_site_by_file_and_statement_text(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/flow/control_flow/typeof_exclusions.rs": (
+                    "fn walk(visited: Vec<u32>) {\n"
+                    "\n"
+                    "    let mut branch_visited = visited.clone();\n"
+                    "}\n"
+                ),
+            }
+        )
+        allowlist = (
+            (
+                "crates/tsz-checker/src/flow/control_flow/typeof_exclusions.rs",
+                "let mut branch_visited = visited.clone();",
+            ),
+        )
+        hits = self.arch_guard.scan_branch_local_visited_clones([root], allowlist)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_duplicate_allowed_statement_still_flags_extra_site(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/flow/control_flow/typeof_exclusions.rs": (
+                    "fn walk(visited: Vec<u32>) {\n"
+                    "    let mut branch_visited = visited.clone();\n"
+                    "    let mut branch_visited = visited.clone();\n"
+                    "}\n"
+                ),
+            }
+        )
+        allowlist = (
+            (
+                "crates/tsz-checker/src/flow/control_flow/typeof_exclusions.rs",
+                "let mut branch_visited = visited.clone();",
+            ),
+        )
+        hits = self.arch_guard.scan_branch_local_visited_clones([root], allowlist)
+        self.assertEqual(len(hits), 1, f"unexpected hits: {hits!r}")
+        self.assertIn("typeof_exclusions.rs:3", hits[0])
+
+    def test_excludes_tests_and_comment_lines(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/foo_tests.rs": (
+                    "let mut branch_visited = visited.clone();\n"
+                ),
+                "crates/tsz-checker/tests/integration.rs": (
+                    "let mut branch_visited = visited.clone();\n"
+                ),
+                "crates/tsz-checker/src/commented.rs": (
+                    "// let mut branch_visited = visited.clone();\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_branch_local_visited_clones([root], ())
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_registered_real_sites_pass(self):
+        _name, search_roots, allowlist = self._registered_check()
+        hits = self.arch_guard.scan_branch_local_visited_clones(
+            search_roots, allowlist
+        )
+        self.assertEqual(hits, [], f"live visited.clone() allowlist is stale: {hits!r}")
+
+
 if __name__ == "__main__":
     unittest.main()

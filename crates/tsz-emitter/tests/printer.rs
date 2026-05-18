@@ -1389,6 +1389,32 @@ fn test_invalid_interface_without_name_recovers_body_text() {
 }
 
 #[test]
+fn test_invalid_predefined_interface_names_recover_tsc_runtime_tokens() {
+    let source =
+        "interface any { }\ninterface string { }\ninterface void {}\ninterface number<T> {}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("interface;\n"),
+        "Invalid `interface any` should recover the runtime interface token statement.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("void {};"),
+        "Invalid `interface void` should recover as a void object statement.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("interface string") && !output.contains("interface number"),
+        "Other predefined type-name interfaces should stay erased here.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_unterminated_empty_switch_recovers_following_class() {
     let source = "class C {\n  constructor() {\n    switch (e) {\n\nclass D {\n}\n";
     let output = parse_lower_print(
@@ -2051,6 +2077,80 @@ fn test_cjs_exported_namespace_uses_var_at_es5() {
 }
 
 #[test]
+fn invalid_namespace_static_var_and_function_modifiers_are_preserved() {
+    let source = r#"namespace N {
+    public var publicValue: number = 0;
+    static var staticValue: number = 1;
+    private function privateFn(x: string) { }
+    static function staticFn(x: string) { }
+}"#;
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("var publicValue = 0;"),
+        "Invalid access modifier on namespace var should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static var staticValue = 1;"),
+        "Invalid static modifier on namespace var should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function privateFn(x) { }"),
+        "Invalid access modifier on namespace function should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static function staticFn(x) { }"),
+        "Invalid static modifier on namespace function should be preserved.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn invalid_namespace_static_modifiers_are_erased_for_es5() {
+    let source = r#"namespace N {
+    static var staticValue: number = 1;
+    static function staticFn(x: string) { }
+}"#;
+    let output = parse_lower_print(source, PrintOptions::es5());
+
+    assert!(
+        output.contains("var staticValue = 1;"),
+        "ES5 namespace var recovery should erase invalid static.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function staticFn(x) { }"),
+        "ES5 namespace function recovery should erase invalid static.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("static var") && !output.contains("static function"),
+        "ES5 namespace output must not preserve invalid static modifiers.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn invalid_namespace_static_async_function_modifier_is_preserved_before_lowering() {
+    let source = r#"namespace N {
+    static async function staticAsync() { }
+    static async function* staticAsyncGen() { }
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("static function staticAsync()"),
+        "Invalid static modifier should be preserved on lowered async namespace functions.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static function staticAsyncGen()"),
+        "Invalid static modifier should be preserved on lowered async generator namespace functions.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_cjs_exported_namespace_reopen_declares_var_once_es5() {
     let source = r#"export namespace N {
     export class A {}
@@ -2462,6 +2562,58 @@ function elem(key: string) {
     assert!(
         !output.contains("return ({ a: 1 }.a);") && !output.contains("return ({ a: 1 }[key]);"),
         "Return expressions should not be wrapped like statement expressions.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn erased_object_literal_access_wraps_arrow_concise_body() {
+    let source = r#"
+const prop = (x: string) => ({ "1": "one", "2": "two" } as { [key: string]: string }).x;
+const elem = (x: string) => ({ "1": "one", "2": "two" } as { [key: string]: string })[x];
+const nested = () => ({ a: { b: 1 } } as any).a.b;
+const bracket = () => ({ a: { b: 1 } } as any)["a"].b;
+const call = () => ({ f() { return 1; } } as any).f();
+const plain = () => ({ a: 1 }).a;
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("const prop = (x) => ({ \"1\": \"one\", \"2\": \"two\" }.x);"),
+        "Arrow property access must be grouped so the object literal is not parsed as a block.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const elem = (x) => ({ \"1\": \"one\", \"2\": \"two\" }[x]);"),
+        "Arrow element access must be grouped so the object literal is not parsed as a block.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const nested = () => ({ a: { b: 1 } }.a.b);"),
+        "Nested property access rooted at an erased object assertion must be grouped.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const bracket = () => ({ a: { b: 1 } }[\"a\"].b);"),
+        "Nested element access rooted at an erased object assertion must be grouped.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const call = () => (({ f() { return 1; } }.f()));"),
+        "Call chains rooted at an erased object assertion must be grouped.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const plain = () => ({ a: 1 }).a;"),
+        "Already-parenthesized plain object access must not be double-wrapped.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("const plain = () => (({ a: 1 }).a);"),
+        "Plain parenthesized access should not be treated as erased assertion output.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("=> { \"1\": \"one\", \"2\": \"two\" }"),
+        "Arrow concise bodies must not start with a bare object literal after type erasure.\nOutput:\n{output}"
     );
 }
 

@@ -1011,13 +1011,23 @@ impl<'a> IRPrinter<'a> {
                 if let Some(else_br) = else_branch {
                     self.write_line();
                     self.write_indent();
-                    self.write("else ");
-                    if let IRNode::Block(stmts) = else_br.as_ref()
-                        && stmts.is_empty()
-                    {
-                        self.emit_empty_block_multiline();
-                    } else {
-                        self.emit_node(else_br);
+                    self.write("else");
+                    match else_br.as_ref() {
+                        IRNode::Block(stmts) if stmts.is_empty() => {
+                            self.write(" ");
+                            self.emit_empty_block_multiline();
+                        }
+                        IRNode::Block(_) | IRNode::IfStatement { .. } => {
+                            self.write(" ");
+                            self.emit_node(else_br);
+                        }
+                        _ => {
+                            self.write_line();
+                            self.increase_indent();
+                            self.write_indent();
+                            self.emit_node(else_br);
+                            self.decrease_indent();
+                        }
                     }
                 }
             }
@@ -1074,6 +1084,7 @@ impl<'a> IRPrinter<'a> {
                 initializer,
                 expression,
                 body,
+                multiline_body,
             } => {
                 self.write("for (");
                 self.emit_node(initializer);
@@ -1082,7 +1093,15 @@ impl<'a> IRPrinter<'a> {
                 self.write(" ");
                 self.emit_node(expression);
                 self.write(") ");
-                self.emit_node(body);
+                if *multiline_body && !matches!(&**body, IRNode::Block(_)) {
+                    self.write_line();
+                    self.increase_indent();
+                    self.write_indent();
+                    self.emit_node(body);
+                    self.decrease_indent();
+                } else {
+                    self.emit_node(body);
+                }
             }
             IRNode::WhileStatement { condition, body } => {
                 self.write("while (");
@@ -1169,12 +1188,19 @@ impl<'a> IRPrinter<'a> {
                 self.write(") ");
                 let force_multiline_empty =
                     self.current_class_iife_name.as_deref() == Some(&**name);
+                let previous_generator_state_name = self.generator_state_name;
+                if let Some(generator_state_name) =
+                    Self::generator_state_name_for_function_body(body)
+                {
+                    self.generator_state_name = generator_state_name;
+                }
                 self.emit_function_body_with_defaults(
                     parameters,
                     body,
                     *body_source_range,
                     force_multiline_empty,
                 );
+                self.generator_state_name = previous_generator_state_name;
                 if !self.remove_comments
                     && !self.suppress_function_trailing_extraction
                     && let Some(comment) = self.extract_trailing_comment_from_function(node)
@@ -1564,6 +1590,7 @@ impl<'a> IRPrinter<'a> {
             IRNode::AwaiterCall {
                 this_arg,
                 generator_body,
+                needs_lexical_this_capture,
                 hoisted_var_groups,
                 promise_constructor,
                 multiline_callback,
@@ -1583,7 +1610,10 @@ impl<'a> IRPrinter<'a> {
                 } else {
                     self.write(", void 0, void 0, function () {");
                 }
-                if hoisted_var_groups.is_empty() && !multiline_callback {
+                if hoisted_var_groups.is_empty()
+                    && !multiline_callback
+                    && !*needs_lexical_this_capture
+                {
                     // TSC keeps the generator call on the awaiter callback's
                     // opening line when no hoisted variables are needed.
                     self.write(" ");
@@ -1594,10 +1624,25 @@ impl<'a> IRPrinter<'a> {
                     self.write_line();
                     self.increase_indent();
                     for group in hoisted_var_groups {
+                        if *needs_lexical_this_capture {
+                            for name in group {
+                                self.write_indent();
+                                self.write("var ");
+                                self.write(name);
+                                self.write(";");
+                                self.write_line();
+                            }
+                        } else {
+                            self.write_indent();
+                            self.write("var ");
+                            self.write(&group.join(", "));
+                            self.write(";");
+                            self.write_line();
+                        }
+                    }
+                    if *needs_lexical_this_capture {
                         self.write_indent();
-                        self.write("var ");
-                        self.write(&group.join(", "));
-                        self.write(";");
+                        self.write("var _this = this;");
                         self.write_line();
                     }
                     self.write_indent();

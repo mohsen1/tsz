@@ -109,6 +109,89 @@ export namespace Outer {
 }
 
 #[test]
+fn test_internal_namespace_does_not_retain_private_module_interface() {
+    let source = r#"
+export var x = 1;
+interface Iterator<T> {
+    value: T;
+}
+
+namespace Query {
+    export function fromDoWhile<T>(doWhile: (test: Iterator<T>) => boolean): Iterator<T> {
+        return null;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert_eq!(
+        "export declare var x: number;",
+        output.trim(),
+        "Expected private namespace dependencies to stay out of module DTS: {output}"
+    );
+}
+
+#[test]
+fn test_exported_namespace_retains_private_module_interface_dependency() {
+    let source = r#"
+export var x = 1;
+interface Iterator<T> {
+    value: T;
+}
+
+export namespace Query {
+    export function fromDoWhile<T>(doWhile: (test: Iterator<T>) => boolean): Iterator<T> {
+        return null;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("interface Iterator<T>"),
+        "Expected private interface to remain when exported namespace references it: {output}"
+    );
+    assert!(
+        output.contains("export declare namespace Query"),
+        "Expected exported namespace to remain public: {output}"
+    );
+    assert!(
+        output.contains("test: Iterator<T>"),
+        "Expected exported namespace member to keep its private dependency reference: {output}"
+    );
+}
+
+#[test]
+fn test_named_exported_namespace_retains_private_module_interface_dependency() {
+    let source = r#"
+export { Query as PublicQuery };
+interface Private {
+    value: string;
+}
+
+namespace Query {
+    export function f(x: Private): Private {
+        return x;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export { Query as PublicQuery };"),
+        "Expected aliased named namespace export to remain public: {output}"
+    );
+    assert!(
+        output.contains("interface Private"),
+        "Expected private interface to remain when named-exported namespace references it: {output}"
+    );
+    assert!(
+        output.contains("function f(x: Private): Private;"),
+        "Expected named-exported namespace member to keep its private dependency reference: {output}"
+    );
+}
+
+#[test]
 fn test_throw_only_unannotated_returns_void() {
     let source = r#"
 export function f() {
@@ -1739,6 +1822,144 @@ declare const j: {
 }
 
 #[test]
+fn test_js_typedef_before_export_equals_function_declaration_stays_local() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | number} Value */
+/**
+ * @param {Value} value
+ * @returns {Value}
+ */
+function make(value) {
+    return value;
+}
+module.exports = make;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = make;")
+        .expect("Expected CommonJS export assignment");
+    let comment_pos = output
+        .find("/** @typedef {string | number} Value */")
+        .expect("Expected source typedef comment before function");
+    let function_pos = output
+        .find("declare function make(value: Value): Value;")
+        .expect("Expected function declaration to use the typedef alias");
+    let alias_pos = output
+        .find("type Value = string | number;")
+        .expect("Expected local typedef alias");
+
+    assert!(
+        comment_pos < export_pos && export_pos < function_pos && function_pos < alias_pos,
+        "Expected commented export= function declaration and local alias after it: {output}"
+    );
+    assert!(
+        !output.contains("export type Value"),
+        "CommonJS export= typedef alias should stay local: {output}"
+    );
+}
+
+#[test]
+fn test_js_typedef_before_export_equals_class_declaration_stays_local() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {string | number} Whatever
+ */
+class Conn {
+    constructor() {}
+    item = 3;
+    method() {}
+}
+module.exports = Conn;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = Conn;")
+        .expect("Expected CommonJS export assignment");
+    let comment_pos = output
+        .find("/**\n * @typedef {string | number} Whatever\n */")
+        .expect("Expected source typedef comment before class");
+    let class_pos = output
+        .find("declare class Conn")
+        .expect("Expected class declaration");
+    let namespace_pos = output
+        .find("declare namespace Conn")
+        .expect("Expected merged namespace declaration");
+    let alias_pos = output
+        .find("type Whatever = string | number;")
+        .expect("Expected local typedef alias");
+
+    assert!(
+        export_pos < comment_pos
+            && comment_pos < class_pos
+            && class_pos < namespace_pos
+            && namespace_pos < alias_pos,
+        "Expected export=, commented class, namespace, then local alias: {output}"
+    );
+    assert!(
+        output.contains("export { Whatever };"),
+        "Expected namespace to re-export the local typedef alias: {output}"
+    );
+    assert!(
+        !output.contains("export type Whatever"),
+        "CommonJS export= typedef alias should stay local: {output}"
+    );
+}
+
+#[test]
+fn test_js_typedef_before_private_function_in_es_module_stays_exported() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | number} Value */
+function local(value) { return value; }
+export const x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected sibling ES export to stay exported: {output}"
+    );
+    assert!(
+        output.contains("export type Value = string | number;"),
+        "Expected top-level typedef before a private JS function to follow ES module export policy: {output}"
+    );
+    assert!(
+        !output.contains("\ntype Value = string | number;"),
+        "Did not expect ES module typedef to be consumed early as a local alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_typedef_before_private_class_in_es_module_stays_exported() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | number} Value */
+class Local {
+    method() {}
+}
+export const x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected sibling ES export to stay exported: {output}"
+    );
+    assert!(
+        output.contains("export type Value = string | number;"),
+        "Expected top-level typedef before a private JS class to follow ES module export policy: {output}"
+    );
+    assert!(
+        !output.contains("\ntype Value = string | number;"),
+        "Did not expect ES module typedef to be consumed early as a local alias: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_uses_jsdoc_signature_types() {
     let source = r#"
 /**
@@ -2266,6 +2487,105 @@ export { x, f };
 }
 
 #[test]
+fn test_js_named_export_interface_folds_into_declaration() {
+    let source = r#"
+interface G {}
+export { G };
+interface HH {}
+export { HH as H };
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export interface G"),
+        "Expected same-name JS interface export to fold into the declaration: {output}"
+    );
+    assert!(
+        output.contains("interface HH"),
+        "Expected renamed interface alias to keep its local declaration: {output}"
+    );
+    assert!(
+        output.contains("export { HH as H };"),
+        "Expected renamed interface alias to remain in the grouped export aliases: {output}"
+    );
+    assert!(
+        !output.contains("export { G"),
+        "Did not expect a redundant same-name export alias for G: {output}"
+    );
+}
+
+#[test]
+fn test_js_mixed_named_export_partitions_interface_and_value_specifiers() {
+    let source = r#"
+interface G {}
+interface H {}
+const x = 1;
+export { G, H as HH, x };
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let g_pos = output
+        .find("export interface G")
+        .expect("expected same-name interface export to fold into declaration");
+    let h_pos = output
+        .find("interface H")
+        .expect("expected renamed interface to keep a local declaration");
+    let x_pos = output
+        .find("export const x: 1;")
+        .expect("expected same-name value export to fold into declaration");
+    let alias_pos = output
+        .find("export { H as HH };")
+        .expect("expected renamed interface alias to remain in trailing export aliases");
+
+    assert!(
+        g_pos < h_pos && h_pos < x_pos && x_pos < alias_pos,
+        "Expected mixed export specifiers to be partitioned in tsc order: {output}"
+    );
+    assert!(
+        !output.contains("export { G, H as HH, x };"),
+        "Did not expect the original mixed export clause to be emitted: {output}"
+    );
+}
+
+#[test]
+fn test_js_interface_recovery_orders_construct_call_then_members() {
+    let source = r#"
+export interface C<T, U> {
+    field: T & U;
+    (): number;
+    (x: T): U;
+    new (): string;
+    new (x: T): U;
+    method(): number;
+    optMethod?(): number;
+}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let construct_pos = output
+        .find("new (): string;")
+        .unwrap_or_else(|| panic!("missing construct signature: {output}"));
+    let call_pos = output
+        .find("(): number;")
+        .unwrap_or_else(|| panic!("missing call signature: {output}"));
+    let field_pos = output
+        .find("field: T & U;")
+        .unwrap_or_else(|| panic!("missing field: {output}"));
+    let method_pos = output
+        .find("method(): number;")
+        .unwrap_or_else(|| panic!("missing method: {output}"));
+
+    assert!(
+        construct_pos < call_pos && call_pos < field_pos && field_pos < method_pos,
+        "Expected JS interface recovery to order construct signatures, call signatures, then source-order members: {output}"
+    );
+    assert!(
+        !output.contains("optMethod"),
+        "Expected optional JS recovered interface methods to be omitted like tsc: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_export_function_preserves_jsdoc_signature_at_export_position() {
     let output = emit_js_dts(
         r#"
@@ -2568,6 +2888,56 @@ const Strings = {
 }
 
 #[test]
+fn test_js_exported_object_literal_property_reference_member_emits_import_alias() {
+    let output = emit_js_dts_with_usage_analysis(
+        r##"
+export const colors = {
+    royalBlue: "#6400e4",
+};
+
+export const brandColors = {
+    purple: colors.royalBlue,
+};
+"##,
+    );
+
+    let expected = r##"export namespace colors {
+    let royalBlue: string;
+}
+export namespace brandColors {
+    import purple = colors.royalBlue;
+    export { purple };
+}"##;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected exported object literal property references to stay namespace-shaped: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_object_literal_ordinary_property_access_member_emits_value() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const s = "x";
+
+export const ns = {
+    len: s.length,
+};
+"#,
+    );
+
+    let expected = r#"export namespace ns {
+    let len: number;
+}"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected ordinary property accesses to emit typed namespace values, not import aliases: {output}"
+    );
+}
+
+#[test]
 fn test_js_class_zero_arg_constructor_is_omitted() {
     let source = r#"
 export class Preferences {
@@ -2847,6 +3217,75 @@ module.exports = {
     assert!(
         !output.contains("export const extends"),
         "Did not expect invalid keyword binding declaration: {output}"
+    );
+}
+
+#[test]
+fn test_object_shorthand_preserves_declared_identifier_type_after_narrowing() {
+    let source = r#"
+class RoyalGuard {
+    isLeader(): this is LeadGuard {
+        return this instanceof LeadGuard;
+    }
+    isFollower(): this is FollowerGuard {
+        return this instanceof FollowerGuard;
+    }
+}
+
+class LeadGuard extends RoyalGuard {
+    lead(): void {}
+}
+
+class FollowerGuard extends RoyalGuard {
+    follow(): void {}
+}
+
+let guard: RoyalGuard = new FollowerGuard();
+
+if (guard.isLeader()) {
+    guard.lead();
+} else if (guard.isFollower()) {
+    guard.follow();
+}
+
+var holder = { guard };
+
+if (holder.guard.isLeader()) {
+    holder.guard;
+} else {
+    holder.guard;
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare var holder: {\n    guard: RoyalGuard;\n};"),
+        "Expected shorthand object member to use the declared annotation instead of a narrowed flow type: {output}"
+    );
+}
+
+#[test]
+fn test_object_shorthand_mixed_members_keep_resolved_member_types() {
+    let source = r#"
+class RoyalGuard {
+    isLeader(): this is LeadGuard {
+        return this instanceof LeadGuard;
+    }
+}
+
+class LeadGuard extends RoyalGuard {
+    lead(): void {}
+}
+
+let guard: RoyalGuard = new LeadGuard();
+var holder = { guard, generated: 1 };
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output
+            .contains("declare var holder: {\n    guard: RoyalGuard;\n    generated: number;\n};"),
+        "Expected mixed object literal to preserve declared shorthand member and resolved generated member: {output}"
     );
 }
 
@@ -4586,6 +5025,65 @@ module.exports = Timer;
     assert!(
         output.contains(expected),
         "Expected synthetic function-like class constructor JSDoc to stay block-formatted: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_export_equals_function_jsdoc_follows_export_assignment() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} timeout
+ */
+function Timer(timeout) {
+    this.timeout = timeout;
+}
+module.exports = Timer;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = Timer;")
+        .expect("Expected CommonJS export assignment");
+    let jsdoc_pos = output
+        .find("/**\n * @param {number} timeout\n */")
+        .expect("Expected Timer JSDoc block");
+    let function_pos = output
+        .find("declare function Timer(timeout: number): void;")
+        .expect("Expected Timer function declaration");
+    assert!(
+        export_pos < jsdoc_pos && jsdoc_pos < function_pos,
+        "Expected export= before the function JSDoc and declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_export_equals_plain_function_jsdoc_follows_export_assignment() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} value
+ * @returns {string}
+ */
+function format(value) {
+    return String(value);
+}
+module.exports = format;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = format;")
+        .expect("Expected CommonJS export assignment");
+    let jsdoc_pos = output
+        .find("/**\n * @param {number} value\n * @returns {string}\n */")
+        .expect("Expected format JSDoc block");
+    let function_pos = output
+        .find("declare function format(value: number): string;")
+        .expect("Expected format function declaration");
+    assert!(
+        export_pos < jsdoc_pos && jsdoc_pos < function_pos,
+        "Expected export= before the plain function JSDoc and declaration: {output}"
     );
 }
 

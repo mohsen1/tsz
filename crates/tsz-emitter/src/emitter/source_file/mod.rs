@@ -5,6 +5,9 @@ mod top_level_using;
 mod top_level_using_decorated;
 
 #[cfg(test)]
+mod decorator_metadata_tests;
+
+#[cfg(test)]
 mod tests {
     use crate::context::emit::EmitContext;
     use crate::emitter::{ModuleKind, Printer as EmitterPrinter, PrinterOptions};
@@ -396,6 +399,68 @@ mod tests {
         assert!(
             !output.contains("var _this = _super.call(this) || this;"),
             "Tail super return should avoid the _this temp.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn derived_constructor_with_explicit_branch_returns_omits_tail_this_return() {
+        let source = "declare const flag: boolean;\nclass A {}\nclass B extends A {\n    prop = () => this;\n    constructor() {\n        super();\n        if (flag) {\n            return {\n                prop: () => this,\n                value: 1\n            };\n        }\n        else\n            return null;\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains(
+                "return {\n                prop: function () { return _this; },\n                value: 1\n            };"
+            ),
+            "Returned multiline object literals in lowered constructors should stay multiline.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("else\n            return null;\n    }"),
+            "Non-block else returns should print on the following indented line.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("return null;\n        return _this;"),
+            "A derived constructor whose remaining post-super statements cannot fall through should not append return _this.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn derived_constructor_bare_returns_return_captured_this() {
+        let source = "declare const flag: boolean;\nclass A {}\nclass B extends A {\n    prop = () => this;\n    constructor() {\n        super();\n        if (flag) {\n            return;\n        }\n        return;\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains(
+                "if (flag) {\n            return _this;\n        }\n        return _this;"
+            ),
+            "Bare returns in the derived constructor body should return the captured instance.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("return;\n"),
+            "Derived constructor bare returns should not survive after ES5 `_this` capture.\nOutput:\n{output}"
         );
     }
 
@@ -967,74 +1032,6 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
             output
                 .contains("__metadata(\"design:type\", Boolean)\n], C.prototype, \"x\", void 0);"),
             "Conditional metadata with boolean literal branches should emit Boolean.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn decorator_metadata_async_method_without_annotation_returns_promise() {
-        let source = "declare const d: MethodDecorator;\nclass C {\n    @d\n    async inferred() {}\n    @d\n    async explicitAny(): any { return 1; }\n    @d\n    async explicitVoid(): void {}\n}\n";
-
-        let (parser, root) = parse_test_source(source);
-        let mut printer = EmitterPrinter::with_options(
-            &parser.arena,
-            PrinterOptions {
-                legacy_decorators: true,
-                emit_decorator_metadata: true,
-                target: ScriptTarget::ES2015,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.contains(
-                "__metadata(\"design:returntype\", Promise)\n], C.prototype, \"inferred\", null);"
-            ),
-            "Inferred async method metadata should use Promise.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains(
-                "__metadata(\"design:returntype\", Object)\n], C.prototype, \"explicitAny\", null);"
-            ),
-            "Explicit async `any` annotation should serialize normally.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains(
-                "__metadata(\"design:returntype\", void 0)\n], C.prototype, \"explicitVoid\", null);"
-            ),
-            "Explicit async `void` annotation should serialize normally.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn decorator_metadata_nolib_isolated_global_type_uses_typeof_guard() {
-        let source = "declare var Decorate: PropertyDecorator;\nexport class B {\n    @Decorate\n    member: Map<string, number>;\n}\n";
-
-        let (parser, root) = parse_test_source(source);
-        let mut printer = EmitterPrinter::with_options(
-            &parser.arena,
-            PrinterOptions {
-                legacy_decorators: true,
-                emit_decorator_metadata: true,
-                no_lib: true,
-                isolated_modules: true,
-                target: ScriptTarget::ES2015,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.contains("var _a;"),
-            "Metadata guard should hoist its temp.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("__metadata(\"design:type\", typeof (_a = typeof Map !== \"undefined\" && Map) === \"function\" ? _a : Object)"),
-            "No-lib isolated metadata should guard unresolved global constructors.\nOutput:\n{output}"
         );
     }
 

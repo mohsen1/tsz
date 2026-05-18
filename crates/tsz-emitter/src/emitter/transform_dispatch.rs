@@ -563,37 +563,10 @@ impl<'a> Printer<'a> {
                         self.ctx.original_module_kind = prev_original;
                     } else if !is_default
                         && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                        && let Some(inline_decls) = self.try_collect_inline_cjs_exports(idx, node)
+                        && let Some(schedule) = self.collect_cjs_export_variable_schedule(idx, node)
                     {
-                        // Inline form: exports.x = initializer;
-                        let decl_count = inline_decls.len();
-                        for (i, (decoded_name, emit_name, init_idx)) in
-                            inline_decls.iter().enumerate()
-                        {
-                            if i == 0 {
-                                self.emit_comments_before_pos(node.pos);
-                            }
-                            // Track that this variable was inlined (no local declaration).
-                            // Use decoded name for set tracking (matching uses decoded text).
-                            self.ctx
-                                .module_state
-                                .inlined_var_exports
-                                .insert(decoded_name.clone());
-                            self.write("exports.");
-                            // Use emit_name to preserve unicode escapes in output.
-                            self.write(emit_name);
-                            self.write(" = ");
-                            // emit_identifier handles `x → exports.x` substitution
-                            // for inline-exported variable names automatically.
-                            self.emit(*init_idx);
-                            self.write(";");
-                            // Skip write_line() on the last declaration so the
-                            // source_file.rs statement loop can emit trailing
-                            // comments (e.g., `// error`) before the newline.
-                            if i < decl_count - 1 {
-                                self.write_line();
-                            }
-                        }
+                        self.emit_comments_before_pos(node.pos);
+                        self.emit_cjs_export_variable_schedule(&schedule);
                     } else if !is_default
                         && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
                         && self.variable_stmt_has_binding_pattern(node)
@@ -714,6 +687,11 @@ impl<'a> Printer<'a> {
                         String::new()
                     };
 
+                    if self
+                        .should_emit_invalid_namespace_static_modifier(func_node, &func.modifiers)
+                    {
+                        self.write("static ");
+                    }
                     if func.asterisk_token {
                         self.emit_async_generator_lowered(func, &func_name);
                     } else {
@@ -1272,17 +1250,41 @@ impl<'a> Printer<'a> {
                         } else {
                             String::new()
                         };
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         self.emit_async_generator_lowered(func, &func_name);
                     } else if func.name.is_some() {
                         let func_name = self.get_identifier_text_idx(func.name);
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         self.emit_async_function_es5(func, &func_name, "this");
                     } else if let Some(export_name) = export_name {
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         if let Some(ident) = self.arena.identifiers.get(export_name as usize) {
                             self.emit_async_function_es5(func, &ident.escaped_text, "this");
                         } else {
                             self.emit_async_function_es5(func, "", "this");
                         }
                     } else {
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         self.emit_async_function_es5(func, "", "this");
                     }
                 }
@@ -1605,6 +1607,11 @@ impl<'a> Printer<'a> {
                         String::new()
                     };
 
+                    if self
+                        .should_emit_invalid_namespace_static_modifier(func_node, &func.modifiers)
+                    {
+                        self.write("static ");
+                    }
                     if func.asterisk_token {
                         self.emit_async_generator_lowered(func, &func_name);
                     } else {

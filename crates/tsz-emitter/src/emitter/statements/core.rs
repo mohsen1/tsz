@@ -802,6 +802,21 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let is_var_declaration = var_stmt.declarations.nodes.iter().any(|decl_list_idx| {
+            self.arena.get(*decl_list_idx).is_some_and(|decl_list| {
+                let flags = decl_list.flags as u32;
+                flags & (node_flags::LET | node_flags::CONST | node_flags::USING) == 0
+            })
+        });
+        if self.in_system_execute_body
+            && self.function_scope_depth == 0
+            && !self.in_namespace_iife
+            && is_var_declaration
+        {
+            self.emit_system_variable_initializers(node);
+            return;
+        }
+
         if self.in_system_execute_body
             && self.function_scope_depth == 0
             && !self.in_namespace_iife
@@ -876,6 +891,9 @@ impl<'a> Printer<'a> {
 
         if self.emit_async_generator_shadow_variable_statement(node) {
             return;
+        }
+        if self.should_emit_invalid_namespace_static_modifier(node, &var_stmt.modifiers) {
+            self.write("static ");
         }
         let is_accessor = self
             .arena

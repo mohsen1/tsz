@@ -310,6 +310,9 @@ pub struct Printer<'a> {
     /// Emit `void 0` for missing initializers during recovery.
     pub(crate) emit_missing_initializer_as_void_0: bool,
 
+    /// Current declaration list is being printed in a `for` header.
+    pub(crate) in_for_initializer: bool,
+
     /// Source text for detecting single-line constructs
     pub(crate) source_text: Option<&'a str>,
 
@@ -694,6 +697,14 @@ pub struct Printer<'a> {
     /// Depth counter for members emitted from class syntax.
     pub(crate) class_member_emit_depth: u32,
 
+    /// Function-scope depth of the class member currently providing ES5 `super`
+    /// home-object semantics. Nested non-arrow functions have a greater depth
+    /// and intentionally fall back to tsc's invalid-super recovery path.
+    pub(crate) es5_super_home_function_depth: Option<u32>,
+
+    /// Whether the active ES5 `super` home is a static class member.
+    pub(crate) es5_super_home_is_static: bool,
+
     /// Whether the current root source file has a JavaScript-like extension.
     pub(crate) is_current_root_js_source: bool,
 
@@ -911,6 +922,74 @@ impl<'a> Printer<'a> {
         true
     }
 
+    fn recovered_jsdoc_type_arguments_text(&self, type_arg_nodes: &[NodeIndex]) -> Option<String> {
+        if type_arg_nodes.is_empty() {
+            return None;
+        }
+
+        let source = self.source_text?;
+        let mut saw_recovered_jsdoc = false;
+        let mut parts = Vec::with_capacity(type_arg_nodes.len());
+
+        for type_arg in type_arg_nodes {
+            let node = self.arena.get(*type_arg)?;
+            let raw = source.get(node.pos as usize..node.end as usize)?.trim();
+            if raw.is_empty() {
+                return None;
+            }
+
+            if let Some(recovered) = self.recovered_jsdoc_type_argument_text(node, raw) {
+                saw_recovered_jsdoc = true;
+                parts.push(recovered);
+            } else {
+                parts.push(raw.to_string());
+            }
+        }
+
+        saw_recovered_jsdoc.then(|| format!("<{}>", parts.join(", ")))
+    }
+
+    fn recovered_jsdoc_type_argument_text(&self, node: &Node, raw: &str) -> Option<String> {
+        if raw == "?" {
+            return Some("?".to_string());
+        }
+
+        let has_prefix = raw.starts_with('?');
+        let has_postfix = self.is_jsdoc_postfix_nullable_type(node, raw);
+        if !has_prefix && !has_postfix {
+            return None;
+        }
+
+        let mut question_count = 0;
+        let mut body = raw;
+        if has_prefix {
+            question_count += 1;
+            body = body.strip_prefix('?')?.trim_start();
+        }
+        if has_postfix {
+            question_count += 1;
+            body = body.strip_suffix('?')?.trim_end();
+        }
+
+        if body.is_empty() {
+            return Some("?".repeat(question_count.max(1)));
+        }
+
+        Some(format!("{}{}", "?".repeat(question_count), body))
+    }
+
+    fn is_jsdoc_postfix_nullable_type(&self, node: &Node, raw: &str) -> bool {
+        if !raw.ends_with('?') || node.kind != syntax_kind_ext::UNION_TYPE {
+            return false;
+        }
+
+        self.arena
+            .get_composite_type(node)
+            .and_then(|composite| composite.types.nodes.last())
+            .and_then(|last| self.arena.get(*last))
+            .is_some_and(|last| last.kind == SyntaxKind::NullKeyword as u16)
+    }
+
     fn emit_recovered_let_array_assignment(&mut self, node: &Node) -> bool {
         let Some(text) = self.source_text else {
             return false;
@@ -989,6 +1068,7 @@ impl<'a> Printer<'a> {
             transforms: TransformContext::new(), // Empty by default, can be set later
             emit_plan,
             emit_missing_initializer_as_void_0: false,
+            in_for_initializer: false,
             source_text: None,
             jsx_pragmas: crate::jsx_pragmas::JsxPragmaFacts::default(),
             source_map_text: None,
@@ -1084,6 +1164,8 @@ impl<'a> Printer<'a> {
             paren_is_direct_call_callee: false,
             object_literal_accessor_depth: 0,
             class_member_emit_depth: 0,
+            es5_super_home_function_depth: None,
+            es5_super_home_is_static: false,
             is_current_root_js_source: false,
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),
@@ -2316,13 +2398,21 @@ impl<'a> Printer<'a> {
                         .type_arguments
                         .as_ref()
                         .map_or_else(Vec::new, |ta| ta.nodes.clone());
+                    if let Some(recovered_type_args) =
+                        self.recovered_jsdoc_type_arguments_text(&type_arg_nodes)
+                    {
+                        self.emit(expression);
+                        self.write(&recovered_type_args);
+                        return;
+                    }
+
                     let needs_parens = !type_arg_nodes.is_empty();
                     if needs_parens {
-                        self.write("(");
+                        self.open_paren();
                     }
                     self.emit(expression);
                     if needs_parens {
-                        self.write(")");
+                        self.close_paren();
                     }
                     // Skip comments inside the erased type arguments so they
                     // don't leak into subsequent output.

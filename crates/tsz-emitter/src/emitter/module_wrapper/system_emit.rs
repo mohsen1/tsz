@@ -1536,7 +1536,10 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn emit_system_variable_initializers(&mut self, node: &tsz_parser::parser::node::Node) {
+    pub(in crate::emitter) fn emit_system_variable_initializers(
+        &mut self,
+        node: &tsz_parser::parser::node::Node,
+    ) {
         let Some(var_stmt) = self.arena.get_variable(node) else {
             return;
         };

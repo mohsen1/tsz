@@ -8,6 +8,16 @@ use tsz_parser::parser::{
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn emit_es5_super_property_base(&mut self) {
+        if self.es5_super_home_function_depth == Some(self.function_scope_depth)
+            && !self.es5_super_home_is_static
+        {
+            self.write("_super.prototype");
+        } else {
+            self.write("_super");
+        }
+    }
+
     pub(super) fn emit_scoped_static_super_receiver(&mut self) {
         if let Some(alias) = self.scoped_static_this_alias.as_ref().cloned() {
             self.write(&alias);
@@ -68,6 +78,16 @@ impl<'a> Printer<'a> {
             self.write(", ");
             self.emit_scoped_static_super_receiver();
             self.write(")");
+            return;
+        }
+
+        if self.ctx.target_es5
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            self.emit_es5_super_property_base();
+            self.write(".");
+            self.emit_property_name_without_import_substitution(access.name_or_argument);
             return;
         }
 
@@ -480,6 +500,17 @@ impl<'a> Printer<'a> {
             self.write(", ");
             self.emit_scoped_static_super_receiver();
             self.write(")");
+            return;
+        }
+
+        if self.ctx.target_es5
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            self.emit_es5_super_property_base();
+            self.write("[");
+            self.emit(access.name_or_argument);
+            self.write("]");
             return;
         }
 
@@ -1568,6 +1599,36 @@ mod tests {
         assert!(
             output.contains("++(o === null || o === void 0 ? void 0 : o[\"a\"])"),
             "Prefix update must support optional element roots.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn optional_chain_array_rest_assignment_uses_rest_lowering() {
+        let source = "declare const obj: any;\ndeclare const foo: any;\n[...obj?.[\"a\"]] = [];\n[...obj?.a[\"b\"]] = [];\n[...obj[foo?.bar]] = [];\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("obj === null || obj === void 0 ? void 0 : obj[\"a\"] = [].slice(0);"),
+            "Optional element rest targets should still use ES5 rest-assignment lowering.\nOutput:\n{output}"
+        );
+        assert!(
+            output
+                .contains("obj === null || obj === void 0 ? void 0 : obj.a[\"b\"] = [].slice(0);"),
+            "Optional-chain rest targets should keep non-optional tails inside the lowered assignment target.\nOutput:\n{output}"
+        );
+        assert!(
+            output
+                .contains("obj[foo === null || foo === void 0 ? void 0 : foo.bar] = [].slice(0);"),
+            "Optional chains inside computed keys are valid element targets and must stay on the normal rest-lowering path.\nOutput:\n{output}"
         );
     }
 

@@ -129,6 +129,42 @@ fn commonjs_type_only_reexport_skips_void_zero_preamble() {
     );
 }
 
+#[test]
+fn namespace_export_star_does_not_emit_commonjs_reexport_helpers() {
+    let source = r#"class Aaa {
+}
+namespace Aaa {
+export class SomeType {
+}
+}
+namespace Bbb {
+export class SomeType {
+}
+export * from Aaa;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        !output.contains("__exportStar") && !output.contains("__createBinding"),
+        "Namespace-scoped export star should be erased in JS and should not request CommonJS re-export helpers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Bbb.SomeType = SomeType;"),
+        "Namespace value members should still emit normally.\nOutput:\n{output}"
+    );
+}
+
 /// moduleDetection=force should also cause "use strict" to be emitted
 /// for CJS modules (since the file is now treated as a module).
 #[test]
@@ -1429,6 +1465,77 @@ fn inline_cjs_export_skips_initializerless_vars() {
 }
 
 #[test]
+fn plain_class_expression_var_export_uses_split_assignment() {
+    let source = "export var simpleExample = class {\n    static getTags() { }\n    tags() { }\n};\nexport var circularReference = class C {\n    static getTags(c) { return c; }\n    tags(c) { return c; }\n};\n";
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var simpleExample = class {"),
+        "Plain exported class expressions should keep a local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.simpleExample = simpleExample;"),
+        "Plain exported class expressions should assign the local binding to exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var circularReference = class C {"),
+        "Named class expressions should also keep the exported local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.circularReference = circularReference;"),
+        "Named class expression exports should assign after the declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.simpleExample = class"),
+        "Plain class expressions should not be emitted as direct exports assignments.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn mixed_cjs_export_var_class_expression_keeps_ordered_assignment_schedule() {
+    let source = r#"declare function side(label: string): string;
+export var a = side("a"), C = class {}, b = side("b");
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let local_class = output
+        .find("var C = class {")
+        .expect("Plain class expression should be emitted as a local binding");
+    let export_assignments = output
+        .find(r#"exports.a = side("a"), exports.C = C, exports.b = side("b");"#)
+        .expect("Mixed export var declarators should share an ordered export assignment statement");
+
+    assert!(
+        local_class < export_assignments,
+        "Local class binding should be scheduled before the export assignment list.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(r#"var a = side("a"), C = class"#),
+        "Inlineable declarators should not be forced into a full local declaration fallback.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn transformed_class_expression_var_export_emits_inline_assignment() {
     let source = "export var noPrivates = class {\n    static getTags() { }\n    tags() { }\n    private static ps = -1;\n    private p = 12;\n};\n";
     let (parser, root) = parse_test_source(source);
@@ -1519,6 +1626,76 @@ export var x = 1;
     assert!(
         !output.contains("export (function"),
         "Merged namespace IIFE should not be preceded by `export`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_esm_class_namespace_merge_uses_bare_iife_after_export_clause() {
+    let source = r#"export class C {
+}
+export namespace C {
+export const x = 1;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("export { C };"),
+        "ES5 class ESM export should use a separate export clause.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(function (C) {"),
+        "Merged namespace should still emit its IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export (function"),
+        "Merged namespace IIFE should not be prefixed with `export`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_esm_erased_namespace_does_not_consume_runtime_export_var() {
+    let source = r#"export namespace N {
+}
+export namespace N {
+export const x = 1;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("export var N;"),
+        "First runtime namespace block should declare the ESM binding even after an erased namespace.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export (function"),
+        "Namespace IIFE should stay bare after the exported var declaration.\nOutput:\n{output}"
     );
 }
 
