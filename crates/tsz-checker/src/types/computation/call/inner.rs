@@ -582,6 +582,7 @@ impl<'a> CheckerState<'a> {
         let mut resolved_for_classification =
             self.evaluate_application_type(callee_type_for_resolution);
         resolved_for_classification = self.resolve_lazy_type(resolved_for_classification);
+        resolved_for_classification = self.evaluate_type_with_env(resolved_for_classification);
         let mut classification =
             query::classify_for_call_signatures(self.ctx.types, resolved_for_classification);
         if matches!(classification, query::CallSignaturesKind::NoSignatures)
@@ -599,6 +600,7 @@ impl<'a> CheckerState<'a> {
             resolved_for_classification =
                 self.evaluate_application_type(callee_type_for_resolution);
             resolved_for_classification = self.resolve_lazy_type(resolved_for_classification);
+            resolved_for_classification = self.evaluate_type_with_env(resolved_for_classification);
             classification =
                 query::classify_for_call_signatures(self.ctx.types, resolved_for_classification);
         }
@@ -617,6 +619,7 @@ impl<'a> CheckerState<'a> {
             resolved_for_classification =
                 self.evaluate_application_type(callee_type_for_resolution);
             resolved_for_classification = self.resolve_lazy_type(resolved_for_classification);
+            resolved_for_classification = self.evaluate_type_with_env(resolved_for_classification);
             classification =
                 query::classify_for_call_signatures(self.ctx.types, resolved_for_classification);
         }
@@ -737,6 +740,7 @@ impl<'a> CheckerState<'a> {
         let callee_type_for_context = self.evaluate_application_type(callee_type_for_resolution);
         let callee_type_for_context = self.resolve_lazy_type(callee_type_for_context);
         let callee_type_for_context = self.evaluate_contextual_type(callee_type_for_context);
+        let callee_type_for_context = self.evaluate_type_with_env(callee_type_for_context);
         // Extract the shape from the same resolved callee type used for contextual typing.
         // Using a less-resolved form here can make Round 2 infer from a pre-instantiation
         // method signature even though callback contextual typing is based on the fully
@@ -2435,6 +2439,7 @@ impl<'a> CheckerState<'a> {
         // Resolve applications/lazy refs to callable forms before solver dispatch.
         let callee_type_for_call = self.evaluate_application_type(callee_type_for_resolution);
         let callee_type_for_call = self.resolve_lazy_type(callee_type_for_call);
+        let callee_type_for_call = self.evaluate_type_with_env(callee_type_for_call);
         // For union types, resolve Lazy members so the solver can inspect their
         // callable shapes (e.g., for `this` type checks in TS2684). The solver's
         // NoopResolver can't resolve Lazy types, so we do it here.

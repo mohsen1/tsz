@@ -76,6 +76,38 @@ function process<K extends Keys>(data: DataEntry<K>[]) {
 }
 
 #[test]
+fn generic_keyed_mapped_callable_property_stays_callable() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+class Form<T> {
+    private childFormFactories: { [K in keyof T]: (value: T[K]) => Form<T[K]> };
+
+    public set<K extends keyof T>(prop: K, value: T[K]) {
+        this.childFormFactories[prop](value);
+    }
+}
+
+class Renamed<Shape> {
+    private factories: { [Key in keyof Shape]: (value: Shape[Key]) => Shape[Key] };
+
+    public set<Member extends keyof Shape>(prop: Member, value: Shape[Member]) {
+        this.factories[prop](value);
+    }
+}
+"#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2349)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected mapped callable property selected by generic key to stay callable, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn mapped_parameter_property_mismatch_displays_instantiated_property_slice() {
     let mut parser = tsz_parser::parser::ParserState::new("test.ts".to_string(), String::new());
     let root = parser.parse_source_file();

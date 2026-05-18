@@ -1533,37 +1533,18 @@ impl<'a> CheckerState<'a> {
             use_index_signature_check = false;
         }
 
-        // Preserve mapped/generic key correlation through solver IndexAccess evaluation.
-        if result_type.is_none()
-            && crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
-        {
-            let resolved_pre = self.resolve_lazy_type(pre_resolution_object_type);
-            let substitution_object = if crate::query_boundaries::common::application_id(
-                self.ctx.types,
-                pre_resolution_object_type,
-            )
-            .is_some()
-            {
-                Some(pre_resolution_object_type)
-            } else if let Some(alias) = self.ctx.types.get_display_alias(pre_resolution_object_type)
-                && crate::query_boundaries::common::application_id(self.ctx.types, alias).is_some()
-            {
-                Some(pre_resolution_object_type)
-            } else if crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved_pre)
-                .is_some()
-            {
-                Some(resolved_pre)
-            } else {
-                None
-            };
-            if let Some(substitution_object) = substitution_object {
-                let index_access = self
-                    .ctx
-                    .types
-                    .factory()
-                    .index_access(substitution_object, index_type);
-                let evaluated = self.evaluate_type_with_env(index_access);
-                if evaluated != index_access && evaluated != TypeId::ERROR {
+        if result_type.is_none() {
+            let substitution =
+                crate::query_boundaries::type_computation::access::generic_index_access_substitution(
+                    self.ctx.types,
+                    raw_object_type,
+                    pre_resolution_object_type,
+                    index_type,
+                    |candidate| self.resolve_lazy_type(candidate),
+                );
+            if let Some(substitution) = substitution {
+                let evaluated = self.evaluate_type_with_env(substitution.type_to_evaluate);
+                if evaluated != substitution.index_access && evaluated != TypeId::ERROR {
                     result_type = Some(evaluated);
                     use_index_signature_check = false;
                 }
