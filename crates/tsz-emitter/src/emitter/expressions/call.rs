@@ -486,10 +486,10 @@ impl<'a> Printer<'a> {
             if let Some(first_arg) = valid_args.first()
                 && let Some(arg_node) = self.arena.get(*first_arg)
             {
-                // Use node.end of the call expression to approximate '(' position
-                // Actually, we need to find the '(' position more carefully
-                let paren_pos = self.find_open_paren_position(node.pos, arg_node.pos);
-                self.emit_call_leading_argument_comments(paren_pos, arg_node.pos);
+                let open_paren_pos = self
+                    .find_call_open_paren_position(node, Some(args))
+                    .unwrap_or(node.pos);
+                self.emit_call_leading_argument_comments(open_paren_pos, arg_node.pos);
             }
             self.emit_comma_separated(&valid_args);
             if let Some(last_arg) = valid_args.last()
@@ -708,8 +708,10 @@ impl<'a> Printer<'a> {
             if let Some(first_arg) = valid_args.first()
                 && let Some(arg_node) = self.arena.get(*first_arg)
             {
-                let paren_pos = self.find_open_paren_position(node.pos, arg_node.pos);
-                self.emit_call_leading_argument_comments(paren_pos, arg_node.pos);
+                let open_paren_pos = self
+                    .find_call_open_paren_position(node, Some(args))
+                    .unwrap_or(node.pos);
+                self.emit_call_leading_argument_comments(open_paren_pos, arg_node.pos);
             }
             self.emit_comma_separated(&valid_args);
             if let Some(last_arg) = valid_args.last()
@@ -1085,7 +1087,12 @@ impl<'a> Printer<'a> {
         call_node: &Node,
         args: Option<&tsz_parser::parser::NodeList>,
     ) -> Option<u32> {
-        self.find_call_open_paren_position_after(call_node, args, call_node.pos)
+        let start_after = self
+            .arena
+            .get_call_expr(call_node)
+            .and_then(|call| self.arena.get(call.expression))
+            .map_or(call_node.pos, |callee| callee.end);
+        self.find_call_open_paren_position_after(call_node, args, start_after)
     }
 
     /// Variant of `find_call_open_paren_position` that begins the search
@@ -1412,22 +1419,6 @@ impl<'a> Printer<'a> {
         }
 
         self.emit(expr);
-    }
-
-    /// Find the position of the opening parenthesis in a call expression.
-    /// Scans forward from `start_pos` looking for '(' before `arg_pos`.
-    fn find_open_paren_position(&self, start_pos: u32, arg_pos: u32) -> u32 {
-        let Some(text) = self.source_text else {
-            return start_pos;
-        };
-        let bytes = text.as_bytes();
-        let start = start_pos as usize;
-        let end = std::cmp::min(arg_pos as usize, bytes.len());
-
-        if let Some(offset) = (start..end).position(|i| bytes[i] == b'(') {
-            return (start + offset) as u32;
-        }
-        start_pos
     }
 
     /// Unwrap parenthesized expressions and type assertions/satisfies to find

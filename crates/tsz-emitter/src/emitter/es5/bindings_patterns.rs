@@ -1378,13 +1378,49 @@ impl<'a> Printer<'a> {
             }
             k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
                 if let Some(pattern) = self.arena.get_binding_pattern(pattern_node) {
+                    let source_name = self
+                        .emit_param_array_downlevel_read(pattern_node, temp_name, started)
+                        .unwrap_or_else(|| temp_name.to_string());
                     for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
-                        self.emit_param_array_binding_element(elem_idx, temp_name, i, started);
+                        self.emit_param_array_binding_element(elem_idx, &source_name, i, started);
                     }
                 }
             }
             _ => {}
         }
+    }
+
+    fn emit_param_array_downlevel_read(
+        &mut self,
+        pattern_node: &Node,
+        temp_name: &str,
+        started: &mut bool,
+    ) -> Option<String> {
+        if !self.ctx.target_es5
+            || !self.ctx.options.downlevel_iteration
+            || pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            return None;
+        }
+
+        let pattern = self.arena.get_binding_pattern(pattern_node)?;
+        if pattern.elements.nodes.is_empty() {
+            return None;
+        }
+
+        let read_name = self.get_temp_var_name();
+        self.emit_param_assignment_prefix(started);
+        self.write(&read_name);
+        self.write(" = ");
+        self.write_helper("__read");
+        self.write("(");
+        self.write(temp_name);
+        if let Some(limit) = self.binding_pattern_read_limit(pattern_node) {
+            self.write(", ");
+            self.write_usize(limit);
+        }
+        self.write(")");
+        Some(read_name)
     }
 
     pub(in crate::emitter) fn emit_param_object_binding_element(

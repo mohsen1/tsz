@@ -10,6 +10,74 @@ fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::pars
 }
 
 #[test]
+fn system_es5_default_class_export_uses_hoisted_assignment_iife() {
+    let source = "export default class A { method() { return 42; } }\n";
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::System,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+    let mut printer = Printer::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("A = /** @class */ (function ()"),
+        "System ES5 default class should assign the lowered IIFE to the hoisted binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("A.prototype.method = function ()"),
+        "System ES5 default class methods should be downleveled onto the prototype.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"default\", A);"),
+        "System default export should publish the lowered class binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("A = class A"),
+        "System ES5 default class must not preserve a native class expression.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_es5_named_and_local_classes_use_assignment_iifes() {
+    let source =
+        "class Local { local() { return 1; } }\nexport class Named { named() { return 2; } }\n";
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::System,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+    let mut printer = Printer::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("Local = /** @class */ (function ()")
+            && output.contains("Named = /** @class */ (function ()"),
+        "System ES5 local and named-export classes should assign lowered IIFEs.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"Named\", Named);"),
+        "System named class export should publish the lowered class binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Local = class Local") && !output.contains("Named = class Named"),
+        "System ES5 classes must not preserve native class expressions.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn umd_dynamic_import_only_file_gets_wrapper_and_loader_branch() {
     let source = r#"class C {
     _path = "./other";
@@ -186,6 +254,46 @@ const value = 1;
 }
 
 #[test]
+fn system_es5_default_class_uses_class_iife_assignment() {
+    let source = r#"export default class A {
+    method() {
+        return 42;
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("A = /** @class */ (function () {"),
+        "System ES5 default class should assign an ES5 class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("A.prototype.method = function () {"),
+        "System ES5 default class methods should be lowered to prototype assignments.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"default\", A);"),
+        "System default export should still publish the class binding after assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("A = class A"),
+        "System ES5 output must not leave a native class expression.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_wrapper_keeps_used_namespace_import_dependency() {
     let source = r#"import * as a from "a";
 
@@ -216,6 +324,85 @@ a.run();
     assert!(
         output.contains("a.run();"),
         "Runtime namespace import usage should remain in execute body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_es5_named_exported_class_uses_class_iife_assignment() {
+    let source = r#"export class A {
+    method() {
+        return 42;
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("A = /** @class */ (function () {"),
+        "System ES5 named class export should assign an ES5 class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"A\", A);"),
+        "System named export should publish the class binding after assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("A = class A"),
+        "System ES5 output must not leave a native class expression.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_es5_named_exported_class_static_block_runs_after_export() {
+    let source = r#"declare function side(x: any): void;
+export class A {
+    static {
+        side(A);
+    }
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let assignment_pos = output
+        .find("A = /** @class */ (function () {")
+        .expect("System ES5 named class export should assign an ES5 class IIFE");
+    let export_pos = output
+        .find("exports_1(\"A\", A);")
+        .expect("System named export should publish the class binding after assignment");
+    let static_block_pos = output
+        .find("(function () {\n                side(A);\n            })();")
+        .expect("System ES5 static block should lower to an IIFE");
+
+    assert!(
+        assignment_pos < export_pos && export_pos < static_block_pos,
+        "System ES5 named class static block should run after the export call.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("A = (_a ="),
+        "Static-block-only class exports should not fold the static block into the assignment RHS.\nOutput:\n{output}"
     );
 }
 
@@ -1063,6 +1250,78 @@ fn system_object_binding_initializer_assigns_hoisted_name() {
     assert!(
         output.contains("let { toFixed } = 1;"),
         "Nested block-scoped destructuring should remain a declaration.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_statement_scoped_erased_export_keeps_referenced_binding() {
+    let source = "if (true)\nexport const cssExports: CssExports;\nexport default cssExports;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var cssExports;"),
+        "System wrapper should hoist the statement-scoped exported binding for later exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (true)"),
+        "System wrapper should preserve the recovered if statement shell.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"default\", cssExports);"),
+        "System default export should reference the hoisted local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports_1(\"cssExports\""),
+        "The erased statement-scoped export should not emit its own runtime export call.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.cssExports"),
+        "Nested System recovery output must not fall back to CommonJS exports.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_statement_scoped_erased_export_can_feed_named_export() {
+    let source = "if (true)\nexport let value: number;\nexport { value as renamed };\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var value;"),
+        "System wrapper should hoist the statement-scoped local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"renamed\", value);"),
+        "System named export should publish the hoisted local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.value"),
+        "Nested System recovery output must not fall back to CommonJS exports.\nOutput:\n{output}"
     );
 }
 

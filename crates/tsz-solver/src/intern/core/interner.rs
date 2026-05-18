@@ -1151,6 +1151,59 @@ impl TypeInterner {
         result
     }
 
+    /// Allocate a fresh `TypeId` for declaration-scoped types that carry
+    /// identity beyond their structural payload.
+    ///
+    /// The stored `TypeData` is still available through `lookup`, but this
+    /// intentionally bypasses `key_to_index` and the thread-local intern cache
+    /// so two declarations with the same surface name and constraint do not
+    /// collapse to one semantic type parameter.
+    pub(crate) fn intern_fresh(&self, key: TypeData) -> TypeId {
+        if self.poisoned.load(std::sync::atomic::Ordering::Relaxed) {
+            return TypeId::ERROR;
+        }
+        if self.interned_type_limit_exceeded() {
+            return self.poison_due_to_interned_type_limit();
+        }
+
+        let mut hasher = FxHasher::default();
+        key.hash(&mut hasher);
+        let hash = hasher.finish();
+        let shard_idx = (hash as usize) & (SHARD_COUNT - 1);
+        let shard = &self.shards[shard_idx];
+        let inner = shard.get_inner();
+
+        let local_index = shard.next_index.fetch_add(1, Ordering::Relaxed);
+        if local_index > (u32::MAX >> SHARD_BITS) {
+            return TypeId::ERROR;
+        }
+
+        let order = self.alloc_counter.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut vec = tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
+                inner
+                    .index_to_key
+                    .write()
+                    .expect("interner index_to_key lock poisoned")
+            });
+            let mut ord = tsz_common::perf_counters::time_shard_write(shard_idx as u32, || {
+                inner
+                    .alloc_order
+                    .write()
+                    .expect("interner alloc_order lock poisoned")
+            });
+            let target_len = local_index as usize + 1;
+            if vec.len() < target_len {
+                vec.resize(target_len, TypeData::Error);
+                ord.resize(target_len, u32::MAX);
+            }
+            vec[local_index as usize] = key;
+            ord[local_index as usize] = order;
+        }
+
+        self.make_id(local_index, shard_idx as u32)
+    }
+
     /// Slow path for `intern`: goes through `DashMap` and RwLock-protected storage.
     ///
     /// `pc` is the cached counter pointer from the public `intern()` entry,

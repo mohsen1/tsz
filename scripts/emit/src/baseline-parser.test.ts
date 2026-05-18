@@ -38,4 +38,3 @@ const collision = parseBaseline(strippedBasenameCollisionBaseline);
 assert.equal(collision.dtsFileName, 'foo.d.ts');
 assert.equal(collision.dts, 'export declare const value = 1;');
 assert.equal(collision.noDtsEmitExpected, false);
-
