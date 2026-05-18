@@ -98,6 +98,24 @@ function validateCleanClassificationSources(cleanManifest, classificationManifes
   }
 }
 
+function validateCandidateOutputPath(value, label) {
+  if (typeof value !== "string" || value.trim() === "") {
+    fail(`${label} must be a non-empty relative path`);
+  }
+  const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
+  if (
+    path.isAbsolute(value) ||
+    normalized === "" ||
+    normalized === "." ||
+    normalized.split("/").includes("..")
+  ) {
+    fail(`${label} must stay inside the assertion candidate directory: ${value}`);
+  }
+  if (!normalized.startsWith("assertions/")) {
+    fail(`${label} must be under assertions/: ${normalized}`);
+  }
+}
+
 function validateReport(report) {
   validateClassificationCompilerReport(report);
   if (!report.comparison || typeof report.comparison !== "object") {
@@ -420,6 +438,12 @@ if (comparison.candidateFileComparison) {
         `assertion classification candidateFileComparison.${field} length (${files.length}) does not match counts.${field} (${count})`,
       );
     }
+    files.forEach((file, index) => {
+      validateCandidateOutputPath(
+        file,
+        `assertion classification candidateFileComparison.${field}[${index}]`,
+      );
+    });
     bucketTotal += count;
   }
   if (bucketTotal !== candidateFileComparisonTotal) {
