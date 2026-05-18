@@ -32,8 +32,29 @@ fn load_es5_lib_files_for_test() -> Vec<Arc<LibFile>> {
     load_compiled_lib_files(&["lib.es5.d.ts"])
 }
 
+fn load_es2015_lib_files_for_test() -> Vec<Arc<LibFile>> {
+    load_compiled_lib_files(&[
+        "lib.es5.d.ts",
+        "lib.es2015.d.ts",
+        "lib.es2015.core.d.ts",
+        "lib.es2015.collection.d.ts",
+        "lib.es2015.iterable.d.ts",
+        "lib.es2015.generator.d.ts",
+        "lib.es2015.promise.d.ts",
+        "lib.es2015.proxy.d.ts",
+        "lib.es2015.reflect.d.ts",
+        "lib.es2015.symbol.d.ts",
+        "lib.es2015.symbol.wellknown.d.ts",
+    ])
+}
+
 fn compile_with_es5_lib_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
     let lib_files = load_es5_lib_files_for_test();
+    check_source_with_libs_code_messages(source, "test.ts", CheckerOptions::default(), &lib_files)
+}
+
+fn compile_with_es2015_lib_and_get_diagnostics(source: &str) -> Vec<(u32, String)> {
+    let lib_files = load_es2015_lib_files_for_test();
     check_source_with_libs_code_messages(source, "test.ts", CheckerOptions::default(), &lib_files)
 }
 
@@ -558,6 +579,92 @@ var newPromise = numPromise.then(testFunction);
     assert!(
         has_diagnostic_code(&diags, 2769),
         "Overloaded method should reject every candidate and report TS2769. Diagnostics: {diags:#?}"
+    );
+}
+
+#[test]
+fn namespace_local_promise_overloaded_method_diagnostics_shadow_lib_promise() {
+    let source = r#"
+namespace m2 {
+    interface Promise<T> {
+        then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+    }
+
+    declare function testFunction(n: number): Promise<number>;
+    declare function testFunction(s: string): Promise<string>;
+
+    declare var numPromise: Promise<number>;
+    var newPromise = numPromise.then(testFunction);
+}
+
+namespace m4 {
+    interface Promise<T> {
+        then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+        then<U>(cb: (x: T) => Promise<U>, error?: (error: any) => Promise<U>): Promise<U>;
+    }
+
+    declare function testFunction(n: number): Promise<number>;
+    declare function testFunction(s: string): Promise<string>;
+
+    declare var numPromise: Promise<number>;
+    var newPromise = numPromise.then(testFunction);
+}
+
+namespace m5 {
+    interface Promise<T> {
+        then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+        then<U>(cb: (x: T) => Promise<U>, error?: (error: any) => Promise<U>): Promise<U>;
+        then<U>(cb: (x: T) => Promise<U>, error?: (error: any) => U, progress?: (preservation: any) => void): Promise<U>;
+    }
+
+    declare function testFunction(n: number): Promise<number>;
+    declare function testFunction(s: string): Promise<string>;
+
+    declare var numPromise: Promise<number>;
+    var newPromise = numPromise.then(testFunction);
+}
+
+namespace m6 {
+    interface Promise<T> {
+        then<U>(cb: (x: T) => Promise<U>): Promise<U>;
+        then<U>(cb: (x: T) => Promise<U>, error?: (error: any) => Promise<U>): Promise<U>;
+    }
+
+    declare function testFunction(n: number): Promise<number>;
+    declare function testFunction(s: string): Promise<string>;
+    declare function testFunction(b: boolean): Promise<boolean>;
+
+    declare var numPromise: Promise<number>;
+    var newPromise = numPromise.then(testFunction);
+}
+"#;
+
+    let diagnostics: Vec<_> = compile_with_es2015_lib_and_get_diagnostics(source)
+        .into_iter()
+        .filter(|(code, _)| matches!(*code, 2345 | 2769))
+        .collect();
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2345 && message.contains("parameter of type '(x: number) => Promise<string>'")
+        }),
+        "m2 should diagnose against the namespace-local Promise, not lib PromiseLike. Diagnostics: {diagnostics:#?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .filter(|(code, message)| {
+                *code == 2769 && message.contains("No overload matches this call.")
+            })
+            .count()
+            >= 3,
+        "overloaded namespace-local Promise.then mismatches should report TS2769. Diagnostics: {diagnostics:#?}",
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(_, message)| !message.contains("PromiseLike")),
+        "namespace-local Promise diagnostics must not leak lib PromiseLike. Diagnostics: {diagnostics:#?}",
     );
 }
 

@@ -326,7 +326,8 @@ impl<'a> DeclarationEmitter<'a> {
         tsz_solver::visitor::conditional_type_id(interner, body)?;
 
         let type_params = cache.def_type_params.get(&def_id.0)?;
-        let instantiated = tsz_solver::instantiate_generic(interner, body, type_params, &app.args);
+        let instantiated =
+            tsz_solver::computation::instantiate_generic(interner, body, type_params, &app.args);
         let resolver = DtsCacheResolver { cache };
         let mut evaluator = tsz_solver::TypeEvaluator::with_resolver(interner, &resolver);
         evaluator.set_max_mapped_keys(1_024);
