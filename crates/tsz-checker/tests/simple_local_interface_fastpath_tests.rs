@@ -126,33 +126,20 @@ const firstIndex: [number, number] = indices[0];
     );
 }
 
-#[test]
-fn missing_interface_lib_row_names_do_not_capture_imported_user_interfaces() {
+fn assert_imported_user_interface_keeps_user_shape(interface_name: &str) {
     let lib_files = load_compiled_lib_files(&["lib.es5.d.ts"]);
     assert!(
         !lib_files.is_empty(),
         "compiled lib fixtures should be available"
     );
 
-    let diagnostics = check_multi_file_with_libs(
-        &[
-            (
-                "defs.ts",
-                r#"
-export interface PropertyDescriptor {
-    custom: string;
-}
-"#,
-            ),
-            (
-                "main.ts",
-                r#"
-import type { PropertyDescriptor } from "./defs";
+    let defs = format!("\nexport interface {interface_name} {{\n    custom: string;\n}}\n");
+    let main = format!(
+        "\nimport type {{ {interface_name} }} from \"./defs\";\n\nconst bad: {interface_name} = {{}};\n"
+    );
 
-const bad: PropertyDescriptor = {};
-"#,
-            ),
-        ],
+    let diagnostics = check_multi_file_with_libs(
+        &[("defs.ts", defs.as_str()), ("main.ts", main.as_str())],
         "main.ts",
         CheckerOptions {
             module: ModuleKind::CommonJS,
@@ -169,6 +156,19 @@ const bad: PropertyDescriptor = {};
         messages
             .iter()
             .any(|(code, message)| *code == 2741 && message.contains("custom")),
-        "imported user interface named PropertyDescriptor must keep its own shape, got {messages:?}",
+        "imported user interface named {interface_name} must keep its own shape, got {messages:?}",
     );
+}
+
+#[test]
+fn missing_interface_lib_row_names_do_not_capture_imported_user_interfaces() {
+    assert_imported_user_interface_keeps_user_shape("PropertyDescriptor");
+}
+
+#[test]
+fn imported_user_interface_lib_name_is_resolved_by_provenance_not_spelling() {
+    // The residue suppress rule is keyed on binder-recorded lib provenance, so an
+    // adjacent lib name (`RegExpExecArray`) must behave identically to the original
+    // `PropertyDescriptor` case.
+    assert_imported_user_interface_keeps_user_shape("RegExpExecArray");
 }
