@@ -15,16 +15,23 @@ export const COMPILE_CANARY_PROJECT_ROWS = [
   "kysely-project",
   "type-challenges-project",
   "type-challenges-solutions-project",
+  "type-challenges-assertion-candidates",
+  "type-challenges-assertions-tsc-clean",
 ];
 
 export const REQUIRED_COMPATIBILITY_FIELDS = [
+  "state",
   "exit_class",
+  "first_failure_class",
+  "owner_track",
   "phase",
   "last_successful_phase",
   "diagnostic_status",
   "diagnostic_deltas",
   "diagnostic_subsystems",
   "known_blockers",
+  "reduced_repro_path",
+  "repro",
   "exit_codes",
   "files_reached",
   "peak_memory_bytes",
@@ -104,6 +111,18 @@ export const COMPATIBILITY_CORPUS_ROWS = [
     label: "type-challenges solutions",
     owner: "Tracks 2, 3, 5",
     family: "advanced type-level solved challenge programs",
+  },
+  {
+    name: "type-challenges-assertion-candidates",
+    label: "type-challenges assertions",
+    owner: "Tracks 2, 3, 5",
+    family: "assertion-level Type Challenges readiness comparison",
+  },
+  {
+    name: "type-challenges-assertions-tsc-clean",
+    label: "type-challenges tsc-clean assertions",
+    owner: "Tracks 2, 3, 5",
+    family: "tsz check over Type Challenges assertion candidates accepted by tsc",
   },
   {
     name: "nextjs",

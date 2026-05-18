@@ -12,7 +12,10 @@ const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const MERGE_SCRIPT = path.join(ROOT, "scripts", "bench", "merge-results.mjs");
 
 const REQUIRED_COMPATIBILITY_FIELDS = {
+  state: "green",
   exit_class: "exit success",
+  first_failure_class: null,
+  owner_track: null,
   phase: "check",
   last_successful_phase: "check",
   diagnostic_status: "none",
@@ -24,6 +27,17 @@ const REQUIRED_COMPATIBILITY_FIELDS = {
   peak_memory_bytes: 1024,
   emit_status: "not in scope (noEmit project check)",
   dts_status: "not in scope (noEmit project check)",
+  reduced_repro_path: null,
+  repro: {
+    tsconfig_path: null,
+    source_root: null,
+    first_failure_path: null,
+    first_failure_line: null,
+    first_failure_column: null,
+    first_failure_code: null,
+    reduced_repro_path: null,
+    command: null,
+  },
 };
 
 function withTempDir(fn) {
@@ -144,6 +158,16 @@ withTempDir((dir) => {
   assert.match(
     result.stderr,
     new RegExp(`${COMPILE_CANARY_PROJECT_ROWS[0]}: missing compatibility\\.diagnostic_subsystems`),
+  );
+});
+
+withTempDir((dir) => {
+  const { owner_track: _ownerTrack, ...compatibility } = REQUIRED_COMPATIBILITY_FIELDS;
+  const result = runMerge(dir, [projectRow(COMPILE_CANARY_PROJECT_ROWS[0], compatibility)]);
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    new RegExp(`${COMPILE_CANARY_PROJECT_ROWS[0]}: missing compatibility\\.owner_track`),
   );
 });
 
