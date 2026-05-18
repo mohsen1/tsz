@@ -102,6 +102,11 @@ withTempDir((dir) => {
     fixture: "type-challenges-assertion-classification",
     candidateManifest: {
       fixture: "type-challenges-assertion-candidates",
+      sources: {
+        templates: { repository: "type", ref: "type-ref" },
+        testCases: { repository: "type", ref: "type-ref" },
+        solutions: { repository: "solutions", ref: "solutions-ref" },
+      },
       counts: { generatedAssertions: 2 },
     },
     compilers: {
@@ -205,6 +210,11 @@ withTempDir((dir) => {
     fixture: "type-challenges-assertion-classification",
     candidateManifest: {
       fixture: "type-challenges-assertion-candidates",
+      sources: {
+        templates: { repository: "type", ref: "type-ref" },
+        testCases: { repository: "type", ref: "type-ref" },
+        solutions: { repository: "solutions", ref: "solutions-ref" },
+      },
       counts: { generatedAssertions: 1 },
     },
     compilers: {
@@ -246,6 +256,85 @@ withTempDir((dir) => {
     manifest.entries.map((entry) => entry.assertion.hasReferencedSolutionDeclaration),
     [false],
   );
+});
+
+withTempDir((dir) => {
+  const candidateDir = path.join(dir, "candidates");
+  const outputDir = path.join(dir, "clean");
+  const candidateManifestPath = path.join(candidateDir, "type-challenges-assertions-manifest.json");
+  const classificationPath = path.join(candidateDir, "type-challenges-assertions-classification.json");
+  const subsetManifestPath = path.join(outputDir, "type-challenges-assertions-tsc-clean-manifest.json");
+
+  writeFile(path.join(candidateDir, "utils", "index.d.ts"), "export {};\n");
+  writeFile(
+    path.join(candidateDir, "assertions", "14-easy-first.ts"),
+    "type First<T extends unknown[]> = T[0];\ntype cases = [];\n",
+  );
+  writeJson(candidateManifestPath, {
+    fixture: "type-challenges-assertion-candidates",
+    sources: {
+      templates: { repository: "type", ref: "type-ref" },
+      testCases: { repository: "type", ref: "type-ref" },
+      solutions: { repository: "solutions", ref: "solutions-ref" },
+    },
+    counts: { generatedAssertions: 1 },
+    entries: [
+      {
+        id: "14",
+        output: "assertions/14-easy-first.ts",
+        solution: { output: "solutions/easy-first.ts", source: "en/easy-first.md" },
+        testCase: {
+          output: "questions/00014-easy-first/test-cases.ts",
+          source: "questions/00014-easy-first/test-cases.ts",
+        },
+        assertion: {
+          hasReferencedSolutionDeclaration: true,
+          referencedSolutionDeclarations: ["First"],
+        },
+      },
+    ],
+  });
+  writeJson(classificationPath, {
+    fixture: "type-challenges-assertion-classification",
+    candidateManifest: {
+      fixture: "type-challenges-assertion-candidates",
+      sources: {
+        templates: { repository: "type", ref: "type-ref" },
+        testCases: { repository: "type", ref: "type-ref" },
+        solutions: { repository: "solutions", ref: "stale-solutions-ref" },
+      },
+      counts: { generatedAssertions: 1 },
+    },
+    compilers: {
+      tsc: {
+        status: "pass",
+        candidateDiagnostics: {
+          totalCandidates: 1,
+          candidatesWithDiagnostics: 0,
+          candidatesWithoutDiagnostics: 1,
+          filesWithDiagnostics: [],
+          filesWithoutDiagnostics: ["assertions/14-easy-first.ts"],
+        },
+      },
+      tsz: { status: "pass" },
+    },
+    comparison: { status: "both-pass" },
+  });
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, candidateDir, candidateManifestPath, classificationPath, outputDir, subsetManifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /classification candidateManifest\.sources\.solutions .* does not match candidate manifest sources\.solutions/,
+  );
+  assert.equal(fs.existsSync(subsetManifestPath), false);
 });
 
 withTempDir((dir) => {

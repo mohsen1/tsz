@@ -89,6 +89,35 @@ function validateCandidateManifestSources(manifest) {
   }
 }
 
+function validateClassificationManifestSources(candidateManifest, classificationManifest) {
+  if (!classificationManifest?.sources || typeof classificationManifest.sources !== "object") {
+    fail("classification candidateManifest is missing sources");
+  }
+
+  for (const label of ["templates", "testCases", "solutions"]) {
+    const candidateSource = candidateManifest.sources[label];
+    const classificationSource = classificationManifest.sources[label];
+    if (!classificationSource?.repository || !classificationSource?.ref) {
+      fail(
+        [
+          `classification candidateManifest.sources.${label} is missing source metadata`,
+          `${classificationSource?.repository || "<missing repository>"} @ ${
+            classificationSource?.ref || "<missing ref>"
+          }`,
+        ].join("\n"),
+      );
+    }
+    if (
+      classificationSource.repository !== candidateSource.repository ||
+      classificationSource.ref !== candidateSource.ref
+    ) {
+      fail(
+        `classification candidateManifest.sources.${label} (${classificationSource.repository} @ ${classificationSource.ref}) does not match candidate manifest sources.${label} (${candidateSource.repository} @ ${candidateSource.ref})`,
+      );
+    }
+  }
+}
+
 function validateSelectedEntryEvidence(entry, index) {
   validateEvidencePath(entry?.solution?.output, `selected entries[${index}].solution.output`);
   validateEvidencePath(entry?.solution?.source, `selected entries[${index}].solution.source`);
@@ -290,6 +319,7 @@ if (tsc.status === "pass" || tsc.status === "fail") {
 const selectedEntries = originalEntries.filter((entry) => tscAcceptedFiles.has(entry.output));
 selectedEntries.forEach(validateSelectedEntryEvidence);
 validateCandidateManifestSources(candidateManifest);
+validateClassificationManifestSources(candidateManifest, classification.candidateManifest);
 const selectedEntriesReferencingSolutionDeclaration = selectedEntries.filter(
   (entry) => entry.assertion?.hasReferencedSolutionDeclaration === true,
 );
