@@ -1322,6 +1322,10 @@ name = "static_readonly_unique_symbol_tests"
 path = "tests/static_readonly_unique_symbol_tests.rs"
 
 [[test]]
+name = "index_signature_argument_assignability_tests"
+path = "tests/index_signature_argument_assignability_tests.rs"
+
+[[test]]
 name = "operator_literal_annotation_display_tests"
 path = "tests/operator_literal_annotation_display_tests.rs"
 
