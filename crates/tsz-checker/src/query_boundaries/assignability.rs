@@ -220,12 +220,6 @@ fn homomorphic_sources_match(
     if left == right {
         return true;
     }
-    if let (Some(left_param), Some(right_param)) = (
-        tsz_solver::type_param_info(db, left),
-        tsz_solver::type_param_info(db, right),
-    ) {
-        return left_param.name == right_param.name;
-    }
     if let (Some((left_obj, left_idx)), Some((right_obj, right_idx))) = (
         tsz_solver::index_access_parts(db, left),
         tsz_solver::index_access_parts(db, right),
