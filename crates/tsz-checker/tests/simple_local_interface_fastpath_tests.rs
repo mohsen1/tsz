@@ -142,14 +142,18 @@ fn missing_interface_lib_row_names_do_not_capture_imported_user_interfaces() {
 export interface PropertyDescriptor {
     custom: string;
 }
+export interface PropertyDescriptorMap {
+    customMap: number;
+}
 "#,
             ),
             (
                 "main.ts",
                 r#"
-import type { PropertyDescriptor } from "./defs";
+import type { PropertyDescriptor, PropertyDescriptorMap } from "./defs";
 
 const bad: PropertyDescriptor = {};
+const alsoBad: PropertyDescriptorMap = {};
 "#,
             ),
         ],
@@ -170,5 +174,11 @@ const bad: PropertyDescriptor = {};
             .iter()
             .any(|(code, message)| *code == 2741 && message.contains("custom")),
         "imported user interface named PropertyDescriptor must keep its own shape, got {messages:?}",
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|(code, message)| *code == 2741 && message.contains("customMap")),
+        "imported user interface named PropertyDescriptorMap must keep its own shape, got {messages:?}",
     );
 }

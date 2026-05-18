@@ -295,6 +295,14 @@ impl<'a> CheckerState<'a> {
                             .register_type_to_def(structural_type, def_id);
                     }
                     let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                    // Cross-file source interfaces use per-file SymbolIds. Return
+                    // the delegated body directly when no generic application is
+                    // needed so the importing checker cannot resolve a lazy ref
+                    // against a same-number local/lib symbol.
+                    if prefer_cross_file_interface && type_params.is_empty() {
+                        self.ctx.leave_recursion();
+                        return structural_type;
+                    }
                     let all_have_defaults =
                         !type_params.is_empty() && type_params.iter().all(|p| p.default.is_some());
                     if all_have_defaults {

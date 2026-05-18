@@ -11,6 +11,40 @@ use tsz_parser::parser::node::NodeAccess;
 
 use super::CheckerContext;
 
+fn is_builtin_lib_file_name(file_name: &str) -> bool {
+    let basename = std::path::Path::new(file_name)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(file_name);
+
+    if basename.starts_with("lib.") && basename.ends_with(".d.ts") {
+        return true;
+    }
+
+    let stem = basename
+        .strip_suffix(".generated.d.ts")
+        .or_else(|| basename.strip_suffix(".d.ts"))
+        .unwrap_or(basename);
+
+    stem == "lib"
+        || stem == "scripthost"
+        || stem == "decorators"
+        || stem == "decorators.legacy"
+        || stem == "dom"
+        || stem.starts_with("dom.")
+        || stem == "webworker"
+        || stem.starts_with("webworker.")
+        || stem == "esnext"
+        || stem.starts_with("esnext.")
+        || (stem.starts_with("es") && stem.as_bytes().get(2).is_some_and(u8::is_ascii_digit))
+}
+
+fn arena_is_builtin_lib_file(arena: &tsz_parser::parser::NodeArena) -> bool {
+    arena.source_files.first().is_some_and(|source_file| {
+        source_file.is_declaration_file && is_builtin_lib_file_name(&source_file.file_name)
+    })
+}
+
 impl<'a> CheckerContext<'a> {
     pub fn actual_lib_def_id_for_bare_name(&self, name: &str) -> Option<tsz_solver::DefId> {
         if name.contains('.') {
@@ -380,6 +414,13 @@ impl<'a> CheckerContext<'a> {
     /// Check if a symbol originates from an actual standard lib file, including
     /// driver paths where binding and checking use separately parsed lib arenas.
     pub fn symbol_is_from_actual_or_cloned_lib(&self, sym_id: SymbolId) -> bool {
+        // Raw SymbolIds are per-binder. If this id has been pinned to a source
+        // file, trust that file's arena before consulting the current binder's
+        // same-number symbol or lib-id set.
+        if let Some(file_idx) = self.resolve_symbol_file_index(sym_id) {
+            return arena_is_builtin_lib_file(self.get_arena_for_file(file_idx as u32));
+        }
+
         // `merge_lib_contexts_into_binder` remaps standard-lib symbols into the
         // file binder and records those new ids here. Arena-pointer checks below
         // can miss those local clones.
@@ -397,8 +438,27 @@ impl<'a> CheckerContext<'a> {
 
         let Some(symbol_arena) = self.binder.symbol_arenas.get(&sym_id) else {
             return self.binder.symbols.get(sym_id).is_some_and(|symbol| {
-                symbol.decl_file_idx == u32::MAX
-                    && self.binder.file_locals.get(symbol.escaped_name.as_str()) == Some(sym_id)
+                let current_arena_is_builtin = arena_is_builtin_lib_file(self.arena);
+                if symbol.decl_file_idx != u32::MAX
+                    || self.binder.file_locals.get(symbol.escaped_name.as_str()) != Some(sym_id)
+                {
+                    return false;
+                }
+
+                // Unstamped source binders can leave decl_file_idx at u32::MAX.
+                // A real declaration in a non-lib current file is still user
+                // provenance, even when the name also exists in the standard libs.
+                if !current_arena_is_builtin
+                    && self.symbol_has_current_file_type_declaration(
+                        sym_id,
+                        symbol.escaped_name.as_str(),
+                    )
+                {
+                    return false;
+                }
+
+                current_arena_is_builtin
+                    || self.actual_lib_context_has_bare_name(symbol.escaped_name.as_str())
             });
         };
 
