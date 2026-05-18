@@ -92,6 +92,38 @@ fn type_param_annotation_displays_raw_name() {
     }
 }
 
+#[test]
+fn long_type_param_annotation_displays_raw_name() {
+    let msgs =
+        ts2365_messages("function f<LongName extends number>(a: LongName) { return false < a; }");
+    assert!(
+        msgs.iter().any(|m| m.contains("'LongName'")),
+        "type param error should reference 'LongName'; got: {:?}",
+        msgs
+    );
+    assert!(
+        msgs.iter().all(|m| !m.contains("'number'")),
+        "type param error should not widen 'LongName' to 'number'; got: {:?}",
+        msgs
+    );
+}
+
+#[test]
+fn short_type_alias_annotation_displays_widened_number() {
+    let msgs = ts2365_messages("type N = number; function f(a: N) { return false < a; }");
+    assert!(!msgs.is_empty(), "expected TS2365 for false < (param: N)");
+    assert!(
+        msgs.iter().any(|m| m.contains("'number'")),
+        "short alias error should show widened 'number'; got: {:?}",
+        msgs
+    );
+    assert!(
+        msgs.iter().all(|m| !m.contains("'N'")),
+        "short alias error should not preserve alias name 'N'; got: {:?}",
+        msgs
+    );
+}
+
 // --- Bigint literal annotations must widen to 'bigint' ---
 
 #[test]

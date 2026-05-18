@@ -369,26 +369,26 @@ impl<'a> CheckerState<'a> {
                 };
                 if node.kind == syntax_kind_ext::PARAMETER
                     && let Some(parameter) = self.ctx.arena.get_parameter(node)
-                    && parameter.type_annotation.is_some()
                     && let Some(annotation_node) = self.ctx.arena.get(parameter.type_annotation)
-                    && let Some(source) = self.ctx.arena.source_files.first()
-                    && let Some(text) = source
-                        .text
-                        .get(annotation_node.pos as usize..annotation_node.end as usize)
+                    && annotation_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                    && let Some(type_ref) = self.ctx.arena.get_type_ref(annotation_node)
+                    && type_ref.type_arguments.is_none()
+                    && self
+                        .ctx
+                        .arena
+                        .get(type_ref.type_name)
+                        .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+                    && let TypeSymbolResolution::Type(annotation_sym_id) =
+                        self.resolve_identifier_symbol_in_type_position(type_ref.type_name)
+                    && self
+                        .ctx
+                        .binder
+                        .get_symbol(annotation_sym_id)
+                        .is_some_and(|symbol| {
+                            symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER)
+                        })
                 {
-                    let text = text.trim();
-                    // Skip numeric/bigint literal annotations (e.g. `2`, `1n`); only
-                    // pass through identifier-shaped annotations (e.g. `T`, `K`).
-                    if text.len() <= 3
-                        && text
-                            .starts_with(|c: char| c.is_ascii_alphabetic() || c == '_' || c == '$')
-                        && text
-                            .chars()
-                            .skip(1)
-                            .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-                    {
-                        return Some(text.to_string());
-                    }
+                    return Some(self.get_source_text_for_node(type_ref.type_name));
                 }
                 let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
                 else {
