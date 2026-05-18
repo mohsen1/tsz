@@ -75,6 +75,33 @@ class CacheVisibilityReportTests(unittest.TestCase):
         self.assertEqual(len(candidates), 1)
         self.assertEqual(candidates[0].owner, "<module>")
         self.assertEqual(candidates[0].name, "ScopeCache")
+        self.assertEqual(candidates[0].type, "FxHashMap<u32, Vec<Symbol>>")
+
+    def test_scan_ignores_cache_shapes_in_block_comments_and_strings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.write(
+                root,
+                "src/lib.rs",
+                "\n".join(
+                    [
+                        "/*",
+                        "pub struct Commented {",
+                        "    ghost_cache: FxHashMap<u32, bool>,",
+                        "}",
+                        "*/",
+                        "pub struct Real {",
+                        "    rendered: &'static str,",
+                        "    real_cache: FxHashMap<u32, bool>,",
+                        "}",
+                        'const SAMPLE: &str = "sample_cache: FxHashMap<u32, bool>";',
+                    ]
+                )
+                + "\n",
+            )
+            candidates = self.module.scan([root / "src"])
+
+        self.assertEqual([candidate.name for candidate in candidates], ["real_cache"])
 
     def test_exact_cache_field_names_are_reported(self):
         with tempfile.TemporaryDirectory() as temp_dir:
