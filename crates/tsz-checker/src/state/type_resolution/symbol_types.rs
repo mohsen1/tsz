@@ -225,12 +225,10 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.symbol_types.insert(sym_id, structural_type);
                             }
                         }
-                        // Always register, even when an entry exists: `register_def_in_envs`
-                        // calls `clear_type_evaluation_caches_for_def` when the body changes,
-                        // evicting stale resolve_cache entries left from earlier recursive
-                        // calls. Skipping this when an entry is present leaves `Lazy(DefId)`
-                        // cached as the resolved type, causing false TS2353 for inherited
-                        // properties of F-bounded interfaces.
+                        // Always register even when an entry exists: evicts stale
+                        // `Lazy(DefId)` entries in resolve_cache (via body-change
+                        // detection inside `register_def_in_envs`) that cause false
+                        // TS2353 for inherited properties of F-bounded interfaces.
                         let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
                         self.ctx.register_def_auto_params_in_envs(
                             def_id,
