@@ -459,6 +459,7 @@ const row = {
           rejected_from_full_corpus: cleanSubsetManifest.counts?.tscRejectedAssertions ?? null,
           tsc_status: cleanSubsetClassification?.compilers?.tsc?.status ?? null,
           tsz_status: cleanSubsetClassification?.compilers?.tsz?.status ?? null,
+          comparison_status: cleanSubsetClassification?.comparison?.status ?? null,
           tsc_diagnostic_free:
             cleanSubsetClassification?.compilers?.tsc?.candidateDiagnostics?.candidatesWithoutDiagnostics ?? null,
           tsz_diagnostic_free:

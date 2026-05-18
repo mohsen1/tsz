@@ -104,6 +104,7 @@ await fs.writeFile(artifact, `${JSON.stringify({
             rejected_from_full_corpus: 68,
             tsc_status: "pass",
             tsz_status: "fail",
+            comparison_status: "tsz-rejects-tsc-accepted",
           },
           file_comparison: {
             counts: {
@@ -294,6 +295,7 @@ try {
   assert.match(compatibilityDashboard, /tsc-clean rejected: 68/);
   assert.match(compatibilityDashboard, /tsc-clean tsc: pass/);
   assert.match(compatibilityDashboard, /tsc-clean tsz: fail/);
+  assert.match(compatibilityDashboard, /tsc-clean comparison: tsz-rejects-tsc-accepted/);
   assert.match(
     compatibilityDashboard,
     /clean manifest: type-challenges-assertions-tsc-clean\/type-challenges-assertions-tsc-clean-manifest\.json/,
