@@ -1592,6 +1592,71 @@ export const x = 1;
     );
 }
 
+#[test]
+fn es5_esm_dotted_namespace_declares_runtime_export_var() {
+    let source = r#"export namespace A.B {
+export const x = 1;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("export var A;"),
+        "Dotted namespace runtime body should declare the top-level ESM binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export (function"),
+        "Dotted namespace IIFE should stay bare after the exported var declaration.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_esm_namespace_export_import_alias_declares_runtime_export_var() {
+    let source = r#"export namespace Source {
+export const x = 1;
+}
+export namespace N {
+export import X = Source;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("export var N;"),
+        "Namespace whose runtime member is an exported import alias should declare the ESM binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("N.X = Source;"),
+        "Runtime exported import alias should still emit inside the namespace IIFE.\nOutput:\n{output}"
+    );
+}
+
 /// When a class has legacy decorators and is exported in CJS, the
 /// `exports.X = X;` pre-assignment should appear exactly once — from
 /// `emit_legacy_class_decorator_assignment`, NOT also from the

@@ -179,6 +179,12 @@ pub(crate) fn module_body_has_runtime_value_declarations(
     let Some(body_node) = arena.get(body_idx) else {
         return false;
     };
+    if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+        return arena
+            .get_module(body_node)
+            .is_some_and(|module| module_body_has_runtime_value_declarations(arena, module.body));
+    }
+
     let Some(block_data) = arena.get_module_block(body_node) else {
         return false;
     };
@@ -199,6 +205,9 @@ pub(crate) fn module_body_has_runtime_value_declarations(
             {
                 true
             }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => arena
+                .get_import_decl(stmt_node)
+                .is_some_and(|import| import_equals_decl_has_runtime_value(arena, import, false)),
             k if k == syntax_kind_ext::MODULE_DECLARATION => arena
                 .get_module(stmt_node)
                 .is_some_and(|ns| module_body_has_runtime_value_declarations(arena, ns.body)),
@@ -218,11 +227,32 @@ pub(crate) fn module_body_has_runtime_value_declarations(
                             module_body_has_runtime_value_declarations(arena, ns.body)
                         })
                     }
+                    k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                        arena.get_import_decl(inner).is_some_and(|import| {
+                            import_equals_decl_has_runtime_value(arena, import, true)
+                        })
+                    }
                     _ => false,
                 }),
             _ => false,
         }
     })
+}
+
+fn import_equals_decl_has_runtime_value(
+    arena: &NodeArena,
+    import_decl: &tsz_parser::parser::node::ImportDeclData,
+    force_exported: bool,
+) -> bool {
+    if import_decl.is_type_only {
+        return false;
+    }
+    if !force_exported && !arena.has_modifier(&import_decl.modifiers, SyntaxKind::ExportKeyword) {
+        return false;
+    }
+    arena
+        .get(import_decl.module_specifier)
+        .is_none_or(|target| target.kind != SyntaxKind::StringLiteral as u16)
 }
 
 pub(crate) fn for_of_using_info(
