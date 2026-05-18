@@ -254,6 +254,7 @@ mod enum_template_and_advanced;
 mod export_specifiers;
 mod fix_verification;
 mod generics_and_ambient;
+mod jsdoc_template_defaults;
 mod misc_features;
 mod probes_issues;
 mod probes_systematic;

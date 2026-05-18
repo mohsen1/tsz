@@ -769,9 +769,7 @@ impl<'a> CheckerState<'a> {
                     )
             {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
-                if let Some(file_idx) = symbol_type_cache_file_idx
-                    && (!symbol_type_cache_from_symbol_arena || direct_params.is_empty())
-                {
+                if let Some(file_idx) = symbol_type_cache_file_idx {
                     if symbol_type_cache_from_symbol_arena {
                         self.ctx.cache_stable_source_file_symbol_arena_type(
                             sym_id,
@@ -821,15 +819,15 @@ impl<'a> CheckerState<'a> {
                 } else {
                     None
                 };
+            let allow_direct_source_alias =
+                symbol_type_cache_from_symbol_arena || needs_cross_file_delegation;
             if let Some((direct_type, direct_params)) = self.direct_source_file_type_alias_result(
                 sym_id,
                 direct_target_file_idx,
-                symbol_type_cache_from_symbol_arena,
+                allow_direct_source_alias,
             ) {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
-                if let Some(file_idx) = symbol_type_cache_file_idx
-                    && (!symbol_type_cache_from_symbol_arena || direct_params.is_empty())
-                {
+                if let Some(file_idx) = symbol_type_cache_file_idx {
                     if symbol_type_cache_from_symbol_arena {
                         self.ctx.cache_stable_source_file_symbol_arena_type(
                             sym_id,
@@ -1122,9 +1120,7 @@ impl<'a> CheckerState<'a> {
             // Write through to the canonical cross-file symbol-type cache so
             // other parallel checkers can reuse this result without rebuilding
             // a child checker.
-            if let Some(target_file_idx) = symbol_type_cache_file_idx
-                && (!symbol_type_cache_from_symbol_arena || result_params.is_empty())
-            {
+            if let Some(target_file_idx) = symbol_type_cache_file_idx {
                 if symbol_type_cache_from_symbol_arena {
                     self.ctx.cache_stable_source_file_symbol_arena_type(
                         sym_id,

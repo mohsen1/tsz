@@ -36,8 +36,10 @@
 //! ```
 
 use crate::context::transform::TransformContext;
+use crate::emitter::ScopedConstEnum;
 use crate::transforms::ir_printer::IRPrinter;
 use crate::transforms::namespace_es5_ir::NamespaceES5Transformer;
+use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 
@@ -139,6 +141,7 @@ impl<'a> NamespaceES5Emitter<'a> {
     /// When true, suppress `/** @class */` annotation in output.
     pub const fn set_remove_comments(&mut self, remove: bool) {
         self.remove_comments = remove;
+        self.transformer.set_remove_comments(remove);
     }
 
     pub fn set_system_export_fold(&mut self, export_name: &str) {
@@ -177,6 +180,19 @@ impl<'a> NamespaceES5Emitter<'a> {
 
     pub fn set_default_exported_func_names(&mut self, names: std::collections::HashSet<String>) {
         self.transformer.set_default_exported_func_names(names);
+    }
+
+    pub fn set_commonjs_export_name(&mut self, name: Option<String>) {
+        self.transformer.set_commonjs_export_name(name);
+    }
+
+    pub(crate) fn set_const_enum_facts(
+        &mut self,
+        values: FxHashMap<String, Vec<ScopedConstEnum>>,
+        import_aliases: FxHashMap<String, String>,
+    ) {
+        self.transformer
+            .set_const_enum_facts(values, import_aliases);
     }
 
     /// Collect exported variable names from a namespace declaration without emitting.

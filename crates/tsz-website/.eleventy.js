@@ -1,4 +1,6 @@
 import fs from "node:fs";
+import path from "node:path";
+import { createTsgoWinnerReport } from "../../scripts/bench/tsgo-winner-report.mjs";
 
 export default function (eleventyConfig) {
   eleventyConfig.addPassthroughCopy({ static: "." });
@@ -26,11 +28,21 @@ export default function (eleventyConfig) {
     "../../artifacts/bench-vs-tsgo-github-latest.json",
     "../../artifacts/bench-vs-tsgo-gcs-latest.json",
     "../../artifacts/bench-vs-tsgo-latest.json",
+    "bench-snapshot.json",
   ];
   const latestBenchmarkArtifact = benchmarkArtifacts.find((file) => fs.existsSync(file));
   if (latestBenchmarkArtifact) {
     eleventyConfig.addPassthroughCopy({
       [latestBenchmarkArtifact]: "benchmark-data/latest.json",
+    });
+  }
+  const latestWinnerArtifact = latestBenchmarkArtifact?.replace(
+    /\.json$/,
+    ".tsgo-winners.json",
+  );
+  if (latestWinnerArtifact && fs.existsSync(latestWinnerArtifact)) {
+    eleventyConfig.addPassthroughCopy({
+      [latestWinnerArtifact]: "benchmark-data/latest.tsgo-winners.json",
     });
   }
 
@@ -41,6 +53,18 @@ export default function (eleventyConfig) {
   if (fs.existsSync("../../pkg/web")) {
     eleventyConfig.addPassthroughCopy({ "../../pkg/web": "wasm" });
   }
+
+  eleventyConfig.on("eleventy.after", ({ dir }) => {
+    if (!latestBenchmarkArtifact || !latestWinnerArtifact || fs.existsSync(latestWinnerArtifact)) {
+      return;
+    }
+
+    const benchmarkData = JSON.parse(fs.readFileSync(latestBenchmarkArtifact, "utf8"));
+    const winnerReport = createTsgoWinnerReport(benchmarkData, latestBenchmarkArtifact);
+    const output = path.join(dir.output, "benchmark-data", "latest.tsgo-winners.json");
+    fs.mkdirSync(path.dirname(output), { recursive: true });
+    fs.writeFileSync(output, `${JSON.stringify(winnerReport, null, 2)}\n`);
+  });
 
   return {
     dir: {

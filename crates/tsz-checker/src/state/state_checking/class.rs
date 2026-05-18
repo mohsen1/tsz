@@ -12,6 +12,130 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    fn class_shape_cache_is_stable(
+        &self,
+        stmt_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        if self.is_js_file()
+            || self.ctx.is_declaration_file()
+            || class.name.is_none()
+            || class.type_parameters.is_some()
+            || self.class_has_base(class)
+            || self
+                .first_decorator_in_modifiers(&class.modifiers)
+                .is_some()
+            || !self.class_symbol_has_single_declaration(stmt_idx)
+        {
+            return false;
+        }
+
+        let Some(&instance_type) = self.ctx.class_instance_type_cache.get(&stmt_idx) else {
+            return false;
+        };
+        let Some(&constructor_type) = self.ctx.class_constructor_type_cache.get(&stmt_idx) else {
+            return false;
+        };
+        if matches!(instance_type, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
+            || matches!(
+                constructor_type,
+                TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR
+            )
+        {
+            return false;
+        }
+
+        class
+            .members
+            .nodes
+            .iter()
+            .copied()
+            .all(|member_idx| self.class_member_shape_cache_is_stable(member_idx))
+    }
+
+    fn class_symbol_has_single_declaration(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(sym_id) = self.ctx.binder.get_node_symbol(stmt_idx) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if symbol.value_declaration.is_some() && symbol.value_declaration != stmt_idx {
+            return false;
+        }
+        !symbol.declarations.is_empty()
+            && symbol
+                .declarations
+                .iter()
+                .copied()
+                .all(|decl_idx| decl_idx == stmt_idx)
+    }
+
+    fn class_member_shape_cache_is_stable(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            return false;
+        };
+
+        match member_node.kind {
+            syntax_kind_ext::PROPERTY_DECLARATION => {
+                let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                    return false;
+                };
+                prop.type_annotation.is_some()
+                    && !self.class_shape_member_name_is_computed(prop.name)
+                    && !self.has_static_modifier(&prop.modifiers)
+                    && self.first_decorator_in_modifiers(&prop.modifiers).is_none()
+            }
+            syntax_kind_ext::METHOD_DECLARATION => {
+                let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                    return false;
+                };
+                method.body.is_some()
+                    && method.type_parameters.is_none()
+                    && method.type_annotation.is_some()
+                    && !self.class_shape_member_name_is_computed(method.name)
+                    && self
+                        .first_decorator_in_modifiers(&method.modifiers)
+                        .is_none()
+                    && self.class_parameters_have_explicit_shape(&method.parameters, false)
+            }
+            syntax_kind_ext::CONSTRUCTOR => {
+                let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                    return false;
+                };
+                ctor.type_parameters.is_none()
+                    && self.first_decorator_in_modifiers(&ctor.modifiers).is_none()
+                    && self.class_parameters_have_explicit_shape(&ctor.parameters, true)
+            }
+            _ => false,
+        }
+    }
+
+    fn class_shape_member_name_is_computed(&self, name_idx: NodeIndex) -> bool {
+        self.ctx
+            .arena
+            .get(name_idx)
+            .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+    }
+
+    fn class_parameters_have_explicit_shape(
+        &self,
+        parameters: &NodeList,
+        reject_parameter_properties: bool,
+    ) -> bool {
+        parameters.nodes.iter().copied().all(|param_idx| {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                return false;
+            };
+            param.type_annotation.is_some()
+                && (!reject_parameter_properties
+                    || !self.has_parameter_property_modifier(&param.modifiers))
+        })
+    }
+
     /// Check a class declaration.
     pub(crate) fn check_class_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::class_inheritance::ClassInheritanceChecker;
@@ -625,6 +749,8 @@ impl<'a> CheckerState<'a> {
             class_type_parameters: _type_params,
         });
 
+        let preserve_stable_class_shape_cache = self.class_shape_cache_is_stable(stmt_idx, class);
+
         // Drop any value-side or instance-side class shape cached during the
         // earlier environment-building pass. Member checking needs a fresh view
         // so `this` inside methods observes the checked class shape rather than
@@ -639,7 +765,9 @@ impl<'a> CheckerState<'a> {
         // returning the instance type as a fallback instead of the correct
         // constructor type. The cache is definitively cleared and refreshed
         // after member checking completes (see below).
-        self.ctx.class_instance_type_cache.remove(&stmt_idx);
+        if !preserve_stable_class_shape_cache {
+            self.ctx.class_instance_type_cache.remove(&stmt_idx);
+        }
         // Clear the constructor type cache for a fresh view. Save the old
         // value so it can be temporarily restored during member checking to
         // prevent cycles. When a generic class has a private static member
@@ -648,7 +776,9 @@ impl<'a> CheckerState<'a> {
         // checking can re-enter get_class_constructor_type and hit cycle
         // detection. Without a valid fallback, the cycle returns the instance
         // type instead of the constructor type, causing false TS2339 errors.
-        self.ctx.class_constructor_type_cache.remove(&stmt_idx);
+        if !preserve_stable_class_shape_cache {
+            self.ctx.class_constructor_type_cache.remove(&stmt_idx);
+        }
         if let Some(sym_id) = self.ctx.binder.get_node_symbol(stmt_idx) {
             self.ctx.symbol_types.remove(&sym_id);
         }
@@ -850,7 +980,9 @@ impl<'a> CheckerState<'a> {
         // build_type_environment before JSDoc/template/member inference stabilizes.
         // Refresh them after the checked pass so following statements observe the
         // finalized constructor signatures and instance return types.
-        self.ctx.class_constructor_type_cache.remove(&stmt_idx);
+        if !preserve_stable_class_shape_cache {
+            self.ctx.class_constructor_type_cache.remove(&stmt_idx);
+        }
         for sym_id in refresh_symbols {
             self.ctx.symbol_types.remove(&sym_id);
             let _ = self.get_type_of_symbol(sym_id);

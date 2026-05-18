@@ -14,6 +14,53 @@ function fmt(n) {
   return Number(n).toLocaleString("en-US");
 }
 
+function formatUtcTimestamp(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function formatMemory(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return `${(value / (1024 ** 3)).toFixed(1)} GiB RAM`;
+}
+
+function runnerEnvironmentSummary(data) {
+  const parts = [];
+  const generatedAt = formatUtcTimestamp(data?.generated_at);
+  if (generatedAt) parts.push(`Generated ${generatedAt}`);
+
+  const env = data?.runner_environment;
+  if (!env || typeof env !== "object") {
+    parts.push("runner hardware metadata unavailable for this artifact");
+    return parts.join(" · ");
+  }
+
+  const platform = [env.platform, env.arch].filter(Boolean).join("/");
+  if (platform) parts.push(platform);
+  if (env.cpu_count) {
+    const cpuModel = env.cpu_model ? ` ${env.cpu_model}` : "";
+    parts.push(`${env.cpu_count} CPU${env.cpu_count === 1 ? "" : "s"}${cpuModel}`);
+  }
+  const memory = formatMemory(env.total_memory_bytes);
+  if (memory) parts.push(memory);
+  if (env.github_actions?.runner_os || env.github_actions?.runner_arch) {
+    const runner = [
+      env.github_actions.runner_os,
+      env.github_actions.runner_arch,
+    ].filter(Boolean).join("/");
+    parts.push(`GitHub Actions ${runner}`);
+  } else if (env.ci) {
+    parts.push("CI runner");
+  }
+  if (env.cloud_build?.machine_type) {
+    parts.push(`Cloud Build ${env.cloud_build.machine_type}`);
+  }
+
+  return parts.join(" · ");
+}
+
 function formatDurationMs(value, fractionDigits = 0) {
   const ms = Number(value);
   if (!Number.isFinite(ms)) return "";
@@ -232,13 +279,18 @@ function normalizedLastSuccessfulPhase(compatibility) {
 }
 
 const COMPATIBILITY_METADATA_FIELDS = [
+  ["state", "state"],
   ["exit_class", "exit class"],
+  ["first_failure_class", "first failure class"],
+  ["owner_track", "owner track"],
   ["phase", "phase"],
   ["last_successful_phase", "last successful phase"],
   ["diagnostic_status", "diagnostic status"],
   ["diagnostic_deltas", "diagnostic deltas"],
   ["diagnostic_subsystems", "diagnostic subsystems"],
   ["known_blockers", "known blockers"],
+  ["reduced_repro_path", "reduced repro path"],
+  ["repro", "repro metadata"],
   ["exit_codes", "exit codes"],
   ["files_reached", "files reached"],
   ["peak_memory_bytes", "peak memory"],
@@ -363,6 +415,9 @@ function compatibilityRowFor(definition, allResults) {
     row,
     lines: row?.lines || 0,
     filesReached: compatibility.files_reached ?? null,
+    firstFailureClass: compatibility.first_failure_class || null,
+    ownerTrack: compatibility.owner_track || null,
+    reducedReproPath: compatibility.reduced_repro_path || null,
     lastSuccessfulPhase: normalizedLastSuccessfulPhase(compatibility),
     peakMemoryBytes: compatibility.peak_memory_bytes ?? null,
     emitStatus: compatibility.emit_status || "not in scope (noEmit project check)",
@@ -378,6 +433,12 @@ function compatibilityRowFor(definition, allResults) {
     diagnosticCodes: Array.isArray(compatibility.diagnostic_codes) ? compatibility.diagnostic_codes.slice(0, 8) : [],
     diagnosticSubsystems,
     primarySubsystem: compatibility.primary_subsystem || diagnosticSubsystems[0]?.subsystem || null,
+    assertionCandidates: compatibility.assertion_candidates && typeof compatibility.assertion_candidates === "object"
+      ? compatibility.assertion_candidates
+      : null,
+    assertionCleanSubset: compatibility.assertion_clean_subset && typeof compatibility.assertion_clean_subset === "object"
+      ? compatibility.assertion_clean_subset
+      : null,
     reductionCandidates: Array.isArray(compatibility.reduction_candidates)
       ? compatibility.reduction_candidates.slice(0, 5)
       : [],
@@ -504,12 +565,13 @@ function loadBenchmarks() {
   const ciLatest = [
     "bench-vs-tsgo-github-latest.json",
     "bench-vs-tsgo-gcs-latest.json",
+    "bench-results.json",
   ].map((file) => path.join(artifactsDir, file));
   const artifactFiles = (() => {
     try {
       const localArtifacts = fs.readdirSync(artifactsDir)
         .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
-        .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json"].includes(file))
+        .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json", "bench-results.json"].includes(file))
         .sort()
         .reverse()
         .map((file) => path.join(artifactsDir, file));
@@ -547,7 +609,9 @@ function categoryFor(name, lines) {
     name === "zod-project" ||
     name === "kysely-project" ||
     name === "type-challenges-project" ||
-    name === "type-challenges-solutions-project"
+    name === "type-challenges-solutions-project" ||
+    name === "type-challenges-assertion-candidates" ||
+    name === "type-challenges-assertions-tsc-clean"
   ) {
     return "Projects: external libraries";
   }
@@ -654,6 +718,8 @@ function displayName(name) {
   if (name === "kysely-project") return "Kysely project";
   if (name === "type-challenges-project") return "type-challenges project";
   if (name === "type-challenges-solutions-project") return "type-challenges solutions project";
+  if (name === "type-challenges-assertion-candidates") return "type-challenges assertion candidates";
+  if (name === "type-challenges-assertions-tsc-clean") return "type-challenges tsc-clean assertions";
 
   const cleaned = String(name || "")
     .replace(/^utility-types\//, "")
@@ -1702,6 +1768,10 @@ function generateCharts(data, mode = "projects") {
   );
 
   let html = "";
+  if (mode === "projects" && visibleCategories.length === 0) {
+    html += `<div class="bench-placeholder">No successful project benchmark timing pairs are available in this artifact yet. Project rows below are still tracked for compile readiness.</div>\n`;
+  }
+
   for (const category of visibleCategories) {
     const entries = entriesForCategory(category);
     const slug = categorySlug(category);
@@ -1797,6 +1867,12 @@ export function getBenchmarkMicroCharts() {
   return generateCharts(loadBenchmarks(), "micro");
 }
 
+export function getBenchmarkEnvironmentSummary() {
+  const summary = runnerEnvironmentSummary(loadBenchmarks());
+  if (!summary) return "";
+  return `<p class="bench-runner-meta">${escapeHtml(summary)}</p>`;
+}
+
 export function getProjectCompatibilityDashboard() {
   const data = loadBenchmarks();
   const allResults = withExpectedProjectRows(data?.results);
@@ -1839,6 +1915,90 @@ export function getProjectCompatibilityDashboard() {
     return parts;
   };
 
+  const assertionCandidateParts = (row) => {
+    const parts = [];
+    const addCount = (label, value) => {
+      if (Number.isFinite(Number(value))) {
+        parts.push(`${label}: ${fmt(Number(value))}`);
+      }
+    };
+    const addPath = (label, value) => {
+      if (value) {
+        parts.push(`${label}: ${value}`);
+      }
+    };
+    const candidates = row.assertionCandidates;
+    if (candidates && typeof candidates === "object") {
+      addCount("paired solutions", candidates.paired_solutions);
+      addCount("assertions generated", candidates.generated_assertions);
+      addCount(
+        "assertions referencing solutions",
+        candidates.assertions_referencing_solution_declaration,
+      );
+      addCount(
+        "assertions missing solution references",
+        candidates.assertions_missing_solution_declaration_reference,
+      );
+      addCount("tsc clean", candidates.tsc_diagnostic_free);
+      addCount("tsz clean", candidates.tsz_diagnostic_free);
+      const sources = candidates.sources && typeof candidates.sources === "object"
+        ? candidates.sources
+        : {};
+      const addRef = (label, source) => {
+        if (source?.ref) {
+          parts.push(`${label} ref: ${source.ref}`);
+        }
+      };
+      addRef("templates", sources.templates);
+      addRef("test cases", sources.testCases);
+      addRef("solutions", sources.solutions);
+    }
+
+    const cleanSubset = candidates?.tsc_clean_subset && typeof candidates.tsc_clean_subset === "object"
+      ? candidates.tsc_clean_subset
+      : row.assertionCleanSubset;
+    if (cleanSubset) {
+      addPath("tsc-clean manifest", cleanSubset.manifest_path);
+      addPath("tsc-clean classification", cleanSubset.classification_path);
+      addPath("tsc-clean tsconfig", cleanSubset.tsconfig_path);
+      addCount("tsc-clean total candidates", cleanSubset.total_candidates);
+      addCount("tsc-clean subset", cleanSubset.generated_assertions);
+      addCount(
+        "tsc-clean references solutions",
+        cleanSubset.assertions_referencing_solution_declaration,
+      );
+      addCount(
+        "tsc-clean missing solution references",
+        cleanSubset.assertions_missing_solution_declaration_reference,
+      );
+      addCount("tsc-clean rejected", cleanSubset.rejected_from_full_corpus);
+      if (cleanSubset.tsc_status) {
+        parts.push(`tsc-clean tsc: ${cleanSubset.tsc_status}`);
+      }
+      if (cleanSubset.tsz_status) {
+        parts.push(`tsc-clean tsz: ${cleanSubset.tsz_status}`);
+      }
+      if (cleanSubset.comparison_status) {
+        parts.push(`tsc-clean comparison: ${cleanSubset.comparison_status}`);
+      }
+      addCount("tsc-clean tsc diagnostic-free", cleanSubset.tsc_diagnostic_free);
+      addCount("tsc-clean tsz diagnostic-free", cleanSubset.tsz_diagnostic_free);
+    }
+
+    const counts = candidates?.file_comparison?.counts;
+    addCount("both accepted", candidates?.both_accepted ?? counts?.bothAccepted);
+    addCount("both rejected", candidates?.both_rejected ?? counts?.bothRejected);
+    addCount(
+      "tsc accepted/tsz rejected",
+      candidates?.tsc_accepted_tsz_rejected ?? counts?.tscAcceptedTszRejected,
+    );
+    addCount(
+      "tsc rejected/tsz accepted",
+      candidates?.tsc_rejected_tsz_accepted ?? counts?.tscRejectedTszAccepted,
+    );
+    return parts;
+  };
+
   const exitCodeParts = (row) => {
     const codes = row.exitCodes || {};
     return ["tsc", "tsz", "tsgo"]
@@ -1861,6 +2021,9 @@ export function getProjectCompatibilityDashboard() {
     const knownBlockers = Array.isArray(row.knownBlockers)
       ? row.knownBlockers.filter(Boolean).slice(0, 8)
       : [];
+    const diagnosticCandidateExamples = Array.isArray(row.assertionCandidates?.diagnostic_candidate_examples)
+      ? row.assertionCandidates.diagnostic_candidate_examples.filter(Boolean).slice(0, 5)
+      : [];
     const parts = [
       `phase: ${row.phase || "unknown"}`,
       row.lastSuccessfulPhase ? `last successful: ${row.lastSuccessfulPhase}` : "",
@@ -1869,11 +2032,15 @@ export function getProjectCompatibilityDashboard() {
             row.missingMetadata.slice(0, 4).join(", ")
           }${row.missingMetadata.length > 4 ? "..." : ""}`
         : "artifact: complete",
+      row.firstFailureClass ? `failure: ${row.firstFailureClass}` : "",
+      row.ownerTrack ? `owner track: ${row.ownerTrack}` : "",
+      row.reducedReproPath ? `repro: ${row.reducedReproPath}` : "",
       `owner: ${row.family || "not classified"}`,
       row.primarySubsystem ? `subsystem: ${row.primarySubsystem}` : "",
       row.emitStatus ? `emit: ${row.emitStatus}` : "",
       row.dtsStatus ? `dts: ${row.dtsStatus}` : "",
       ...measurementParts(row),
+      ...assertionCandidateParts(row),
       ...exitCodeParts(row),
     ].filter(Boolean);
     const blockerHtml = row.className === "green" || !knownBlockers.length
@@ -1886,6 +2053,17 @@ export function getProjectCompatibilityDashboard() {
       : `<div class="compat-queue">
           <span>${escapeHtml(`queue: ${diagnosticCodes.length ? diagnosticCodes.join(", ") : "unclassified diagnostic"}`)}</span>
           ${reductionCandidates.map((candidate) => `<code>${escapeHtml(candidate)}</code>`).join("")}
+        </div>`;
+    const candidateExampleHtml = row.className === "green" || !diagnosticCandidateExamples.length
+      ? ""
+      : `<div class="compat-queue">
+          ${diagnosticCandidateExamples.map((example) => {
+            const codes = Array.isArray(example.codes) && example.codes.length
+              ? ` ${example.codes.slice(0, 3).join(",")}`
+              : "";
+            const file = example.file || example.candidate_id || "unknown candidate";
+            return `<code>${escapeHtml(`${example.compiler || "compiler"}:${codes} ${file}`)}</code>`;
+          }).join("")}
         </div>`;
     const subsystemHtml = row.className === "green" || !diagnosticSubsystems.length
       ? ""
@@ -1902,7 +2080,7 @@ export function getProjectCompatibilityDashboard() {
           ? deltas.map((delta) => `<code>${escapeHtml(delta)}</code>`).join("")
           : `<span>${escapeHtml("diagnostic delta not captured")}</span>`}
         </div>`;
-    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${blockerHtml}${subsystemHtml}${queueHtml}${deltaHtml}`;
+    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${blockerHtml}${subsystemHtml}${queueHtml}${candidateExampleHtml}${deltaHtml}`;
   };
 
   return `<section class="compat-dashboard">
