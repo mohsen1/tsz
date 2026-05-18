@@ -29,15 +29,19 @@ DEFAULT_ROOTS = (
 )
 EXCLUDED_DIRS = {".git", "target", "node_modules", "tests", "benches", "examples"}
 MAP_TYPES = ("HashMap", "FxHashMap", "DashMap", "IndexMap", "BTreeMap")
+CACHE_NAME_PATTERN = (
+    r"(?:[A-Za-z_][A-Za-z0-9_]*(?:cache|Cache|memo|Memo)[A-Za-z0-9_]*"
+    r"|cache|Cache|memo|Memo)"
+)
 
 FIELD_RE = re.compile(
     r"^\s*(?:(?:pub|pub\(crate\)|pub\(super\)|pub\(in [^)]+\))\s+)?"
-    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*(?:cache|Cache|memo|Memo)[A-Za-z0-9_]*)"
+    rf"(?P<name>{CACHE_NAME_PATTERN})"
     r"\s*:\s*(?P<type>.+)$"
 )
 TYPE_ALIAS_RE = re.compile(
     r"^\s*(?:(?:pub|pub\(crate\)|pub\(super\)|pub\(in [^)]+\))\s+)?"
-    r"type\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*(?:Cache|cache|Memo|memo)[A-Za-z0-9_]*)"
+    rf"type\s+(?P<name>{CACHE_NAME_PATTERN})"
     r"\s*=\s*(?P<type>.+)$"
 )
 STRUCT_RE = re.compile(
@@ -87,12 +91,50 @@ def iter_rust_files(roots: Iterable[Path]) -> Iterable[Path]:
                 yield path
 
 
-def strip_line_comment(line: str) -> str:
-    return line.split("//", 1)[0]
+def scrub_comments_and_strings(line: str, in_block_comment: bool) -> tuple[str, bool]:
+    """Return code with comments and string contents removed."""
+    escaped = False
+    in_string = False
+    chars: list[str] = []
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        nxt = line[i + 1] if i + 1 < len(line) else ""
+        if in_block_comment:
+            if ch == "*" and nxt == "/":
+                in_block_comment = False
+                i += 2
+            else:
+                i += 1
+            continue
+        if escaped:
+            chars.append(" ")
+            escaped = False
+            i += 1
+            continue
+        if ch == "\\" and in_string:
+            chars.append(" ")
+            escaped = True
+            i += 1
+            continue
+        if ch == '"':
+            in_string = not in_string
+            chars.append(" ")
+            i += 1
+            continue
+        if ch == "/" and nxt == "*" and not in_string:
+            in_block_comment = True
+            i += 2
+            continue
+        if ch == "/" and nxt == "/" and not in_string:
+            break
+        chars.append(" " if in_string else ch)
+        i += 1
+    return "".join(chars), in_block_comment
 
 
 def trim_type(raw: str) -> str:
-    return raw.strip().rstrip(",").strip()
+    return raw.strip().rstrip(",;").strip()
 
 
 def is_cache_type(type_text: str) -> bool:
@@ -128,13 +170,17 @@ def has_size_signal(file_text: str, name: str) -> bool:
 
 def scan_file(path: Path) -> list[CacheCandidate]:
     raw_text = path.read_text(encoding="utf-8")
-    file_text = "\n".join(strip_line_comment(line) for line in raw_text.splitlines())
+    code_lines: list[str] = []
+    in_block_comment = False
+    for raw_line in raw_text.splitlines():
+        code, in_block_comment = scrub_comments_and_strings(raw_line, in_block_comment)
+        code_lines.append(code)
+    file_text = "\n".join(code_lines)
     rel = relative(path)
     owner = "<module>"
     struct_depth = 0
     candidates: list[CacheCandidate] = []
-    for line_no, raw_line in enumerate(raw_text.splitlines(), start=1):
-        line = strip_line_comment(raw_line)
+    for line_no, line in enumerate(code_lines, start=1):
         struct_match = STRUCT_RE.search(line)
         if struct_match:
             owner = struct_match.group(1)
