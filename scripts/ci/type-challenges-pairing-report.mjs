@@ -153,6 +153,40 @@ function ensureManifestEntries(label, manifest) {
     );
     process.exit(1);
   }
+
+  const outputs = new Set();
+  const sources = new Set();
+  for (const [index, entry] of entries.entries()) {
+    const output = entry?.output == null ? "" : String(entry.output);
+    const source = entry?.source == null ? "" : String(entry.source);
+    if (!output) {
+      console.error(
+        `error: Type Challenges ${label} manifest entry ${index + 1} has no output path`,
+      );
+      process.exit(1);
+    }
+    if (outputs.has(output)) {
+      console.error(
+        `error: Type Challenges ${label} manifest contains duplicate output path ${output}`,
+      );
+      process.exit(1);
+    }
+    outputs.add(output);
+
+    if (!source) {
+      console.error(
+        `error: Type Challenges ${label} manifest entry ${index + 1} has no source path`,
+      );
+      process.exit(1);
+    }
+    if (sources.has(source)) {
+      console.error(
+        `error: Type Challenges ${label} manifest contains duplicate source path ${source}`,
+      );
+      process.exit(1);
+    }
+    sources.add(source);
+  }
 }
 
 function ensureSolutionDeclarations(manifest) {
