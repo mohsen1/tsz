@@ -335,6 +335,10 @@ impl<'a> Printer<'a> {
                 }
                 let system_export_fold = self.pending_system_namespace_export_fold.take();
                 let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                ns_emitter.set_const_enum_facts(
+                    self.const_enum_values.clone(),
+                    self.const_enum_import_aliases.clone(),
+                );
                 if let Some(export_names) = system_export_fold.as_deref() {
                     ns_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
                 }
@@ -420,6 +424,10 @@ impl<'a> Printer<'a> {
                             let mut ns_emitter = NamespaceES5Emitter::with_commonjs(
                                 self.arena,
                                 !merges_with_default_func,
+                            );
+                            ns_emitter.set_const_enum_facts(
+                                self.const_enum_values.clone(),
+                                self.const_enum_import_aliases.clone(),
                             );
                             // Cross-block export sharing
                             if let Some(module_decl) = self.arena.get_module(node) {
@@ -687,6 +695,11 @@ impl<'a> Printer<'a> {
                         String::new()
                     };
 
+                    if self
+                        .should_emit_invalid_namespace_static_modifier(func_node, &func.modifiers)
+                    {
+                        self.write("static ");
+                    }
                     if func.asterisk_token {
                         self.emit_async_generator_lowered(func, &func_name);
                     } else {
@@ -1196,6 +1209,10 @@ impl<'a> Printer<'a> {
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_const_enum_facts(
+                    self.const_enum_values.clone(),
+                    self.const_enum_import_aliases.clone(),
+                );
                 // Collect this block's exported vars and accumulate for cross-block sharing
                 if !ns_name_for_exports.is_empty() {
                     let block_exports = ns_emitter.collect_exported_var_names(*namespace_node);
@@ -1245,17 +1262,41 @@ impl<'a> Printer<'a> {
                         } else {
                             String::new()
                         };
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         self.emit_async_generator_lowered(func, &func_name);
                     } else if func.name.is_some() {
                         let func_name = self.get_identifier_text_idx(func.name);
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         self.emit_async_function_es5(func, &func_name, "this");
                     } else if let Some(export_name) = export_name {
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         if let Some(ident) = self.arena.identifiers.get(export_name as usize) {
                             self.emit_async_function_es5(func, &ident.escaped_text, "this");
                         } else {
                             self.emit_async_function_es5(func, "", "this");
                         }
                     } else {
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         self.emit_async_function_es5(func, "", "this");
                     }
                 }
@@ -1381,6 +1422,10 @@ impl<'a> Printer<'a> {
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_const_enum_facts(
+                    self.const_enum_values.clone(),
+                    self.const_enum_import_aliases.clone(),
+                );
                 // Collect this block's exported vars and accumulate for cross-block sharing
                 if !ns_name_for_exports.is_empty() {
                     let block_exports = ns_emitter.collect_exported_var_names(*namespace_node);
@@ -1421,6 +1466,10 @@ impl<'a> Printer<'a> {
             } => {
                 if node.kind == syntax_kind_ext::MODULE_DECLARATION && !*is_default {
                     let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                    ns_emitter.set_const_enum_facts(
+                        self.const_enum_values.clone(),
+                        self.const_enum_import_aliases.clone(),
+                    );
                     let mut should_declare_namespace_var = None;
                     // Cross-block export sharing
                     if let Some(module_decl) = self.arena.get_module(node) {
@@ -1578,6 +1627,11 @@ impl<'a> Printer<'a> {
                         String::new()
                     };
 
+                    if self
+                        .should_emit_invalid_namespace_static_modifier(func_node, &func.modifiers)
+                    {
+                        self.write("static ");
+                    }
                     if func.asterisk_token {
                         self.emit_async_generator_lowered(func, &func_name);
                     } else {

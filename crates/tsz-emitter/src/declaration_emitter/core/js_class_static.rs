@@ -92,11 +92,7 @@ impl<'a> DeclarationEmitter<'a> {
             planned_members.push((initializer, local_name, export_alias));
         }
 
-        let has_export_aliases = planned_members
-            .iter()
-            .any(|(_, _, export_alias)| export_alias.is_some());
         for (initializer, local_name, export_alias) in planned_members {
-            let emit_export = export_alias.is_none() && has_export_aliases;
             if let Some(init_node) = self.arena.get(initializer) {
                 if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
                     || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
@@ -109,13 +105,13 @@ impl<'a> DeclarationEmitter<'a> {
                             &local_name,
                             func,
                             initializer,
-                            emit_export,
+                            false,
                         );
                     }
                 } else if let Some(type_text) =
                     self.js_namespace_value_member_type_text(initializer)
                 {
-                    self.emit_js_namespace_value_member_text(&local_name, &type_text, emit_export);
+                    self.emit_js_namespace_value_member_text(&local_name, &type_text, false);
                 }
             }
             if let Some((local_name, exported_name)) = export_alias {

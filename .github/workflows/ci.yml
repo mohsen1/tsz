@@ -32,6 +32,8 @@ jobs:
       rust_cache_refresh: ${{ steps.gate.outputs.rust_cache_refresh }}
       required_summary: ${{ steps.gate.outputs.required_summary }}
       bench_shell_only: ${{ steps.gate.outputs.bench_shell_only }}
+      perf_tool_only: ${{ steps.gate.outputs.perf_tool_only }}
+      arch_tool_only: ${{ steps.gate.outputs.arch_tool_only }}
       compiler_checks_required: ${{ steps.gate.outputs.compiler_checks_required }}
       unit_packages: ${{ steps.gate.outputs.unit_packages }}
     steps:
@@ -47,6 +49,8 @@ jobs:
           rust_cache_refresh=false
           cache_key_changed=false
           bench_shell_only=false
+          perf_tool_only=false
+          arch_tool_only=false
           compiler_checks_required=true
           unit_packages=""
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
@@ -140,6 +144,46 @@ jobs:
                 should_run=false
                 full_run=false
                 bench_shell_only=true
+              fi
+            fi
+            # Perf-tool Python script-only changes do not need Rust compiler CI.
+            # Keep the required CI Summary alive, but replace lint/unit/dist/wasm
+            # jobs with a cheap Python smoke job below. CI workflow edits, Cargo
+            # files, Rust crates, shell scripts, and non-perf scripts still take
+            # the normal path.
+            if [[ "$should_run" == "true" && -n "${all_paths:-}" ]]; then
+              perf_tool_paths=$(printf '%s\n' "$all_paths" \
+                | grep -E '^scripts/perf/[^/]+\.py$' \
+                || true)
+              non_perf_tool_paths=$(printf '%s\n' "$all_paths" \
+                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^scripts/perf/[^/]+\.py$' \
+                || true)
+              if [[ -n "$perf_tool_paths" && -z "$non_perf_tool_paths" ]]; then
+                echo "PR diff only changes perf Python tools/docs — running perf tool smoke only:"
+                printf '%s\n' "$perf_tool_paths" | sort -u | sed 's/^/  /'
+                should_run=false
+                full_run=false
+                perf_tool_only=true
+              fi
+            fi
+            # Arch-tool Python script-only changes do not need Rust compiler CI.
+            # Keep the required CI Summary alive, but replace lint/unit/dist/wasm
+            # jobs with a cheap Python smoke job below. CI workflow edits, Cargo
+            # files, Rust crates, shell scripts, and non-arch scripts still take
+            # the normal path.
+            if [[ "$should_run" == "true" && -n "${all_paths:-}" ]]; then
+              arch_tool_paths=$(printf '%s\n' "$all_paths" \
+                | grep -E '^scripts/arch/[^/]+\.py$' \
+                || true)
+              non_arch_tool_paths=$(printf '%s\n' "$all_paths" \
+                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^scripts/arch/[^/]+\.py$' \
+                || true)
+              if [[ -n "$arch_tool_paths" && -z "$non_arch_tool_paths" ]]; then
+                echo "PR diff only changes arch Python tools/docs — running arch tool smoke only:"
+                printf '%s\n' "$arch_tool_paths" | sort -u | sed 's/^/  /'
+                should_run=false
+                full_run=false
+                arch_tool_only=true
               fi
             fi
             # P4 — draft-phase fast-fail: narrow the unit job to the touched
@@ -320,6 +364,8 @@ jobs:
           echo "rust_cache_refresh=${rust_cache_refresh}" >> "$GITHUB_OUTPUT"
           echo "required_summary=${required_summary}" >> "$GITHUB_OUTPUT"
           echo "bench_shell_only=${bench_shell_only}" >> "$GITHUB_OUTPUT"
+          echo "perf_tool_only=${perf_tool_only}" >> "$GITHUB_OUTPUT"
+          echo "arch_tool_only=${arch_tool_only}" >> "$GITHUB_OUTPUT"
           echo "compiler_checks_required=${compiler_checks_required}" >> "$GITHUB_OUTPUT"
           echo "unit_packages=${unit_packages}" >> "$GITHUB_OUTPUT"
 
@@ -415,6 +461,60 @@ jobs:
       - name: Check bench shell syntax
         shell: bash
         run: bash -n scripts/bench/*.sh
+
+  perf-tool-smoke:
+    name: perf-tool-smoke
+    needs: gate
+    if: needs.gate.outputs.perf_tool_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Check perf Python tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/perf/*.py
+          tests=()
+          while IFS= read -r test_file; do
+            tests+=("$test_file")
+          done < <(find scripts/perf -maxdepth 1 -type f -name 'test_*.py' | sort)
+          if [[ "${#tests[@]}" -eq 0 ]]; then
+            echo "No scripts/perf/test_*.py files found."
+            exit 0
+          fi
+          for test_file in "${tests[@]}"; do
+            python3 "$test_file"
+          done
+
+  arch-tool-smoke:
+    name: arch-tool-smoke
+    needs: gate
+    if: needs.gate.outputs.arch_tool_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Check arch Python tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/arch/*.py
+          tests=()
+          while IFS= read -r test_file; do
+            tests+=("$test_file")
+          done < <(find scripts/arch -maxdepth 1 -type f -name 'test_*.py' | sort)
+          if [[ "${#tests[@]}" -eq 0 ]]; then
+            echo "No scripts/arch/test_*.py files found."
+            exit 0
+          fi
+          for test_file in "${tests[@]}"; do
+            python3 "$test_file"
+          done
 
   lint:
     name: lint
@@ -968,6 +1068,8 @@ jobs:
     needs:
       - gate
       - bench-script-smoke
+      - perf-tool-smoke
+      - arch-tool-smoke
       - lint
       - cargo-shear
       - cargo-deny
@@ -1000,6 +1102,8 @@ jobs:
           should_run = gate.get("outputs", {}).get("should_run") == "true"
           full_run = gate.get("outputs", {}).get("full_run") == "true"
           bench_shell_only = gate.get("outputs", {}).get("bench_shell_only") == "true"
+          perf_tool_only = gate.get("outputs", {}).get("perf_tool_only") == "true"
+          arch_tool_only = gate.get("outputs", {}).get("arch_tool_only") == "true"
           compiler_checks_required = gate.get("outputs", {}).get("compiler_checks_required") != "false"
 
           gate_result = gate.get("result")
@@ -1034,6 +1138,20 @@ jobs:
                       print(f"bench-script-smoke did not pass: {bench_smoke.get('result')}")
                       sys.exit(1)
                   print("Bench shell-only CI passed: bench-script-smoke.")
+                  sys.exit(0)
+              if perf_tool_only:
+                  perf_smoke = needs.get("perf-tool-smoke", {})
+                  if perf_smoke.get("result") != "success":
+                      print(f"perf-tool-smoke did not pass: {perf_smoke.get('result')}")
+                      sys.exit(1)
+                  print("Perf tool-only CI passed: perf-tool-smoke.")
+                  sys.exit(0)
+              if arch_tool_only:
+                  arch_smoke = needs.get("arch-tool-smoke", {})
+                  if arch_smoke.get("result") != "success":
+                      print(f"arch-tool-smoke did not pass: {arch_smoke.get('result')}")
+                      sys.exit(1)
+                  print("Arch tool-only CI passed: arch-tool-smoke.")
                   sys.exit(0)
               print("CI gated off; summary passes because jobs were intentionally skipped.")
               sys.exit(0)

@@ -1005,6 +1005,14 @@ impl<'a> Printer<'a> {
         // checking if the name is already in `declared_namespace_names`, which
         // means a prior declaration already emitted the `var`/`export` prefix.
         let is_merged_subsequent = self.is_merged_subsequent_declaration(clause_node);
+        let es5_namespace_should_declare_var =
+            if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION && self.ctx.target_es5 {
+                self.transforms
+                    .get(export.export_clause)
+                    .and_then(|directive| directive.es5_namespace_should_declare_var())
+            } else {
+                None
+            };
 
         // When a class has ES (non-legacy) decorators and is exported, tsc emits
         // decorators BEFORE the `export` keyword:
@@ -1047,7 +1055,12 @@ impl<'a> Printer<'a> {
                 false,
             );
         } else {
-            if !is_merged_subsequent && !clause_emits_export_prefix {
+            let namespace_iife_supplies_no_binding =
+                es5_namespace_should_declare_var == Some(false);
+            if !is_merged_subsequent
+                && !clause_emits_export_prefix
+                && !namespace_iife_supplies_no_binding
+            {
                 self.write("export ");
             }
             self.emit(export.export_clause);
@@ -1877,6 +1890,12 @@ impl<'a> Printer<'a> {
                         .has_modifier(&t.modifiers, SyntaxKind::ExportKeyword)
                 })
             }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                self.arena.get_import_decl(node).is_some_and(|i| {
+                    self.arena
+                        .has_modifier(&i.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
             _ => false,
         }
     }
@@ -1912,6 +1931,12 @@ impl<'a> Printer<'a> {
                     // (namespace alias, not a module indicator)
                     k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                         if let Some(import_data) = self.arena.get_import_decl(node) {
+                            if self
+                                .arena
+                                .has_modifier(&import_data.modifiers, SyntaxKind::ExportKeyword)
+                            {
+                                return true;
+                            }
                             if import_data.module_specifier.is_none() {
                                 // require(nonStringLiteral) — specifier failed to parse
                                 // as string literal, but the `import` keyword still
@@ -1984,7 +2009,7 @@ impl<'a> Printer<'a> {
                 || node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             {
                 if let Some(import_decl) = self.arena.get_import_decl(node) {
-                    if !self.import_decl_has_runtime_value(import_decl) {
+                    if !self.import_decl_should_schedule_wrapped_dependency(node, import_decl) {
                         continue;
                     }
                     if let Some(text) =

@@ -129,6 +129,42 @@ fn commonjs_type_only_reexport_skips_void_zero_preamble() {
     );
 }
 
+#[test]
+fn namespace_export_star_does_not_emit_commonjs_reexport_helpers() {
+    let source = r#"class Aaa {
+}
+namespace Aaa {
+export class SomeType {
+}
+}
+namespace Bbb {
+export class SomeType {
+}
+export * from Aaa;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        !output.contains("__exportStar") && !output.contains("__createBinding"),
+        "Namespace-scoped export star should be erased in JS and should not request CommonJS re-export helpers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Bbb.SomeType = SomeType;"),
+        "Namespace value members should still emit normally.\nOutput:\n{output}"
+    );
+}
+
 /// moduleDetection=force should also cause "use strict" to be emitted
 /// for CJS modules (since the file is now treated as a module).
 #[test]
@@ -1593,6 +1629,76 @@ export var x = 1;
     );
 }
 
+#[test]
+fn es5_esm_class_namespace_merge_uses_bare_iife_after_export_clause() {
+    let source = r#"export class C {
+}
+export namespace C {
+export const x = 1;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("export { C };"),
+        "ES5 class ESM export should use a separate export clause.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(function (C) {"),
+        "Merged namespace should still emit its IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export (function"),
+        "Merged namespace IIFE should not be prefixed with `export`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_esm_erased_namespace_does_not_consume_runtime_export_var() {
+    let source = r#"export namespace N {
+}
+export namespace N {
+export const x = 1;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("export var N;"),
+        "First runtime namespace block should declare the ESM binding even after an erased namespace.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export (function"),
+        "Namespace IIFE should stay bare after the exported var declaration.\nOutput:\n{output}"
+    );
+}
+
 /// When a class has legacy decorators and is exported in CJS, the
 /// `exports.X = X;` pre-assignment should appear exactly once — from
 /// `emit_legacy_class_decorator_assignment`, NOT also from the
@@ -1974,6 +2080,31 @@ fn node_esm_exported_import_equals_require_uses_export_list() {
         output.trim_end(),
         "import { createRequire as _createRequire } from \"module\";\nconst __require = _createRequire(import.meta.url);\nconst fs2 = __require(\"fs\");\nexport { fs2 };"
     );
+}
+
+#[test]
+fn es_module_declare_export_import_equals_recovers_export_var() {
+    let source = r#"namespace x {
+    interface c {}
+}
+declare export import a = x.c;
+var b: a;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ES2015,
+        target: ScriptTarget::ES2015,
+        always_strict: true,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert_eq!(output.trim_end(), "export var a = x.c;\nvar b;");
 }
 
 /// A file without any module syntax or import.meta should NOT get __esModule.

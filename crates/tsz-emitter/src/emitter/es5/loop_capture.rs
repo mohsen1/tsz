@@ -906,7 +906,11 @@ impl<'a> Printer<'a> {
             if i > 0 {
                 self.write(", ");
             }
-            self.write(var);
+            if let Some(emitted) = self.ctx.block_scope_state.get_emitted_name(var) {
+                self.write(&emitted);
+            } else {
+                self.write(var);
+            }
         }
     }
 
@@ -930,7 +934,19 @@ impl<'a> Printer<'a> {
                             self.write(", ");
                         }
                         first = false;
+                        let initializer_is_missing = self
+                            .arena
+                            .get(decl_idx)
+                            .and_then(|decl_node| self.arena.get_variable_declaration(decl_node))
+                            .is_some_and(|decl| decl.initializer.is_none());
+                        let prev_emit_missing_initializer_as_void_0 =
+                            self.emit_missing_initializer_as_void_0;
+                        if initializer_is_missing {
+                            self.emit_missing_initializer_as_void_0 = true;
+                        }
                         self.emit(decl_idx);
+                        self.emit_missing_initializer_as_void_0 =
+                            prev_emit_missing_initializer_as_void_0;
                     }
                 }
             } else {
@@ -1036,6 +1052,61 @@ function foo(x: number) {\n\
         assert!(
             output.contains("(function () { return i; })();"),
             "Single-line arrow block should keep the compact ES5 function body.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn captured_initializerless_for_let_uses_void0_without_leaking_scope() {
+        let source = "declare function use(a: any);\n\
+var x;\n\
+for (let x = 10; ;) {\n\
+    use(x);\n\
+}\n\
+use(x);\n\
+for (; ;) {\n\
+    let x;\n\
+    use(x);\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains("for (var x_1 = 10;;) {\n    use(x_1);\n}\nuse(x);"),
+            "For-header lexical scope should not leak to the following statement.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var x_2 = void 0;\n    use(x_2);"),
+            "Initializerless block-scoped body declarations downlevel to `void 0`.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn object_literal_methods_capture_for_initializer_let() {
+        let source = "for (let x; ;) {\n\
+    ({ foo() { x } });\n\
+}\n\
+for (let x; ;) {\n\
+    ({ get foo() { return x } });\n\
+}\n\
+for (let x; ;) {\n\
+    ({ set foo(v) { x } });\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains(
+                "var _loop_1 = function (x) {\n    ({ foo: function () { x; } });\n};\nfor (var x = void 0;;) {\n    _loop_1(x);\n}"
+            ),
+            "Object literal methods should trigger loop capture and initialize the loop binding.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var _loop_2 = function (x) {\n    ({ get foo() { return x; } });\n};"),
+            "Object literal getters should trigger loop capture.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var _loop_3 = function (x) {\n    ({ set foo(v) { x; } });\n};"),
+            "Object literal setters should trigger loop capture.\nOutput:\n{output}"
         );
     }
 }

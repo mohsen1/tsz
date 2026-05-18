@@ -1090,17 +1090,17 @@ impl<'a> TypePrinter<'a> {
             );
         }
 
-        // Collect all signatures (call + construct)
-        let mut parts = Vec::new();
-
+        let mut signature_parts = Vec::new();
         for sig in &callable.call_signatures {
-            parts.push(self.print_call_signature(sig, false, false));
+            signature_parts.push(self.print_call_signature(sig, false, false));
         }
         for sig in &callable.construct_signatures {
-            parts.push(self.print_call_signature(sig, true, callable.is_abstract));
+            signature_parts.push(self.print_call_signature(sig, true, callable.is_abstract));
         }
 
-        // Add index signatures (tsc emits these before properties)
+        let mut member_parts = Vec::new();
+
+        // Add index signatures (tsc emits these before properties).
         if let Some(ref idx) = callable.number_index {
             let readonly = if idx.readonly { "readonly " } else { "" };
             let param = idx
@@ -1108,7 +1108,7 @@ impl<'a> TypePrinter<'a> {
                 .map(|a| self.resolve_atom(a))
                 .unwrap_or_else(|| "x".to_string());
             let widened = self.widen_synthesized_method_return_type(idx.value_type);
-            parts.push(format!(
+            member_parts.push(format!(
                 "{}[{}: number]: {}",
                 readonly,
                 param,
@@ -1122,7 +1122,7 @@ impl<'a> TypePrinter<'a> {
                 .map(|a| self.resolve_atom(a))
                 .unwrap_or_else(|| "x".to_string());
             let widened = self.widen_synthesized_method_return_type(idx.value_type);
-            parts.push(format!(
+            member_parts.push(format!(
                 "{}[{}: string]: {}",
                 readonly,
                 param,
@@ -1140,18 +1140,18 @@ impl<'a> TypePrinter<'a> {
             if prop.is_method
                 && let Some(method_str) = self.print_property_as_method(prop, callable.symbol)
             {
-                parts.push(method_str);
+                member_parts.push(method_str);
                 continue;
             }
 
             if let Some(accessors) = self.print_property_as_accessors(prop) {
-                parts.extend(accessors);
+                member_parts.extend(accessors);
                 continue;
             }
 
             let readonly = if prop.readonly { "readonly " } else { "" };
             let optional = if prop.optional { "?" } else { "" };
-            parts.push(format!(
+            member_parts.push(format!(
                 "{}{}{}: {}",
                 readonly,
                 self.declaration_property_name_text(prop),
@@ -1160,11 +1160,30 @@ impl<'a> TypePrinter<'a> {
             ));
         }
 
+        if callable.is_abstract
+            && callable.call_signatures.is_empty()
+            && callable.construct_signatures.len() == 1
+            && !member_parts.is_empty()
+        {
+            let constructor_type = self.print_construct_signature_arrow(
+                &callable.construct_signatures[0],
+                callable.is_abstract,
+            );
+            let member_type = self.format_type_literal_parts(&member_parts);
+            return format!("({constructor_type}) & {member_type}");
+        }
+
+        let mut parts = signature_parts;
+        parts.extend(member_parts);
+
         if parts.is_empty() {
             return "{}".to_string();
         }
 
-        // Multi-line format when indent context is set
+        self.format_type_literal_parts(&parts)
+    }
+
+    fn format_type_literal_parts(&self, parts: &[String]) -> String {
         if let Some(indent) = self.indent_level {
             let member_indent = "    ".repeat((indent + 1) as usize);
             let closing_indent = "    ".repeat(indent as usize);
@@ -1382,6 +1401,16 @@ impl<'a> TypePrinter<'a> {
             .properties
             .iter()
             .any(|property| !self.property_is_hidden_in_declaration_shape(property));
+
+        if callable.is_abstract
+            && callable.call_signatures.is_empty()
+            && callable.construct_signatures.len() == 1
+            && (has_properties
+                || callable.string_index.is_some()
+                || callable.number_index.is_some())
+        {
+            return true;
+        }
 
         callable.symbol.is_none()
             && !has_properties
