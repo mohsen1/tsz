@@ -1025,6 +1025,12 @@ pub fn remapped_mapped_index_access_result(
         return Some(RemappedMappedIndexAccessResult::Known(known));
     }
 
+    if let Some(known) =
+        identity_remapped_keyof_value_type(db, mapped_object_type, index_type, &mapped, name_type)
+    {
+        return Some(RemappedMappedIndexAccessResult::Known(known));
+    }
+
     if super::contains_type_parameters_db(db, index_type)
         || keyof_targets_type_or_display_alias(db, index_type, mapped_object_type)
     {
@@ -1078,6 +1084,23 @@ pub fn remapped_mapped_type_has_no_outer_type_params(
     })
 }
 
+fn identity_remapped_keyof_value_type(
+    db: &dyn TypeDatabase,
+    object_type: TypeId,
+    index_type: TypeId,
+    mapped: &crate::types::MappedType,
+    name_type: TypeId,
+) -> Option<TypeId> {
+    if !keyof_targets_type_or_display_alias(db, index_type, object_type)
+        || !is_mapped_iteration_param(db, mapped.template, mapped)
+        || !remapped_name_projects_iteration_key(db, name_type, mapped)
+    {
+        return None;
+    }
+
+    Some(mapped.constraint)
+}
+
 fn filtered_identity_remapped_keyof_value_type(
     db: &dyn TypeDatabase,
     _object_type: TypeId,
@@ -1101,6 +1124,22 @@ fn filtered_identity_remapped_keyof_value_type(
     } else {
         None
     }
+}
+
+fn remapped_name_projects_iteration_key(
+    db: &dyn TypeDatabase,
+    name_type: TypeId,
+    mapped: &crate::types::MappedType,
+) -> bool {
+    if is_mapped_iteration_param(db, name_type, mapped) {
+        return true;
+    }
+
+    matches!(
+        db.lookup(name_type),
+        Some(TypeData::IndexAccess(object, _))
+            if is_mapped_iteration_param(db, object, mapped)
+    )
 }
 
 fn single_tuple_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {

@@ -1562,6 +1562,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// This resolves property access on object types.
     pub fn evaluate_index_access(&mut self, object_type: TypeId, index_type: TypeId) -> TypeId {
+        if let Some(crate::type_queries::RemappedMappedIndexAccessResult::Known(value_type)) =
+            crate::type_queries::remapped_mapped_index_access_result(
+                self.interner(),
+                object_type,
+                index_type,
+            )
+        {
+            return value_type;
+        }
+
         // Pre-evaluation check: if the object is a mapped type and the index is a type
         // parameter whose constraint matches the mapped constraint, substitute K into
         // the mapped template directly. This MUST happen before evaluate(object_type)

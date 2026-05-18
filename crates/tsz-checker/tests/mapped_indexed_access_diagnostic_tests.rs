@@ -1,6 +1,66 @@
 use tsz_checker::test_utils::check_source_diagnostics;
 
 #[test]
+fn remapped_keyof_identity_value_accepts_iteration_member_assignment() {
+    let source = r#"
+type Dict<TItems extends readonly { readonly key: string }[]> = {
+  [Item in TItems[number] as Item["key"]]: Item;
+};
+
+function put<TItems extends readonly { readonly key: string }[]>(
+  item: TItems[number],
+): Dict<TItems> {
+  const result = {} as Dict<TItems>;
+  const value: Dict<TItems>[keyof Dict<TItems>] = item;
+  result[item.key as keyof Dict<TItems>] = item;
+  void value;
+  return result;
+}
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let relation_diags: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322 || diag.code == 2345)
+        .collect();
+
+    assert!(
+        relation_diags.is_empty(),
+        "remapped mapped value union should accept the mapped iteration member: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn renamed_remapped_keyof_identity_value_accepts_iteration_member_assignment() {
+    let source = r#"
+type Lookup<TRows extends readonly { readonly id: string }[]> = {
+  [Row in TRows[number] as Row["id"]]: Row;
+};
+
+function store<TRows extends readonly { readonly id: string }[]>(
+  row: TRows[number],
+): Lookup<TRows> {
+  const lookup = {} as Lookup<TRows>;
+  const stored: Lookup<TRows>[keyof Lookup<TRows>] = row;
+  lookup[row.id as keyof Lookup<TRows>] = row;
+  void stored;
+  return lookup;
+}
+"#;
+
+    let diagnostics = check_source_diagnostics(source);
+    let relation_diags: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322 || diag.code == 2345)
+        .collect();
+
+    assert!(
+        relation_diags.is_empty(),
+        "renamed remapped mapped value union should not depend on binder spelling: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn mapped_indexed_access_discriminated_union_reports_outer_assignment() {
     let source = r#"
 type Pairs<T> = {
