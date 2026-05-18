@@ -78,10 +78,29 @@ impl<'a> Printer<'a> {
                 }
                 first = false;
                 self.write(&temp_name);
-                self.write(" = void 0");
-                // Emit the destructured bindings (e.g., `, a = _a[0], b = _a[1]`)
-                if let Some(pattern_node) = self.arena.get(decl.name) {
-                    self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
+                let downlevel_array_binding = self.ctx.options.downlevel_iteration
+                    && self
+                        .arena
+                        .get(decl.name)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN);
+                if downlevel_array_binding {
+                    self.write(" = ");
+                    self.write_helper("__read");
+                    self.write("(void 0");
+                    if let Some(pattern_node) = self.arena.get(decl.name)
+                        && let Some(limit) = self.binding_pattern_read_limit(pattern_node)
+                    {
+                        self.write(", ");
+                        self.write_usize(limit);
+                    }
+                    self.write(")");
+                    self.emit_es5_destructuring_with_read_tail(decl.name, &temp_name);
+                } else {
+                    self.write(" = void 0");
+                    // Emit the destructured bindings (e.g., `, a = _a[0], b = _a[1]`)
+                    if let Some(pattern_node) = self.arena.get(decl.name) {
+                        self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
+                    }
                 }
             } else {
                 if first {
