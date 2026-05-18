@@ -67,6 +67,9 @@ export function semanticFamiliesForFile(file, root, sourceCache = new Map()) {
   ) {
     return ["unknown"];
   }
+  if (!fs.statSync(candidatePath).isFile()) {
+    return ["unknown"];
+  }
 
   let source = sourceCache.get(candidatePath);
   if (source === undefined) {
