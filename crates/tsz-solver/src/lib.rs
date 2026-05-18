@@ -239,7 +239,10 @@ pub use intern::type_factory::*;
 pub use narrowing::*;
 pub use objects::*;
 pub use operations::compound_assignment;
-pub use operations::compound_assignment::*;
+pub use operations::compound_assignment::{
+    fallback_compound_assignment_result, is_assignment_operator, is_compound_assignment_operator,
+    is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
+};
 pub use operations::expression_ops;
 pub use operations::expression_ops::*;
 pub use operations::{
