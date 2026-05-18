@@ -171,6 +171,9 @@ mod jsdoc_this_arrow_tests;
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
 #[cfg(test)]
+#[path = "tests/lib_abstract_member_ts2515_tests.rs"]
+mod lib_abstract_member_ts2515_tests;
+#[cfg(test)]
 #[path = "../tests/literal_application_alias_display_tests.rs"]
 mod literal_application_alias_display_tests;
 #[cfg(test)]
@@ -483,6 +486,9 @@ mod in_narrow_bare_type_param_chained_tests;
 #[path = "../tests/interface_extends_array_json_tests.rs"]
 mod interface_extends_array_json_tests;
 #[cfg(test)]
+#[path = "tests/intersection_callable_constraint_ts2344_tests.rs"]
+mod intersection_callable_constraint_ts2344_tests;
+#[cfg(test)]
 #[path = "../tests/intersection_signatures.rs"]
 mod intersection_signatures;
 #[cfg(test)]
@@ -599,6 +605,9 @@ mod property_alias_display_tests;
 #[cfg(test)]
 #[path = "../tests/recursive_alias_application_target_display_tests.rs"]
 mod recursive_alias_application_target_display_tests;
+#[cfg(test)]
+#[path = "tests/recursive_path_default_type_param_tests.rs"]
+mod recursive_path_default_type_param_tests;
 #[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;

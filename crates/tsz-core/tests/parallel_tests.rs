@@ -4852,6 +4852,187 @@ fn test_merge_deterministic_global_namespace() {
     }
 }
 
+/// Regression: when the same namespace member is declared in two sibling lib
+/// files (the parent namespace already merges across files), the global merge
+/// must collapse the nested declarations into one symbol carrying both
+/// declarations. Without this, property lookup on the namespace-scoped type
+/// reports a different shape depending on which lib's declaration won the
+/// initial allocation race — mirroring the real-world regression where
+/// `Intl.ResolvedDateTimeFormatOptions` was split between
+/// `lib.es5.d.ts` (carrying `calendar`, `numberingSystem`, ...) and
+/// `lib.es2021.intl.d.ts` (carrying `dateStyle`, `formatMatcher`, ...) and
+/// only one half survived in the merged shape.
+#[test]
+fn lib_merge_collapses_same_named_nested_interfaces_across_lib_files() {
+    fn assert_merged(namespace: &str, type_name: &str, members_a: &str, members_b: &str) {
+        let src_a =
+            format!("declare namespace {namespace} {{ interface {type_name} {{ {members_a} }} }}");
+        let src_b =
+            format!("declare namespace {namespace} {{ interface {type_name} {{ {members_b} }} }}");
+
+        let lib_files = vec![
+            std::sync::Arc::new(crate::lib_loader::LibFile::from_source(
+                "lib.a.d.ts".to_string(),
+                src_a,
+            )),
+            std::sync::Arc::new(crate::lib_loader::LibFile::from_source(
+                "lib.b.d.ts".to_string(),
+                src_b,
+            )),
+        ];
+
+        let program = merge_bind_results(parse_and_bind_parallel_with_libs(
+            vec![("main.ts".to_string(), String::new())],
+            &lib_files,
+        ));
+
+        let ns_id = program
+            .globals
+            .get(namespace)
+            .unwrap_or_else(|| panic!("namespace {namespace} should be a global lib symbol"));
+        let ns_sym = program
+            .symbols
+            .get(ns_id)
+            .unwrap_or_else(|| panic!("namespace {namespace} symbol must exist"));
+
+        let exports = ns_sym
+            .exports
+            .as_ref()
+            .unwrap_or_else(|| panic!("namespace {namespace} must have exports"));
+        let type_id = exports
+            .get(type_name)
+            .unwrap_or_else(|| panic!("{namespace}.{type_name} must be exported"));
+
+        // The merged interface symbol must carry distinct declarations from
+        // BOTH lib files. `symbol.declarations` deduplicates by raw NodeIndex
+        // which can coincide across arenas, so verify via the (symbol, decl)
+        // → arenas map: two declarations from sibling lib files must show up
+        // as either two NodeIndex entries or one NodeIndex entry with two
+        // arenas.
+        let type_sym = program
+            .symbols
+            .get(type_id)
+            .unwrap_or_else(|| panic!("{namespace}.{type_name} symbol must exist"));
+        let total_arena_decls: usize = type_sym
+            .declarations
+            .iter()
+            .map(|&decl_idx| {
+                program
+                    .declaration_arenas
+                    .get(&(type_id, decl_idx))
+                    .map_or(0, |v| v.len())
+            })
+            .sum();
+        assert_eq!(
+            total_arena_decls,
+            2,
+            "{namespace}.{type_name} should hold both lib declarations across arenas, \
+             got declarations={:?} and arena counts={:?}",
+            type_sym.declarations,
+            type_sym
+                .declarations
+                .iter()
+                .map(|&d| program
+                    .declaration_arenas
+                    .get(&(type_id, d))
+                    .map_or(0, |v| v.len()))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    // Original repro: `Intl.ResolvedDateTimeFormatOptions` split across two libs.
+    assert_merged(
+        "Intl",
+        "ResolvedDateTimeFormatOptions",
+        "calendar: string; numberingSystem: string;",
+        "dateStyle?: string; formatMatcher?: string;",
+    );
+
+    // Vary the namespace and type names to prove the rule isn't keyed on
+    // any particular spelling.
+    assert_merged(
+        "MyOwnNS",
+        "Config",
+        "host: string; port: number;",
+        "useTls: boolean; retries: number;",
+    );
+
+    // Renamed sibling namespace under a different alias.
+    assert_merged(
+        "Reflect2",
+        "Capability",
+        "read: boolean;",
+        "write: boolean;",
+    );
+}
+
+/// Negative case for the nested-merge rule: two `Foo` interfaces nested
+/// inside *different* namespaces must remain distinct, even after the merge.
+/// Without keying on the parent's global id, both `Foo`s would collapse and
+/// `NsA.Foo` would gain members from `NsB.Foo`.
+#[test]
+fn lib_merge_does_not_collapse_nested_interfaces_under_different_namespaces() {
+    let lib_files = vec![
+        std::sync::Arc::new(crate::lib_loader::LibFile::from_source(
+            "lib.a.d.ts".to_string(),
+            "declare namespace NsA { interface Foo { onlyA: string; } }".to_string(),
+        )),
+        std::sync::Arc::new(crate::lib_loader::LibFile::from_source(
+            "lib.b.d.ts".to_string(),
+            "declare namespace NsB { interface Foo { onlyB: number; } }".to_string(),
+        )),
+    ];
+
+    let program = merge_bind_results(parse_and_bind_parallel_with_libs(
+        vec![("main.ts".to_string(), String::new())],
+        &lib_files,
+    ));
+
+    let lookup = |ns: &str, type_name: &str| -> SymbolId {
+        let ns_id = program.globals.get(ns).expect("namespace");
+        let ns_sym = program.symbols.get(ns_id).expect("namespace symbol");
+        ns_sym
+            .exports
+            .as_ref()
+            .expect("exports")
+            .get(type_name)
+            .expect("type export")
+    };
+
+    let a_id = lookup("NsA", "Foo");
+    let b_id = lookup("NsB", "Foo");
+    assert_ne!(
+        a_id, b_id,
+        "NsA.Foo and NsB.Foo must remain distinct symbols; \
+         the nested-merge key (global parent id, name) must scope them by parent",
+    );
+
+    let a_sym = program.symbols.get(a_id).expect("NsA.Foo");
+    let b_sym = program.symbols.get(b_id).expect("NsB.Foo");
+    let a_decl_count: usize = a_sym
+        .declarations
+        .iter()
+        .map(|&d| {
+            program
+                .declaration_arenas
+                .get(&(a_id, d))
+                .map_or(0, |v| v.len())
+        })
+        .sum();
+    let b_decl_count: usize = b_sym
+        .declarations
+        .iter()
+        .map(|&d| {
+            program
+                .declaration_arenas
+                .get(&(b_id, d))
+                .map_or(0, |v| v.len())
+        })
+        .sum();
+    assert_eq!(a_decl_count, 1, "NsA.Foo should hold one declaration");
+    assert_eq!(b_decl_count, 1, "NsB.Foo should hold one declaration");
+}
+
 #[test]
 fn test_skeleton_index_estimated_size_bytes_is_nonzero() {
     let files = vec![

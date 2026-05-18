@@ -99,115 +99,81 @@ elif [[ "$PROFILE" == "release" ]]; then
 fi
 TSZ_BIN="$TARGET_DIR/$profile_dir/tsz"
 
-generate_bct_stress_file() {
-    local count="$1"
-    local output="$2"
-
-    cat > "$output" << 'HEADER'
-// Pre-commit BCT microbenchmark
-class Base { base: string = ''; }
-HEADER
-
-    for ((i=0; i<count; i++)); do
-        echo "class Derived$i extends Base { prop$i: number = $i; }" >> "$output"
-    done
-    echo "" >> "$output"
-
-    echo -n "const items = [" >> "$output"
-    for ((i=0; i<count; i++)); do
-        if [ "$i" -gt 0 ]; then echo -n ", " >> "$output"; fi
-        echo -n "new Derived$i()" >> "$output"
-    done
-    echo "];" >> "$output"
-    echo "" >> "$output"
-
-    echo "function pickOne(index: number) {" >> "$output"
-    for ((i=0; i<count; i++)); do
-        echo "  if (index === $i) return new Derived$i();" >> "$output"
-    done
-    echo "  return new Base();" >> "$output"
-    echo "}" >> "$output"
-    echo "" >> "$output"
-
-    echo "function identity<T>(x: T): T { return x; }" >> "$output"
-    echo -n "const mixed = [" >> "$output"
-    for ((i=0; i<count; i++)); do
-        if [ "$i" -gt 0 ]; then echo -n ", " >> "$output"; fi
-        echo -n "identity(new Derived$i())" >> "$output"
-    done
-    echo "];" >> "$output"
-    echo "" >> "$output"
-
-    echo "declare const flag: number;" >> "$output"
-    echo -n "const chosen = " >> "$output"
-    for ((i=0; i<count; i++)); do
-        echo -n "flag === $i ? new Derived$i() : " >> "$output"
-    done
-    echo "new Base();" >> "$output"
-    echo "" >> "$output"
-
-    echo "const _base: Base = items[0];" >> "$output"
-    echo "const _picked: Base = pickOne(0);" >> "$output"
-    echo "const _chosen: Base = chosen;" >> "$output"
-}
-
-generate_constraint_conflict_file() {
-    local count="$1"
-    local output="$2"
-
-    cat > "$output" << 'HEADER'
-// Pre-commit constraint conflict microbenchmark
-HEADER
-
-    for ((i=0; i<count; i++)); do
-        echo "interface Constraint$i { key$i: string; shared: number; }" >> "$output"
-    done
-    echo "" >> "$output"
-
-    for ((i=0; i<count; i++)); do
-        echo "declare function constrain$i<T extends Constraint$i>(x: T): T;" >> "$output"
-    done
-    echo "" >> "$output"
-
-    for ((i=0; i<count; i++)); do
-        echo -n "const obj$i = { shared: $i" >> "$output"
-        for ((j=0; j<=i && j<count; j++)); do
-            echo -n ", key$j: 'val'" >> "$output"
-        done
-        echo " };" >> "$output"
-    done
-    echo "" >> "$output"
-
-    for ((i=0; i<count; i++)); do
-        echo "const res$i = constrain$i(obj$i);" >> "$output"
-    done
-    echo "" >> "$output"
-
-    echo -n "function multiConstrained<T extends " >> "$output"
-    for ((i=0; i<count; i++)); do
-        if [ "$i" -gt 0 ]; then echo -n " & " >> "$output"; fi
-        echo -n "Constraint$i" >> "$output"
-    done
-    echo ">(x: T): T { return x; }" >> "$output"
-    echo "" >> "$output"
-
-    echo -n "const allConstraints = { shared: 0" >> "$output"
-    for ((i=0; i<count; i++)); do
-        echo -n ", key$i: 'val'" >> "$output"
-    done
-    echo " };" >> "$output"
-    echo "const _result = multiConstrained(allConstraints);" >> "$output"
-}
+# Fixture generators are shared with bench-vs-tsgo.sh. One source of truth
+# keeps the regression gate aligned with the larger benchmark suite, so a case
+# that locks in a hotspot here uses the same shape that bench-vs-tsgo measures.
+# shellcheck source=lib/synthetic-generators.sh
+source "$SCRIPT_DIR/lib/synthetic-generators.sh"
 
 temp_dir="$(mktemp -d)"
 trap 'rm -rf "$temp_dir"' EXIT
 
-large_cfa="$ROOT_DIR/TypeScript/tests/cases/compiler/largeControlFlowGraph.ts"
-bct_case="$temp_dir/bct_100.ts"
-constraint_case="$temp_dir/constraint_conflicts_100.ts"
+# Each microbench case targets a distinct perf hotspot that has surfaced in
+# project benchmarks. Sizes are small enough for fast local iteration but
+# large enough that a real algorithmic regression cannot hide inside noise.
+declare -a MICROBENCH_CASE_NAMES=()
+declare -a MICROBENCH_CASE_FILES=()
 
-generate_bct_stress_file 100 "$bct_case"
-generate_constraint_conflict_file 100 "$constraint_case"
+# Add a case backed by an existing fixture file (e.g. a TypeScript submodule
+# sample). Used for fixtures that aren't shell-generated.
+register_case() {
+    MICROBENCH_CASE_NAMES+=("$1")
+    MICROBENCH_CASE_FILES+=("$2")
+}
+
+# Generate a fixture via one of the shared generators and register it. The
+# generator is invoked with any sizing arguments followed by the output path,
+# which matches the generator function signature in lib/synthetic-generators.sh.
+register_generated() {
+    local case_name="$1"
+    local generator="$2"
+    shift 2
+    local path="$temp_dir/$case_name.ts"
+    "$generator" "$@" "$path"
+    register_case "$case_name" "$path"
+}
+
+# largeControlFlowGraph is the only non-generated case; it comes from the
+# TypeScript submodule. Keep it first so its baseline entry name is stable.
+register_case "largeControlFlowGraph" \
+    "$ROOT_DIR/TypeScript/tests/cases/compiler/largeControlFlowGraph.ts"
+
+# Generated synthetic cases. Each line: register_generated <case-name> <generator> [size].
+# The case name is also the basename of the .ts file under $temp_dir.
+register_generated "bct_candidates_100"            generate_bct_stress_file                  100
+register_generated "constraint_conflicts_100"      generate_constraint_conflict_file         100
+register_generated "classes_30"                    generate_synthetic_file                    30
+register_generated "complex_generics_25"           generate_complex_file                      25
+# DeepPartial+optional chain triggers recursive mapped-type evaluation per
+# property access; small N is enough to lock in regressions while keeping
+# per-case runtime under the local-iteration budget.
+register_generated "deeppartial_optional_chain_15" generate_deeppartial_optional_chain_file   15
+register_generated "shallow_optional_chain_15"     generate_shallow_optional_chain_file       15
+register_generated "typed_arrays"                  generate_typed_arrays_file
+register_generated "union_members_50"              generate_union_file                        50
+# Larger union variant exercises the algorithmic cliff that the 50-member
+# variant cannot reach; both are kept because a regression often appears only
+# at one of the two scales.
+register_generated "union_members_100"             generate_union_file                       100
+register_generated "recursive_generic_depth_20"    generate_recursive_generic_file            20
+register_generated "conditional_distribution_40"   generate_conditional_distribution_file     40
+register_generated "mapped_type_keys_80"           generate_mapped_type_file                  80
+# Larger mapped-keys variant probes the MAX_MAPPED_KEYS scaling regime;
+# kept just under the runtime budget because each application iterates every
+# property through a non-trivial homomorphic body.
+register_generated "mapped_type_keys_150"          generate_mapped_type_file                 150
+register_generated "template_literal_20"           generate_template_literal_file             20
+register_generated "deep_subtype_depth_25"         generate_deep_subtype_file                 25
+register_generated "intersection_25"               generate_intersection_file                 25
+register_generated "infer_stress_15"               generate_infer_stress_file                 15
+register_generated "cfa_branches_40"               generate_cfa_stress_file                   40
+# Complex-template mapped types apply 6+ non-trivial mapped types over each
+# property (FormField recurses via nested conditionals); per-case cost is
+# the highest in the gate, so size is kept low.
+register_generated "mapped_complex_template_15"    generate_mapped_complex_template_file      15
+register_generated "keyof_chain_20"                generate_keyof_chain_file                  20
+register_generated "overload_resolution_25"        generate_overload_resolution_file          25
+register_generated "object_literal_assign_20"      generate_object_literal_assign_file        20
 
 if [[ "$NO_BUILD" != true ]]; then
     echo "   Building benchmark binary (profile=$PROFILE)..."
@@ -224,6 +190,11 @@ if [[ "$UPDATE_BASELINE" == true ]]; then
     update_flag="1"
 fi
 
+case_args=()
+for idx in "${!MICROBENCH_CASE_NAMES[@]}"; do
+    case_args+=(--case "${MICROBENCH_CASE_NAMES[$idx]}=${MICROBENCH_CASE_FILES[$idx]}")
+done
+
 node "$SCRIPT_DIR/precommit-microbench.mjs" \
     --bin "$TSZ_BIN" \
     --baseline "$BASELINE_FILE" \
@@ -232,6 +203,4 @@ node "$SCRIPT_DIR/precommit-microbench.mjs" \
     --warmup "$WARMUP" \
     --update-baseline "$update_flag" \
     --profile "$PROFILE" \
-    --case "largeControlFlowGraph=$large_cfa" \
-    --case "bct_candidates_100=$bct_case" \
-    --case "constraint_conflicts_100=$constraint_case"
+    "${case_args[@]}"
