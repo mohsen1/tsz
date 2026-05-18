@@ -135,6 +135,9 @@ function ensureManifestEntries(label, manifest) {
   const entries = manifest?.entries;
   const generated = Number(manifest?.generated);
   const expectedGenerated = Number(manifest?.expectedGenerated);
+  const requiredChallengeFields = label === "solution"
+    ? ["level", "title"]
+    : ["level", "slug"];
 
   if (!Array.isArray(entries) || entries.length === 0) {
     console.error(`error: Type Challenges ${label} manifest has no entries`);
@@ -192,6 +195,15 @@ function ensureManifestEntries(label, manifest) {
       process.exit(1);
     }
     sources.add(normalizedSource);
+
+    for (const field of requiredChallengeFields) {
+      if (challengeField(entry, field)) continue;
+
+      console.error(
+        `error: Type Challenges ${label} manifest entry ${index + 1} has no challenge ${field}`,
+      );
+      process.exit(1);
+    }
   }
 }
 
