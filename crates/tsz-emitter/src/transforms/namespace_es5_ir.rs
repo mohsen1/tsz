@@ -56,11 +56,14 @@ use namespace_es5_ir_helpers::*;
 
 use std::cell::RefCell;
 
+use crate::emitter::ScopedConstEnum;
+use crate::enums::evaluator::EnumValue;
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::class_es5_ir::{AstToIr, ES5ClassTransformer};
 use crate::transforms::enum_es5_ir::transform_enum_to_ir;
 use crate::transforms::ir::{EnumMemberValue, IRNode, IRParam, IRPropertyKey};
 use crate::transforms::ir_printer::IRPrinter;
+use rustc_hash::FxHashMap;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
@@ -107,6 +110,9 @@ pub struct NamespaceES5Transformer<'a> {
     /// (e.g., from computed property lowering inside object literals)
     hoisted_temps: RefCell<Vec<String>>,
     default_exported_func_names: std::collections::HashSet<String>,
+    const_enum_values: FxHashMap<String, Vec<ScopedConstEnum>>,
+    const_enum_import_aliases: FxHashMap<String, String>,
+    remove_comments: bool,
 }
 
 impl<'a> NamespaceES5Transformer<'a> {
@@ -122,6 +128,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             emit_decorator_metadata: false,
             hoisted_temps: RefCell::new(Vec::new()),
             default_exported_func_names: std::collections::HashSet::new(),
+            const_enum_values: FxHashMap::default(),
+            const_enum_import_aliases: FxHashMap::default(),
+            remove_comments: false,
         }
     }
 
@@ -137,6 +146,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             emit_decorator_metadata: false,
             hoisted_temps: RefCell::new(Vec::new()),
             default_exported_func_names: std::collections::HashSet::new(),
+            const_enum_values: FxHashMap::default(),
+            const_enum_import_aliases: FxHashMap::default(),
+            remove_comments: false,
         }
     }
 
@@ -164,6 +176,19 @@ impl<'a> NamespaceES5Transformer<'a> {
 
     pub fn set_default_exported_func_names(&mut self, names: std::collections::HashSet<String>) {
         self.default_exported_func_names = names;
+    }
+
+    pub(crate) fn set_const_enum_facts(
+        &mut self,
+        values: FxHashMap<String, Vec<ScopedConstEnum>>,
+        import_aliases: FxHashMap<String, String>,
+    ) {
+        self.const_enum_values = values;
+        self.const_enum_import_aliases = import_aliases;
+    }
+
+    pub const fn set_remove_comments(&mut self, remove_comments: bool) {
+        self.remove_comments = remove_comments;
     }
 
     /// Set exported variable names from prior blocks of the same namespace.
@@ -530,6 +555,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         // Transform the innermost body - use the last name part for member exports
         let mut body = self.transform_namespace_body(innermost_body, &name_parts);
+        self.rewrite_const_enum_accesses(&mut body);
 
         // Skip non-instantiated namespaces (only contain types).
         // A namespace is instantiated if it has any value declarations
@@ -954,6 +980,8 @@ impl<'a> NamespaceES5Transformer<'a> {
                     stmt_idx,
                     &declared_names,
                 );
+                let erased_import_alias =
+                    ir.is_none() && is_namespace_import_equals_statement(self.arena, stmt_node);
 
                 if ir.is_some() {
                     for c in leading_comments {
@@ -1012,8 +1040,10 @@ impl<'a> NamespaceES5Transformer<'a> {
                     // statement kinds.)
                 }
 
-                for c in trailing_standalone {
-                    result.push(c);
+                if !erased_import_alias {
+                    for c in trailing_standalone {
+                        result.push(c);
+                    }
                 }
 
                 // For class-like members the class sub-emitter handles its own
@@ -1177,6 +1207,10 @@ impl<'a> NamespaceES5Transformer<'a> {
         import_idx: NodeIndex,
     ) -> Option<IRNode> {
         let import = self.arena.get_import_decl_at(import_idx)?;
+        if !self.import_equals_target_has_runtime_value(import_idx, import.module_specifier) {
+            return None;
+        }
+
         let alias = get_identifier_text(self.arena, import.import_clause)?;
         let target_expr = AstToIr::new(self.arena).convert_expression(import.module_specifier);
         let is_exported = self
@@ -1205,21 +1239,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         let import = self.arena.get_import_decl_at(import_idx)?;
         let alias = get_identifier_text(self.arena, import.import_clause)?;
 
-        // Skip export-import aliases that point to type-only namespaces.
-        // These are emitted as no-op in TypeScript emit output.
-        let should_emit_alias = if let Some(target_parts) =
-            collect_qualified_name_parts(self.arena, import.module_specifier)
-        {
-            if let Some(body) = namespace_body_by_name(self.arena, &target_parts) {
-                body_has_value_declarations(self.arena, body)
-            } else {
-                true
-            }
-        } else {
-            true
-        };
-
-        if !should_emit_alias {
+        if !self.import_equals_target_has_runtime_value(import_idx, import.module_specifier) {
             return None;
         }
 
@@ -1230,6 +1250,408 @@ impl<'a> NamespaceES5Transformer<'a> {
             name: alias.into(),
             value: Box::new(target_expr),
         })
+    }
+
+    fn import_equals_target_has_runtime_value(
+        &self,
+        import_idx: NodeIndex,
+        target_idx: NodeIndex,
+    ) -> bool {
+        let Some(target_parts) = collect_qualified_name_parts(self.arena, target_idx) else {
+            return true;
+        };
+
+        let namespace_parts = self.containing_namespace_parts(import_idx);
+        if !namespace_parts.is_empty() {
+            let mut relative_parts = namespace_parts;
+            relative_parts.extend(target_parts.iter().cloned());
+            if let Some(has_runtime) = entity_path_has_runtime_value(self.arena, &relative_parts) {
+                return has_runtime;
+            }
+        }
+
+        entity_path_has_runtime_value(self.arena, &target_parts).unwrap_or(true)
+    }
+
+    fn containing_namespace_parts(&self, node_idx: NodeIndex) -> Vec<String> {
+        let mut groups = Vec::new();
+        let mut current = self.arena.parent_of(node_idx).unwrap_or(NodeIndex::NONE);
+
+        while current != NodeIndex::NONE {
+            let Some(node) = self.arena.get(current) else {
+                break;
+            };
+            if node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module) = self.arena.get_module(node)
+                && let Some(parts) = self.flatten_module_name(module.name)
+            {
+                groups.push(parts);
+            }
+            current = self.arena.parent_of(current).unwrap_or(NodeIndex::NONE);
+        }
+
+        groups.reverse();
+        groups.into_iter().flatten().collect()
+    }
+
+    fn rewrite_const_enum_accesses(&self, nodes: &mut [IRNode]) {
+        if self.const_enum_values.is_empty() {
+            return;
+        }
+
+        for node in nodes {
+            self.rewrite_const_enum_accesses_in_node(node);
+        }
+    }
+
+    fn rewrite_const_enum_accesses_in_node(&self, node: &mut IRNode) {
+        if let Some(replacement) = self.const_enum_replacement(node) {
+            *node = replacement;
+            return;
+        }
+
+        match node {
+            IRNode::BinaryExpr { left, right, .. }
+            | IRNode::LogicalOr { left, right }
+            | IRNode::LogicalAnd { left, right } => {
+                self.rewrite_const_enum_accesses_in_node(left);
+                self.rewrite_const_enum_accesses_in_node(right);
+            }
+            IRNode::PrefixUnaryExpr { operand, .. }
+            | IRNode::PostfixUnaryExpr { operand, .. }
+            | IRNode::Parenthesized(operand)
+            | IRNode::SpreadElement(operand)
+            | IRNode::ExpressionStatement(operand)
+            | IRNode::ThrowStatement(operand)
+            | IRNode::PrivateFieldGet {
+                receiver: operand, ..
+            }
+            | IRNode::PrivateStaticFieldGet {
+                receiver: operand, ..
+            }
+            | IRNode::PrivateFieldIn { obj: operand, .. } => {
+                self.rewrite_const_enum_accesses_in_node(operand);
+            }
+            IRNode::CallExpr { callee, arguments }
+            | IRNode::NewExpr {
+                callee, arguments, ..
+            } => {
+                self.rewrite_const_enum_accesses_in_node(callee);
+                for arg in arguments {
+                    self.rewrite_const_enum_accesses_in_node(arg);
+                }
+            }
+            IRNode::PropertyAccess { object, .. } => {
+                self.rewrite_const_enum_accesses_in_node(object);
+            }
+            IRNode::ElementAccess { object, index } => {
+                self.rewrite_const_enum_accesses_in_node(object);
+                self.rewrite_const_enum_accesses_in_node(index);
+            }
+            IRNode::ConditionalExpr {
+                condition,
+                when_true,
+                when_false,
+            } => {
+                self.rewrite_const_enum_accesses_in_node(condition);
+                self.rewrite_const_enum_accesses_in_node(when_true);
+                self.rewrite_const_enum_accesses_in_node(when_false);
+            }
+            IRNode::CommaExpr(items)
+            | IRNode::CommaExprMultiline(items)
+            | IRNode::ArrayLiteral(items)
+            | IRNode::VarDeclList(items)
+            | IRNode::Block(items)
+            | IRNode::Sequence(items)
+            | IRNode::StaticBlockIIFE { statements: items } => {
+                for item in items {
+                    self.rewrite_const_enum_accesses_in_node(item);
+                }
+            }
+            IRNode::ObjectLiteral { properties, .. } => {
+                for property in properties {
+                    if let IRPropertyKey::Computed(key) = &mut property.key {
+                        self.rewrite_const_enum_accesses_in_node(key);
+                    }
+                    self.rewrite_const_enum_accesses_in_node(&mut property.value);
+                }
+            }
+            IRNode::FunctionExpr {
+                parameters, body, ..
+            }
+            | IRNode::FunctionDecl {
+                parameters, body, ..
+            } => {
+                for param in parameters {
+                    if let Some(default_value) = &mut param.default_value {
+                        self.rewrite_const_enum_accesses_in_node(default_value);
+                    }
+                }
+                for item in body {
+                    self.rewrite_const_enum_accesses_in_node(item);
+                }
+            }
+            IRNode::VarDecl { initializer, .. } => {
+                if let Some(initializer) = initializer {
+                    self.rewrite_const_enum_accesses_in_node(initializer);
+                }
+            }
+            IRNode::ReturnStatement(expr) => {
+                if let Some(expr) = expr {
+                    self.rewrite_const_enum_accesses_in_node(expr);
+                }
+            }
+            IRNode::IfStatement {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                self.rewrite_const_enum_accesses_in_node(condition);
+                self.rewrite_const_enum_accesses_in_node(then_branch);
+                if let Some(else_branch) = else_branch {
+                    self.rewrite_const_enum_accesses_in_node(else_branch);
+                }
+            }
+            IRNode::SwitchStatement { expression, cases } => {
+                self.rewrite_const_enum_accesses_in_node(expression);
+                for case in cases {
+                    if let Some(test) = &mut case.test {
+                        self.rewrite_const_enum_accesses_in_node(test);
+                    }
+                    for statement in &mut case.statements {
+                        self.rewrite_const_enum_accesses_in_node(statement);
+                    }
+                }
+            }
+            IRNode::ForStatement {
+                initializer,
+                condition,
+                incrementor,
+                body,
+            } => {
+                if let Some(initializer) = initializer {
+                    self.rewrite_const_enum_accesses_in_node(initializer);
+                }
+                if let Some(condition) = condition {
+                    self.rewrite_const_enum_accesses_in_node(condition);
+                }
+                if let Some(incrementor) = incrementor {
+                    self.rewrite_const_enum_accesses_in_node(incrementor);
+                }
+                self.rewrite_const_enum_accesses_in_node(body);
+            }
+            IRNode::ForInOfStatement {
+                initializer,
+                expression,
+                body,
+                ..
+            } => {
+                self.rewrite_const_enum_accesses_in_node(initializer);
+                self.rewrite_const_enum_accesses_in_node(expression);
+                self.rewrite_const_enum_accesses_in_node(body);
+            }
+            IRNode::WhileStatement { condition, body }
+            | IRNode::DoWhileStatement { body, condition } => {
+                self.rewrite_const_enum_accesses_in_node(condition);
+                self.rewrite_const_enum_accesses_in_node(body);
+            }
+            IRNode::TryStatement {
+                try_block,
+                catch_clause,
+                finally_block,
+            } => {
+                self.rewrite_const_enum_accesses_in_node(try_block);
+                if let Some(catch_clause) = catch_clause {
+                    for statement in &mut catch_clause.body {
+                        self.rewrite_const_enum_accesses_in_node(statement);
+                    }
+                }
+                if let Some(finally_block) = finally_block {
+                    self.rewrite_const_enum_accesses_in_node(finally_block);
+                }
+            }
+            IRNode::LabeledStatement { statement, .. } => {
+                self.rewrite_const_enum_accesses_in_node(statement);
+            }
+            IRNode::ES5ClassIIFE {
+                base_class,
+                body,
+                computed_prop_temp_inits,
+                deferred_static_blocks,
+                ..
+            }
+            | IRNode::ES5ClassAssignment {
+                base_class,
+                body,
+                computed_prop_temp_inits,
+                deferred_static_blocks,
+                ..
+            } => {
+                if let Some(base_class) = base_class {
+                    self.rewrite_const_enum_accesses_in_node(base_class);
+                }
+                for item in body {
+                    self.rewrite_const_enum_accesses_in_node(item);
+                }
+                for item in computed_prop_temp_inits {
+                    self.rewrite_const_enum_accesses_in_node(item);
+                }
+                for item in deferred_static_blocks {
+                    self.rewrite_const_enum_accesses_in_node(item);
+                }
+            }
+            IRNode::ES5ClassApply {
+                factory,
+                base_class,
+            } => {
+                self.rewrite_const_enum_accesses_in_node(factory);
+                self.rewrite_const_enum_accesses_in_node(base_class);
+            }
+            IRNode::PrototypeMethod {
+                method_name,
+                function,
+                ..
+            }
+            | IRNode::StaticMethod {
+                method_name,
+                function,
+                ..
+            } => {
+                if let crate::transforms::ir::IRMethodName::Computed(name) = method_name {
+                    self.rewrite_const_enum_accesses_in_node(name);
+                }
+                self.rewrite_const_enum_accesses_in_node(function);
+            }
+            IRNode::DefineProperty {
+                target,
+                property_name,
+                descriptor,
+                ..
+            } => {
+                self.rewrite_const_enum_accesses_in_node(target);
+                if let crate::transforms::ir::IRMethodName::Computed(name) = property_name {
+                    self.rewrite_const_enum_accesses_in_node(name);
+                }
+                if let Some(get) = &mut descriptor.get {
+                    self.rewrite_const_enum_accesses_in_node(get);
+                }
+                if let Some(set) = &mut descriptor.set {
+                    self.rewrite_const_enum_accesses_in_node(set);
+                }
+                if let Some(value) = &mut descriptor.value {
+                    self.rewrite_const_enum_accesses_in_node(value);
+                }
+            }
+            IRNode::AwaiterCall {
+                this_arg,
+                generator_body,
+                ..
+            } => {
+                self.rewrite_const_enum_accesses_in_node(this_arg);
+                self.rewrite_const_enum_accesses_in_node(generator_body);
+            }
+            IRNode::GeneratorBody { cases, .. } => {
+                for case in cases {
+                    for statement in &mut case.statements {
+                        self.rewrite_const_enum_accesses_in_node(statement);
+                    }
+                }
+            }
+            IRNode::GeneratorOp { value, .. } => {
+                if let Some(value) = value {
+                    self.rewrite_const_enum_accesses_in_node(value);
+                }
+            }
+            IRNode::IfBreak { condition, .. } => {
+                self.rewrite_const_enum_accesses_in_node(condition);
+            }
+            IRNode::PrivateFieldSet {
+                receiver, value, ..
+            } => {
+                self.rewrite_const_enum_accesses_in_node(receiver);
+                self.rewrite_const_enum_accesses_in_node(value);
+            }
+            IRNode::PrivateStaticFieldSet {
+                receiver,
+                state,
+                value,
+                ..
+            } => {
+                self.rewrite_const_enum_accesses_in_node(receiver);
+                self.rewrite_const_enum_accesses_in_node(state);
+                self.rewrite_const_enum_accesses_in_node(value);
+            }
+            IRNode::WeakMapSet { key, value, .. } => {
+                self.rewrite_const_enum_accesses_in_node(key);
+                self.rewrite_const_enum_accesses_in_node(value);
+            }
+            IRNode::EnumIIFE { members, .. } => {
+                for member in members {
+                    if let EnumMemberValue::Computed(expr) = &mut member.value {
+                        self.rewrite_const_enum_accesses_in_node(expr);
+                    }
+                }
+            }
+            IRNode::NamespaceIIFE { body, .. } => {
+                for item in body {
+                    self.rewrite_const_enum_accesses_in_node(item);
+                }
+            }
+            IRNode::NamespaceExport { value, .. } => {
+                self.rewrite_const_enum_accesses_in_node(value);
+            }
+            _ => {}
+        }
+    }
+
+    fn const_enum_replacement(&self, node: &IRNode) -> Option<IRNode> {
+        let IRNode::PropertyAccess { object, property } = node else {
+            return None;
+        };
+        let enum_path = ir_access_path(object)?;
+        let values = self.lookup_const_enum_values_for_ir(&enum_path)?;
+        let value = values.get(property.as_ref())?;
+        let literal = value.to_js_literal();
+        if self.remove_comments {
+            return Some(IRNode::Raw(literal.into()));
+        }
+        Some(IRNode::Raw(
+            format!("{literal} /* {enum_path}.{property} */").into(),
+        ))
+    }
+
+    fn lookup_const_enum_values_for_ir(
+        &self,
+        enum_path: &str,
+    ) -> Option<&FxHashMap<String, EnumValue>> {
+        if let Some(values) = self.lookup_const_enum_values_direct(enum_path) {
+            return Some(values);
+        }
+
+        if let Some(dot_pos) = enum_path.find('.') {
+            let first = &enum_path[..dot_pos];
+            let rest = &enum_path[dot_pos + 1..];
+            if let Some(target) = self.const_enum_import_aliases.get(first) {
+                let resolved = format!("{target}.{rest}");
+                return self.lookup_const_enum_values_direct(&resolved);
+            }
+        } else if let Some(target) = self.const_enum_import_aliases.get(enum_path) {
+            return self.lookup_const_enum_values_direct(target);
+        }
+
+        None
+    }
+
+    fn lookup_const_enum_values_direct(
+        &self,
+        enum_path: &str,
+    ) -> Option<&FxHashMap<String, EnumValue>> {
+        let entries = self.const_enum_values.get(enum_path)?;
+        entries
+            .iter()
+            .find(|entry| entry.scope_start == 0 && entry.scope_end == u32::MAX)
+            .or_else(|| entries.first())
+            .map(|entry| &entry.values)
     }
 
     /// Transform a function in namespace. When `force_export` is true, the function
@@ -1506,6 +1928,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
         // Transform body
         let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
+        self.rewrite_const_enum_accesses(&mut body);
 
         // Skip non-instantiated namespaces (only contain types).
         if !body.iter().any(|n| !is_comment_node(n)) && !self.has_value_declarations(ns_data.body) {

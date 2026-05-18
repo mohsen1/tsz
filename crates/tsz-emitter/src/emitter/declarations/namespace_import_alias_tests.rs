@@ -1,4 +1,5 @@
 use crate::output::printer::{PrintOptions, Printer};
+use tsz_common::common::ScriptTarget;
 use tsz_parser::ParserState;
 
 /// When the same `import X = ...` alias is re-declared (e.g., a duplicate
@@ -56,5 +57,61 @@ fn namespace_import_alias_elided_when_shadowed_before_use() {
     assert!(
         output.contains("var Y = 12;") && output.contains("const Q = 0;"),
         "Shadowing declarations should still emit.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_relative_const_enum_aliases_inline_and_elide() {
+    let source = "namespace Root.Child {\n    export const enum E { A, B }\n    export interface I {}\n}\nnamespace Root {\n    import Local = Child.E;\n    export import ReExported = Child.E;\n    export import TypeAlias = Child.I;\n    export class Use {\n        m() {\n            const a = Local.B;\n            const b = ReExported.A;\n        }\n    }\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("var Local =") && !output.contains("Root.ReExported ="),
+        "Const-enum import aliases inside merged namespaces should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Root.TypeAlias ="),
+        "Interface import aliases inside merged namespaces should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const a = 1 /* Local.B */;")
+            && output.contains("const b = 0 /* ReExported.A */;"),
+        "Const enum aliases should still inline at usage sites.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_relative_const_enum_aliases_inline_and_elide_es5() {
+    let source = "namespace Root.Child {\n    export const enum E { A, B }\n    export interface I {}\n}\nnamespace Root {\n    import Local = Child.E;\n    export import ReExported = Child.E;\n    export import TypeAlias = Child.I;\n    export class Use {\n        m() {\n            const a = Local.B;\n            const b = ReExported.A;\n        }\n    }\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut options = PrintOptions::default();
+    options.target = ScriptTarget::ES5;
+    let mut printer = Printer::new(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("var Local =") && !output.contains("Root.ReExported ="),
+        "ES5 const-enum import aliases inside merged namespaces should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Root.TypeAlias ="),
+        "ES5 interface import aliases inside merged namespaces should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var a = 1 /* Local.B */;")
+            && output.contains("var b = 0 /* ReExported.A */;"),
+        "ES5 const enum aliases should still inline at usage sites.\nOutput:\n{output}"
     );
 }

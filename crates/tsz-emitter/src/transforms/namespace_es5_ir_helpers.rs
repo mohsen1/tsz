@@ -101,6 +101,17 @@ pub(super) fn is_namespace_like(arena: &NodeArena, node: &tsz_parser::parser::no
     false
 }
 
+pub(super) fn is_namespace_import_equals_statement(arena: &NodeArena, node: &Node) -> bool {
+    if node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+        return true;
+    }
+    node.kind == syntax_kind_ext::EXPORT_DECLARATION
+        && arena
+            .get_export_decl(node)
+            .and_then(|export| arena.get(export.export_clause))
+            .is_some_and(|inner| inner.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+}
+
 pub(super) use crate::transforms::emit_utils::identifier_text as get_identifier_text;
 
 /// Convert function parameters to IR parameters (without type annotations)
@@ -1192,6 +1203,202 @@ pub(super) fn namespace_body_by_name(
     }
 
     None
+}
+
+pub(super) fn entity_path_has_runtime_value(arena: &NodeArena, path: &[String]) -> Option<bool> {
+    if path.is_empty() {
+        return None;
+    }
+
+    if path.len() >= 2 {
+        let namespace_path = &path[..path.len() - 1];
+        let member_name = path.last()?;
+        if let Some(body) = namespace_body_by_name(arena, namespace_path)
+            && let Some(runtime) = namespace_member_has_runtime_value(arena, body, member_name)
+        {
+            return Some(runtime);
+        }
+    }
+
+    namespace_body_by_name(arena, path).map(|body| namespace_body_has_runtime_value(arena, body))
+}
+
+fn namespace_member_has_runtime_value(
+    arena: &NodeArena,
+    body_idx: NodeIndex,
+    name: &str,
+) -> Option<bool> {
+    let body_node = arena.get(body_idx)?;
+
+    if let Some(module) = arena.get_module(body_node) {
+        if get_identifier_text(arena, module.name).as_deref() == Some(name) {
+            return Some(namespace_body_has_runtime_value(arena, module.body));
+        }
+        return namespace_member_has_runtime_value(arena, module.body, name);
+    }
+
+    let block_data = arena.get_module_block(body_node)?;
+    let stmts = block_data.statements.as_ref()?;
+    let mut matched_type_only = false;
+
+    for &stmt_idx in &stmts.nodes {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            continue;
+        };
+        if let Some(runtime) = statement_has_runtime_value_for_name(arena, stmt_node, name) {
+            if runtime {
+                return Some(true);
+            }
+            matched_type_only = true;
+        }
+    }
+
+    matched_type_only.then_some(false)
+}
+
+fn namespace_body_has_runtime_value(arena: &NodeArena, body_idx: NodeIndex) -> bool {
+    let Some(body_node) = arena.get(body_idx) else {
+        return false;
+    };
+
+    if let Some(module) = arena.get_module(body_node) {
+        return namespace_body_has_runtime_value(arena, module.body);
+    }
+
+    let Some(block_data) = arena.get_module_block(body_node) else {
+        return false;
+    };
+    let Some(stmts) = block_data.statements.as_ref() else {
+        return false;
+    };
+
+    stmts.nodes.iter().any(|&stmt_idx| {
+        arena
+            .get(stmt_idx)
+            .is_some_and(|stmt_node| statement_has_any_runtime_value(arena, stmt_node))
+    })
+}
+
+fn statement_has_runtime_value_for_name(
+    arena: &NodeArena,
+    stmt_node: &Node,
+    name: &str,
+) -> Option<bool> {
+    match stmt_node.kind {
+        k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+            let export = arena.get_export_decl(stmt_node)?;
+            let inner = arena.get(export.export_clause)?;
+            statement_has_runtime_value_for_name(arena, inner, name)
+        }
+        k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+            let iface = arena.get_interface(stmt_node)?;
+            (get_identifier_text(arena, iface.name).as_deref() == Some(name)).then_some(false)
+        }
+        k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+            let alias = arena.get_type_alias(stmt_node)?;
+            (get_identifier_text(arena, alias.name).as_deref() == Some(name)).then_some(false)
+        }
+        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+            let enum_decl = arena.get_enum(stmt_node)?;
+            if get_identifier_text(arena, enum_decl.name).as_deref() != Some(name) {
+                return None;
+            }
+            Some(!arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword))
+        }
+        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+            let func = arena.get_function(stmt_node)?;
+            (get_identifier_text(arena, func.name).as_deref() == Some(name)).then_some(true)
+        }
+        k if k == syntax_kind_ext::CLASS_DECLARATION => {
+            let class = arena.get_class(stmt_node)?;
+            (get_identifier_text(arena, class.name).as_deref() == Some(name)).then_some(true)
+        }
+        k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+            variable_statement_declares_name(arena, stmt_node, name).then_some(true)
+        }
+        k if k == syntax_kind_ext::MODULE_DECLARATION => {
+            let module = arena.get_module(stmt_node)?;
+            if get_identifier_text(arena, module.name).as_deref() != Some(name) {
+                return None;
+            }
+            Some(namespace_body_has_runtime_value(arena, module.body))
+        }
+        _ => None,
+    }
+}
+
+fn statement_has_any_runtime_value(arena: &NodeArena, stmt_node: &Node) -> bool {
+    match stmt_node.kind {
+        k if k == syntax_kind_ext::EXPORT_DECLARATION => arena
+            .get_export_decl(stmt_node)
+            .and_then(|export| arena.get(export.export_clause))
+            .is_some_and(|inner| statement_has_any_runtime_value(arena, inner)),
+        k if k == syntax_kind_ext::VARIABLE_STATEMENT
+            || k == syntax_kind_ext::FUNCTION_DECLARATION
+            || k == syntax_kind_ext::CLASS_DECLARATION =>
+        {
+            true
+        }
+        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+            arena.get_enum(stmt_node).is_some_and(|enum_decl| {
+                !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
+            })
+        }
+        k if k == syntax_kind_ext::MODULE_DECLARATION => arena
+            .get_module(stmt_node)
+            .is_some_and(|module| namespace_body_has_runtime_value(arena, module.body)),
+        _ => false,
+    }
+}
+
+fn variable_statement_declares_name(arena: &NodeArena, stmt_node: &Node, name: &str) -> bool {
+    let Some(var_data) = arena.get_variable(stmt_node) else {
+        return false;
+    };
+
+    var_data.declarations.nodes.iter().any(|&decl_list_idx| {
+        let Some(decl_list_node) = arena.get(decl_list_idx) else {
+            return false;
+        };
+        let Some(decl_list) = arena.get_variable(decl_list_node) else {
+            return false;
+        };
+        decl_list.declarations.nodes.iter().any(|&decl_idx| {
+            arena
+                .get_variable_declaration_at(decl_idx)
+                .is_some_and(|decl| binding_name_contains(arena, decl.name, name))
+        })
+    })
+}
+
+fn binding_name_contains(arena: &NodeArena, name_idx: NodeIndex, expected: &str) -> bool {
+    let Some(node) = arena.get(name_idx) else {
+        return false;
+    };
+    if let Some(ident) = arena.get_identifier(node) {
+        return ident.escaped_text == expected;
+    }
+    if is_binding_pattern_kind(node.kind)
+        && let Some(pattern) = arena.get_binding_pattern(node)
+    {
+        return pattern.elements.nodes.iter().any(|&elem_idx| {
+            arena
+                .get_binding_element_at(elem_idx)
+                .is_some_and(|element| binding_name_contains(arena, element.name, expected))
+        });
+    }
+    false
+}
+
+pub(super) fn ir_access_path(node: &IRNode) -> Option<String> {
+    match node {
+        IRNode::Identifier(name) => Some(name.to_string()),
+        IRNode::PropertyAccess { object, property } => {
+            let object_path = ir_access_path(object)?;
+            Some(format!("{object_path}.{property}"))
+        }
+        _ => None,
+    }
 }
 
 pub(super) fn collect_module_decl_parts_for_body_lookup(
