@@ -362,7 +362,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\b(?:self|self\.ctx\.types|self\.interner)"
             r"\.is_assignable_to(?:_[A-Za-z0-9_]+)?\s*\("
         ),
-        144,
+        136,
     ),
     (
         "Checker relation boundary: diagnostic-local RelationRequest constructors (#8227)",
