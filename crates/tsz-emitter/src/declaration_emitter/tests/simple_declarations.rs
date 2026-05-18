@@ -638,6 +638,44 @@ export function j() {}
 }
 
 #[test]
+fn test_js_local_renamed_export_function_with_jsdoc_emits_before_alias_group() {
+    let source = r#"
+export function i() {}
+/**
+ * @param {number} x
+ */
+function hh(x) {
+    return x;
+}
+export { hh as h };
+export function j() {}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let i_pos = output
+        .find("export function i(): void;")
+        .unwrap_or_else(|| panic!("missing i declaration: {output}"));
+    let j_pos = output
+        .find("export function j(): void;")
+        .unwrap_or_else(|| panic!("missing j declaration: {output}"));
+    let hh_pos = output
+        .find("declare function hh(x: number): number;")
+        .unwrap_or_else(|| panic!("missing deferred hh declaration: {output}"));
+    let alias_pos = output
+        .find("export { hh as h };")
+        .unwrap_or_else(|| panic!("missing alias group: {output}"));
+
+    assert!(
+        i_pos < j_pos && j_pos < hh_pos && hh_pos < alias_pos,
+        "Expected JSDoc-typed local export alias function to emit before the trailing alias group: {output}"
+    );
+    assert!(
+        output.contains("/**\n * @param {number} x\n */\ndeclare function hh"),
+        "Expected deferred local function to keep its JSDoc comment: {output}"
+    );
+}
+
+#[test]
 fn test_js_local_enum_exports_are_deferred_before_alias_group() {
     let source = r#"
 export enum A {}
@@ -686,6 +724,25 @@ module.exports.j = function j() {}
         output.matches("export {").count(),
         1,
         "Expected exactly one CJS export alias statement: {output}"
+    );
+}
+
+#[test]
+fn test_js_cjs_synthetic_function_export_with_jsdoc_is_not_alias_deferred() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} value
+ */
+module.exports.map = function map(value) {
+    return value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function map(value: number): number;"),
+        "Expected CJS synthetic function export to emit at its own statement: {output}"
     );
 }
 
