@@ -551,6 +551,74 @@ withTempDir((dir) => {
     classification: {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(2),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: {
+        status: "match",
+        candidateFileComparison: {
+          totalCandidates: 2,
+          counts: {
+            bothAccepted: 2,
+            bothRejected: 0,
+            tscAcceptedTszRejected: 0,
+            tscRejectedTszAccepted: 0,
+          },
+          bothAccepted: ["assertions/one.ts", "assertions/one.ts"],
+          bothRejected: [],
+          tscAcceptedTszRejected: [],
+          tscRejectedTszAccepted: [],
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /candidateFileComparison\.bothAccepted contains duplicate files: assertions\/one\.ts/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: {
+        status: "match",
+        candidateFileComparison: {
+          totalCandidates: 2,
+          counts: {
+            bothAccepted: 1,
+            bothRejected: 1,
+            tscAcceptedTszRejected: 0,
+            tscRejectedTszAccepted: 0,
+          },
+          bothAccepted: ["assertions/one.ts"],
+          bothRejected: ["assertions/one.ts"],
+          tscAcceptedTszRejected: [],
+          tscRejectedTszAccepted: [],
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /candidateFileComparison buckets overlap: assertions\/one\.ts \(bothAccepted, bothRejected\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
       compilers: {
         tsc: {
           status: "pass",
