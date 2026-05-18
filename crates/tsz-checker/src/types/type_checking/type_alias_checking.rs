@@ -1448,20 +1448,33 @@ impl<'a> CheckerState<'a> {
                 // initializers in type position, including binding element defaults).
                 let _ = self.get_type_from_type_node(node_idx);
 
-                // TS2370: Check that rest parameters have array types.
-                // This is needed because function/constructor types in type aliases
-                // don't go through the normal function declaration checking path.
-                //
-                // Push the function type's own type parameters into scope so that
-                // rest parameter annotations referencing them (e.g. `<L>(...args: L)`)
-                // resolve correctly instead of emitting a spurious TS2304.
-                // `get_type_from_function_type` pushes/pops these internally, so by
-                // the time we reach this sibling check the scope no longer contains
-                // the inner signature's type parameters.
+                // Check all nested type nodes (parameter types and return type) in the
+                // scope of the function/constructor's own type parameters. Without this,
+                // constraint errors (TS2536, TS2344, etc.) inside return type annotations
+                // and parameter type annotations are silently missed because
+                // `get_type_from_function_type` pushes/pops its own type parameter scope
+                // internally without triggering the recursive check_type_node walk.
                 if let Some(func_type) = self.ctx.arena.get_function_type(node) {
-                    let tp_updates =
-                        self.push_missing_name_type_parameters(&func_type.type_parameters);
-                    self.check_rest_parameter_types(&func_type.parameters.nodes);
+                    let param_nodes = func_type.parameters.nodes.clone();
+                    let return_type = func_type.type_annotation;
+                    // Use push_type_parameters (constraint-preserving, two-pass) so that
+                    // inner generic function type parameters like `<K extends keyof T>` have
+                    // their constraints visible during the recursive check_type_node walk.
+                    // push_missing_name_type_parameters would lose constraints and produce
+                    // false-positive TS2536 for valid `<K extends keyof T>() => T[K]`.
+                    let (_, tp_updates) = self.push_type_parameters(&func_type.type_parameters);
+                    self.check_rest_parameter_types(&param_nodes);
+                    for &param_idx in &param_nodes {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                            && param.type_annotation != NodeIndex::NONE
+                        {
+                            self.check_type_node(param.type_annotation);
+                        }
+                    }
+                    if return_type != NodeIndex::NONE {
+                        self.check_type_node(return_type);
+                    }
                     self.pop_type_parameters(tp_updates);
                 }
             }
