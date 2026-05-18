@@ -992,8 +992,24 @@ jobs:
           bench_shell_only = gate.get("outputs", {}).get("bench_shell_only") == "true"
           compiler_checks_required = gate.get("outputs", {}).get("compiler_checks_required") != "false"
 
-          if gate.get("result") != "success":
-              print(f"gate did not pass: {gate.get('result')}")
+          gate_result = gate.get("result")
+          if gate_result != "success":
+              non_success = {
+                  name: data.get("result")
+                  for name, data in needs.items()
+                  if name != "gate" and data.get("result") not in ("success", "skipped")
+              }
+              if gate_result == "cancelled" and all(
+                  result == "cancelled" for result in non_success.values()
+              ):
+                  print(
+                      "CI run superseded by a newer push before gate completed: "
+                      f"gate cancelled and {len(non_success)} downstream job(s) "
+                      "cancelled, none failed. Treating as neutral — the "
+                      "superseding run provides the final status."
+                  )
+                  sys.exit(0)
+              print(f"gate did not pass: {gate_result}")
               sys.exit(1)
 
           if not should_run:
