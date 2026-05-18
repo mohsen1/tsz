@@ -1,6 +1,6 @@
 # Project corpus row metadata
 
-Project rows are defined in [`project-rows.mjs`](/Users/mohsen/code/tsz/scripts/bench/project-rows.mjs).
+Project rows are defined in [`project-rows.mjs`](./project-rows.mjs).
 
 Each entry in `PROJECT_ROW_DEFINITIONS` is the single metadata source for benchmark/guard rows.
 A row currently includes:
@@ -30,9 +30,9 @@ labels are passed from the same metadata into JSON output.
 
 To add a new row:
 
-1. Add one object to `PROJECT_ROW_DEFINITIONS` in [`project-rows.mjs`](/Users/mohsen/code/tsz/scripts/bench/project-rows.mjs) and choose values for `guard_set` / `benchmark_set`.
-2. If the row is handled in compile guard, add a case in `run_project_row` inside [`project-compile-guard.sh`](/Users/mohsen/code/tsz/scripts/ci/project-compile-guard.sh) for fixture setup + `check_project`.
-3. If the row is benchmarked as a full project row, add the corresponding `run_*_project_benchmarks` helper and `run_isolated` invocation in [`bench-vs-tsgo.sh`](/Users/mohsen/code/tsz/scripts/bench/bench-vs-tsgo.sh).
+1. Add one object to `PROJECT_ROW_DEFINITIONS` in [`project-rows.mjs`](./project-rows.mjs) and choose values for `guard_set` / `benchmark_set`.
+2. If the row is handled in compile guard, add a case in `run_project_row` inside [`project-compile-guard.sh`](../ci/project-compile-guard.sh) for fixture setup + `check_project`.
+3. If the row is benchmarked as a full project row, add the corresponding `run_*_project_benchmarks` helper and `run_isolated` invocation in [`bench-vs-tsgo.sh`](./bench-vs-tsgo.sh).
 
 Validation:
 
