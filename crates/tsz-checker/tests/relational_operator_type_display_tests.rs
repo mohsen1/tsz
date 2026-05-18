@@ -63,7 +63,7 @@ var r4 = a > b;
     }
 }
 
-/// Type parameter names (not annotation text) must appear in the message.
+/// Type parameter names, not annotation text, must appear in the message.
 /// Uses non-standard names `Tp`/`Uq` to rule out any hardcoded `T` check.
 #[test]
 fn relational_type_param_named_tp_shows_type_param_name() {
@@ -107,10 +107,10 @@ function fnBig<T extends bigint | boolean>(a: T, b: number): boolean {
     assert_types_in_message(&msgs, "'T'", "'number'");
 }
 
-/// Short type alias (≤3 chars) as annotation: formatter resolves the alias to
-/// its expanded type. Regression guard: the old code sliced raw AST annotation
-/// bytes — after the parser node-span fix that would silently return the alias
-/// name instead of the resolved type; the formatter must always drive display.
+/// Short type alias as annotation: formatter resolves the alias to its expanded
+/// type. Regression guard: the old code sliced raw AST annotation bytes after
+/// parser node-span fixes, which could silently return the alias name instead of
+/// the resolved type; the formatter must always drive display.
 #[test]
 fn relational_short_alias_as_param_annotation_shows_formatted_types() {
     let source = r#"

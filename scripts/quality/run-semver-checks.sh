@@ -5,7 +5,8 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 baseline_rev="${TSZ_SEMVER_BASELINE_REV:-}"
-packages=(${TSZ_SEMVER_PACKAGES:-tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-lowering tsz-checker tsz-emitter tsz-lsp tsz-core tsz-cli})
+packages=()
+read -r -a packages <<< "${TSZ_SEMVER_PACKAGES:-tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-lowering tsz-checker tsz-emitter tsz-lsp tsz-core tsz-cli}"
 
 if [[ -z "$baseline_rev" ]]; then
   baseline_rev="$(git tag --merged HEAD --list 'v[0-9]*' --sort=-v:refname | head -n1)"

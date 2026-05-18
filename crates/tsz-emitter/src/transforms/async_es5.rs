@@ -222,7 +222,7 @@ impl<'a> AsyncES5Emitter<'a> {
         &mut self,
         body_idx: NodeIndex,
     ) -> (String, Vec<String>) {
-        let (body, groups) = self.emit_simple_generator_body_with_hoisted_var_groups(body_idx);
+        let (body, groups, _) = self.emit_simple_generator_body_with_hoisted_var_groups(body_idx);
         let hoisted = groups.into_iter().flatten().collect();
         (body, hoisted)
     }
@@ -230,9 +230,10 @@ impl<'a> AsyncES5Emitter<'a> {
     pub fn emit_simple_generator_body_with_hoisted_var_groups(
         &mut self,
         body_idx: NodeIndex,
-    ) -> (String, Vec<Vec<String>>) {
-        let (body, hoisted, _) = self.emit_generator_body_and_hoisted_vars(body_idx, false);
-        (body, hoisted)
+    ) -> (String, Vec<Vec<String>>, bool) {
+        let (body, hoisted, _, needs_lexical_this_capture) =
+            self.emit_generator_body_and_hoisted_vars(body_idx, false);
+        (body, hoisted, needs_lexical_this_capture)
     }
 
     /// Emit a generator body with await, returning hoisted var names.
@@ -240,14 +241,15 @@ impl<'a> AsyncES5Emitter<'a> {
         &mut self,
         body_idx: NodeIndex,
     ) -> (String, Vec<String>, Vec<String>) {
-        let (body, groups, directives) = self.emit_generator_body_and_hoisted_vars(body_idx, true);
+        let (body, groups, directives, _) =
+            self.emit_generator_body_and_hoisted_vars(body_idx, true);
         (body, groups.into_iter().flatten().collect(), directives)
     }
 
     pub fn emit_generator_body_with_await_and_hoisted_var_groups(
         &mut self,
         body_idx: NodeIndex,
-    ) -> (String, Vec<Vec<String>>, Vec<String>) {
+    ) -> (String, Vec<Vec<String>>, Vec<String>, bool) {
         self.emit_generator_body_and_hoisted_vars(body_idx, true)
     }
 
@@ -255,12 +257,13 @@ impl<'a> AsyncES5Emitter<'a> {
         &mut self,
         body_idx: NodeIndex,
         has_await: bool,
-    ) -> (String, Vec<Vec<String>>, Vec<String>) {
+    ) -> (String, Vec<Vec<String>>, Vec<String>, bool) {
         let mut ir = self
             .transformer
             .transform_generator_body(body_idx, has_await);
         let directives = Self::extract_and_remove_directive_prologue(&mut ir);
         let hoisted = AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut ir);
+        let needs_lexical_this_capture = ir.contains_captured_this_reference();
         let mut printer = IRPrinter::with_arena(self.arena);
         if let Some(text) = self.source_text {
             printer.set_source_text(text);
@@ -276,7 +279,12 @@ impl<'a> AsyncES5Emitter<'a> {
         printer
             .set_generator_state_name(IRPrinter::generator_state_name_for_hoisted(&hoisted_names));
         printer.emit(&ir);
-        (printer.take_output(), hoisted, directives)
+        (
+            printer.take_output(),
+            hoisted,
+            directives,
+            needs_lexical_this_capture,
+        )
     }
 
     fn extract_and_remove_directive_prologue(generator_body: &mut IRNode) -> Vec<String> {

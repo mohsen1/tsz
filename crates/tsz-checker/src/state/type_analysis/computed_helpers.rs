@@ -18,10 +18,11 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::ContextualTypeContext;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn raw_contextual_signature_available(&self, type_id: TypeId) -> bool {
-        let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+        let helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             type_id,
             self.ctx.compiler_options.no_implicit_any,

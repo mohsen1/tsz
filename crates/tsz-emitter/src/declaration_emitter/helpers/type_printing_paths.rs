@@ -115,6 +115,10 @@ impl<'a> DeclarationEmitter<'a> {
                 self.package_specifier_for_package_json_path(current_path, module_path)
             {
                 package_specifier
+            } else if let Some(package_specifier) =
+                self.package_specifier_for_symlinked_dependency_path(current_path, module_path)
+            {
+                package_specifier
             } else if binder.declared_modules.contains(module_path) {
                 // Ambient module declaration `declare module "url" {}` — the
                 // module specifier is the declared name itself, which is
@@ -167,6 +171,10 @@ impl<'a> DeclarationEmitter<'a> {
                     package_specifier
                 } else if let Some(package_specifier) =
                     self.package_specifier_for_package_json_path(current_path, module_path)
+                {
+                    package_specifier
+                } else if let Some(package_specifier) =
+                    self.package_specifier_for_symlinked_dependency_path(current_path, module_path)
                 {
                     package_specifier
                 } else {
@@ -379,6 +387,12 @@ impl<'a> DeclarationEmitter<'a> {
                 return Some(package_specifier);
             }
 
+            if let Some(package_specifier) =
+                self.package_specifier_for_symlinked_dependency_path(current_path, source_path)
+            {
+                return Some(package_specifier);
+            }
+
             let rel_path = self.calculate_relative_path(current_path, source_path);
             Some(self.strip_ts_extensions(&rel_path))
         };
@@ -556,6 +570,91 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         Some(source_specifier)
+    }
+
+    pub(in crate::declaration_emitter) fn package_specifier_for_symlinked_dependency_path(
+        &self,
+        current_path: &str,
+        source_path: &str,
+    ) -> Option<String> {
+        use std::path::Path;
+
+        let current_dir = Path::new(current_path).parent()?;
+        let source_canonical = Path::new(source_path).canonicalize().ok()?;
+
+        for ancestor in current_dir.ancestors() {
+            let package_json_path = ancestor.join("package.json");
+            let Ok(package_json_text) = std::fs::read_to_string(&package_json_path) else {
+                continue;
+            };
+            let Ok(package_json) = serde_json::from_str::<serde_json::Value>(&package_json_text)
+            else {
+                continue;
+            };
+
+            for field in [
+                "dependencies",
+                "devDependencies",
+                "peerDependencies",
+                "optionalDependencies",
+            ] {
+                let Some(dependencies) =
+                    package_json.get(field).and_then(|value| value.as_object())
+                else {
+                    continue;
+                };
+
+                for package_name in dependencies.keys() {
+                    let package_link = ancestor.join("node_modules").join(package_name);
+                    let Ok(link_metadata) = std::fs::symlink_metadata(&package_link) else {
+                        continue;
+                    };
+                    if !link_metadata.file_type().is_symlink() {
+                        continue;
+                    }
+                    let Ok(package_root) = package_link.canonicalize() else {
+                        continue;
+                    };
+                    if !source_canonical.starts_with(&package_root) {
+                        continue;
+                    }
+
+                    let relative = source_canonical
+                        .strip_prefix(&package_root)
+                        .ok()?
+                        .to_string_lossy()
+                        .trim_start_matches('/')
+                        .replace('\\', "/");
+                    if relative.is_empty()
+                        || self.package_json_decl_entry_matches(&package_root, &relative)
+                    {
+                        return Some(package_name.clone());
+                    }
+
+                    let subpath = self
+                        .declaration_runtime_relative_path(&relative)
+                        .and_then(|runtime| {
+                            self.reverse_export_specifier_for_runtime_path(&package_root, &runtime)
+                        })
+                        .or_else(|| {
+                            let mut relative_path = self.strip_ts_extensions(&relative);
+                            if relative_path.ends_with("/index") {
+                                relative_path.truncate(relative_path.len() - "/index".len());
+                            } else if relative_path == "index" {
+                                relative_path.clear();
+                            }
+                            Some(relative_path)
+                        })?;
+                    let subpath = subpath.strip_prefix("./").unwrap_or(&subpath);
+                    if subpath.is_empty() {
+                        return Some(package_name.clone());
+                    }
+                    return Some(format!("{package_name}/{subpath}"));
+                }
+            }
+        }
+
+        None
     }
 
     pub(in crate::declaration_emitter) fn node_modules_package_info(
