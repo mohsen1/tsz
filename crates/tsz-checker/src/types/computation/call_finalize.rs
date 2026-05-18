@@ -6,6 +6,7 @@
 //! - contextual call param normalization and generic-call result finalization,
 //! - `this.property<T>(...)` TS2347 suppression helpers.
 
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::query_boundaries::checkers::call::is_type_parameter_type;
 use crate::query_boundaries::common;
 use crate::query_boundaries::common::CallResult;
@@ -489,13 +490,13 @@ impl<'a> CheckerState<'a> {
                             // object literals when the contextual parameter type uses
                             // a constraint (e.g., Record<string, unknown>) rather than
                             // the final inferred type. Filter these out after the check.
-                            let epc_snap = self.ctx.snapshot_diagnostics();
+                            let epc_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
                             self.check_object_literal_excess_properties(
                                 arg_type,
                                 evaluated_param,
                                 arg_idx,
                             );
-                            self.ctx.rollback_diagnostics_filtered(&epc_snap, |diag| {
+                            epc_snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
                                 !matches!(
                                     diag.code,
                                     crate::diagnostics::diagnostic_codes::IS_OF_TYPE_UNKNOWN
