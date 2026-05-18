@@ -22,6 +22,8 @@
 
 use crate::context::CheckerOptions;
 use tsz_common::common::ModuleKind;
+use tsz_common::interner::Atom;
+use tsz_solver::TypeParamInfo;
 
 fn opts() -> CheckerOptions {
     CheckerOptions {
@@ -148,6 +150,37 @@ fn cache_stores_only_positive_type_param_results() {
     let observed: Option<Vec<tsz_solver::TypeParamInfo>> =
         cache.get(&key).map(|e| e.value().clone());
     assert_eq!(observed, Some(Vec::new()));
+}
+
+#[test]
+fn cache_statistics_report_entries_and_size() {
+    let cache: crate::context::CrossFileTypeParamsCache =
+        std::sync::Arc::new(dashmap::DashMap::new());
+
+    let empty = crate::context::cross_file_type_params_cache_statistics(&cache);
+    assert_eq!(empty.entries, 0);
+    assert_eq!(empty.type_param_entries, 0);
+    assert_eq!(empty.estimated_size_bytes(), 0);
+
+    cache.insert(
+        (1u32, tsz_parser::parser::NodeIndex(10)),
+        vec![
+            TypeParamInfo::simple(Atom(1)),
+            TypeParamInfo::simple(Atom(2)),
+        ],
+    );
+    cache.insert(
+        (2u32, tsz_parser::parser::NodeIndex(20)),
+        vec![TypeParamInfo::simple(Atom(3))],
+    );
+
+    let populated = crate::context::cross_file_type_params_cache_statistics(&cache);
+    assert_eq!(populated.entries, 2);
+    assert_eq!(populated.type_param_entries, 3);
+    assert!(
+        populated.estimated_size_bytes() > empty.estimated_size_bytes(),
+        "populated cache should report nonzero estimated residency"
+    );
 }
 
 #[test]

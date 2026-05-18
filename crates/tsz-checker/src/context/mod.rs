@@ -80,6 +80,54 @@ use tsz_parser::parser::node::NodeArena;
 pub type CrossFileTypeParamsCache =
     Arc<dashmap::DashMap<(u32, NodeIndex), Vec<tsz_solver::TypeParamInfo>>>;
 
+/// Residency statistics for [`CrossFileTypeParamsCache`].
+///
+/// Owner: `ProgramContext`/`CheckerContext`; invalidated at the project-run or
+/// project-version boundary by dropping the shared cache.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CrossFileTypeParamsCacheStatistics {
+    /// Number of declaration entries keyed by `(target_file_idx, decl_idx)`.
+    pub entries: usize,
+    /// Total `TypeParamInfo` values stored across all entries.
+    pub type_param_entries: usize,
+    estimated_size_bytes: usize,
+}
+
+impl CrossFileTypeParamsCacheStatistics {
+    /// Estimated heap bytes owned by the cache entries.
+    #[must_use]
+    pub const fn estimated_size_bytes(self) -> usize {
+        self.estimated_size_bytes
+    }
+}
+
+/// Return entry and size accounting for a shared cross-file type-params cache.
+#[must_use]
+pub fn cross_file_type_params_cache_statistics(
+    cache: &CrossFileTypeParamsCache,
+) -> CrossFileTypeParamsCacheStatistics {
+    let mut type_param_entries = 0usize;
+    for entry in cache.iter() {
+        type_param_entries += entry.value().len();
+    }
+
+    let cross_file_type_params_entries = cache.len();
+    let cross_file_type_params_estimated_size_bytes = cross_file_type_params_entries
+        .saturating_mul(
+            std::mem::size_of::<(u32, NodeIndex)>()
+                + std::mem::size_of::<Vec<tsz_solver::TypeParamInfo>>(),
+        )
+        .saturating_add(
+            type_param_entries.saturating_mul(std::mem::size_of::<tsz_solver::TypeParamInfo>()),
+        );
+
+    CrossFileTypeParamsCacheStatistics {
+        entries: cross_file_type_params_entries,
+        type_param_entries,
+        estimated_size_bytes: cross_file_type_params_estimated_size_bytes,
+    }
+}
+
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular
