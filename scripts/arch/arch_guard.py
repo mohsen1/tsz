@@ -300,7 +300,7 @@ SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS = [
         "Checker speculation boundary: snapshot-rollback call sites outside speculation.rs (architecture health metric 5)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/context/speculation.rs",),
-        15,
+        10,
     ),
 ]
 
@@ -727,16 +727,15 @@ _QUERY_BOUNDARY_COMMON_REFERENCE_PATTERN = re.compile(
 
 # Architecture health metric 5: snapshot-rollback call site count.
 #
-# Matches CheckerContext rollback methods, snapshot restorers, and
-# `*guard.rollback(` SpeculationGuard calls. The `\w*guard\.rollback\(`
-# alternative requires "guard" (with optional prefix) immediately before the
-# method to avoid catching unrelated `.rollback(` methods on other types.
+# Matches broad `CheckerContext` rollback methods, snapshot restorers, and
+# `*guard.rollback(` SpeculationGuard calls. `DiagnosticSpeculationSnapshot`
+# holder methods are intentionally not counted here because their signatures
+# already require the narrow `DiagnosticState` capability.
 _SPECULATION_ROLLBACK_PATTERN = re.compile(
     r"\.rollback_full\b"
-    r"|\.rollback_diagnostics(?:_filtered)?\b"
+    r"|\b\w*ctx\.rollback_diagnostics(?:_filtered)?\b"
     r"|\.rollback_and_replace_diagnostics\b"
     r"|\.rollback_return_type\b"
-    r"|\.rollback_filtered\b"
     r"|\.restore_ts2454_state\b"
     r"|\.restore_implicit_any_closures\b"
     r"|\b\w*guard\.rollback\("
@@ -936,10 +935,13 @@ def scan_snapshot_rollback_file_count(
     `crates/tsz-checker/src/context/speculation.rs` (architecture health
     metric 5: snapshot-restore call sites).
 
-    A file "calls a speculation-rollback API" if a non-comment line matches
-    `_SPECULATION_ROLLBACK_PATTERN` (covers `CheckerContext::rollback_*`,
-    the `restore_ts2454_state` / `restore_implicit_any_closures` snapshot
-    restorers, and `*guard.rollback(` SpeculationGuard calls).  Test files
+    A file "calls a broad speculation-rollback API" if a non-comment line
+    matches `_SPECULATION_ROLLBACK_PATTERN` (covers `CheckerContext`
+    rollback methods, the `restore_ts2454_state` /
+    `restore_implicit_any_closures` snapshot restorers, and
+    `*guard.rollback(` SpeculationGuard calls). `DiagnosticSpeculationSnapshot`
+    holder calls are intentionally outside this metric because they already
+    consume the narrow `DiagnosticState` capability. Test files
     (`*_tests.rs`, `test_*.rs`, files inside any `tests/` or `benches/`
     directory) are excluded; only the first matching line per file is
     recorded.  Files whose ROOT-relative path starts with any of

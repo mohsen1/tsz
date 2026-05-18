@@ -1270,7 +1270,8 @@ class ArchGuardSnapshotRollbackTests(unittest.TestCase):
     contributors who refactor `scan_snapshot_rollback_file_count` keep the
     invariants:
 
-      - all `CheckerContext::rollback_*` methods are flagged
+      - broad `CheckerContext::rollback_*` methods are flagged
+      - `DiagnosticSpeculationSnapshot` holder rollback methods are ignored
       - snapshot restorers (`restore_ts2454_state`,
         `restore_implicit_any_closures`) are flagged
       - `*guard.rollback(` SpeculationGuard calls are flagged
@@ -1365,6 +1366,20 @@ class ArchGuardSnapshotRollbackTests(unittest.TestCase):
                 "crates/tsz-checker/src/unrelated.rs": (
                     "transaction.rollback();\n"
                     "db.rollback(&conn);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_snapshot_rollback_file_count([root], (), 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_ignores_diagnostic_speculation_snapshot_holder_methods(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/snapshot_holder.rs": (
+                    "let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);\n"
+                    "snap.rollback(&mut self.ctx.diagnostic_state());\n"
+                    "snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |_| true);\n"
+                    "snap.commit(&mut self.ctx.diagnostic_state());\n"
                 ),
             }
         )

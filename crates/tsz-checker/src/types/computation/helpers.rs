@@ -3,6 +3,7 @@
 //! operations, providing cleaner APIs for common patterns.
 
 use crate::context::TypingRequest;
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::type_computation::core::{
     self as expr_ops, evaluate_contextual_structure_with,
@@ -192,18 +193,18 @@ impl<'a> CheckerState<'a> {
         let should_suppress_contextual_branch_assignability =
             contextual_type.is_some() && !self.assignment_source_is_return_expression(idx);
         let suppress_contextual_branch_ts2322 =
-            |state: &mut Self,
-             branch_idx: NodeIndex,
-             snap: &crate::context::speculation::DiagnosticSnapshot| {
+            |state: &mut Self, branch_idx: NodeIndex, snap: DiagnosticSpeculationSnapshot| {
                 if !should_suppress_contextual_branch_assignability {
+                    snap.commit(&mut state.ctx.diagnostic_state());
                     return;
                 }
                 let Some(branch_node) = state.ctx.arena.get(branch_idx) else {
+                    snap.commit(&mut state.ctx.diagnostic_state());
                     return;
                 };
                 let branch_start = branch_node.pos;
                 let branch_end = branch_node.end;
-                state.ctx.rollback_diagnostics_filtered(snap, |diag| {
+                snap.rollback_filtered(&mut state.ctx.diagnostic_state(), |diag| {
                     let in_branch = diag.start >= branch_start && diag.start < branch_end;
                     !(in_branch && diag.code == 2322)
                 });
@@ -222,9 +223,9 @@ impl<'a> CheckerState<'a> {
             // (e.g. TS8010 grammar errors in JS files).
             self.speculative_type_of_node(cond.when_true, &true_request)
         } else {
-            let snap = self.ctx.snapshot_diagnostics();
+            let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
             let ty = self.get_type_of_node_with_request(cond.when_true, &true_request);
-            suppress_contextual_branch_ts2322(self, cond.when_true, &snap);
+            suppress_contextual_branch_ts2322(self, cond.when_true, snap);
             ty
         };
 
@@ -235,9 +236,9 @@ impl<'a> CheckerState<'a> {
             // Dead branch — suppress diagnostics but still compute type.
             self.speculative_type_of_node(cond.when_false, &false_request)
         } else {
-            let snap = self.ctx.snapshot_diagnostics();
+            let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
             let ty = self.get_type_of_node_with_request(cond.when_false, &false_request);
-            suppress_contextual_branch_ts2322(self, cond.when_false, &snap);
+            suppress_contextual_branch_ts2322(self, cond.when_false, snap);
             ty
         };
 
@@ -1820,9 +1821,9 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
-        let snap = self.ctx.snapshot_diagnostics();
+        let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
         let ty = self.get_type_of_node_with_request(idx, request);
-        self.ctx.rollback_diagnostics(&snap);
+        snap.rollback(&mut self.ctx.diagnostic_state());
         ty
     }
 
@@ -1834,9 +1835,9 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         request: &TypingRequest,
     ) -> TypeId {
-        let snap = self.ctx.snapshot_diagnostics();
+        let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
         let ty = self.get_type_of_function_with_request(idx, request);
-        self.ctx.rollback_diagnostics(&snap);
+        snap.rollback(&mut self.ctx.diagnostic_state());
         ty
     }
 }
