@@ -162,6 +162,9 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_local_export_aliases: Vec<NodeIndex>,
     /// JS local renamed export declarations skipped at their source position.
     pub(super) js_skipped_local_export_aliases: FxHashSet<NodeIndex>,
+    /// JS function declarations with signature-bearing JSDoc whose public
+    /// surface is owned by a trailing local export alias group.
+    pub(super) js_deferred_local_export_alias_function_statements: FxHashSet<NodeIndex>,
     /// Top-level JS bindings referenced by an explicit `export = name` assignment.
     pub(super) js_export_equals_names: FxHashSet<String>,
     /// JS `export = name` assignments already emitted ahead of their declaration.

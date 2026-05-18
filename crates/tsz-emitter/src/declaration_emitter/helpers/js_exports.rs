@@ -1269,6 +1269,77 @@ impl<'a> DeclarationEmitter<'a> {
         (aliases, skipped)
     }
 
+    pub(crate) fn collect_js_deferred_local_export_alias_function_statements(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> FxHashSet<NodeIndex> {
+        let mut deferred = FxHashSet::default();
+        if !self.source_file_is_js(source_file) {
+            return deferred;
+        }
+
+        let export_targets = self.collect_js_named_export_targets(source_file);
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            if export.is_default_export || export.is_type_only || export.module_specifier.is_some()
+            {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(export.export_clause) else {
+                continue;
+            };
+            if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+                continue;
+            }
+            let Some(named) = self.arena.get_named_imports(clause_node) else {
+                continue;
+            };
+            for &spec_idx in &named.elements.nodes {
+                let Some(spec) = self
+                    .arena
+                    .get(spec_idx)
+                    .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                else {
+                    continue;
+                };
+                if spec.is_type_only || spec.property_name.is_none() {
+                    continue;
+                }
+                let Some(local_name) = self.get_identifier_text(spec.property_name) else {
+                    continue;
+                };
+                let Some(&target_stmt_idx) = export_targets.get(&local_name) else {
+                    continue;
+                };
+                if self.js_function_declaration_has_signature_jsdoc(target_stmt_idx) {
+                    deferred.insert(target_stmt_idx);
+                }
+            }
+        }
+
+        deferred
+    }
+
+    fn js_function_declaration_has_signature_jsdoc(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        if stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+            return false;
+        }
+        self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos)
+            .iter()
+            .any(|jsdoc| Self::jsdoc_has_function_signature_tags(jsdoc))
+    }
+
     pub(crate) fn collect_js_local_export_enum_statements(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
@@ -1441,6 +1512,27 @@ impl<'a> DeclarationEmitter<'a> {
             } else {
                 self.emit_interface_declaration(stmt_idx);
             }
+        }
+    }
+
+    pub(crate) fn emit_deferred_js_local_export_alias_function_statements(
+        &mut self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) {
+        if self
+            .js_deferred_local_export_alias_function_statements
+            .is_empty()
+        {
+            return;
+        }
+        for &stmt_idx in &source_file.statements.nodes {
+            if !self
+                .js_deferred_local_export_alias_function_statements
+                .contains(&stmt_idx)
+            {
+                continue;
+            }
+            self.emit_hoisted_js_function_statement(stmt_idx);
         }
     }
 

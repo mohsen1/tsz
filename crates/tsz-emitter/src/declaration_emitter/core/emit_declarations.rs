@@ -177,7 +177,7 @@ impl<'a> DeclarationEmitter<'a> {
             js_commonjs_named_value_exports,
         ) = self.collect_js_commonjs_named_exports(source_file);
         self.js_named_export_names
-            .extend(js_commonjs_named_export_names);
+            .extend(js_commonjs_named_export_names.iter().cloned());
         let js_hoistable_function_export_names = self.js_named_export_names.clone();
         let (module_exports_obj_names, module_exports_obj_stmts) =
             self.collect_js_module_exports_object_names(source_file);
@@ -190,6 +190,8 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_cjs_export_aliases = cjs_aliases.aliases;
         self.js_cjs_export_alias_value_declarations = cjs_aliases.value_declarations;
         self.js_cjs_export_alias_statements = cjs_aliases.skipped_statements;
+        self.js_deferred_local_export_alias_function_statements =
+            self.collect_js_deferred_local_export_alias_function_statements(source_file);
         // Mark CJS alias local names as used so they survive usage analysis pruning.
         if let Some(binder) = self.binder
             && let Some(ref mut used) = self.used_symbols
@@ -356,6 +358,12 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     continue;
                 }
+                if self
+                    .js_deferred_local_export_alias_function_statements
+                    .contains(&stmt_idx)
+                {
+                    continue;
+                }
                 let should_hoist = if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
                     let jsdoc_chain = self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
                     let Some(func) = self.arena.get_function(stmt_node) else {
@@ -444,11 +452,25 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 continue;
             }
+            if self
+                .js_deferred_local_export_alias_function_statements
+                .contains(&stmt_idx)
+            {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+                }
+                continue;
+            }
             if self.js_cjs_export_alias_statements.contains(&stmt_idx) {
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
                     self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
                 }
-                self.emit_js_cjs_export_aliases();
+                if self
+                    .js_deferred_local_export_alias_function_statements
+                    .is_empty()
+                {
+                    self.emit_js_cjs_export_aliases();
+                }
                 continue;
             }
             if self.js_module_exports_object_stmts.contains(&stmt_idx) {
@@ -516,6 +538,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_js_require_property_import_aliases();
         self.emit_deferred_js_local_export_enum_statements(source_file);
         self.emit_deferred_js_local_export_interface_statements(source_file);
+        self.emit_deferred_js_local_export_alias_function_statements(source_file);
         self.emit_js_local_export_aliases();
         self.emit_js_cjs_export_aliases();
         if !self.source_is_js_file
@@ -897,7 +920,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.current_statement_jsdoc_chain.clear();
     }
 
-    fn emit_hoisted_js_function_statement(&mut self, stmt_idx: NodeIndex) {
+    pub(crate) fn emit_hoisted_js_function_statement(&mut self, stmt_idx: NodeIndex) {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return;
         };
