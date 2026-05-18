@@ -142,6 +142,36 @@ function duplicatedValues(values) {
   return [...duplicates].sort();
 }
 
+function intersectSorted(left, right) {
+  const rightSet = new Set(right);
+  return left.filter((value) => rightSet.has(value)).sort();
+}
+
+function hasConcreteCandidateDiagnosticFiles(diagnostics) {
+  return (
+    Number.isInteger(diagnostics.totalCandidates) &&
+    Number.isInteger(diagnostics.candidatesWithDiagnostics) &&
+    Number.isInteger(diagnostics.candidatesWithoutDiagnostics) &&
+    (diagnostics.candidatesWithDiagnostics === 0 ||
+      Array.isArray(diagnostics.filesWithDiagnostics)) &&
+    (diagnostics.candidatesWithoutDiagnostics === 0 ||
+      Array.isArray(diagnostics.filesWithoutDiagnostics))
+  );
+}
+
+function assertSameFileSet(actual, expected, label) {
+  const sortedActual = [...actual].sort();
+  const sortedExpected = [...expected].sort();
+  if (
+    sortedActual.length !== sortedExpected.length ||
+    sortedActual.some((file, index) => file !== sortedExpected[index])
+  ) {
+    fail(
+      `${label} does not match compiler candidate diagnostic file lists: expected ${sortedExpected.join(", ") || "<none>"}, actual ${sortedActual.join(", ") || "<none>"}`,
+    );
+  }
+}
+
 function validateCompilerStatus(status, label) {
   if (typeof status !== "string" || status.trim() === "") {
     fail(`${label} status must be a non-empty string`);
@@ -894,6 +924,43 @@ if (comparison.candidateFileComparison) {
   if (bucketTotal !== candidateFileComparisonTotal) {
     fail(
       `assertion classification candidateFileComparison bucket counts (${bucketTotal}) do not match totalCandidates (${candidateFileComparisonTotal})`,
+    );
+  }
+  if (
+    hasConcreteCandidateDiagnosticFiles(tscCandidateDiagnostics) &&
+    hasConcreteCandidateDiagnosticFiles(tszCandidateDiagnostics)
+  ) {
+    assertSameFileSet(
+      normalizedCandidateFileComparison.bothAccepted,
+      intersectSorted(
+        normalizedCandidateDiagnosticFiles.tsc.filesWithoutDiagnostics,
+        normalizedCandidateDiagnosticFiles.tsz.filesWithoutDiagnostics,
+      ),
+      "assertion classification candidateFileComparison.bothAccepted",
+    );
+    assertSameFileSet(
+      normalizedCandidateFileComparison.bothRejected,
+      intersectSorted(
+        normalizedCandidateDiagnosticFiles.tsc.filesWithDiagnostics,
+        normalizedCandidateDiagnosticFiles.tsz.filesWithDiagnostics,
+      ),
+      "assertion classification candidateFileComparison.bothRejected",
+    );
+    assertSameFileSet(
+      normalizedCandidateFileComparison.tscAcceptedTszRejected,
+      intersectSorted(
+        normalizedCandidateDiagnosticFiles.tsc.filesWithoutDiagnostics,
+        normalizedCandidateDiagnosticFiles.tsz.filesWithDiagnostics,
+      ),
+      "assertion classification candidateFileComparison.tscAcceptedTszRejected",
+    );
+    assertSameFileSet(
+      normalizedCandidateFileComparison.tscRejectedTszAccepted,
+      intersectSorted(
+        normalizedCandidateDiagnosticFiles.tsc.filesWithDiagnostics,
+        normalizedCandidateDiagnosticFiles.tsz.filesWithoutDiagnostics,
+      ),
+      "assertion classification candidateFileComparison.tscRejectedTszAccepted",
     );
   }
 }
