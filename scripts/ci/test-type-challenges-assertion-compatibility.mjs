@@ -551,6 +551,37 @@ withTempDir((dir) => {
     classification: {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(2),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 2,
+            candidatesWithDiagnostics: 1,
+            candidatesWithoutDiagnostics: 1,
+            filesWithDiagnostics: ["assertions/one.ts"],
+            byCandidate: [{ file: "../outside.ts" }],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc candidateDiagnostics\.byCandidate\[0\]\.file must stay inside the assertion candidate directory/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
       comparison: {
         status: "match",
