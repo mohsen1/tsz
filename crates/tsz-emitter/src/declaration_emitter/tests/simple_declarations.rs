@@ -4050,6 +4050,54 @@ exports.K = class K {
 }
 
 #[test]
+fn test_exported_class_expression_method_object_types_keep_tsc_indent() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export var circularReference = class C {
+    static getTags(c: C): C { return c }
+    tags(c: C): C { return c }
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "    getTags(c: {\n        tags(c: /*elided*/ any): /*elided*/ any;\n    }): {\n        tags(c: /*elided*/ any): /*elided*/ any;\n    };"
+        ),
+        "Expected method parameter and return object types to use one member-relative indent level: {output}"
+    );
+    assert!(
+        !output.contains("\n                tags(c:"),
+        "Did not expect multiline method object types to be reindented by the declaration writer: {output}"
+    );
+}
+
+#[test]
+fn test_namespaced_class_expression_method_object_types_keep_tsc_indent() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export namespace Boxed {
+    export var circularReference = class C {
+        static getTags(c: C): C { return c }
+        tags(c: C): C { return c }
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "        getTags(c: {\n            tags(c: /*elided*/ any): /*elided*/ any;\n        }): {\n            tags(c: /*elided*/ any): /*elided*/ any;\n        };"
+        ),
+        "Expected namespaced method object types to stay relative to the namespace member indent: {output}"
+    );
+    assert!(
+        !output.contains("\n                    tags(c:"),
+        "Did not expect nested namespace declaration writer indentation to be added twice: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_class_expression_method_body_survives_non_callable_cache() {
     let source = r#"
 exports.K = class K {
