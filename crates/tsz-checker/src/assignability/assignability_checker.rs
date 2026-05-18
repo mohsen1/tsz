@@ -2057,6 +2057,7 @@ impl<'a> CheckerState<'a> {
             return crate::query_boundaries::assignability::RelationOutcome {
                 related: true,
                 depth_exceeded: false,
+                iteration_exceeded: false,
                 failure: None,
                 weak_union_violation: false,
                 property_classification: None,
@@ -2106,6 +2107,7 @@ impl<'a> CheckerState<'a> {
             return crate::query_boundaries::assignability::RelationOutcome {
                 related: true,
                 depth_exceeded: false,
+                iteration_exceeded: false,
                 failure: None,
                 weak_union_violation: false,
                 property_classification: None,
