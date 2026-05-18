@@ -35,6 +35,7 @@ export const REQUIRED_COMPATIBILITY_FIELDS = [
   "exit_codes",
   "files_reached",
   "peak_memory_bytes",
+  "fixture_sources",
   "emit_status",
   "dts_status",
 ];

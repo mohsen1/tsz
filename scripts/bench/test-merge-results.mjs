@@ -25,6 +25,7 @@ const REQUIRED_COMPATIBILITY_FIELDS = {
   exit_codes: { tsc: [0], tsz: [0], tsgo: [0] },
   files_reached: 1,
   peak_memory_bytes: 1024,
+  fixture_sources: [{ name: "fixture", repository: "https://example.invalid/repo.git", ref: "abc123" }],
   emit_status: "not in scope (noEmit project check)",
   dts_status: "not in scope (noEmit project check)",
   reduced_repro_path: null,
