@@ -301,6 +301,52 @@ fn direct_source_file_interface_lowering_rejects_non_readonly_type_operator() {
 }
 
 #[test]
+fn direct_source_file_interface_lowering_merges_simple_heritage() {
+    let (arena, binder, types) = parse_bound_source_with_name(
+        "target.ts",
+        r#"
+                interface DashboardBaseFixture {
+                    title: string;
+                    logos: readonly string[];
+                }
+                interface DashboardModelFixture extends DashboardBaseFixture {
+                    heroUrl: string;
+                }
+            "#,
+    );
+    let ctx = CheckerContext::new(
+        arena.as_ref(),
+        binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let sym_id = binder
+        .file_locals
+        .get("DashboardModelFixture")
+        .expect("fixture interface symbol");
+
+    let (ty, params) = state
+        .direct_cross_file_interface_lowering(sym_id, binder.as_ref(), arena.as_ref(), false, true)
+        .expect("simple source-file heritage should direct-lower");
+
+    assert!(params.is_empty());
+    for name in ["title", "logos", "heroUrl"] {
+        let prop = types.intern_string(name);
+        assert!(
+            crate::query_boundaries::common::raw_property_type(
+                state.ctx.types.as_type_database(),
+                ty,
+                prop,
+            )
+            .is_some(),
+            "{name} should be present after source heritage merge",
+        );
+    }
+}
+
+#[test]
 fn direct_source_file_interface_member_simple_types_accept_option_bag_members() {
     let (arena, binder, types) = parse_bound_source_with_name(
         "target.ts",

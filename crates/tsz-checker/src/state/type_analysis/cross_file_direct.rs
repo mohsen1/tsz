@@ -1674,8 +1674,7 @@ impl<'a> CheckerState<'a> {
             Self::interface_declarations_have_unsupported_computed_names(&declarations);
         let builtin_lib_declaration_arena = is_builtin_lib_declaration_arena(symbol_arena);
         if direct_source_file_arena {
-            if has_heritage
-                || has_computed_names
+            if has_computed_names
                 || !Self::source_file_interface_declarations_are_direct_lowerable(
                     &declarations,
                     delegate_binder,
@@ -1746,6 +1745,14 @@ impl<'a> CheckerState<'a> {
                 record(DirectCrossFileInterfaceLoweringOutcome::UnknownOrError);
                 return None;
             }
+        }
+        if direct_source_file_arena && has_heritage {
+            interface_type = self.merge_direct_source_file_interface_heritage(
+                interface_type,
+                &declarations,
+                delegate_binder,
+                symbol_arena,
+            )?;
         }
         if builtin_lib_declaration_arena && !self.lib_name_locally_augmented(&symbol.escaped_name) {
             self.ctx
