@@ -360,9 +360,7 @@ try {
   const crates = path.join(tmp, "crates");
   const crateA = path.join(crates, "crate-a");
   const crateASrc = path.join(crateA, "src");
-  const crateATests = path.join(crateA, "tests");
   await fs.mkdir(crateASrc, { recursive: true });
-  await fs.mkdir(crateATests, { recursive: true });
 
   const libContent = [
     "pub fn one() -> u32 { 1 }",
@@ -380,26 +378,18 @@ try {
   ].join("\n");
   const libNl = (libContent.match(/\n/g) || []).length;
 
+  const sharedTestsContent = ["#[test]", "fn shared() {}", ""].join("\n");
+  const libBContent = ["pub fn hello() -> &'static str { \"hi\" }", ""].join("\n");
+  const buildContent = ["fn main() {}", ""].join("\n");
+  const countNl = (s) => (s.match(/\n/g) || []).length;
+
   await fs.writeFile(path.join(crateASrc, "lib.rs"), libContent);
-  await fs.writeFile(
-    path.join(crateASrc, "tests.rs"),
-    ["#[test]", "fn shared() {}", ""].join("\n"),
-  );
-  await fs.writeFile(
-    path.join(crateATests, "integration.rs"),
-    ["#[test]", "fn it_works() {", "    assert!(true);", "}", ""].join("\n"),
-  );
+  await fs.writeFile(path.join(crateASrc, "tests.rs"), sharedTestsContent);
 
   const crateB = path.join(crates, "crate-b");
   await fs.mkdir(path.join(crateB, "src"), { recursive: true });
-  await fs.writeFile(
-    path.join(crateB, "src", "lib.rs"),
-    ["pub fn hello() -> &'static str { \"hi\" }", ""].join("\n"),
-  );
-  await fs.writeFile(
-    path.join(crateB, "build.rs"),
-    ["fn main() {}", ""].join("\n"),
-  );
+  await fs.writeFile(path.join(crateB, "src", "lib.rs"), libBContent);
+  await fs.writeFile(path.join(crateB, "build.rs"), buildContent);
 
   execSync("git add -A", { cwd: tmp });
   execSync("git -c commit.gpgsign=false commit -q -m init", { cwd: tmp });
@@ -414,20 +404,16 @@ try {
   );
 
   const libInlineTest = scanRust(libContent).testNl;
-  const sharedTestsRsNl = 2;
-  const integrationRsNl = 4;
-  const libBRsNl = 1;
-  const buildRsNl = 1;
 
   assert.equal(
     split.test_lines,
-    libInlineTest + sharedTestsRsNl + integrationRsNl,
-    "test lines include inline + tests.rs + integration",
+    libInlineTest + countNl(sharedTestsContent),
+    "test lines: libContent inline tests + tests.rs",
   );
   assert.equal(
     split.source_lines,
-    libNl - libInlineTest + libBRsNl + buildRsNl,
-    "source lines exclude inline test contribution",
+    libNl - libInlineTest + countNl(libBContent) + countNl(buildContent),
+    "source lines: libContent non-test + crate-b lib.rs + build.rs",
   );
 
   assert.equal(split.num_crates, "2");
