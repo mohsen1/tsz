@@ -1058,20 +1058,20 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Fast path for the common case: a `unique symbol` that lives in a
-        // top-level `node_modules/<pkg>` package and is re-exported through
-        // that package's public surface. Caught here without per-file
-        // re-export resolution.
+        // Only the node_modules fast path applies here. The generalised
+        // `symbol_reachable_via_local_imports` check is *not* applied to the
+        // TS4023 path: TS4023 fires when the consumer's inferred type
+        // references a symbol exported from another module under a name that
+        // dts emit cannot synthesize while preserving the original type
+        // identity. Examples include un-annotated `export const SYMBOL = Symbol()`
+        // (TS widens to `symbol`, so `typeof import("m").SYMBOL` doesn't
+        // preserve `unique symbol` identity) and namespaced `export const sym = Symbol()`
+        // reached only through a type-only import. The reachability of the
+        // name through a re-export chain is not by itself enough to make the
+        // type-level identity nameable, so this gate must stay strict outside
+        // the well-defined `node_modules` public-package case handled by
+        // `unique_symbol_is_publicly_reachable`.
         if self.unique_symbol_is_publicly_reachable(sym_id, root_sym_id) {
-            return None;
-        }
-
-        // General case: the symbol is reachable through any module specifier
-        // imported by the current file, following named/wildcard re-export
-        // chains. Covers project-relative re-exports
-        // (`export { foo } from "./inner"` not under `node_modules`) where
-        // the fast path doesn't apply.
-        if self.symbol_reachable_via_local_imports(sym_id) {
             return None;
         }
 
