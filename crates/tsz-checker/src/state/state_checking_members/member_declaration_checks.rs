@@ -26,8 +26,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1277: `const` modifier can only appear on a type parameter of a
-    /// function, method, or class. Interfaces and type aliases are rejected.
+    /// TS1277: `const` modifier can only appear on a type parameter of a function, method, or class. Interfaces and type aliases are rejected.
     pub(crate) fn check_const_type_parameter_on_non_function(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
@@ -541,9 +540,7 @@ impl<'a> CheckerState<'a> {
                         .collect();
                     let factory = self.ctx.types.factory();
                     let mut param_bindings = Vec::new();
-                    for (param_name, &constraint) in
-                        infer_params.iter().zip(infer_constraints.iter())
-                    {
+                    for (param_name, &constraint) in infer_params.iter().zip(&infer_constraints) {
                         let atom = self.ctx.types.intern_string(param_name);
                         let type_id = factory.type_param(tsz_solver::TypeParamInfo {
                             name: atom,
