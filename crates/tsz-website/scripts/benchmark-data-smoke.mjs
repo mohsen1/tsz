@@ -321,20 +321,21 @@ try {
   assert.match(compatibilityDashboard, /tsc-clean tsz diagnostic-free: 7/);
   assert.match(
     compatibilityDashboard,
-    /clean manifest: type-challenges-assertions-tsc-clean\/type-challenges-assertions-tsc-clean-manifest\.json/,
+    /tsc-clean manifest: type-challenges-assertions-tsc-clean\/type-challenges-assertions-tsc-clean-manifest\.json/,
   );
   assert.match(
     compatibilityDashboard,
-    /clean classification: type-challenges-assertions-tsc-clean\/type-challenges-assertions-tsc-clean-classification\.json/,
+    /tsc-clean classification: type-challenges-assertions-tsc-clean\/type-challenges-assertions-tsc-clean-classification\.json/,
   );
-  assert.match(compatibilityDashboard, /clean total candidates: 78/);
-  assert.match(compatibilityDashboard, /clean subset: 10/);
-  assert.match(compatibilityDashboard, /clean references solutions: 9/);
-  assert.match(compatibilityDashboard, /clean rejected from full corpus: 68/);
-  assert.match(compatibilityDashboard, /clean tsc: pass/);
-  assert.match(compatibilityDashboard, /clean tsz: pass/);
-  assert.match(compatibilityDashboard, /clean comparison: both-pass/);
-  assert.match(compatibilityDashboard, /clean tsz diagnostic-free: 10/);
+  assert.match(compatibilityDashboard, /tsc-clean total candidates: 78/);
+  assert.match(compatibilityDashboard, /tsc-clean subset: 10/);
+  assert.match(compatibilityDashboard, /tsc-clean references solutions: 9/);
+  assert.match(compatibilityDashboard, /tsc-clean rejected: 68/);
+  assert.match(compatibilityDashboard, /tsc-clean tsc: pass/);
+  assert.match(compatibilityDashboard, /tsc-clean tsz: pass/);
+  assert.match(compatibilityDashboard, /tsc-clean comparison: both-pass/);
+  assert.match(compatibilityDashboard, /tsc-clean tsc diagnostic-free: 10/);
+  assert.match(compatibilityDashboard, /tsc-clean tsz diagnostic-free: 10/);
   assert.match(compatibilityDashboard, /both accepted: 5/);
   assert.match(compatibilityDashboard, /both rejected: 60/);
   assert.match(compatibilityDashboard, /tsc accepted\/tsz rejected: 3/);
