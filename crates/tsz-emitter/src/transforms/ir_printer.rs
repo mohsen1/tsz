@@ -119,7 +119,7 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
-    fn is_generator_inline_throw_expression(expr: &IRNode) -> bool {
+    const fn is_generator_inline_throw_expression(expr: &IRNode) -> bool {
         matches!(
             expr,
             IRNode::Identifier(_) | IRNode::CallExpr { .. } | IRNode::GeneratorSent
