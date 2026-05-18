@@ -1767,10 +1767,10 @@ impl<'a> Completions<'a> {
         let type_id = checker.get_type_of_node(node_idx);
         let detail = checker.format_type(type_id);
         if detail.is_empty() {
-            None
-        } else {
-            Some(detail)
+            return None;
         }
+        // Completion details use colon notation `(params): RetType`, not arrow `(params) => RetType`.
+        Some(crate::hover::format::arrow_to_colon(&detail))
     }
 
     pub(super) fn class_extends_expression(&self, class_idx: NodeIndex) -> Option<NodeIndex> {
