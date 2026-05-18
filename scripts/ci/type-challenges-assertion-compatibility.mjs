@@ -278,6 +278,19 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
         `tsc-clean assertion classification ${compiler} totalCandidates (${totalCandidates}) does not match manifest tscAcceptedAssertions (${acceptedAssertions})`,
       );
     }
+    const candidatesWithoutDiagnostics =
+      cleanSubsetClassification.compilers?.[compiler]?.candidateDiagnostics
+        ?.candidatesWithoutDiagnostics;
+    if (!Number.isInteger(candidatesWithoutDiagnostics)) {
+      fail(
+        `tsc-clean assertion classification ${compiler} candidateDiagnostics.candidatesWithoutDiagnostics must be an integer`,
+      );
+    }
+    if (candidatesWithoutDiagnostics < 0 || candidatesWithoutDiagnostics > totalCandidates) {
+      fail(
+        `tsc-clean assertion classification ${compiler} candidatesWithoutDiagnostics (${candidatesWithoutDiagnostics}) must be between 0 and totalCandidates (${totalCandidates})`,
+      );
+    }
   }
 }
 const tsc = report.compilers?.tsc || {};
