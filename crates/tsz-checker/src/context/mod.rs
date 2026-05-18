@@ -356,10 +356,7 @@ pub struct CheckerContext<'a> {
     /// since they inherit non-optional members from Array.prototype.
     pub types_extending_array: FxHashSet<TypeId>,
 
-    /// Typed registry of nodes whose `TypeId::ANY` came from a recovery
-    /// fallback rather than a real `: any` annotation. Write via
-    /// `CheckerContext::recover_any`; bulk read via
-    /// `recovery_sites_snapshot`. See `crates/tsz-checker/src/recovery.rs`.
+    /// Recovery sites; see `crate::recovery`.
     pub(crate) recovery_sites: RefCell<crate::recovery::RecoverySites>,
 
     // --- Caches ---
