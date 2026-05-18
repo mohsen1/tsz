@@ -210,6 +210,7 @@ record_project_compatibility() {
   local tsz_exit_codes="${8:-}"
   local tsconfig_path="${9:-}"
   local source_root="${10:-}"
+  local tsc_exit_codes="${11:-}"
 
   COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
   COMPAT_NAME="$name" \
@@ -220,9 +221,12 @@ record_project_compatibility() {
   COMPAT_FILES_REACHED="$files_reached" \
   COMPAT_PEAK_MEMORY_BYTES="$peak_memory_bytes" \
   COMPAT_TSZ_EXIT_CODES="$tsz_exit_codes" \
+  COMPAT_TSC_EXIT_CODES="$tsc_exit_codes" \
   COMPAT_TSCONFIG_PATH="$tsconfig_path" \
   COMPAT_SOURCE_ROOT="$source_root" \
   COMPAT_FIXTURE_ROOT="$FIXTURE_ROOT" \
+  COMPAT_TYPE_CHALLENGES_CLEAN_MANIFEST="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-manifest.json" \
+  COMPAT_TYPE_CHALLENGES_CLEAN_CLASSIFICATION="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-classification.json" \
   node scripts/ci/project-compatibility.mjs record
 }
 
@@ -389,10 +393,228 @@ write_type_challenges_assertion_candidates() {
   fi
 }
 
+type_challenges_tsc_bin() {
+  if [[ -n "${TYPE_CHALLENGES_ASSERTION_TSC_BIN+x}" ]]; then
+    if [[ -x "$TYPE_CHALLENGES_ASSERTION_TSC_BIN" ]]; then
+      printf '%s\n' "$TYPE_CHALLENGES_ASSERTION_TSC_BIN"
+    fi
+    return 0
+  fi
+
+  if [[ -x scripts/node_modules/.bin/tsc ]]; then
+    printf '%s\n' "scripts/node_modules/.bin/tsc"
+    return 0
+  fi
+  if [[ -x node_modules/.bin/tsc ]]; then
+    printf '%s\n' "node_modules/.bin/tsc"
+    return 0
+  fi
+}
+
+ensure_type_challenges_assertion_tsc() {
+  if [[ -n "${TYPE_CHALLENGES_ASSERTION_TSC_BIN+x}" ]]; then
+    return 0
+  fi
+
+  if [[ -x scripts/node_modules/.bin/tsc || -x node_modules/.bin/tsc ]]; then
+    return 0
+  fi
+
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "warn: npm not found; Type Challenges assertion classifier will report tsc unavailable" >&2
+    return 0
+  fi
+
+  echo "Installing scripts Node dependencies for Type Challenges assertion classifier"
+  (cd scripts && npm install --silent)
+  if [[ ! -x scripts/node_modules/.bin/tsc ]]; then
+    echo "warn: scripts Node install did not provide tsc; Type Challenges assertion classifier will report tsc unavailable" >&2
+  fi
+}
+
+check_type_challenges_solutions_tsc_oracle() {
+  local tsconfig="$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json"
+  local src_dir="$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/solutions"
+  local log="$FIXTURE_ROOT/type-challenges-solutions-project.tsc.log"
+  local file_count
+  file_count="$(count_ts_files "$src_dir")"
+
+  ensure_type_challenges_assertion_tsc
+
+  local tsc_bin
+  tsc_bin="$(type_challenges_tsc_bin)"
+  if [[ -z "$tsc_bin" ]]; then
+    FAILURES=$((FAILURES + 1))
+    record_project_compatibility \
+      "type-challenges-solutions-project" \
+      "fixture invalid" \
+      "fixture setup" \
+      "tsc oracle unavailable" \
+      "tsc: Type Challenges solutions oracle is unavailable" \
+      "$file_count" \
+      "" \
+      "" \
+      "$tsconfig" \
+      "$src_dir" \
+      "127"
+    echo "error: Type Challenges solutions project requires a tsc oracle, but no tsc binary is available" >&2
+    return 1
+  fi
+
+  local rc=0
+  run_with_timeout "$PROJECT_TIMEOUT" "$tsc_bin" --noEmit -p "$tsconfig" >"$log" 2>&1 || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    FAILURES=$((FAILURES + 1))
+    local diagnostic_delta
+    if [[ "$rc" -eq 124 ]]; then
+      diagnostic_delta="tsc: Type Challenges solutions project timed out after ${PROJECT_TIMEOUT}s"
+    else
+      diagnostic_delta="$(diagnostic_lines_from_file "tsc" "$log")"
+    fi
+    record_project_compatibility \
+      "type-challenges-solutions-project" \
+      "fixture invalid" \
+      "fixture setup" \
+      "tsc fixture failed" \
+      "$diagnostic_delta" \
+      "$file_count" \
+      "$LAST_PEAK_RSS_BYTES" \
+      "" \
+      "$tsconfig" \
+      "$src_dir" \
+      "$rc"
+    echo "error: type-challenges-solutions-project failed the tsc oracle check" >&2
+    sed -n '1,160p' "$log" >&2 || true
+    return 1
+  fi
+
+  return 0
+}
+
+write_type_challenges_assertion_classification() {
+  local candidate_dir="$FIXTURE_ROOT/type-challenges-assertions"
+  local manifest="$candidate_dir/type-challenges-assertions-manifest.json"
+  local output="$candidate_dir/type-challenges-assertions-classification.json"
+  local clean_dir="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean"
+  local clean_manifest="$clean_dir/type-challenges-assertions-tsc-clean-manifest.json"
+  local clean_output="$clean_dir/type-challenges-assertions-tsc-clean-classification.json"
+
+  if [[ -f "$manifest" ]]; then
+    ensure_type_challenges_assertion_tsc
+    TSZ_BIN="$TSZ_BIN" \
+      node scripts/ci/type-challenges-assertion-classifier.mjs \
+      "$candidate_dir" \
+      "$manifest" \
+      "$output"
+    node scripts/ci/type-challenges-assertion-clean-subset.mjs \
+      "$candidate_dir" \
+      "$manifest" \
+      "$output" \
+      "$clean_dir" \
+      "$clean_manifest"
+    if [[ -f "$clean_manifest" ]] \
+      && node -e 'const fs = require("fs"); const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); process.exit(Number(manifest.counts?.tscAcceptedAssertions || 0) > 0 ? 0 : 1)' "$clean_manifest"; then
+      TSZ_BIN="$TSZ_BIN" \
+        node scripts/ci/type-challenges-assertion-classifier.mjs \
+        "$clean_dir" \
+        "$clean_manifest" \
+        "$clean_output"
+    fi
+    if should_check_project "type-challenges-assertion-candidates"; then
+      node scripts/ci/type-challenges-assertion-compatibility.mjs \
+        "$output" \
+        "$candidate_dir" \
+        "$PROJECT_COMPATIBILITY_JSONL" \
+        "$FIXTURE_ROOT" \
+        "$clean_manifest" \
+        "$clean_output" \
+        "$clean_dir"
+    fi
+  fi
+}
+
+type_challenges_assertion_clean_count() {
+  local manifest="$1"
+  node -e '
+const fs = require("fs");
+const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const count = Number(manifest?.counts?.tscAcceptedAssertions ?? 0);
+process.stdout.write(Number.isFinite(count) ? String(count) : "0");
+' "$manifest"
+}
+
+type_challenges_assertion_clean_tsc_status() {
+  local classification="$1"
+  node -e '
+const fs = require("fs");
+const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+process.stdout.write(String(report?.compilers?.tsc?.status ?? ""));
+' "$classification"
+}
+
+type_challenges_assertion_clean_tsc_exit_code() {
+  local classification="$1"
+  node -e '
+const fs = require("fs");
+const report = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const code = report?.compilers?.tsc?.exitCode;
+if (Number.isInteger(code)) process.stdout.write(String(code));
+' "$classification"
+}
+
+check_type_challenges_assertions_tsc_clean() {
+  local subset_dir="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean"
+  local manifest="$subset_dir/type-challenges-assertions-tsc-clean-manifest.json"
+  local classification="$subset_dir/type-challenges-assertions-tsc-clean-classification.json"
+  local tsconfig="$subset_dir/tsconfig.tsz-guard.json"
+
+  if [[ ! -f "$manifest" || ! -f "$tsconfig" ]]; then
+    return 0
+  fi
+
+  local accepted_count
+  accepted_count="$(type_challenges_assertion_clean_count "$manifest")"
+  if [[ "$accepted_count" -eq 0 ]]; then
+    echo "Skipping type-challenges-assertions-tsc-clean; no tsc-clean assertion candidates were materialized."
+    return 0
+  fi
+
+  local tsc_status=""
+  local tsc_exit_codes=""
+  if [[ -f "$classification" ]]; then
+    tsc_status="$(type_challenges_assertion_clean_tsc_status "$classification")"
+    tsc_exit_codes="$(type_challenges_assertion_clean_tsc_exit_code "$classification")"
+  fi
+  if [[ "$tsc_status" != "pass" ]]; then
+    FAILURES=$((FAILURES + 1))
+    record_project_compatibility \
+      "type-challenges-assertions-tsc-clean" \
+      "fixture invalid" \
+      "fixture setup" \
+      "tsc clean subset failed" \
+      "tsc: Type Challenges clean assertion subset did not pass the tsc project oracle" \
+      "$accepted_count" \
+      "" \
+      "" \
+      "$tsconfig" \
+      "$subset_dir/assertions" \
+      "$tsc_exit_codes"
+    echo "error: type-challenges-assertions-tsc-clean failed the tsc oracle check" >&2
+    return 0
+  fi
+
+  check_project \
+    "type-challenges-assertions-tsc-clean" \
+    "$tsconfig" \
+    "$subset_dir/assertions" \
+    "$tsc_exit_codes"
+}
+
 check_project() {
   local name="$1"
   local tsconfig="$2"
   local src_dir="${3:-$(dirname "$tsconfig")}"
+  local tsc_exit_codes="${4:-}"
   local log="$FIXTURE_ROOT/${name}.log"
   local file_count
   file_count="$(count_ts_files "$src_dir")"
@@ -422,7 +644,8 @@ check_project() {
       "$LAST_PEAK_RSS_BYTES" \
       "$rc" \
       "$tsconfig" \
-      "$src_dir"
+      "$src_dir" \
+      "$tsc_exit_codes"
     if [[ "$rc" -eq 124 ]]; then
       echo "error: ${name} timed out after ${PROJECT_TIMEOUT}s" >&2
     else
@@ -436,7 +659,7 @@ check_project() {
     return 0
   fi
 
-  record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count" "$LAST_PEAK_RSS_BYTES" "0" "$tsconfig" "$src_dir"
+  record_project_compatibility "$name" "exit success" "check" "none" "" "$file_count" "$LAST_PEAK_RSS_BYTES" "0" "$tsconfig" "$src_dir" "$tsc_exit_codes"
   echo "${name} compiled successfully."
   echo "::endgroup::"
 }
@@ -518,7 +741,25 @@ fi
 if should_check_project "type-challenges-solutions-project"; then
   ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
   write_type_challenges_solutions_config
-  check_project "type-challenges-solutions-project" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/solutions"
+  if check_type_challenges_solutions_tsc_oracle; then
+    check_project "type-challenges-solutions-project" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/solutions" "0"
+  elif [[ "$ALLOW_FAILURES" == "1" ]]; then
+    echo "::warning::type-challenges-solutions-project tsc oracle failed; continuing because TSZ_PROJECT_COMPILE_ALLOW_FAILURES=1"
+  fi
+fi
+
+if should_check_project "type-challenges-assertion-candidates"; then
+  ensure_git_fixture "type-challenges" "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF" "$FIXTURE_ROOT/type-challenges"
+  write_type_challenges_config
+  ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
+  write_type_challenges_solutions_config
+fi
+
+if should_check_project "type-challenges-assertions-tsc-clean"; then
+  ensure_git_fixture "type-challenges" "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF" "$FIXTURE_ROOT/type-challenges"
+  write_type_challenges_config
+  ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
+  write_type_challenges_solutions_config
 fi
 }
 
@@ -541,6 +782,10 @@ esac
 
 write_type_challenges_pairing_report
 write_type_challenges_assertion_candidates
+write_type_challenges_assertion_classification
+if should_check_project "type-challenges-assertions-tsc-clean"; then
+  check_type_challenges_assertions_tsc_clean
+fi
 
 if [[ "$FAILURES" -gt 0 ]]; then
   echo "Project compile failures: $FAILURES"
