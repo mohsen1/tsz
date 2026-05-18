@@ -4538,3 +4538,90 @@ const _check: "hello" = result;
         "T should be inferred as \"hello\" from leading template span. Got: {diags:#?}"
     );
 }
+
+// Nullish in T|null: nullish source provides no info about T (conformance: inferenceFromParameterlessLambda)
+
+#[test]
+fn nullish_in_t_or_null_param_does_not_infer_t_null() {
+    let source = r#"
+function withDefault<T>(value: T | null, f: () => T): T { return value ?? f(); }
+const r1 = withDefault(null, () => 42);
+const r2 = withDefault(null, () => "hello");
+const r3 = withDefault(null, () => true);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "null in T|null should not yield T=null; T should come from callback return. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn nullish_undefined_in_t_or_undefined_param_does_not_infer_t() {
+    let source = r#"
+function maybe<T>(x: T | undefined, f: () => T): T { return x ?? f(); }
+const r1 = maybe(undefined, () => 99);
+const r2 = maybe(undefined, () => "hi");
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "undefined in T|undefined should not constrain T; callback return supplies T. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn non_nullish_in_t_or_null_still_constrains_t() {
+    let source = r#"
+function withDefault<T>(value: T | null, f: () => T): T { return value ?? f(); }
+const r1 = withDefault(42, () => 0);
+const r2 = withDefault("x", () => "y");
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "non-null concrete arg should not produce false positives. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn nullish_in_t_or_null_with_nullable_union_source_still_constrains_t() {
+    let source = r#"
+function withDefault<T>(value: T | null, f: () => T): T { return value ?? f(); }
+declare const maybeStr: string | null;
+const r = withDefault(maybeStr, () => "fallback");
+const _check: string = r;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "string|null source in T|null should still infer T=string. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn nullish_in_array_wrapped_t_or_null_does_not_infer_t() {
+    let source = r#"
+function orNull<T>(x: T[] | null, factory: () => T[]): T[] { return x ?? factory(); }
+const r = orNull(null, () => [42]);
+const _check: number[] = r;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "null in T[]|null should not infer T=null; callback supplies T[]=number[]. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn real_type_mismatch_still_errors_with_nullable_union_inference() {
+    let source = r#"
+function bar<T>(x: T, f: () => T): T { return f(); }
+bar("hi", () => 42);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        !diags.is_empty(),
+        "type mismatch (string vs number for T) should still produce an error. Got: {diags:#?}"
+    );
+}

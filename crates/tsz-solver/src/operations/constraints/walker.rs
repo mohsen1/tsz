@@ -1033,8 +1033,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let t_members = self.interner.type_list(t_members);
                 let mut non_nullable = None;
                 let mut count = 0;
+                let mut has_nullish = false;
                 for &member in t_members.iter() {
-                    if !is_nullish(member) {
+                    if is_nullish(member) {
+                        has_nullish = true;
+                        if count == 1 {
+                            break;
+                        }
+                    } else {
                         count += 1;
                         if count == 1 {
                             non_nullable = Some(member);
@@ -1046,6 +1052,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 if count == 1
                     && let Some(member) = non_nullable
                 {
+                    // `null <: T | null` gives no information about T; skip constraint.
+                    if is_nullish(source) && has_nullish {
+                        return;
+                    }
                     self.constrain_types(ctx, var_map, source, member, priority);
                     return;
                 }
