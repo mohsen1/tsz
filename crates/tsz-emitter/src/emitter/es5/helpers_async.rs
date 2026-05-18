@@ -1229,7 +1229,7 @@ impl<'a> Printer<'a> {
                 if name.is_empty() {
                     continue;
                 }
-                self.make_unique_name_from_base(&name)
+                self.make_function_local_unique_name_from_base(&name)
             };
 
             if !first {

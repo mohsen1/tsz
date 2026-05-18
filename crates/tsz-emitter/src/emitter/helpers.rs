@@ -780,6 +780,20 @@ impl<'a> Printer<'a> {
         name
     }
 
+    pub(super) fn make_function_local_unique_name_from_base(&mut self, base: &str) -> String {
+        for suffix in 1..=1000 {
+            let candidate = format!("{base}_{suffix}");
+            if !self.file_identifiers.contains(&candidate)
+                && !self.generated_temp_names.contains(&candidate)
+            {
+                self.generated_temp_names.insert(candidate.clone());
+                return candidate;
+            }
+        }
+
+        self.make_unique_name_fresh()
+    }
+
     pub(super) fn blocked_disposable_names_for_transform(&self) -> Vec<String> {
         self.file_identifiers
             .iter()
