@@ -1688,6 +1688,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.add_undefined_if_unchecked(union);
         }
 
+        // If index is the general symbol type, return union of all symbol-named properties.
+        // This mirrors the string case: `obj[s: symbol]` matches any computed-symbol property.
+        if index_type == TypeId::SYMBOL {
+            let union = self.union_symbol_named_property_types(props);
+            return self.add_undefined_if_unchecked(union);
+        }
+
         TypeId::UNDEFINED
     }
 
@@ -1789,10 +1796,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.add_undefined_if_unchecked(result);
         }
 
-        if index_type == TypeId::SYMBOL
-            && let Some(symbol_index) = symbol_index
-        {
-            return self.add_undefined_if_unchecked(symbol_index.value_type);
+        if index_type == TypeId::SYMBOL {
+            let symbol_named_union = self.union_symbol_named_property_types(&shape.properties);
+            let result = match (symbol_index, symbol_named_union) {
+                (Some(sig), TypeId::UNDEFINED) => sig.value_type,
+                (None, named) => named,
+                (Some(sig), named) => self.interner().union2(sig.value_type, named),
+            };
+            if result != TypeId::UNDEFINED {
+                return self.add_undefined_if_unchecked(result);
+            }
         }
 
         // Template literal types (e.g., `foo${string}`), string intrinsic types
@@ -1911,10 +1924,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.add_undefined_if_unchecked(result);
         }
 
-        if index_type == TypeId::SYMBOL
-            && let Some(symbol_index) = symbol_index
-        {
-            return self.add_undefined_if_unchecked(symbol_index.value_type);
+        if index_type == TypeId::SYMBOL {
+            let symbol_named_union = self.union_symbol_named_property_types(&shape.properties);
+            let result = match (symbol_index, symbol_named_union) {
+                (Some(sig), TypeId::UNDEFINED) => sig.value_type,
+                (None, named) => named,
+                (Some(sig), named) => self.interner().union2(sig.value_type, named),
+            };
+            if result != TypeId::UNDEFINED {
+                return self.add_undefined_if_unchecked(result);
+            }
         }
 
         // String-like index types (template literals, string intrinsics, branded strings)
@@ -1937,6 +1956,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeId::UNDEFINED
         } else {
             self.interner().union(all_types)
+        }
+    }
+
+    pub(crate) fn union_symbol_named_property_types(&self, props: &[PropertyInfo]) -> TypeId {
+        let types: Vec<TypeId> = props
+            .iter()
+            .filter(|p| p.is_symbol_named)
+            .map(|p| self.optional_property_type(p))
+            .collect();
+        if types.is_empty() {
+            TypeId::UNDEFINED
+        } else {
+            self.interner().union(types)
         }
     }
 

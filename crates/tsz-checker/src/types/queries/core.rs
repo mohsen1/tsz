@@ -1081,6 +1081,11 @@ impl<'a> CheckerState<'a> {
     /// the const initializer).
     pub(crate) fn get_property_name_resolved(&mut self, name_idx: NodeIndex) -> Option<String> {
         let name_node = self.ctx.arena.get(name_idx)?;
+        tracing::trace!(
+            name_idx = name_idx.0,
+            kind = name_node.kind,
+            "get_property_name_resolved: called"
+        );
         // For computed property names with identifier expressions (e.g., `[k]` where
         // `const k = 'foo'`), skip `get_property_name` which would incorrectly return
         // the identifier text ("k") instead of the resolved value ("foo").
@@ -1184,6 +1189,15 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // When the computed property type is the general `symbol` type (not a specific
+            // unique symbol or well-known symbol), store it as a synthetic symbol-named
+            // property. The expression node index provides a stable, unique key per
+            // declaration site. This handles: `const sym: symbol = Symbol(...); interface I { [sym]: T }`
+            if prop_name_type == TypeId::SYMBOL {
+                let key = format!("__symbol_computed_{}", computed.expression.0);
+                return Some(key);
+            }
+
             for candidate in [
                 prop_name_type,
                 evaluated_prop_name_type,
@@ -1283,6 +1297,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.checking_computed_property_name = prev_checking;
 
         crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type).is_some()
+            || expr_type == TypeId::SYMBOL
     }
 
     /// For an identifier expression, trace back to the variable's declaration

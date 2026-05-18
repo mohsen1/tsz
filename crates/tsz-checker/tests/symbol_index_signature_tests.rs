@@ -1,6 +1,14 @@
 use tsz_checker::diagnostics::diagnostic_codes;
 use tsz_checker::test_utils::{check_js_source_diagnostics, check_source_diagnostics};
 
+// Helper: assert no TS2322 errors
+fn assert_no_ts2322(codes: &[u32], context: &str) {
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "{context}: expected no TS2322, got {codes:?}",
+    );
+}
+
 fn diagnostic_codes_for_ts(source: &str) -> Vec<u32> {
     check_source_diagnostics(source)
         .into_iter()
@@ -228,5 +236,141 @@ const obj = {};
     assert!(
         !codes.contains(&diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE),
         "unresolved JSDoc index signature should not become a required property, got {diagnostics:?}",
+    );
+}
+
+// ── Issue #6251: non-unique symbol property access ────────────────────────────
+//
+// Rule: when an object is indexed with the general `symbol` type, the result
+// is the union of all symbol-named property types (computed symbol keys), plus
+// any general `[key: symbol]: T` index signature — NOT `undefined`.
+
+#[test]
+fn non_unique_symbol_property_read_returns_declared_type_on_interface() {
+    // The exact repro from issue #6251.
+    // `sym` has the general `symbol` type (not `unique symbol`).
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const sym: symbol;
+
+interface WithSymbol {
+  [sym]: number;
+}
+
+declare const ws: WithSymbol;
+const _wss: number = ws[sym];
+"#,
+    );
+    assert_no_ts2322(
+        &codes,
+        "interface with symbol-keyed prop accessed via symbol type",
+    );
+}
+
+#[test]
+fn non_unique_symbol_property_read_with_renamed_param_still_works() {
+    // Vary the variable name: `key` instead of `sym`.
+    // Both are `symbol`-typed (not `unique symbol`).
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const key: symbol;
+
+interface Container {
+  [key]: string;
+}
+
+declare const c: Container;
+const _v: string = c[key];
+"#,
+    );
+    assert_no_ts2322(
+        &codes,
+        "renamed symbol variable in interface computed property",
+    );
+}
+
+#[test]
+fn symbol_indexed_access_returns_union_of_all_symbol_named_props() {
+    // Multiple symbol-keyed properties: accessing with `symbol` returns their union.
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const s1: unique symbol;
+declare const s2: unique symbol;
+
+interface Multi {
+  [s1]: number;
+  [s2]: string;
+}
+
+declare const m: Multi;
+declare const k: symbol;
+
+// The access must not be assignable to just one branch — must be the union.
+const _n: number | string = m[k];
+"#,
+    );
+    assert_no_ts2322(
+        &codes,
+        "symbol access on interface with multiple symbol-named props",
+    );
+}
+
+#[test]
+fn symbol_indexed_access_on_object_type_literal() {
+    // Same rule applies to type literals (not just interface declarations).
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const sym: unique symbol;
+declare const obj: { [sym]: boolean };
+declare const k: symbol;
+const _b: boolean = obj[k];
+"#,
+    );
+    assert_no_ts2322(
+        &codes,
+        "symbol access on type-literal object with symbol-named prop",
+    );
+}
+
+#[test]
+fn symbol_indexed_access_combined_with_symbol_index_signature() {
+    // An interface that has both a specific symbol property AND a general
+    // `[key: symbol]: T` index sig. The access must resolve correctly.
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const specific: unique symbol;
+
+interface Mixed {
+  [specific]: number;
+  [key: symbol]: number | boolean;
+}
+
+declare const m: Mixed;
+declare const k: symbol;
+const _v: number | boolean = m[k];
+"#,
+    );
+    assert_no_ts2322(
+        &codes,
+        "symbol access on interface with both specific prop and symbol index sig",
+    );
+}
+
+#[test]
+fn symbol_indexed_access_false_positive_does_not_occur_for_plain_object() {
+    // Object without any symbol-keyed property — accessing with `symbol` should
+    // still produce no TS2322 when the target type is compatible.
+    // (The result is `undefined`; assigning to `undefined` is fine.)
+    let codes = diagnostic_codes_for_ts(
+        r#"
+interface Plain { a: number }
+declare const p: Plain;
+declare const k: symbol;
+const _u: undefined = p[k] as undefined;
+"#,
+    );
+    assert_no_ts2322(
+        &codes,
+        "symbol access on plain interface with no symbol props (cast to undefined)",
     );
 }
