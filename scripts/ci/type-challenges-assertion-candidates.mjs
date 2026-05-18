@@ -32,6 +32,10 @@ function readRequiredFile(file, label) {
     console.error(`error: ${label} does not exist: ${file}`);
     process.exit(1);
   }
+  if (!fs.statSync(file).isFile()) {
+    console.error(`error: ${label} is not a file: ${file}`);
+    process.exit(1);
+  }
   return fs.readFileSync(file, "utf8");
 }
 

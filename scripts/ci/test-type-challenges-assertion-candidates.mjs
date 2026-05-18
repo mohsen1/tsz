@@ -654,6 +654,61 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
+  const typeCompile = path.join(dir, "type-challenges", ".tsz-compile");
+  const solutionsCompile = path.join(
+    dir,
+    "type-challenges-solutions",
+    ".tsz-compile",
+  );
+  const pairingPath = path.join(dir, "pairing.json");
+  const outputDir = path.join(dir, "assertions");
+  const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
+
+  writeFile(path.join(typeCompile, "utils", "index.d.ts"), "export {};\n");
+  writeFile(
+    path.join(solutionsCompile, "solutions", "easy-first.ts"),
+    "type First<T extends unknown[]> = T[0];\nexport {};\n",
+  );
+  fs.mkdirSync(
+    path.join(typeCompile, "questions", "00014-easy-first", "template.ts"),
+    { recursive: true },
+  );
+  writeFile(
+    path.join(
+      typeCompile,
+      "test-cases",
+      "questions",
+      "00014-easy-first",
+      "test-cases.ts",
+    ),
+    "type cases = [First<[1, 2]>]\n",
+  );
+  writeJson(
+    pairingPath,
+    basePairingReport({
+      pairedSolutions: [basePairingReport().pairedSolutions[0]],
+      counts: {
+        pairedSolutions: 1,
+        solutionsMissingTemplates: 0,
+        solutionsMissingTestCases: 0,
+      },
+    }),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, pairingPath, typeCompile, solutionsCompile, outputDir, manifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /template source is not a file/);
+  assert.equal(fs.existsSync(manifestPath), false);
+});
+
+withTempDir((dir) => {
   const pairingPath = path.join(dir, "pairing.json");
   const outputDir = path.join(dir, "assertions");
   const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
