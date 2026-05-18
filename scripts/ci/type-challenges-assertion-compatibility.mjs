@@ -321,6 +321,14 @@ const tsc = report.compilers?.tsc || {};
 const tsz = report.compilers?.tsz || {};
 const comparison = report.comparison || {};
 const counts = report.candidateManifest?.counts || {};
+for (const [compiler, result] of [
+  ["tsc", tsc],
+  ["tsz", tsz],
+]) {
+  if (typeof result.status !== "string" || result.status.trim() === "") {
+    fail(`assertion classification ${compiler} status must be a non-empty string`);
+  }
+}
 if (!Number.isInteger(counts.pairedSolutions)) {
   fail("assertion classification candidateManifest.counts.pairedSolutions must be an integer");
 }
