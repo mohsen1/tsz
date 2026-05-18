@@ -166,6 +166,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         Some(IRNode::ES5ClassIIFE {
             name: class_name.into(),
+            binding_name: None,
             base_class: base_class.map(Box::new),
             super_param: has_extends.then(|| "_super".into()),
             body,
