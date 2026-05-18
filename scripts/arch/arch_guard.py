@@ -625,6 +625,16 @@ REGEX_LINE_COUNT_CHECKS = [
         0,
     ),
     (
+        "Solver relation boundary: legacy relation flag bridge surface (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src"],
+        re.compile(
+            r"\b(?:from_checker_flags_u16|from_legacy_u8|to_legacy_u8|"
+            r"subtype_cache_config_from_legacy_flags|"
+            r"assignability_cache_config_from_legacy_flags)\b"
+        ),
+        0,
+    ),
+    (
         "Checker relation boundary: raw diagnostic assignability predicates (#8227)",
         [
             ROOT
