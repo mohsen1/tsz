@@ -200,3 +200,32 @@ value["size"];
         "Expected TS2576 for inherited static field and accessor element access, got: {errors:?}"
     );
 }
+
+#[test]
+fn nested_generic_indexed_write_preserves_key_parameter_target() {
+    let diags = check_source_with_default_libs(
+        r#"
+const assignTo =
+    <Source, Outer extends keyof Source, Inner extends keyof Source[Outer]>(
+        object: Source,
+        key1: Outer,
+        key2: Inner
+    ) =>
+        (value: Source[Outer][Inner]) => object[key1][key2] = value;
+
+const assignRenamed =
+    <Bag, FirstKey extends keyof Bag, SecondKey extends keyof Bag[FirstKey]>(
+        object: Bag,
+        key1: FirstKey,
+        key2: SecondKey
+    ) =>
+        (value: Bag[FirstKey][SecondKey]) => object[key1][key2] = value;
+"#,
+    );
+
+    let errors = semantic_errors(&diags);
+    assert!(
+        errors.is_empty(),
+        "Expected nested generic indexed writes to keep their deferred target type, got: {errors:?}"
+    );
+}

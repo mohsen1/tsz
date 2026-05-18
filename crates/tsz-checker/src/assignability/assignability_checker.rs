@@ -2198,11 +2198,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // Pre-evaluation IndexAccess identity check: when both source and target are
-        // IndexAccess types whose object types are the same type parameter identity,
-        // accept the relationship before evaluation can destroy type parameter identity.
+        // IndexAccess types whose object types are the same generic identity,
+        // accept the relationship before evaluation can destroy that identity.
         // Example: `T_229[K] <: T_420[K]` where T_229 (unconstrained, from type alias)
         // and T_420 (constrained `extends object`, from function) share name "T".
         // Without this, evaluation resolves T_420 to `object`, losing the name match.
+        // The same rule applies recursively for nested deferred objects like
+        // `T[K1][K2]`: the object is itself an `IndexAccess`, not a bare type
+        // parameter, but both sides still name the same generic value space.
         if let Some((s_obj, s_idx)) =
             crate::query_boundaries::checkers::generic::index_access_components(
                 self.ctx.types,
@@ -2213,9 +2216,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     target,
                 )
-            && crate::query_boundaries::common::type_param_info(self.ctx.types, s_obj).is_some()
-            && crate::query_boundaries::common::type_param_info(self.ctx.types, t_obj).is_some()
-            && self.type_parameter_identities_match(s_obj, t_obj)
+            && self.index_access_object_identities_match(s_obj, t_obj)
             && self.is_generic_index_key_assignable(s_idx, t_idx)
         {
             return true;
@@ -2702,7 +2703,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_generic_index_key_assignable(&mut self, source_key: TypeId, target_key: TypeId) -> bool {
-        if self.type_parameter_identities_match(source_key, target_key) {
+        if self.type_parameter_identities_match_for_index_access(source_key, target_key) {
             return true;
         }
 
@@ -2714,6 +2715,102 @@ impl<'a> CheckerState<'a> {
         }
 
         self.is_assignable_to(source_key, target_key)
+    }
+
+    fn index_access_object_identities_match(&mut self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
+
+        if crate::query_boundaries::common::type_param_info(self.ctx.types, source).is_some()
+            && crate::query_boundaries::common::type_param_info(self.ctx.types, target).is_some()
+        {
+            return self.type_parameter_identities_match_for_index_access(source, target);
+        }
+
+        if let Some((source_object, source_index)) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, source)
+            && let Some((target_object, target_index)) =
+                crate::query_boundaries::common::index_access_types(self.ctx.types, target)
+        {
+            return self.index_access_object_identities_match(source_object, target_object)
+                && self.index_access_type_surfaces_match(source_index, target_index);
+        }
+
+        crate::query_boundaries::assignability::are_types_structurally_identical(
+            self.ctx.types,
+            &self.ctx,
+            source,
+            target,
+        )
+    }
+
+    fn type_parameter_identities_match_for_index_access(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if self.type_parameter_identities_match(source, target) {
+            return true;
+        }
+
+        let Some(source_param) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, source)
+        else {
+            return false;
+        };
+        let Some(target_param) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, target)
+        else {
+            return false;
+        };
+        if source_param.name != target_param.name {
+            return false;
+        }
+
+        match (source_param.constraint, target_param.constraint) {
+            (None, None) => true,
+            (Some(source_constraint), Some(target_constraint)) => {
+                self.index_access_type_surfaces_match(source_constraint, target_constraint)
+            }
+            _ => false,
+        }
+    }
+
+    fn index_access_type_surfaces_match(&mut self, source: TypeId, target: TypeId) -> bool {
+        if source == target {
+            return true;
+        }
+
+        if crate::query_boundaries::common::type_param_info(self.ctx.types, source).is_some()
+            || crate::query_boundaries::common::type_param_info(self.ctx.types, target).is_some()
+        {
+            return self.type_parameter_identities_match_for_index_access(source, target);
+        }
+
+        if let Some(source_inner) =
+            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, source)
+            && let Some(target_inner) =
+                crate::query_boundaries::common::keyof_inner_type(self.ctx.types, target)
+        {
+            return self.index_access_type_surfaces_match(source_inner, target_inner);
+        }
+
+        if let Some((source_object, source_index)) =
+            crate::query_boundaries::common::index_access_types(self.ctx.types, source)
+            && let Some((target_object, target_index)) =
+                crate::query_boundaries::common::index_access_types(self.ctx.types, target)
+        {
+            return self.index_access_object_identities_match(source_object, target_object)
+                && self.index_access_type_surfaces_match(source_index, target_index);
+        }
+
+        crate::query_boundaries::assignability::are_types_structurally_identical(
+            self.ctx.types,
+            &self.ctx,
+            source,
+            target,
+        )
     }
 
     fn type_parameter_identities_match(&self, source: TypeId, target: TypeId) -> bool {

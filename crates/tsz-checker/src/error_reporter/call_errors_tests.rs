@@ -108,6 +108,62 @@ class Renamed<Shape> {
 }
 
 #[test]
+fn mapped_callable_generic_index_preserves_optional_read_undefined() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+type Factories<Shape> = { [Member in keyof Shape]: (value: Shape[Member]) => void };
+type Shape = { required: number; optional?: string };
+
+function callMaybeOptional<Member extends keyof Shape>(
+    factories: Factories<Shape>,
+    prop: Member,
+    value: Shape[Member],
+) {
+    factories[prop](value);
+}
+"#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2722 || diag.code == 2349)
+        .collect();
+    assert!(
+        relevant.iter().any(|diag| diag.code == 2722),
+        "Expected homomorphic optional mapped read to keep possible undefined callee, got: {relevant:?}"
+    );
+    assert!(
+        relevant.iter().all(|diag| diag.code != 2349),
+        "Expected optional mapped read to fail as possibly undefined, not non-callable, got: {relevant:?}"
+    );
+}
+
+#[test]
+fn declared_union_callee_preserves_this_parameter_errors() {
+    let diagnostics = check_source_with_strict_null(
+        r#"
+interface AcceptsVoidThis {
+    (this: void, value?: number): void;
+}
+interface RequiresNumberThis {
+    (this: number, value?: number): void;
+}
+interface AcceptsNumberArgument {
+    (value: number): void;
+}
+
+declare const call: AcceptsVoidThis | RequiresNumberThis | AcceptsNumberArgument;
+call(0);
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|diag| diag.code == 2684),
+        "Expected declared union callee to keep union-call `this` checks, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn mapped_parameter_property_mismatch_displays_instantiated_property_slice() {
     let mut parser = tsz_parser::parser::ParserState::new("test.ts".to_string(), String::new());
     let root = parser.parse_source_file();

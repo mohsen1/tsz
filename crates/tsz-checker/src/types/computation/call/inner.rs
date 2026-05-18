@@ -79,6 +79,22 @@ impl<'a> CheckerState<'a> {
         }))
     }
 
+    fn resolve_callee_for_signature_shape(&mut self, mut type_id: TypeId) -> TypeId {
+        type_id = self.evaluate_application_type(type_id);
+        type_id = self.resolve_lazy_type(type_id);
+        if common::is_union_type(self.ctx.types, type_id) {
+            return type_id;
+        }
+        self.evaluate_type_with_env(type_id)
+    }
+
+    fn resolve_callee_for_contextual_shape(&mut self, mut type_id: TypeId) -> TypeId {
+        type_id = self.evaluate_application_type(type_id);
+        type_id = self.resolve_lazy_type(type_id);
+        type_id = self.evaluate_contextual_type(type_id);
+        self.evaluate_type_with_env(type_id)
+    }
+
     fn refresh_callee_shape_type_param_constraints(
         &mut self,
         callee_expression: NodeIndex,
@@ -580,9 +596,7 @@ impl<'a> CheckerState<'a> {
         // doesn't handle, causing the overloaded path to be skipped and literal arguments
         // to be widened to `string` instead of matching specialized signatures.
         let mut resolved_for_classification =
-            self.evaluate_application_type(callee_type_for_resolution);
-        resolved_for_classification = self.resolve_lazy_type(resolved_for_classification);
-        resolved_for_classification = self.evaluate_type_with_env(resolved_for_classification);
+            self.resolve_callee_for_signature_shape(callee_type_for_resolution);
         let mut classification =
             query::classify_for_call_signatures(self.ctx.types, resolved_for_classification);
         if matches!(classification, query::CallSignaturesKind::NoSignatures)
@@ -598,9 +612,7 @@ impl<'a> CheckerState<'a> {
                 annotated_callee_type
             };
             resolved_for_classification =
-                self.evaluate_application_type(callee_type_for_resolution);
-            resolved_for_classification = self.resolve_lazy_type(resolved_for_classification);
-            resolved_for_classification = self.evaluate_type_with_env(resolved_for_classification);
+                self.resolve_callee_for_signature_shape(callee_type_for_resolution);
             classification =
                 query::classify_for_call_signatures(self.ctx.types, resolved_for_classification);
         }
@@ -617,9 +629,7 @@ impl<'a> CheckerState<'a> {
                 direct_callee_type
             };
             resolved_for_classification =
-                self.evaluate_application_type(callee_type_for_resolution);
-            resolved_for_classification = self.resolve_lazy_type(resolved_for_classification);
-            resolved_for_classification = self.evaluate_type_with_env(resolved_for_classification);
+                self.resolve_callee_for_signature_shape(callee_type_for_resolution);
             classification =
                 query::classify_for_call_signatures(self.ctx.types, resolved_for_classification);
         }
@@ -722,29 +732,9 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // Resolve Lazy/Application types before creating the contextual context.
-        // This ensures that when the callee is an interface type (stored as Lazy(DefId))
-        // or a generic interface application (Application(Lazy, args)), the contextual
-        // type context can properly extract parameter types from the resolved Callable shape.
-        //
-        // Without this resolution, ContextualTypeContext's get_parameter_type_for_call
-        // calls evaluate_type (with NoopResolver) on the Lazy type, which returns the
-        // Lazy type unchanged (NoopResolver.resolve_lazy returns None). The extractor
-        // then falls back to default None output because visit_lazy is not overridden.
-        // This causes false TS7006 emissions for callbacks passed to interface-typed callees.
-        //
-        // Examples that were wrongly emitting TS7006:
-        //   interface Fn { (fn: (x: number) => void): void }
-        //   declare const fn: Fn;
-        //   fn(x => {});  // x was typed as any (false positive)
-        let callee_type_for_context = self.evaluate_application_type(callee_type_for_resolution);
-        let callee_type_for_context = self.resolve_lazy_type(callee_type_for_context);
-        let callee_type_for_context = self.evaluate_contextual_type(callee_type_for_context);
-        let callee_type_for_context = self.evaluate_type_with_env(callee_type_for_context);
-        // Extract the shape from the same resolved callee type used for contextual typing.
-        // Using a less-resolved form here can make Round 2 infer from a pre-instantiation
-        // method signature even though callback contextual typing is based on the fully
-        // resolved receiver-specific callable type.
+        let callee_type_for_context =
+            self.resolve_callee_for_contextual_shape(callee_type_for_resolution);
+        // Keep contextual typing and Round 2 inference on the same resolved shape.
         let mut callee_shape = call_checker::get_contextual_signature_for_arity(
             self.ctx.types,
             callee_type_for_context,
@@ -2436,10 +2426,8 @@ impl<'a> CheckerState<'a> {
         // We pop it at the end of this function.
         self.ensure_relation_input_ready(callee_type_for_resolution);
 
-        // Resolve applications/lazy refs to callable forms before solver dispatch.
-        let callee_type_for_call = self.evaluate_application_type(callee_type_for_resolution);
-        let callee_type_for_call = self.resolve_lazy_type(callee_type_for_call);
-        let callee_type_for_call = self.evaluate_type_with_env(callee_type_for_call);
+        let callee_type_for_call =
+            self.resolve_callee_for_signature_shape(callee_type_for_resolution);
         // For union types, resolve Lazy members so the solver can inspect their
         // callable shapes (e.g., for `this` type checks in TS2684). The solver's
         // NoopResolver can't resolve Lazy types, so we do it here.

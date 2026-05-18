@@ -1731,6 +1731,15 @@ impl<'a> CheckerState<'a> {
         if let Some(generic_target) =
             self.deferred_generic_element_write_target(left_idx, source_type)
         {
+            if crate::query_boundaries::assignability::are_types_structurally_identical(
+                self.ctx.types,
+                &self.ctx,
+                source_type,
+                generic_target,
+            ) {
+                return;
+            }
+
             if (source_type != generic_target
                 && !self.is_assignable_to(source_type, generic_target))
                 || (source_type != generic_target

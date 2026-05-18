@@ -428,6 +428,114 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
             Some(self.evaluator.interner().union(results))
         }
     }
+
+    fn can_substitute_mapped_index(&mut self, mapped: &MappedType) -> bool {
+        // Name-match TypeParams so expanded `Record<K, V>` constraints still
+        // substitute for the caller's distinct-but-same-name `K`.
+        let same_type_param_name = {
+            let interner = self.evaluator.interner();
+            match (
+                interner.lookup(mapped.constraint),
+                interner.lookup(self.index_type),
+            ) {
+                (
+                    Some(TypeData::TypeParameter(constraint_tp)),
+                    Some(TypeData::TypeParameter(index_tp)),
+                ) => constraint_tp.name == index_tp.name,
+                _ => false,
+            }
+        };
+
+        // TypeParameter index whose constraint matches the mapped constraint:
+        // When the index is `K extends "one" | "two"` and the mapped constraint is
+        // `"one" | "two"`, K is a valid key into the mapped type. Substituting K into
+        // the template preserves the generic relationship, e.g., `{ [P in "one" | "two"]: F<P> }[K]`
+        // becomes `F<K>`. This matches tsc's behavior for indexed access on mapped types
+        // with generic key types.
+        let type_param_constraint_matches = {
+            let raw_constraint = {
+                let interner = self.evaluator.interner();
+                if let Some(TypeData::TypeParameter(index_tp)) = interner.lookup(self.index_type) {
+                    index_tp.constraint
+                } else {
+                    None
+                }
+            };
+            if let Some(constraint) = raw_constraint {
+                if constraint == mapped.constraint {
+                    true
+                } else {
+                    // The constraint on the type parameter may be an unevaluated form
+                    // (e.g., IndexAccess(Options, "kind")) that evaluates to the same
+                    // type as the mapped constraint (e.g., "one" | "two"). Evaluate it
+                    // before comparing to handle cases like:
+                    //   type OptionHandlers = { [K in Options['kind']]: ... }
+                    //   function handleOption<K extends Options['kind']>(...)
+                    // where K's constraint is stored as Options['kind'] but the mapped
+                    // constraint is the evaluated union "one" | "two".
+                    self.key_spaces_semantically_match(constraint, mapped.constraint)
+                        || self
+                            .evaluator
+                            .constraints_semantically_match(constraint, mapped.constraint)
+                }
+            } else {
+                false
+            }
+        };
+
+        mapped.constraint == self.index_type
+            // Same-named TypeParameters with different TypeIds (see above)
+            || same_type_param_name
+            // Union/intersection constraints that directly include the index type
+            || self.mapped_constraint_contains_index_type(mapped.constraint)
+            // TypeParameter whose constraint matches the mapped constraint
+            || type_param_constraint_matches
+            // Implicit index signature: when the constraint is `keyof T`,
+            // string/number are valid key types because keyof T always
+            // includes string | number | symbol for any T.
+            // This handles for-in loops: `for (let k in obj) { result[k] = ... }`.
+            || (matches!(self.index_type, TypeId::STRING | TypeId::NUMBER)
+                && keyof_inner_type(self.evaluator.interner(), mapped.constraint).is_some())
+            // Intersection index containing the constraint: when index is
+            // `string & keyof T` and constraint is `keyof T`, the intersection
+            // is a subset of the constraint. This handles for-in loops where the
+            || self.intersection_contains_mapped_constraint(mapped.constraint)
+            || self
+                .evaluator
+                .constraints_semantically_match(self.index_type, mapped.constraint)
+    }
+
+    fn key_spaces_semantically_match(&mut self, left: TypeId, right: TypeId) -> bool {
+        if left == right {
+            return true;
+        }
+
+        let interner = self.evaluator.interner();
+        if let (Some(TypeData::KeyOf(left_inner)), Some(TypeData::KeyOf(right_inner))) =
+            (interner.lookup(left), interner.lookup(right))
+        {
+            return self.keyof_operands_semantically_match(left_inner, right_inner);
+        }
+
+        false
+    }
+
+    fn keyof_operands_semantically_match(&mut self, left: TypeId, right: TypeId) -> bool {
+        if left == right {
+            return true;
+        }
+
+        let interner = self.evaluator.interner();
+        if let (
+            Some(TypeData::TypeParameter(left_param)),
+            Some(TypeData::TypeParameter(right_param)),
+        ) = (interner.lookup(left), interner.lookup(right))
+        {
+            return left_param.name == right_param.name;
+        }
+
+        false
+    }
 }
 
 impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
@@ -808,80 +916,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             return None;
         }
 
-        // Name-match TypeParams so expanded `Record<K, V>` constraints still
-        // substitute for the caller's distinct-but-same-name `K`.
-        let same_type_param_name = {
-            let interner = self.evaluator.interner();
-            match (
-                interner.lookup(mapped.constraint),
-                interner.lookup(self.index_type),
-            ) {
-                (
-                    Some(TypeData::TypeParameter(constraint_tp)),
-                    Some(TypeData::TypeParameter(index_tp)),
-                ) => constraint_tp.name == index_tp.name,
-                _ => false,
-            }
-        };
-
-        // TypeParameter index whose constraint matches the mapped constraint:
-        // When the index is `K extends "one" | "two"` and the mapped constraint is
-        // `"one" | "two"`, K is a valid key into the mapped type. Substituting K into
-        // the template preserves the generic relationship, e.g., `{ [P in "one" | "two"]: F<P> }[K]`
-        // becomes `F<K>`. This matches tsc's behavior for indexed access on mapped types
-        // with generic key types.
-        let type_param_constraint_matches = {
-            let raw_constraint = {
-                let interner = self.evaluator.interner();
-                if let Some(TypeData::TypeParameter(index_tp)) = interner.lookup(self.index_type) {
-                    index_tp.constraint
-                } else {
-                    None
-                }
-            };
-            if let Some(constraint) = raw_constraint {
-                if constraint == mapped.constraint {
-                    true
-                } else {
-                    // The constraint on the type parameter may be an unevaluated form
-                    // (e.g., IndexAccess(Options, "kind")) that evaluates to the same
-                    // type as the mapped constraint (e.g., "one" | "two"). Evaluate it
-                    // before comparing to handle cases like:
-                    //   type OptionHandlers = { [K in Options['kind']]: ... }
-                    //   function handleOption<K extends Options['kind']>(...)
-                    // where K's constraint is stored as Options['kind'] but the mapped
-                    // constraint is the evaluated union "one" | "two".
-                    self.evaluator
-                        .constraints_semantically_match(constraint, mapped.constraint)
-                }
-            } else {
-                false
-            }
-        };
-
-        // Direct match: index type exactly equals the constraint
-        let can_substitute = mapped.constraint == self.index_type
-            // Same-named TypeParameters with different TypeIds (see above)
-            || same_type_param_name
-            // Union/intersection constraints that directly include the index type
-            || self.mapped_constraint_contains_index_type(mapped.constraint)
-            // TypeParameter whose constraint matches the mapped constraint
-            || type_param_constraint_matches
-            // Implicit index signature: when the constraint is `keyof T`,
-            // string/number are valid key types because keyof T always
-            // includes string | number | symbol for any T.
-            // This handles for-in loops: `for (let k in obj) { result[k] = ... }`.
-            || (matches!(self.index_type, TypeId::STRING | TypeId::NUMBER)
-                && keyof_inner_type(self.evaluator.interner(), mapped.constraint).is_some())
-            // Intersection index containing the constraint: when index is
-            // `string & keyof T` and constraint is `keyof T`, the intersection
-            // is a subset of the constraint. This handles for-in loops where the
-            || self.intersection_contains_mapped_constraint(mapped.constraint)
-            || self
-                .evaluator
-                .constraints_semantically_match(self.index_type, mapped.constraint);
-
-        if can_substitute {
+        if self.can_substitute_mapped_index(&mapped) {
             // `{ [K in Keys]: F<K> }[Keys]` is a per-key union, not `F<Keys>`.
             // Preserve that relationship for symbolic key-space indexes.
             if self.index_is_symbolic_key_space(mapped.constraint) {
@@ -1475,10 +1510,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         // Check if index is a type parameter
-        let index_constraint = match self.interner().lookup(index_type) {
-            Some(TypeData::TypeParameter(tp)) => tp.constraint?,
-            _ => return None,
-        };
+        if !matches!(
+            self.interner().lookup(index_type),
+            Some(TypeData::TypeParameter(_))
+        ) {
+            return None;
+        }
 
         let mapped = self.interner().get_mapped(MappedTypeId(mapped_id.0));
 
@@ -1487,13 +1524,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         }
 
-        // The constraint may be unevaluated; the index itself can still evaluate
-        // to the mapped constraint while its own constraint stays deferred.
-        let constraint_matches = self
-            .constraints_semantically_match(index_constraint, mapped.constraint)
-            || self.constraints_semantically_match(index_type, mapped.constraint);
+        let can_substitute = {
+            let mut visitor = IndexAccessVisitor {
+                evaluator: self,
+                object_type,
+                index_type,
+            };
+            visitor.can_substitute_mapped_index(&mapped)
+        };
 
-        if !constraint_matches {
+        if !can_substitute {
             return None;
         }
 

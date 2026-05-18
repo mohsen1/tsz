@@ -400,7 +400,8 @@ impl<'a> CheckerState<'a> {
                         crate::query_boundaries::common::keyof_inner_type(self.ctx.types, member)
                             .is_some()
                     })
-                });
+                })
+                || self.index_type_parameter_constraint_targets_object(index_type, object_type);
 
         if !index_mentions_keyof
             || !crate::query_boundaries::common::contains_type_parameters(
@@ -433,6 +434,62 @@ impl<'a> CheckerState<'a> {
 
         let resolved = self.resolve_lazy_type(object_type);
         crate::query_boundaries::common::mapped_type_id(self.ctx.types, resolved).is_some()
+    }
+
+    fn index_type_parameter_constraint_targets_object(
+        &mut self,
+        index_type: TypeId,
+        object_type: TypeId,
+    ) -> bool {
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, index_type)
+        {
+            return members.iter().copied().any(|member| {
+                self.index_type_parameter_constraint_targets_object(member, object_type)
+            });
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, index_type)
+        {
+            return members.iter().copied().any(|member| {
+                self.index_type_parameter_constraint_targets_object(member, object_type)
+            });
+        }
+
+        if let Some(param_info) =
+            crate::query_boundaries::common::type_param_info(self.ctx.types, index_type)
+            && let Some(constraint) = param_info.constraint
+        {
+            if let Some(keyof_inner) =
+                crate::query_boundaries::common::keyof_inner_type(self.ctx.types, constraint)
+            {
+                return self.same_type_or_evaluates_to(keyof_inner, object_type);
+            }
+
+            return self.index_type_parameter_constraint_targets_object(constraint, object_type);
+        }
+
+        if crate::query_boundaries::common::is_generic_application(self.ctx.types, index_type) {
+            let evaluated = self.evaluate_type_with_env(index_type);
+            if evaluated != index_type && evaluated != TypeId::ERROR {
+                return self.index_type_parameter_constraint_targets_object(evaluated, object_type);
+            }
+        }
+
+        false
+    }
+
+    fn same_type_or_evaluates_to(&mut self, left: TypeId, right: TypeId) -> bool {
+        if left == right {
+            return true;
+        }
+
+        let evaluated_left = self.evaluate_type_with_env(left);
+        let evaluated_right = self.evaluate_type_with_env(right);
+        evaluated_left != TypeId::ERROR
+            && evaluated_right != TypeId::ERROR
+            && evaluated_left == evaluated_right
     }
 
     /// Decide whether a write-context element access on a *concrete* receiver

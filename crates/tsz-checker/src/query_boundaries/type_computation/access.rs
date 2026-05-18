@@ -1,5 +1,5 @@
 use tsz_common::Atom;
-use tsz_solver::{QueryDatabase, TypeDatabase, TypeId, TypeSubstitution};
+use tsz_solver::{QueryDatabase, TypeDatabase, TypeId};
 
 pub(crate) use super::super::common::tuple_elements;
 
@@ -48,37 +48,11 @@ pub(crate) fn generic_index_access_substitution(
         })?;
 
     let index_access = db.factory().index_access(substitution_object, index_type);
-    let type_to_evaluate = mapped_index_template_substitution(db, substitution_object, index_type)
-        .unwrap_or(index_access);
+    let type_to_evaluate = index_access;
     Some(GenericIndexedAccessSubstitution {
         index_access,
         type_to_evaluate,
     })
-}
-
-fn mapped_index_template_substitution(
-    db: &dyn QueryDatabase,
-    object_type: TypeId,
-    index_type: TypeId,
-) -> Option<TypeId> {
-    let mapped_id = tsz_solver::mapped_type_id(db.as_type_database(), object_type)?;
-    let mapped = db.mapped_type(mapped_id);
-    if mapped.name_type.is_some()
-        || matches!(
-            mapped.optional_modifier,
-            Some(tsz_solver::MappedModifier::Add)
-        )
-    {
-        return None;
-    }
-
-    let substitution = TypeSubstitution::single(mapped.type_param.name, index_type);
-    Some(tsz_solver::instantiate_type_cached(
-        db.as_type_database(),
-        Some(db),
-        mapped.template,
-        &substitution,
-    ))
 }
 
 #[cfg(test)]
