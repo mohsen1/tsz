@@ -1147,8 +1147,20 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
+        let block_close_pos = self
+            .find_token_end_before_trivia(block_node.pos, block_node.end)
+            .saturating_sub(1);
+        let directive_prologue_count = self
+            .emit_leading_directive_prologue_statements(&block.statements.nodes, block_close_pos);
+
         if has_function_temps {
             self.emit_function_body_hoisted_temps();
+        }
+
+        if !self.pending_object_rest_params.is_empty() {
+            self.emit_pending_object_rest_param_preamble(false);
+        } else if !self.pending_object_rest_param_defaults.is_empty() {
+            self.emit_pending_object_rest_param_defaults(false);
         }
 
         // Capture position for inserting hoisted temps created during statement emit
@@ -1201,7 +1213,13 @@ impl<'a> Printer<'a> {
 
         // Emit original body statements, inserting prologue after super() if present
         let mut prologue_emitted = !has_prologue || (has_using_region && super_call_idx.is_none());
-        for (stmt_i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
+        for (stmt_i, &stmt_idx) in block
+            .statements
+            .nodes
+            .iter()
+            .enumerate()
+            .skip(directive_prologue_count)
+        {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
                 let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
                 self.emit_comments_before_pos(actual_start);

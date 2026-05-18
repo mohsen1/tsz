@@ -265,6 +265,9 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
+        let directive_prologue_count = self
+            .emit_leading_directive_prologue_statements(&block.statements.nodes, block_close_pos);
+
         // Inject `var _this = this;` at the start of the block for arrow function _this capture
         if let Some(ref capture_name) = this_capture_name {
             self.write("var ");
@@ -331,7 +334,7 @@ impl<'a> Printer<'a> {
         let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
         let prev_recovered_module_syntax_block_depth = self.recovered_module_syntax_block_depth;
         self.recovered_module_syntax_block_depth += 1;
-        for (stmt_i, &stmt_idx) in stmts.iter().enumerate() {
+        for (stmt_i, &stmt_idx) in stmts.iter().enumerate().skip(directive_prologue_count) {
             // Save state before leading comments so we can undo them if the
             // statement produces no output (e.g., namespace alias import or
             // CJS export var with no initializer).
@@ -1919,6 +1922,73 @@ impl<'a> Printer<'a> {
                 || k == syntax_kind_ext::CLASS_EXPRESSION
         );
         !can_strip
+    }
+
+    pub(in crate::emitter) fn emit_leading_directive_prologue_statements(
+        &mut self,
+        statements: &[NodeIndex],
+        block_close_pos: u32,
+    ) -> usize {
+        let mut emitted_count = 0;
+        for (stmt_i, &stmt_idx) in statements.iter().enumerate() {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                break;
+            };
+            if !self.is_directive_prologue_statement(stmt_node) {
+                break;
+            }
+
+            let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+            if let Some(text) = self.source_text {
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c_end = self.all_comments[self.comment_emit_idx].end;
+                    if c_end > actual_start {
+                        break;
+                    }
+                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                    let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                    if let Ok(comment_text) =
+                        safe_slice::slice(text, c_pos as usize, c_end as usize)
+                    {
+                        self.write_comment_with_reindent(comment_text, Some(c_pos));
+                        if c_trailing {
+                            self.write_line();
+                        } else if comment_text.starts_with("/*") {
+                            self.pending_block_comment_space = true;
+                        }
+                    }
+                    self.comment_emit_idx += 1;
+                }
+            }
+
+            let before_emit_len = self.writer.len();
+            self.emit(stmt_idx);
+            if self.writer.len() > before_emit_len && !self.writer.is_at_line_start() {
+                let upper_bound = statements
+                    .get(stmt_i + 1)
+                    .and_then(|&next_idx| self.arena.get(next_idx))
+                    .map_or(block_close_pos, |next_node| next_node.pos);
+                let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
+                let max_pos = if stmt_i + 1 >= statements.len() {
+                    block_close_pos
+                } else {
+                    upper_bound
+                };
+                self.emit_trailing_comments_before(token_end, max_pos);
+                self.write_line();
+            }
+            emitted_count += 1;
+        }
+        emitted_count
+    }
+
+    fn is_directive_prologue_statement(&self, node: &Node) -> bool {
+        node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+            && self
+                .arena
+                .get_expression_statement(node)
+                .and_then(|stmt| self.arena.get(stmt.expression))
+                .is_some_and(|expr| expr.is_string_literal())
     }
 
     /// Emit trailing comments after a semicolon. Scans backward through the
