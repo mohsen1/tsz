@@ -152,17 +152,89 @@ function validateCompilerStatus(status, label) {
   }
 }
 
+function validateCompilerExitCode(exitCode, label) {
+  if (
+    exitCode !== null &&
+    exitCode !== undefined &&
+    !Number.isInteger(exitCode)
+  ) {
+    fail(`${label} exitCode must be an integer when present`);
+  }
+}
+
+function validateNonNegativeCount(value, label) {
+  if (Number.isInteger(value) && value < 0) {
+    fail(`${label} must be non-negative`);
+  }
+}
+
+function validateComparisonStatus(status, label) {
+  if (typeof status !== "string" || status.trim() === "") {
+    fail(`${label} comparison.status must be a non-empty string`);
+  }
+  const allowedStatuses = new Set([
+    "unavailable",
+    "both-nonpassing",
+    "both-pass",
+    "tsz-rejects-tsc-accepted",
+    "tsz-accepts-tsc-rejected",
+  ]);
+  if (!allowedStatuses.has(status)) {
+    fail(
+      `${label} comparison.status must be one of ${[...allowedStatuses].join(", ")}: ${status}`,
+    );
+  }
+}
+
+function validateComparisonCompilerStatuses(comparison, compilers, label) {
+  for (const compiler of ["tsc", "tsz"]) {
+    const field = `${compiler}Status`;
+    const comparisonStatus = comparison?.[field];
+    const compilerStatus = compilers?.[compiler]?.status;
+    if (typeof comparisonStatus !== "string" || comparisonStatus.trim() === "") {
+      fail(`${label} comparison.${field} must be a non-empty string`);
+    }
+    if (comparisonStatus !== compilerStatus) {
+      fail(
+        `${label} comparison.${field} (${comparisonStatus}) does not match compilers.${compiler}.status (${compilerStatus})`,
+      );
+    }
+  }
+}
+
+function expectedComparisonStatus(compilers) {
+  const tscStatus = compilers?.tsc?.status;
+  const tszStatus = compilers?.tsz?.status;
+  if (tscStatus === "unavailable" || tszStatus === "unavailable") {
+    return "unavailable";
+  }
+  if (tscStatus === "pass" && tszStatus === "pass") {
+    return "both-pass";
+  }
+  if (tscStatus === "pass") {
+    return "tsz-rejects-tsc-accepted";
+  }
+  if (tszStatus === "pass") {
+    return "tsz-accepts-tsc-rejected";
+  }
+  return "both-nonpassing";
+}
+
+function validateComparisonStatusConsistency(comparison, compilers, label) {
+  const expected = expectedComparisonStatus(compilers);
+  if (comparison.status !== expected) {
+    fail(
+      `${label} comparison.status (${comparison.status}) does not match compiler statuses (${expected})`,
+    );
+  }
+}
+
 function validateReport(report) {
   validateClassificationCompilerReport(report);
   if (!report.comparison || typeof report.comparison !== "object") {
     fail("assertion classification report is missing comparison");
   }
-  if (
-    typeof report.comparison.status !== "string" ||
-    report.comparison.status.trim() === ""
-  ) {
-    fail("assertion classification comparison.status must be a non-empty string");
-  }
+  validateComparisonStatus(report.comparison.status, "assertion classification");
   if (!report.candidateManifest || typeof report.candidateManifest !== "object") {
     fail("assertion classification report is missing candidateManifest");
   }
@@ -240,6 +312,26 @@ if (cleanSubsetManifest) {
   if (!Number.isInteger(totalCandidates)) {
     fail("tsc-clean assertion manifest counts.totalCandidates must be an integer");
   }
+  validateNonNegativeCount(
+    acceptedAssertions,
+    "tsc-clean assertion manifest counts.tscAcceptedAssertions",
+  );
+  validateNonNegativeCount(
+    acceptedReferencingSolutionDeclaration,
+    "tsc-clean assertion manifest counts.tscAcceptedAssertionsReferencingSolutionDeclaration",
+  );
+  validateNonNegativeCount(
+    acceptedMissingSolutionDeclarationReference,
+    "tsc-clean assertion manifest counts.tscAcceptedAssertionsMissingSolutionDeclarationReference",
+  );
+  validateNonNegativeCount(
+    rejectedAssertions,
+    "tsc-clean assertion manifest counts.tscRejectedAssertions",
+  );
+  validateNonNegativeCount(
+    totalCandidates,
+    "tsc-clean assertion manifest counts.totalCandidates",
+  );
   if (
     acceptedReferencingSolutionDeclaration + acceptedMissingSolutionDeclarationReference !==
       acceptedAssertions
@@ -284,15 +376,10 @@ if (cleanSubsetClassification) {
   ) {
     fail("tsc-clean assertion classification report is missing comparison");
   }
-  const cleanComparisonStatus = cleanSubsetClassification.comparison.status;
-  if (
-    typeof cleanComparisonStatus !== "string" ||
-    cleanComparisonStatus.trim() === ""
-  ) {
-    fail(
-      "tsc-clean assertion classification comparison.status must be a non-empty string",
-    );
-  }
+  validateComparisonStatus(
+    cleanSubsetClassification.comparison.status,
+    "tsc-clean assertion classification",
+  );
 }
 if (cleanSubsetManifest && cleanSubsetClassification) {
   const acceptedAssertions = cleanSubsetManifest.counts.tscAcceptedAssertions;
@@ -326,10 +413,17 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
     }
   }
   for (const compiler of ["tsc", "tsz"]) {
-    const status = cleanSubsetClassification.compilers?.[compiler]?.status;
-    validateCompilerStatus(status, `tsc-clean assertion classification ${compiler}`);
+    const compilerResult = cleanSubsetClassification.compilers?.[compiler] || {};
+    validateCompilerStatus(
+      compilerResult.status,
+      `tsc-clean assertion classification ${compiler}`,
+    );
+    validateCompilerExitCode(
+      compilerResult.exitCode,
+      `tsc-clean assertion classification ${compiler}`,
+    );
     const totalCandidates =
-      cleanSubsetClassification.compilers?.[compiler]?.candidateDiagnostics?.totalCandidates;
+      compilerResult.candidateDiagnostics?.totalCandidates;
     if (!Number.isInteger(totalCandidates)) {
       fail(
         `tsc-clean assertion classification ${compiler} candidateDiagnostics.totalCandidates must be an integer`,
@@ -354,6 +448,16 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
       );
     }
   }
+  validateComparisonCompilerStatuses(
+    cleanSubsetClassification.comparison,
+    cleanSubsetClassification.compilers,
+    "tsc-clean assertion classification",
+  );
+  validateComparisonStatusConsistency(
+    cleanSubsetClassification.comparison,
+    cleanSubsetClassification.compilers,
+    "tsc-clean assertion classification",
+  );
 }
 const tsc = report.compilers?.tsc || {};
 const tsz = report.compilers?.tsz || {};
@@ -364,26 +468,38 @@ for (const [compiler, result] of [
   ["tsz", tsz],
 ]) {
   validateCompilerStatus(result.status, `assertion classification ${compiler}`);
-  if (
-    result.exitCode !== null &&
-    result.exitCode !== undefined &&
-    !Number.isInteger(result.exitCode)
-  ) {
-    fail(`assertion classification ${compiler} exitCode must be an integer when present`);
-  }
+  validateCompilerExitCode(result.exitCode, `assertion classification ${compiler}`);
 }
+validateComparisonCompilerStatuses(
+  comparison,
+  report.compilers,
+  "assertion classification",
+);
+validateComparisonStatusConsistency(
+  comparison,
+  report.compilers,
+  "assertion classification",
+);
 if (!Number.isInteger(counts.pairedSolutions)) {
   fail("assertion classification candidateManifest.counts.pairedSolutions must be an integer");
 }
 if (!Number.isInteger(counts.generatedAssertions)) {
   fail("assertion classification candidateManifest.counts.generatedAssertions must be an integer");
 }
+validateNonNegativeCount(
+  counts.pairedSolutions,
+  "assertion classification candidateManifest.counts.pairedSolutions",
+);
+validateNonNegativeCount(
+  counts.generatedAssertions,
+  "assertion classification candidateManifest.counts.generatedAssertions",
+);
 if (counts.pairedSolutions !== counts.generatedAssertions) {
   fail(
     `assertion classification pairedSolutions (${counts.pairedSolutions}) does not match generatedAssertions (${counts.generatedAssertions})`,
   );
 }
-if (counts.generatedAssertions === 0) {
+if (counts.generatedAssertions <= 0) {
   fail("assertion classification generatedAssertions must be greater than zero");
 }
 const assertionsReferencingSolutionDeclaration =
@@ -400,6 +516,14 @@ if (!Number.isInteger(assertionsMissingSolutionDeclarationReference)) {
     "assertion classification candidateManifest.counts.assertionsMissingSolutionDeclarationReference must be an integer",
   );
 }
+validateNonNegativeCount(
+  assertionsReferencingSolutionDeclaration,
+  "assertion classification candidateManifest.counts.assertionsReferencingSolutionDeclaration",
+);
+validateNonNegativeCount(
+  assertionsMissingSolutionDeclarationReference,
+  "assertion classification candidateManifest.counts.assertionsMissingSolutionDeclarationReference",
+);
 if (
   assertionsReferencingSolutionDeclaration +
     assertionsMissingSolutionDeclarationReference !==
