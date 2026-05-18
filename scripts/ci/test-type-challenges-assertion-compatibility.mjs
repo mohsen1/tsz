@@ -204,7 +204,7 @@ withTempDir((dir) => {
             filesWithDiagnostics: ["assertions/one.ts"],
             byCandidate: [
               {
-                file: "assertions/one.ts",
+                file: ".\\assertions\\one.ts",
                 errorCount: 1,
                 codes: [{ key: "TS2344", count: 1 }],
                 semanticFamilies: ["mapped/key-remapped types"],
