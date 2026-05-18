@@ -533,7 +533,7 @@ impl DisplayProvenanceStore {
 mod tests {
     use super::*;
     use crate::intern::TypeInterner;
-    use crate::types::{ObjectFlags, ObjectShape, OrderedFloat, PropertyInfo};
+    use crate::types::PropertyInfo;
 
     fn make_interner() -> TypeInterner {
         TypeInterner::new()
@@ -542,12 +542,8 @@ mod tests {
     #[test]
     fn record_alias_application_basic() {
         let interner = make_interner();
-        let lit_a = interner.intern(TypeData::Literal(LiteralValue::String(
-            interner.intern_string("a"),
-        )));
-        let lit_b = interner.intern(TypeData::Literal(LiteralValue::String(
-            interner.intern_string("b"),
-        )));
+        let lit_a = interner.literal_string("a");
+        let lit_b = interner.literal_string("b");
         interner
             .display_provenance
             .record_alias_application(&interner, lit_a, lit_b);
@@ -557,7 +553,7 @@ mod tests {
     #[test]
     fn record_alias_application_skips_self() {
         let interner = make_interner();
-        let lit = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(1.0))));
+        let lit = interner.literal_number(1.0);
         interner
             .display_provenance
             .record_alias_application(&interner, lit, lit);
@@ -567,7 +563,7 @@ mod tests {
     #[test]
     fn record_alias_application_skips_intrinsic_evaluated() {
         let interner = make_interner();
-        let lit = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(42.0))));
+        let lit = interner.literal_number(42.0);
         interner
             .display_provenance
             .record_alias_application(&interner, TypeId::STRING, lit);
@@ -577,9 +573,9 @@ mod tests {
     #[test]
     fn record_alias_application_last_writer_wins_for_non_application() {
         let interner = make_interner();
-        let lit_a = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(1.0))));
-        let lit_b = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(2.0))));
-        let lit_c = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(3.0))));
+        let lit_a = interner.literal_number(1.0);
+        let lit_b = interner.literal_number(2.0);
+        let lit_c = interner.literal_number(3.0);
         interner
             .display_provenance
             .record_alias_application(&interner, lit_a, lit_b);
@@ -593,11 +589,9 @@ mod tests {
     #[test]
     fn union_origin_skipped_when_order_matches() {
         let interner = make_interner();
-        let a = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(1.0))));
-        let b = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(2.0))));
-        let union_id = interner.intern(TypeData::Union(
-            interner.intern_type_list_from_slice(&[a, b]),
-        ));
+        let a = interner.literal_number(1.0);
+        let b = interner.literal_number(2.0);
+        let union_id = interner.union_from_sorted_vec(vec![a, b]);
         interner
             .display_provenance
             .record_union_origin(&interner, union_id, vec![a, b]);
@@ -613,12 +607,10 @@ mod tests {
     #[test]
     fn union_origin_stored_on_flatten() {
         let interner = make_interner();
-        let a = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(1.0))));
-        let b = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(2.0))));
-        let c = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(3.0))));
-        let union_id = interner.intern(TypeData::Union(
-            interner.intern_type_list_from_slice(&[a, b, c]),
-        ));
+        let a = interner.literal_number(1.0);
+        let b = interner.literal_number(2.0);
+        let c = interner.literal_number(3.0);
+        let union_id = interner.union_from_sorted_vec(vec![a, b, c]);
         // origin is shorter than current → flattening occurred
         interner
             .display_provenance
@@ -636,26 +628,12 @@ mod tests {
     fn union_origin_stored_for_anon_object_reorder() {
         let interner = make_interner();
         // Two distinct anonymous shapes so they get distinct TypeIds.
-        let shape_a = interner.intern_object_shape(ObjectShape {
-            flags: ObjectFlags::empty(),
-            properties: vec![PropertyInfo {
-                name: interner.intern_string("p"),
-                type_id: TypeId::NUMBER,
-                ..Default::default()
-            }],
-            string_index: None,
-            number_index: None,
-            symbol: None,
-        });
-        let shape_b = interner.intern_object_shape(ObjectShape {
-            flags: ObjectFlags::empty(),
-            properties: vec![],
-            string_index: None,
-            number_index: None,
-            symbol: None,
-        });
-        let a_obj = interner.intern(TypeData::Object(shape_a));
-        let b_obj = interner.intern(TypeData::Object(shape_b));
+        let a_obj = interner.object(vec![PropertyInfo {
+            name: interner.intern_string("p"),
+            type_id: TypeId::NUMBER,
+            ..Default::default()
+        }]);
+        let b_obj = interner.object(vec![]);
         assert_ne!(
             a_obj, b_obj,
             "test requires two distinct anonymous object types"
@@ -666,9 +644,7 @@ mod tests {
         } else {
             ([b_obj, a_obj], vec![a_obj, b_obj])
         };
-        let union_id = interner.intern(TypeData::Union(
-            interner.intern_type_list_from_slice(&canon),
-        ));
+        let union_id = interner.union_from_sorted_vec(canon.to_vec());
         interner
             .display_provenance
             .record_union_origin(&interner, union_id, origin.clone());
@@ -683,7 +659,7 @@ mod tests {
     #[test]
     fn conditional_alias_base_roundtrip() {
         let interner = make_interner();
-        let ty = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(0.0))));
+        let ty = interner.literal_number(0.0);
         assert!(!interner.display_provenance.is_conditional_alias_base(ty));
         interner.display_provenance.mark_conditional_alias_base(ty);
         assert!(interner.display_provenance.is_conditional_alias_base(ty));
@@ -692,7 +668,7 @@ mod tests {
     #[test]
     fn fresh_properties_roundtrip() {
         let interner = make_interner();
-        let ty = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(99.0))));
+        let ty = interner.literal_number(99.0);
         let prop = PropertyInfo {
             name: interner.intern_string("x"),
             type_id: TypeId::NUMBER,
@@ -726,7 +702,7 @@ mod tests {
             interner.display_provenance.get_array_display_base_type(),
             None
         );
-        let lit = interner.intern(TypeData::Literal(LiteralValue::Number(OrderedFloat(7.0))));
+        let lit = interner.literal_number(7.0);
         interner.display_provenance.set_array_display_base_type(lit);
         assert_eq!(
             interner.display_provenance.get_array_display_base_type(),
