@@ -589,6 +589,81 @@ withTempDir((dir) => {
             candidatesWithDiagnostics: 1,
             candidatesWithoutDiagnostics: 1,
             filesWithDiagnostics: ["assertions/one.ts"],
+            filesWithoutDiagnostics: ["./assertions/one.ts"],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc candidateDiagnostics files overlap between diagnostic and diagnostic-free lists: assertions\/one\.ts/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const row = runCompatibility({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: {
+        tsc: {
+          status: "fail",
+          exitCode: 1,
+          diagnostics: {
+            firstErrors: ["assertions/one.ts(1,1): error TS2344: mismatch"],
+            byCode: [{ key: "TS2344", count: 1 }],
+          },
+          candidateDiagnostics: {
+            totalCandidates: 1,
+            candidatesWithDiagnostics: 1,
+            candidatesWithoutDiagnostics: 0,
+            filesWithDiagnostics: [".\\assertions\\one.ts"],
+          },
+        },
+        tsz: {
+          status: "pass",
+          exitCode: 0,
+          candidateDiagnostics: {
+            totalCandidates: 1,
+            candidatesWithDiagnostics: 0,
+            candidatesWithoutDiagnostics: 1,
+          },
+        },
+      },
+      comparison: {
+        status: "tsz-accepts-tsc-rejected",
+        diagnosticFreeCandidateDelta: 1,
+      },
+    },
+  });
+
+  assert.equal(
+    row.repro.first_failure_path,
+    "type-challenges-assertions/assertions/one.ts",
+  );
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 2,
+            candidatesWithDiagnostics: 1,
+            candidatesWithoutDiagnostics: 1,
+            filesWithDiagnostics: ["assertions/one.ts"],
             byCandidate: [{ file: "../outside.ts" }],
           },
         },
