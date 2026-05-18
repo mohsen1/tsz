@@ -2534,6 +2534,12 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        let unwrapped_type = query::unwrap_readonly_for_lookup(self.ctx.types, check_type);
+
+        if index_type == TypeId::SYMBOL {
+            return !self.has_general_symbol_index_surface(unwrapped_type);
+        }
+
         // `any` index type: tsc reports TS7053 when noImplicitAny is on and the
         // object lacks an index signature. Treat `any` as wanting both string and
         // number indexing — if the object supports neither, a diagnostic should fire.
@@ -2554,8 +2560,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let unwrapped_type = query::unwrap_readonly_for_lookup(self.ctx.types, check_type);
-
         if wants_string
             && let Some(string_index) =
                 crate::query_boundaries::common::IndexSignatureResolver::new(self.ctx.types)
@@ -2572,6 +2576,47 @@ impl<'a> CheckerState<'a> {
         }
 
         !self.is_element_indexable(unwrapped_type, wants_string, wants_number)
+    }
+
+    fn has_general_symbol_index_surface(&self, object_type: TypeId) -> bool {
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, object_type)
+        {
+            return members
+                .iter()
+                .all(|&member| self.has_general_symbol_index_surface(member));
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, object_type)
+        {
+            return members
+                .iter()
+                .any(|&member| self.has_general_symbol_index_surface(member));
+        }
+
+        let Some(shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)
+        else {
+            return false;
+        };
+
+        if shape
+            .string_index
+            .as_ref()
+            .is_some_and(|index| index.key_type == TypeId::SYMBOL)
+        {
+            return true;
+        }
+
+        shape.properties.iter().any(|property| {
+            property.is_symbol_named
+                && self
+                    .ctx
+                    .types
+                    .resolve_atom_ref(property.name)
+                    .starts_with("__symbol_computed_")
+        })
     }
 
     /// Determine what kind of index key a type represents.

@@ -1,5 +1,7 @@
 use tsz_checker::diagnostics::diagnostic_codes;
-use tsz_checker::test_utils::{check_js_source_diagnostics, check_source_diagnostics};
+use tsz_checker::test_utils::{
+    check_js_source_diagnostics, check_source_diagnostics, check_source_strict_codes,
+};
 
 // Helper: assert no TS2322 errors
 fn assert_no_ts2322(codes: &[u32], context: &str) {
@@ -14,6 +16,10 @@ fn diagnostic_codes_for_ts(source: &str) -> Vec<u32> {
         .into_iter()
         .map(|diagnostic| diagnostic.code)
         .collect()
+}
+
+fn strict_diagnostic_codes_for_ts(source: &str) -> Vec<u32> {
+    check_source_strict_codes(source)
 }
 
 fn diagnostic_codes_for_js(source: &str) -> Vec<u32> {
@@ -290,12 +296,12 @@ const _v: string = c[key];
 }
 
 #[test]
-fn symbol_indexed_access_returns_union_of_all_symbol_named_props() {
-    // Multiple symbol-keyed properties: accessing with `symbol` returns their union.
+fn symbol_indexed_access_returns_union_of_broad_symbol_computed_props() {
+    // Multiple broad symbol-keyed properties: accessing with `symbol` returns their union.
     let codes = diagnostic_codes_for_ts(
         r#"
-declare const s1: unique symbol;
-declare const s2: unique symbol;
+declare const s1: symbol;
+declare const s2: symbol;
 
 interface Multi {
   [s1]: number;
@@ -316,9 +322,32 @@ const _n: number | string = m[k];
 }
 
 #[test]
-fn symbol_indexed_access_on_object_type_literal() {
-    // Same rule applies to type literals (not just interface declarations).
-    let codes = diagnostic_codes_for_ts(
+fn symbol_indexed_access_rejects_unique_symbol_only_interface() {
+    // A general `symbol` cannot index specific unique-symbol-only properties.
+    let codes = strict_diagnostic_codes_for_ts(
+        r#"
+declare const s1: unique symbol;
+declare const s2: unique symbol;
+
+interface Multi {
+  [s1]: number;
+  [s2]: string;
+}
+
+declare const m: Multi;
+declare const k: symbol;
+const _n: number | string = m[k];
+"#,
+    );
+    assert!(
+        codes.contains(&7053),
+        "general symbol index should reject unique-symbol-only interface props with TS7053, got {codes:?}",
+    );
+}
+
+#[test]
+fn symbol_indexed_access_rejects_unique_symbol_only_object_type_literal() {
+    let codes = strict_diagnostic_codes_for_ts(
         r#"
 declare const sym: unique symbol;
 declare const obj: { [sym]: boolean };
@@ -326,9 +355,9 @@ declare const k: symbol;
 const _b: boolean = obj[k];
 "#,
     );
-    assert_no_ts2322(
-        &codes,
-        "symbol access on type-literal object with symbol-named prop",
+    assert!(
+        codes.contains(&7053),
+        "general symbol index should reject unique-symbol-only type literal props with TS7053, got {codes:?}",
     );
 }
 

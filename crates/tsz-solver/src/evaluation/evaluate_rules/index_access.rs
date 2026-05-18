@@ -1769,10 +1769,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.add_undefined_if_unchecked(union);
         }
 
-        // If index is the general symbol type, return union of all symbol-named properties.
-        // This mirrors the string case: `obj[s: symbol]` matches any computed-symbol property.
+        // If index is the general symbol type, return the union of broad
+        // `symbol` computed properties. Specific `unique symbol` and
+        // well-known-symbol keys remain direct-only and are not swept in by a
+        // general symbol index.
         if index_type == TypeId::SYMBOL {
-            let union = self.union_symbol_named_property_types(props);
+            let union = self.union_broad_symbol_named_property_types(props);
             return self.add_undefined_if_unchecked(union);
         }
 
@@ -1878,7 +1880,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         if index_type == TypeId::SYMBOL {
-            let symbol_named_union = self.union_symbol_named_property_types(&shape.properties);
+            let symbol_named_union =
+                self.union_broad_symbol_named_property_types(&shape.properties);
             let result = match (symbol_index, symbol_named_union) {
                 (Some(sig), TypeId::UNDEFINED) => sig.value_type,
                 (None, named) => named,
@@ -2006,7 +2009,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         if index_type == TypeId::SYMBOL {
-            let symbol_named_union = self.union_symbol_named_property_types(&shape.properties);
+            let symbol_named_union =
+                self.union_broad_symbol_named_property_types(&shape.properties);
             let result = match (symbol_index, symbol_named_union) {
                 (Some(sig), TypeId::UNDEFINED) => sig.value_type,
                 (None, named) => named,
@@ -2040,10 +2044,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    pub(crate) fn union_symbol_named_property_types(&self, props: &[PropertyInfo]) -> TypeId {
+    pub(crate) fn union_broad_symbol_named_property_types(&self, props: &[PropertyInfo]) -> TypeId {
         let types: Vec<TypeId> = props
             .iter()
-            .filter(|p| p.is_symbol_named)
+            .filter(|p| {
+                p.is_symbol_named
+                    && self
+                        .interner()
+                        .resolve_atom_ref(p.name)
+                        .starts_with("__symbol_computed_")
+            })
             .map(|p| self.optional_property_type(p))
             .collect();
         if types.is_empty() {
