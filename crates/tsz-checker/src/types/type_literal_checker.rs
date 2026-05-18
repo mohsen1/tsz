@@ -1065,7 +1065,8 @@ impl<'a> CheckerState<'a> {
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
         use tsz_solver::{
-            CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectShape, PropertyInfo,
+            CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
+            PropertyInfo,
         };
         let factory = self.ctx.types.factory();
 
@@ -1099,6 +1100,7 @@ impl<'a> CheckerState<'a> {
         let mut number_index = None;
         let mut extra_number_indices = Vec::new();
         let mut has_abstract_construct_sig = false;
+        let mut has_late_bound_members = false;
         // Global member counter for preserving source declaration order across
         // both properties and methods. Using properties.len() would give methods
         // higher declaration_order than all properties since methods are merged
@@ -1176,6 +1178,14 @@ impl<'a> CheckerState<'a> {
                     }
                     METHOD_SIGNATURE | PROPERTY_SIGNATURE => {
                         let Some(name) = self.get_property_name_resolved(sig.name) else {
+                            if self
+                                .ctx
+                                .arena
+                                .get(sig.name)
+                                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                            {
+                                has_late_bound_members = true;
+                            }
                             continue;
                         };
                         let name_atom = self.ctx.types.intern_string(&name);
@@ -1483,6 +1493,15 @@ impl<'a> CheckerState<'a> {
                         circular_self_reference,
                     });
                 }
+            } else if member.is_accessor()
+                && let Some(accessor) = self.ctx.arena.get_accessor(member)
+                && self
+                    .ctx
+                    .arena
+                    .get(accessor.name)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+            {
+                has_late_bound_members = true;
             }
         }
 
@@ -1639,11 +1658,18 @@ impl<'a> CheckerState<'a> {
             return result;
         }
 
+        let late_bound_flags = if has_late_bound_members {
+            ObjectFlags::HAS_LATE_BOUND_MEMBERS
+        } else {
+            ObjectFlags::empty()
+        };
+
         if string_index.is_some() || number_index.is_some() {
             let mut result = factory.object_with_index(ObjectShape {
                 properties,
                 string_index,
                 number_index,
+                flags: late_bound_flags,
                 ..ObjectShape::default()
             });
             for idx in extra_number_indices {
@@ -1656,6 +1682,6 @@ impl<'a> CheckerState<'a> {
             return result;
         }
 
-        factory.object(properties)
+        factory.object_with_flags_and_symbol(properties, late_bound_flags, None)
     }
 }
