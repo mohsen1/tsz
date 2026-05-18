@@ -633,20 +633,23 @@ checker_integration_test_args() {
   local test_name
   while IFS= read -r test_name; do
     printf -- '--test\n%s\n' "$test_name"
-  done < <(
-    cargo metadata --no-deps --format-version 1 \
-      | jq -r '.packages[]
-          | select(.name == "tsz-checker")
-          | .targets[]
-          | select(.kind[]? == "test")
-          | .name' \
-      | sort
-  )
+  done < <(checker_integration_test_names)
+}
+
+checker_integration_test_names() {
+  cargo metadata --no-deps --format-version 1 \
+    | jq -r '.packages[]
+        | select(.name == "tsz-checker")
+        | .targets[]
+        | select(.kind[]? == "test")
+        | .name' \
+    | sort
 }
 
 run_unit_tests() {
   ci_section "Workspace nextest suites"
-  local package package_names checker_selected general_pkg_args checker_test_args
+  local package package_names checker_selected general_pkg_args
+  local checker_batch_size checker_batch_names checker_batch_args
   mapfile -t package_names < <(unit_test_packages)
   if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
     echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
@@ -672,10 +675,42 @@ run_unit_tests() {
     # The checker lib-test binary is larger than the 32 GiB CI runners can
     # link reliably. Keep checker integration tests in unit CI while avoiding
     # that monolithic `rustc --test crates/tsz-checker/src/lib.rs` artifact.
-    mapfile -t checker_test_args < <(checker_integration_test_args)
-    cargo nextest run --profile ci --cargo-profile ci-unit \
-      --build-jobs "$CARGO_BUILD_JOBS" \
-      -p tsz-checker "${checker_test_args[@]}"
+    #
+    # Cargo also struggles when one command asks it to link every checker
+    # integration target. Batch the declared targets so each `cargo test
+    # --no-run` phase has a bounded link set while preserving the same test
+    # coverage.
+    checker_batch_size="${TSZ_CI_CHECKER_TEST_BATCH_SIZE:-40}"
+    if ! [[ "$checker_batch_size" =~ ^[0-9]+$ ]] || (( checker_batch_size < 1 )); then
+      echo "error: TSZ_CI_CHECKER_TEST_BATCH_SIZE must be a positive integer" >&2
+      return 2
+    fi
+    checker_batch_names=()
+    while IFS= read -r test_name; do
+      checker_batch_names+=("$test_name")
+      if (( ${#checker_batch_names[@]} >= checker_batch_size )); then
+        checker_batch_args=()
+        for test_name in "${checker_batch_names[@]}"; do
+          checker_batch_args+=(--test "$test_name")
+        done
+        echo "info: checker integration batch (${#checker_batch_names[@]} targets): ${checker_batch_names[*]}"
+        cargo nextest run --profile ci --cargo-profile ci-unit \
+          --build-jobs "$CARGO_BUILD_JOBS" \
+          -p tsz-checker "${checker_batch_args[@]}"
+        checker_batch_names=()
+      fi
+    done < <(checker_integration_test_names)
+
+    if (( ${#checker_batch_names[@]} > 0 )); then
+      checker_batch_args=()
+      for test_name in "${checker_batch_names[@]}"; do
+        checker_batch_args+=(--test "$test_name")
+      done
+      echo "info: checker integration batch (${#checker_batch_names[@]} targets): ${checker_batch_names[*]}"
+      cargo nextest run --profile ci --cargo-profile ci-unit \
+        --build-jobs "$CARGO_BUILD_JOBS" \
+        -p tsz-checker "${checker_batch_args[@]}"
+    fi
   fi
 }
 
