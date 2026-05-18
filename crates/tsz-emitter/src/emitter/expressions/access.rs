@@ -1602,6 +1602,36 @@ mod tests {
         );
     }
 
+    #[test]
+    fn optional_chain_array_rest_assignment_uses_rest_lowering() {
+        let source = "declare const obj: any;\ndeclare const foo: any;\n[...obj?.[\"a\"]] = [];\n[...obj?.a[\"b\"]] = [];\n[...obj[foo?.bar]] = [];\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("obj === null || obj === void 0 ? void 0 : obj[\"a\"] = [].slice(0);"),
+            "Optional element rest targets should still use ES5 rest-assignment lowering.\nOutput:\n{output}"
+        );
+        assert!(
+            output
+                .contains("obj === null || obj === void 0 ? void 0 : obj.a[\"b\"] = [].slice(0);"),
+            "Optional-chain rest targets should keep non-optional tails inside the lowered assignment target.\nOutput:\n{output}"
+        );
+        assert!(
+            output
+                .contains("obj[foo === null || foo === void 0 ? void 0 : foo.bar] = [].slice(0);"),
+            "Optional chains inside computed keys are valid element targets and must stay on the normal rest-lowering path.\nOutput:\n{output}"
+        );
+    }
+
     // =====================================================================
     // write_dot_token: numeric literal double-dot disambiguation
     // =====================================================================
