@@ -483,6 +483,9 @@ mod in_narrow_bare_type_param_chained_tests;
 #[path = "../tests/interface_extends_array_json_tests.rs"]
 mod interface_extends_array_json_tests;
 #[cfg(test)]
+#[path = "tests/intersection_callable_constraint_ts2344_tests.rs"]
+mod intersection_callable_constraint_ts2344_tests;
+#[cfg(test)]
 #[path = "../tests/intersection_signatures.rs"]
 mod intersection_signatures;
 #[cfg(test)]
