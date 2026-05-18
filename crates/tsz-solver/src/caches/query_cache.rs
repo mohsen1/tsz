@@ -194,7 +194,7 @@ impl QueryCacheStatistics {
         // We use 64 bytes as a conservative per-bucket overhead constant.
         const BUCKET_OVERHEAD: usize = 64;
 
-        // eval_cache: (TypeId, bool) -> TypeId  ≈ 8 + 1 + 4 = 13 bytes key+value
+        // eval_cache: EvaluationCacheKey -> TypeId  ≈ 8 + 1 + 4 = 13 bytes key+value
         let eval = self.eval_cache_entries * (BUCKET_OVERHEAD + 13);
 
         // application_eval_cache: (DefId, SmallVec<[TypeId;4]>, bool) -> TypeId
