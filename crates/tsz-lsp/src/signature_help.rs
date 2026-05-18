@@ -12,7 +12,10 @@ use tsz_binder::symbol_flags;
 use tsz_checker::state::CheckerState;
 use tsz_common::position::Position;
 use tsz_parser::parser::node::{CallExprData, NodeAccess};
-use tsz_parser::{NodeIndex, NodeList, syntax_kind_ext};
+use tsz_parser::{
+    NodeIndex, NodeList, count_top_level_commas, find_incomplete_angle_call,
+    find_incomplete_paren_call, has_comma_between_offsets, syntax_kind_ext,
+};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
     FunctionShape, ParamInfo, TypeData, TypeId, TypePredicateTarget, apparent_intrinsic_kind,
@@ -1683,78 +1686,11 @@ impl<'a> SignatureHelpProvider<'a> {
     }
 
     fn has_comma_between(&self, start: u32, end: u32) -> bool {
-        if start >= end {
-            return false;
-        }
-
-        let max_len = self.source_text.len() as u32;
-        let start = start.min(max_len) as usize;
-        let end = end.min(max_len) as usize;
-        if start >= end {
-            return false;
-        }
-
-        let bytes = self.source_text.as_bytes();
-        let mut i = start;
-        while i < end {
-            match bytes[i] {
-                b',' => return true,
-                b'/' if i + 1 < end && bytes[i + 1] == b'/' => {
-                    i += 2;
-                    while i < end && bytes[i] != b'\n' && bytes[i] != b'\r' {
-                        i += 1;
-                    }
-                }
-                b'/' if i + 1 < end && bytes[i + 1] == b'*' => {
-                    i += 2;
-                    while i + 1 < end {
-                        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
-                            i += 2;
-                            break;
-                        }
-                        i += 1;
-                    }
-                    if i + 1 >= end {
-                        i = end;
-                    }
-                }
-                _ => i += 1,
-            }
-        }
-
-        false
+        has_comma_between_offsets(self.source_text, start as usize, end as usize)
     }
 
     fn count_top_level_commas_in_range(&self, start: usize, end: usize) -> u32 {
-        if start >= end || start >= self.source_text.len() {
-            return 0;
-        }
-        let end = end.min(self.source_text.len());
-        let bytes = self.source_text.as_bytes();
-        let mut commas = 0u32;
-        let mut paren = 0i32;
-        let mut bracket = 0i32;
-        let mut brace = 0i32;
-        let mut angle = 0i32;
-        let mut i = start;
-        while i < end {
-            match bytes[i] {
-                b'(' => paren += 1,
-                b')' => paren = paren.saturating_sub(1),
-                b'[' => bracket += 1,
-                b']' => bracket = bracket.saturating_sub(1),
-                b'{' => brace += 1,
-                b'}' => brace = brace.saturating_sub(1),
-                b'<' => angle += 1,
-                b'>' if i == 0 || bytes[i - 1] != b'=' => {
-                    angle = angle.saturating_sub(1);
-                }
-                b',' if paren == 0 && bracket == 0 && brace == 0 && angle == 0 => commas += 1,
-                _ => {}
-            }
-            i += 1;
-        }
-        commas
+        count_top_level_commas(self.source_text, start, end)
     }
 
     fn type_argument_context_for_call(
@@ -1884,104 +1820,19 @@ impl<'a> SignatureHelpProvider<'a> {
         byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
     }
 
-    fn preceded_by_declaration_keyword(&self, probe: usize) -> bool {
-        const DECLARATION_KEYWORDS: [&str; 7] = [
-            "function",
-            "class",
-            "interface",
-            "type",
-            "enum",
-            "namespace",
-            "module",
-        ];
-        let bytes = self.source_text.as_bytes();
-        DECLARATION_KEYWORDS.iter().any(|keyword| {
-            let kw = keyword.as_bytes();
-            if probe < kw.len() {
-                return false;
-            }
-            let start = probe - kw.len();
-            if &bytes[start..probe] != kw {
-                return false;
-            }
-            start == 0 || !Self::is_ascii_identifier_byte(bytes[start - 1])
-        })
-    }
-
     fn find_textual_call_trigger(&self, cursor_offset: u32) -> Option<TextualTypeArgumentTrigger> {
-        let bytes = self.source_text.as_bytes();
-        if bytes.is_empty() {
-            return None;
-        }
-        let cursor = (cursor_offset as usize).min(bytes.len());
-        if cursor == 0 {
-            return None;
-        }
-
-        let mut depth = 0i32;
-        let mut paren_idx = None;
-        let mut idx = cursor;
-        while idx > 0 {
-            idx -= 1;
-            match bytes[idx] {
-                b')' => depth += 1,
-                b'(' => {
-                    if depth == 0 {
-                        paren_idx = Some(idx);
-                        break;
-                    }
-                    depth -= 1;
-                }
-                b';' | b'\n' | b'\r' if depth == 0 => break,
-                _ => {}
-            }
-        }
-        let paren_idx = paren_idx?;
-
-        let mut name_end = paren_idx;
-        while name_end > 0 && bytes[name_end - 1].is_ascii_whitespace() {
-            name_end -= 1;
-        }
-        let mut name_start = name_end;
-        while name_start > 0 && Self::is_ascii_identifier_byte(bytes[name_start - 1]) {
-            name_start -= 1;
-        }
-        if name_start == name_end {
-            return None;
-        }
-        let callee_name = self.source_text[name_start..name_end].to_string();
-        if callee_name.is_empty() {
-            return None;
-        }
-
-        let mut probe = name_start;
-        while probe > 0 && bytes[probe - 1].is_ascii_whitespace() {
-            probe -= 1;
-        }
-        if self.preceded_by_declaration_keyword(probe) {
-            return None;
-        }
-        let call_kind = if probe >= 3 {
-            let prefix = &self.source_text[probe - 3..probe];
-            let boundary_ok = probe == 3 || !Self::is_ascii_identifier_byte(bytes[probe - 4]);
-            if prefix == "new" && boundary_ok {
+        let ctx = find_incomplete_paren_call(self.source_text, cursor_offset as usize)?;
+        Some(TextualTypeArgumentTrigger {
+            callee_name: ctx.callee_name,
+            callee_offset: ctx.callee_end_offset.saturating_sub(1) as u32,
+            call_kind: if ctx.is_new_expression {
                 CallKind::New
             } else {
                 CallKind::Call
-            }
-        } else {
-            CallKind::Call
-        };
-
-        let scan_start = (paren_idx + 1).min(cursor);
-        let active_parameter = self.count_top_level_commas_in_range(scan_start, cursor);
-        Some(TextualTypeArgumentTrigger {
-            callee_name,
-            callee_offset: name_end.saturating_sub(1) as u32,
-            call_kind,
-            active_parameter,
-            span_start: scan_start as u32,
-            span_length: (cursor.saturating_sub(scan_start)) as u32,
+            },
+            active_parameter: ctx.active_parameter,
+            span_start: ctx.span_start as u32,
+            span_length: ctx.span_length as u32,
         })
     }
 
@@ -1992,85 +1843,24 @@ impl<'a> SignatureHelpProvider<'a> {
         // Robustness audit (PR #F, item 6 in
         // `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`): emit a
         // structured trace at every invocation so the rate at which
-        // signature help depends on byte-level source-text scanning is
-        // visible. The audit's full solution extracts an
-        // `IncompleteCallContext` / `IncompleteCodeQuery` service; this
-        // is the visibility-first foothold.
+        // signature help depends on source-text scanning is visible.
         tracing::trace!(
             site = "signature_help::find_textual_type_argument_trigger",
             cursor_offset = cursor_offset,
             "LSP signature help fell back to text-scanning for type-argument trigger"
         );
-        let bytes = self.source_text.as_bytes();
-        if bytes.is_empty() {
-            return None;
-        }
-        let cursor = (cursor_offset as usize).min(bytes.len());
-
-        let mut depth = 0i32;
-        let mut lt_idx = None;
-        let mut idx = cursor;
-        while idx > 0 {
-            idx -= 1;
-            match bytes[idx] {
-                b'>' if idx == 0 || bytes[idx - 1] != b'=' => depth += 1,
-                b'<' => {
-                    if depth == 0 {
-                        lt_idx = Some(idx);
-                        break;
-                    }
-                    depth -= 1;
-                }
-                b';' | b'\n' | b'\r' if depth == 0 => break,
-                _ => {}
-            }
-        }
-        let lt_idx = lt_idx?;
-
-        let mut name_end = lt_idx;
-        while name_end > 0 && bytes[name_end - 1].is_ascii_whitespace() {
-            name_end -= 1;
-        }
-        let mut name_start = name_end;
-        while name_start > 0 && Self::is_ascii_identifier_byte(bytes[name_start - 1]) {
-            name_start -= 1;
-        }
-        if name_start == name_end {
-            return None;
-        }
-        let callee_name = self.source_text[name_start..name_end].to_string();
-        if callee_name.is_empty() {
-            return None;
-        }
-
-        let mut probe = name_start;
-        while probe > 0 && bytes[probe - 1].is_ascii_whitespace() {
-            probe -= 1;
-        }
-        if self.preceded_by_declaration_keyword(probe) {
-            return None;
-        }
-        let call_kind = if probe >= 3 {
-            let prefix = &self.source_text[probe - 3..probe];
-            let boundary_ok = probe == 3 || !Self::is_ascii_identifier_byte(bytes[probe - 4]);
-            if prefix == "new" && boundary_ok {
+        let ctx = find_incomplete_angle_call(self.source_text, cursor_offset as usize)?;
+        Some(TextualTypeArgumentTrigger {
+            callee_name: ctx.callee_name,
+            callee_offset: ctx.callee_end_offset.saturating_sub(1) as u32,
+            call_kind: if ctx.is_new_expression {
                 CallKind::New
             } else {
                 CallKind::Call
-            }
-        } else {
-            CallKind::Call
-        };
-
-        let scan_start = (lt_idx + 1).min(cursor);
-        let active_parameter = self.count_top_level_commas_in_range(scan_start, cursor);
-        Some(TextualTypeArgumentTrigger {
-            callee_name,
-            callee_offset: name_end.saturating_sub(1) as u32,
-            call_kind,
-            active_parameter,
-            span_start: scan_start as u32,
-            span_length: (cursor.saturating_sub(scan_start)) as u32,
+            },
+            active_parameter: ctx.active_parameter,
+            span_start: ctx.span_start as u32,
+            span_length: ctx.span_length as u32,
         })
     }
 
