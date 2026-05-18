@@ -46,23 +46,31 @@ impl<'a> Printer<'a> {
             self.map_closing_paren_backward(node.pos, then_node.pos);
         }
         self.write(")");
-        if then_is_multiline_in_source {
-            self.write_line();
-            if !then_is_block {
-                self.increase_indent();
-            }
+        let then_is_initializerless_export_var = (self.ctx.is_commonjs()
+            || self.in_system_execute_body)
+            && !then_is_block
+            && self.statement_is_initializerless_export_variable(if_stmt.then_statement);
+        if then_is_initializerless_export_var {
+            self.write(" { }");
         } else {
-            self.write(" ");
-        }
-        let before_then = self.writer.len();
-        self.emit(if_stmt.then_statement);
-        // If the then-statement was completely erased (e.g. const enum),
-        // emit `;` to produce a valid empty statement.
-        if self.writer.len() == before_then {
-            self.write(";");
-        }
-        if then_is_multiline_in_source && !then_is_block {
-            self.decrease_indent();
+            if then_is_multiline_in_source {
+                self.write_line();
+                if !then_is_block {
+                    self.increase_indent();
+                }
+            } else {
+                self.write(" ");
+            }
+            let before_then = self.writer.len();
+            self.emit(if_stmt.then_statement);
+            // If the then-statement was completely erased (e.g. const enum),
+            // emit `;` to produce a valid empty statement.
+            if self.writer.len() == before_then {
+                self.write(";");
+            }
+            if then_is_multiline_in_source && !then_is_block {
+                self.decrease_indent();
+            }
         }
 
         if if_stmt.else_statement.is_some() {
@@ -1275,7 +1283,7 @@ impl<'a> Printer<'a> {
         self.emit(labeled.label);
         self.write(": ");
         if (self.ctx.is_commonjs() || self.in_system_execute_body)
-            && self.labeled_body_is_initializerless_export_variable(labeled.statement)
+            && self.statement_is_initializerless_export_variable(labeled.statement)
         {
             self.write(";");
             return;
@@ -1320,7 +1328,7 @@ impl<'a> Printer<'a> {
             || self.ctx.options.preserve_const_enums
     }
 
-    fn labeled_body_is_initializerless_export_variable(&self, stmt_idx: NodeIndex) -> bool {
+    fn statement_is_initializerless_export_variable(&self, stmt_idx: NodeIndex) -> bool {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return false;
         };

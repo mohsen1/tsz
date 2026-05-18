@@ -905,6 +905,10 @@ impl<'a> Printer<'a> {
             match clause_node.kind {
                 // export const/let/var x = ...
                 k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    if self.in_system_execute_body {
+                        self.emit_system_variable_initializers(clause_node);
+                        return;
+                    }
                     if !self.ctx.module_state.has_export_assignment {
                         // Try inline form: exports.x = initializer;
                         // TSC emits this for simple single-binding declarations.
