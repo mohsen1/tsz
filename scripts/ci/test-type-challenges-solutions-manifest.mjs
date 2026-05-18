@@ -222,6 +222,22 @@ withTempDir((dir) => {
 withTempDir((dir) => {
   const compileDir = path.join(dir, "compile");
   const manifestPath = path.join(compileDir, "type-challenges-solutions-manifest.json");
+  fs.mkdirSync(path.join(compileDir, "solutions", "alpha.ts"), { recursive: true });
+
+  const directoryOutput = path.join(dir, "directory-output.tsv");
+  fs.writeFileSync(
+    directoryOutput,
+    "output\tsource\tid\tlevel\ttitle\nsolutions/alpha.ts\ten/alpha.md\t1\teasy\tAlpha\n",
+    "utf8",
+  );
+  const result = runManifest(directoryOutput, manifestPath);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /manifest output is not a file: solutions\/alpha\.ts/);
+});
+
+withTempDir((dir) => {
+  const compileDir = path.join(dir, "compile");
+  const manifestPath = path.join(compileDir, "type-challenges-solutions-manifest.json");
   fs.mkdirSync(path.join(compileDir, "solutions"), { recursive: true });
   fs.writeFileSync(path.join(compileDir, "solutions", "alpha.ts"), "type Alpha = string;\n");
 
