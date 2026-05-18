@@ -6,6 +6,7 @@ mod unknown_callback;
 
 use crate::call_checker::CallableContext;
 use crate::context::TypingRequest;
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::checkers::call::is_type_parameter_type;
 use crate::query_boundaries::common;
@@ -775,7 +776,7 @@ impl<'a> CheckerState<'a> {
         callable_ctx: CallableContext,
         callback_body_spans: &[(u32, u32)],
     ) {
-        let snap = self.ctx.snapshot_diagnostics();
+        let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
         let _ = self.compute_single_call_argument_type(
             arg_idx,
             Some(contextual_type),
@@ -785,7 +786,7 @@ impl<'a> CheckerState<'a> {
             false,
             callable_ctx,
         );
-        self.ctx.rollback_diagnostics_filtered(&snap, |diag| {
+        snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
             matches!(
                 diag.code,
                 diagnostic_codes::IS_OF_TYPE_UNKNOWN | diagnostic_codes::OBJECT_IS_OF_TYPE_UNKNOWN
