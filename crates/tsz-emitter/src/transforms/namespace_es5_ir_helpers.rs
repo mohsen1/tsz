@@ -14,68 +14,7 @@ use crate::transforms::ir::IRMethodName;
 /// Value declarations are: variables, functions, classes, enums, sub-namespaces.
 /// Type-only declarations (interfaces, type aliases) don't count.
 pub(super) fn body_has_value_declarations(arena: &NodeArena, body_idx: NodeIndex) -> bool {
-    let Some(body_node) = arena.get(body_idx) else {
-        return false;
-    };
-
-    let Some(block_data) = arena.get_module_block(body_node) else {
-        return false;
-    };
-
-    let Some(stmts) = block_data.statements.as_ref() else {
-        return false;
-    };
-
-    for &stmt_idx in &stmts.nodes {
-        let Some(stmt_node) = arena.get(stmt_idx) else {
-            continue;
-        };
-
-        match stmt_node.kind {
-            k if k == syntax_kind_ext::VARIABLE_STATEMENT
-                || k == syntax_kind_ext::FUNCTION_DECLARATION
-                || k == syntax_kind_ext::CLASS_DECLARATION
-                || k == syntax_kind_ext::ENUM_DECLARATION =>
-            {
-                return true;
-            }
-            k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                // Recursively check nested namespaces when they contain runtime members.
-                if let Some(ns_data) = arena.get_module(stmt_node)
-                    && body_has_value_declarations(arena, ns_data.body)
-                {
-                    return true;
-                }
-            }
-            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                // Check if the exported declaration is a value declaration
-                if let Some(export_data) = arena.get_export_decl(stmt_node)
-                    && let Some(inner_node) = arena.get(export_data.export_clause)
-                {
-                    match inner_node.kind {
-                        k if k == syntax_kind_ext::VARIABLE_STATEMENT
-                            || k == syntax_kind_ext::FUNCTION_DECLARATION
-                            || k == syntax_kind_ext::CLASS_DECLARATION
-                            || k == syntax_kind_ext::ENUM_DECLARATION =>
-                        {
-                            return true;
-                        }
-                        k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                            if let Some(ns_data) = arena.get_module(inner_node)
-                                && body_has_value_declarations(arena, ns_data.body)
-                            {
-                                return true;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    false
+    crate::transforms::emit_utils::module_body_has_runtime_value_declarations(arena, body_idx)
 }
 
 /// Check if an IR node is a comment (standalone or trailing).

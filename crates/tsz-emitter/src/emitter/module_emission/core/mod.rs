@@ -1005,6 +1005,14 @@ impl<'a> Printer<'a> {
         // checking if the name is already in `declared_namespace_names`, which
         // means a prior declaration already emitted the `var`/`export` prefix.
         let is_merged_subsequent = self.is_merged_subsequent_declaration(clause_node);
+        let es5_namespace_should_declare_var =
+            if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION && self.ctx.target_es5 {
+                self.transforms
+                    .get(export.export_clause)
+                    .and_then(|directive| directive.es5_namespace_should_declare_var())
+            } else {
+                None
+            };
 
         // When a class has ES (non-legacy) decorators and is exported, tsc emits
         // decorators BEFORE the `export` keyword:
@@ -1047,7 +1055,12 @@ impl<'a> Printer<'a> {
                 false,
             );
         } else {
-            if !is_merged_subsequent && !clause_emits_export_prefix {
+            let namespace_iife_supplies_no_binding =
+                es5_namespace_should_declare_var == Some(false);
+            if !is_merged_subsequent
+                && !clause_emits_export_prefix
+                && !namespace_iife_supplies_no_binding
+            {
                 self.write("export ");
             }
             self.emit(export.export_clause);
