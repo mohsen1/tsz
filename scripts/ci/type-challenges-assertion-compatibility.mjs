@@ -817,6 +817,13 @@ if (comparison.bySemanticFamilyDelta !== null && comparison.bySemanticFamilyDelt
 }
 const candidateFileComparisonCounts = comparison.candidateFileComparison?.counts || {};
 const normalizedCandidateFileComparison = {};
+if (
+  Number.isInteger(tscCandidateDiagnostics.candidatesWithDiagnostics) &&
+  Number.isInteger(tszCandidateDiagnostics.candidatesWithDiagnostics) &&
+  !comparison.candidateFileComparison
+) {
+  fail("assertion classification comparison.candidateFileComparison is required when both compiler candidate file lists are concrete");
+}
 if (comparison.candidateFileComparison) {
   const candidateFileComparisonTotal = comparison.candidateFileComparison.totalCandidates;
   const bucketEntries = [];
