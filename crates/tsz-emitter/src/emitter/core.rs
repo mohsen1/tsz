@@ -457,6 +457,10 @@ pub struct Printer<'a> {
     /// the closing: `(N || (exports.N = N = {}))` instead of `(N || (N = {}))`.
     pub(crate) pending_cjs_namespace_export_fold: bool,
 
+    /// Export property name to use with `pending_cjs_namespace_export_fold`.
+    /// This differs from the namespace's local name for `export { N as Alias }`.
+    pub(crate) pending_cjs_namespace_export_name: Option<String>,
+
     /// `SystemJS` export names for the next namespace IIFE tail:
     /// `(N || (exports_1("alias", exports_1("name", N = {}))))`.
     pub(crate) pending_system_namespace_export_fold: Option<Vec<String>>,
@@ -1116,6 +1120,7 @@ impl<'a> Printer<'a> {
             metadata_class_type_params: None,
             pending_block_comment_space: false,
             pending_cjs_namespace_export_fold: false,
+            pending_cjs_namespace_export_name: None,
             pending_system_namespace_export_fold: None,
             suppress_default_export_merge_iife: false,
             pending_commonjs_class_export_name: None,
