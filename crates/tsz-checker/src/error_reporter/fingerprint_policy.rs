@@ -13,6 +13,7 @@ use crate::diagnostics::{
 use crate::error_reporter::assignability::is_object_prototype_method;
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::query_boundaries::common as query_common;
+use crate::query_boundaries::diagnostic_display as query_diagnostic_display;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
@@ -275,7 +276,7 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 let source_display_type =
-                    query_common::widen_object_properties_for_diagnostic_display(
+                    query_diagnostic_display::widen_object_properties_for_diagnostic_display(
                         self.ctx.types,
                         source,
                     );
@@ -284,12 +285,12 @@ impl<'a> CheckerState<'a> {
                     source_display_type,
                 );
                 let source_display_type =
-                    query_common::widen_object_properties_for_diagnostic_display(
+                    query_diagnostic_display::widen_object_properties_for_diagnostic_display(
                         self.ctx.types,
                         source_display_type,
                     );
                 let target_display_type =
-                    query_common::widen_object_properties_for_diagnostic_display(
+                    query_diagnostic_display::widen_object_properties_for_diagnostic_display(
                         self.ctx.types,
                         target,
                     );

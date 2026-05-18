@@ -60,6 +60,8 @@ pub(crate) mod common;
 pub(crate) mod construct_signatures;
 pub(crate) mod definite_assignment;
 pub(crate) mod definition_identity;
+#[allow(dead_code, clippy::missing_const_for_fn, clippy::match_same_arms)]
+pub(crate) mod diagnostic_display;
 #[allow(
     dead_code,
     clippy::missing_const_for_fn,
