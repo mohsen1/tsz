@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = path.resolve(import.meta.dirname, "..", "..");
+const dirname = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(dirname, "..", "..");
 const runner = path.join(root, "scripts/bench/run-with-timeout.sh");
 
 const success = spawnSync("bash", [runner, "2", "--", "node", "-e", "process.exit(7)"], {
