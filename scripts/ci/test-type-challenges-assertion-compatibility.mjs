@@ -348,6 +348,7 @@ withTempDir((dir) => {
       manifest_path: "type-challenges-assertions-tsc-clean/manifest.json",
       classification_path: "type-challenges-assertions-tsc-clean/classification.json",
       tsconfig_path: "type-challenges-assertions-tsc-clean/tsconfig.tsz-guard.json",
+      total_candidates: 2,
       generated_assertions: 1,
       assertions_referencing_solution_declaration: 1,
       assertions_missing_solution_declaration_reference: 0,

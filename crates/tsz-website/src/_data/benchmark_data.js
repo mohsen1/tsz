@@ -1958,6 +1958,7 @@ export function getProjectCompatibilityDashboard() {
       if (cleanSubset.tsconfig_path) {
         parts.push(`tsc-clean tsconfig: ${cleanSubset.tsconfig_path}`);
       }
+      addCount("tsc-clean total candidates", cleanSubset.total_candidates);
       addCount("tsc-clean subset", cleanSubset.generated_assertions);
       addCount(
         "tsc-clean references solutions",

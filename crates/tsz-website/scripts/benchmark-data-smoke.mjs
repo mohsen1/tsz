@@ -103,6 +103,7 @@ await fs.writeFile(artifact, `${JSON.stringify({
             classification_path:
               "type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-classification.json",
             tsconfig_path: "type-challenges-assertions-tsc-clean/tsconfig.tsz-guard.json",
+            total_candidates: 78,
             generated_assertions: 10,
             assertions_referencing_solution_declaration: 9,
             assertions_missing_solution_declaration_reference: 1,
@@ -310,6 +311,7 @@ try {
     compatibilityDashboard,
     /tsc-clean tsconfig: type-challenges-assertions-tsc-clean\/tsconfig\.tsz-guard\.json/,
   );
+  assert.match(compatibilityDashboard, /tsc-clean total candidates: 78/);
   assert.match(compatibilityDashboard, /tsc-clean subset: 10/);
   assert.match(compatibilityDashboard, /tsc-clean rejected: 68/);
   assert.match(compatibilityDashboard, /tsc-clean tsc: pass/);
