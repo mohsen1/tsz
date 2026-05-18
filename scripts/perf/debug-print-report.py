@@ -33,6 +33,8 @@ DEFAULT_SCAN_DIRS = (
 
 MACRO_RE = re.compile(r"\b(println|eprintln|dbg)!\s*(?:\(|\{|\[)")
 COMMENT_PREFIXES = ("//", "///", "//!")
+TRACE_RESOLUTION_PATH = "crates/tsz-core/src/module_resolver/mod.rs"
+TRACE_RESOLUTION_RE = re.compile(r"\bif\s+self\.trace_resolution\b")
 
 
 @dataclass(frozen=True)
@@ -116,22 +118,32 @@ def scan_file(root: Path, path: Path) -> list[DebugPrintHit]:
     hits: list[DebugPrintHit] = []
     rel = path.relative_to(root).as_posix()
     in_block_comment = False
+    trace_resolution_depth = 0
     for idx, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         stripped = raw_line.lstrip()
         if stripped.startswith(COMMENT_PREFIXES):
             continue
         code, in_block_comment = scrub_comments_and_strings(raw_line, in_block_comment)
-        match = MACRO_RE.search(code)
-        if not match:
-            continue
-        hits.append(
-            DebugPrintHit(
-                path=rel,
-                line=idx,
-                macro=f"{match.group(1)}!",
-                text=raw_line.strip(),
-            )
+        starts_trace_resolution = rel == TRACE_RESOLUTION_PATH and bool(
+            TRACE_RESOLUTION_RE.search(code)
         )
+        in_trace_resolution_output = trace_resolution_depth > 0 or starts_trace_resolution
+        match = MACRO_RE.search(code)
+        if match:
+            macro = f"{match.group(1)}!"
+            if not (in_trace_resolution_output and macro == "println!"):
+                hits.append(
+                    DebugPrintHit(
+                        path=rel,
+                        line=idx,
+                        macro=macro,
+                        text=raw_line.strip(),
+                    )
+                )
+        if in_trace_resolution_output:
+            trace_resolution_depth += code.count("{") - code.count("}")
+            if trace_resolution_depth <= 0:
+                trace_resolution_depth = 0
     return hits
 
 
