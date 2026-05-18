@@ -214,9 +214,8 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // For JS source files, `export default <Identifier>` referencing a
-        // top-level local declaration is hoisted to the very top of the .d.ts
-        // ahead of the main statement loop. Suppress the in-source statement
-        // here so it isn't duplicated.
+        // top-level local declaration is emitted at this source position. Once
+        // emitted, later duplicate visits are suppressed.
         if export.is_default_export
             && self.source_is_js_file
             && export.export_clause.is_some()
@@ -1113,11 +1112,25 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(expr_node) = self.arena.get(expr_idx)
             && expr_node.kind == SyntaxKind::Identifier as u16
         {
+            let deferred_name = self
+                .source_is_js_file
+                .then(|| self.arena.get_identifier(expr_node))
+                .flatten()
+                .map(|ident| ident.escaped_text.clone())
+                .filter(|name| self.js_export_default_names.contains(name));
+            if deferred_name.is_some() {
+                self.emit_jsdoc_default_typedef_aliases_for_js_default_export_in_current_file();
+            }
             self.write_indent();
             self.write("export default ");
             self.emit_node(expr_idx);
             self.write(";");
             self.write_line();
+            if let Some(name) = deferred_name
+                && self.emitted_js_export_default_names.insert(name.clone())
+            {
+                self.emit_js_default_export_deferred_declaration_for_name(&name);
+            }
             return;
         }
 

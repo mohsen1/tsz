@@ -748,6 +748,43 @@ const pp: PP = ["+", "85", "%"];
     );
 }
 
+/// Standard Type Challenges `PercentageParser` reaches the empty-string case
+/// through the false branch, not by matching adjacent `infer` spans on empty.
+#[test]
+fn percentage_parser_type_challenge_matrix_matches_tsc() {
+    let source = r#"
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2) ? true : false;
+type Expect<T extends true> = T;
+
+type PercentageParser<A extends string> =
+  A extends `${infer L}${infer R}`
+    ? L extends "+" | "-"
+      ? R extends `${infer K}%`
+        ? [L, K, "%"]
+        : [L, R, ""]
+      : A extends `${infer K}%`
+        ? ["", K, "%"]
+        : ["", A, ""]
+    : ["", A, ""];
+
+type cases = [
+  Expect<Equal<PercentageParser<"">, ["", "", ""]>>,
+  Expect<Equal<PercentageParser<"+">, ["+", "", ""]>>,
+  Expect<Equal<PercentageParser<"+85%">, ["+", "85", "%"]>>,
+  Expect<Equal<PercentageParser<"-7">, ["-", "7", ""]>>,
+  Expect<Equal<PercentageParser<"85%">, ["", "85", "%"]>>,
+  Expect<Equal<PercentageParser<"85">, ["", "85", ""]>>
+];
+"#;
+    let diags = check_strict(source);
+    assert!(
+        diags.is_empty(),
+        "Expected standard PercentageParser cases to match tsc. Got: {diags:?}"
+    );
+}
+
 /// Same pattern with a different infer variable name to prove no hardcoding.
 #[test]
 fn template_intrinsic_number_after_constrained_infer_renamed_var() {

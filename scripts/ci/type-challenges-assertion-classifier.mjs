@@ -59,21 +59,21 @@ function requiredRelativeManifestPath(value, label) {
   if (typeof value !== "string" || value.trim() === "") {
     fail(`manifest ${label} must be a non-empty relative path`);
   }
-  const normalized = normalizePath(value).replace(/^\.\//, "");
-  const segments = normalized.split("/");
+  const normalizedInput = String(value).replace(/\\/g, "/").replace(/^\.\//, "");
+  const segments = normalizedInput.split("/");
   if (
     path.isAbsolute(value) ||
-    normalized.startsWith("/") ||
-    /^[A-Za-z]:(?:\/|$)/.test(normalized) ||
-    normalized === "" ||
-    normalized === "." ||
+    normalizedInput.startsWith("/") ||
+    /^[A-Za-z]:(?:\/|$)/.test(normalizedInput) ||
+    normalizedInput === "" ||
+    normalizedInput === "." ||
     segments.includes("") ||
     segments.includes(".") ||
     segments.includes("..")
   ) {
     fail(`manifest ${label} must be a relative path inside the candidate directory: ${value}`);
   }
-  return normalized;
+  return segments.join("/");
 }
 
 function requiredManifestString(value, label) {

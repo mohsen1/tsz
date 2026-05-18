@@ -58,8 +58,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1273: modifiers categorically invalid on a type parameter.
-    /// TS1274 is reserved for `in`/`out` in the wrong context.
+    /// TS1273: modifiers categorically invalid on a type parameter (`public`,
+    /// `private`, `protected`, `static`, `readonly`, `async`, `declare`,
+    /// `abstract`, `override`, `export`, `default`, `accessor`). TS1274 is
+    /// reserved for `in`/`out` in the wrong context.
     pub(crate) fn check_never_valid_type_parameter_modifiers(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
@@ -525,33 +527,8 @@ impl<'a> CheckerState<'a> {
                     // TS2838: Check that duplicate infer type params have identical constraints
                     self.check_infer_constraint_consistency(cond.extends_type);
 
-                    // Collect infer type parameters from extends_type and add them to scope for true_type
-                    let infer_params = self.collect_infer_type_parameters(cond.extends_type);
-                    let infer_constraints: Vec<Option<TypeId>> = infer_params
-                        .iter()
-                        .map(|name| {
-                            self.effective_infer_constraint_from_extends_type(
-                                cond.extends_type,
-                                name,
-                            )
-                        })
-                        .collect();
-                    let factory = self.ctx.types.factory();
-                    let mut param_bindings = Vec::new();
-                    for (param_name, &constraint) in infer_params.iter().zip(&infer_constraints) {
-                        let atom = self.ctx.types.intern_string(param_name);
-                        let type_id = factory.type_param(tsz_solver::TypeParamInfo {
-                            name: atom,
-                            constraint,
-                            default: None,
-                            is_const: false,
-                        });
-                        let previous = self
-                            .ctx
-                            .type_parameter_scope
-                            .insert(param_name.clone(), type_id);
-                        param_bindings.push((param_name.clone(), previous));
-                    }
+                    // Collect infer bindings and install them in scope for true_type.
+                    let param_bindings = self.push_infer_bindings_from_extends(cond.extends_type);
 
                     // Check true_type with infer type parameters in scope
                     self.check_type_for_missing_names(cond.true_type);

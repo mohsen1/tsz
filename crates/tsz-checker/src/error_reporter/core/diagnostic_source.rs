@@ -9,6 +9,7 @@ mod literal_surface;
 mod literal_widening_helpers;
 mod literal_widening_policy;
 mod object_literal_targets;
+mod recursive_alias_display;
 mod static_schema;
 mod tuple_source_display;
 mod type_query_alias;
@@ -1635,6 +1636,12 @@ impl<'a> CheckerState<'a> {
         if prefer_declared_display
             && let Some(display) =
                 self.declared_numeric_literal_union_alias_source_display(expr_idx, declared_type)
+        {
+            return Some(display);
+        }
+        if prefer_declared_display
+            && let Some(display) =
+                self.recursive_alias_application_source_display(expr_idx, declared_type)
         {
             return Some(display);
         }

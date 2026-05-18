@@ -895,6 +895,33 @@ fn system_import_meta_file_is_wrapped_as_module() {
 }
 
 #[test]
+fn system_import_meta_preserves_import_property_lookalikes() {
+    let output = emit_es5_with_module(
+        "export let x = import.meta;\n\
+         export let y = import.metal;\n\
+         export let z = import.import.import.malkovich;\n",
+        ModuleKind::System,
+    );
+
+    assert!(
+        output.contains("exports_1(\"x\", x = context_1.meta);"),
+        "System should lower only real import.meta.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"y\", y = import.metal);"),
+        "System should preserve import.metal lookalikes.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"z\", z = import.import.import.malkovich);"),
+        "System should preserve nested import property lookalikes.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("context_1.metal") && !output.contains("context_1.import"),
+        "System import.meta lowering must not rewrite non-meta import properties.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_async_while_with_await_lowers_loop_body() {
     let output = emit_es5(
         "async function f(xs) {\n    while (xs.length) {\n        await g(xs.pop());\n    }\n}\n",
