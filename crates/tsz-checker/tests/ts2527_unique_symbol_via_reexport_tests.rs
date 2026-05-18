@@ -1,5 +1,5 @@
-//! TS2527 false-positive guard for `unique symbol` references reached through
-//! re-exported packages.
+//! TS2527 / TS4023 false-positive guard for `unique symbol` references
+//! reached through re-exported packages.
 //!
 //! When the inferred type of an exported value references a `unique symbol`
 //! declared in a sibling file of a package that the current file already
@@ -9,10 +9,10 @@
 //!
 //! Before this fix, tsz's accessibility check only accepted a symbol when a
 //! direct local alias resolved to it. Symbols reached via re-export chains
-//! through an imported module triggered a spurious
-//! `TS2527: The inferred type of '<x>' references an inaccessible 'unique
-//! symbol' type.` This file pins the structural rule with adjacent-case
-//! coverage so a future refactor can't reintroduce the bug.
+//! through an imported module triggered a spurious TS2527 ("inferred type
+//! references an inaccessible 'unique symbol' type") or TS4023 ("has or is
+//! using name from external module but cannot be named"). Both gates share
+//! the relaxation, so every fixture asserts neither code fires.
 //!
 //! Tracks: <https://github.com/mohsen1/tsz/issues/7642>.
 
@@ -32,12 +32,30 @@ fn opts() -> CheckerOptions {
     }
 }
 
-fn count_ts2527(diags: &[Diagnostic]) -> usize {
-    diags.iter().filter(|d| d.code == 2527).count()
+/// Counts of every diagnostic this PR's accessibility relaxation gates:
+/// TS2527 (`The_inferred_type_of_0_references_an_inaccessible_1_type_*`)
+/// and TS4023 (`Exported_variable_0_has_or_is_using_name_1_from_external_*`).
+/// Asserting both per fixture prevents a future regression that re-tightens
+/// just one path from slipping past these tests.
+fn count_accessibility_diagnostics(diags: &[Diagnostic]) -> (usize, usize) {
+    let ts2527 = diags.iter().filter(|d| d.code == 2527).count();
+    let ts4023 = diags.iter().filter(|d| d.code == 4023).count();
+    (ts2527, ts4023)
+}
+
+fn assert_no_accessibility_diagnostics(diags: &[Diagnostic], context: &str) {
+    let (ts2527, ts4023) = count_accessibility_diagnostics(diags);
+    assert_eq!(
+        (ts2527, ts4023),
+        (0, 0),
+        "{context}: expected no TS2527 (inaccessible unique symbol) and no TS4023 (unnameable external module name); \
+         got TS2527={ts2527} TS4023={ts4023}. \
+         Diagnostics: {diags:#?}",
+    );
 }
 
 #[test]
-fn unique_symbol_reachable_through_named_reexport_does_not_emit_ts2527() {
+fn unique_symbol_reachable_through_named_reexport_does_not_emit_ts2527_or_ts4023() {
     // `consumer.ts` imports only `getValue` from `./pkg`. `pkg` re-exports
     // `sym` from `./inner`, so `typeof sym` inside the inferred type of
     // `getValue<{}>` is reachable from `consumer.ts` via
@@ -61,12 +79,7 @@ export const bound = getValue<{}>;
         ),
     ];
     let diags = check_multi_file(&files, "consumer.ts", opts());
-    assert_eq!(
-        count_ts2527(&diags),
-        0,
-        "unique symbol re-exported from imported package must not trigger TS2527 (rule is structural, not name-based). \
-         Diagnostics: {diags:#?}",
-    );
+    assert_no_accessibility_diagnostics(&diags, "unique symbol re-exported from imported package");
 }
 
 #[test]
@@ -95,11 +108,9 @@ export const target = locallyRenamed<number>;
         ),
     ];
     let diags = check_multi_file(&files, "consumerA.ts", opts());
-    assert_eq!(
-        count_ts2527(&diags),
-        0,
-        "renamed local import alias must still resolve the unique symbol through the package's re-export. \
-         Diagnostics: {diags:#?}",
+    assert_no_accessibility_diagnostics(
+        &diags,
+        "renamed local import alias resolving through package re-export",
     );
 }
 
@@ -129,11 +140,9 @@ export const v = make<{}>;
         ),
     ];
     let diags = check_multi_file(&files, "consumerB.ts", opts());
-    assert_eq!(
-        count_ts2527(&diags),
-        0,
-        "Export-side renaming must still let the consumer reach the symbol via the imported package. \
-         Diagnostics: {diags:#?}",
+    assert_no_accessibility_diagnostics(
+        &diags,
+        "export-side rename `export { internal as external }`",
     );
 }
 
@@ -162,12 +171,7 @@ export const out = fromWild<string>;
         ),
     ];
     let diags = check_multi_file(&files, "consumerC.ts", opts());
-    assert_eq!(
-        count_ts2527(&diags),
-        0,
-        "Wildcard re-export must let the consumer reach the symbol. \
-         Diagnostics: {diags:#?}",
-    );
+    assert_no_accessibility_diagnostics(&diags, "wildcard re-export `export * from \"./inner\"`");
 }
 
 // Negative-case coverage (symbol not re-exported from any locally imported
