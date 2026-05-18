@@ -12,9 +12,10 @@ use crate::def::DefId;
 use crate::intern::TypeInterner;
 use crate::objects::element_access::ElementAccessResult;
 use crate::operations::property::PropertyAccessResult;
-use crate::relations::compat::CompatChecker;
-use crate::relations::relation_queries::RelationPolicy;
-use crate::relations::subtype::TypeResolver;
+use crate::relations::relation_queries::{
+    RelationContext, RelationPolicy, configured_compat_checker, configured_subtype_checker,
+};
+use crate::relations::subtype::{NoopResolver, TypeResolver};
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
@@ -1506,12 +1507,15 @@ impl QueryDatabase for QueryCache<'_> {
         self.subtype_cache_misses
             .set(self.subtype_cache_misses.get() + 1);
 
-        let result = crate::relations::subtype::is_subtype_of_with_flags(
+        let policy = RelationPolicy::from_flags(flags);
+        let resolver = NoopResolver;
+        let mut checker = configured_subtype_checker(
             self.as_type_database(),
-            source,
-            target,
-            flags,
+            &resolver,
+            policy,
+            RelationContext::default(),
         );
+        let result = checker.is_subtype_of(source, target);
         self.subtype_cache.borrow_mut().insert(key, result);
         // Write to shared cache for cross-file benefit.
         if let Some(shared) = self.shared {
@@ -1595,14 +1599,14 @@ impl QueryDatabase for QueryCache<'_> {
         self.assignability_cache_misses
             .set(self.assignability_cache_misses.get() + 1);
 
-        // Use CompatChecker with all compatibility rules
-        let mut checker = CompatChecker::new(self.as_type_database());
-
-        // FIX: Apply flags to ensure checker matches the cache key configuration
-        // This prevents cache poisoning where results from non-strict checks
-        // leak into strict checks (Gap C fix)
-        checker.apply_flags(flags);
-
+        let policy = RelationPolicy::from_flags(flags);
+        let resolver = NoopResolver;
+        let mut checker = configured_compat_checker(
+            self.as_type_database(),
+            &resolver,
+            policy,
+            RelationContext::default(),
+        );
         let result = checker.is_assignable(source, target);
 
         self.insert_cache(&self.assignability_cache, key, result);
