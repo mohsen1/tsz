@@ -382,6 +382,7 @@ if (
 }
 const tscCandidateDiagnostics = tsc.candidateDiagnostics || {};
 const tszCandidateDiagnostics = tsz.candidateDiagnostics || {};
+const normalizedCandidateDiagnosticFiles = {};
 for (const [compiler, diagnostics] of [
   ["tsc", tscCandidateDiagnostics],
   ["tsz", tszCandidateDiagnostics],
@@ -421,42 +422,60 @@ for (const [compiler, diagnostics] of [
         `assertion classification ${compiler} candidate diagnostic counts (${diagnostics.candidatesWithDiagnostics} + ${diagnostics.candidatesWithoutDiagnostics}) do not match totalCandidates (${diagnostics.totalCandidates})`,
       );
     }
-    const filesWithDiagnostics = diagnostics.filesWithDiagnostics;
-    if (filesWithDiagnostics !== null && filesWithDiagnostics !== undefined) {
-      if (!Array.isArray(filesWithDiagnostics)) {
-        fail(
-          `assertion classification ${compiler} candidateDiagnostics.filesWithDiagnostics must be an array`,
-        );
-      }
+  }
+  const diagnosticFiles = {};
+  for (const [field, countField] of [
+    ["filesWithDiagnostics", "candidatesWithDiagnostics"],
+    ["filesWithoutDiagnostics", "candidatesWithoutDiagnostics"],
+  ]) {
+    const files = diagnostics[field];
+    if (files === null || files === undefined) {
+      diagnosticFiles[field] = [];
       if (
-        Number.isInteger(diagnostics.candidatesWithDiagnostics) &&
-        filesWithDiagnostics.length !== diagnostics.candidatesWithDiagnostics
+        field === "filesWithDiagnostics" &&
+        Number.isInteger(diagnostics[countField]) &&
+        diagnostics[countField] > 0
       ) {
         fail(
-          `assertion classification ${compiler} candidateDiagnostics.filesWithDiagnostics length (${filesWithDiagnostics.length}) does not match candidatesWithDiagnostics (${diagnostics.candidatesWithDiagnostics})`,
+          `assertion classification ${compiler} candidateDiagnostics.${field} must be an array when ${countField} is nonzero`,
         );
       }
-      const normalizedDiagnosticFiles = filesWithDiagnostics.map((file, index) =>
-        validateCandidateOutputPath(
-          file,
-          `assertion classification ${compiler} candidateDiagnostics.filesWithDiagnostics[${index}]`,
-        ),
-      );
-      const duplicateDiagnosticFiles = duplicatedValues(normalizedDiagnosticFiles);
-      if (duplicateDiagnosticFiles.length > 0) {
-        fail(
-          `assertion classification ${compiler} candidateDiagnostics.filesWithDiagnostics contains duplicate files: ${duplicateDiagnosticFiles.join(", ")}`,
-        );
-      }
-    } else if (
-      Number.isInteger(diagnostics.candidatesWithDiagnostics) &&
-      diagnostics.candidatesWithDiagnostics > 0
-    ) {
+      continue;
+    }
+    if (!Array.isArray(files)) {
+      fail(`assertion classification ${compiler} candidateDiagnostics.${field} must be an array`);
+    }
+    const normalizedFiles = files.map((file, index) =>
+      validateCandidateOutputPath(
+        file,
+        `assertion classification ${compiler} candidateDiagnostics.${field}[${index}]`,
+      ),
+    );
+    const duplicateFiles = duplicatedValues(normalizedFiles);
+    if (duplicateFiles.length > 0) {
       fail(
-        `assertion classification ${compiler} candidateDiagnostics.filesWithDiagnostics must be an array when candidatesWithDiagnostics is nonzero`,
+        `assertion classification ${compiler} candidateDiagnostics.${field} contains duplicate files: ${duplicateFiles.join(", ")}`,
       );
     }
+    if (
+      Number.isInteger(diagnostics[countField]) &&
+      normalizedFiles.length !== diagnostics[countField]
+    ) {
+      fail(
+        `assertion classification ${compiler} candidateDiagnostics.${field} length (${normalizedFiles.length}) does not match ${countField} (${diagnostics[countField]})`,
+      );
+    }
+    diagnosticFiles[field] = normalizedFiles;
   }
+  const overlappingDiagnosticFiles = diagnosticFiles.filesWithDiagnostics
+    .filter((file) => diagnosticFiles.filesWithoutDiagnostics.includes(file))
+    .sort();
+  if (overlappingDiagnosticFiles.length > 0) {
+    fail(
+      `assertion classification ${compiler} candidateDiagnostics files overlap between diagnostic and diagnostic-free lists: ${overlappingDiagnosticFiles.join(", ")}`,
+    );
+  }
+  normalizedCandidateDiagnosticFiles[compiler] = diagnosticFiles;
   const byCandidate = diagnostics.byCandidate;
   if (byCandidate !== null && byCandidate !== undefined) {
     if (!Array.isArray(byCandidate)) {
@@ -580,10 +599,10 @@ if (comparison.candidateFileComparison) {
   }
 }
 const tscFilesWithDiagnostics = Array.isArray(tscCandidateDiagnostics.filesWithDiagnostics)
-  ? tscCandidateDiagnostics.filesWithDiagnostics
+  ? normalizedCandidateDiagnosticFiles.tsc.filesWithDiagnostics
   : [];
 const tszFilesWithDiagnostics = Array.isArray(tszCandidateDiagnostics.filesWithDiagnostics)
-  ? tszCandidateDiagnostics.filesWithDiagnostics
+  ? normalizedCandidateDiagnosticFiles.tsz.filesWithDiagnostics
   : [];
 
 const rel = (value) => {
