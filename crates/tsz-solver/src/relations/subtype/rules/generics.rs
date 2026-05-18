@@ -1481,6 +1481,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             is_const: false,
         });
         let source_value_type = self.interner.index_access(constraint_source, k_type_id);
+        // Wrapper templates like `Deep<S[K]>` are not homomorphic identity
+        // targets; proving `S[K] <: Deep<S[K]>` just re-enters the same relation.
+        if contains_type_parameter_named(self.interner, mapped.template, mapped.type_param.name)
+            || crate::visitor::contains_type_by_id(
+                self.interner,
+                mapped.template,
+                source_value_type,
+            )
+        {
+            return false;
+        }
         if self
             .check_subtype(source_value_type, mapped.template)
             .is_true()
