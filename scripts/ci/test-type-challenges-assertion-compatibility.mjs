@@ -592,6 +592,10 @@ withTempDir((dir) => {
             tscAcceptedTszRejected: 1,
             tscRejectedTszAccepted: 0,
           },
+          bothAccepted: ["assertions/one.ts"],
+          bothRejected: ["assertions/two.ts"],
+          tscAcceptedTszRejected: ["assertions/three.ts"],
+          tscRejectedTszAccepted: [],
         },
       },
     },
@@ -601,6 +605,40 @@ withTempDir((dir) => {
   assert.match(
     result.stderr,
     /candidateFileComparison bucket counts \(3\) do not match totalCandidates \(2\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: {
+        status: "match",
+        candidateFileComparison: {
+          totalCandidates: 2,
+          counts: {
+            bothAccepted: 1,
+            bothRejected: 1,
+            tscAcceptedTszRejected: 0,
+            tscRejectedTszAccepted: 0,
+          },
+          bothAccepted: ["assertions/one.ts", "assertions/two.ts"],
+          bothRejected: ["assertions/three.ts"],
+          tscAcceptedTszRejected: [],
+          tscRejectedTszAccepted: [],
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /candidateFileComparison\.bothAccepted length \(2\) does not match counts\.bothAccepted \(1\)/,
   );
   assert.equal(fs.existsSync(outFile), false);
 });

@@ -379,6 +379,17 @@ if (comparison.candidateFileComparison) {
         `assertion classification candidateFileComparison.counts.${field} must be an integer`,
       );
     }
+    const files = comparison.candidateFileComparison[field];
+    if (!Array.isArray(files)) {
+      fail(
+        `assertion classification candidateFileComparison.${field} must be an array`,
+      );
+    }
+    if (files.length !== count) {
+      fail(
+        `assertion classification candidateFileComparison.${field} length (${files.length}) does not match counts.${field} (${count})`,
+      );
+    }
     bucketTotal += count;
   }
   if (bucketTotal !== candidateFileComparisonTotal) {
