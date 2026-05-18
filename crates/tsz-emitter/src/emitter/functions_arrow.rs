@@ -1043,7 +1043,9 @@ impl<'a> Printer<'a> {
                     && let Some(ident) = self.arena.get_identifier(name_node)
                     && !ident.escaped_text.is_empty()
                 {
-                    return Some(self.make_unique_name_from_base(&ident.escaped_text));
+                    return Some(
+                        self.make_function_local_unique_name_from_base(&ident.escaped_text),
+                    );
                 }
                 Some(self.make_unique_name())
             })
@@ -1473,7 +1475,7 @@ impl<'a> Printer<'a> {
         let leading_names = self.async_arrow_forwarded_parameter_names(
             &func.parameters.nodes[..first_default_param_idx],
         );
-        let args_name = self.make_unique_name_from_base("args");
+        let args_name = self.make_function_local_unique_name_from_base("args");
         let captures_arguments = !self.ctx.rewrite_arguments_to_arguments_1
             && contains_arguments_reference(self.arena, func.body);
         let existing_arguments_capture_name = self.ctx.arguments_capture_name.clone();
@@ -1613,7 +1615,7 @@ impl<'a> Printer<'a> {
         ) else {
             return;
         };
-        let args_name = self.make_unique_name_from_base("args");
+        let args_name = self.make_function_local_unique_name_from_base("args");
 
         self.write("(...");
         self.write(&args_name);
