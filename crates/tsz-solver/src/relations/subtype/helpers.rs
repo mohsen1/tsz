@@ -31,6 +31,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         })
     }
 
+    pub(crate) fn resolved_type_param_type_id(&self, type_id: TypeId) -> Option<TypeId> {
+        if type_param_info(self.interner, type_id).is_some() {
+            return Some(type_id);
+        }
+
+        let resolved = self.resolve_lazy_type(type_id);
+        (resolved != type_id && type_param_info(self.interner, resolved).is_some())
+            .then_some(resolved)
+    }
+
     pub(crate) fn index_accesses_have_same_object_distinct_type_param_keys(
         &self,
         source_object: TypeId,
@@ -52,14 +62,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_key: TypeId,
         target_key: TypeId,
     ) -> bool {
-        let Some(source_param) = self.resolved_type_param_info(source_key) else {
+        let Some(source_param) = self.resolved_type_param_type_id(source_key) else {
             return false;
         };
-        let Some(target_param) = self.resolved_type_param_info(target_key) else {
+        let Some(target_param) = self.resolved_type_param_type_id(target_key) else {
             return false;
         };
 
-        source_param.name != target_param.name
+        source_param != target_param
+    }
+
+    /// Build the elaboration carrier for two distinct type-parameter keys
+    /// of an index access mismatch.
+    ///
+    /// Returns `None` when either key does not resolve to a `TypeParameter`
+    /// kind — callers must fall back to the generic mismatch reason.
+    /// Surface keys (not the underlying resolved types) are used so the
+    /// rendered message matches what the user wrote at the use site.
+    pub(crate) fn index_access_distinct_type_param_keys_failure_reason(
+        &self,
+        source_key: TypeId,
+        target_key: TypeId,
+    ) -> Option<crate::diagnostics::SubtypeFailureReason> {
+        if !self.index_accesses_have_distinct_type_param_keys(source_key, target_key) {
+            return None;
+        }
+        let target_info = self.resolved_type_param_info(target_key)?;
+        Some(
+            crate::diagnostics::SubtypeFailureReason::IndexAccessTypeParameterMismatch {
+                source_param: source_key,
+                target_param: target_key,
+                target_constraint: target_info.constraint,
+            },
+        )
     }
 
     pub(crate) fn can_use_object_intersection_fast_path(&self, members: &[TypeId]) -> bool {
