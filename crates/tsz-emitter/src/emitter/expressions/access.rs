@@ -8,6 +8,16 @@ use tsz_parser::parser::{
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn emit_es5_super_property_base(&mut self) {
+        if self.es5_super_home_function_depth == Some(self.function_scope_depth)
+            && !self.es5_super_home_is_static
+        {
+            self.write("_super.prototype");
+        } else {
+            self.write("_super");
+        }
+    }
+
     pub(super) fn emit_scoped_static_super_receiver(&mut self) {
         if let Some(alias) = self.scoped_static_this_alias.as_ref().cloned() {
             self.write(&alias);
@@ -68,6 +78,16 @@ impl<'a> Printer<'a> {
             self.write(", ");
             self.emit_scoped_static_super_receiver();
             self.write(")");
+            return;
+        }
+
+        if self.ctx.target_es5
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            self.emit_es5_super_property_base();
+            self.write(".");
+            self.emit_property_name_without_import_substitution(access.name_or_argument);
             return;
         }
 
@@ -476,6 +496,17 @@ impl<'a> Printer<'a> {
             self.write(", ");
             self.emit_scoped_static_super_receiver();
             self.write(")");
+            return;
+        }
+
+        if self.ctx.target_es5
+            && let Some(base_node) = self.arena.get(access.expression)
+            && base_node.kind == SyntaxKind::SuperKeyword as u16
+        {
+            self.emit_es5_super_property_base();
+            self.write("[");
+            self.emit(access.name_or_argument);
+            self.write("]");
             return;
         }
 
