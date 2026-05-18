@@ -202,8 +202,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         .intern_string(&format!("__unique_{}", sym_id.0))
                 })
             };
-        let computed_symbol_name_resolver =
-            |expr_idx: NodeIndex| -> bool { computed_unique_symbol_name(expr_idx).is_some() };
         let name_def_id_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
             if !type_name.contains('.') && self.ctx.type_parameter_scope.contains_key(type_name) {
                 return None;
