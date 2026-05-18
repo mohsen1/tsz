@@ -171,6 +171,9 @@ mod jsdoc_this_arrow_tests;
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
 #[cfg(test)]
+#[path = "tests/lib_abstract_member_ts2515_tests.rs"]
+mod lib_abstract_member_ts2515_tests;
+#[cfg(test)]
 #[path = "../tests/literal_application_alias_display_tests.rs"]
 mod literal_application_alias_display_tests;
 #[cfg(test)]

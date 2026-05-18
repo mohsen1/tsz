@@ -147,6 +147,7 @@ pub struct ES5ClassTransformer<'a> {
     use_define_for_class_fields: bool,
     commonjs_import_substitutions: FxHashMap<String, String>,
     module_kind: ModuleKind,
+    downlevel_iteration: bool,
     async_generator_inner_name_counts: RefCell<FxHashMap<String, u32>>,
     disposable_env_counter: Cell<u32>,
     blocked_disposable_env_names: RefCell<FxHashSet<String>>,
@@ -183,6 +184,7 @@ impl<'a> ES5ClassTransformer<'a> {
             use_define_for_class_fields: false,
             commonjs_import_substitutions: FxHashMap::default(),
             module_kind: ModuleKind::None,
+            downlevel_iteration: false,
             async_generator_inner_name_counts: RefCell::new(FxHashMap::default()),
             disposable_env_counter: Cell::new(1),
             blocked_disposable_env_names: RefCell::new(FxHashSet::default()),
@@ -213,6 +215,10 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub const fn set_module_kind(&mut self, module_kind: ModuleKind) {
         self.module_kind = module_kind;
+    }
+
+    pub const fn set_downlevel_iteration(&mut self, downlevel_iteration: bool) {
+        self.downlevel_iteration = downlevel_iteration;
     }
 
     pub fn set_async_generator_inner_name_counts(&mut self, counts: FxHashMap<String, u32>) {
@@ -591,6 +597,14 @@ impl<'a> ES5ClassTransformer<'a> {
     /// closing brace comment instead of the method's own comment.
     fn extract_trailing_comment_for_method(&self, body_idx: NodeIndex) -> Option<String> {
         let source_text = self.source_text?;
+        let close_brace = self.body_closing_brace_pos(body_idx)?;
+        crate::emitter::get_trailing_comment_ranges(source_text, close_brace + 1)
+            .first()
+            .map(|c| source_text[c.pos as usize..c.end as usize].to_string())
+    }
+
+    fn body_closing_brace_pos(&self, body_idx: NodeIndex) -> Option<usize> {
+        let source_text = self.source_text?;
         let body_node = self.arena.get(body_idx)?;
         let bytes = source_text.as_bytes();
         let start = body_node.pos as usize;
@@ -620,11 +634,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     }
                     b'}' => {
                         if depth == 0 {
-                            // This is the closing brace of the block
-                            let after = i + 1;
-                            return crate::emitter::get_trailing_comment_ranges(source_text, after)
-                                .first()
-                                .map(|c| source_text[c.pos as usize..c.end as usize].to_string());
+                            return Some(i);
                         }
                         depth -= 1;
                     }
@@ -683,8 +693,11 @@ impl<'a> ES5ClassTransformer<'a> {
         is_static: bool,
         class_alias: Option<&str>,
         lexical_this_capture_alias: Option<&str>,
+        trailing_comment_limit: Option<u32>,
     ) -> IRNode {
-        let mut converter = self.make_converter();
+        let mut converter = self
+            .make_converter()
+            .with_trailing_comment_limit(trailing_comment_limit);
         if is_static {
             converter = converter.with_static(true);
         }
@@ -1839,6 +1852,8 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut stmts = if let Some(block_node) = self.arena.get(block_idx)
             && let Some(block) = self.arena.get_block(block_node)
         {
+            let trailing_comment_limit =
+                self.body_closing_brace_pos(block_idx).map(|pos| pos as u32);
             let mut converted = Vec::new();
             for &stmt_idx in &block.statements.nodes {
                 if let Some(stmt_node) = self.arena.get(stmt_idx)
@@ -1851,6 +1866,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     is_static,
                     class_alias.as_deref(),
                     lexical_this_capture_alias.as_deref(),
+                    trailing_comment_limit,
                 ));
             }
             converted
@@ -2353,6 +2369,7 @@ impl<'a> ES5ClassTransformer<'a> {
             .cloned();
         Some(IRNode::ES5ClassIIFE {
             name: self.class_name.clone().into(),
+            binding_name: None,
             base_class: base_class.map(Box::new),
             super_param: self.has_extends.then(|| self.super_name.clone().into()),
             body,
@@ -3567,6 +3584,10 @@ impl<'a> ES5ClassTransformer<'a> {
     ) -> Vec<IRNode> {
         let mut prologue = Vec::new();
         let mut ir_idx = 0;
+        let mut reserved_temp_names: FxHashSet<String> = ir_params
+            .iter()
+            .map(|param| param.name.to_string())
+            .collect();
 
         for &param_idx in &ast_params.nodes {
             let Some(param_node) = self.arena.get(param_idx) else {
@@ -3606,7 +3627,6 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             };
 
-            // Generate destructuring: `var a = _a.a, b = _a.b;`
             if let Some(name_n) = name_node
                 && name_n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 && let Some(pattern) = self.arena.get_binding_pattern(name_n)
@@ -3653,10 +3673,95 @@ impl<'a> ES5ClassTransformer<'a> {
                 if !declarations.is_empty() {
                     prologue.push(IRNode::VarDeclList(declarations));
                 }
+            } else if let Some(name_n) = name_node
+                && name_n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                && let Some(pattern) = self.arena.get_binding_pattern(name_n)
+            {
+                let mut declarations = Vec::new();
+                let source_name = if self.downlevel_iteration && !pattern.elements.nodes.is_empty()
+                {
+                    let read_name = Self::fresh_destructuring_temp(&mut reserved_temp_names);
+                    let mut read_args = vec![IRNode::id(temp_name.clone())];
+                    if let Some(limit) = self.array_binding_read_limit(pattern) {
+                        read_args.push(IRNode::number(limit.to_string()));
+                    }
+                    declarations.push(IRNode::var_decl(
+                        read_name.clone(),
+                        Some(IRNode::call(
+                            IRNode::RuntimeHelper("__read".into()),
+                            read_args,
+                        )),
+                    ));
+                    read_name
+                } else {
+                    temp_name.clone()
+                };
+
+                for (element_index, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+                    let Some(elem_node) = self.arena.get(elem_idx) else {
+                        continue;
+                    };
+                    let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                        continue;
+                    };
+                    let elem_name = get_identifier_text(self.arena, elem.name).unwrap_or_default();
+                    if elem_name.is_empty() {
+                        continue;
+                    }
+
+                    let initializer = if elem.dot_dot_dot_token {
+                        IRNode::call(
+                            IRNode::prop(IRNode::id(source_name.clone()), "slice"),
+                            vec![IRNode::number(element_index.to_string())],
+                        )
+                    } else {
+                        IRNode::elem(
+                            IRNode::id(source_name.clone()),
+                            IRNode::number(element_index.to_string()),
+                        )
+                    };
+                    declarations.push(IRNode::var_decl(elem_name, Some(initializer)));
+                }
+
+                if !declarations.is_empty() {
+                    prologue.push(IRNode::VarDeclList(declarations));
+                }
             }
             ir_idx += 1;
         }
         prologue
+    }
+
+    fn fresh_destructuring_temp(reserved: &mut FxHashSet<String>) -> String {
+        let mut idx = 0usize;
+        loop {
+            let candidate = if idx < 26 {
+                format!("_{}", (b'a' + idx as u8) as char)
+            } else {
+                format!("_{idx}")
+            };
+            if reserved.insert(candidate.clone()) {
+                return candidate;
+            }
+            idx += 1;
+        }
+    }
+
+    fn array_binding_read_limit(
+        &self,
+        pattern: &tsz_parser::parser::node::BindingPatternData,
+    ) -> Option<usize> {
+        for &elem_idx in &pattern.elements.nodes {
+            if self
+                .arena
+                .get(elem_idx)
+                .and_then(|node| self.arena.get_binding_element(node))
+                .is_some_and(|elem| elem.dot_dot_dot_token)
+            {
+                return None;
+            }
+        }
+        Some(pattern.elements.nodes.len())
     }
 
     /// Check if any parameters are destructured binding patterns.

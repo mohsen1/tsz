@@ -3696,6 +3696,7 @@ impl<'a> AsyncES5Transformer<'a> {
 
         let IRNode::ES5ClassIIFE {
             name,
+            binding_name: _,
             base_class,
             super_param,
             body,
@@ -3766,6 +3767,7 @@ impl<'a> AsyncES5Transformer<'a> {
         let class_ir =
             class_transformer.transform_class_to_ir_with_name(class_idx, Some(class_name))?;
         let IRNode::ES5ClassIIFE {
+            binding_name: _,
             body,
             super_param,
             weakmap_decls,
@@ -3857,16 +3859,32 @@ impl<'a> AsyncES5Transformer<'a> {
                 .get(if_stmt.else_statement)
                 .is_some_and(|n| n.kind != syntax_kind_ext::EMPTY_STATEMENT);
 
-        // Reserve labels for else branch and end
-        let else_label = self.state.next_label();
-        let end_label = if has_else {
-            self.state.next_label()
+        // When the then branch suspends, its resume case must claim the next
+        // label before the else branch is scheduled. Use a placeholder for the
+        // initial branch target, then patch it once the then branch has been
+        // lowered.
+        let delayed_else_label = has_else && then_has_await;
+        let else_placeholder = delayed_else_label.then(|| self.next_loop_exit_placeholder());
+        let (mut else_label, mut end_label) = if delayed_else_label {
+            (None, None)
         } else {
-            else_label
+            let else_label = self.state.next_label();
+            let end_label = if has_else {
+                self.state.next_label()
+            } else {
+                else_label
+            };
+            (Some(else_label), Some(end_label))
         };
 
         // Emit: if (!(condition)) return [3 /*break*/, else_label];
-        let target_label = if has_else { else_label } else { end_label };
+        let target_label = else_placeholder.unwrap_or_else(|| {
+            if has_else {
+                else_label.expect("else label must be allocated without delayed scheduling")
+            } else {
+                end_label.expect("end label must be allocated without delayed scheduling")
+            }
+        });
         let cond_ir = self.expression_to_ir(if_stmt.expression);
         current_statements.push(IRNode::IfBreak {
             condition: Box::new(IRNode::PrefixUnaryExpr {
@@ -3885,6 +3903,21 @@ impl<'a> AsyncES5Transformer<'a> {
         );
 
         if has_else {
+            if let Some(placeholder) = else_placeholder {
+                let patched_else_label = self.state.next_label();
+                let patched_end_label = self.state.next_label();
+                Self::patch_if_break_target(cases, placeholder, patched_else_label);
+                Self::patch_if_break_target_in_statements(
+                    current_statements,
+                    placeholder,
+                    patched_else_label,
+                );
+                else_label = Some(patched_else_label);
+                end_label = Some(patched_end_label);
+            }
+            let else_label = else_label.expect("else label must be available before else branch");
+            let end_label = end_label.expect("end label must be available before then break");
+
             // Emit: return [3 /*break*/, end_label]; at end of then branch
             current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                 IRNode::GeneratorOp {
@@ -3919,7 +3952,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 statements: std::mem::take(current_statements),
             });
         }
-        *current_label = end_label;
+        *current_label = end_label.expect("end label must be available after if lowering");
     }
 
     /// Process a while statement inside an async function body.
@@ -4728,6 +4761,16 @@ impl<'a> AsyncES5Transformer<'a> {
             for statement in &mut case.statements {
                 Self::patch_if_break_target_in_node(statement, placeholder_label, target_label);
             }
+        }
+    }
+
+    fn patch_if_break_target_in_statements(
+        statements: &mut [IRNode],
+        placeholder_label: u32,
+        target_label: u32,
+    ) {
+        for statement in statements {
+            Self::patch_if_break_target_in_node(statement, placeholder_label, target_label);
         }
     }
 

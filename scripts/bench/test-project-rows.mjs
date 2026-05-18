@@ -130,10 +130,16 @@ assert.deepEqual(
 );
 
 const projectCompileGuardRows = sortedUnique(
-  extractAll(
-    readRepoFile("scripts/ci/project-compile-guard.sh"),
-    /check_project\s+"([^"]+)"/g,
-  ),
+  (() => {
+    const guard = readRepoFile("scripts/ci/project-compile-guard.sh");
+    const literalRows = extractAll(guard, /check_project\s+"([^"]+)"/g)
+      .filter((row) => row !== "$name");
+    const caseRows = extractAll(
+      guard,
+      /^\s{4}([a-z0-9-]+(?:\|[a-z0-9-]+)*)\)\s*$/gm,
+    ).flatMap((row) => row.split("|"));
+    return [...literalRows, ...caseRows];
+  })(),
 );
 assert.deepEqual(
   projectCompileGuardRows,
