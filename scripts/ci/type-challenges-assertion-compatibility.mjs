@@ -384,6 +384,47 @@ const tscCandidateDiagnostics = tsc.candidateDiagnostics || {};
 const tszCandidateDiagnostics = tsz.candidateDiagnostics || {};
 const normalizedCandidateDiagnosticFiles = {};
 const normalizedCandidateExampleFiles = {};
+for (const [compiler, result] of [
+  ["tsc", tsc],
+  ["tsz", tsz],
+]) {
+  const diagnostics = result.diagnostics;
+  if (diagnostics === null || diagnostics === undefined) {
+    continue;
+  }
+  if (typeof diagnostics !== "object" || Array.isArray(diagnostics)) {
+    fail(`assertion classification ${compiler}.diagnostics must be an object`);
+  }
+  if (diagnostics.firstErrors !== null && diagnostics.firstErrors !== undefined) {
+    if (!Array.isArray(diagnostics.firstErrors)) {
+      fail(`assertion classification ${compiler}.diagnostics.firstErrors must be an array`);
+    }
+    diagnostics.firstErrors.forEach((line, index) => {
+      if (typeof line !== "string" || line.trim() === "") {
+        fail(
+          `assertion classification ${compiler}.diagnostics.firstErrors[${index}] must be a non-empty string`,
+        );
+      }
+    });
+  }
+  if (diagnostics.byCode !== null && diagnostics.byCode !== undefined) {
+    if (!Array.isArray(diagnostics.byCode)) {
+      fail(`assertion classification ${compiler}.diagnostics.byCode must be an array`);
+    }
+    diagnostics.byCode.forEach((entry, index) => {
+      if (typeof entry?.key !== "string" || entry.key.trim() === "") {
+        fail(
+          `assertion classification ${compiler}.diagnostics.byCode[${index}].key must be a non-empty string`,
+        );
+      }
+      if (!Number.isInteger(entry.count) || entry.count < 0) {
+        fail(
+          `assertion classification ${compiler}.diagnostics.byCode[${index}].count must be a non-negative integer`,
+        );
+      }
+    });
+  }
+}
 for (const [compiler, diagnostics] of [
   ["tsc", tscCandidateDiagnostics],
   ["tsz", tszCandidateDiagnostics],
