@@ -45,12 +45,42 @@ function withComparisonCompilerStatuses(report) {
     return report;
   }
 
+  const compilers = Object.fromEntries(
+    Object.entries(report.compilers ?? {}).map(([compiler, result]) => [
+      compiler,
+      withDiagnosticFreeFileList(result),
+    ]),
+  );
+
   return {
     ...report,
+    compilers,
     comparison: {
-      tscStatus: report.compilers?.tsc?.status,
-      tszStatus: report.compilers?.tsz?.status,
+      tscStatus: compilers.tsc?.status,
+      tszStatus: compilers.tsz?.status,
       ...report.comparison,
+    },
+  };
+}
+
+function withDiagnosticFreeFileList(result) {
+  const diagnostics = result?.candidateDiagnostics;
+  if (
+    !diagnostics ||
+    Object.prototype.hasOwnProperty.call(diagnostics, "filesWithoutDiagnostics") ||
+    !Number.isInteger(diagnostics.candidatesWithoutDiagnostics)
+  ) {
+    return result;
+  }
+
+  return {
+    ...result,
+    candidateDiagnostics: {
+      ...diagnostics,
+      filesWithoutDiagnostics: Array.from(
+        { length: diagnostics.candidatesWithoutDiagnostics },
+        (_, index) => `assertions/diagnostic-free-${index + 1}.ts`,
+      ),
     },
   };
 }
@@ -1492,6 +1522,37 @@ withTempDir((dir) => {
   assert.match(
     result.stderr,
     /tsc candidateDiagnostics files overlap between diagnostic and diagnostic-free lists: assertions\/one\.ts/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 2,
+            candidatesWithDiagnostics: 1,
+            candidatesWithoutDiagnostics: 1,
+            filesWithDiagnostics: ["assertions/one.ts"],
+            filesWithoutDiagnostics: null,
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc candidateDiagnostics\.filesWithoutDiagnostics must be an array when candidatesWithoutDiagnostics is nonzero/,
   );
   assert.equal(fs.existsSync(outFile), false);
 });

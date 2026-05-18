@@ -633,7 +633,6 @@ for (const [compiler, diagnostics] of [
     if (files === null || files === undefined) {
       diagnosticFiles[field] = [];
       if (
-        field === "filesWithDiagnostics" &&
         Number.isInteger(diagnostics[countField]) &&
         diagnostics[countField] > 0
       ) {
