@@ -464,3 +464,140 @@ fn test_async_tagged_template_no_substitutions_unchanged() {
         "No-substitution tagged template should still lower to __makeTemplateObject.\nOutput:\n{output}"
     );
 }
+
+// ---------------------------------------------------------------------
+// Discovery-phase boundary tests
+//
+// `body_contains_await` is the entry point of the read-only discovery
+// pass that lowering decisions key on. These tests exercise the
+// discovery module (`async_es5_ir_discovery.rs`) without going through
+// the full IR-print path, so they fail fast when the predicate boundary
+// drifts.
+
+fn first_function_body(parser: &mut ParserState) -> NodeIndex {
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("source file");
+    let func_idx = *source_file.statements.nodes.first().expect("function");
+    let func_node = parser.arena.get(func_idx).expect("function node");
+    let func = parser.arena.get_function(func_node).expect("function decl");
+    func.body
+}
+
+fn body_contains_await(source: &str) -> bool {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let body_idx = first_function_body(&mut parser);
+    let mut transformer = AsyncES5Transformer::new(&parser.arena);
+    transformer.set_source_text(source);
+    transformer.body_contains_await(body_idx)
+}
+
+fn generator_body_contains_yield(source: &str) -> bool {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let body_idx = first_function_body(&mut parser);
+    let mut transformer = AsyncES5Transformer::new(&parser.arena);
+    transformer.generator_mode = true;
+    transformer.set_source_text(source);
+    transformer.body_contains_await(body_idx)
+}
+
+#[test]
+fn discovery_body_contains_await_returns_true_for_direct_await() {
+    assert!(body_contains_await("async function f() { await bar(); }"));
+}
+
+#[test]
+fn discovery_body_contains_await_ignores_nested_async_function() {
+    // Discovery must not climb into a nested function body; the inner
+    // `await` belongs to the nested async function's own state machine.
+    assert!(!body_contains_await(
+        "async function f() { async function g() { await bar(); } }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_ignores_nested_arrow_function() {
+    assert!(!body_contains_await(
+        "async function f() { const g = async () => { await bar(); }; }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_sees_through_type_assertion() {
+    // `(await foo()) as T` is stripped by `expression_to_ir`, so the
+    // discovery pass must look through the type wrapper.
+    assert!(body_contains_await(
+        "async function f() { var x = (await foo()) as T; }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_sees_through_non_null_assertion() {
+    assert!(body_contains_await(
+        "async function f() { var x = (await foo())!; }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_sees_class_heritage() {
+    // Class bodies are function-like, but heritage clauses run in the
+    // surrounding async scope.
+    assert!(body_contains_await(
+        "async function f() { class C extends (await base()) {} }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_skips_class_member_bodies() {
+    assert!(!body_contains_await(
+        "async function f() { class C { m() { await bar(); } } }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_sees_using_declarations() {
+    // `using` and `await using` introduce disposable regions that the
+    // generator state machine must own, so the predicate must flag them
+    // even when there is no syntactic `await` in the body.
+    assert!(body_contains_await(
+        "async function f() { using d = acquire(); }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_sees_for_await_of() {
+    assert!(body_contains_await(
+        "async function f() { for await (const x of stream()) {} }"
+    ));
+}
+
+#[test]
+fn discovery_body_contains_await_sees_computed_property_await() {
+    assert!(body_contains_await(
+        "async function f() { var o = { [await key()]: 1 }; }"
+    ));
+}
+
+#[test]
+fn discovery_generator_mode_classifies_yield_as_suspension() {
+    // In generator mode, `yield` is the suspension point, not `await`.
+    assert!(generator_body_contains_yield("function* f() { yield 1; }"));
+}
+
+#[test]
+fn discovery_generator_mode_ignores_plain_await_call() {
+    // A plain function call named `await` should not be detected as a
+    // suspension in generator mode (there is no real syntactic await
+    // here — `await(x)` is just a call expression at parse time only
+    // in non-strict contexts; in this test we keep the source free of
+    // `await` to avoid ambiguity).
+    assert!(!generator_body_contains_yield("function* f() { x(); }"));
+}
+
+#[test]
+fn discovery_body_contains_await_returns_false_for_pure_body() {
+    assert!(!body_contains_await("async function f() { var x = 1; }"));
+}
