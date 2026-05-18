@@ -1,7 +1,14 @@
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, node_flags};
 use tsz_scanner::SyntaxKind;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ForOfUsingInfo {
+    pub binding_name: String,
+    pub using_async: bool,
+    pub recovered_missing_binding: bool,
+}
 
 /// Returns true when a function/method header contains the async-generator
 /// asterisk, without treating `*` in parameter defaults or computed names as a
@@ -161,6 +168,114 @@ pub(crate) fn identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<Strin
 /// Get identifier text from a node index, returning an empty string on failure.
 pub(crate) fn identifier_text_or_empty(arena: &NodeArena, idx: NodeIndex) -> String {
     identifier_text(arena, idx).unwrap_or_default()
+}
+
+/// Returns true when a namespace/module block contains declarations that
+/// produce runtime output.
+pub(crate) fn module_body_has_runtime_value_declarations(
+    arena: &NodeArena,
+    body_idx: NodeIndex,
+) -> bool {
+    let Some(body_node) = arena.get(body_idx) else {
+        return false;
+    };
+    let Some(block_data) = arena.get_module_block(body_node) else {
+        return false;
+    };
+    let Some(stmts) = block_data.statements.as_ref() else {
+        return false;
+    };
+
+    stmts.nodes.iter().any(|&stmt_idx| {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            return false;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                || k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::ENUM_DECLARATION =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => arena
+                .get_module(stmt_node)
+                .is_some_and(|ns| module_body_has_runtime_value_declarations(arena, ns.body)),
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => arena
+                .get_export_decl(stmt_node)
+                .and_then(|export| arena.get(export.export_clause))
+                .is_some_and(|inner| match inner.kind {
+                    k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                        || k == syntax_kind_ext::FUNCTION_DECLARATION
+                        || k == syntax_kind_ext::CLASS_DECLARATION
+                        || k == syntax_kind_ext::ENUM_DECLARATION =>
+                    {
+                        true
+                    }
+                    k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                        arena.get_module(inner).is_some_and(|ns| {
+                            module_body_has_runtime_value_declarations(arena, ns.body)
+                        })
+                    }
+                    _ => false,
+                }),
+            _ => false,
+        }
+    })
+}
+
+pub(crate) fn for_of_using_info(
+    arena: &NodeArena,
+    initializer: NodeIndex,
+) -> Option<ForOfUsingInfo> {
+    if let Some(info) = for_of_using_declaration_info(arena, initializer) {
+        return Some(info);
+    }
+
+    let init_node = arena.get(initializer)?;
+    if init_node.kind == syntax_kind_ext::AWAIT_EXPRESSION
+        && let Some(unary) = arena.get_unary_expr_ex(init_node)
+        && identifier_text_or_empty(arena, unary.expression) == "using"
+    {
+        return Some(ForOfUsingInfo {
+            binding_name: "_a".to_string(),
+            using_async: true,
+            recovered_missing_binding: true,
+        });
+    }
+
+    None
+}
+
+pub(crate) fn for_of_using_declaration_info(
+    arena: &NodeArena,
+    initializer: NodeIndex,
+) -> Option<ForOfUsingInfo> {
+    let init_node = arena.get(initializer)?;
+    if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+        let flags = init_node.flags as u32;
+        if (flags & node_flags::USING) == 0 {
+            return None;
+        }
+        let decl_list = arena.get_variable(init_node)?;
+        if decl_list.declarations.nodes.len() != 1 {
+            return None;
+        }
+        let decl_idx = decl_list.declarations.nodes[0];
+        let decl_node = arena.get(decl_idx)?;
+        let decl = arena.get_variable_declaration(decl_node)?;
+        let binding_name = identifier_text_or_empty(arena, decl.name);
+        if binding_name.is_empty() {
+            return None;
+        }
+        return Some(ForOfUsingInfo {
+            binding_name,
+            using_async: node_flags::is_await_using(flags),
+            recovered_missing_binding: false,
+        });
+    }
+    None
 }
 
 /// Get the emit text for an identifier, preserving unicode escape sequences.

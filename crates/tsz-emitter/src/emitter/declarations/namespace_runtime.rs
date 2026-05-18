@@ -214,6 +214,24 @@ impl<'a> Printer<'a> {
             return has_runtime;
         }
 
+        let target_path = self.qualified_name_to_string(target);
+        if !target_path.is_empty()
+            && let Some(current_namespace) = self.current_namespace_source_path.as_deref()
+        {
+            let qualified_target = format!("{current_namespace}.{target_path}");
+            if let Some((has_runtime, _)) =
+                self.resolve_entity_runtime_value_by_path(&qualified_target, None)
+            {
+                return has_runtime;
+            }
+        }
+        if !target_path.is_empty()
+            && let Some((has_runtime, _)) =
+                self.resolve_relative_entity_runtime_value_by_suffix(&target_path)
+        {
+            return has_runtime;
+        }
+
         if scope_body.is_some() {
             return self
                 .resolve_entity_runtime_value(target, None)
@@ -221,6 +239,202 @@ impl<'a> Printer<'a> {
         }
 
         true
+    }
+
+    fn resolve_entity_runtime_value_by_path(
+        &self,
+        path: &str,
+        scope_body: Option<NodeIndex>,
+    ) -> Option<(bool, Option<NodeIndex>)> {
+        let parts: Vec<&str> = path.split('.').filter(|part| !part.is_empty()).collect();
+        if parts.is_empty() {
+            return None;
+        }
+
+        let statements = self.scope_statements_for_runtime_lookup(scope_body);
+        self.resolve_entity_runtime_path_in_statements(&parts, &statements)
+    }
+
+    fn resolve_entity_runtime_path_in_statements(
+        &self,
+        parts: &[&str],
+        statements: &[NodeIndex],
+    ) -> Option<(bool, Option<NodeIndex>)> {
+        let name = *parts.first()?;
+        let is_leaf = parts.len() == 1;
+        let mut matched = false;
+        let mut has_runtime = false;
+        let mut nested_scope = None;
+
+        for &stmt_idx in statements {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let effective_node = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                self.arena
+                    .get_export_decl(stmt_node)
+                    .and_then(|export| self.arena.get(export.export_clause))
+                    .unwrap_or(stmt_node)
+            } else {
+                stmt_node
+            };
+
+            if let Some(module) = self.arena.get_module(effective_node) {
+                let module_path = self.qualified_name_to_string(module.name);
+                let module_parts: Vec<&str> = module_path
+                    .split('.')
+                    .filter(|part| !part.is_empty())
+                    .collect();
+                if module_parts.is_empty() || !parts.starts_with(&module_parts) {
+                    continue;
+                }
+
+                if parts.len() == module_parts.len() {
+                    matched = true;
+                    let runtime = self.module_decl_has_runtime_alias_target(module);
+                    if runtime {
+                        has_runtime = true;
+                        if nested_scope.is_none() {
+                            nested_scope = Some(module.body);
+                        }
+                    }
+                    continue;
+                }
+
+                if let Some((child_runtime, child_scope)) = self
+                    .resolve_entity_runtime_path_in_module_body(
+                        &parts[module_parts.len()..],
+                        module.body,
+                    )
+                {
+                    matched = true;
+                    if child_runtime {
+                        has_runtime = true;
+                        if nested_scope.is_none() {
+                            nested_scope = child_scope;
+                        }
+                    }
+                }
+                continue;
+            }
+
+            if is_leaf
+                && let Some((stmt_runtime, stmt_scope)) =
+                    self.statement_runtime_for_name(stmt_node, name, None)
+            {
+                matched = true;
+                if stmt_runtime {
+                    has_runtime = true;
+                    if nested_scope.is_none() {
+                        nested_scope = stmt_scope;
+                    }
+                }
+            }
+        }
+
+        matched.then_some((has_runtime, nested_scope))
+    }
+
+    fn resolve_entity_runtime_path_in_module_body(
+        &self,
+        parts: &[&str],
+        body_idx: NodeIndex,
+    ) -> Option<(bool, Option<NodeIndex>)> {
+        let body_node = self.arena.get(body_idx)?;
+        if let Some(module) = self.arena.get_module(body_node) {
+            let module_path = self.qualified_name_to_string(module.name);
+            let module_parts: Vec<&str> = module_path
+                .split('.')
+                .filter(|part| !part.is_empty())
+                .collect();
+            if module_parts.is_empty() || !parts.starts_with(&module_parts) {
+                return None;
+            }
+
+            if parts.len() == module_parts.len() {
+                let runtime = self.module_decl_has_runtime_alias_target(module);
+                return Some((runtime, runtime.then_some(module.body)));
+            }
+
+            return self.resolve_entity_runtime_path_in_module_body(
+                &parts[module_parts.len()..],
+                module.body,
+            );
+        }
+
+        let statements = self.scope_statements_for_runtime_lookup(Some(body_idx));
+        self.resolve_entity_runtime_path_in_statements(parts, &statements)
+    }
+
+    fn resolve_relative_entity_runtime_value_by_suffix(
+        &self,
+        target_path: &str,
+    ) -> Option<(bool, Option<NodeIndex>)> {
+        let statements = self.scope_statements_for_runtime_lookup(None);
+        let mut outcomes = Vec::new();
+        self.collect_relative_entity_runtime_outcomes(target_path, "", &statements, &mut outcomes);
+        if outcomes.is_empty() {
+            return None;
+        }
+
+        let mut has_runtime = false;
+        let mut nested_scope = None;
+        for (runtime, scope) in outcomes {
+            if runtime {
+                has_runtime = true;
+                if nested_scope.is_none() {
+                    nested_scope = scope;
+                }
+            }
+        }
+        Some((has_runtime, nested_scope))
+    }
+
+    fn collect_relative_entity_runtime_outcomes(
+        &self,
+        target_path: &str,
+        prefix: &str,
+        statements: &[NodeIndex],
+        outcomes: &mut Vec<(bool, Option<NodeIndex>)>,
+    ) {
+        for &stmt_idx in statements {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let effective_node = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                self.arena
+                    .get_export_decl(stmt_node)
+                    .and_then(|export| self.arena.get(export.export_clause))
+                    .unwrap_or(stmt_node)
+            } else {
+                stmt_node
+            };
+
+            let Some(module) = self.arena.get_module(effective_node) else {
+                continue;
+            };
+            let module_name = self.qualified_name_to_string(module.name);
+            if module_name.is_empty() {
+                continue;
+            }
+            let module_path = if prefix.is_empty() {
+                module_name
+            } else {
+                format!("{prefix}.{module_name}")
+            };
+            let candidate = format!("{module_path}.{target_path}");
+            if let Some(outcome) = self.resolve_entity_runtime_value_by_path(&candidate, None) {
+                outcomes.push(outcome);
+            }
+
+            let child_statements = self.scope_statements_for_runtime_lookup(Some(module.body));
+            self.collect_relative_entity_runtime_outcomes(
+                target_path,
+                &module_path,
+                &child_statements,
+                outcomes,
+            );
+        }
     }
 
     /// Resolve whether an entity name has runtime value semantics in a scope.
@@ -237,6 +451,13 @@ impl<'a> Printer<'a> {
         let node = self.arena.get(entity)?;
 
         if let Some(qualified) = self.arena.get_qualified_name(node) {
+            let path = self.qualified_name_to_string(entity);
+            if !path.is_empty()
+                && let Some(resolved) = self.resolve_entity_runtime_value_by_path(&path, scope_body)
+            {
+                return Some(resolved);
+            }
+
             let left = self.resolve_entity_runtime_value(qualified.left, scope_body)?;
             if !left.0 {
                 return Some((false, None));
@@ -258,6 +479,14 @@ impl<'a> Printer<'a> {
             return None;
         }
 
+        self.resolve_name_runtime_value(&name, scope_body)
+    }
+
+    fn resolve_name_runtime_value(
+        &self,
+        name: &str,
+        scope_body: Option<NodeIndex>,
+    ) -> Option<(bool, Option<NodeIndex>)> {
         let statements = self.scope_statements_for_runtime_lookup(scope_body);
         if statements.is_empty() {
             return None;

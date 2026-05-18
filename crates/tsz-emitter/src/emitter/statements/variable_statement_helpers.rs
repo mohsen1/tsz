@@ -10,6 +10,14 @@ impl<'a> Printer<'a> {
         &mut self,
         statements: &NodeList,
     ) -> bool {
+        self.emit_statement_list_with_using_scope_for_node(statements, NodeIndex::NONE)
+    }
+
+    pub(in crate::emitter) fn emit_statement_list_with_using_scope_for_node(
+        &mut self,
+        statements: &NodeList,
+        block_idx: NodeIndex,
+    ) -> bool {
         if self.ctx.options.target.supports_es2025()
             || !self.block_has_using_declarations(statements)
         {
@@ -17,7 +25,11 @@ impl<'a> Printer<'a> {
         }
 
         let using_async = self.block_has_await_using(statements);
-        let (env_name, error_name, result_name) = self.next_disposable_env_names();
+        let (env_name, error_name, result_name) = if block_idx.is_none() {
+            self.next_disposable_env_names()
+        } else {
+            self.disposable_env_names_for_node(block_idx)
+        };
         let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
         let prev_block_using_env = self
             .block_using_env
@@ -220,7 +232,11 @@ impl<'a> Printer<'a> {
                     self.write("(");
                     self.write(&env_name);
                     self.write(", ");
-                    self.emit(decl.initializer);
+                    if !self
+                        .try_emit_object_literal_es5_inline_computed_expression(decl.initializer)
+                    {
+                        self.emit(decl.initializer);
+                    }
                     self.write(", ");
                     self.write(if using_async { "true" } else { "false" });
                     self.write(")");

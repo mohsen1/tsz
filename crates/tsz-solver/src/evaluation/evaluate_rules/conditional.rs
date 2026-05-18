@@ -17,6 +17,7 @@ use tracing::trace;
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
+use crate::type_queries::get_application_base;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Maximum depth for tail-recursive conditional evaluation.
@@ -1956,21 +1957,66 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().conditional(*cond);
         }
 
-        let mut subst = TypeSubstitution::new();
+        // Pass 1: resolve each property and accumulate inferred types per variable name.
+        // Co-located uses of the same `infer T` union their candidates. Track which
+        // variables received contributions from more than one slot, and the effective
+        // constraint from the first occurrence that declares one.
+        let mut accumulated: FxHashMap<Atom, TypeId> = FxHashMap::default();
+        // Set when ≥2 distinct slots contributed to the same variable.
+        let mut multi_slot: FxHashSet<Atom> = FxHashSet::default();
+        // (constraint, optional) from the first constrained occurrence.
+        let mut effective_constraint: FxHashMap<Atom, (TypeId, bool)> = FxHashMap::default();
+
         for &(prop_name, info, optional) in infer_props {
-            let Some(mut inferred) =
+            let Some(inferred) =
                 self.resolve_conditional_infer_property(check_unwrapped, prop_name, optional)
             else {
                 return self.evaluate(cond.false_type);
             };
 
-            subst.insert(info.name, inferred);
+            if let Some(existing) = accumulated.get(&info.name).copied() {
+                // tsc unions co-located infer candidates across property slots.
+                multi_slot.insert(info.name);
+                let merged = self.interner().union2(existing, inferred);
+                accumulated.insert(info.name, merged);
+            } else {
+                accumulated.insert(info.name, inferred);
+            }
 
+            // The constraint declared at the first occurrence is the variable's constraint;
+            // later co-located uses that lack a constraint are just additional candidates.
             if let Some(constraint) = info.constraint {
+                effective_constraint
+                    .entry(info.name)
+                    .or_insert((constraint, optional));
+            }
+        }
+
+        // Pass 2: apply each variable's effective constraint to its fully-accumulated type,
+        // then build the substitution in declaration order.
+        //
+        // Constraint semantics differ by how the union arose:
+        // - Multi-slot accumulation: the whole union must satisfy the constraint (tsc fails
+        //   the conditional when `string | number extends string` is false).
+        // - Single-slot with a union source property: filter per-member and keep matching
+        //   parts (preserving the original `filter_inferred_by_constraint_or_undefined`
+        //   behaviour for non-distributive unions).
+        let mut subst = TypeSubstitution::new();
+        for &(_, info, _) in infer_props {
+            if subst.get(info.name).is_some() {
+                continue; // already processed this variable
+            }
+            let Some(mut inferred) = accumulated.get(&info.name).copied() else {
+                continue;
+            };
+
+            if let Some(&(constraint, opt)) = effective_constraint.get(&info.name) {
                 let mut checker = self.conditional_subtype_checker();
                 checker.allow_bivariant_rest = true;
                 let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
-                if optional {
+                let is_multi = multi_slot.contains(&info.name);
+
+                if opt {
                     let Some(filtered) =
                         self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
                     else {
@@ -1979,7 +2025,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.evaluate(false_inst);
                     };
                     inferred = filtered;
-                } else if is_union && !cond.is_distributive {
+                } else if is_union && !cond.is_distributive && !is_multi {
+                    // Union from a single source property — filter members, keep matching.
                     inferred = self.filter_inferred_by_constraint_or_undefined(
                         inferred,
                         constraint,
@@ -1988,8 +2035,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 } else if !checker.is_subtype_of(inferred, constraint) {
                     return self.evaluate(cond.false_type);
                 }
-                subst.insert(info.name, inferred);
             }
+
+            subst.insert(info.name, inferred);
         }
 
         let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
@@ -2312,9 +2360,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // it at the Application level. This is critical for complex generic interfaces
         // like Promise, Map, Set where structural expansion loses the ability to
         // match type arguments directly.
-        let Some(TypeData::Application(_)) = self.interner().lookup(cond.extends_type) else {
+        let Some(TypeData::Application(pattern_app_id)) = self.interner().lookup(cond.extends_type)
+        else {
             return None;
         };
+        let pattern_base = self.interner().type_application(pattern_app_id).base;
 
         let contains_infer =
             if let Some(contains_infer) = self.cached_contains_infer(cond.extends_type) {
@@ -2328,46 +2378,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         }
 
-        // Use the raw (unevaluated) check_type — it may still be an Application
-        // which enables Application-vs-Application matching in match_infer_pattern.
-        // When the raw form is *not* an Application (e.g. an IndexAccess inside a
-        // mapped-type per-key conditional like `S[K] extends Pattern<infer T>`),
-        // evaluate it once: if evaluation yields an Application, that Application
-        // is what we want to feed to `match_infer_pattern` so the
-        // Application-vs-Application path can bind the infer arguments. Without
-        // this, downstream `try_expand_application_for_conditional_check`
-        // unfolds the evaluated Application into its structural Object form and
-        // the Application-level match is irretrievably lost.
-        // The raw `cond.check_type` may not be an Application (e.g. an
-        // `IndexAccess` like `S[K]` inside a mapped-type per-key conditional).
-        // Try to recover an Application form so the Application-vs-Application
-        // path in `match_infer_pattern` can bind the infer arguments:
-        //   1. Evaluate the raw type once. If that yields an Application,
-        //      use it directly.
-        //   2. Otherwise, the raw type may have evaluated to the *body* of
-        //      an Application (the structural Object the body interned to).
-        //      The interner records `display_alias[body] = Application` for
-        //      every evaluated Application; consult it to recover the
-        //      original Application form when the evaluated check_type is
-        //      not itself an Application but came from one.
+        // Recover an Application form for `check_type` whose base matches
+        // `pattern_base`. Three shapes need recovery:
+        //   1. raw type isn't an Application (e.g. `S[K]` inside a per-key
+        //      conditional) — evaluate may yield one;
+        //   2. raw type evaluates to a structural Object/Callable — the
+        //      `display_alias` map records a back-reference to the original
+        //      Application;
+        //   3. raw type IS an Application but its base differs from the
+        //      pattern's (e.g. `Exclude<X<T> | undefined, undefined>` wraps
+        //      `X<T>`) — evaluate through the wrapper so the
+        //      Application-vs-Application match has a same-base source.
         let mut check_type = cond.check_type;
-        if !matches!(
-            self.interner().lookup(check_type),
-            Some(TypeData::Application(_))
-        ) {
+        if get_application_base(self.interner(), check_type) != Some(pattern_base) {
             let evaluated = self.evaluate(check_type);
-            if matches!(
-                self.interner().lookup(evaluated),
-                Some(TypeData::Application(_))
-            ) {
+            if get_application_base(self.interner(), evaluated) == Some(pattern_base) {
                 check_type = evaluated;
-            } else if let Some(application_origin) = self.interner().get_display_alias(evaluated)
-                && matches!(
-                    self.interner().lookup(application_origin),
-                    Some(TypeData::Application(_))
-                )
+            } else if let Some(origin) = self.try_recover_application_from_display_alias(evaluated)
+                && get_application_base(self.interner(), origin) == Some(pattern_base)
             {
-                check_type = application_origin;
+                check_type = origin;
             }
         }
 

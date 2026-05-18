@@ -222,3 +222,179 @@ fn local_required_unrelated_shape_emits_ts2536() {
         "Local Required with unrelated body must still emit TS2536: {diags:?}"
     );
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Recursive conditional utility types (DeepRequired / DeepPartial patterns)
+//
+// Structural rule: when a generic alias body is `T extends C ? A : B` and
+// each branch shares the source argument's key space (identity, or a
+// non-remapped mapped type whose constraint is `keyof T`), `keyof F<T>` =
+// `keyof T`. So `F<T>[K]` with `K in keyof T` must not emit TS2536.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn deep_required_mapped_key_no_ts2536() {
+    let diags = check_es5(
+        "type DeepRequired<T> = T extends object ? { [P in keyof T]-?: DeepRequired<T[P]> } : T;\n\
+         type Test<T> = { [K in keyof T]: DeepRequired<T>[K] };",
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "DeepRequired<T>[K] where K in keyof T must not emit TS2536: {diags:?}"
+    );
+}
+
+#[test]
+fn deep_partial_mapped_key_no_ts2536() {
+    let diags = check_es5(
+        "type DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T;\n\
+         type Test<T> = { [K in keyof T]: DeepPartial<T>[K] };",
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "DeepPartial<T>[K] where K in keyof T must not emit TS2536: {diags:?}"
+    );
+}
+
+#[test]
+fn deep_readonly_mapped_key_no_ts2536() {
+    let diags = check_es5(
+        "type DeepReadonly<T> = T extends object ? { readonly [P in keyof T]: DeepReadonly<T[P]> } : T;\n\
+         type Test<T> = { [K in keyof T]: DeepReadonly<T>[K] };",
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "DeepReadonly<T>[K] where K in keyof T must not emit TS2536: {diags:?}"
+    );
+}
+
+/// Renamed parameters prove the rule is structural, not keyed on identifier spelling.
+#[test]
+fn deep_required_renamed_param_no_ts2536() {
+    let diags = check_es5(
+        "type DeepReq<U> = U extends object ? { [Q in keyof U]-?: DeepReq<U[Q]> } : U;\n\
+         type Test<V> = { [J in keyof V]: DeepReq<V>[J] };",
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "DeepReq<V>[J] with renamed params must not emit TS2536: {diags:?}"
+    );
+}
+
+#[test]
+fn deep_required_concrete_no_errors() {
+    let diags = check_es5(
+        r#"type DeepRequired<T> = T extends object ? { [P in keyof T]-?: DeepRequired<T[P]> } : T;
+type Test<T> = { [K in keyof T]: DeepRequired<T>[K] };
+type Obj = { a: number; b?: string };
+type Result = Test<Obj>;"#,
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "Concrete DeepRequired use must not emit TS2536: {diags:?}"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Negative cases: conditional bodies whose branches do NOT share keyof T
+// must still emit TS2536 — tsc reports these at the generic definition
+// level because the solver cannot prove keyof F<T> = keyof T.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Verified against `tsc 6.0.3 --noEmit`: this exact shape emits
+/// `TS2536: Type 'K' cannot be used to index type 'Fixed<T>'.`
+/// The solver-side branch proof must reject this (true-branch is `{ x: number }`,
+/// whose keyof is `"x"`, not `keyof T`), and the checker must not defer it.
+#[test]
+fn conditional_unrelated_true_branch_emits_ts2536() {
+    let diags = check_es5(
+        "type Fixed<T> = T extends object ? { x: number } : T;\n\
+         type Test<T> = { [K in keyof T]: Fixed<T>[K] };",
+    );
+    assert!(
+        !ts2536(&diags).is_empty(),
+        "Fixed<T>[K] with unrelated true-branch must emit TS2536 (parity with tsc): {diags:?}"
+    );
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Nested mapped type in type-argument position (issue #6562)
+//
+// Structural rule: when `{ [P in K]: T[P] }` appears inside a type argument
+// where K is the iteration variable of an enclosing `[K in keyof T]` mapped
+// type, the chain P → K → keyof T must be recognised and TS2536 suppressed.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Simple two-argument wrapper — both mapped-body variants must be accepted.
+#[test]
+fn nested_mapped_in_type_arg_simple_wrapper_no_ts2536() {
+    let diags = check_es5(
+        r#"type Wrap<A, B> = [A, B];
+type Test<T> = {
+  [K in keyof T]-?: Wrap<
+    { [P in K]: T[P] },
+    { -readonly [Q in K]: T[Q] }
+  > extends any ? K : never;
+}[keyof T];"#,
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "{{[P in K]: T[P]}} in Wrap<> type arg must not emit TS2536: {diags:?}"
+    );
+}
+
+/// Higher-order conditional (Equal pattern) — the original issue #6562 repro.
+#[test]
+fn nested_mapped_in_higher_order_conditional_no_ts2536() {
+    let diags = check_es5(
+        r#"type IsIdentical<X, Y> = (<T>() => T extends X ? 1 : 2) extends (<T>() => T extends Y ? 1 : 2) ? true : false;
+type PickMutable<T> = {
+  [K in keyof T]-?: IsIdentical<
+    { [P in K]: T[P] },
+    { -readonly [P in K]: T[P] }
+  > extends true ? K : never;
+}[keyof T];"#,
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "{{[P in K]: T[P]}} in higher-order conditional must not emit TS2536: {diags:?}"
+    );
+}
+
+/// Renamed iteration variables (outer J, inner X and Y) — names must not matter.
+#[test]
+fn nested_mapped_renamed_vars_no_ts2536() {
+    let diags = check_es5(
+        r#"type Pair<A, B> = { fst: A; snd: B };
+type Test<T> = {
+  [J in keyof T]-?: Pair<
+    { [X in J]: T[X] },
+    { readonly [Y in J]?: T[Y] }
+  >;
+};"#,
+    );
+    assert!(
+        ts2536(&diags).is_empty(),
+        "Renamed outer/inner vars must not emit TS2536: {diags:?}"
+    );
+}
+
+/// Negative: inner mapped iterates over unrelated key space — TS2536 must fire.
+#[test]
+fn nested_mapped_unrelated_key_space_still_emits_ts2536() {
+    let diags = check_es5(
+        r#"interface A { x: number; }
+interface B { y: string; }
+type Wrap<A, B> = [A, B];
+type Test<T> = {
+  [K in keyof T]: Wrap<
+    { [P in keyof A]: B[P] },
+    K
+  >;
+};"#,
+    );
+    assert!(
+        !ts2536(&diags).is_empty(),
+        "B[P] where P extends keyof A but B ≠ A must still emit TS2536: {diags:?}"
+    );
+}

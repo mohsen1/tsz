@@ -46,23 +46,31 @@ impl<'a> Printer<'a> {
             self.map_closing_paren_backward(node.pos, then_node.pos);
         }
         self.write(")");
-        if then_is_multiline_in_source {
-            self.write_line();
-            if !then_is_block {
-                self.increase_indent();
-            }
+        let then_is_initializerless_export_var = (self.ctx.is_commonjs()
+            || self.in_system_execute_body)
+            && !then_is_block
+            && self.statement_is_initializerless_export_variable(if_stmt.then_statement);
+        if then_is_initializerless_export_var {
+            self.write(" { }");
         } else {
-            self.write(" ");
-        }
-        let before_then = self.writer.len();
-        self.emit(if_stmt.then_statement);
-        // If the then-statement was completely erased (e.g. const enum),
-        // emit `;` to produce a valid empty statement.
-        if self.writer.len() == before_then {
-            self.write(";");
-        }
-        if then_is_multiline_in_source && !then_is_block {
-            self.decrease_indent();
+            if then_is_multiline_in_source {
+                self.write_line();
+                if !then_is_block {
+                    self.increase_indent();
+                }
+            } else {
+                self.write(" ");
+            }
+            let before_then = self.writer.len();
+            self.emit(if_stmt.then_statement);
+            // If the then-statement was completely erased (e.g. const enum),
+            // emit `;` to produce a valid empty statement.
+            if self.writer.len() == before_then {
+                self.write(";");
+            }
+            if then_is_multiline_in_source && !then_is_block {
+                self.decrease_indent();
+            }
         }
 
         if if_stmt.else_statement.is_some() {
@@ -183,6 +191,12 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let scoped_initializer =
+            self.ctx.target_es5 && self.for_initializer_is_block_scoped(loop_stmt.initializer);
+        if scoped_initializer {
+            self.ctx.block_scope_state.enter_scope();
+        }
+
         // ES5: Check if closures capture loop variables (let/const) —
         // if so, emit the _loop_N IIFE pattern instead of a plain for-loop.
         // Capture can happen with let/const from the initializer OR the body.
@@ -201,6 +215,9 @@ impl<'a> Printer<'a> {
                         &body_info.block_scoped_vars,
                     )
             {
+                if scoped_initializer {
+                    self.pre_register_for_initializer_block_scoped_bindings(loop_stmt.initializer);
+                }
                 self.emit_for_statement_with_capture(
                     node,
                     loop_stmt,
@@ -208,6 +225,9 @@ impl<'a> Printer<'a> {
                     &init_vars,
                     &body_info,
                 );
+                if scoped_initializer {
+                    self.ctx.block_scope_state.exit_scope();
+                }
                 return;
             }
         }
@@ -273,7 +293,7 @@ impl<'a> Printer<'a> {
             // Rewritten from `var x = y` to `x = y`; the declaration is hoisted
             // at the top of the generated async generator body.
         } else {
-            self.emit(loop_stmt.initializer);
+            self.emit_for_header_initializer(loop_stmt.initializer);
         }
         // Map first `;` in for-header
         self.pending_source_pos = semi1_src;
@@ -315,6 +335,9 @@ impl<'a> Printer<'a> {
         }
         self.write(")");
         self.emit_loop_body(loop_stmt.statement);
+        if scoped_initializer {
+            self.ctx.block_scope_state.exit_scope();
+        }
     }
 
     fn recovered_empty_for_header_body_comment(
@@ -362,6 +385,14 @@ impl<'a> Printer<'a> {
         };
         let initializer_exports = self
             .deferred_exported_var_iteration_bindings(for_in_of.initializer, for_in_of.statement);
+        let scoped_initializer = self.ctx.target_es5
+            && self.arena.get(for_in_of.initializer).is_some_and(|init| {
+                init.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                    && node_flags::is_let_or_const(init.flags as u32)
+            });
+        if scoped_initializer {
+            self.ctx.block_scope_state.enter_scope();
+        }
 
         self.write("for (");
         // In System modules, `var` declarations are hoisted to the module scope,
@@ -376,7 +407,7 @@ impl<'a> Printer<'a> {
             // Rewritten from `var x in y` to `x in y`; the declaration is hoisted
             // at the top of the generated async generator body.
         } else {
-            self.emit(for_in_of.initializer);
+            self.emit_for_header_initializer(for_in_of.initializer);
         }
         self.write(" in ");
         self.emit(for_in_of.expression);
@@ -389,6 +420,9 @@ impl<'a> Printer<'a> {
             self.emit_loop_body(for_in_of.statement);
         } else {
             self.emit_loop_body_with_deferred_exports(for_in_of.statement, &initializer_exports);
+        }
+        if scoped_initializer {
+            self.ctx.block_scope_state.exit_scope();
         }
     }
 
@@ -453,7 +487,8 @@ impl<'a> Printer<'a> {
         // Check if the for-of initializer has `using` that needs lowering.
         if !self.ctx.target_es5
             && !self.ctx.options.target.supports_es2025()
-            && let Some(using_info) = self.for_of_initializer_using_info(for_in_of.initializer)
+            && let Some(using_info) =
+                crate::transforms::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
         {
             self.emit_for_of_with_using_lowering(node, for_in_of, using_info);
             return;
@@ -488,7 +523,7 @@ impl<'a> Printer<'a> {
             // Rewritten from `var x of y` to `x of y`; the declaration is hoisted
             // at the top of the generated async generator body.
         } else {
-            self.emit(for_in_of.initializer);
+            self.emit_for_header_initializer(for_in_of.initializer);
         }
         self.write(" of ");
         self.emit(for_in_of.expression);
@@ -688,7 +723,7 @@ impl<'a> Printer<'a> {
         // Only strip `var`, not `let`/`const`
         let is_var = !node_flags::is_let_or_const(init_node.flags as u32);
         if !is_var {
-            self.emit(initializer);
+            self.emit_for_header_initializer(initializer);
             return;
         }
         // Emit just the variable names (without `var` keyword)
@@ -707,6 +742,43 @@ impl<'a> Printer<'a> {
                 continue;
             };
             self.emit(decl.name);
+        }
+    }
+
+    fn emit_for_header_initializer(&mut self, initializer: NodeIndex) {
+        let prev_in_for_initializer = self.in_for_initializer;
+        self.in_for_initializer = true;
+        self.emit(initializer);
+        self.in_for_initializer = prev_in_for_initializer;
+    }
+
+    fn for_initializer_is_block_scoped(&self, initializer: NodeIndex) -> bool {
+        self.arena.get(initializer).is_some_and(|init| {
+            init.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                && node_flags::is_let_or_const(init.flags as u32)
+        })
+    }
+
+    fn pre_register_for_initializer_block_scoped_bindings(&mut self, initializer: NodeIndex) {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            || !node_flags::is_let_or_const(init_node.flags as u32)
+        {
+            return;
+        }
+        let Some(decl_list) = self.arena.get_variable(init_node) else {
+            return;
+        };
+        for &decl_idx in &decl_list.declarations.nodes {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            self.pre_register_binding_name(decl.name);
         }
     }
 
@@ -817,6 +889,11 @@ impl<'a> Printer<'a> {
         body: NodeIndex,
         exports: &[(String, String)],
     ) {
+        let prev_loop_body_missing_initializer_function_depth =
+            self.loop_body_missing_initializer_function_depth;
+        if self.ctx.target_es5 {
+            self.loop_body_missing_initializer_function_depth = Some(self.function_scope_depth);
+        }
         self.write(" {");
         self.write_line();
         self.increase_indent();
@@ -833,9 +910,16 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.decrease_indent();
         self.write("}");
+        self.loop_body_missing_initializer_function_depth =
+            prev_loop_body_missing_initializer_function_depth;
     }
 
     fn emit_loop_body(&mut self, body: NodeIndex) {
+        let prev_loop_body_missing_initializer_function_depth =
+            self.loop_body_missing_initializer_function_depth;
+        if self.ctx.target_es5 {
+            self.loop_body_missing_initializer_function_depth = Some(self.function_scope_depth);
+        }
         let is_block = self
             .arena
             .get(body)
@@ -855,6 +939,8 @@ impl<'a> Printer<'a> {
             }
             self.decrease_indent();
         }
+        self.loop_body_missing_initializer_function_depth =
+            prev_loop_body_missing_initializer_function_depth;
     }
 
     pub(in crate::emitter) fn emit_return_statement(&mut self, node: &Node) {
@@ -1263,7 +1349,7 @@ impl<'a> Printer<'a> {
         self.emit(labeled.label);
         self.write(": ");
         if (self.ctx.is_commonjs() || self.in_system_execute_body)
-            && self.labeled_body_is_initializerless_export_variable(labeled.statement)
+            && self.statement_is_initializerless_export_variable(labeled.statement)
         {
             self.write(";");
             return;
@@ -1308,7 +1394,7 @@ impl<'a> Printer<'a> {
             || self.ctx.options.preserve_const_enums
     }
 
-    fn labeled_body_is_initializerless_export_variable(&self, stmt_idx: NodeIndex) -> bool {
+    fn statement_is_initializerless_export_variable(&self, stmt_idx: NodeIndex) -> bool {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return false;
         };
@@ -1372,6 +1458,11 @@ impl<'a> Printer<'a> {
         }
 
         self.write("do");
+        let prev_loop_body_missing_initializer_function_depth =
+            self.loop_body_missing_initializer_function_depth;
+        if self.ctx.target_es5 {
+            self.loop_body_missing_initializer_function_depth = Some(self.function_scope_depth);
+        }
         let body_is_block = self
             .arena
             .get(loop_stmt.statement)
@@ -1393,6 +1484,8 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
             self.write_line();
         }
+        self.loop_body_missing_initializer_function_depth =
+            prev_loop_body_missing_initializer_function_depth;
         self.write("while (");
         self.emit(loop_stmt.condition);
         // Map closing `)` — scan backward from node end (past `;`)
@@ -1454,35 +1547,6 @@ impl<'a> Printer<'a> {
         (init_node.flags as u32 & node_flags::USING) != 0
     }
 
-    /// Get info about a for-of initializer that has `using`: returns the variable
-    /// name and whether it's `await using`.
-    /// For `for (using d of items)`, the initializer is a `VariableDeclarationList`
-    /// with one declaration `d` (no initializer in for-of context).
-    pub(in crate::emitter) fn for_of_initializer_using_info(
-        &self,
-        initializer: NodeIndex,
-    ) -> Option<(String, bool)> {
-        let init_node = self.arena.get(initializer)?;
-        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            return None;
-        }
-        let flags = init_node.flags as u32;
-        if (flags & node_flags::USING) == 0 {
-            return None;
-        }
-        let using_async = node_flags::is_await_using(flags);
-        let decl_list = self.arena.get_variable(init_node)?;
-        if decl_list.declarations.nodes.len() != 1 {
-            return None;
-        }
-        let decl_idx = decl_list.declarations.nodes[0];
-        let decl_node = self.arena.get(decl_idx)?;
-        let decl = self.arena.get_variable_declaration(decl_node)?;
-        let name_node = self.arena.get(decl.name)?;
-        let ident = self.arena.get_identifier(name_node)?;
-        Some((ident.escaped_text.clone(), using_async))
-    }
-
     /// Emit `for (using d of items) { body }` with dispose lowering.
     /// Transforms to:
     /// ```js
@@ -1500,9 +1564,10 @@ impl<'a> Printer<'a> {
         &mut self,
         node: &Node,
         for_in_of: &tsz_parser::parser::node::ForInOfData,
-        using_info: (String, bool),
+        using_info: crate::transforms::emit_utils::ForOfUsingInfo,
     ) {
-        let (var_name, using_async) = using_info;
+        let var_name = using_info.binding_name;
+        let using_async = using_info.using_async;
         let (env_name, error_name, result_name) = self.next_disposable_env_names();
         // Generate a temp name based on original: d1 -> d1_1 (uses the env counter)
         let temp_name = format!("{}_{}", var_name, self.next_disposable_env_id - 1);
@@ -1702,7 +1767,11 @@ impl<'a> Printer<'a> {
                     self.write("(");
                     self.write(&env_name);
                     self.write(", ");
-                    self.emit(decl.initializer);
+                    if !self
+                        .try_emit_object_literal_es5_inline_computed_expression(decl.initializer)
+                    {
+                        self.emit(decl.initializer);
+                    }
                     self.write(", ");
                     self.write(if using_async { "true" } else { "false" });
                     self.write(")");
@@ -1887,7 +1956,11 @@ impl<'a> Printer<'a> {
                     self.write("(");
                     self.write(env_name);
                     self.write(", ");
-                    self.emit(decl.initializer);
+                    if !self
+                        .try_emit_object_literal_es5_inline_computed_expression(decl.initializer)
+                    {
+                        self.emit(decl.initializer);
+                    }
                     self.write(", ");
                     self.write(if using_async { "true" } else { "false" });
                     self.write(")");

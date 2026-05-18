@@ -219,6 +219,7 @@ pub enum IRNode {
         initializer: Box<Self>,
         expression: Box<Self>,
         body: Box<Self>,
+        multiline_body: bool,
     },
 
     /// While statement: `while (cond) { body }`
@@ -276,6 +277,10 @@ pub enum IRNode {
     /// `var ClassName = /** @class */ (function (_super) { ... }(BaseClass));`
     ES5ClassIIFE {
         name: Cow<'static, str>,
+        /// Optional outer binding name when block-scoped class lowering must
+        /// avoid colliding with an outer declaration while preserving the
+        /// class's own lexical name inside the IIFE.
+        binding_name: Option<Cow<'static, str>>,
         base_class: Option<Box<Self>>,
         super_param: Option<Cow<'static, str>>,
         body: Vec<Self>,
@@ -380,6 +385,9 @@ pub enum IRNode {
     AwaiterCall {
         this_arg: Box<Self>,
         generator_body: Box<Self>,
+        /// Whether the awaiter callback body must declare `var _this = this;`
+        /// for generated `IRNode::This { captured: true }` references.
+        needs_lexical_this_capture: bool,
         /// Var declaration groups hoisted out of the generator body to the awaiter wrapper scope.
         hoisted_var_groups: Vec<Vec<String>>,
         /// Custom promise constructor for the third `__awaiter` arg.
@@ -410,6 +418,21 @@ pub enum IRNode {
 
     /// _a.label - the label property
     GeneratorLabel,
+
+    /// `_a.trys.push([start, catch, finally, end])`
+    GeneratorTryPush {
+        start_label: u32,
+        catch_label: u32,
+        finally_label: u32,
+        end_label: u32,
+    },
+
+    /// `_a.trys.push([start, , finally, end])`
+    GeneratorTryPushFinally {
+        start_label: u32,
+        finally_label: u32,
+        end_label: u32,
+    },
 
     /// `if (condition) return [3 /*break*/, target_label];`
     /// Used in async state machines for conditional branching.
@@ -561,6 +584,9 @@ pub enum IRNode {
         body: Vec<Self>,
         is_exported: bool,
         attach_to_exports: bool,
+        /// CommonJS export property for an exported namespace IIFE. Usually the
+        /// local namespace name, but `export { N as Alias }` folds `Alias`.
+        commonjs_export_name: Option<Cow<'static, str>>,
         /// `SystemJS` export names folded into the namespace IIFE tail:
         /// `N || (exports_1("alias", exports_1("name", N = {})))`.
         system_export_names: Vec<Cow<'static, str>>,
@@ -701,6 +727,10 @@ impl IRProperty {
     fn contains_identifier(&self, name: &str) -> bool {
         self.key.contains_identifier(name) || self.value.contains_identifier(name)
     }
+
+    fn contains_captured_this_reference(&self) -> bool {
+        self.key.contains_captured_this_reference() || self.value.contains_captured_this_reference()
+    }
 }
 
 impl IRPropertyKey {
@@ -709,6 +739,13 @@ impl IRPropertyKey {
             Self::Identifier(ident) => ident.as_ref() == name,
             Self::Computed(expr) => expr.contains_identifier(name),
             Self::StringLiteral(_) | Self::NumericLiteral(_) => false,
+        }
+    }
+
+    fn contains_captured_this_reference(&self) -> bool {
+        match self {
+            Self::Computed(expr) => expr.contains_captured_this_reference(),
+            Self::Identifier(_) | Self::StringLiteral(_) | Self::NumericLiteral(_) => false,
         }
     }
 }
@@ -730,6 +767,12 @@ impl IRParam {
                 .default_value
                 .as_ref()
                 .is_some_and(|value| value.contains_identifier(name))
+    }
+
+    fn contains_captured_this_reference(&self) -> bool {
+        self.default_value
+            .as_ref()
+            .is_some_and(|value| value.contains_captured_this_reference())
     }
 }
 
@@ -779,6 +822,12 @@ impl IRGeneratorCase {
             .iter()
             .any(|statement| statement.contains_identifier(name))
     }
+
+    fn contains_captured_this_reference(&self) -> bool {
+        self.statements
+            .iter()
+            .any(IRNode::contains_captured_this_reference)
+    }
 }
 
 impl EnumMember {
@@ -796,11 +845,23 @@ impl EnumMember {
 // Builder helpers for IR construction
 // =========================================================================
 
+fn function_body_declares_var(body: &[IRNode], name: &str) -> bool {
+    body.iter().any(|node| match node {
+        IRNode::VarDecl { name: var_name, .. } => var_name.as_ref() == name,
+        IRNode::VarDeclList(decls) => decls.iter().any(|decl| match decl {
+            IRNode::VarDecl { name: var_name, .. } => var_name.as_ref() == name,
+            _ => false,
+        }),
+        _ => false,
+    })
+}
+
 impl IRNode {
     /// Return whether this `IR` subtree references `name` as an identifier.
     pub fn contains_identifier(&self, name: &str) -> bool {
         match self {
             Self::Identifier(ident) => ident.as_ref() == name,
+            Self::This { captured } => *captured && name == "_this",
             Self::BinaryExpr { left, right, .. }
             | Self::LogicalOr { left, right }
             | Self::LogicalAnd { left, right } => {
@@ -857,14 +918,26 @@ impl IRNode {
             | Self::FunctionDecl {
                 parameters, body, ..
             } => {
-                parameters
+                if parameters
                     .iter()
                     .any(|param| param.contains_identifier(name))
-                    || body.iter().any(|node| node.contains_identifier(name))
+                {
+                    return true;
+                }
+                if function_body_declares_var(body, name) {
+                    return false;
+                }
+                body.iter().any(|node| node.contains_identifier(name))
             }
-            Self::VarDecl { initializer, .. } => initializer
-                .as_ref()
-                .is_some_and(|init| init.contains_identifier(name)),
+            Self::VarDecl {
+                name: var_name,
+                initializer,
+            } => {
+                var_name.as_ref() == name
+                    || initializer
+                        .as_ref()
+                        .is_some_and(|init| init.contains_identifier(name))
+            }
             Self::ReturnStatement(expr) => expr
                 .as_ref()
                 .is_some_and(|expr| expr.contains_identifier(name)),
@@ -1075,7 +1148,6 @@ impl IRNode {
             | Self::NullLiteral
             | Self::Undefined
             | Self::RuntimeHelper(_)
-            | Self::This { .. }
             | Self::Super
             | Self::ImportMeta
             | Self::EmptyStatement
@@ -1084,6 +1156,8 @@ impl IRNode {
             | Self::ContinueStatement(_)
             | Self::GeneratorSent
             | Self::GeneratorLabel
+            | Self::GeneratorTryPush { .. }
+            | Self::GeneratorTryPushFinally { .. }
             | Self::Raw(_)
             | Self::Comment { .. }
             | Self::TrailingComment(_)
@@ -1092,6 +1166,130 @@ impl IRNode {
             | Self::ASTRefRange(..)
             | Self::UseStrict
             | Self::EsesModuleMarker => false,
+        }
+    }
+
+    /// Return whether this `IR` subtree contains a generated captured-this
+    /// reference. User identifiers named `_this` are intentionally ignored.
+    pub fn contains_captured_this_reference(&self) -> bool {
+        match self {
+            Self::This { captured } => *captured,
+            Self::BinaryExpr { left, right, .. }
+            | Self::LogicalOr { left, right }
+            | Self::LogicalAnd { left, right } => {
+                left.contains_captured_this_reference() || right.contains_captured_this_reference()
+            }
+            Self::PrefixUnaryExpr { operand, .. }
+            | Self::PostfixUnaryExpr { operand, .. }
+            | Self::Parenthesized(operand)
+            | Self::SpreadElement(operand)
+            | Self::ExpressionStatement(operand)
+            | Self::ThrowStatement(operand)
+            | Self::PrivateFieldGet {
+                receiver: operand, ..
+            }
+            | Self::PrivateStaticFieldGet {
+                receiver: operand, ..
+            }
+            | Self::PrivateFieldIn { obj: operand, .. } => {
+                operand.contains_captured_this_reference()
+            }
+            Self::CallExpr { callee, arguments }
+            | Self::NewExpr {
+                callee, arguments, ..
+            } => {
+                callee.contains_captured_this_reference()
+                    || arguments.iter().any(Self::contains_captured_this_reference)
+            }
+            Self::PropertyAccess { object, .. } => object.contains_captured_this_reference(),
+            Self::ElementAccess { object, index } => {
+                object.contains_captured_this_reference()
+                    || index.contains_captured_this_reference()
+            }
+            Self::ConditionalExpr {
+                condition,
+                when_true,
+                when_false,
+            } => {
+                condition.contains_captured_this_reference()
+                    || when_true.contains_captured_this_reference()
+                    || when_false.contains_captured_this_reference()
+            }
+            Self::CommaExpr(nodes)
+            | Self::CommaExprMultiline(nodes)
+            | Self::ArrayLiteral(nodes)
+            | Self::VarDeclList(nodes)
+            | Self::Block(nodes)
+            | Self::Sequence(nodes)
+            | Self::StaticBlockIIFE { statements: nodes } => {
+                nodes.iter().any(Self::contains_captured_this_reference)
+            }
+            Self::ObjectLiteral { properties, .. } => properties
+                .iter()
+                .any(IRProperty::contains_captured_this_reference),
+            Self::FunctionExpr {
+                parameters, body, ..
+            }
+            | Self::FunctionDecl {
+                parameters, body, ..
+            } => {
+                !function_body_declares_var(body, "_this")
+                    && (parameters
+                        .iter()
+                        .any(IRParam::contains_captured_this_reference)
+                        || body.iter().any(Self::contains_captured_this_reference))
+            }
+            Self::VarDecl { initializer, .. } => initializer
+                .as_ref()
+                .is_some_and(|init| init.contains_captured_this_reference()),
+            Self::ReturnStatement(expr) => expr
+                .as_ref()
+                .is_some_and(|expr| expr.contains_captured_this_reference()),
+            Self::IfStatement {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                condition.contains_captured_this_reference()
+                    || then_branch.contains_captured_this_reference()
+                    || else_branch
+                        .as_ref()
+                        .is_some_and(|branch| branch.contains_captured_this_reference())
+            }
+            Self::GeneratorBody { cases, .. } => cases
+                .iter()
+                .any(IRGeneratorCase::contains_captured_this_reference),
+            Self::GeneratorOp { value, .. } => value
+                .as_ref()
+                .is_some_and(|value| value.contains_captured_this_reference()),
+            Self::AwaiterCall {
+                this_arg,
+                generator_body,
+                ..
+            } => {
+                this_arg.contains_captured_this_reference()
+                    || generator_body.contains_captured_this_reference()
+            }
+            Self::PrivateFieldSet {
+                receiver, value, ..
+            } => {
+                receiver.contains_captured_this_reference()
+                    || value.contains_captured_this_reference()
+            }
+            Self::PrivateStaticFieldSet {
+                receiver,
+                state,
+                value,
+                ..
+            } => {
+                receiver.contains_captured_this_reference()
+                    || state.contains_captured_this_reference()
+                    || value.contains_captured_this_reference()
+            }
+            Self::WeakMapSet { key, value, .. } => {
+                key.contains_captured_this_reference() || value.contains_captured_this_reference()
+            }
+            _ => false,
         }
     }
 

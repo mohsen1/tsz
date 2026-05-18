@@ -683,7 +683,12 @@ impl<'a> CheckerState<'a> {
             );
             ctx_helper.get_this_type()
         });
-        let implicit_this_type = prototype_owner_this_type.or(contextual_this_type);
+        let explicit_this_type = self
+            .get_explicit_this_type_annotation(&method.parameters.nodes)
+            .map(|ann_idx| self.get_type_from_type_node(ann_idx));
+        let implicit_this_type = explicit_this_type
+            .or(prototype_owner_this_type)
+            .or(contextual_this_type);
         let mut pushed_this_type = false;
         if let Some(this_type) = implicit_this_type {
             self.ctx.this_type_stack.push(this_type);

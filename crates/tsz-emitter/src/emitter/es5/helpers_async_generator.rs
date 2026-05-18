@@ -33,12 +33,19 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text {
             transformer.set_source_text(text);
         }
+        let blocked_disposable_names = self.blocked_disposable_names_for_transform();
+        transformer
+            .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
         let ir = transformer.transform_async_generator_inner_function(
             inner_name,
             params,
             body,
             include_params,
         );
+        self.next_disposable_env_id = transformer.disposable_env_counter();
+        for generated_name in transformer.take_generated_disposable_env_names() {
+            self.generated_temp_names.insert(generated_name);
+        }
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_transforms(self.transforms.clone());
         printer.set_target_es5(true);

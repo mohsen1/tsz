@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { REQUIRED_PROJECT_ROWS } from "../../../../scripts/bench/project-rows.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 
@@ -30,16 +31,7 @@ function hasSuccessfulTiming(row) {
 }
 
 const TINY_BENCHMARK_MAX_LINES = 200;
-const PROJECT_BENCHMARK_NAMES = new Set([
-  "large-ts-repo",
-  "utility-types-project",
-  "ts-essentials-project",
-  "nextjs",
-  "nextjs-fresh-app",
-  "vite-vanilla-ts-app",
-  "rxjs-project",
-  "type-fest-project",
-]);
+const PROJECT_BENCHMARK_NAMES = new Set(REQUIRED_PROJECT_ROWS);
 const SINGLE_FILE_BENCHMARK_PREFIXES = [
   "utility-types/",
   "ts-toolbelt/",

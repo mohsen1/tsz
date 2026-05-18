@@ -744,10 +744,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 }
                 computed
             });
-        // T<X> <: T<any> is always True when any-propagation is enabled — skip
-        // variance computation entirely rather than risking structural expansion.
+        // T<X> <: T<any> and T<any> <: T<X> are always true when
+        // any-propagation is enabled; skip variance computation entirely rather
+        // than risking structural expansion.
         let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
-        if allow_any && t_args.iter().all(|a| a.is_any()) {
+        if allow_any && (s_args.iter().all(|a| a.is_any()) || t_args.iter().all(|a| a.is_any())) {
             return Some(SubtypeResult::True);
         }
 

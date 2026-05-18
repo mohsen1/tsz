@@ -1,4 +1,6 @@
 use super::super::{ModuleKind, Printer};
+use super::core::{CjsExportAssignmentValue, CjsExportVariableSchedule};
+use crate::emitter::declarations::class::class_has_self_references;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::NodeList;
@@ -876,6 +878,14 @@ impl<'a> Printer<'a> {
                 return;
             }
 
+            if self.in_system_execute_body
+                && clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                && let Some(var_stmt) = self.arena.get_variable(clause_node)
+                && self.all_declarations_lack_initializer(&var_stmt.declarations)
+            {
+                return;
+            }
+
             let clause_kind = clause_node.kind;
             let is_decl = clause_kind == syntax_kind_ext::VARIABLE_STATEMENT
                 || clause_kind == syntax_kind_ext::FUNCTION_DECLARATION
@@ -905,40 +915,22 @@ impl<'a> Printer<'a> {
             match clause_node.kind {
                 // export const/let/var x = ...
                 k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    if self.in_system_execute_body {
+                        self.emit_system_variable_initializers(clause_node);
+                        return;
+                    }
                     if !self.ctx.module_state.has_export_assignment {
-                        // Try inline form: exports.x = initializer;
-                        // TSC emits this for simple single-binding declarations.
-                        if let Some(inline_decls) =
-                            self.try_collect_inline_cjs_exports(export.export_clause, clause_node)
+                        if let Some(schedule) = self
+                            .collect_cjs_export_variable_schedule(export.export_clause, clause_node)
                         {
-                            let decl_count = inline_decls.len();
-                            for (i, (decoded_name, emit_name, init_idx)) in
-                                inline_decls.iter().enumerate()
-                            {
-                                // Track that this variable was inlined (no local declaration).
-                                // Use decoded name for set tracking (matching uses decoded text).
-                                self.ctx
-                                    .module_state
-                                    .inlined_var_exports
-                                    .insert(decoded_name.clone());
-                                self.write("exports.");
-                                // Use emit_name to preserve unicode escapes in output.
-                                self.write(emit_name);
-                                self.write(" = ");
-                                // emit_identifier handles `x → exports.x` substitution
-                                // for inline-exported variable names automatically.
-                                self.emit(*init_idx);
-                                self.write(";");
-                                // Skip write_line() on the last declaration so the
-                                // caller can emit trailing comments before the newline.
-                                if i < decl_count - 1 {
-                                    self.write_line();
-                                }
-                            }
-                        } else {
-                            // Complex case (destructuring): transform into comma
-                            // expression that directly assigns to exports, matching tsc.
+                            self.emit_cjs_export_variable_schedule(&schedule);
+                        } else if self.variable_stmt_has_binding_pattern(clause_node) {
+                            // Destructuring exports lower into assignments that write
+                            // directly to exports.
                             self.emit_cjs_destructuring_export(clause_node);
+                        } else {
+                            self.emit_variable_statement(clause_node);
+                            self.write_line();
                         }
                     } else {
                         self.emit_variable_statement(clause_node);
@@ -1013,11 +1005,10 @@ impl<'a> Printer<'a> {
                         if !legacy_decorators.is_empty()
                             && let Some(name) = self.get_identifier_text_opt(class.name)
                         {
-                            // Clear pending_commonjs_class_export_name to avoid duplicate
-                            // exports.X = X; — the decorator assignment path handles the
-                            // pre-assignment itself via emit_commonjs_pre_assignment=true.
-                            self.pending_commonjs_class_export_name = None;
                             if self.ctx.target_es5 {
+                                // ES5 class export lowering is handled by the ES5 class emitter,
+                                // so keep this pending hook from leaking into later nodes.
+                                self.pending_commonjs_class_export_name = None;
                                 // Check for member decorators too
                                 let has_member_decorators =
                                     class.members.nodes.iter().any(|&m_idx| {
@@ -1054,6 +1045,12 @@ impl<'a> Printer<'a> {
                                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                                 es5_emitter.set_temp_var_counter(
                                     self.ctx.destructuring_state.temp_var_counter,
+                                );
+                                es5_emitter.set_async_generator_inner_name_counts(
+                                    self.async_generator_inner_name_counts.clone(),
+                                );
+                                self.configure_es5_class_emitter_disposable_context(
+                                    &mut es5_emitter,
                                 );
                                 es5_emitter.set_indent_level(self.writer.indent_level());
                                 es5_emitter.set_transforms(self.transforms.clone());
@@ -1095,8 +1092,7 @@ impl<'a> Printer<'a> {
                                         .emit_decorator_metadata,
                                 });
                                 let output = es5_emitter.emit_class(export.export_clause);
-                                self.ctx.destructuring_state.temp_var_counter =
-                                    es5_emitter.temp_var_counter();
+                                self.sync_es5_class_emitter_state(&mut es5_emitter);
                                 let mappings = es5_emitter.take_mappings();
                                 if !mappings.is_empty() && self.writer.has_source_map() {
                                     self.writer.write("");
@@ -1128,23 +1124,35 @@ impl<'a> Printer<'a> {
                                 self.write(";");
                                 self.write_line();
                             } else {
+                                let needs_alias = class_has_self_references(
+                                    self.arena,
+                                    self.source_text_for_map(),
+                                    &name,
+                                    &class.members.nodes,
+                                );
+                                let alias_name = if needs_alias {
+                                    let alias = self.make_unique_name_from_base(&name);
+                                    if !self.hoisted_assignment_temps.contains(&alias) {
+                                        self.hoisted_assignment_temps.push(alias.clone());
+                                    }
+                                    Some(alias)
+                                } else {
+                                    None
+                                };
+                                self.pending_commonjs_class_export_name =
+                                    Some((export.export_clause, name.clone()));
                                 self.emit_class_es6_with_options(
                                     clause_node,
                                     export.export_clause,
                                     true,
                                     Some(("let", name.clone())),
-                                    None,
-                                    None,
-                                    false,
+                                    alias_name.as_deref(),
+                                    alias_name.as_deref(),
+                                    true,
                                 );
-                                self.write_line();
-                                // CommonJS export assignment
-                                self.write("exports.");
-                                self.write(&name);
-                                self.write(" = ");
-                                self.write(&name);
-                                self.write(";");
-                                self.write_line();
+                                if !self.writer.is_at_line_start() {
+                                    self.write_line();
+                                }
                                 // Emit __decorate call for ES2015+
                                 let members = class.members.nodes.clone();
                                 self.emit_legacy_class_decorator_assignment(
@@ -1153,7 +1161,7 @@ impl<'a> Printer<'a> {
                                     true,  // commonjs_exported
                                     false, // commonjs_default
                                     false, // emit_commonjs_pre_assignment (already emitted above)
-                                    None,
+                                    alias_name.as_deref(),
                                     &members,
                                 );
                             }
@@ -1296,12 +1304,14 @@ impl<'a> Printer<'a> {
                             // `export = X` sets module.exports but named exports like
                             // `export enum E` still get their own exports.E binding.
                             self.pending_cjs_namespace_export_fold = true;
+                            self.pending_cjs_namespace_export_name = None;
                         }
                         self.emit_module_declaration(clause_node, export.export_clause);
                         // If the flag was consumed (instantiated namespace),
                         // no separate export needed. If still set, the namespace
                         // was non-instantiated/skipped, clear it.
                         self.pending_cjs_namespace_export_fold = false;
+                        self.pending_cjs_namespace_export_name = None;
                     } else {
                         self.emit_module_declaration(clause_node, export.export_clause);
                     }
@@ -1349,8 +1359,15 @@ impl<'a> Printer<'a> {
                                 if self
                                     .ctx
                                     .module_state
-                                    .iife_exported_names
-                                    .contains(&local_name)
+                                    .iife_exported_bindings
+                                    .get(&local_name)
+                                    .is_some_and(|exports| exports.contains(&export_name))
+                                    || (export_name == local_name
+                                        && self
+                                            .ctx
+                                            .module_state
+                                            .iife_exported_names
+                                            .contains(&local_name))
                                 {
                                     continue;
                                 }
@@ -1455,28 +1472,48 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Emit an exported variable statement with destructuring binding patterns
-    /// as a CJS/AMD comma expression that directly assigns to `exports.*`.
-    ///
-    /// For `export const { x, ...rest } = expr;` with esnext target:
-    /// ```js
-    /// _a = expr, exports.x = _a.x, exports.rest = __rest(_a, ["x"]);
-    /// ```
-    ///
-    /// For `export const { x, ...rest } = expr;` with es5 target:
-    /// ```js
-    /// exports.x = (_a = expr, _a).x, exports.rest = __rest(_a, ["x"]);
-    /// ```
-    ///
-    /// For empty patterns like `export const {} = {};` with esnext target:
-    /// ```js
-    /// _a = {};
-    /// ```
-    ///
-    /// For empty patterns with es5 target:
-    /// ```js
-    /// exports._b = _a = {};
-    /// ```
+    /// Emit local declarations and the ordered `CommonJS` assignment statement
+    /// for a structurally planned exported variable declaration.
+    pub(in crate::emitter) fn emit_cjs_export_variable_schedule(
+        &mut self,
+        schedule: &CjsExportVariableSchedule,
+    ) {
+        for group in &schedule.local_groups {
+            self.write(group.keyword);
+            self.write(" ");
+            self.emit_comma_separated(&group.declarations);
+            self.write(";");
+            self.write_line();
+        }
+
+        for assignment in &schedule.assignments {
+            if matches!(&assignment.value, CjsExportAssignmentValue::Initializer(_)) {
+                self.ctx
+                    .module_state
+                    .inlined_var_exports
+                    .insert(assignment.decoded_name.clone());
+            }
+        }
+
+        for (idx, assignment) in schedule.assignments.iter().enumerate() {
+            if idx > 0 {
+                self.write(", ");
+            }
+            self.write("exports.");
+            self.write(&assignment.emit_name);
+            self.write(" = ");
+            match &assignment.value {
+                CjsExportAssignmentValue::Initializer(init_idx) => {
+                    self.emit(*init_idx);
+                }
+                CjsExportAssignmentValue::LocalName(local_name) => {
+                    self.write(local_name);
+                }
+            }
+        }
+        self.write(";");
+    }
+
     /// Check if a `VARIABLE_STATEMENT` has any destructuring binding patterns.
     pub(in crate::emitter) fn variable_stmt_has_binding_pattern(
         &self,
@@ -1510,6 +1547,8 @@ impl<'a> Printer<'a> {
         false
     }
 
+    /// Emit an exported variable statement with destructuring binding patterns
+    /// as a `CJS`/`AMD` comma expression that directly assigns to `exports.*`.
     pub(in crate::emitter) fn emit_cjs_destructuring_export(
         &mut self,
         clause_node: &tsz_parser::parser::node::Node,

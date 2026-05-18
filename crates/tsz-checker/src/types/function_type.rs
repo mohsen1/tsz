@@ -222,6 +222,7 @@ impl<'a> CheckerState<'a> {
         let mut param_types: Vec<Option<TypeId>> = Vec::new();
         let mut destructuring_context_param_types: Vec<Option<TypeId>> = Vec::new();
         let mut this_type = None;
+        let mut pushed_this_type = false;
         let this_atom = self.ctx.types.intern_string("this");
         let closure_already_checked =
             is_closure && self.ctx.implicit_any_checked_closures.contains(&idx);
@@ -779,11 +780,11 @@ impl<'a> CheckerState<'a> {
                 };
                 let has_unknown_expected_context = ctx_helper
                     .as_ref()
-                    .and_then(tsz_solver::ContextualTypeContext::expected)
+                    .and_then(ContextualTypeContext::expected)
                     .is_some_and(|t| t == TypeId::UNKNOWN);
                 let has_never_expected_context = ctx_helper
                     .as_ref()
-                    .and_then(tsz_solver::ContextualTypeContext::expected)
+                    .and_then(ContextualTypeContext::expected)
                     .is_some_and(|t| t == TypeId::NEVER);
                 let jsdoc_initializer_callable_context = is_js_file
                     && is_closure
@@ -1087,6 +1088,13 @@ impl<'a> CheckerState<'a> {
                 if is_this_param {
                     if this_type.is_none() {
                         this_type = Some(type_id);
+                        // Push early so subsequent parameter defaults (e.g. `a = this.method()`)
+                        // see the correct `this` type when `enclosing_class` isn't set.
+                        if !is_arrow_function && param.type_annotation.is_some() {
+                            self.ctx.this_type_stack.push(type_id);
+                            self.ctx.function_owned_this_stack.push(idx);
+                            pushed_this_type = true;
+                        }
                     }
                     param_types.push(None);
                     destructuring_context_param_types.push(None);
@@ -1533,14 +1541,11 @@ impl<'a> CheckerState<'a> {
 
         let implicit_this = implicit_this.map(|tt| self.resolve_lazy_type(tt));
 
-        let mut pushed_this_type_early = false;
-        if let Some(tt) = implicit_this {
+        // Push `this` unless we already did so early from an explicit `this:` annotation.
+        if !pushed_this_type && let Some(tt) = implicit_this {
             self.ctx.this_type_stack.push(tt);
             self.ctx.function_owned_this_stack.push(idx);
-            pushed_this_type_early = true;
-            // Track closures with contextual this types.
-            // Any non-None implicit_this for a closure comes from a contextual source
-            // (parameter type with this, JS constructor, prototype owner, or prototype assignment).
+            pushed_this_type = true;
             if is_closure {
                 self.ctx.closures_with_contextual_this_type.insert(idx);
             }
@@ -1603,8 +1608,6 @@ impl<'a> CheckerState<'a> {
                 } else {
                     (false, false, NodeIndex::NONE)
                 };
-            // this_type was already pushed early (before parameter initializer checks)
-
             // Push contextual yield type EARLY (before infer_return_type_from_body)
             // so yield expressions get contextual typing during inference.
             // Also extract return and next types from contextual Generator<Y, R, N>.
@@ -1652,7 +1655,7 @@ impl<'a> CheckerState<'a> {
                     jsdoc_return_context.or_else(|| {
                         ctx_helper
                             .as_ref()
-                            .and_then(tsz_solver::ContextualTypeContext::get_return_type)
+                            .and_then(ContextualTypeContext::get_return_type)
                             .or_else(|| {
                                 contextual_type.and_then(|ty| {
                                     crate::query_boundaries::checkers::call::get_contextual_signature(
@@ -1678,10 +1681,7 @@ impl<'a> CheckerState<'a> {
                     // to TReturn so that `return expr` in the body is contextually typed
                     // against the correct type (matching tsc behavior).
                     early_gen_return_type.or(return_context.and_then(|ctx_ty| {
-                        let ret_ctx = tsz_solver::ContextualTypeContext::with_expected(
-                            self.ctx.types,
-                            ctx_ty,
-                        );
+                        let ret_ctx = ContextualTypeContext::with_expected(self.ctx.types, ctx_ty);
                         ret_ctx.get_generator_return_type()
                     }))
                 } else if is_generator {
@@ -1690,10 +1690,7 @@ impl<'a> CheckerState<'a> {
                     // `return expr` in the body is contextually typed against TReturn
                     // (matching tsc behavior, same as sync generators).
                     early_gen_return_type.or(return_context.and_then(|ctx_ty| {
-                        let ret_ctx = tsz_solver::ContextualTypeContext::with_expected(
-                            self.ctx.types,
-                            ctx_ty,
-                        );
+                        let ret_ctx = ContextualTypeContext::with_expected(self.ctx.types, ctx_ty);
                         ret_ctx.get_generator_return_type()
                     }))
                 } else {
@@ -2284,7 +2281,7 @@ impl<'a> CheckerState<'a> {
                                     self.get_type_of_node_with_request(cond.when_true, &return_req);
                                 let mut when_false = self
                                     .get_type_of_node_with_request(cond.when_false, &return_req);
-                                snap.rollback(&mut self.ctx);
+                                snap.rollback(&mut self.ctx.diagnostic_state());
                                 if is_async_for_context {
                                     when_true =
                                         self.unwrap_promise_type(when_true).unwrap_or(when_true);
@@ -2417,7 +2414,7 @@ impl<'a> CheckerState<'a> {
                 let effective_body_ctx = if body_is_expression && !has_type_annotation {
                     let body_return_context = ctx_helper
                         .as_ref()
-                        .and_then(tsz_solver::ContextualTypeContext::get_return_type)
+                        .and_then(ContextualTypeContext::get_return_type)
                         .or_else(|| {
                             outer_ctx.and_then(|ty| {
                                 crate::query_boundaries::checkers::call::get_contextual_signature(
@@ -2482,7 +2479,7 @@ impl<'a> CheckerState<'a> {
                     self.check_statement_with_request(body, &body_request);
                 }
                 if let Some(snap) = diag_snap {
-                    snap.rollback(&mut self.ctx);
+                    snap.rollback(&mut self.ctx.diagnostic_state());
                 }
 
                 // For annotated generator expressions, check that Generator<TYield, any, any>
@@ -2587,7 +2584,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Pop this_type that was pushed before parameter initializer checks
-        if pushed_this_type_early {
+        if pushed_this_type {
             self.ctx.this_type_stack.pop();
             self.ctx.function_owned_this_stack.pop();
         }

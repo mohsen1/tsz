@@ -12,16 +12,10 @@ use crate::query_boundaries::state::type_environment;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{SymbolId, symbol_flags};
+use tsz_common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
-
-fn should_resolve_simple_object_missing_interface_decl_from_lib(name: &str) -> bool {
-    matches!(
-        name,
-        "PropertyDescriptor" | "PropertyDescriptorMap" | "RegExpIndicesArray"
-    )
-}
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn normalize_namespace_export_declaration_order(props: &mut [PropertyInfo]) {
@@ -74,6 +68,58 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .map(|(name, sym_id, _)| (name, sym_id))
             .collect()
+    }
+
+    /// Resolve the type of a require-style import alias under Node20/NodeNext
+    /// CJS-of-ESM `"module.exports"` interop.
+    ///
+    /// When a `.cjs`/`.cts` file imports a `.mjs`/`.mts` module that exports a
+    /// `"module.exports"` binding (`export { X as "module.exports" }`), the
+    /// alias resolves to the `"module.exports"` value rather than a synthesized
+    /// namespace surface — `import X = require(M)`, `import * as X from M`,
+    /// and (separately handled at `new`/identifier sites) `import X from M` all
+    /// see `typeof X`, mirroring tsc's CommonJS-of-ESM interop where
+    /// `module.exports = X` replaces the entire module value.
+    pub(crate) fn module_exports_require_interop_alias_type(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        // The interop only applies under Node20/NodeNext; gate on that first so
+        // every other build pays one enum compare per call.
+        if !matches!(
+            self.ctx.compiler_options.module,
+            ModuleKind::Node20 | ModuleKind::NodeNext
+        ) {
+            return None;
+        }
+        // Local-binder lookup: the alias symbol is owned by the file that
+        // wrote the import declaration, not by the target module, so a
+        // cross-file fallback would surface an unrelated symbol that happens
+        // to share the same raw `SymbolId`.
+        let module_exports_sym = {
+            let symbol = self.ctx.binder.get_symbol(sym_id)?;
+            if symbol.flags & symbol_flags::ALIAS == 0 {
+                return None;
+            }
+            // Only require-style alias shapes: `import X = require(M)`
+            // (import_name = None) and `import * as X from M`
+            // (import_name = "*"). Named and default imports flow through
+            // their own type-resolution paths.
+            if !matches!(symbol.import_name.as_deref(), None | Some("*")) {
+                return None;
+            }
+            let module_name = symbol.import_module.as_deref()?;
+            if !self.current_file_uses_module_exports_require_interop(module_name) {
+                return None;
+            }
+            let declaring_file_idx = self
+                .ctx
+                .resolve_symbol_file_index(sym_id)
+                .or(Some(self.ctx.current_file_idx));
+            self.resolve_effective_module_exports_from_file(module_name, declaring_file_idx)
+                .and_then(|exports| exports.get("module.exports"))?
+        };
+        Some(self.get_type_of_symbol(module_exports_sym))
     }
 
     pub(crate) fn node_esm_cjs_default_import_namespace_type(
@@ -723,6 +769,16 @@ impl<'a> CheckerState<'a> {
         let factory = self.ctx.types.factory();
         use tsz_lowering::TypeLowering;
 
+        // Node20/NodeNext CJS-of-ESM `export { X as "module.exports" }` interop:
+        // a require-style alias (`import X = require(M)` or `import * as X from M`)
+        // pointing at an ESM module M with a `"module.exports"` binding is the
+        // value of that binding — not a synthesized namespace wrapper. Decide this
+        // before cross-arena delegation so the same rule fires for same-arena and
+        // cross-arena alias resolutions.
+        if let Some(me_type) = self.module_exports_require_interop_alias_type(sym_id) {
+            return (me_type, Vec::new());
+        }
+
         // Handle cross-file symbol resolution via delegation
         if let Some(result) = self.delegate_cross_arena_symbol_resolution(sym_id) {
             tracing::trace!(
@@ -1075,7 +1131,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // Create the structural type (union of member types, or NUMBER/STRING for homogeneous enums)
+            // Create the structural type as a finite union of member values.
             let structural_type = if member_types.is_empty() {
                 // Empty enum - default to NUMBER
                 TypeId::NUMBER
@@ -1574,9 +1630,12 @@ impl<'a> CheckerState<'a> {
             // through to the full merge path so user-declared members are included.
             let should_suppress_missing_interface_decl_reject =
                 tsz_common::perf_counters::enabled_fast()
-                    && !has_local_interface_decl
-                    && self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
-                    && should_resolve_simple_object_missing_interface_decl_from_lib(&escaped_name);
+                    && self
+                        .ctx
+                        .simple_object_missing_interface_decl_residue_is_lib_provenance_case(
+                            sym_id,
+                            has_local_interface_decl,
+                        );
             let can_resolve_lib_interface_without_local_decl =
                 !has_local_interface_decl && (has_out_of_arena_decl || is_lib_symbol);
 

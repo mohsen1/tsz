@@ -166,6 +166,93 @@ const x: E = -1;
 }
 
 #[test]
+fn test_computed_numeric_enum_comparisons_preserve_member_overlap() {
+    // Mirrors TypeScript's `equalityWithEnumTypes`: literal enum types reject
+    // impossible numeric comparisons, and computed numeric enums still use
+    // evaluated member values for equality-overlap diagnostics.
+    let diagnostics = collect_diagnostics(
+        r"
+enum LiteralEnum {
+    a = 1,
+    b = 2,
+}
+
+enum ComputedEnum {
+    a = 1 << 0,
+    b = 1 << 1,
+}
+
+function f1(v: LiteralEnum) {
+    if (v !== 0) { v; }
+    if (v !== 1) { v; }
+    if (v !== 2) { v; }
+    if (v !== 3) { v; }
+}
+
+function f2(v: ComputedEnum) {
+    if (v !== 0) { v; }
+    if (v !== 1) { v; }
+    if (v !== 2) { v; }
+    if (v !== 3) { v; }
+}
+",
+    );
+
+    let ts2367 = diagnostics.iter().filter(|d| d.0 == 2367).count();
+    assert_eq!(
+        ts2367, 4,
+        "Expected TS2367 for non-member comparisons in both enum forms, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_computed_numeric_enum_members_do_not_assign_to_other_enum_unions() {
+    // Mirrors TypeScript's `enumLiteralAssignableToEnumInsideUnion`: enum
+    // members from a different enum can flow to another enum only through the
+    // numeric-enum compatibility path that tsc accepts. A computed enum member
+    // does not become assignable to an unrelated literal enum union just
+    // because the computed value is numeric.
+    let diagnostics = collect_diagnostics(
+        r"
+namespace X {
+    export enum Foo {
+        A, B
+    }
+}
+namespace Y {
+    export enum Foo {
+        A, B
+    }
+}
+namespace Z {
+    export enum Foo {
+        A = 1 << 1,
+        B = 1 << 2,
+    }
+}
+namespace Ka {
+    export enum Foo {
+        A = 1 << 10,
+        B = 1 << 11,
+    }
+}
+const e0: X.Foo | boolean = Y.Foo.A;
+const e1: X.Foo | boolean = Z.Foo.A;
+const e2: X.Foo.A | X.Foo.B | boolean = Z.Foo.A;
+const e3: X.Foo.B | boolean = Z.Foo.A;
+const e4: X.Foo.A | boolean = Z.Foo.A;
+const e5: Ka.Foo | boolean = Z.Foo.A;
+",
+    );
+
+    let ts2322 = diagnostics.iter().filter(|d| d.0 == 2322).count();
+    assert_eq!(
+        ts2322, 5,
+        "Expected TS2322 for the computed enum member assignments, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_string_enum_opacity() {
     // String literal should NOT be assignable to string enum
     let source = r#"

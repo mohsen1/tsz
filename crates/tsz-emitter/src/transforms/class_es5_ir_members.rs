@@ -82,17 +82,20 @@ impl<'a> ES5ClassTransformer<'a> {
         let move_params_to_generator = self.async_generator_params_need_forwarding(params);
         let method_name =
             crate::transforms::emit_utils::identifier_text_or_empty(self.arena, method_name_idx);
-        let inner_name = (!method_name.is_empty()).then(|| format!("{method_name}_1"));
+        let inner_name =
+            (!method_name.is_empty()).then(|| self.next_async_generator_inner_name(&method_name));
         let mut transformer = AsyncES5Transformer::new(self.arena);
         if let Some(source_text) = self.source_text {
             transformer.set_source_text(source_text);
         }
+        self.configure_async_disposable_context(&mut transformer);
         let inner = transformer.transform_async_generator_inner_function(
             inner_name,
             params,
             body,
             move_params_to_generator,
         );
+        self.sync_async_disposable_context(&mut transformer);
         vec![IRNode::ReturnStatement(Some(Box::new(IRNode::CallExpr {
             callee: Box::new(IRNode::RuntimeHelper("__asyncGenerator".into())),
             arguments: vec![
@@ -123,21 +126,24 @@ impl<'a> ES5ClassTransformer<'a> {
         let params = self.extract_parameters(&accessor_data.parameters);
 
         let body_source_range = self.arena.pos_end_at(accessor_data.body);
-
         let body = if accessor_data.body.is_none() {
             vec![]
         } else {
+            let this_capture_alias = self.this_capture_alias_for_body(accessor_data.body, None);
             let mut body = if is_static {
-                self.convert_block_body_static(accessor_data.body)
+                self.convert_block_body_static_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
             } else {
-                self.convert_block_body(accessor_data.body)
+                self.convert_block_body_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
             };
 
-            // Check if getter needs `var _this = this;` capture
-            let needs_this_capture = self.constructor_needs_this_capture(accessor_data.body);
-            if needs_this_capture {
-                // Insert `var _this = this;` at the start of getter body
-                body.insert(0, IRNode::var_decl("_this", Some(IRNode::this())));
+            if let Some(alias) = this_capture_alias {
+                body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
             }
 
             body
@@ -180,20 +186,25 @@ impl<'a> ES5ClassTransformer<'a> {
         } else {
             None // Force multi-line when destructuring prologue exists
         };
-
         let mut body = if accessor_data.body.is_none() {
             vec![]
         } else {
+            let this_capture_alias = self
+                .this_capture_alias_for_body(accessor_data.body, Some(&accessor_data.parameters));
             let mut body = if is_static {
-                self.convert_block_body_static(accessor_data.body)
+                self.convert_block_body_static_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
             } else {
-                self.convert_block_body(accessor_data.body)
+                self.convert_block_body_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
             };
 
-            // Check if setter needs `var _this = this;` capture
-            let needs_this_capture = self.constructor_needs_this_capture(accessor_data.body);
-            if needs_this_capture {
-                body.insert(0, IRNode::var_decl("_this", Some(IRNode::this())));
+            if let Some(alias) = this_capture_alias {
+                body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
             }
 
             // Prepend destructuring prologue
@@ -418,15 +429,19 @@ impl<'a> ES5ClassTransformer<'a> {
                         if let Some(source_text) = self.source_text {
                             async_transformer.set_source_text(source_text);
                         }
+                        self.configure_async_disposable_context(&mut async_transformer);
                         let has_await = async_transformer.body_contains_await(method_data.body);
                         let mut generator_body =
                             async_transformer.transform_generator_body(method_data.body, has_await);
+                        self.sync_async_disposable_context(&mut async_transformer);
                         let hoisted_var_groups =
                             AsyncES5Transformer::extract_and_remove_var_decl_groups(
                                 &mut generator_body,
                             );
                         vec![IRNode::AwaiterCall {
                             this_arg: Box::new(IRNode::this()),
+                            needs_lexical_this_capture: generator_body
+                                .contains_captured_this_reference(),
                             generator_body: Box::new(generator_body),
                             hoisted_var_groups,
                             promise_constructor: self
@@ -546,15 +561,19 @@ impl<'a> ES5ClassTransformer<'a> {
                         if let Some(source_text) = self.source_text {
                             async_transformer.set_source_text(source_text);
                         }
+                        self.configure_async_disposable_context(&mut async_transformer);
                         let has_await = async_transformer.body_contains_await(method_data.body);
                         let mut generator_body =
                             async_transformer.transform_generator_body(method_data.body, has_await);
+                        self.sync_async_disposable_context(&mut async_transformer);
                         let hoisted_var_groups =
                             AsyncES5Transformer::extract_and_remove_var_decl_groups(
                                 &mut generator_body,
                             );
                         vec![IRNode::AwaiterCall {
                             this_arg: Box::new(IRNode::this()),
+                            needs_lexical_this_capture: generator_body
+                                .contains_captured_this_reference(),
                             generator_body: Box::new(generator_body),
                             hoisted_var_groups,
                             promise_constructor: self
@@ -568,16 +587,21 @@ impl<'a> ES5ClassTransformer<'a> {
                             method_data.body,
                         )
                     } else {
-                        let mut method_body = self.convert_block_body(method_data.body);
+                        let this_capture_alias = self.this_capture_alias_for_body(
+                            method_data.body,
+                            Some(&method_data.parameters),
+                        );
+                        let mut method_body = self.convert_block_body_with_this_capture_alias(
+                            method_data.body,
+                            this_capture_alias.clone(),
+                        );
                         if !destructuring_prologue.is_empty() {
                             let mut full_body = destructuring_prologue;
                             full_body.append(&mut method_body);
                             method_body = full_body;
                         }
-                        let needs_this_capture =
-                            self.constructor_needs_this_capture(method_data.body);
-                        if needs_this_capture {
-                            method_body.insert(0, IRNode::var_decl("_this", Some(IRNode::this())));
+                        if let Some(alias) = this_capture_alias {
+                            method_body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
                         }
                         method_body
                     };
@@ -1248,7 +1272,10 @@ impl<'a> ES5ClassTransformer<'a> {
             .any(|child_idx| self.contains_static_value_this_reference(child_idx))
     }
 
-    fn async_method_promise_constructor(&self, type_annotation: NodeIndex) -> Option<String> {
+    pub(super) fn async_method_promise_constructor(
+        &self,
+        type_annotation: NodeIndex,
+    ) -> Option<String> {
         let type_node = self.arena.get(type_annotation)?;
         if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
             return None;

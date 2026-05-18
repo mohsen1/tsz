@@ -1580,14 +1580,32 @@ impl<'a> CheckerState<'a> {
                 && symbol.has_any_flags(symbol_flags::ENUM)
                 && !symbol.has_any_flags(symbol_flags::ENUM_MEMBER)
             {
-                self.enum_object_type(sym_id)
-                    .inspect(|&enum_obj| {
+                let is_merged_enum_namespace = symbol
+                    .has_any_flags(symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE);
+                if is_merged_enum_namespace {
+                    // When an enum merges with a namespace its value-position type must
+                    // include both enum member properties and namespace-exported values.
+                    let cached = self.ctx.enum_namespace_types.get(&sym_id).copied();
+                    cached.unwrap_or_else(|| {
+                        let base = self.get_type_of_symbol(sym_id);
+                        let merged = self.merge_namespace_exports_into_object(sym_id, base);
                         let def_id = self.ctx.get_or_create_def_id(sym_id);
                         self.ctx
                             .definition_store
-                            .register_type_to_def(enum_obj, def_id);
+                            .register_type_to_def(merged, def_id);
+                        self.ctx.enum_namespace_types.insert(sym_id, merged);
+                        merged
                     })
-                    .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
+                } else {
+                    self.enum_object_type(sym_id)
+                        .inspect(|&enum_obj| {
+                            let def_id = self.ctx.get_or_create_def_id(sym_id);
+                            self.ctx
+                                .definition_store
+                                .register_type_to_def(enum_obj, def_id);
+                        })
+                        .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
+                }
             } else if (flags & symbol_flags::CLASS) != 0
                 && (flags & symbol_flags::FUNCTION) == 0
                 && has_value

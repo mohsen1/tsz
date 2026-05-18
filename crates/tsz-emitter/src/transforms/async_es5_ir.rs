@@ -49,13 +49,15 @@
 //! The thin wrapper in `async_es5.rs` uses this transformer with `IRPrinter`
 //! to emit JavaScript strings.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use crate::transforms::class_es5_ir::ES5ClassTransformer;
 use crate::transforms::helpers::HelpersNeeded;
-use crate::transforms::ir::{IRGeneratorCase, IRNode, IRParam};
+use crate::transforms::ir::{IRCatchClause, IRGeneratorCase, IRNode, IRParam};
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 
 #[path = "async_es5_ir_bindings.rs"]
@@ -79,6 +81,28 @@ pub struct AsyncTransformState {
 enum SuspendedAssignmentTarget {
     Property(String),
     Element(Box<IRNode>),
+}
+
+enum ForInAssignmentTarget {
+    Direct(Box<IRNode>),
+    SuspendedProperty {
+        object_suspension: NodeIndex,
+        property: String,
+    },
+    SuspendedElement {
+        object: ForInSuspendedObject,
+        index: ForInSuspendedElementIndex,
+    },
+}
+
+enum ForInSuspendedObject {
+    Direct(Box<IRNode>),
+    Suspended(NodeIndex),
+}
+
+enum ForInSuspendedElementIndex {
+    Direct(Box<IRNode>),
+    Suspended(NodeIndex),
 }
 
 impl AsyncTransformState {
@@ -155,6 +179,10 @@ pub struct AsyncES5Transformer<'a> {
     /// `__asyncGenerator`.
     pub(crate) async_generator_mode: bool,
     temp_var_counter: Cell<u32>,
+    blocked_temp_names: RefCell<FxHashSet<String>>,
+    disposable_env_counter: Cell<u32>,
+    blocked_disposable_env_names: FxHashSet<String>,
+    generated_disposable_env_names: Vec<String>,
     lexical_this_capture: Cell<bool>,
     capture_this_references: Cell<bool>,
     loop_exit_placeholder_counter: Cell<u32>,
@@ -177,6 +205,10 @@ impl<'a> AsyncES5Transformer<'a> {
             generator_mode: false,
             async_generator_mode: false,
             temp_var_counter: Cell::new(0),
+            blocked_temp_names: RefCell::new(FxHashSet::default()),
+            disposable_env_counter: Cell::new(1),
+            blocked_disposable_env_names: FxHashSet::default(),
+            generated_disposable_env_names: Vec::new(),
             lexical_this_capture: Cell::new(false),
             capture_this_references: Cell::new(false),
             loop_exit_placeholder_counter: Cell::new(0),
@@ -229,14 +261,18 @@ impl<'a> AsyncES5Transformer<'a> {
     }
 
     pub(super) fn generate_hoisted_temp(&self) -> String {
-        let counter = self.temp_var_counter.get();
-        let name = if counter < 26 {
-            format!("_{}", (b'a' + counter as u8) as char)
-        } else {
-            format!("_{counter}")
-        };
-        self.temp_var_counter.set(counter + 1);
-        name
+        loop {
+            let counter = self.temp_var_counter.get();
+            let name = if counter < 26 {
+                format!("_{}", (b'a' + counter as u8) as char)
+            } else {
+                format!("_{counter}")
+            };
+            self.temp_var_counter.set(counter + 1);
+            if self.blocked_temp_names.borrow_mut().insert(name.clone()) {
+                return name;
+            }
+        }
     }
 
     pub(super) fn set_temp_var_counter(&self, counter: u32) {
@@ -245,6 +281,117 @@ impl<'a> AsyncES5Transformer<'a> {
 
     pub const fn temp_var_counter(&self) -> u32 {
         self.temp_var_counter.get()
+    }
+
+    fn reset_temp_name_reservations(&self, body_idx: NodeIndex) {
+        let mut blocked_names = Vec::new();
+        self.collect_body_binding_names(body_idx, &mut blocked_names);
+        *self.blocked_temp_names.borrow_mut() = blocked_names.into_iter().collect();
+    }
+
+    fn fresh_reserved_name(&self, preferred: impl Into<String>) -> String {
+        let preferred = preferred.into();
+        if self
+            .blocked_temp_names
+            .borrow_mut()
+            .insert(preferred.clone())
+        {
+            return preferred;
+        }
+        let mut suffix = 1u32;
+        loop {
+            let candidate = format!("{preferred}_{suffix}");
+            if self
+                .blocked_temp_names
+                .borrow_mut()
+                .insert(candidate.clone())
+            {
+                return candidate;
+            }
+            suffix += 1;
+        }
+    }
+
+    pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.disposable_env_counter.set(next_id);
+        self.blocked_disposable_env_names = blocked_names.into_iter().collect();
+        self.generated_disposable_env_names.clear();
+    }
+
+    pub const fn disposable_env_counter(&self) -> u32 {
+        self.disposable_env_counter.get()
+    }
+
+    pub fn take_generated_disposable_env_names(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.generated_disposable_env_names)
+    }
+
+    fn next_disposable_env_names(&mut self) -> (String, String, String) {
+        loop {
+            let env_id = self.disposable_env_counter.get();
+            let env_name = format!("env_{env_id}");
+            let error_name = format!("e_{env_id}");
+            let result_name = format!("result_{env_id}");
+            self.disposable_env_counter.set(env_id + 1);
+
+            if self.blocked_disposable_env_names.contains(&env_name)
+                || self.blocked_disposable_env_names.contains(&error_name)
+                || self.blocked_disposable_env_names.contains(&result_name)
+            {
+                continue;
+            }
+
+            self.blocked_disposable_env_names.insert(env_name.clone());
+            self.blocked_disposable_env_names.insert(error_name.clone());
+            self.blocked_disposable_env_names
+                .insert(result_name.clone());
+            self.generated_disposable_env_names.push(env_name.clone());
+            self.generated_disposable_env_names.push(error_name.clone());
+            self.generated_disposable_env_names
+                .push(result_name.clone());
+            return (env_name, error_name, result_name);
+        }
+    }
+
+    fn next_disposable_env_names_allowing_error_gap(&mut self) -> (String, String, String, u32) {
+        loop {
+            let env_id = self.disposable_env_counter.get();
+            let env_name = format!("env_{env_id}");
+            let result_name = format!("result_{env_id}");
+            self.disposable_env_counter.set(env_id + 1);
+
+            if self.blocked_disposable_env_names.contains(&env_name)
+                || self.blocked_disposable_env_names.contains(&result_name)
+            {
+                continue;
+            }
+
+            let mut error_id = env_id;
+            loop {
+                let error_name = format!("e_{error_id}");
+                if self.blocked_disposable_env_names.contains(&error_name) {
+                    error_id += 1;
+                    continue;
+                }
+
+                self.blocked_disposable_env_names.insert(env_name.clone());
+                self.blocked_disposable_env_names.insert(error_name.clone());
+                self.blocked_disposable_env_names
+                    .insert(result_name.clone());
+                self.generated_disposable_env_names.push(env_name.clone());
+                self.generated_disposable_env_names.push(error_name.clone());
+                self.generated_disposable_env_names
+                    .push(result_name.clone());
+                return (env_name, error_name, result_name, error_id);
+            }
+        }
+    }
+
+    fn env_id_from_name(&self, name: &str) -> Option<u32> {
+        name.strip_prefix("env_")?.parse().ok()
     }
 
     /// Get the helpers needed after transformation
@@ -431,6 +578,7 @@ impl<'a> AsyncES5Transformer<'a> {
         // Build the awaiter call
         let awaiter_call = IRNode::AwaiterCall {
             this_arg: Box::new(IRNode::This { captured: false }),
+            needs_lexical_this_capture: generator_body.contains_captured_this_reference(),
             generator_body: Box::new(generator_body),
             hoisted_var_groups,
             promise_constructor,
@@ -705,6 +853,7 @@ impl<'a> AsyncES5Transformer<'a> {
         _has_await: bool,
         skipped_statements: &[NodeIndex],
     ) -> Vec<IRGeneratorCase> {
+        self.reset_temp_name_reservations(body_idx);
         let mut cases = Vec::new();
         let mut current_statements = Vec::new();
         let mut current_label = self.state.next_label();
@@ -779,27 +928,13 @@ impl<'a> AsyncES5Transformer<'a> {
         // Handle block statements
         if node.kind == syntax_kind_ext::BLOCK {
             if let Some(block) = self.arena.get_block(node) {
-                for &stmt_idx in &block.statements.nodes {
-                    if skipped_statements.contains(&stmt_idx) {
-                        continue;
-                    }
-                    if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                        let actual_start = super::emit_utils::skip_trivia_forward(
-                            self.source_text,
-                            stmt_node.pos,
-                            stmt_node.end,
-                        );
-                        if let Some(comment) = self.extract_preceding_line_comment(actual_start) {
-                            current_statements.push(IRNode::Raw(comment.into()));
-                        }
-                    }
-                    self.process_async_statement(
-                        stmt_idx,
-                        cases,
-                        current_statements,
-                        current_label,
-                    );
-                }
+                self.process_async_statement_list(
+                    &block.statements.nodes,
+                    cases,
+                    current_statements,
+                    current_label,
+                    skipped_statements,
+                );
             }
             return;
         }
@@ -849,6 +984,1557 @@ impl<'a> AsyncES5Transformer<'a> {
         }
     }
 
+    fn process_async_statement_list(
+        &mut self,
+        statements: &[NodeIndex],
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+        skipped_statements: &[NodeIndex],
+    ) {
+        let mut index = 0;
+        while index < statements.len() {
+            let stmt_idx = statements[index];
+            if skipped_statements.contains(&stmt_idx) {
+                index += 1;
+                continue;
+            }
+            if self.statement_is_using_variable_statement(stmt_idx) {
+                self.process_async_disposable_region(
+                    &statements[index..],
+                    cases,
+                    current_statements,
+                    current_label,
+                    skipped_statements,
+                );
+                break;
+            }
+            self.push_preceding_line_comment(stmt_idx, current_statements);
+            self.process_async_statement(stmt_idx, cases, current_statements, current_label);
+            index += 1;
+        }
+    }
+
+    fn push_preceding_line_comment(
+        &self,
+        stmt_idx: NodeIndex,
+        current_statements: &mut Vec<IRNode>,
+    ) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+        let actual_start =
+            super::emit_utils::skip_trivia_forward(self.source_text, stmt_node.pos, stmt_node.end);
+        if let Some(comment) = self.extract_preceding_line_comment(actual_start) {
+            current_statements.push(IRNode::Raw(comment.into()));
+        }
+    }
+
+    fn statement_is_using_variable_statement(&self, stmt_idx: NodeIndex) -> bool {
+        self.using_variable_statement_flags(stmt_idx)
+            .is_some_and(|flags| (flags & node_flags::USING) != 0)
+    }
+
+    fn using_variable_statement_flags(&self, stmt_idx: NodeIndex) -> Option<u32> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return None;
+        }
+        let var_stmt = self.arena.get_variable(stmt_node)?;
+        var_stmt
+            .declarations
+            .nodes
+            .iter()
+            .find_map(|&decl_list_idx| {
+                self.arena.get(decl_list_idx).and_then(|decl_list_node| {
+                    ((decl_list_node.flags as u32 & node_flags::USING) != 0)
+                        .then_some(decl_list_node.flags as u32)
+                })
+            })
+    }
+
+    fn process_async_disposable_region(
+        &mut self,
+        statements: &[NodeIndex],
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+        skipped_statements: &[NodeIndex],
+    ) {
+        let (env_name, error_name, result_name) = self.next_disposable_env_names();
+        let using_async = self.statement_slice_has_await_using(statements, skipped_statements);
+        let using_binding_names = self.collect_using_binding_names(statements, skipped_statements);
+        let start_label = self.state.next_label();
+        let try_push_placeholder = u32::MAX;
+
+        current_statements.push(IRNode::VarDecl {
+            name: env_name.clone().into(),
+            initializer: Some(Box::new(self.disposable_env_initializer())),
+        });
+        for name in using_binding_names {
+            current_statements.push(IRNode::VarDecl {
+                name: name.into(),
+                initializer: None,
+            });
+        }
+        current_statements.push(IRNode::VarDecl {
+            name: error_name.clone().into(),
+            initializer: None,
+        });
+        current_statements.push(IRNode::VarDecl {
+            name: result_name.clone().into(),
+            initializer: None,
+        });
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::GeneratorLabel,
+            IRNode::number(start_label.to_string()),
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+        *current_label = start_label;
+
+        current_statements.push(IRNode::GeneratorTryPush {
+            start_label,
+            catch_label: try_push_placeholder,
+            finally_label: try_push_placeholder,
+            end_label: try_push_placeholder,
+        });
+
+        for &stmt_idx in statements {
+            if skipped_statements.contains(&stmt_idx) {
+                continue;
+            }
+            self.push_preceding_line_comment(stmt_idx, current_statements);
+            if self.statement_is_using_variable_statement(stmt_idx) {
+                self.process_using_variable_statement_in_region(
+                    stmt_idx,
+                    &env_name,
+                    current_statements,
+                );
+            } else {
+                self.process_async_statement(stmt_idx, cases, current_statements, current_label);
+            }
+        }
+
+        let catch_label = self.state.next_label();
+        let finally_label = self.state.next_label();
+        let dispose_resume_label = using_async.then(|| self.state.next_label());
+        let dispose_done_label = if using_async {
+            self.state.next_label()
+        } else {
+            finally_label
+        };
+        let end_label = self.state.next_label();
+        Self::patch_generator_try_push(
+            cases,
+            current_statements,
+            start_label,
+            catch_label,
+            finally_label,
+            end_label,
+        );
+
+        current_statements.push(Self::generator_break_statement(end_label));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = catch_label;
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(error_name.clone()),
+            IRNode::GeneratorSent,
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::prop(IRNode::id(env_name.clone()), "error"),
+            IRNode::id(error_name),
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::prop(IRNode::id(env_name.clone()), "hasError"),
+            IRNode::BooleanLiteral(true),
+        ))));
+        current_statements.push(Self::generator_break_statement(end_label));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = finally_label;
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(result_name.clone()),
+            IRNode::CallExpr {
+                callee: Box::new(IRNode::RuntimeHelper("__disposeResources".into())),
+                arguments: vec![IRNode::id(env_name)],
+            },
+        ))));
+
+        if using_async {
+            current_statements.push(IRNode::IfBreak {
+                condition: Box::new(IRNode::PrefixUnaryExpr {
+                    operator: "!".into(),
+                    operand: Box::new(IRNode::id(result_name.clone())),
+                }),
+                target_label: dispose_done_label,
+            });
+            let dispose_yield_value = if self.async_generator_mode {
+                IRNode::CallExpr {
+                    callee: Box::new(IRNode::RuntimeHelper("__await".into())),
+                    arguments: vec![IRNode::id(result_name)],
+                }
+            } else {
+                IRNode::id(result_name)
+            };
+            current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+                IRNode::GeneratorOp {
+                    opcode: opcodes::YIELD,
+                    value: Some(Box::new(dispose_yield_value)),
+                    comment: Some("yield".into()),
+                },
+            ))));
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+
+            *current_label =
+                dispose_resume_label.expect("async disposable regions reserve a resume label");
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::GeneratorSent)));
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::GeneratorLabel,
+                IRNode::number(dispose_done_label.to_string()),
+            ))));
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+        }
+
+        *current_label = dispose_done_label;
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode: opcodes::END_FINALLY,
+                value: None,
+                comment: Some("endfinally".into()),
+            },
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+        *current_label = end_label;
+    }
+
+    fn disposable_env_initializer(&self) -> IRNode {
+        IRNode::object(vec![
+            crate::transforms::ir::IRProperty {
+                key: crate::transforms::ir::IRPropertyKey::Identifier("stack".into()),
+                value: IRNode::ArrayLiteral(Vec::new()),
+                kind: crate::transforms::ir::IRPropertyKind::Init,
+            },
+            crate::transforms::ir::IRProperty {
+                key: crate::transforms::ir::IRPropertyKey::Identifier("error".into()),
+                value: IRNode::Undefined,
+                kind: crate::transforms::ir::IRPropertyKind::Init,
+            },
+            crate::transforms::ir::IRProperty {
+                key: crate::transforms::ir::IRPropertyKey::Identifier("hasError".into()),
+                value: IRNode::BooleanLiteral(false),
+                kind: crate::transforms::ir::IRPropertyKind::Init,
+            },
+        ])
+    }
+
+    fn add_disposable_resource_call(
+        &self,
+        env_name: &str,
+        value_name: &str,
+        using_async: bool,
+    ) -> IRNode {
+        IRNode::CallExpr {
+            callee: Box::new(IRNode::RuntimeHelper("__addDisposableResource".into())),
+            arguments: vec![
+                IRNode::id(env_name.to_string()),
+                IRNode::id(value_name.to_string()),
+                IRNode::BooleanLiteral(using_async),
+            ],
+        }
+    }
+
+    fn generator_break_statement(target_label: u32) -> IRNode {
+        IRNode::ReturnStatement(Some(Box::new(IRNode::GeneratorOp {
+            opcode: opcodes::BREAK,
+            value: Some(Box::new(IRNode::NumericLiteral(
+                target_label.to_string().into(),
+            ))),
+            comment: Some("break".into()),
+        })))
+    }
+
+    fn patch_generator_try_push(
+        cases: &mut [IRGeneratorCase],
+        current_statements: &mut [IRNode],
+        start_label: u32,
+        catch_label: u32,
+        finally_label: u32,
+        end_label: u32,
+    ) {
+        for case in cases {
+            Self::patch_generator_try_push_in_statements(
+                &mut case.statements,
+                start_label,
+                catch_label,
+                finally_label,
+                end_label,
+            );
+        }
+        Self::patch_generator_try_push_in_statements(
+            current_statements,
+            start_label,
+            catch_label,
+            finally_label,
+            end_label,
+        );
+    }
+
+    fn patch_generator_try_push_in_statements(
+        statements: &mut [IRNode],
+        start_label: u32,
+        catch_label: u32,
+        finally_label: u32,
+        end_label: u32,
+    ) {
+        for statement in statements {
+            if let IRNode::GeneratorTryPush {
+                start_label: candidate_start,
+                catch_label: candidate_catch,
+                finally_label: candidate_finally,
+                end_label: candidate_end,
+            } = statement
+                && *candidate_start == start_label
+                && *candidate_catch == u32::MAX
+            {
+                *candidate_catch = catch_label;
+                *candidate_finally = finally_label;
+                *candidate_end = end_label;
+            }
+        }
+    }
+
+    fn statement_slice_has_await_using(
+        &self,
+        statements: &[NodeIndex],
+        skipped_statements: &[NodeIndex],
+    ) -> bool {
+        statements.iter().copied().any(|stmt_idx| {
+            !skipped_statements.contains(&stmt_idx)
+                && self
+                    .using_variable_statement_flags(stmt_idx)
+                    .is_some_and(node_flags::is_await_using)
+        })
+    }
+
+    fn collect_using_binding_names(
+        &self,
+        statements: &[NodeIndex],
+        skipped_statements: &[NodeIndex],
+    ) -> Vec<String> {
+        let mut names = Vec::new();
+        for &stmt_idx in statements {
+            if skipped_statements.contains(&stmt_idx)
+                || !self.statement_is_using_variable_statement(stmt_idx)
+            {
+                continue;
+            }
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                if (decl_list_node.flags as u32 & node_flags::USING) == 0 {
+                    continue;
+                }
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    let name = crate::transforms::emit_utils::identifier_text_or_empty(
+                        self.arena, decl.name,
+                    );
+                    if !name.is_empty() && !names.contains(&name) {
+                        names.push(name);
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    fn process_using_variable_statement_in_region(
+        &mut self,
+        stmt_idx: NodeIndex,
+        env_name: &str,
+        current_statements: &mut Vec<IRNode>,
+    ) {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return;
+        };
+        let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+            return;
+        };
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            if (decl_list_node.flags as u32 & node_flags::USING) == 0 {
+                continue;
+            }
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                self.process_using_variable_declaration_in_region(
+                    decl_idx,
+                    env_name,
+                    node_flags::is_await_using(decl_list_node.flags as u32),
+                    current_statements,
+                );
+            }
+        }
+    }
+
+    fn process_using_variable_declaration_in_region(
+        &mut self,
+        decl_idx: NodeIndex,
+        env_name: &str,
+        using_async: bool,
+        current_statements: &mut Vec<IRNode>,
+    ) {
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return;
+        };
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return;
+        };
+        let name = crate::transforms::emit_utils::identifier_text_or_empty(self.arena, decl.name);
+        if name.is_empty() {
+            return;
+        }
+        let value = if decl.initializer.is_none() {
+            IRNode::Undefined
+        } else if let Some((temp, lowered_init)) =
+            self.lower_object_literal_es5_with_computed_properties(decl.initializer)
+        {
+            current_statements.push(IRNode::HoistedVarGroupBreak);
+            current_statements.push(IRNode::VarDecl {
+                name: temp.into(),
+                initializer: None,
+            });
+            lowered_init
+        } else {
+            self.expression_to_ir(decl.initializer)
+        };
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(name),
+            IRNode::CallExpr {
+                callee: Box::new(IRNode::RuntimeHelper("__addDisposableResource".into())),
+                arguments: vec![
+                    IRNode::id(env_name.to_string()),
+                    value,
+                    IRNode::BooleanLiteral(using_async),
+                ],
+            },
+        ))));
+    }
+
+    fn process_for_of_using_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::FOR_OF_STATEMENT {
+            return false;
+        }
+        let Some(for_in_of) = self.arena.get_for_in_of(node) else {
+            return false;
+        };
+        if for_in_of.await_modifier {
+            return false;
+        }
+        let Some(using_info) =
+            super::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
+        else {
+            return false;
+        };
+
+        let env_id = self.disposable_env_counter.get();
+        let (env_name, error_name, result_name) = self.next_disposable_env_names();
+        let index_name = self.fresh_reserved_name("_i");
+        let array_name = self.for_of_iterable_temp_name(for_in_of.expression, env_id);
+        let value_temp_name =
+            self.fresh_reserved_name(format!("{}_{}", using_info.binding_name, env_id));
+
+        for name in [
+            &index_name,
+            &array_name,
+            &value_temp_name,
+            &env_name,
+            &using_info.binding_name,
+            &error_name,
+            &result_name,
+        ] {
+            current_statements.push(IRNode::VarDecl {
+                name: name.to_string().into(),
+                initializer: None,
+            });
+        }
+
+        let iterable = self.for_of_iterable_to_ir_with_es5_computed_temps(
+            for_in_of.expression,
+            current_statements,
+        );
+        let loop_label = self.state.next_label();
+        let try_start_label = self.state.next_label();
+        let catch_label = self.state.next_label();
+        let finally_label = self.state.next_label();
+        let dispose_resume_label = self.state.next_label();
+        let dispose_done_label = self.state.next_label();
+        let iteration_label = self.state.next_label();
+        let end_label = self.state.next_label();
+
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::binary(
+            IRNode::assign(IRNode::id(index_name.clone()), IRNode::number("0")),
+            ",",
+            IRNode::assign(IRNode::id(array_name.clone()), iterable),
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::GeneratorLabel,
+            IRNode::number(loop_label.to_string()),
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = loop_label;
+        current_statements.push(IRNode::IfBreak {
+            condition: Box::new(IRNode::PrefixUnaryExpr {
+                operator: "!".into(),
+                operand: Box::new(IRNode::Parenthesized(Box::new(IRNode::binary(
+                    IRNode::id(index_name.clone()),
+                    "<",
+                    IRNode::prop(IRNode::id(array_name.clone()), "length"),
+                )))),
+            }),
+            target_label: end_label,
+        });
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(value_temp_name.clone()),
+            IRNode::elem(IRNode::id(array_name), IRNode::id(index_name.clone())),
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(env_name.clone()),
+            self.disposable_env_initializer(),
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::GeneratorLabel,
+            IRNode::number(try_start_label.to_string()),
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = try_start_label;
+        current_statements.push(IRNode::GeneratorTryPush {
+            start_label: try_start_label,
+            catch_label,
+            finally_label,
+            end_label: iteration_label,
+        });
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(using_info.binding_name),
+            IRNode::CallExpr {
+                callee: Box::new(IRNode::RuntimeHelper("__addDisposableResource".into())),
+                arguments: vec![
+                    IRNode::id(env_name.clone()),
+                    IRNode::id(value_temp_name),
+                    IRNode::BooleanLiteral(using_info.using_async),
+                ],
+            },
+        ))));
+        self.process_block_or_statement_in_async(
+            for_in_of.statement,
+            cases,
+            current_statements,
+            current_label,
+        );
+        current_statements.push(Self::generator_break_statement(iteration_label));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = catch_label;
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(error_name.clone()),
+            IRNode::GeneratorSent,
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::prop(IRNode::id(env_name.clone()), "error"),
+            IRNode::id(error_name),
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::prop(IRNode::id(env_name.clone()), "hasError"),
+            IRNode::BooleanLiteral(true),
+        ))));
+        current_statements.push(Self::generator_break_statement(iteration_label));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = finally_label;
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(result_name.clone()),
+            IRNode::CallExpr {
+                callee: Box::new(IRNode::RuntimeHelper("__disposeResources".into())),
+                arguments: vec![IRNode::id(env_name)],
+            },
+        ))));
+        current_statements.push(IRNode::IfBreak {
+            condition: Box::new(IRNode::PrefixUnaryExpr {
+                operator: "!".into(),
+                operand: Box::new(IRNode::id(result_name.clone())),
+            }),
+            target_label: dispose_done_label,
+        });
+        let dispose_yield_value = if self.async_generator_mode {
+            IRNode::CallExpr {
+                callee: Box::new(IRNode::RuntimeHelper("__await".into())),
+                arguments: vec![IRNode::id(result_name)],
+            }
+        } else {
+            IRNode::id(result_name)
+        };
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode: opcodes::YIELD,
+                value: Some(Box::new(dispose_yield_value)),
+                comment: Some("yield".into()),
+            },
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = dispose_resume_label;
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::GeneratorSent)));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::GeneratorLabel,
+            IRNode::number(dispose_done_label.to_string()),
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = dispose_done_label;
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode: opcodes::END_FINALLY,
+                value: None,
+                comment: Some("endfinally".into()),
+            },
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = iteration_label;
+        current_statements.push(IRNode::ExpressionStatement(Box::new(
+            IRNode::PostfixUnaryExpr {
+                operand: Box::new(IRNode::id(index_name)),
+                operator: "++".into(),
+            },
+        )));
+        current_statements.push(Self::generator_break_statement(loop_label));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = end_label;
+        true
+    }
+
+    fn process_for_await_using_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::FOR_OF_STATEMENT {
+            return false;
+        }
+        let Some(for_in_of) = self.arena.get_for_in_of(node) else {
+            return false;
+        };
+        if !for_in_of.await_modifier {
+            return false;
+        }
+        let Some(using_info) =
+            super::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
+        else {
+            return false;
+        };
+
+        self.helpers_needed.mark_async_values();
+        self.helpers_needed.add_disposable_resource = true;
+        self.helpers_needed.dispose_resources = true;
+
+        let loop_guard_name = self.generate_hoisted_temp();
+        let env_id = self.disposable_env_counter.get();
+        let (iterator_name, result_name) =
+            self.for_await_iterator_names(for_in_of.expression, env_id);
+        let binding_name = if using_info.recovered_missing_binding {
+            self.generate_hoisted_temp()
+        } else {
+            using_info.binding_name
+        };
+        let value_binding_name = format!("{binding_name}_1");
+
+        let (env_name, resource_error_name, dispose_result_name, resource_error_id) =
+            if using_info.using_async {
+                let (env_name, error_name, result_name, error_id) =
+                    self.next_disposable_env_names_allowing_error_gap();
+                (env_name, error_name, Some(result_name), error_id)
+            } else {
+                let env_id = self.disposable_env_counter.get();
+                self.disposable_env_counter.set(env_id + 1);
+                let env_name = format!("env_{env_id}");
+                self.blocked_disposable_env_names.insert(env_name.clone());
+                self.generated_disposable_env_names.push(env_name.clone());
+                (env_name, format!("e_{}", env_id + 1), None, env_id + 1)
+            };
+
+        let outer_error_id = if using_info.using_async {
+            resource_error_id + 1
+        } else {
+            self.env_id_from_name(&env_name).unwrap_or(1)
+        };
+        let outer_error_name = format!("e_{outer_error_id}");
+        let outer_catch_error_name = format!("{outer_error_name}_1");
+
+        for name in [
+            loop_guard_name.as_str(),
+            iterator_name.as_str(),
+            result_name.as_str(),
+            value_binding_name.as_str(),
+            env_name.as_str(),
+            binding_name.as_str(),
+        ] {
+            current_statements.push(IRNode::var_decl(name.to_string(), None));
+        }
+        if using_info.using_async {
+            current_statements.push(IRNode::var_decl(resource_error_name.clone(), None));
+            if let Some(dispose_result_name) = &dispose_result_name {
+                current_statements.push(IRNode::var_decl(dispose_result_name.clone(), None));
+            }
+        }
+        current_statements.push(IRNode::var_decl(outer_catch_error_name.clone(), None));
+
+        let iterable = self.for_of_iterable_to_ir_with_es5_computed_temps(
+            for_in_of.expression,
+            current_statements,
+        );
+
+        current_statements.push(IRNode::HoistedVarGroupBreak);
+        let done_name = self.generate_hoisted_temp();
+        let return_name = self.generate_hoisted_temp();
+        let value_name = self.generate_hoisted_temp();
+        for name in [&done_name, &outer_error_name, &return_name, &value_name] {
+            current_statements.push(IRNode::var_decl(name.clone(), None));
+        }
+
+        let loop_yield_label = self.state.next_label();
+        let after_next_label = self.state.next_label();
+        let (
+            resource_start_label,
+            resource_catch_label,
+            resource_finally_label,
+            dispose_resume_label,
+            dispose_done_label,
+            iteration_label,
+            loop_exit_label,
+        ) = if using_info.using_async {
+            (
+                self.state.next_label(),
+                self.state.next_label(),
+                self.state.next_label(),
+                Some(self.state.next_label()),
+                Some(self.state.next_label()),
+                self.state.next_label(),
+                self.state.next_label(),
+            )
+        } else {
+            (
+                u32::MAX,
+                u32::MAX,
+                u32::MAX,
+                None,
+                None,
+                self.state.next_label(),
+                self.state.next_label(),
+            )
+        };
+        let outer_catch_label = self.state.next_label();
+        let outer_finally_label = self.state.next_label();
+        let return_resume_label = self.state.next_label();
+        let return_done_label = self.state.next_label();
+        let rethrow_label = self.state.next_label();
+        let outer_endfinally_label = self.state.next_label();
+        let end_label = self.state.next_label();
+
+        current_statements.push(IRNode::GeneratorTryPush {
+            start_label: *current_label,
+            catch_label: outer_catch_label,
+            finally_label: outer_finally_label,
+            end_label,
+        });
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::binary(
+            IRNode::assign(
+                IRNode::id(loop_guard_name.clone()),
+                IRNode::BooleanLiteral(true),
+            ),
+            ",",
+            IRNode::assign(
+                IRNode::id(iterator_name.clone()),
+                IRNode::CallExpr {
+                    callee: Box::new(IRNode::RuntimeHelper("__asyncValues".into())),
+                    arguments: vec![iterable],
+                },
+            ),
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::GeneratorLabel,
+            IRNode::number(loop_yield_label.to_string()),
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = loop_yield_label;
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode: opcodes::YIELD,
+                value: Some(Box::new(IRNode::CallExpr {
+                    callee: Box::new(IRNode::prop(IRNode::id(iterator_name.clone()), "next")),
+                    arguments: vec![],
+                })),
+                comment: Some("yield".into()),
+            },
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = after_next_label;
+        current_statements.push(IRNode::IfBreak {
+            condition: Box::new(IRNode::PrefixUnaryExpr {
+                operator: "!".into(),
+                operand: Box::new(IRNode::CommaExpr(vec![
+                    IRNode::assign(IRNode::id(result_name.clone()), IRNode::GeneratorSent),
+                    IRNode::assign(
+                        IRNode::id(done_name.clone()),
+                        IRNode::prop(IRNode::id(result_name.clone()), "done"),
+                    ),
+                    IRNode::PrefixUnaryExpr {
+                        operator: "!".into(),
+                        operand: Box::new(IRNode::id(done_name.clone())),
+                    },
+                ])),
+            }),
+            target_label: loop_exit_label,
+        });
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(value_name.clone()),
+            IRNode::prop(IRNode::id(result_name), "value"),
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(loop_guard_name.clone()),
+            IRNode::BooleanLiteral(false),
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(value_binding_name.clone()),
+            IRNode::id(value_name),
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(env_name.clone()),
+            self.disposable_env_initializer(),
+        ))));
+
+        if using_info.using_async {
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::GeneratorLabel,
+                IRNode::number(resource_start_label.to_string()),
+            ))));
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+
+            *current_label = resource_start_label;
+            current_statements.push(IRNode::GeneratorTryPush {
+                start_label: resource_start_label,
+                catch_label: resource_catch_label,
+                finally_label: resource_finally_label,
+                end_label: iteration_label,
+            });
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::id(binding_name),
+                self.add_disposable_resource_call(
+                    &env_name,
+                    &value_binding_name,
+                    using_info.using_async,
+                ),
+            ))));
+            self.process_block_or_statement_in_async(
+                for_in_of.statement,
+                cases,
+                current_statements,
+                current_label,
+            );
+            current_statements.push(Self::generator_break_statement(iteration_label));
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+
+            *current_label = resource_catch_label;
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::id(resource_error_name.clone()),
+                IRNode::GeneratorSent,
+            ))));
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::prop(IRNode::id(env_name.clone()), "error"),
+                IRNode::id(resource_error_name),
+            ))));
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::prop(IRNode::id(env_name.clone()), "hasError"),
+                IRNode::BooleanLiteral(true),
+            ))));
+            current_statements.push(Self::generator_break_statement(iteration_label));
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+
+            let dispose_result_name =
+                dispose_result_name.expect("await using reserves a dispose result");
+            *current_label = resource_finally_label;
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::id(dispose_result_name.clone()),
+                IRNode::CallExpr {
+                    callee: Box::new(IRNode::RuntimeHelper("__disposeResources".into())),
+                    arguments: vec![IRNode::id(env_name)],
+                },
+            ))));
+            current_statements.push(IRNode::IfBreak {
+                condition: Box::new(IRNode::PrefixUnaryExpr {
+                    operator: "!".into(),
+                    operand: Box::new(IRNode::id(dispose_result_name.clone())),
+                }),
+                target_label: dispose_done_label.expect("await using reserves done label"),
+            });
+            current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+                IRNode::GeneratorOp {
+                    opcode: opcodes::YIELD,
+                    value: Some(Box::new(IRNode::id(dispose_result_name))),
+                    comment: Some("yield".into()),
+                },
+            ))));
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+
+            *current_label = dispose_resume_label.expect("await using reserves resume label");
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::GeneratorSent)));
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::GeneratorLabel,
+                IRNode::number(
+                    dispose_done_label
+                        .expect("await using reserves done label")
+                        .to_string(),
+                ),
+            ))));
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+
+            *current_label = dispose_done_label.expect("await using reserves done label");
+            current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+                IRNode::GeneratorOp {
+                    opcode: opcodes::END_FINALLY,
+                    value: None,
+                    comment: Some("endfinally".into()),
+                },
+            ))));
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+        } else {
+            current_statements.push(IRNode::TryStatement {
+                try_block: Box::new(IRNode::Block(vec![IRNode::ExpressionStatement(Box::new(
+                    IRNode::assign(
+                        IRNode::id(binding_name),
+                        self.add_disposable_resource_call(
+                            &env_name,
+                            &value_binding_name,
+                            using_info.using_async,
+                        ),
+                    ),
+                ))])),
+                catch_clause: Some(IRCatchClause {
+                    param: Some(resource_error_name.into()),
+                    body: vec![
+                        IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                            IRNode::prop(IRNode::id(env_name.clone()), "error"),
+                            IRNode::id(format!(
+                                "e_{}",
+                                self.env_id_from_name(&env_name).unwrap_or(1) + 1
+                            )),
+                        ))),
+                        IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                            IRNode::prop(IRNode::id(env_name.clone()), "hasError"),
+                            IRNode::BooleanLiteral(true),
+                        ))),
+                    ],
+                }),
+                finally_block: Some(Box::new(IRNode::Block(vec![IRNode::ExpressionStatement(
+                    Box::new(IRNode::CallExpr {
+                        callee: Box::new(IRNode::RuntimeHelper("__disposeResources".into())),
+                        arguments: vec![IRNode::id(env_name)],
+                    }),
+                )]))),
+            });
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::GeneratorLabel,
+                IRNode::number(iteration_label.to_string()),
+            ))));
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+        }
+
+        *current_label = iteration_label;
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(loop_guard_name.clone()),
+            IRNode::BooleanLiteral(true),
+        ))));
+        current_statements.push(Self::generator_break_statement(loop_yield_label));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = loop_exit_label;
+        current_statements.push(Self::generator_break_statement(end_label));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = outer_catch_label;
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(outer_catch_error_name.clone()),
+            IRNode::GeneratorSent,
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(outer_error_name.clone()),
+            IRNode::object(vec![crate::transforms::ir::IRProperty {
+                key: crate::transforms::ir::IRPropertyKey::Identifier("error".into()),
+                value: IRNode::id(outer_catch_error_name),
+                kind: crate::transforms::ir::IRPropertyKind::Init,
+            }]),
+        ))));
+        current_statements.push(Self::generator_break_statement(end_label));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = outer_finally_label;
+        current_statements.push(IRNode::GeneratorTryPushFinally {
+            start_label: outer_finally_label,
+            finally_label: rethrow_label,
+            end_label: outer_endfinally_label,
+        });
+        current_statements.push(IRNode::IfBreak {
+            condition: Box::new(IRNode::PrefixUnaryExpr {
+                operator: "!".into(),
+                operand: Box::new(IRNode::Parenthesized(Box::new(IRNode::logical_and(
+                    IRNode::logical_and(
+                        IRNode::PrefixUnaryExpr {
+                            operator: "!".into(),
+                            operand: Box::new(IRNode::id(loop_guard_name)),
+                        },
+                        IRNode::PrefixUnaryExpr {
+                            operator: "!".into(),
+                            operand: Box::new(IRNode::id(done_name)),
+                        },
+                    ),
+                    IRNode::Parenthesized(Box::new(IRNode::assign(
+                        IRNode::id(return_name.clone()),
+                        IRNode::prop(IRNode::id(iterator_name.clone()), "return"),
+                    ))),
+                )))),
+            }),
+            target_label: return_done_label,
+        });
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode: opcodes::YIELD,
+                value: Some(Box::new(IRNode::CallExpr {
+                    callee: Box::new(IRNode::prop(IRNode::id(return_name), "call")),
+                    arguments: vec![IRNode::id(iterator_name)],
+                })),
+                comment: Some("yield".into()),
+            },
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = return_resume_label;
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::GeneratorSent)));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::GeneratorLabel,
+            IRNode::number(return_done_label.to_string()),
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = return_done_label;
+        current_statements.push(Self::generator_break_statement(outer_endfinally_label));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = rethrow_label;
+        current_statements.push(IRNode::IfStatement {
+            condition: Box::new(IRNode::id(outer_error_name.clone())),
+            then_branch: Box::new(IRNode::ThrowStatement(Box::new(IRNode::prop(
+                IRNode::id(outer_error_name),
+                "error",
+            )))),
+            else_branch: None,
+        });
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode: opcodes::END_FINALLY,
+                value: None,
+                comment: Some("endfinally".into()),
+            },
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = outer_endfinally_label;
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode: opcodes::END_FINALLY,
+                value: None,
+                comment: Some("endfinally".into()),
+            },
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = end_label;
+        true
+    }
+
+    fn process_for_initializer_using_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::FOR_STATEMENT {
+            return false;
+        }
+        let Some(loop_data) = self.arena.get_loop(node) else {
+            return false;
+        };
+        let Some((using_async, declarations)) =
+            self.for_initializer_using_declarations(loop_data.initializer)
+        else {
+            return false;
+        };
+
+        self.helpers_needed.add_disposable_resource = true;
+        self.helpers_needed.dispose_resources = true;
+
+        let (env_name, error_name, result_name) = self.next_disposable_env_names();
+        current_statements.push(IRNode::var_decl(env_name.clone(), None));
+        for &decl_idx in &declarations {
+            if let Some(name) = self.variable_declaration_name(decl_idx) {
+                current_statements.push(IRNode::var_decl(name, None));
+            }
+        }
+        current_statements.push(IRNode::var_decl(error_name.clone(), None));
+        if using_async {
+            current_statements.push(IRNode::var_decl(result_name.clone(), None));
+        }
+
+        let mut registration_exprs = Vec::new();
+        let mut started_computed_temp_group = false;
+        for &decl_idx in &declarations {
+            let Some(name) = self.variable_declaration_name(decl_idx) else {
+                continue;
+            };
+            let value = self.using_declaration_initializer_value(
+                decl_idx,
+                current_statements,
+                &mut started_computed_temp_group,
+            );
+            registration_exprs.push(IRNode::assign(
+                IRNode::id(name),
+                IRNode::CallExpr {
+                    callee: Box::new(IRNode::RuntimeHelper("__addDisposableResource".into())),
+                    arguments: vec![
+                        IRNode::id(env_name.clone()),
+                        value,
+                        IRNode::BooleanLiteral(using_async),
+                    ],
+                },
+            ));
+        }
+
+        let start_label = self.state.next_label();
+        let catch_label = self.state.next_label();
+        let finally_label = self.state.next_label();
+        let dispose_resume_label = self.state.next_label();
+        let dispose_done_label = self.state.next_label();
+        let end_label = self.state.next_label();
+
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(env_name.clone()),
+            self.disposable_env_initializer(),
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::GeneratorLabel,
+            IRNode::number(start_label.to_string()),
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = start_label;
+        current_statements.push(IRNode::GeneratorTryPush {
+            start_label,
+            catch_label,
+            finally_label,
+            end_label,
+        });
+        if let Some(registration_expr) = Self::comma_chain(registration_exprs) {
+            current_statements.push(IRNode::ExpressionStatement(Box::new(registration_expr)));
+        }
+        current_statements.push(IRNode::ForStatement {
+            initializer: None,
+            condition: loop_data
+                .condition
+                .is_some()
+                .then(|| Box::new(self.expression_to_ir(loop_data.condition))),
+            incrementor: loop_data
+                .incrementor
+                .is_some()
+                .then(|| Box::new(self.expression_to_ir(loop_data.incrementor))),
+            body: Box::new(self.loop_body_to_ir(loop_data.statement)),
+        });
+        current_statements.push(Self::generator_break_statement(end_label));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = catch_label;
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::id(error_name.clone()),
+            IRNode::GeneratorSent,
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::prop(IRNode::id(env_name.clone()), "error"),
+            IRNode::id(error_name),
+        ))));
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::prop(IRNode::id(env_name.clone()), "hasError"),
+            IRNode::BooleanLiteral(true),
+        ))));
+        current_statements.push(Self::generator_break_statement(end_label));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = finally_label;
+        if using_async {
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::id(result_name.clone()),
+                IRNode::CallExpr {
+                    callee: Box::new(IRNode::RuntimeHelper("__disposeResources".into())),
+                    arguments: vec![IRNode::id(env_name)],
+                },
+            ))));
+            current_statements.push(IRNode::IfBreak {
+                condition: Box::new(IRNode::PrefixUnaryExpr {
+                    operator: "!".into(),
+                    operand: Box::new(IRNode::id(result_name.clone())),
+                }),
+                target_label: dispose_done_label,
+            });
+            current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+                IRNode::GeneratorOp {
+                    opcode: opcodes::YIELD,
+                    value: Some(Box::new(IRNode::id(result_name))),
+                    comment: Some("yield".into()),
+                },
+            ))));
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+
+            *current_label = dispose_resume_label;
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::GeneratorSent)));
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::GeneratorLabel,
+                IRNode::number(dispose_done_label.to_string()),
+            ))));
+            cases.push(IRGeneratorCase {
+                label: *current_label,
+                statements: std::mem::take(current_statements),
+            });
+        } else {
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::CallExpr {
+                callee: Box::new(IRNode::RuntimeHelper("__disposeResources".into())),
+                arguments: vec![IRNode::id(env_name)],
+            })));
+        }
+
+        *current_label = dispose_done_label;
+        current_statements.push(IRNode::ReturnStatement(Some(Box::new(
+            IRNode::GeneratorOp {
+                opcode: opcodes::END_FINALLY,
+                value: None,
+                comment: Some("endfinally".into()),
+            },
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        *current_label = end_label;
+        true
+    }
+
+    fn for_initializer_using_declarations(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<(bool, Vec<NodeIndex>)> {
+        let init_node = self.arena.get(initializer)?;
+        let flags = init_node.flags as u32;
+        if (flags & node_flags::USING) == 0 && !node_flags::is_await_using(flags) {
+            return None;
+        }
+        let decl_list = self.arena.get_variable(init_node)?;
+        Some((
+            node_flags::is_await_using(flags),
+            decl_list.declarations.nodes.clone(),
+        ))
+    }
+
+    fn variable_declaration_name(&self, decl_idx: NodeIndex) -> Option<String> {
+        let decl_node = self.arena.get(decl_idx)?;
+        let decl = self.arena.get_variable_declaration(decl_node)?;
+        let name = super::emit_utils::identifier_text_or_empty(self.arena, decl.name);
+        (!name.is_empty()).then_some(name)
+    }
+
+    fn loop_body_to_ir(&self, statement: NodeIndex) -> IRNode {
+        let Some(node) = self.arena.get(statement) else {
+            return IRNode::EmptyStatement;
+        };
+        if node.kind != syntax_kind_ext::BLOCK {
+            return self.statement_to_ir(statement);
+        }
+        let Some(block) = self.arena.get_block(node) else {
+            return IRNode::Block(Vec::new());
+        };
+        IRNode::Block(
+            block
+                .statements
+                .nodes
+                .iter()
+                .map(|&stmt| self.statement_to_ir(stmt))
+                .collect(),
+        )
+    }
+
+    fn using_declaration_initializer_value(
+        &self,
+        decl_idx: NodeIndex,
+        current_statements: &mut Vec<IRNode>,
+        started_computed_temp_group: &mut bool,
+    ) -> IRNode {
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return IRNode::Undefined;
+        };
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return IRNode::Undefined;
+        };
+        if decl.initializer.is_none() {
+            return IRNode::Undefined;
+        }
+        if let Some((temp, lowered)) =
+            self.lower_object_literal_es5_with_computed_properties(decl.initializer)
+        {
+            if !*started_computed_temp_group {
+                current_statements.push(IRNode::HoistedVarGroupBreak);
+                *started_computed_temp_group = true;
+            }
+            current_statements.push(IRNode::VarDecl {
+                name: temp.into(),
+                initializer: None,
+            });
+            lowered
+        } else {
+            self.expression_to_ir(decl.initializer)
+        }
+    }
+
+    fn comma_chain(mut expressions: Vec<IRNode>) -> Option<IRNode> {
+        if expressions.is_empty() {
+            return None;
+        }
+        let mut expression = expressions.remove(0);
+        for next in expressions {
+            expression = IRNode::binary(expression, ",", next);
+        }
+        Some(expression)
+    }
+
+    fn for_of_iterable_temp_name(&self, expression: NodeIndex, env_id: u32) -> String {
+        if let Some(expr_node) = self.arena.get(expression)
+            && expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+        {
+            let name = super::emit_utils::identifier_text_or_empty(self.arena, expression);
+            if !name.is_empty() {
+                return self.fresh_reserved_name(format!("{name}_{env_id}"));
+            }
+        }
+        self.generate_hoisted_temp()
+    }
+
+    fn for_await_iterator_names(&self, expression: NodeIndex, env_id: u32) -> (String, String) {
+        if let Some(expr_node) = self.arena.get(expression)
+            && expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+        {
+            let name = super::emit_utils::identifier_text_or_empty(self.arena, expression);
+            if !name.is_empty() {
+                let iterator_name = format!("{name}_{env_id}");
+                return (iterator_name.clone(), format!("{iterator_name}_1"));
+            }
+        }
+        (self.generate_hoisted_temp(), self.generate_hoisted_temp())
+    }
+
+    fn for_of_iterable_to_ir_with_es5_computed_temps(
+        &self,
+        expression: NodeIndex,
+        current_statements: &mut Vec<IRNode>,
+    ) -> IRNode {
+        let Some(expr_node) = self.arena.get(expression) else {
+            return IRNode::Undefined;
+        };
+        if expr_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return self.expression_to_ir(expression);
+        }
+        let Some(array) = self.arena.get_literal_expr(expr_node) else {
+            return IRNode::ArrayLiteral(Vec::new());
+        };
+
+        let mut started_computed_temp_group = false;
+        let elements = array
+            .elements
+            .nodes
+            .iter()
+            .map(|&element| {
+                if let Some((temp, lowered)) =
+                    self.lower_object_literal_es5_with_computed_properties(element)
+                {
+                    if !started_computed_temp_group {
+                        current_statements.push(IRNode::HoistedVarGroupBreak);
+                        started_computed_temp_group = true;
+                    }
+                    current_statements.push(IRNode::VarDecl {
+                        name: temp.into(),
+                        initializer: None,
+                    });
+                    lowered
+                } else {
+                    self.expression_to_ir(element)
+                }
+            })
+            .collect();
+
+        IRNode::ArrayLiteral(elements)
+    }
+
     fn process_async_statement(
         &mut self,
         idx: NodeIndex,
@@ -861,6 +2547,10 @@ impl<'a> AsyncES5Transformer<'a> {
         };
 
         match node.kind {
+            k if k == syntax_kind_ext::EMPTY_STATEMENT => {
+                current_statements.push(IRNode::EmptyStatement);
+            }
+
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
                 if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
                     self.process_expression_in_async(
@@ -999,7 +2689,39 @@ impl<'a> AsyncES5Transformer<'a> {
             }
 
             k if k == syntax_kind_ext::FOR_STATEMENT => {
-                if !self.process_captured_for_statement_in_async(
+                if !self.process_for_initializer_using_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) && !self.process_captured_for_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) {
+                    current_statements.push(self.statement_to_ir(idx));
+                }
+            }
+
+            k if k == syntax_kind_ext::FOR_IN_STATEMENT => {
+                if !self.process_for_in_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) {
+                    current_statements.push(self.statement_to_ir(idx));
+                }
+            }
+
+            k if k == syntax_kind_ext::FOR_OF_STATEMENT => {
+                if !self.process_for_await_using_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) && !self.process_for_of_using_statement_in_async(
                     idx,
                     cases,
                     current_statements,
@@ -1974,6 +3696,7 @@ impl<'a> AsyncES5Transformer<'a> {
 
         let IRNode::ES5ClassIIFE {
             name,
+            binding_name: _,
             base_class,
             super_param,
             body,
@@ -2044,6 +3767,7 @@ impl<'a> AsyncES5Transformer<'a> {
         let class_ir =
             class_transformer.transform_class_to_ir_with_name(class_idx, Some(class_name))?;
         let IRNode::ES5ClassIIFE {
+            binding_name: _,
             body,
             super_param,
             weakmap_decls,
@@ -2135,16 +3859,32 @@ impl<'a> AsyncES5Transformer<'a> {
                 .get(if_stmt.else_statement)
                 .is_some_and(|n| n.kind != syntax_kind_ext::EMPTY_STATEMENT);
 
-        // Reserve labels for else branch and end
-        let else_label = self.state.next_label();
-        let end_label = if has_else {
-            self.state.next_label()
+        // When the then branch suspends, its resume case must claim the next
+        // label before the else branch is scheduled. Use a placeholder for the
+        // initial branch target, then patch it once the then branch has been
+        // lowered.
+        let delayed_else_label = has_else && then_has_await;
+        let else_placeholder = delayed_else_label.then(|| self.next_loop_exit_placeholder());
+        let (mut else_label, mut end_label) = if delayed_else_label {
+            (None, None)
         } else {
-            else_label
+            let else_label = self.state.next_label();
+            let end_label = if has_else {
+                self.state.next_label()
+            } else {
+                else_label
+            };
+            (Some(else_label), Some(end_label))
         };
 
         // Emit: if (!(condition)) return [3 /*break*/, else_label];
-        let target_label = if has_else { else_label } else { end_label };
+        let target_label = else_placeholder.unwrap_or_else(|| {
+            if has_else {
+                else_label.expect("else label must be allocated without delayed scheduling")
+            } else {
+                end_label.expect("end label must be allocated without delayed scheduling")
+            }
+        });
         let cond_ir = self.expression_to_ir(if_stmt.expression);
         current_statements.push(IRNode::IfBreak {
             condition: Box::new(IRNode::PrefixUnaryExpr {
@@ -2163,6 +3903,21 @@ impl<'a> AsyncES5Transformer<'a> {
         );
 
         if has_else {
+            if let Some(placeholder) = else_placeholder {
+                let patched_else_label = self.state.next_label();
+                let patched_end_label = self.state.next_label();
+                Self::patch_if_break_target(cases, placeholder, patched_else_label);
+                Self::patch_if_break_target_in_statements(
+                    current_statements,
+                    placeholder,
+                    patched_else_label,
+                );
+                else_label = Some(patched_else_label);
+                end_label = Some(patched_end_label);
+            }
+            let else_label = else_label.expect("else label must be available before else branch");
+            let end_label = end_label.expect("end label must be available before then break");
+
             // Emit: return [3 /*break*/, end_label]; at end of then branch
             current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                 IRNode::GeneratorOp {
@@ -2197,7 +3952,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 statements: std::mem::take(current_statements),
             });
         }
-        *current_label = end_label;
+        *current_label = end_label.expect("end label must be available after if lowering");
     }
 
     /// Process a while statement inside an async function body.
@@ -2394,6 +4149,446 @@ impl<'a> AsyncES5Transformer<'a> {
         true
     }
 
+    fn process_for_in_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::FOR_IN_STATEMENT {
+            return false;
+        }
+        let Some(for_in) = self.arena.get_for_in_of(node) else {
+            return false;
+        };
+
+        let initializer_has_suspension = self.contains_await_recursive(for_in.initializer);
+        let expression_has_suspension = self.contains_await_recursive(for_in.expression);
+        let body_has_suspension = self.contains_await_recursive(for_in.statement);
+        if !initializer_has_suspension && !expression_has_suspension && !body_has_suspension {
+            return self.process_simple_for_in_statement(for_in, current_statements);
+        }
+        if self.for_in_body_has_unsupported_control_flow(for_in.statement) {
+            return false;
+        }
+
+        let object_suspension = self.direct_suspension_expression(for_in.expression);
+        if expression_has_suspension && object_suspension.is_none() {
+            return false;
+        }
+
+        let Some((assignment_target, declared_iteration_name)) =
+            self.for_in_assignment_target(for_in.initializer)
+        else {
+            return false;
+        };
+
+        let object_temp = self.generate_hoisted_temp();
+        let keys_temp = self.generate_hoisted_temp();
+        let key_temp = self.generate_hoisted_temp();
+        let index_temp = self.fresh_reserved_name("_i");
+        let target_object_temp = if matches!(
+            assignment_target,
+            ForInAssignmentTarget::SuspendedElement {
+                index: ForInSuspendedElementIndex::Suspended(_),
+                ..
+            }
+        ) {
+            Some(self.generate_hoisted_temp())
+        } else {
+            None
+        };
+
+        for name in [&object_temp, &keys_temp, &key_temp, &index_temp] {
+            current_statements.push(IRNode::VarDecl {
+                name: name.clone().into(),
+                initializer: None,
+            });
+        }
+        if let Some(temp) = &target_object_temp {
+            current_statements.push(IRNode::VarDecl {
+                name: temp.clone().into(),
+                initializer: None,
+            });
+        }
+        if let Some(iteration_name) = declared_iteration_name {
+            current_statements.push(IRNode::VarDecl {
+                name: iteration_name.into(),
+                initializer: None,
+            });
+        }
+
+        let object_value = if let Some(suspension) = object_suspension {
+            self.process_await_expression(suspension, cases, current_statements, current_label);
+            IRNode::GeneratorSent
+        } else {
+            self.expression_to_ir(for_in.expression)
+        };
+
+        current_statements.push(Self::expression_statement(IRNode::assign(
+            IRNode::id(object_temp.clone()),
+            object_value,
+        )));
+        current_statements.push(Self::expression_statement(IRNode::assign(
+            IRNode::id(keys_temp.clone()),
+            IRNode::ArrayLiteral(Vec::new()),
+        )));
+        current_statements.push(IRNode::ForInOfStatement {
+            kind: "in".into(),
+            initializer: Box::new(IRNode::id(key_temp.clone())),
+            expression: Box::new(IRNode::id(object_temp.clone())),
+            body: Box::new(Self::expression_statement(IRNode::CallExpr {
+                callee: Box::new(IRNode::prop(IRNode::id(keys_temp.clone()), "push")),
+                arguments: vec![IRNode::id(key_temp.clone())],
+            })),
+            multiline_body: true,
+        });
+        current_statements.push(Self::expression_statement(IRNode::assign(
+            IRNode::id(index_temp.clone()),
+            IRNode::number("0"),
+        )));
+
+        let loop_label = self.state.next_label();
+        let increment_placeholder = self.next_loop_exit_placeholder();
+        let end_placeholder = self.next_loop_exit_placeholder();
+        current_statements.push(Self::generator_label_assignment(loop_label));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+        *current_label = loop_label;
+
+        current_statements.push(IRNode::IfBreak {
+            condition: Box::new(IRNode::PrefixUnaryExpr {
+                operator: "!".into(),
+                operand: Box::new(IRNode::Parenthesized(Box::new(IRNode::binary(
+                    IRNode::id(index_temp.clone()),
+                    "<",
+                    IRNode::prop(IRNode::id(keys_temp.clone()), "length"),
+                )))),
+            }),
+            target_label: end_placeholder,
+        });
+        current_statements.push(Self::expression_statement(IRNode::assign(
+            IRNode::id(key_temp.clone()),
+            IRNode::elem(IRNode::id(keys_temp), IRNode::id(index_temp.clone())),
+        )));
+        current_statements.push(IRNode::IfBreak {
+            condition: Box::new(IRNode::PrefixUnaryExpr {
+                operator: "!".into(),
+                operand: Box::new(IRNode::Parenthesized(Box::new(IRNode::binary(
+                    IRNode::id(key_temp.clone()),
+                    "in",
+                    IRNode::id(object_temp),
+                )))),
+            }),
+            target_label: increment_placeholder,
+        });
+        match assignment_target {
+            ForInAssignmentTarget::Direct(target) => {
+                current_statements.push(Self::expression_statement(IRNode::assign(
+                    *target,
+                    IRNode::id(key_temp),
+                )));
+            }
+            ForInAssignmentTarget::SuspendedProperty {
+                object_suspension,
+                property,
+            } => {
+                self.process_await_expression(
+                    object_suspension,
+                    cases,
+                    current_statements,
+                    current_label,
+                );
+                current_statements.push(Self::expression_statement(IRNode::assign(
+                    IRNode::prop(
+                        IRNode::Parenthesized(Box::new(IRNode::GeneratorSent)),
+                        property,
+                    ),
+                    IRNode::id(key_temp),
+                )));
+            }
+            ForInAssignmentTarget::SuspendedElement { object, index } => match index {
+                ForInSuspendedElementIndex::Direct(index) => {
+                    let ForInSuspendedObject::Suspended(object_suspension) = object else {
+                        return false;
+                    };
+                    self.process_await_expression(
+                        object_suspension,
+                        cases,
+                        current_statements,
+                        current_label,
+                    );
+                    current_statements.push(Self::expression_statement(IRNode::assign(
+                        IRNode::elem(
+                            IRNode::Parenthesized(Box::new(IRNode::GeneratorSent)),
+                            *index,
+                        ),
+                        IRNode::id(key_temp),
+                    )));
+                }
+                ForInSuspendedElementIndex::Suspended(index_suspension) => {
+                    let Some(temp) = target_object_temp else {
+                        return false;
+                    };
+                    match object {
+                        ForInSuspendedObject::Direct(object) => {
+                            current_statements.push(Self::expression_statement(IRNode::assign(
+                                IRNode::id(temp.clone()),
+                                *object,
+                            )));
+                        }
+                        ForInSuspendedObject::Suspended(object_suspension) => {
+                            self.process_await_expression(
+                                object_suspension,
+                                cases,
+                                current_statements,
+                                current_label,
+                            );
+                            current_statements.push(Self::expression_statement(IRNode::assign(
+                                IRNode::id(temp.clone()),
+                                IRNode::Parenthesized(Box::new(IRNode::GeneratorSent)),
+                            )));
+                        }
+                    }
+                    self.process_await_expression(
+                        index_suspension,
+                        cases,
+                        current_statements,
+                        current_label,
+                    );
+                    current_statements.push(Self::expression_statement(IRNode::assign(
+                        IRNode::elem(IRNode::id(temp), IRNode::GeneratorSent),
+                        IRNode::id(key_temp),
+                    )));
+                }
+            },
+        }
+
+        self.process_block_or_statement_in_async(
+            for_in.statement,
+            cases,
+            current_statements,
+            current_label,
+        );
+
+        let increment_label = self.state.next_label();
+        let end_label = self.state.next_label();
+        current_statements.push(Self::generator_label_assignment(increment_label));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        current_statements.push(Self::expression_statement(IRNode::PostfixUnaryExpr {
+            operand: Box::new(IRNode::id(index_temp)),
+            operator: "++".into(),
+        }));
+        current_statements.push(Self::generator_break_statement(loop_label));
+        cases.push(IRGeneratorCase {
+            label: increment_label,
+            statements: std::mem::take(current_statements),
+        });
+
+        Self::patch_if_break_target(cases, increment_placeholder, increment_label);
+        Self::patch_if_break_target(cases, end_placeholder, end_label);
+        *current_label = end_label;
+        true
+    }
+
+    fn process_simple_for_in_statement(
+        &self,
+        for_in: &tsz_parser::parser::node::ForInOfData,
+        current_statements: &mut Vec<IRNode>,
+    ) -> bool {
+        let Some((target, declared_iteration_name)) =
+            self.for_in_direct_assignment_target(for_in.initializer)
+        else {
+            return false;
+        };
+        if let Some(iteration_name) = declared_iteration_name {
+            current_statements.push(IRNode::VarDecl {
+                name: iteration_name.into(),
+                initializer: None,
+            });
+        }
+        current_statements.push(IRNode::ForInOfStatement {
+            kind: "in".into(),
+            initializer: Box::new(target),
+            expression: Box::new(self.expression_to_ir(for_in.expression)),
+            body: Box::new(self.statement_to_ir(for_in.statement)),
+            multiline_body: false,
+        });
+        true
+    }
+
+    fn for_in_assignment_target(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<(ForInAssignmentTarget, Option<String>)> {
+        if self.contains_await_recursive(initializer) {
+            return self
+                .for_in_suspended_assignment_target(initializer)
+                .map(|target| (target, None));
+        }
+        self.for_in_direct_assignment_target(initializer)
+            .map(|(target, declared_name)| {
+                (
+                    ForInAssignmentTarget::Direct(Box::new(target)),
+                    declared_name,
+                )
+            })
+    }
+
+    fn for_in_direct_assignment_target(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<(IRNode, Option<String>)> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            let decl_list = self.arena.get_variable(init_node)?;
+            if decl_list.declarations.nodes.len() != 1 {
+                return None;
+            }
+            let decl_idx = *decl_list.declarations.nodes.first()?;
+            let decl_node = self.arena.get(decl_idx)?;
+            let decl = self.arena.get_variable_declaration(decl_node)?;
+            if decl.initializer.is_some() {
+                return None;
+            }
+            let name = super::emit_utils::identifier_text(self.arena, decl.name)?;
+            return Some((IRNode::id(name.clone()), Some(name)));
+        }
+        if init_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let name = super::emit_utils::identifier_text(self.arena, initializer)?;
+            return Some((IRNode::id(name), None));
+        }
+        if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || init_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return Some((self.expression_to_ir(initializer), None));
+        }
+        None
+    }
+
+    fn for_in_suspended_assignment_target(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<ForInAssignmentTarget> {
+        let initializer = self.strip_parenthesized_expression(initializer);
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(init_node)?;
+            let object_suspension = self.direct_suspension_expression(access.expression)?;
+            let property = crate::transforms::emit_utils::identifier_text_or_empty(
+                self.arena,
+                access.name_or_argument,
+            );
+            return Some(ForInAssignmentTarget::SuspendedProperty {
+                object_suspension,
+                property,
+            });
+        }
+        if init_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(init_node)?;
+            let object = if let Some(object_suspension) =
+                self.direct_suspension_expression(access.expression)
+            {
+                ForInSuspendedObject::Suspended(object_suspension)
+            } else if self.contains_await_recursive(access.expression) {
+                return None;
+            } else {
+                ForInSuspendedObject::Direct(Box::new(self.expression_to_ir(access.expression)))
+            };
+            let index = if let Some(index_suspension) =
+                self.direct_suspension_expression(access.name_or_argument)
+            {
+                ForInSuspendedElementIndex::Suspended(index_suspension)
+            } else if self.contains_await_recursive(access.name_or_argument) {
+                return None;
+            } else {
+                ForInSuspendedElementIndex::Direct(Box::new(
+                    self.expression_to_ir(access.name_or_argument),
+                ))
+            };
+            if matches!(object, ForInSuspendedObject::Direct(_))
+                && matches!(index, ForInSuspendedElementIndex::Direct(_))
+            {
+                return None;
+            }
+            return Some(ForInAssignmentTarget::SuspendedElement { object, index });
+        }
+        None
+    }
+
+    fn direct_suspension_expression(&self, expression: NodeIndex) -> Option<NodeIndex> {
+        let expression = self.strip_parenthesized_expression(expression);
+        self.is_suspension_expression(expression)
+            .then_some(expression)
+    }
+
+    fn for_in_body_has_unsupported_control_flow(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.is_function_expression_or_arrow()
+        {
+            return false;
+        }
+        match node.kind {
+            k if k == syntax_kind_ext::BREAK_STATEMENT
+                || k == syntax_kind_ext::CONTINUE_STATEMENT
+                || k == syntax_kind_ext::RETURN_STATEMENT =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
+                self.arena.get_block(node).is_some_and(|block| {
+                    block
+                        .statements
+                        .nodes
+                        .iter()
+                        .any(|&stmt| self.for_in_body_has_unsupported_control_flow(stmt))
+                })
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                self.arena.get_if_statement(node).is_some_and(|if_stmt| {
+                    self.for_in_body_has_unsupported_control_flow(if_stmt.then_statement)
+                        || self.for_in_body_has_unsupported_control_flow(if_stmt.else_statement)
+                })
+            }
+            k if k == syntax_kind_ext::WHILE_STATEMENT
+                || k == syntax_kind_ext::DO_STATEMENT
+                || k == syntax_kind_ext::FOR_STATEMENT
+                || k == syntax_kind_ext::FOR_IN_STATEMENT
+                || k == syntax_kind_ext::FOR_OF_STATEMENT
+                || k == syntax_kind_ext::SWITCH_STATEMENT
+                || k == syntax_kind_ext::TRY_STATEMENT
+                || k == syntax_kind_ext::LABELED_STATEMENT =>
+            {
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn expression_statement(expression: IRNode) -> IRNode {
+        IRNode::ExpressionStatement(Box::new(expression))
+    }
+
+    fn generator_label_assignment(label: u32) -> IRNode {
+        Self::expression_statement(IRNode::assign(
+            IRNode::GeneratorLabel,
+            IRNode::number(label.to_string()),
+        ))
+    }
+
     fn loop_needs_async_capture(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return false;
@@ -2566,6 +4761,16 @@ impl<'a> AsyncES5Transformer<'a> {
             for statement in &mut case.statements {
                 Self::patch_if_break_target_in_node(statement, placeholder_label, target_label);
             }
+        }
+    }
+
+    fn patch_if_break_target_in_statements(
+        statements: &mut [IRNode],
+        placeholder_label: u32,
+        target_label: u32,
+    ) {
+        for statement in statements {
+            Self::patch_if_break_target_in_node(statement, placeholder_label, target_label);
         }
     }
 
@@ -2861,14 +5066,13 @@ impl<'a> AsyncES5Transformer<'a> {
 
         if node.kind == syntax_kind_ext::BLOCK {
             if let Some(block) = self.arena.get_block(node) {
-                for &stmt_idx in &block.statements.nodes {
-                    self.process_async_statement(
-                        stmt_idx,
-                        cases,
-                        current_statements,
-                        current_label,
-                    );
-                }
+                self.process_async_statement_list(
+                    &block.statements.nodes,
+                    cases,
+                    current_statements,
+                    current_label,
+                    &[],
+                );
             }
         } else {
             self.process_async_statement(idx, cases, current_statements, current_label);
@@ -2892,6 +5096,12 @@ impl<'a> AsyncES5Transformer<'a> {
         // Check if this is an await expression
         if node.kind == self.suspension_kind()
             || (self.async_generator_mode && node.kind == syntax_kind_ext::AWAIT_EXPRESSION)
+        {
+            return true;
+        }
+
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            && (node.flags as u32 & node_flags::USING) != 0
         {
             return true;
         }
@@ -2955,6 +5165,9 @@ impl<'a> AsyncES5Transformer<'a> {
                 if let Some(decl_list_node) = self.arena.get(decl_list_idx)
                     && let Some(decl_list) = self.arena.get_variable(decl_list_node)
                 {
+                    if (decl_list_node.flags as u32 & node_flags::USING) != 0 {
+                        return true;
+                    }
                     for &decl_idx in &decl_list.declarations.nodes {
                         if let Some(decl_node) = self.arena.get(decl_idx)
                             && let Some(decl) = self.arena.get_variable_declaration(decl_node)
@@ -3176,6 +5389,17 @@ impl<'a> AsyncES5Transformer<'a> {
             || node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
             && let Some(for_data) = self.arena.get_for_in_of(node)
         {
+            if for_data.await_modifier {
+                return true;
+            }
+            if node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                && super::emit_utils::for_of_using_info(self.arena, for_data.initializer).is_some()
+            {
+                return true;
+            }
+            if self.contains_await_recursive(for_data.initializer) {
+                return true;
+            }
             if self.contains_await_recursive(for_data.expression) {
                 return true;
             }

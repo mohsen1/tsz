@@ -316,7 +316,7 @@ impl<'a> Completions<'a> {
         }
 
         let resolved = checker.resolve_lazy_type(type_id);
-        let evaluated = tsz_solver::evaluate_type(interner, resolved);
+        let evaluated = tsz_solver::computation::evaluate_type(interner, resolved);
         if evaluated != type_id {
             self.collect_properties_for_type_inner(
                 evaluated,
@@ -1358,6 +1358,12 @@ impl<'a> Completions<'a> {
     ) {
         for prop in properties {
             if !include_private && prop.visibility != Visibility::Public {
+                continue;
+            }
+            // Symbol-keyed computed properties (e.g. `[Symbol.iterator]`,
+            // `unique symbol` keys) require bracket-notation access and are
+            // excluded from dot-access member completions, matching tsc behavior.
+            if prop.is_symbol_named {
                 continue;
             }
             let name = interner.resolve_atom(prop.name);

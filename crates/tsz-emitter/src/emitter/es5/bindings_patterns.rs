@@ -1378,13 +1378,49 @@ impl<'a> Printer<'a> {
             }
             k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
                 if let Some(pattern) = self.arena.get_binding_pattern(pattern_node) {
+                    let source_name = self
+                        .emit_param_array_downlevel_read(pattern_node, temp_name, started)
+                        .unwrap_or_else(|| temp_name.to_string());
                     for (i, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
-                        self.emit_param_array_binding_element(elem_idx, temp_name, i, started);
+                        self.emit_param_array_binding_element(elem_idx, &source_name, i, started);
                     }
                 }
             }
             _ => {}
         }
+    }
+
+    fn emit_param_array_downlevel_read(
+        &mut self,
+        pattern_node: &Node,
+        temp_name: &str,
+        started: &mut bool,
+    ) -> Option<String> {
+        if !self.ctx.target_es5
+            || !self.ctx.options.downlevel_iteration
+            || pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            return None;
+        }
+
+        let pattern = self.arena.get_binding_pattern(pattern_node)?;
+        if pattern.elements.nodes.is_empty() {
+            return None;
+        }
+
+        let read_name = self.get_temp_var_name();
+        self.emit_param_assignment_prefix(started);
+        self.write(&read_name);
+        self.write(" = ");
+        self.write_helper("__read");
+        self.write("(");
+        self.write(temp_name);
+        if let Some(limit) = self.binding_pattern_read_limit(pattern_node) {
+            self.write(", ");
+            self.write_usize(limit);
+        }
+        self.write(")");
+        Some(read_name)
     }
 
     pub(in crate::emitter) fn emit_param_object_binding_element(
@@ -1407,6 +1443,18 @@ impl<'a> Printer<'a> {
         let rest_prop = self.es5_rest_prop_for_key(key_idx, computed_key_temp.as_deref());
 
         if self.is_binding_pattern(elem.name) {
+            if elem.initializer.is_none()
+                && self.can_inline_param_nested_source(elem.name)
+                && let Some(source_name) = self.param_object_binding_source_expr(
+                    key_idx,
+                    temp_name,
+                    computed_key_temp.as_deref(),
+                )
+            {
+                self.emit_param_binding_assignments(elem.name, &source_name, started);
+                return Some(rest_prop);
+            }
+
             let value_name = self.get_temp_var_name();
             self.emit_param_assignment_prefix(started);
             self.write(&value_name);
@@ -1518,6 +1566,12 @@ impl<'a> Printer<'a> {
         }
 
         if self.is_binding_pattern(elem.name) {
+            if elem.initializer.is_none() && self.can_inline_param_nested_source(elem.name) {
+                let source_name = format!("{temp_name}[{index}]");
+                self.emit_param_binding_assignments(elem.name, &source_name, started);
+                return;
+            }
+
             let value_name = self.get_temp_var_name();
             self.emit_param_assignment_prefix(started);
             self.write(&value_name);
@@ -1576,6 +1630,93 @@ impl<'a> Printer<'a> {
             self.write_usize(index);
             self.write("]");
         }
+    }
+
+    fn can_inline_param_nested_source(&self, pattern_idx: NodeIndex) -> bool {
+        self.param_nested_source_inlineable(pattern_idx)
+            .is_some_and(|has_binding| has_binding)
+    }
+
+    fn param_nested_source_inlineable(&self, pattern_idx: NodeIndex) -> Option<bool> {
+        let pattern_node = self.arena.get(pattern_idx)?;
+        let pattern = self.arena.get_binding_pattern(pattern_node)?;
+
+        match pattern_node.kind {
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                let mut has_binding = false;
+                for &elem_idx in &pattern.elements.nodes {
+                    let Some(elem_node) = self.arena.get(elem_idx) else {
+                        continue;
+                    };
+                    let elem = self.arena.get_binding_element(elem_node)?;
+                    if elem.dot_dot_dot_token || elem.initializer.is_some() {
+                        return None;
+                    }
+                    let key_idx = self.get_binding_element_property_key(elem)?;
+                    if !self.is_literal_property_name(key_idx) {
+                        return None;
+                    }
+                    has_binding |= self.param_nested_target_inlineable(elem.name)?;
+                }
+                Some(has_binding)
+            }
+            k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                let mut has_binding = false;
+                for &elem_idx in &pattern.elements.nodes {
+                    if elem_idx.is_none() {
+                        continue;
+                    }
+                    let elem_node = self.arena.get(elem_idx)?;
+                    let elem = self.arena.get_binding_element(elem_node)?;
+                    if elem.dot_dot_dot_token || elem.initializer.is_some() {
+                        return None;
+                    }
+                    has_binding |= self.param_nested_target_inlineable(elem.name)?;
+                }
+                Some(has_binding)
+            }
+            _ => None,
+        }
+    }
+
+    fn param_nested_target_inlineable(&self, target_idx: NodeIndex) -> Option<bool> {
+        let target_node = self.arena.get(target_idx)?;
+
+        match target_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => Some(true),
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
+            {
+                self.param_nested_source_inlineable(target_idx)
+            }
+            _ => None,
+        }
+    }
+
+    fn param_object_binding_source_expr(
+        &self,
+        key_idx: NodeIndex,
+        temp_name: &str,
+        computed_key_temp: Option<&str>,
+    ) -> Option<String> {
+        let key_node = self.arena.get(key_idx)?;
+
+        if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            let computed_key_temp = computed_key_temp?;
+            return Some(format!("{temp_name}[{computed_key_temp}]"));
+        }
+
+        if key_node.kind == SyntaxKind::Identifier as u16 {
+            let ident = self.arena.get_identifier(key_node)?;
+            return Some(format!("{temp_name}.{}", ident.escaped_text));
+        }
+
+        if key_node.kind == SyntaxKind::NumericLiteral as u16 {
+            let lit = self.arena.get_literal(key_node)?;
+            return Some(format!("{temp_name}[{}]", lit.text));
+        }
+
+        None
     }
 
     pub(in crate::emitter) fn emit_param_object_rest_element(
@@ -2200,17 +2341,23 @@ impl<'a> Printer<'a> {
 
         // Check if the initializer is a `using` declaration that needs dispose lowering.
         let using_info = if !self.ctx.options.target.supports_es2025() {
-            self.for_of_initializer_using_info(for_in_of.initializer)
+            crate::transforms::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
         } else {
             None
         };
 
-        if let Some((var_name, using_async)) = using_info {
+        if let Some(using_info) = using_info {
             // For `using` in for-await-of with async iterator lowering:
             // Emit: _c = _f.value;
             // Then: _d = false;
             // Then: const d1_1 = _c;
             // Then: const env = ...; try { const d1 = __addDisposable(env, d1_1, ...); body } catch/finally
+            let var_name = if using_info.recovered_missing_binding {
+                self.get_temp_var_name()
+            } else {
+                using_info.binding_name
+            };
+            let using_async = using_info.using_async;
             let value_temp = loop_result_name.clone();
 
             // Emit value assignment to the temp already reserved with the loop temps.
