@@ -7,12 +7,9 @@ import {
   COMPATIBILITY_CORPUS_ROWS,
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
+import { fmt } from "./loc.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
-
-function fmt(n) {
-  return Number(n).toLocaleString("en-US");
-}
 
 function formatUtcTimestamp(value) {
   const date = new Date(value);
