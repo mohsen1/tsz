@@ -1,5 +1,6 @@
 use super::super::Printer;
 use crate::emitter::ModuleKind;
+use tsz_parser::parser::node::NodeAccess;
 
 impl<'a> Printer<'a> {
     fn referenced_declaration_files(
@@ -26,61 +27,42 @@ impl<'a> Printer<'a> {
         Some(&after_keyword[1..1 + end])
     }
 
-    pub(super) fn should_preserve_bang_module_reference(
-        &self,
-        path: &str,
-        source_text: &str,
-    ) -> bool {
+    pub(super) fn should_preserve_bang_module_reference(&self, path: &str) -> bool {
         if self.ctx.options.module != ModuleKind::AMD || !path.ends_with(".d.ts") {
             return false;
         }
 
-        let mut saw_referenced_declaration_file = false;
-        let declares_imported_bang_module =
-            self.referenced_declaration_files(path).any(|source_file| {
-                saw_referenced_declaration_file = true;
-                source_file.text.lines().any(|line| {
-                    let Some(module_name) = Self::extract_declare_module_name(line) else {
-                        return false;
-                    };
-                    module_name.contains('!')
-                        && (source_text.contains(&format!("\"{module_name}\""))
-                            || source_text.contains(&format!("'{module_name}'")))
-                })
-            });
-
-        if saw_referenced_declaration_file {
-            declares_imported_bang_module
-        } else {
-            Self::source_imports_bang_module_specifier(source_text)
+        let mut decl_files = self.referenced_declaration_files(path).peekable();
+        if decl_files.peek().is_none() {
+            return self.source_imports_bang_module_specifier();
         }
-    }
 
-    fn source_imports_bang_module_specifier(source_text: &str) -> bool {
-        source_text.lines().any(|line| {
-            let trimmed = line.trim_start();
-            (trimmed.starts_with("import ")
-                || (trimmed.starts_with("export ")
-                    && (trimmed.contains(" from ") || trimmed.contains("require(")))
-                || trimmed.contains("require(")
-                || trimmed.contains(" from "))
-                && Self::quoted_text_contains_bang(line)
+        decl_files.any(|source_file| {
+            source_file.text.lines().any(|line| {
+                let Some(module_name) = Self::extract_declare_module_name(line) else {
+                    return false;
+                };
+                module_name.contains('!')
+                    && self.arena.import_decls.iter().any(|d| {
+                        self.arena
+                            .get_literal_text(d.module_specifier)
+                            .is_some_and(|s| s == module_name)
+                    })
+            })
         })
     }
 
-    fn quoted_text_contains_bang(text: &str) -> bool {
-        let mut rest = text;
-        while let Some(quote_start) = rest.find(['"', '\'']) {
-            rest = &rest[quote_start..];
-            let quote = rest.as_bytes()[0] as char;
-            let Some(quote_end) = rest[1..].find(quote) else {
-                return false;
-            };
-            if rest[1..1 + quote_end].contains('!') {
-                return true;
-            }
-            rest = &rest[1 + quote_end + 1..];
-        }
-        false
+    fn source_imports_bang_module_specifier(&self) -> bool {
+        let specifier_has_bang = |idx| {
+            self.arena
+                .get_literal_text(idx)
+                .is_some_and(|s| s.contains('!'))
+        };
+        self.arena
+            .import_decls
+            .iter()
+            .map(|d| d.module_specifier)
+            .chain(self.arena.export_decls.iter().map(|d| d.module_specifier))
+            .any(specifier_has_bang)
     }
 }

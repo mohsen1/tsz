@@ -35,11 +35,21 @@ pub(in crate::declaration_emitter) struct CallableDeclParts<'b> {
     pub(in crate::declaration_emitter) body: NodeIndex,
 }
 
+/// Carries the textual alias for a non-nameable class heritage expression and
+/// records which production path built it, so callers can decide preference
+/// without re-inspecting the formatted string.
+pub(in crate::declaration_emitter) struct SyntheticExtendsAlias {
+    pub text: String,
+    /// `true` when produced by the mixin-intersection path (`typeof A & typeof B & …`);
+    /// the caller should always prefer this text over the solver-synthesized type.
+    pub is_mixin_intersection: bool,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn synthetic_class_extends_alias_source_type_text(
         &self,
         heritage: Option<&NodeList>,
-    ) -> Option<String> {
+    ) -> Option<SyntheticExtendsAlias> {
         let heritage = heritage?;
         let (_, expr_idx) = self.non_nameable_extends_heritage_type(heritage)?;
         let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
@@ -62,15 +72,25 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(type_text) =
                 self.function_returned_local_class_constructor_type_text(arg_idx)
             {
-                return Some(type_text);
+                return Some(SyntheticExtendsAlias {
+                    text: type_text,
+                    is_mixin_intersection: false,
+                });
             }
         }
 
         if let Some(text) = self.mixin_call_intersection_source_text(expr_idx) {
-            return Some(text);
+            return Some(SyntheticExtendsAlias {
+                text,
+                is_mixin_intersection: true,
+            });
         }
 
         self.call_expression_returned_local_class_constructor_text(expr_idx, true)
+            .map(|text| SyntheticExtendsAlias {
+                text,
+                is_mixin_intersection: false,
+            })
     }
 
     /// Recover the source-side return type for a heritage call like

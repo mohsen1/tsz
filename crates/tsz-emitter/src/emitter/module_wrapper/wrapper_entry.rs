@@ -123,7 +123,7 @@ impl<'a> Printer<'a> {
                                     || source_file.file_name.ends_with(&format!("/{path}")))
                         });
                     if (path.starts_with('/') && !references_compilation_dts)
-                        || self.should_preserve_bang_module_reference(&path, text)
+                        || self.should_preserve_bang_module_reference(&path)
                     {
                         refs.push(trimmed.to_string());
                     }

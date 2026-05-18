@@ -1337,13 +1337,15 @@ impl<'a> DeclarationEmitter<'a> {
         let type_text = self.print_synthetic_class_extends_alias_type(type_id);
         let source_type_text = self.synthetic_class_extends_alias_source_type_text(heritage);
         let prefer_source_text = type_text == "never"
-            || source_type_text.as_ref().is_some_and(|source_text| {
-                source_text.contains(" & ")
-                    || (Self::is_constructor_object_type_text(source_text)
+            || source_type_text.as_ref().is_some_and(|alias| {
+                alias.is_mixin_intersection
+                    || (Self::is_constructor_object_type_text(&alias.text)
                         && Self::type_text_has_conditional_infer_surface(&type_text))
             });
         let type_text = if prefer_source_text {
-            source_type_text.unwrap_or(type_text)
+            source_type_text
+                .map(|alias| alias.text)
+                .unwrap_or(type_text)
         } else {
             type_text
         };

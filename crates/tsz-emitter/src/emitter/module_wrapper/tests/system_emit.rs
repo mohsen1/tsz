@@ -588,6 +588,64 @@ import * as http from 'intern/dojo/node!http';
     );
 }
 
+#[test]
+fn amd_reference_directive_stripped_when_bang_module_not_imported() {
+    let declarations = r#"declare module 'intern/dojo/node!http' {
+export = {};
+}
+"#;
+    let source = r#"/// <reference path="a.d.ts"/>
+
+import * as other from 'some-other-module';
+"#;
+    let mut parser = ParserState::new("a.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut declaration_file = parser.arena.source_files[0].clone();
+    declaration_file.file_name = "a.d.ts".to_string();
+    declaration_file.text = std::sync::Arc::from(declarations);
+    declaration_file.is_declaration_file = true;
+    parser.arena.source_files.push(declaration_file);
+
+    let options = PrinterOptions {
+        module: ModuleKind::AMD,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        !output.contains("/// <reference"),
+        "Reference should be stripped when the bang module is not actually imported.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn amd_reference_directive_preserved_via_import_specifier_fallback() {
+    // No matching declaration file — falls back to AST import_decls scan.
+    let source = r#"/// <reference path="missing.d.ts"/>
+
+import * as plugin from 'loader!resource';
+"#;
+    let mut parser = ParserState::new("a.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::AMD,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.starts_with("/// <reference path=\"missing.d.ts\"/>"),
+        "Reference should be preserved when source imports a bang-module specifier.\nOutput:\n{output}"
+    );
+}
+
 /// UMD wrappers should also strip `/// <reference>` directives from JS output.
 #[test]
 fn umd_reference_directive_stripped_from_output() {

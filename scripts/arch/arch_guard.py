@@ -364,7 +364,7 @@ REGEX_LINE_COUNT_CHECKS = [
         "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
         [ROOT / "crates" / "tsz-emitter" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
-        3,
+        0,
     ),
     (
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
