@@ -4891,6 +4891,65 @@ module.exports = Timer;
 }
 
 #[test]
+fn test_js_commonjs_export_equals_function_jsdoc_follows_export_assignment() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} timeout
+ */
+function Timer(timeout) {
+    this.timeout = timeout;
+}
+module.exports = Timer;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = Timer;")
+        .expect("Expected CommonJS export assignment");
+    let jsdoc_pos = output
+        .find("/**\n * @param {number} timeout\n */")
+        .expect("Expected Timer JSDoc block");
+    let function_pos = output
+        .find("declare function Timer(timeout: number): void;")
+        .expect("Expected Timer function declaration");
+    assert!(
+        export_pos < jsdoc_pos && jsdoc_pos < function_pos,
+        "Expected export= before the function JSDoc and declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_export_equals_plain_function_jsdoc_follows_export_assignment() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} value
+ * @returns {string}
+ */
+function format(value) {
+    return String(value);
+}
+module.exports = format;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = format;")
+        .expect("Expected CommonJS export assignment");
+    let jsdoc_pos = output
+        .find("/**\n * @param {number} value\n * @returns {string}\n */")
+        .expect("Expected format JSDoc block");
+    let function_pos = output
+        .find("declare function format(value: number): string;")
+        .expect("Expected format function declaration");
+    assert!(
+        export_pos < jsdoc_pos && jsdoc_pos < function_pos,
+        "Expected export= before the plain function JSDoc and declaration: {output}"
+    );
+}
+
+#[test]
 fn test_js_exported_function_like_class_preserves_constructor_jsdoc_block() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
