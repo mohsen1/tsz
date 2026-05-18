@@ -492,6 +492,8 @@ impl<'a> DeclarationEmitter<'a> {
                     .unwrap_or(type_text);
                 type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
                     .unwrap_or(type_text);
+                type_text =
+                    Self::unwrap_return_type_zero_arg_import_type(&type_text).unwrap_or(type_text);
                 if let Some(labelled_type_text) = self
                     .preserve_spread_argument_tuple_labels_in_call_return_type(
                         initializer,
@@ -927,6 +929,9 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     selected_type_text
                 };
+                let selected_type_text =
+                    Self::unwrap_return_type_zero_arg_import_type(&selected_type_text)
+                        .unwrap_or(selected_type_text);
                 if has_initializer {
                     self.insert_import_for_reused_static_call_type(
                         initializer,
