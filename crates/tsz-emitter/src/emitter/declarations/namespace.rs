@@ -1919,6 +1919,23 @@ impl<'a> Printer<'a> {
                             if !self.writer.is_at_line_start() {
                                 self.write_line();
                             }
+                        } else if export.is_default_export
+                            && !matches!(
+                                inner_kind,
+                                k if k == syntax_kind_ext::CLASS_DECLARATION
+                                    || k == syntax_kind_ext::FUNCTION_DECLARATION
+                                    || k == syntax_kind_ext::ENUM_DECLARATION
+                                    || k == syntax_kind_ext::MODULE_DECLARATION
+                            )
+                        {
+                            // Invalid namespace-scope `export default expr`
+                            // recovers as an export declaration. Tsc preserves
+                            // that syntax verbatim instead of treating it as a
+                            // namespace property export.
+                            self.write("export default ");
+                            self.emit_expression(inner_idx);
+                            self.write_semicolon();
+                            self.write_line();
                         } else {
                             // class/function/enum: emit without export, then add assignment
                             let recovered_anonymous_default_class_name =

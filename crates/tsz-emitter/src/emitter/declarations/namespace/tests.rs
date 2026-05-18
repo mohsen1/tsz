@@ -570,3 +570,34 @@ fn namespace_default_function_recovery_emits_default_assignment() {
         "Recovered async namespace default function should lower async body and export assignment.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn namespace_invalid_default_expression_export_is_preserved_verbatim() {
+    let source =
+        "namespace Foo {\n  export default foo;\n}\n\nnamespace Bar {\n  export default bar;\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("export default foo;"),
+        "Invalid namespace default expression export should be printed verbatim.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("export default bar;"),
+        "Invalid namespace default expression export should preserve each recovered statement.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Foo.foo = foo;"),
+        "Invalid default expression export should not become a namespace property assignment.\nOutput:\n{output}"
+    );
+}

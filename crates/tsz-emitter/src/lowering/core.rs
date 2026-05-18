@@ -499,7 +499,7 @@ impl<'a> LoweringPass<'a> {
         )
     }
 
-    fn import_has_value_usage_after_node(
+    pub(super) fn import_has_value_usage_after_node(
         &self,
         node: &Node,
         clause: &tsz_parser::parser::node::ImportClauseData,
