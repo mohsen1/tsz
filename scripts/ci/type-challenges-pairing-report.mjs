@@ -97,11 +97,18 @@ function sourceField(manifest, field) {
 }
 
 function describeManifestSource(label, manifest) {
-  return `${label}: ${sourceField(manifest, "repository") || "<missing repository>"} @ ${sourceField(manifest, "ref") || "<missing ref>"}`;
+  const repository = sourceField(manifest, "repository").trim();
+  const ref = sourceField(manifest, "ref").trim();
+  return `${label}: ${repository || "<missing repository>"} @ ${ref || "<missing ref>"}`;
 }
 
 function ensurePinnedSource(label, manifest) {
-  if (sourceField(manifest, "repository") && sourceField(manifest, "ref")) return;
+  if (
+    sourceField(manifest, "repository").trim() !== "" &&
+    sourceField(manifest, "ref").trim() !== ""
+  ) {
+    return;
+  }
 
   console.error(
     [
@@ -133,6 +140,10 @@ function normalizeManifestPath(value) {
 }
 
 function validateRelativeManifestPath(value, label) {
+  if (typeof value !== "string" || value.trim() === "") {
+    console.error(`error: Type Challenges ${label} must be a non-empty relative path`);
+    process.exit(1);
+  }
   const normalized = normalizeManifestPath(value);
   if (
     path.isAbsolute(value) ||

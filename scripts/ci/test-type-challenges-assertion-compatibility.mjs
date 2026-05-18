@@ -698,6 +698,36 @@ withTempDir((dir) => {
     dir,
     classification: {
       fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 1,
+            candidatesWithDiagnostics: 1,
+            candidatesWithoutDiagnostics: 0,
+            filesWithDiagnostics: ["assertions//one.ts"],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc candidateDiagnostics\.filesWithDiagnostics\[0\] must stay inside the assertion candidate directory/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(2),
       compilers: {
         tsc: {
@@ -2033,6 +2063,84 @@ withTempDir((dir) => {
   assert.match(
     result.stderr,
     /candidateManifest\.sources\.solutions is missing source metadata/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const sources = candidateSources();
+  sources.testCases = { repository: "type", ref: "other-type-ref" };
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: {
+        sources,
+        counts: candidateCounts(1),
+      },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /assertion classification candidateManifest template and test-case sources come from different snapshots/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const sources = candidateSources();
+  sources.testCases = { repository: "type", ref: "other-type-ref" };
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "both-pass" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      sources,
+      counts: {
+        totalCandidates: 1,
+        tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
+        tscRejectedAssertions: 0,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+    cleanSubsetClassification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: cleanCandidateManifest(),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 1,
+            candidatesWithoutDiagnostics: 1,
+          },
+        },
+        tsz: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 1,
+            candidatesWithoutDiagnostics: 1,
+          },
+        },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc-clean assertion manifest template and test-case sources come from different snapshots/,
   );
   assert.equal(fs.existsSync(outFile), false);
 });

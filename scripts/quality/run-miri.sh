@@ -10,7 +10,8 @@ default_targets=(
   tsz-parser:parser::node_arena::tests::estimated_size_bytes_is_nonzero_for_empty_arena
   tsz-core:parallel::lib_snapshot::tests::disk_round_trip_resolves_identifier_text_and_symbols
 )
-targets=(${TSZ_MIRI_TARGETS:-${default_targets[*]}})
+targets=()
+read -r -a targets <<< "${TSZ_MIRI_TARGETS:-${default_targets[*]}}"
 # The snapshot-cache target creates a temp directory. Keep strict provenance
 # enabled, but disable Miri isolation so that filesystem-backed test can run.
 miri_flags="${MIRIFLAGS:--Zmiri-strict-provenance -Zmiri-disable-isolation}"

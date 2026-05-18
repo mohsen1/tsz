@@ -31,6 +31,27 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|type_text| {
                 Self::expand_parameters_utility_tuple_type_text(&type_text).unwrap_or(type_text)
             })
+            .map(|type_text| {
+                Self::unwrap_return_type_zero_arg_import_type(&type_text).unwrap_or(type_text)
+            })
+    }
+
+    pub(in crate::declaration_emitter) fn unwrap_return_type_zero_arg_import_type(
+        type_text: &str,
+    ) -> Option<String> {
+        let inner = type_text
+            .trim()
+            .strip_prefix("ReturnType<() => ")?
+            .strip_suffix('>')?
+            .trim();
+        if inner.starts_with("import(")
+            && !inner.contains("=>")
+            && !inner.contains(" | ")
+            && !inner.contains(" & ")
+        {
+            return Some(inner.to_string());
+        }
+        None
     }
 
     fn call_expression_local_overload_return_type_text(
