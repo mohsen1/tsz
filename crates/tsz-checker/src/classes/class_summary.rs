@@ -8,6 +8,7 @@ use tsz_lowering::TypeLowering;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::TypeSubstitution;
 use tsz_solver::{TypeId, Visibility};
 
 #[derive(Clone)]
@@ -597,7 +598,7 @@ impl<'a> CheckerState<'a> {
         // members from T are expressed in terms of L's type params.  This prevents
         // false TS2416 when the derived class overrides a property whose base type
         // is only correct after full substitution through the chain.
-        let mut cumulative_substitution = tsz_solver::TypeSubstitution::new();
+        let mut cumulative_substitution = TypeSubstitution::new();
         let mut is_first = true;
 
         while let Some(current_idx) = current {
@@ -712,12 +713,12 @@ impl<'a> CheckerState<'a> {
                     self.pop_type_parameters(base_type_param_updates);
 
                     if !base_type_params.is_empty() && !type_arg_ids.is_empty() {
-                        let level_sub = tsz_solver::TypeSubstitution::from_args(
+                        let level_sub = TypeSubstitution::from_args(
                             self.ctx.types,
                             &base_type_params,
                             &type_arg_ids,
                         );
-                        let mut new_cumulative = tsz_solver::TypeSubstitution::new();
+                        let mut new_cumulative = TypeSubstitution::new();
                         for (&param_name, &arg_type) in level_sub.map() {
                             let instantiated = if !cumulative_substitution.is_empty() {
                                 crate::query_boundaries::common::instantiate_type(

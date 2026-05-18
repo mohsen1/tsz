@@ -780,11 +780,11 @@ impl<'a> CheckerState<'a> {
                 };
                 let has_unknown_expected_context = ctx_helper
                     .as_ref()
-                    .and_then(tsz_solver::ContextualTypeContext::expected)
+                    .and_then(ContextualTypeContext::expected)
                     .is_some_and(|t| t == TypeId::UNKNOWN);
                 let has_never_expected_context = ctx_helper
                     .as_ref()
-                    .and_then(tsz_solver::ContextualTypeContext::expected)
+                    .and_then(ContextualTypeContext::expected)
                     .is_some_and(|t| t == TypeId::NEVER);
                 let jsdoc_initializer_callable_context = is_js_file
                     && is_closure
@@ -1655,7 +1655,7 @@ impl<'a> CheckerState<'a> {
                     jsdoc_return_context.or_else(|| {
                         ctx_helper
                             .as_ref()
-                            .and_then(tsz_solver::ContextualTypeContext::get_return_type)
+                            .and_then(ContextualTypeContext::get_return_type)
                             .or_else(|| {
                                 contextual_type.and_then(|ty| {
                                     crate::query_boundaries::checkers::call::get_contextual_signature(
@@ -1681,10 +1681,7 @@ impl<'a> CheckerState<'a> {
                     // to TReturn so that `return expr` in the body is contextually typed
                     // against the correct type (matching tsc behavior).
                     early_gen_return_type.or(return_context.and_then(|ctx_ty| {
-                        let ret_ctx = tsz_solver::ContextualTypeContext::with_expected(
-                            self.ctx.types,
-                            ctx_ty,
-                        );
+                        let ret_ctx = ContextualTypeContext::with_expected(self.ctx.types, ctx_ty);
                         ret_ctx.get_generator_return_type()
                     }))
                 } else if is_generator {
@@ -1693,10 +1690,7 @@ impl<'a> CheckerState<'a> {
                     // `return expr` in the body is contextually typed against TReturn
                     // (matching tsc behavior, same as sync generators).
                     early_gen_return_type.or(return_context.and_then(|ctx_ty| {
-                        let ret_ctx = tsz_solver::ContextualTypeContext::with_expected(
-                            self.ctx.types,
-                            ctx_ty,
-                        );
+                        let ret_ctx = ContextualTypeContext::with_expected(self.ctx.types, ctx_ty);
                         ret_ctx.get_generator_return_type()
                     }))
                 } else {
@@ -2420,7 +2414,7 @@ impl<'a> CheckerState<'a> {
                 let effective_body_ctx = if body_is_expression && !has_type_annotation {
                     let body_return_context = ctx_helper
                         .as_ref()
-                        .and_then(tsz_solver::ContextualTypeContext::get_return_type)
+                        .and_then(ContextualTypeContext::get_return_type)
                         .or_else(|| {
                             outer_ctx.and_then(|ty| {
                                 crate::query_boundaries::checkers::call::get_contextual_signature(
