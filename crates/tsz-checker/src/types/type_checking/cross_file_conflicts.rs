@@ -422,11 +422,10 @@ impl<'a> CheckerState<'a> {
                 // augmentation targets exactly the same module M (verified via from_file_idx)
                 // AND every declaration of X in M is mergeable (all interface or function).
                 // A module mismatch or a non-mergeable declaration (e.g. const) must still error.
-                if let Some(from_idx) = from_file_idx {
-                    if self.reexport_suppressed_by_same_module_augmentation(from_idx, &export_name)
-                    {
-                        continue;
-                    }
+                if from_file_idx.is_some_and(|from_idx| {
+                    self.reexport_suppressed_by_same_module_augmentation(from_idx, &export_name)
+                }) {
+                    continue;
                 }
 
                 let code = if conflict_decls.iter().any(|(_, flags, _, _, _)| {
@@ -470,7 +469,7 @@ impl<'a> CheckerState<'a> {
                         }
                         self.ctx
                             .resolve_import_target_from_file(self.ctx.current_file_idx, module_spec)
-                            .map_or(false, |t| t == from_file_idx)
+                            .is_some_and(|t| t == from_file_idx)
                     })
                 });
         if !has_matching_aug {
