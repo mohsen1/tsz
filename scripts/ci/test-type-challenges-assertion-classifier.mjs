@@ -1,0 +1,928 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
+const SCRIPT = path.join(
+  ROOT,
+  "scripts",
+  "ci",
+  "type-challenges-assertion-classifier.mjs",
+);
+
+function withTempDir(fn) {
+  const dir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "tsz-type-challenges-classifier-"),
+  );
+  try {
+    return fn(dir);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+function writeFile(file, text) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, text, "utf8");
+}
+
+function writeJson(file, value) {
+  writeFile(file, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function writeExecutable(file, text) {
+  writeFile(file, text);
+  fs.chmodSync(file, 0o755);
+}
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+  const fakeTsc = path.join(dir, "fake-tsc.js");
+  const fakeTsz = path.join(dir, "fake-tsz.js");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+    include: ["assertions/**/*.ts"],
+  });
+  writeFile(
+    path.join(candidates, "assertions", "one.ts"),
+    [
+      "type Parse<T extends string> = T extends `${infer Head}.${infer Tail}`",
+      "  ? [Head, ...Parse<Tail>]",
+      "  : [T];",
+      "",
+    ].join("\n"),
+  );
+  writeFile(
+    path.join(candidates, "assertions", "two.ts"),
+    [
+      "type Remap<T> = {",
+      "  [K in keyof T as `get${Capitalize<string & K>}`]: T[K];",
+      "};",
+      "",
+    ].join("\n"),
+  );
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    sources: {
+      templates: { repository: "type", ref: "type-ref" },
+      testCases: { repository: "type", ref: "type-ref" },
+      solutions: { repository: "solutions", ref: "solutions-ref" },
+    },
+    counts: {
+      pairedSolutions: 2,
+      generatedAssertions: 2,
+      assertionsReferencingSolutionDeclaration: 1,
+      assertionsMissingSolutionDeclarationReference: 1,
+    },
+    entries: [
+      {
+        id: "one",
+        output: "assertions/one.ts",
+        solution: {
+          output: "solutions/one.ts",
+          source: "en/one.md",
+          declarations: ["Parse"],
+        },
+        testCase: {
+          output: "questions/00001-one/test-cases.ts",
+          source: "questions/00001-one/test-cases.ts",
+        },
+        assertion: {
+          hasReferencedSolutionDeclaration: true,
+          referencedSolutionDeclarations: ["Parse"],
+        },
+      },
+      {
+        id: "two",
+        output: "assertions/two.ts",
+        solution: {
+          output: "solutions/two.ts",
+          source: "en/two.md",
+          declarations: ["Remap"],
+        },
+        testCase: {
+          output: "questions/00002-two/test-cases.ts",
+          source: "questions/00002-two/test-cases.ts",
+        },
+        assertion: {
+          hasReferencedSolutionDeclaration: false,
+          referencedSolutionDeclarations: [],
+        },
+      },
+    ],
+  });
+  writeExecutable(
+    fakeTsc,
+    [
+      "#!/usr/bin/perl",
+      `print STDERR ${JSON.stringify(
+        `${path.join(candidates, "assertions", "one.ts")}(1,1): error TS2344: mismatch\n`,
+      )};`,
+      "print STDERR \"assertions/two.ts(2,3): error TS2304: missing\\n\";",
+      "exit 1;",
+      "",
+    ].join("\n"),
+  );
+  writeExecutable(
+    fakeTsz,
+    [
+      "#!/usr/bin/perl",
+      "print \"ok\\n\";",
+      "exit 0;",
+      "",
+    ].join("\n"),
+  );
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TYPE_CHALLENGES_ASSERTION_TSC_BIN: path.relative(ROOT, fakeTsc),
+      TSZ_BIN: path.relative(ROOT, fakeTsz),
+      TYPE_CHALLENGES_ASSERTION_CLASSIFIER_TIMEOUT_MS: "5000",
+    },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const report = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.equal(report.fixture, "type-challenges-assertion-classification");
+  assert.deepEqual(report.candidateManifest.sources, {
+    templates: { repository: "type", ref: "type-ref" },
+    testCases: { repository: "type", ref: "type-ref" },
+    solutions: { repository: "solutions", ref: "solutions-ref" },
+  });
+  assert.deepEqual(report.candidateManifest.counts, {
+    pairedSolutions: 2,
+    generatedAssertions: 2,
+    assertionsReferencingSolutionDeclaration: 1,
+    assertionsMissingSolutionDeclarationReference: 1,
+  });
+  assert.deepEqual(
+    report.candidateManifest.semanticFamilies.map((entry) => [
+      entry.family,
+      entry.candidateCount,
+      entry.files,
+    ]),
+    [
+      ["template literal inference", 2, ["assertions/one.ts", "assertions/two.ts"]],
+      ["distributive conditionals", 1, ["assertions/one.ts"]],
+      ["indexed access", 1, ["assertions/two.ts"]],
+      ["inference cache/session behavior", 1, ["assertions/one.ts"]],
+      ["mapped/key-remapped types", 1, ["assertions/two.ts"]],
+      ["recursive conditionals", 1, ["assertions/one.ts"]],
+      ["tuple recursion", 1, ["assertions/one.ts"]],
+    ],
+  );
+  assert.equal(report.compilers.tsc.status, "fail");
+  assert.equal(report.compilers.tsc.exitCode, 1);
+  assert.equal(report.compilers.tsc.diagnostics.errorCount, 2);
+  assert.deepEqual(report.compilers.tsc.diagnostics.firstErrors, [
+    "assertions/one.ts(1,1): error TS2344: mismatch",
+    "assertions/two.ts(2,3): error TS2304: missing",
+  ]);
+  assert.deepEqual(report.compilers.tsc.diagnostics.byCode, [
+    { key: "TS2304", count: 1 },
+    { key: "TS2344", count: 1 },
+  ]);
+  assert.deepEqual(report.compilers.tsc.diagnostics.byFile, [
+    { key: "assertions/one.ts", count: 1 },
+    { key: "assertions/two.ts", count: 1 },
+  ]);
+  assert.deepEqual(report.compilers.tsc.candidateDiagnostics, {
+    totalCandidates: 2,
+    candidatesWithDiagnostics: 2,
+    candidatesWithoutDiagnostics: 0,
+    filesWithDiagnostics: ["assertions/one.ts", "assertions/two.ts"],
+    filesWithoutDiagnostics: [],
+    byCandidate: [
+      {
+        file: "assertions/one.ts",
+        errorCount: 1,
+        candidate: {
+          id: "one",
+          solution: {
+            output: "solutions/one.ts",
+            source: "en/one.md",
+            declarations: ["Parse"],
+          },
+          testCase: {
+            output: "questions/00001-one/test-cases.ts",
+            source: "questions/00001-one/test-cases.ts",
+          },
+          assertion: {
+            hasReferencedSolutionDeclaration: true,
+            referencedSolutionDeclarations: ["Parse"],
+          },
+        },
+        codes: [{ key: "TS2344", count: 1 }],
+        semanticFamilies: [
+          "distributive conditionals",
+          "inference cache/session behavior",
+          "recursive conditionals",
+          "template literal inference",
+          "tuple recursion",
+        ],
+        firstErrors: [
+          {
+            line: 1,
+            column: 1,
+            code: "TS2344",
+            message: "mismatch",
+            text: "assertions/one.ts(1,1): error TS2344: mismatch",
+          },
+        ],
+      },
+      {
+        file: "assertions/two.ts",
+        errorCount: 1,
+        candidate: {
+          id: "two",
+          solution: {
+            output: "solutions/two.ts",
+            source: "en/two.md",
+            declarations: ["Remap"],
+          },
+          testCase: {
+            output: "questions/00002-two/test-cases.ts",
+            source: "questions/00002-two/test-cases.ts",
+          },
+          assertion: {
+            hasReferencedSolutionDeclaration: false,
+            referencedSolutionDeclarations: [],
+          },
+        },
+        codes: [{ key: "TS2304", count: 1 }],
+        semanticFamilies: [
+          "indexed access",
+          "mapped/key-remapped types",
+          "template literal inference",
+        ],
+        firstErrors: [
+          {
+            line: 2,
+            column: 3,
+            code: "TS2304",
+            message: "missing",
+            text: "assertions/two.ts(2,3): error TS2304: missing",
+          },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(
+    report.compilers.tsc.diagnostics.bySemanticFamily.map((entry) => [
+      entry.family,
+      entry.errorCount,
+      entry.files,
+    ]),
+    [
+      ["template literal inference", 2, ["assertions/one.ts", "assertions/two.ts"]],
+      ["distributive conditionals", 1, ["assertions/one.ts"]],
+      ["indexed access", 1, ["assertions/two.ts"]],
+      ["inference cache/session behavior", 1, ["assertions/one.ts"]],
+      ["mapped/key-remapped types", 1, ["assertions/two.ts"]],
+      ["recursive conditionals", 1, ["assertions/one.ts"]],
+      ["tuple recursion", 1, ["assertions/one.ts"]],
+    ],
+  );
+  assert.deepEqual(report.compilers.tsc.command.slice(1), [
+    "--noEmit",
+    "-p",
+    path.join(candidates, "tsconfig.tsz-guard.json"),
+    "--pretty",
+    "false",
+  ]);
+  assert.equal(path.isAbsolute(report.compilers.tsc.command[0]), true);
+  assert.equal(path.isAbsolute(report.compilers.tsz.command[0]), true);
+  assert.equal(report.compilers.tsz.status, "pass");
+  assert.equal(report.compilers.tsz.exitCode, 0);
+  assert.deepEqual(report.compilers.tsz.candidateDiagnostics, {
+    totalCandidates: 2,
+    candidatesWithDiagnostics: 0,
+    candidatesWithoutDiagnostics: 2,
+    filesWithDiagnostics: [],
+    filesWithoutDiagnostics: ["assertions/one.ts", "assertions/two.ts"],
+    byCandidate: [],
+  });
+  assert.deepEqual(report.comparison, {
+    status: "tsz-accepts-tsc-rejected",
+    tscStatus: "fail",
+    tszStatus: "pass",
+    errorCountDelta: -2,
+    diagnosticFreeCandidateDelta: 2,
+    candidateFileComparison: {
+      totalCandidates: 2,
+      counts: {
+        bothAccepted: 0,
+        bothRejected: 0,
+        tscAcceptedTszRejected: 0,
+        tscRejectedTszAccepted: 2,
+      },
+      bothAccepted: [],
+      bothRejected: [],
+      tscAcceptedTszRejected: [],
+      tscRejectedTszAccepted: ["assertions/one.ts", "assertions/two.ts"],
+    },
+    byCodeDelta: [
+      { key: "TS2304", tsc: 1, tsz: 0, delta: -1 },
+      { key: "TS2344", tsc: 1, tsz: 0, delta: -1 },
+    ],
+    bySemanticFamilyDelta: [
+      { key: "template literal inference", tsc: 2, tsz: 0, delta: -2 },
+      { key: "distributive conditionals", tsc: 1, tsz: 0, delta: -1 },
+      { key: "indexed access", tsc: 1, tsz: 0, delta: -1 },
+      { key: "inference cache/session behavior", tsc: 1, tsz: 0, delta: -1 },
+      { key: "mapped/key-remapped types", tsc: 1, tsz: 0, delta: -1 },
+      { key: "recursive conditionals", tsc: 1, tsz: 0, delta: -1 },
+      { key: "tuple recursion", tsc: 1, tsz: 0, delta: -1 },
+    ],
+  });
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+  const fakeTsc = path.join(dir, "fake-tsc.js");
+  const fakeTsz = path.join(dir, "fake-tsz.js");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+    include: ["assertions/**/*.ts"],
+  });
+  writeFile(path.join(candidates, "assertions", "one.ts"), "type One = true;\n");
+  writeFile(path.join(candidates, "assertions", "two.ts"), "type Two = true;\n");
+  writeJson(manifest, {
+    fixture: "type-challenges-assertions-tsc-clean",
+    sources: {
+      templates: { repository: "type", ref: "type-ref" },
+      testCases: { repository: "type", ref: "type-ref" },
+      solutions: { repository: "solutions", ref: "solutions-ref" },
+    },
+    counts: {
+      totalCandidates: 3,
+      tscAcceptedAssertions: 2,
+      tscRejectedAssertions: 1,
+      tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+      tscAcceptedAssertionsMissingSolutionDeclarationReference: 1,
+    },
+    entries: [
+      {
+        id: "one",
+        output: "assertions/one.ts",
+        solution: {
+          output: "solutions/one.ts",
+          source: "en/one.md",
+          declarations: ["Parse"],
+        },
+        testCase: {
+          output: "questions/00001-one/test-cases.ts",
+          source: "questions/00001-one/test-cases.ts",
+        },
+        assertion: {
+          hasReferencedSolutionDeclaration: true,
+          referencedSolutionDeclarations: ["Parse"],
+        },
+      },
+      {
+        id: "two",
+        output: "assertions/two.ts",
+        solution: {
+          output: "solutions/two.ts",
+          source: "en/two.md",
+          declarations: ["Remap"],
+        },
+        testCase: {
+          output: "questions/00002-two/test-cases.ts",
+          source: "questions/00002-two/test-cases.ts",
+        },
+        assertion: {
+          hasReferencedSolutionDeclaration: false,
+          referencedSolutionDeclarations: [],
+        },
+      },
+    ],
+  });
+  writeExecutable(
+    fakeTsc,
+    ["#!/usr/bin/env node", "process.exit(0)", ""].join("\n"),
+  );
+  writeExecutable(
+    fakeTsz,
+    ["#!/usr/bin/env node", "process.exit(0)", ""].join("\n"),
+  );
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TYPE_CHALLENGES_ASSERTION_TSC_BIN: fakeTsc,
+      TSZ_BIN: fakeTsz,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const report = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.equal(report.candidateManifest.fixture, "type-challenges-assertions-tsc-clean");
+  assert.deepEqual(report.candidateManifest.counts, {
+    totalCandidates: 3,
+    tscAcceptedAssertions: 2,
+    tscRejectedAssertions: 1,
+    tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+    tscAcceptedAssertionsMissingSolutionDeclarationReference: 1,
+  });
+  assert.deepEqual(report.compilers.tsc.candidateDiagnostics, {
+    totalCandidates: 2,
+    candidatesWithDiagnostics: 0,
+    candidatesWithoutDiagnostics: 2,
+    filesWithDiagnostics: [],
+    filesWithoutDiagnostics: ["assertions/one.ts", "assertions/two.ts"],
+    byCandidate: [],
+  });
+  assert.equal(report.comparison.status, "both-pass");
+  assert.deepEqual(report.comparison.candidateFileComparison.counts, {
+    bothAccepted: 2,
+    bothRejected: 0,
+    tscAcceptedTszRejected: 0,
+    tscRejectedTszAccepted: 0,
+  });
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: {
+      pairedSolutions: 0,
+      generatedAssertions: 0,
+      assertionsReferencingSolutionDeclaration: 0,
+      assertionsMissingSolutionDeclarationReference: 0,
+    },
+    entries: [],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TYPE_CHALLENGES_ASSERTION_TSC_BIN: "",
+      TSZ_BIN: "",
+    },
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /entries must include at least one assertion candidate/);
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeFile(path.join(candidates, "assertions", "one.ts"), "type One = true;\n");
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: {
+      pairedSolutions: 1,
+      generatedAssertions: 1,
+      assertionsReferencingSolutionDeclaration: 1,
+      assertionsMissingSolutionDeclarationReference: 0,
+    },
+    entries: [
+      {
+        id: "one",
+        output: "assertions/one.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /manifest is missing sources/);
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeFile(path.join(candidates, "assertions", "one.ts"), "type One = true;\n");
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    sources: {
+      templates: { repository: "type", ref: "type-ref" },
+      testCases: { repository: "type", ref: "type-ref" },
+      solutions: { repository: "solutions", ref: 123 },
+    },
+    counts: {
+      pairedSolutions: 1,
+      generatedAssertions: 1,
+      assertionsReferencingSolutionDeclaration: 1,
+      assertionsMissingSolutionDeclarationReference: 0,
+    },
+    entries: [
+      {
+        id: "one",
+        output: "assertions/one.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /manifest sources\.solutions is missing source metadata/);
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+  const fakeTsc = path.join(dir, "fake-tsc.js");
+  const fakeTsz = path.join(dir, "fake-tsz.js");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: {
+      pairedSolutions: 0,
+      generatedAssertions: 0,
+      assertionsReferencingSolutionDeclaration: 0,
+      assertionsMissingSolutionDeclarationReference: 0,
+    },
+    entries: [],
+  });
+  writeExecutable(
+    fakeTsc,
+    ["#!/usr/bin/env node", "process.exit(0)", ""].join("\n"),
+  );
+  writeExecutable(
+    fakeTsz,
+    [
+      "#!/usr/bin/env node",
+      "console.error(\"assertions/three.ts(1,1): error TS2589: deep\")",
+      "console.error(\"assertions/three.ts(2,1): error TS2589: deep again\")",
+      "process.exit(1)",
+      "",
+    ].join("\n"),
+  );
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TYPE_CHALLENGES_ASSERTION_TSC_BIN: fakeTsc,
+      TSZ_BIN: fakeTsz,
+    },
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /entries must include at least one assertion candidate/);
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: {
+      pairedSolutions: 1,
+      generatedAssertions: 1,
+      assertionsReferencingSolutionDeclaration: 1,
+      assertionsMissingSolutionDeclarationReference: 0,
+    },
+    entries: [
+      {
+        id: "escape",
+        output: "../outside.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /must be a relative path inside the candidate directory/);
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeFile(path.join(candidates, "assertions", "one.ts"), "type One = true;\n");
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: {
+      pairedSolutions: 2,
+      generatedAssertions: 2,
+      assertionsReferencingSolutionDeclaration: 1,
+      assertionsMissingSolutionDeclarationReference: 1,
+    },
+    entries: [
+      {
+        id: "one",
+        output: "assertions/one.ts",
+      },
+      {
+        id: "one-copy",
+        output: "assertions/one.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /duplicate assertion candidate output/);
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeFile(path.join(candidates, "assertions", "one.ts"), "type One = true;\n");
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: {
+      pairedSolutions: 2,
+      generatedAssertions: 1,
+      assertionsReferencingSolutionDeclaration: 1,
+      assertionsMissingSolutionDeclarationReference: 0,
+    },
+    entries: [
+      {
+        id: "one",
+        output: "assertions/one.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /counts\.pairedSolutions \(2\) does not match entries length \(1\)/);
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: {
+      pairedSolutions: 1,
+      generatedAssertions: 1,
+      assertionsReferencingSolutionDeclaration: 1,
+      assertionsMissingSolutionDeclarationReference: 0,
+    },
+    entries: [
+      {
+        id: "missing",
+        output: "assertions/missing.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /does not exist inside candidate directory/);
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeFile(path.join(candidates, "assertions", "one.ts"), "type One = true;\n");
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: {
+      pairedSolutions: 1,
+      assertionsReferencingSolutionDeclaration: 1,
+      assertionsMissingSolutionDeclarationReference: 0,
+    },
+    entries: [
+      {
+        id: "one",
+        output: "assertions/one.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /counts\.generatedAssertions must be a non-negative integer/);
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeFile(path.join(candidates, "assertions", "one.ts"), "type One = true;\n");
+  writeJson(manifest, {
+    fixture: "type-challenges-assertions-tsc-clean",
+    counts: {
+      totalCandidates: 1,
+      tscRejectedAssertions: 0,
+    },
+    entries: [
+      {
+        id: "one",
+        output: "assertions/one.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /counts\.tscAcceptedAssertions must be a non-negative integer/);
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeFile(path.join(candidates, "assertions", "one.ts"), "type One = true;\n");
+  writeJson(manifest, {
+    fixture: "type-challenges-assertions-tsc-clean",
+    counts: {
+      totalCandidates: 1,
+      tscAcceptedAssertions: 1,
+      tscRejectedAssertions: 0,
+      tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
+    },
+    entries: [
+      {
+        id: "one",
+        output: "assertions/one.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /counts\.tscAcceptedAssertionsReferencingSolutionDeclaration must be a non-negative integer/,
+  );
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeFile(path.join(candidates, "assertions", "one.ts"), "type One = true;\n");
+  writeJson(manifest, {
+    fixture: "type-challenges-assertions-tsc-clean",
+    counts: {
+      totalCandidates: 1,
+      tscAcceptedAssertions: 1,
+      tscRejectedAssertions: 0,
+      tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+      tscAcceptedAssertionsMissingSolutionDeclarationReference: 1,
+    },
+    entries: [
+      {
+        id: "one",
+        output: "assertions/one.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc-accepted declaration-reference counts do not account for every assertion candidate/,
+  );
+  assert.equal(fs.existsSync(output), false);
+});
+
+withTempDir((dir) => {
+  const candidates = path.join(dir, "assertions");
+  const manifest = path.join(candidates, "type-challenges-assertions-manifest.json");
+  const output = path.join(candidates, "type-challenges-assertions-classification.json");
+
+  writeJson(path.join(candidates, "tsconfig.tsz-guard.json"), {
+    compilerOptions: { noEmit: true },
+  });
+  writeFile(path.join(candidates, "assertions", "one.ts"), "type One = true;\n");
+  writeJson(manifest, {
+    fixture: "type-challenges-assertion-candidates",
+    counts: {
+      pairedSolutions: 1,
+      generatedAssertions: 1,
+      assertionsReferencingSolutionDeclaration: 1,
+    },
+    entries: [
+      {
+        id: "one",
+        output: "assertions/one.ts",
+      },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, candidates, manifest, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /counts\.assertionsMissingSolutionDeclarationReference must be a non-negative integer/,
+  );
+  assert.equal(fs.existsSync(output), false);
+});
