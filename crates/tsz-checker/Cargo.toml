@@ -470,6 +470,10 @@ name = "ts2353_generic_constraint_excess_property_tests"
 path = "tests/ts2353_generic_constraint_excess_property_tests.rs"
 
 [[test]]
+name = "relational_operator_type_display_tests"
+path = "tests/relational_operator_type_display_tests.rs"
+
+[[test]]
 name = "ts2677_intersection_predicate_tests"
 path = "tests/ts2677_intersection_predicate_tests.rs"
 
