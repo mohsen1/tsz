@@ -653,6 +653,12 @@ REGEX_LINE_COUNT_CHECKS = [
         3,
     ),
     (
+        "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
+        re.compile(r"^pub use (?:[A-Za-z_][A-Za-z0-9_]*::)+\*;"),
+        14,
+    ),
+    (
         "Checker relation boundary: raw diagnostic assignability predicates (#8227)",
         [
             ROOT

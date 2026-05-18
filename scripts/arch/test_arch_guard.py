@@ -2157,6 +2157,23 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("diagnostic.rs:2", hits[1])
         self.assertIn("diagnostic.rs:3", hits[2])
 
+    def test_flags_root_solver_wildcard_compat_reexports(self):
+        pattern, _max_lines = self._check_by_name("#8204")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/lib.rs": (
+                    "pub use evaluation::evaluate::*;\n"
+                    "pub mod query {\n"
+                    "    pub use crate::visitors::visitor::*;\n"
+                    "}\n"
+                    "// pub use operations::*;\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("lib.rs:1", hits[0])
+
     def test_scan_regex_line_count_accepts_file_roots(self):
         pattern, _max_lines = self._check_by_name("#8227")
         root = self._make_tree(
@@ -2215,6 +2232,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertTrue(any("file-name/path" in name for name in names))
         self.assertTrue(any("rendered type strings" in name for name in names))
         self.assertTrue(any("#8227" in name for name in names))
+        self.assertTrue(any("#8204" in name for name in names))
 
     def test_real_counts_pass_at_pinned_caps(self):
         """The pinned caps must match the live count (no off-by-one)."""
