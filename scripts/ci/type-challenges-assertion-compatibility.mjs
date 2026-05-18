@@ -494,6 +494,24 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
         `tsc-clean assertion classification ${compiler} candidatesWithoutDiagnostics (${candidatesWithoutDiagnostics}) must be between 0 and totalCandidates (${totalCandidates})`,
       );
     }
+    const candidatesWithDiagnostics =
+      cleanSubsetClassification.compilers?.[compiler]?.candidateDiagnostics
+        ?.candidatesWithDiagnostics;
+    if (!Number.isInteger(candidatesWithDiagnostics)) {
+      fail(
+        `tsc-clean assertion classification ${compiler} candidateDiagnostics.candidatesWithDiagnostics must be an integer`,
+      );
+    }
+    if (candidatesWithDiagnostics < 0 || candidatesWithDiagnostics > totalCandidates) {
+      fail(
+        `tsc-clean assertion classification ${compiler} candidatesWithDiagnostics (${candidatesWithDiagnostics}) must be between 0 and totalCandidates (${totalCandidates})`,
+      );
+    }
+    if (candidatesWithDiagnostics + candidatesWithoutDiagnostics !== totalCandidates) {
+      fail(
+        `tsc-clean assertion classification ${compiler} candidate diagnostic counts (${candidatesWithDiagnostics} + ${candidatesWithoutDiagnostics}) do not match totalCandidates (${totalCandidates})`,
+      );
+    }
   }
   validateComparisonCompilerStatuses(
     cleanSubsetClassification.comparison,
