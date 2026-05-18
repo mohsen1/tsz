@@ -197,9 +197,21 @@ impl<'a> CheckerState<'a> {
 
                     // Ensure the DefId→TypeId mapping exists even when symbol_types
                     // cache hits skip TypeEnvironment registration for cross-file libs.
+                    //
+                    // Skip when structural_type is Lazy(def_id) — the cycle-breaker
+                    // placeholder returned while this symbol is actively being resolved.
+                    // Persisting Lazy(X) → X creates a self-loop: evaluate looks up X,
+                    // finds Lazy(X), and loops; the cycle guard returns Lazy(X) unchanged,
+                    // leaving no contextual type for empty array literals (false `never[]`).
+                    let is_self_referential_lazy = crate::query_boundaries::common::lazy_def_id(
+                        self.ctx.types,
+                        structural_type,
+                    ) == Some(def_id);
+
                     if structural_type != TypeId::ERROR
                         && structural_type != TypeId::ANY
                         && structural_type != TypeId::UNKNOWN
+                        && !is_self_referential_lazy
                     {
                         if prefer_cross_file_interface {
                             // Refresh stale local cache entries from cross-file
@@ -213,25 +225,18 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.symbol_types.insert(sym_id, structural_type);
                             }
                         }
-                        // Only register if not already present in type_env
-                        let needs_registration = self
-                            .ctx
-                            .type_env
-                            .try_borrow()
-                            .is_ok_and(|env| env.get_def(def_id).is_none());
-                        if needs_registration || prefer_cross_file_interface {
-                            let type_params =
-                                self.ctx.get_def_type_params(def_id).unwrap_or_default();
-                            if type_params.is_empty() {
-                                self.ctx.register_def_in_envs(def_id, structural_type);
-                            } else {
-                                self.ctx.register_def_with_params_in_envs(
-                                    def_id,
-                                    structural_type,
-                                    type_params,
-                                );
-                            }
-                        }
+                        // Always register, even when an entry exists: `register_def_in_envs`
+                        // calls `clear_type_evaluation_caches_for_def` when the body changes,
+                        // evicting stale resolve_cache entries left from earlier recursive
+                        // calls. Skipping this when an entry is present leaves `Lazy(DefId)`
+                        // cached as the resolved type, causing false TS2353 for inherited
+                        // properties of F-bounded interfaces.
+                        let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
+                        self.ctx.register_def_auto_params_in_envs(
+                            def_id,
+                            structural_type,
+                            type_params,
+                        );
                     }
 
                     // For merged interface+namespace symbols, return the structural type
