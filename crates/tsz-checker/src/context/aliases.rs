@@ -86,7 +86,7 @@ pub(crate) fn export_equals_named_cache_estimated_size_bytes(
         * (std::mem::size_of::<(usize, String, String)>()
             + std::mem::size_of::<Option<SymbolId>>()
             + 8);
-    for ((_, specifier, export_name), _) in cache {
+    for (_, specifier, export_name) in cache.keys() {
         size += specifier.capacity() + export_name.capacity();
     }
     size
