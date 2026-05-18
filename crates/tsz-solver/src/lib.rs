@@ -210,7 +210,7 @@ pub use caches::query_cache::{
     QueryCache, QueryCacheStatistics, RelationCacheProbe, RelationCacheStats, SharedQueryCache,
 };
 pub use canonicalize::*;
-pub use classes::inheritance::*;
+pub use classes::inheritance::InheritanceGraph;
 pub use contextual::{ContextualTypeContext, apply_contextual_type, rest_argument_element_type};
 pub use def::*;
 pub use diagnostics::SubtypeFailureReason;
