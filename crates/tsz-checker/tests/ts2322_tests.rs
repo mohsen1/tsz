@@ -8055,3 +8055,92 @@ let expected: Wrapper<"first" | "second"> = got;
         "generic alias target surface should be preserved independent of parameter name, got: {message}"
     );
 }
+
+/// Regression test for issue #6800.
+///
+/// When an overloaded generic function is called with an inline arrow
+/// callback, the first-pass overload resolution collects argument types once
+/// using the union of all overload signatures as the contextual type. The
+/// callback parameter type therefore picks up a reference to the sigs' shared
+/// type-parameter atom (`T`). The per-overload rename then renames the sig's
+/// `T` to a fresh atom, leaving the arg's `T` as a stale reference. During
+/// inference, that stale reference would surface as a contravariant
+/// candidate and dominate the genuine covariant candidate inferred from the
+/// array value, causing the resolver to fall back to the contra-candidate
+/// (the bare type parameter name) rather than the widened concrete type.
+///
+/// The structural rule: when every contravariant candidate is a bare
+/// unconstrained type parameter (so it carries no shape requirement that
+/// could be violated), the informative covariant inference must win.
+#[test]
+fn overload_inline_callback_does_not_leak_outer_sig_type_param() {
+    let source = r#"
+declare function map<T, U>(arr: T[], fn: (x: T) => U): U[];
+declare function map<T>(arr: T[], fn: (x: T) => T): T[];
+
+const mapped = map([1, 2, 3], x => String(x));
+const check: string[] = mapped;
+"#;
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for generic overload with callback returning different type. Got: {diagnostics:#?}"
+    );
+}
+
+/// Same as `overload_inline_callback_does_not_leak_outer_sig_type_param` but
+/// with the overload order reversed to verify the fix is symmetric.
+#[test]
+fn overload_inline_callback_does_not_leak_outer_sig_type_param_reversed_order() {
+    let source = r#"
+declare function map<T>(arr: T[], fn: (x: T) => T): T[];
+declare function map<T, U>(arr: T[], fn: (x: T) => U): U[];
+
+const mapped = map([1, 2, 3], x => String(x));
+const check: string[] = mapped;
+"#;
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors regardless of overload declaration order. Got: {diagnostics:#?}"
+    );
+}
+
+/// Renamed type-parameter variant of the bug: the fix must not depend on the
+/// spelling of the sig's type parameter name. Using `A`/`B` and `C` instead of
+/// `T`/`U` and `T` should produce the same result.
+#[test]
+fn overload_inline_callback_leak_fix_is_independent_of_type_param_name() {
+    let source = r#"
+declare function map<A, B>(arr: A[], fn: (x: A) => B): B[];
+declare function map<C>(arr: C[], fn: (x: C) => C): C[];
+
+const mapped = map([1, 2, 3], x => String(x));
+const check: string[] = mapped;
+"#;
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diagnostics.is_empty(),
+        "Fix must be structural, not name-dependent. Got: {diagnostics:#?}"
+    );
+}
+
+/// Negative case for the same fix: when the inline callback genuinely returns
+/// the input type, the `T`-identity overload should match cleanly without
+/// requiring the leak guard.
+#[test]
+fn overload_inline_callback_identity_overload_still_matches() {
+    let source = r#"
+declare function map<T, U>(arr: T[], fn: (x: T) => U): U[];
+declare function map<T>(arr: T[], fn: (x: T) => T): T[];
+
+const arr: number[] = [1, 2, 3];
+const mapped = map(arr, x => x + 1);
+const check: number[] = mapped;
+"#;
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diagnostics.is_empty(),
+        "Identity-return callback should pick either overload and yield `number[]`. Got: {diagnostics:#?}"
+    );
+}

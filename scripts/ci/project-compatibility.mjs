@@ -250,7 +250,19 @@ function lastSuccessfulPhaseFrom({ exitClass, diagnosticStatus }) {
 
 function rowStateFrom({ exitClass, diagnosticStatus }) {
   if (exitClass === "exit success" && diagnosticStatus === "none") return "green";
-  if (exitClass === "nonzero exit") return "red";
+  if (exitClass === "fixture invalid" || exitClass === "tsz unavailable") return "gray";
+  if (String(diagnosticStatus || "").toLowerCase().includes("diagnostic mismatch")) {
+    return "yellow";
+  }
+  if (
+    exitClass === "nonzero exit" ||
+    exitClass === "timeout" ||
+    exitClass === "oom" ||
+    exitClass === "crash" ||
+    exitClass === "runner error"
+  ) {
+    return "red";
+  }
   return "yellow";
 }
 
@@ -351,6 +363,7 @@ function readRows(input) {
 
 function readOptionalJson(file) {
   if (!file || !fs.existsSync(file)) return null;
+  if (!fs.statSync(file).isFile()) return null;
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 

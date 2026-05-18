@@ -288,6 +288,7 @@ impl<'a> CheckerState<'a> {
         // Merge global augmentations (declare global { interface X { ... } }).
         if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, &lib_contexts) {
             lib_type_id = Some(merged);
+            self.register_augmented_lib_body(name, merged);
         }
 
         // Mirror into shared cache when safe (no local augmentations).

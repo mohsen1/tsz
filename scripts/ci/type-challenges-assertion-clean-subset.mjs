@@ -36,31 +36,42 @@ function normalizeManifestPath(value, label) {
   if (typeof value !== "string" || value.trim() === "") {
     fail(`${label} must be a non-empty relative path`);
   }
-  const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
+  const normalizedInput = value.replace(/\\/g, "/").replace(/^\.\//, "");
+  const segments = normalizedInput.split("/");
   if (
     path.isAbsolute(value) ||
-    normalized === "" ||
-    normalized === "." ||
-    normalized.split("/").includes("..")
+    normalizedInput === "" ||
+    normalizedInput === "." ||
+    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
   ) {
     fail(`${label} must stay inside the assertion candidate directory: ${value}`);
   }
+  const normalized = segments.join("/");
   if (!normalized.startsWith("assertions/")) {
     fail(`${label} must be under assertions/: ${normalized}`);
   }
   return normalized;
 }
 
+function normalizeManifestId(value, label) {
+  if (typeof value !== "string" || value.trim() === "") {
+    fail(`${label} must be a non-empty string`);
+  }
+  return value;
+}
+
 function validateEvidencePath(value, label) {
   if (typeof value !== "string" || value.trim() === "") {
     fail(`${label} must be a non-empty relative path`);
   }
-  const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
+  const normalizedInput = value.replace(/\\/g, "/").replace(/^\.\//, "");
+  const segments = normalizedInput.split("/");
   if (
     path.isAbsolute(value) ||
-    normalized === "" ||
-    normalized === "." ||
-    normalized.split("/").includes("..")
+    /^[A-Za-z]:\//.test(normalizedInput) ||
+    normalizedInput === "" ||
+    normalizedInput === "." ||
+    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
   ) {
     fail(`${label} must be a relative source path: ${value}`);
   }
@@ -86,6 +97,21 @@ function validateCandidateManifestSources(manifest) {
 
   for (const label of ["templates", "testCases", "solutions"]) {
     validateSourceMetadata(manifest.sources[label], label);
+  }
+
+  const templateSource = manifest.sources.templates;
+  const testCaseSource = manifest.sources.testCases;
+  if (
+    templateSource.repository !== testCaseSource.repository ||
+    templateSource.ref !== testCaseSource.ref
+  ) {
+    fail(
+      [
+        "candidate manifest template and test-case sources come from different snapshots",
+        `templates: ${templateSource.repository} @ ${templateSource.ref}`,
+        `testCases: ${testCaseSource.repository} @ ${testCaseSource.ref}`,
+      ].join("\n"),
+    );
   }
 }
 
@@ -170,8 +196,16 @@ function validateInputs(candidateManifest, classification) {
 
   const entries = candidateManifest.entries.map((entry, index) => ({
     ...entry,
+    id: normalizeManifestId(entry?.id, `candidate manifest entries[${index}].id`),
     output: normalizeManifestPath(entry?.output, `candidate manifest entries[${index}].output`),
   }));
+  const duplicateIds = duplicates(entries.map((entry) => entry.id));
+  if (duplicateIds.length > 0) {
+    reportFileSetError(
+      "assertion candidate manifest reported duplicate candidate ids",
+      duplicateIds,
+    );
+  }
   const duplicateOutputs = duplicates(entries.map((entry) => entry.output));
   if (duplicateOutputs.length > 0) {
     reportFileSetError(

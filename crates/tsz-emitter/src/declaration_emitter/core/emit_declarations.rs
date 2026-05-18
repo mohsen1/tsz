@@ -166,6 +166,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_export_default_names = self.collect_js_export_default_names(source_file);
         self.emitted_js_export_default_names.clear();
         self.js_shadowed_export_equals_local_aliases.clear();
+        self.js_elided_bare_require_binding_names.clear();
         let (
             js_commonjs_named_export_names,
             js_commonjs_named_function_exports,

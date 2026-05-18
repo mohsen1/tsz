@@ -3695,8 +3695,8 @@ declare namespace foo {
 }
 declare function bar(): void;
 declare namespace bar {
-    export let async: boolean;
-    export let normal: boolean;
+    let async: boolean;
+    let normal: boolean;
 }
 declare function baz(): void;
 declare namespace baz {
@@ -6706,6 +6706,25 @@ u.noError();
 }
 
 #[test]
+fn test_js_local_destructured_require_alias_without_exports_is_elided() {
+    let source = r#"
+const { apply } = require("./moduleExportAliasDuplicateAlias");
+const result = apply.toFixed();
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        !output.contains("declare const apply"),
+        "Expected local destructured require alias in a non-exporting JS module to be elided: {output}"
+    );
+    assert!(
+        !output.contains("declare const result"),
+        "Expected locals derived from the elided destructured require alias to be omitted: {output}"
+    );
+    assert_eq!("export {};", output.trim());
+}
+
+#[test]
 fn test_js_local_dynamic_require_alias_without_exports_is_preserved() {
     let source = r#"
 const moduleName = "untyped";
@@ -6806,6 +6825,36 @@ foo.default = 2;
     assert!(
         output.contains("let _default: number;\n    export { _default as default };"),
         "Expected reserved expando property to use local alias plus export specifier: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_static_property_without_alias_omits_member_export() {
+    let output = emit_js_dts(
+        r#"
+function foo() {}
+foo.x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace foo {\n    let x: number;\n}"),
+        "Expected ordinary expando property without alias scheduling to omit member export: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_function_static_property_without_alias_omits_member_export() {
+    let output = emit_js_dts(
+        r#"
+export function foo() {}
+foo.x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("export namespace foo {\n    let x: number;\n}"),
+        "Expected exported function expando namespace to omit member export when no alias is scheduled: {output}"
     );
 }
 

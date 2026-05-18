@@ -127,6 +127,36 @@ tsz_write_type_challenges_solutions_config ${shellQuote(sourceDir)} ${shellQuote
 });
 
 withTempDir((dir) => {
+  const compileDir = path.join(dir, "compile");
+  const manifestPath = path.join(compileDir, "type-challenges-solutions-manifest.json");
+  fs.mkdirSync(path.join(compileDir, "solutions"), { recursive: true });
+  fs.writeFileSync(path.join(compileDir, "solutions", "alpha.ts"), "type Alpha = string;\n");
+
+  const tsvPath = path.join(dir, "blank-ref.tsv");
+  fs.writeFileSync(
+    tsvPath,
+    "output\tsource\tid\tlevel\ttitle\nsolutions/alpha.ts\ten/alpha.md\t1\teasy\tAlpha\n",
+    "utf8",
+  );
+  const result = spawnSync(process.execPath, [MANIFEST_SCRIPT, tsvPath, manifestPath], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      TYPE_CHALLENGES_SOLUTIONS_REPO:
+        "https://example.invalid/type-challenges-solutions.git",
+      TYPE_CHALLENGES_SOLUTIONS_REF: "   ",
+      TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED: "1",
+    },
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /missing Type Challenges solutions repository, ref, or expected count/,
+  );
+});
+
+withTempDir((dir) => {
   const sourceDir = path.join(dir, "source");
   const compileDir = path.join(dir, "compile");
   fs.mkdirSync(path.join(sourceDir, "en"), { recursive: true });
@@ -217,6 +247,22 @@ withTempDir((dir) => {
   const sourceResult = runManifest(sourceTraversal, manifestPath);
   assert.notEqual(sourceResult.status, 0);
   assert.match(sourceResult.stderr, /unsafe manifest source path: \.\.\/alpha\.md/);
+});
+
+withTempDir((dir) => {
+  const compileDir = path.join(dir, "compile");
+  const manifestPath = path.join(compileDir, "type-challenges-solutions-manifest.json");
+  fs.mkdirSync(path.join(compileDir, "solutions", "alpha.ts"), { recursive: true });
+
+  const directoryOutput = path.join(dir, "directory-output.tsv");
+  fs.writeFileSync(
+    directoryOutput,
+    "output\tsource\tid\tlevel\ttitle\nsolutions/alpha.ts\ten/alpha.md\t1\teasy\tAlpha\n",
+    "utf8",
+  );
+  const result = runManifest(directoryOutput, manifestPath);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /manifest output is not a file: solutions\/alpha\.ts/);
 });
 
 withTempDir((dir) => {
