@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { REQUIRED_COMPATIBILITY_FIELDS } from "../bench/project-rows.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -68,6 +69,15 @@ function readJsonl(file) {
     .split(/\r?\n/)
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+}
+
+function assertRequiredCompatibilityFields(row) {
+  for (const field of REQUIRED_COMPATIBILITY_FIELDS) {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(row, field),
+      `tsc-clean assertion row is missing ${field}`,
+    );
+  }
 }
 
 withTempDir((dir) => {
@@ -136,6 +146,7 @@ withTempDir((dir) => {
   const rows = readJsonl(path.join(fixtureRoot, "project-compatibility.jsonl"));
   assert.equal(rows.length, 1);
   assert.equal(rows[0].name, "type-challenges-assertions-tsc-clean");
+  assertRequiredCompatibilityFields(rows[0]);
   assert.equal(rows[0].state, "green");
   assert.equal(rows[0].phase, "check");
   assert.equal(rows[0].files_reached, 1);
