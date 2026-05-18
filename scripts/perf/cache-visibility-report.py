@@ -29,15 +29,19 @@ DEFAULT_ROOTS = (
 )
 EXCLUDED_DIRS = {".git", "target", "node_modules", "tests", "benches", "examples"}
 MAP_TYPES = ("HashMap", "FxHashMap", "DashMap", "IndexMap", "BTreeMap")
+CACHE_NAME_PATTERN = (
+    r"(?:[A-Za-z_][A-Za-z0-9_]*(?:cache|Cache|memo|Memo)[A-Za-z0-9_]*"
+    r"|cache|Cache|memo|Memo)"
+)
 
 FIELD_RE = re.compile(
     r"^\s*(?:(?:pub|pub\(crate\)|pub\(super\)|pub\(in [^)]+\))\s+)?"
-    r"(?P<name>[A-Za-z_][A-Za-z0-9_]*(?:cache|Cache|memo|Memo)[A-Za-z0-9_]*)"
+    rf"(?P<name>{CACHE_NAME_PATTERN})"
     r"\s*:\s*(?P<type>.+)$"
 )
 TYPE_ALIAS_RE = re.compile(
     r"^\s*(?:(?:pub|pub\(crate\)|pub\(super\)|pub\(in [^)]+\))\s+)?"
-    r"type\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*(?:Cache|cache|Memo|memo)[A-Za-z0-9_]*)"
+    rf"type\s+(?P<name>{CACHE_NAME_PATTERN})"
     r"\s*=\s*(?P<type>.+)$"
 )
 STRUCT_RE = re.compile(
