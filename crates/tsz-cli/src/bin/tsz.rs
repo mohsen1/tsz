@@ -57,12 +57,6 @@ fn main() -> Result<()> {
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
     let use_large_stack_thread = should_use_large_stack_thread(&args);
 
-    if use_large_stack_thread {
-        // Initialize Rayon before any driver path can accidentally create the
-        // default pool with platform-default worker stacks.
-        tsz::parallel::ensure_rayon_global_pool();
-    }
-
     // Run on a larger stack for project-sized and multi-file workflows.
     // Single-file CLI probes avoid this extra thread hop for lower startup overhead.
     if use_large_stack_thread {

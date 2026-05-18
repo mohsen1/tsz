@@ -132,6 +132,16 @@ fn test_normalize_lib_reference_name_handles_legacy_and_nested_lib_names() {
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_rayon_worker_count_for_work_items_caps_only_small_implicit_workloads() {
+    assert_eq!(rayon_worker_count_for_work_items(4, 16, false), Some(4));
+    assert_eq!(rayon_worker_count_for_work_items(4, 2, false), Some(2));
+    assert_eq!(rayon_worker_count_for_work_items(0, 16, false), None);
+    assert_eq!(rayon_worker_count_for_work_items(33, 16, false), None);
+    assert_eq!(rayon_worker_count_for_work_items(4, 16, true), None);
+}
+
 #[test]
 fn test_resolve_lib_reference_path_prefers_available_candidate_names() {
     let temp_dir = tempfile::tempdir().expect("temp dir");
