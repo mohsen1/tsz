@@ -683,6 +683,17 @@ build_test_binaries() {
     return 0
   fi
 
+  local heartbeat_pid heartbeat_interval cargo_rc
+  heartbeat_interval="${TSZ_CI_DIST_BUILD_HEARTBEAT_SECONDS:-60}"
+  (
+    while true; do
+      sleep "$heartbeat_interval"
+      echo "dist-fast cargo build still running at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    done
+  ) &
+  heartbeat_pid="$!"
+
+  set +e
   cargo build --profile dist-fast \
     --jobs "$CARGO_BUILD_JOBS" \
     -p tsz-cli \
@@ -691,6 +702,13 @@ build_test_binaries() {
     --bin tsz-server \
     --bin tsz-conformance \
     --bin generate-tsc-cache
+  cargo_rc="$?"
+  set -e
+  kill "$heartbeat_pid" >/dev/null 2>&1 || true
+  wait "$heartbeat_pid" 2>/dev/null || true
+  if [[ "$cargo_rc" -ne 0 ]]; then
+    return "$cargo_rc"
+  fi
   mkdir -p .target/release
   ln -sf "$ROOT_DIR/.target/dist-fast/tsz-server" .target/release/tsz-server
   ls -lh "${binaries[@]}"
