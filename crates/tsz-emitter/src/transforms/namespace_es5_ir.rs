@@ -55,6 +55,7 @@ mod namespace_es5_ir_helpers;
 use namespace_es5_ir_helpers::*;
 
 use std::cell::RefCell;
+use std::sync::Arc;
 
 use crate::emitter::ScopedConstEnum;
 use crate::enums::evaluator::EnumValue;
@@ -110,8 +111,8 @@ pub struct NamespaceES5Transformer<'a> {
     /// (e.g., from computed property lowering inside object literals)
     hoisted_temps: RefCell<Vec<String>>,
     default_exported_func_names: std::collections::HashSet<String>,
-    const_enum_values: FxHashMap<String, Vec<ScopedConstEnum>>,
-    const_enum_import_aliases: FxHashMap<String, String>,
+    const_enum_values: Arc<FxHashMap<String, Vec<ScopedConstEnum>>>,
+    const_enum_import_aliases: Arc<FxHashMap<String, String>>,
     remove_comments: bool,
 }
 
@@ -128,8 +129,8 @@ impl<'a> NamespaceES5Transformer<'a> {
             emit_decorator_metadata: false,
             hoisted_temps: RefCell::new(Vec::new()),
             default_exported_func_names: std::collections::HashSet::new(),
-            const_enum_values: FxHashMap::default(),
-            const_enum_import_aliases: FxHashMap::default(),
+            const_enum_values: Arc::new(FxHashMap::default()),
+            const_enum_import_aliases: Arc::new(FxHashMap::default()),
             remove_comments: false,
         }
     }
@@ -146,8 +147,8 @@ impl<'a> NamespaceES5Transformer<'a> {
             emit_decorator_metadata: false,
             hoisted_temps: RefCell::new(Vec::new()),
             default_exported_func_names: std::collections::HashSet::new(),
-            const_enum_values: FxHashMap::default(),
-            const_enum_import_aliases: FxHashMap::default(),
+            const_enum_values: Arc::new(FxHashMap::default()),
+            const_enum_import_aliases: Arc::new(FxHashMap::default()),
             remove_comments: false,
         }
     }
@@ -180,8 +181,8 @@ impl<'a> NamespaceES5Transformer<'a> {
 
     pub(crate) fn set_const_enum_facts(
         &mut self,
-        values: FxHashMap<String, Vec<ScopedConstEnum>>,
-        import_aliases: FxHashMap<String, String>,
+        values: Arc<FxHashMap<String, Vec<ScopedConstEnum>>>,
+        import_aliases: Arc<FxHashMap<String, String>>,
     ) {
         self.const_enum_values = values;
         self.const_enum_import_aliases = import_aliases;

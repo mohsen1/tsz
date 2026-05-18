@@ -40,6 +40,7 @@ use crate::emitter::ScopedConstEnum;
 use crate::transforms::ir_printer::IRPrinter;
 use crate::transforms::namespace_es5_ir::NamespaceES5Transformer;
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 
@@ -184,8 +185,8 @@ impl<'a> NamespaceES5Emitter<'a> {
 
     pub(crate) fn set_const_enum_facts(
         &mut self,
-        values: FxHashMap<String, Vec<ScopedConstEnum>>,
-        import_aliases: FxHashMap<String, String>,
+        values: Arc<FxHashMap<String, Vec<ScopedConstEnum>>>,
+        import_aliases: Arc<FxHashMap<String, String>>,
     ) {
         self.transformer
             .set_const_enum_facts(values, import_aliases);

@@ -702,10 +702,10 @@ pub struct Printer<'a> {
     /// position range of the scope it was declared in so that at inline time
     /// we pick the right entry (the tightest scope that contains the access).
     /// File-level const enums use `(0, u32::MAX)`.
-    pub(crate) const_enum_values: FxHashMap<String, Vec<ScopedConstEnum>>,
+    pub(crate) const_enum_values: Arc<FxHashMap<String, Vec<ScopedConstEnum>>>,
 
     /// Import-equals alias mappings for const enum resolution.
-    pub(crate) const_enum_import_aliases: FxHashMap<String, String>,
+    pub(crate) const_enum_import_aliases: Arc<FxHashMap<String, String>>,
 
     /// Accumulated enum member values across all processed enum declarations.
     /// Used by `EnumES5Transformer` to resolve cross-enum references like
@@ -1085,8 +1085,8 @@ impl<'a> Printer<'a> {
             object_literal_accessor_depth: 0,
             class_member_emit_depth: 0,
             is_current_root_js_source: false,
-            const_enum_values: FxHashMap::default(),
-            const_enum_import_aliases: FxHashMap::default(),
+            const_enum_values: Arc::new(FxHashMap::default()),
+            const_enum_import_aliases: Arc::new(FxHashMap::default()),
             prior_enum_member_values: FxHashMap::default(),
             prior_enum_string_members: FxHashMap::default(),
             prior_enum_string_values: FxHashMap::default(),

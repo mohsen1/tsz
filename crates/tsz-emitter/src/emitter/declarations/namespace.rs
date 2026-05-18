@@ -1,4 +1,5 @@
 use super::super::Printer;
+use std::sync::Arc;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -57,8 +58,8 @@ impl<'a> Printer<'a> {
             es5_emitter.set_target_es5(self.ctx.target_es5);
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
             es5_emitter.set_const_enum_facts(
-                self.const_enum_values.clone(),
-                self.const_enum_import_aliases.clone(),
+                Arc::clone(&self.const_enum_values),
+                Arc::clone(&self.const_enum_import_aliases),
             );
             if let Some(export_names) = system_export_fold.as_deref() {
                 es5_emitter.set_system_export_folds(export_names.iter().map(String::as_str));

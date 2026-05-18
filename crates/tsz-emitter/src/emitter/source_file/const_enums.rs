@@ -1,5 +1,6 @@
 use super::super::Printer;
 use crate::enums::evaluator::EnumEvaluator;
+use std::sync::Arc;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::NodeList;
 use tsz_parser::parser::node::Node;
@@ -12,13 +13,13 @@ impl<'a> Printer<'a> {
     /// `const_enum_values` so that property/element access expressions
     /// referencing const enum members can be inlined during emit.
     pub(in crate::emitter) fn collect_const_enum_values(&mut self, statements: &NodeList) {
-        self.const_enum_values.clear();
-        self.const_enum_import_aliases.clear();
+        Arc::make_mut(&mut self.const_enum_values).clear();
+        Arc::make_mut(&mut self.const_enum_import_aliases).clear();
         let mut evaluator = EnumEvaluator::new(self.arena);
         self.collect_const_enums_recursive(&mut evaluator, statements, 0, u32::MAX, "");
         self.collect_const_enum_import_aliases(statements);
         for (name, values) in &self.ctx.options.external_const_enum_values {
-            self.const_enum_values
+            Arc::make_mut(&mut self.const_enum_values)
                 .entry(name.clone())
                 .or_default()
                 .push(crate::emitter::core::ScopedConstEnum {
@@ -265,7 +266,9 @@ impl<'a> Printer<'a> {
     ) {
         use crate::emitter::core::ScopedConstEnum;
 
-        let entries = self.const_enum_values.entry(key).or_default();
+        let entries = Arc::make_mut(&mut self.const_enum_values)
+            .entry(key)
+            .or_default();
         if let Some(existing) = entries
             .iter_mut()
             .find(|e| e.scope_start == scope_start && e.scope_end == scope_end)
@@ -443,8 +446,7 @@ impl<'a> Printer<'a> {
         } else {
             format!("{ns_prefix}.{alias_name}")
         };
-        self.const_enum_import_aliases
-            .insert(alias_key, resolved_target);
+        Arc::make_mut(&mut self.const_enum_import_aliases).insert(alias_key, resolved_target);
     }
 
     fn resolve_const_enum_alias_target(&self, target: &str, ns_prefix: &str) -> Option<String> {

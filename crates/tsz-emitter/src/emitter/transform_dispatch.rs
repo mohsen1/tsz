@@ -336,8 +336,8 @@ impl<'a> Printer<'a> {
                 let system_export_fold = self.pending_system_namespace_export_fold.take();
                 let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
                 ns_emitter.set_const_enum_facts(
-                    self.const_enum_values.clone(),
-                    self.const_enum_import_aliases.clone(),
+                    Arc::clone(&self.const_enum_values),
+                    Arc::clone(&self.const_enum_import_aliases),
                 );
                 if let Some(export_names) = system_export_fold.as_deref() {
                     ns_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
@@ -426,8 +426,8 @@ impl<'a> Printer<'a> {
                                 !merges_with_default_func,
                             );
                             ns_emitter.set_const_enum_facts(
-                                self.const_enum_values.clone(),
-                                self.const_enum_import_aliases.clone(),
+                                Arc::clone(&self.const_enum_values),
+                                Arc::clone(&self.const_enum_import_aliases),
                             );
                             // Cross-block export sharing
                             if let Some(module_decl) = self.arena.get_module(node) {
@@ -1232,8 +1232,8 @@ impl<'a> Printer<'a> {
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
                 ns_emitter.set_const_enum_facts(
-                    self.const_enum_values.clone(),
-                    self.const_enum_import_aliases.clone(),
+                    Arc::clone(&self.const_enum_values),
+                    Arc::clone(&self.const_enum_import_aliases),
                 );
                 // Collect this block's exported vars and accumulate for cross-block sharing
                 if !ns_name_for_exports.is_empty() {
@@ -1421,8 +1421,8 @@ impl<'a> Printer<'a> {
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
                 ns_emitter.set_const_enum_facts(
-                    self.const_enum_values.clone(),
-                    self.const_enum_import_aliases.clone(),
+                    Arc::clone(&self.const_enum_values),
+                    Arc::clone(&self.const_enum_import_aliases),
                 );
                 // Collect this block's exported vars and accumulate for cross-block sharing
                 if !ns_name_for_exports.is_empty() {
@@ -1465,8 +1465,8 @@ impl<'a> Printer<'a> {
                 if node.kind == syntax_kind_ext::MODULE_DECLARATION && !*is_default {
                     let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
                     ns_emitter.set_const_enum_facts(
-                        self.const_enum_values.clone(),
-                        self.const_enum_import_aliases.clone(),
+                        Arc::clone(&self.const_enum_values),
+                        Arc::clone(&self.const_enum_import_aliases),
                     );
                     let mut should_declare_namespace_var = None;
                     // Cross-block export sharing
