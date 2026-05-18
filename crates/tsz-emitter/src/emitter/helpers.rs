@@ -194,6 +194,9 @@ impl<'a> Printer<'a> {
         if !self.in_namespace_iife {
             return false;
         }
+        if self.ctx.target_es5 {
+            return false;
+        }
         self.arena
             .has_modifier(modifiers, SyntaxKind::StaticKeyword)
             || self.has_recovered_namespace_static_modifier(node)

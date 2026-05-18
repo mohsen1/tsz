@@ -2079,6 +2079,28 @@ fn invalid_namespace_static_var_and_function_modifiers_are_preserved() {
 }
 
 #[test]
+fn invalid_namespace_static_modifiers_are_erased_for_es5() {
+    let source = r#"namespace N {
+    static var staticValue: number = 1;
+    static function staticFn(x: string) { }
+}"#;
+    let output = parse_lower_print(source, PrintOptions::es5());
+
+    assert!(
+        output.contains("var staticValue = 1;"),
+        "ES5 namespace var recovery should erase invalid static.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function staticFn(x) { }"),
+        "ES5 namespace function recovery should erase invalid static.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("static var") && !output.contains("static function"),
+        "ES5 namespace output must not preserve invalid static modifiers.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_cjs_exported_namespace_reopen_declares_var_once_es5() {
     let source = r#"export namespace N {
     export class A {}
