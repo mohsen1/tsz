@@ -211,6 +211,8 @@ record_project_compatibility() {
   local tsconfig_path="${9:-}"
   local source_root="${10:-}"
   local tsc_exit_codes="${11:-}"
+  local fixture_sources
+  fixture_sources="$(tsz_project_fixture_sources "$name")"
 
   COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
   COMPAT_NAME="$name" \
@@ -225,6 +227,7 @@ record_project_compatibility() {
   COMPAT_TSCONFIG_PATH="$tsconfig_path" \
   COMPAT_SOURCE_ROOT="$source_root" \
   COMPAT_FIXTURE_ROOT="$FIXTURE_ROOT" \
+  COMPAT_FIXTURE_SOURCES="$fixture_sources" \
   COMPAT_TYPE_CHALLENGES_CLEAN_MANIFEST="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-manifest.json" \
   COMPAT_TYPE_CHALLENGES_CLEAN_CLASSIFICATION="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-classification.json" \
   node scripts/ci/project-compatibility.mjs record

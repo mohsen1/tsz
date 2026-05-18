@@ -67,6 +67,26 @@ function toExitCodes(value) {
   return codes;
 }
 
+function fixtureSourcesFrom(value) {
+  const sources = [];
+  const seen = new Set();
+  for (const rawLine of String(value || "").split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const [name, repository, ref = ""] = line.split("|");
+    if (!name || !repository) continue;
+    const key = `${name}\0${repository}\0${ref}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    sources.push({
+      name,
+      repository,
+      ref: ref || null,
+    });
+  }
+  return sources;
+}
+
 function subsystemForCode(code) {
   for (const [subsystem, codes] of DIAGNOSTIC_SUBSYSTEM_RULES) {
     if (codes.has(code)) return subsystem;
@@ -453,6 +473,7 @@ function record() {
     },
     files_reached: toNumber(process.env.COMPAT_FILES_REACHED),
     peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
+    fixture_sources: fixtureSourcesFrom(process.env.COMPAT_FIXTURE_SOURCES),
   };
   const assertionMetadata = typeChallengesCleanAssertionMetadata(projectName);
   if (assertionMetadata) {

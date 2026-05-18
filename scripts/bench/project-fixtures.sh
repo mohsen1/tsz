@@ -33,6 +33,48 @@ TSZ_PROJECT_FIXTURES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${TYPE_CHALLENGES_SOLUTIONS_REF:=91a6d2986650475f29eeb3bd18ebd025128aa07e}"
 : "${TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED:=78}"
 
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|%s|%s\n' "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF"
+      ;;
+    ts-toolbelt-project)
+      printf 'ts-toolbelt|%s|%s\n' "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF"
+      ;;
+    ts-essentials-project)
+      printf 'ts-essentials|%s|%s\n' "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF"
+      ;;
+    rxjs-project)
+      printf 'rxjs|%s|%s\n' "$RXJS_REPO" "$RXJS_REF"
+      ;;
+    type-fest-project)
+      printf 'type-fest|%s|%s\n' "$TYPE_FEST_REPO" "$TYPE_FEST_REF"
+      ;;
+    zod-project)
+      printf 'zod|%s|%s\n' "$ZOD_REPO" "$ZOD_REF"
+      ;;
+    kysely-project)
+      printf 'kysely|%s|%s\n' "$KYSELY_REPO" "$KYSELY_REF"
+      ;;
+    nextjs)
+      printf 'nextjs|%s|%s\n' "$NEXTJS_REPO" "$NEXTJS_REF"
+      ;;
+    large-ts-repo)
+      printf 'large-ts-repo|%s|%s\n' "$LARGE_TS_REPO" "$LARGE_TS_REF"
+      ;;
+    type-challenges-project)
+      printf 'type-challenges|%s|%s\n' "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF"
+      ;;
+    type-challenges-solutions-project)
+      printf 'type-challenges-solutions|%s|%s\n' "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF"
+      ;;
+    type-challenges-assertion-candidates|type-challenges-assertions-tsc-clean)
+      printf 'type-challenges|%s|%s\n' "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF"
+      printf 'type-challenges-solutions|%s|%s\n' "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF"
+      ;;
+  esac
+}
+
 tsz_ensure_git_fixture() {
   local name="$1"
   local repo="$2"

@@ -51,6 +51,11 @@ withTempDir((dir) => {
     COMPAT_TSCONFIG_PATH: tsconfig,
     COMPAT_SOURCE_ROOT: sourceRoot,
     COMPAT_FIXTURE_ROOT: path.join(dir, "fixture"),
+    COMPAT_FIXTURE_SOURCES: [
+      "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
+      "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
+      "malformed",
+    ].join("\n"),
   });
 
   assert.equal(result.status, 0, result.stderr);
@@ -72,6 +77,13 @@ withTempDir((dir) => {
   assert.equal(row.repro.source_root, "src");
   assert.equal(row.repro.first_failure_path, "src/index.ts");
   assert.equal(row.repro.first_failure_code, "TS2344");
+  assert.deepEqual(row.fixture_sources, [
+    {
+      name: "type-fest",
+      repository: "https://github.com/sindresorhus/type-fest.git",
+      ref: "4005f60",
+    },
+  ]);
   assert.equal(row.diagnostic_subsystems[0].subsystem, "evaluation-inference-instantiation");
   assert.equal(row.diagnostic_subsystems[1].subsystem, "uncoded diagnostic");
 });
