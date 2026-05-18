@@ -122,6 +122,22 @@ pub(crate) enum RelationFailure {
         source_type: TypeId,
         target_type: TypeId,
     },
+    /// Two distinct type parameters used as keys of structurally-identical
+    /// indexed-access types — e.g. `JSX.IntrinsicElements[T1]` against
+    /// `JSX.IntrinsicElements[T2]`. tsc elaborates this as the chain
+    /// `Type 'S[T1]' is not assignable to type 'S[T2]'.` followed by
+    /// `Type 'T1' is not assignable to type 'T2'.` and the TS5075
+    /// "is assignable to the constraint of type ... could be instantiated
+    /// with a different subtype of constraint ..." note.
+    IndexAccessTypeParameterMismatch {
+        /// The source type parameter used as the source index access key.
+        source_param: TypeId,
+        /// The target type parameter used as the target index access key.
+        target_param: TypeId,
+        /// The target parameter's constraint (the "constraint" arg of
+        /// TS5075). `None` only when the target parameter is unconstrained.
+        target_constraint: Option<TypeId>,
+    },
 }
 
 impl RelationFailure {
@@ -275,6 +291,15 @@ impl RelationFailure {
             | SubtypeFailureReason::RecursionLimitExceeded => Self::TypeMismatch {
                 source_type: TypeId::ERROR,
                 target_type: TypeId::ERROR,
+            },
+            SubtypeFailureReason::IndexAccessTypeParameterMismatch {
+                source_param,
+                target_param,
+                target_constraint,
+            } => Self::IndexAccessTypeParameterMismatch {
+                source_param,
+                target_param,
+                target_constraint,
             },
         }
     }

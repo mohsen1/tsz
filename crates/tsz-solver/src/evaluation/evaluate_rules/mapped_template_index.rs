@@ -5,6 +5,7 @@ use crate::evaluation::evaluate::TypeEvaluator;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{MappedType, TypeId};
+use smallvec::SmallVec;
 
 /// Evaluate `mapped[constraint]` by substituting each concrete key literal into the
 /// mapped template and unioning the results.
@@ -25,7 +26,7 @@ pub(super) fn try_evaluate_mapped_template_per_concrete_key<R: TypeResolver>(
         return None;
     }
 
-    let results: Vec<TypeId> = keys
+    let results: SmallVec<[TypeId; 4]> = keys
         .keys
         .iter()
         .filter_map(|mapped_key| {
@@ -36,5 +37,9 @@ pub(super) fn try_evaluate_mapped_template_per_concrete_key<R: TypeResolver>(
         })
         .collect();
 
-    Some(crate::utils::union_or_single(evaluator.interner(), results))
+    Some(match results.len() {
+        0 => TypeId::NEVER,
+        1 => results[0],
+        _ => evaluator.interner().union(results.into_vec()),
+    })
 }

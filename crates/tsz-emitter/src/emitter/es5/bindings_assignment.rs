@@ -180,10 +180,25 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let effective_right_idx = self.unwrap_empty_destructuring_chain(right_idx);
+
+        if self.ctx.options.downlevel_iteration
+            && (left_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || left_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+            && let Some(elements) = self.get_binding_or_literal_elements(left_node)
+        {
+            let mut first = true;
+            self.emit_assignment_array_destructuring_with_read(
+                &elements,
+                effective_right_idx,
+                &mut first,
+            );
+            return;
+        }
+
         // Determine if right side is a simple identifier (can be accessed directly).
         // Also check if the RHS is a destructuring assignment with an empty pattern,
         // which reduces to just the inner RHS (e.g., `{} = a` evaluates to `a`).
-        let effective_right_idx = self.unwrap_empty_destructuring_chain(right_idx);
         let mut is_simple = self
             .arena
             .get(effective_right_idx)
@@ -1235,6 +1250,39 @@ impl<'a> Printer<'a> {
             self.write_usize(i);
             self.write("]");
         }
+    }
+
+    fn emit_assignment_array_destructuring_with_read(
+        &mut self,
+        elements: &[NodeIndex],
+        source_idx: NodeIndex,
+        first: &mut bool,
+    ) {
+        let read_temp = self.make_unique_name_hoisted_assignment();
+        self.emit_assignment_separator(first);
+        self.write(&read_temp);
+        self.write(" = ");
+        self.write_helper("__read");
+        self.write("(");
+        self.emit(source_idx);
+        if let Some(limit) = self.assignment_array_read_limit(elements) {
+            self.write(", ");
+            self.write_usize(limit);
+        }
+        self.write(")");
+        self.emit_assignment_array_destructuring(elements, &read_temp, first, None);
+    }
+
+    fn assignment_array_read_limit(&self, elements: &[NodeIndex]) -> Option<usize> {
+        for &elem_idx in elements {
+            let Some(elem_node) = self.arena.get(elem_idx) else {
+                continue;
+            };
+            if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+                return None;
+            }
+        }
+        Some(elements.len())
     }
 
     /// Emit lowered object assignment destructuring.

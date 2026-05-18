@@ -2355,7 +2355,7 @@ impl<'a> CheckerState<'a> {
         base_chain_summary: &ClassChainSummary,
         derived_class_name: &str,
         base_class_name: &str,
-        substitution: &tsz_solver::TypeSubstitution,
+        substitution: &TypeSubstitution,
     ) {
         use crate::query_boundaries::common::instantiate_type;
 
