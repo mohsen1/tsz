@@ -1472,9 +1472,6 @@ impl<'a> CheckerState<'a> {
         let kind = classify_for_assignability_eval(self.ctx.types, type_id);
         let mut evaluated = match kind {
             AssignabilityEvalKind::Application => {
-                if self.type_alias_application_body_is_application(type_id) {
-                    return type_id;
-                }
                 let result = self.evaluate_type_with_resolution(type_id);
                 // Guard: if evaluation degraded a valid type to ERROR (e.g., due to
                 // stack overflow protection tripping during deep recursive type
@@ -1570,25 +1567,6 @@ impl<'a> CheckerState<'a> {
         evaluated = self.normalize_callable_type_for_assignability(evaluated);
 
         evaluated
-    }
-
-    fn type_alias_application_body_is_application(&self, type_id: TypeId) -> bool {
-        let Some(def_id) = crate::query_boundaries::common::get_application_lazy_def_id(
-            self.ctx.types.as_type_database(),
-            type_id,
-        ) else {
-            return false;
-        };
-        self.ctx
-            .definition_store
-            .get(def_id)
-            .and_then(|def| def.body)
-            .is_some_and(|body| {
-                crate::query_boundaries::common::is_generic_application(
-                    self.ctx.types.as_type_database(),
-                    body,
-                )
-            })
     }
 
     fn distribute_intersection_union_for_assignability(
