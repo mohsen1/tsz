@@ -296,6 +296,45 @@ pub(crate) fn has_recursive_type_parameter_constraint(
     })
 }
 
+/// Detect the `S[T1]` vs `S[T2]` mismatch pattern where T1/T2 are
+/// distinct type parameters and the object halves share a TypeId.
+/// Returns the failure reason that elaborates the TS2322 + TS5075
+/// chain, or `None` for any other pair.
+///
+/// Operates on the unevaluated pair so callers can short-circuit
+/// before `prepare_assignability_inputs` collapses both halves to
+/// the same evaluated shape. The same-object check is intentionally
+/// strict (TypeId equality) here; deeper unification is owned by the
+/// solver-side recognizer to keep this boundary helper free of a fresh
+/// subtype context.
+pub(crate) fn index_access_pair_distinct_type_param_keys_failure_reason(
+    db: &dyn TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    source: TypeId,
+    target: TypeId,
+) -> Option<SubtypeFailureReason> {
+    let (s_obj, s_idx) = tsz_solver::index_access_parts(db, source)?;
+    let (t_obj, t_idx) = tsz_solver::index_access_parts(db, target)?;
+    if s_obj != t_obj {
+        return None;
+    }
+    tsz_solver::type_param_info(db, s_idx)?;
+    let t_param = tsz_solver::type_param_info(db, t_idx)?;
+    let same_identity = s_idx == t_idx
+        || def_store
+            .find_def_for_type(s_idx)
+            .zip(def_store.find_def_for_type(t_idx))
+            .is_some_and(|(source_def, target_def)| source_def == target_def);
+    if same_identity {
+        return None;
+    }
+    Some(SubtypeFailureReason::IndexAccessTypeParameterMismatch {
+        source_param: s_idx,
+        target_param: t_idx,
+        target_constraint: t_param.constraint,
+    })
+}
+
 pub(crate) fn has_deferred_conditional_member(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::has_deferred_conditional_member(db, type_id)
 }

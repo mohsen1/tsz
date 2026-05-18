@@ -405,6 +405,213 @@ fn test_ts2322_for_index_accesses_with_distinct_key_type_parameters() {
     );
 }
 
+/// Adjacent-case test matrix for the `S[T1]` vs `S[T2]` distinct-type-parameter
+/// elaboration (issue #7647).
+///
+/// Structural rule: when an index access `S[T1]` is assigned to `S[T2]` and
+/// `T1`, `T2` are distinct type parameters with relatable constraints, tsc
+/// emits the TS2322 chain:
+///
+/// ```text
+/// Type 'S[T1]' is not assignable to type 'S[T2]'.
+///   Type 'T1' is not assignable to type 'T2'.
+///     'T1' is assignable to the constraint of type 'T2', but 'T2' could be
+///     instantiated with a different subtype of constraint '<constraint>'.
+/// ```
+///
+/// The expected elaboration is independent of the chosen parameter names —
+/// the tests below rename the parameters and the object type to prove
+/// the rule isn't keyed on identifier spelling (anti-hardcoding §25).
+mod index_access_type_parameter_mismatch_elaboration {
+    use super::*;
+    use tsz_checker::test_utils::check_source_diagnostics;
+
+    fn assert_index_access_elaboration_chain(
+        source: &str,
+        source_param: &str,
+        target_param: &str,
+        constraint_display: &str,
+    ) {
+        let diagnostics = check_source_diagnostics(source);
+        let primary = diagnostics
+            .iter()
+            .find(|d| {
+                d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    && d.message_text
+                        .contains("is not assignable to type")
+                    && !d.message_text.contains(&format!("Type '{source_param}'"))
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "Expected primary TS2322 diagnostic for index-access mismatch; got: {diagnostics:#?}"
+                )
+            });
+        let related: Vec<(u32, &str)> = primary
+            .related_information
+            .iter()
+            .map(|r| (r.code, r.message_text.as_str()))
+            .collect();
+        let inner_msg =
+            format!("Type '{source_param}' is not assignable to type '{target_param}'.");
+        assert!(
+            related.iter().any(|(code, msg)| {
+                let expected_code = if source_param == target_param {
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY
+                } else {
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                };
+                *code == expected_code && msg.contains(&inner_msg)
+            }),
+            "Expected related parameter mismatch with `{inner_msg}`; got related: {related:?}"
+        );
+        if source_param == target_param {
+            assert!(
+                related.iter().any(|(_, msg)| msg
+                    .contains("Two different types with this name exist, but they are unrelated.")),
+                "Expected same-spelling distinct parameters to mention unrelated names; got related: {related:?}"
+            );
+        }
+        let ts5075_msg = format!(
+            "'{source_param}' is assignable to the constraint of type '{target_param}', but '{target_param}' could be instantiated with a different subtype of constraint '{constraint_display}'."
+        );
+        assert!(
+            related.iter().any(|(_, msg)| msg.contains(&ts5075_msg)),
+            "Expected TS5075 elaboration `{ts5075_msg}`; got related: {related:?}"
+        );
+    }
+
+    /// Reported repro shape: `JSX.IntrinsicElements[T1]` vs `[T2]`.
+    #[test]
+    fn jsx_intrinsic_elements_index_access_emits_elaboration_chain() {
+        assert_index_access_elaboration_chain(
+            r#"
+            declare namespace JSX {
+                interface IntrinsicElements {
+                    div: { divOnly?: string };
+                    span: { spanOnly?: string };
+                }
+            }
+            class I<
+                T1 extends keyof JSX.IntrinsicElements,
+                T2 extends keyof JSX.IntrinsicElements
+            > {
+                M() {
+                    let c1: JSX.IntrinsicElements[T1] = {};
+                    const c2: JSX.IntrinsicElements[T2] = c1;
+                }
+            }
+            "#,
+            "T1",
+            "T2",
+            "keyof IntrinsicElements",
+        );
+    }
+
+    /// Same rule with renamed parameters proves the elaboration is structural,
+    /// not hardcoded to the `T1`/`T2` spelling.
+    #[test]
+    fn renamed_parameters_still_emit_elaboration_chain() {
+        assert_index_access_elaboration_chain(
+            r#"
+            declare namespace JSX {
+                interface IntrinsicElements {
+                    div: { divOnly?: string };
+                    span: { spanOnly?: string };
+                }
+            }
+            class Holder<
+                Source extends keyof JSX.IntrinsicElements,
+                Target extends keyof JSX.IntrinsicElements
+            > {
+                M() {
+                    let a: JSX.IntrinsicElements[Source] = {};
+                    const b: JSX.IntrinsicElements[Target] = a;
+                }
+            }
+            "#,
+            "Source",
+            "Target",
+            "keyof IntrinsicElements",
+        );
+    }
+
+    /// A user-defined object type (no JSX namespace) and single-letter
+    /// rename: the constraint display follows the *target's* constraint.
+    #[test]
+    fn user_defined_object_index_access_uses_target_constraint() {
+        assert_index_access_elaboration_chain(
+            r#"
+            interface Map {
+                a: { x: number };
+                b: { y: string };
+            }
+            class Pair<
+                K1 extends keyof Map,
+                K2 extends keyof Map
+            > {
+                M() {
+                    let lhs: Map[K1] = { x: 0, y: "" } as any;
+                    const rhs: Map[K2] = lhs;
+                }
+            }
+            "#,
+            "K1",
+            "K2",
+            "keyof Map",
+        );
+    }
+
+    /// Same spelling in nested scopes still represents distinct type parameters.
+    #[test]
+    fn nested_same_spelling_parameters_still_emit_elaboration_chain() {
+        assert_index_access_elaboration_chain(
+            r#"
+            interface Dict {
+                a: { aOnly: string };
+                b: { bOnly: number };
+            }
+
+            function outer<K extends keyof Dict>(x: Dict[K]) {
+                function inner<K extends keyof Dict>(y: Dict[K]) {
+                    y = x;
+                }
+            }
+            "#,
+            "K",
+            "K",
+            "keyof Dict",
+        );
+    }
+
+    /// Negative case: same type parameter on both sides is reflexive — no diagnostic.
+    /// Proves the structural rule fires only on *distinct* type parameters.
+    #[test]
+    fn same_type_parameter_does_not_emit_elaboration() {
+        let source = r#"
+            declare namespace JSX {
+                interface IntrinsicElements {
+                    div: { divOnly?: string };
+                }
+            }
+            class Same<T extends keyof JSX.IntrinsicElements> {
+                M() {
+                    let a: JSX.IntrinsicElements[T] = {};
+                    const b: JSX.IntrinsicElements[T] = a;
+                }
+            }
+        "#;
+        let diagnostics = check_source_diagnostics(source);
+        let ts2322_count = diagnostics
+            .iter()
+            .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+            .count();
+        assert_eq!(
+            ts2322_count, 0,
+            "Same type-parameter index accesses must not emit TS2322; got: {diagnostics:#?}"
+        );
+    }
+}
+
 #[test]
 fn test_ts2322_identifier_literal_initializer_display_for_literal_sensitive_targets() {
     let diagnostics = get_all_diagnostics(
