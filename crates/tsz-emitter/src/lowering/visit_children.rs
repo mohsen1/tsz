@@ -175,8 +175,23 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                 if let Some(prop) = self.arena.get_property_assignment(node) {
+                    if self.is_tc39_decorated_anonymous_class_expression(prop.initializer)
+                        && self.arena.get(prop.name).is_some_and(|name_node| {
+                            name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        })
+                    {
+                        self.transforms.helpers_mut().prop_key = true;
+                    }
                     self.visit(prop.name);
                     self.visit(prop.initializer);
+                }
+            }
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                if let Some(prop) = self.arena.get_shorthand_property(node) {
+                    self.visit(prop.name);
+                    if prop.object_assignment_initializer.is_some() {
+                        self.visit(prop.object_assignment_initializer);
+                    }
                 }
             }
             k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
@@ -193,6 +208,14 @@ impl<'a> LoweringPass<'a> {
                         })
                     {
                         self.transforms.helpers_mut().metadata = true;
+                    }
+                    if prop.initializer.is_some()
+                        && self.is_tc39_decorated_anonymous_class_expression(prop.initializer)
+                        && self.arena.get(prop.name).is_some_and(|name_node| {
+                            name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        })
+                    {
+                        self.transforms.helpers_mut().prop_key = true;
                     }
                     if let Some(mods) = &prop.modifiers {
                         for &mod_idx in &mods.nodes {
@@ -404,33 +427,7 @@ impl<'a> LoweringPass<'a> {
                         && self.class_has_decorators(class_data);
 
                     if has_tc39_decorators {
-                        let needs_prop_key = self.class_has_computed_decorated_member(class_data);
-                        let needs_set_function_name =
-                            self.class_has_private_decorated_member(class_data);
-                        let has_class_decorators =
-                            class_data.modifiers.as_ref().is_some_and(|mods| {
-                                mods.nodes.iter().any(|&mod_idx| {
-                                    self.arena
-                                        .get(mod_idx)
-                                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-                                })
-                            });
-                        // The class-decorator path only writes the
-                        // `__setFunctionName(_classThis, ...)` static block when
-                        // the source class is *anonymous* (a named class
-                        // expression carries its own name to the engine). Match
-                        // that here so we don't drop a phantom helper preamble
-                        // for `const C = @dec class C {}`.
-                        let class_is_anonymous = class_data.name.is_none();
-                        let helpers = self.transforms.helpers_mut();
-                        helpers.es_decorate = true;
-                        helpers.run_initializers = true;
-                        if needs_prop_key {
-                            helpers.prop_key = true;
-                        }
-                        if needs_set_function_name || (has_class_decorators && class_is_anonymous) {
-                            helpers.set_function_name = true;
-                        }
+                        self.mark_tc39_decorator_helpers(class_data);
                     }
                     if self.class_expr_static_comma_needs_set_function_name(idx, class_data) {
                         self.transforms.helpers_mut().set_function_name = true;
