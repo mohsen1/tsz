@@ -72,6 +72,26 @@ function validateCandidateManifestSources(manifest) {
   }
 }
 
+function fixtureSourcesFromCandidateManifest(manifest) {
+  const labelNames = new Map([
+    ["templates", "type-challenges"],
+    ["testCases", "type-challenges"],
+    ["solutions", "type-challenges-solutions"],
+  ]);
+  const sources = [];
+  const seen = new Set();
+  for (const [label, name] of labelNames) {
+    const source = manifest?.sources?.[label];
+    const repository = source?.repository || "";
+    const ref = source?.ref || "";
+    const key = `${name}\0${repository}\0${ref}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    sources.push({ name, repository, ref });
+  }
+  return sources;
+}
+
 function validateCleanManifestSources(manifest) {
   if (!manifest?.sources || typeof manifest.sources !== "object") {
     fail("tsc-clean assertion manifest is missing sources");
@@ -1273,6 +1293,7 @@ const row = {
       0,
   ),
   peak_memory_bytes: null,
+  fixture_sources: fixtureSourcesFromCandidateManifest(report.candidateManifest),
   assertion_candidates: {
     sources: report.candidateManifest?.sources ?? null,
     paired_solutions: counts.pairedSolutions ?? null,

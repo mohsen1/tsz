@@ -474,6 +474,10 @@ withTempDir((dir) => {
   assert.equal(row.exit_class, "fixture invalid");
   assert.equal(row.first_failure_class, "assertion corpus not tsc-clean");
   assert.deepEqual(row.known_blockers, ["assertion corpus not tsc-clean"]);
+  assert.deepEqual(row.fixture_sources, [
+    { name: "type-challenges", repository: "type", ref: "type-ref" },
+    { name: "type-challenges-solutions", repository: "solutions", ref: "solutions-ref" },
+  ]);
   assert.deepEqual(row.diagnostic_codes, ["TS2344"]);
   assert.deepEqual(row.diagnostic_subsystems, [
     {
