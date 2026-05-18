@@ -3093,6 +3093,43 @@ module.exports = a;
 }
 
 #[test]
+fn test_js_module_exports_typed_object_keeps_value_declaration_with_usage_analysis() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @typedef {{x: number}} Item
+ */
+/**
+ * @type {Item}
+ */
+const x = { x: 12 };
+module.exports = x;
+"#,
+    );
+
+    assert!(
+        output.starts_with("export = x;"),
+        "Expected CommonJS export assignment to stay before its value declaration: {output}"
+    );
+    assert!(
+        output.contains("const x: Item;"),
+        "Expected typed export-equals object root to emit as a value declaration: {output}"
+    );
+    assert!(
+        !output.contains("namespace x {\n    let x: number;"),
+        "Did not expect the object-literal namespace shortcut for an export-equals root: {output}"
+    );
+    assert!(
+        output.contains("declare namespace x {\n    export { Item };\n}"),
+        "Expected export-equals root namespace to re-export local typedef aliases: {output}"
+    );
+    assert!(
+        output.contains("type Item = {\n    x: number;\n};"),
+        "Expected local JSDoc typedef dependency to remain available: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_function_with_typedef_members() {
     let output = emit_js_dts(
         r#"

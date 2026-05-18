@@ -696,6 +696,27 @@ impl<'a> DeclarationEmitter<'a> {
         } else if has_effective_export && !is_variable_like_export {
             self.emit_leading_jsdoc_type_aliases_for_pos(stmt_node.pos, has_effective_export);
         }
+        if kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && let Some(var_stmt) = self.arena.get_variable(stmt_node)
+        {
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    self.emit_pending_js_export_equals_for_name(decl.name);
+                }
+            }
+        }
 
         // Save position before JSDoc comments so we can undo them if the
         // declaration turns out to be invisible (non-exported in namespace, etc.)
