@@ -1927,12 +1927,12 @@ fn setup_cross_file_index_state<'a>(
     );
     ctx.share_owner_symbol_type_results = true;
     ctx.set_all_arenas(Arc::new(vec![
-        Arc::clone(&requester_arena),
-        Arc::clone(&target_arena),
+        Arc::clone(requester_arena),
+        Arc::clone(target_arena),
     ]));
     ctx.set_all_binders(Arc::new(vec![
-        Arc::clone(&requester_binder),
-        Arc::clone(&target_binder),
+        Arc::clone(requester_binder),
+        Arc::clone(target_binder),
     ]));
     let state = CheckerState { ctx };
 
