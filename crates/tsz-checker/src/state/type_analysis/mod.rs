@@ -17,4 +17,5 @@ mod cross_file_env_merge;
 pub(crate) mod cross_file_query_types;
 mod cross_file_residue;
 mod cross_file_shared_cache;
+mod source_file_direct_lowerability;
 mod symbol_type_helpers;
