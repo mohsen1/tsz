@@ -258,6 +258,13 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// thousands of times. Cache the shape once per checker so those
     /// checks avoid rebuilding method signatures and property vectors.
     pub(crate) apparent_primitive_shapes: [Option<Arc<ObjectShape>>; 5],
+    /// Computed type-parameter variance masks for this relation walk.
+    ///
+    /// Query databases cache this across calls when available, but evaluator-created
+    /// subtype checkers often run with only a resolver. The resolver view is
+    /// immutable for a single checker, so a per-checker cache avoids repeating the
+    /// variance visitor for the same `DefId` inside recursive conditional checks.
+    pub(crate) computed_variance_cache: FxHashMap<DefId, Arc<[crate::types::Variance]>>,
     /// Optional tracer for collecting subtype failure diagnostics.
     /// When `Some`, enables detailed failure reason collection for error messages.
     /// When `None`, disables tracing for maximum performance (default).
@@ -332,6 +339,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             allow_erased_generic_signature_retry: false,
             eval_cache: FxHashMap::default(),
             apparent_primitive_shapes: std::array::from_fn(|_| None),
+            computed_variance_cache: FxHashMap::default(),
             tracer: None,
             type_param_equivalences: Vec::new(),
         }
@@ -380,6 +388,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             allow_erased_generic_signature_retry: false,
             eval_cache: FxHashMap::default(),
             apparent_primitive_shapes: std::array::from_fn(|_| None),
+            computed_variance_cache: FxHashMap::default(),
             tracer: None,
             type_param_equivalences: Vec::new(),
         }

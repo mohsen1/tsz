@@ -21,6 +21,41 @@ use crate::visitor::{
 use crate::visitors::visitor_predicates::is_primitive_type;
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    fn get_or_compute_type_param_variances(
+        &mut self,
+        def_id: DefId,
+    ) -> Option<std::sync::Arc<[crate::types::Variance]>> {
+        use crate::caches::db::QueryDatabase;
+
+        if let Some(declared) = self.resolver.get_type_param_variance(def_id) {
+            return Some(declared);
+        }
+        if let Some(cached) = self.computed_variance_cache.get(&def_id) {
+            return Some(cached.clone());
+        }
+        if let Some(cached) = self
+            .query_db
+            .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
+        {
+            self.computed_variance_cache.insert(def_id, cached.clone());
+            return Some(cached);
+        }
+
+        let computed = crate::relations::variance::compute_type_param_variances_with_resolver(
+            self.interner,
+            self.resolver,
+            def_id,
+        );
+        if let Some(variances) = computed.as_ref() {
+            if let Some(db) = self.query_db {
+                db.insert_type_param_variance(def_id, variances.clone());
+            }
+            self.computed_variance_cache
+                .insert(def_id, variances.clone());
+        }
+        computed
+    }
+
     fn iterator_protocol_mismatch_for_same_application_family(
         &mut self,
         source_type: TypeId,
@@ -56,7 +91,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     fn application_cycle_with_concrete_differing_args_is_unsound(
-        &self,
+        &mut self,
         s_app: &crate::types::TypeApplication,
         t_app: &crate::types::TypeApplication,
     ) -> bool {
@@ -76,26 +111,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         })
     }
 
-    fn application_type_args_are_unwitnessed(&self, app: &crate::types::TypeApplication) -> bool {
+    fn application_type_args_are_unwitnessed(
+        &mut self,
+        app: &crate::types::TypeApplication,
+    ) -> bool {
         let Some(def_id) = self.application_base_def_id(app.base) else {
             return false;
         };
 
-        use crate::caches::db::QueryDatabase;
-        let variances = self
-            .resolver
-            .get_type_param_variance(def_id)
-            .or_else(|| {
-                self.query_db
-                    .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
-            })
-            .or_else(|| {
-                crate::relations::variance::compute_type_param_variances_with_resolver(
-                    self.interner,
-                    self.resolver,
-                    def_id,
-                )
-            });
+        let variances = self.get_or_compute_type_param_variances(def_id);
 
         variances.as_ref().is_some_and(|variances| {
             variances.len() == app.args.len() && variances.iter().all(|v| v.is_independent())
@@ -451,26 +475,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let def_id = variance_def_id;
 
             if let Some(def_id) = def_id {
-                use crate::caches::db::QueryDatabase;
-                let variances = self
-                    .resolver
-                    .get_type_param_variance(def_id)
-                    .or_else(|| {
-                        self.query_db
-                            .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
-                    })
-                    .or_else(|| {
-                        let computed =
-                            crate::relations::variance::compute_type_param_variances_with_resolver(
-                                self.interner,
-                                self.resolver,
-                                def_id,
-                            );
-                        if let (Some(db), Some(variances)) = (self.query_db, computed.as_ref()) {
-                            db.insert_type_param_variance(def_id, variances.clone());
-                        }
-                        computed
-                    });
+                let variances = self.get_or_compute_type_param_variances(def_id);
                 if let Some(variances) = variances {
                     // Ensure variance count matches arg count (may differ with defaults)
                     if variances.len() == s_app.args.len() {
@@ -724,26 +729,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             (s_app.args.clone(), t_app.args.clone())
         };
 
-        use crate::caches::db::QueryDatabase;
-        let variances = self
-            .resolver
-            .get_type_param_variance(def_id)
-            .or_else(|| {
-                self.query_db
-                    .and_then(|db| QueryDatabase::get_type_param_variance(db, def_id))
-            })
-            .or_else(|| {
-                let computed =
-                    crate::relations::variance::compute_type_param_variances_with_resolver(
-                        self.interner,
-                        self.resolver,
-                        def_id,
-                    );
-                if let (Some(db), Some(variances)) = (self.query_db, computed.as_ref()) {
-                    db.insert_type_param_variance(def_id, variances.clone());
-                }
-                computed
-            });
+        let variances = self.get_or_compute_type_param_variances(def_id);
         // T<X> <: T<any> and T<any> <: T<X> are always true when
         // any-propagation is enabled; skip variance computation entirely rather
         // than risking structural expansion.

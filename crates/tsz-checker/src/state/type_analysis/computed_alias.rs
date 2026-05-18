@@ -39,6 +39,26 @@ impl<'a> CheckerState<'a> {
         {
             return Some(cached_type);
         }
+        if let Some(file_idx) = delegate_file_idx
+            && decl_arena
+                .source_files
+                .first()
+                .is_some_and(|source_file| !source_file.is_declaration_file)
+            && self
+                .ctx
+                .symbol_arena_symbol_type_cache_is_stable(sym_id, decl_arena)
+        {
+            let source_cache_scope = self.ctx.source_file_symbol_type_cache_scope();
+            if let Some((cached_type, _params)) =
+                self.ctx.cached_stable_source_file_symbol_arena_type(
+                    sym_id,
+                    file_idx as u32,
+                    source_cache_scope,
+                )
+            {
+                return Some(cached_type);
+            }
+        }
 
         let delegate_file_name = decl_arena
             .source_files

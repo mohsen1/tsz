@@ -611,6 +611,83 @@ fn delegate_source_file_type_alias_caches_generic_params() {
 }
 
 #[test]
+fn alias_resolution_reuses_stable_source_file_type_alias_cache() {
+    let (target_arena, target_binder, types) =
+        parse_bound_source_with_name("target.ts", "export type Cached = string;");
+    let (requester_arena, mut requester_binder, _) = parse_bound_source_with_name(
+        "requester.ts",
+        "// synthetic requester with no same-id local symbol",
+    );
+    let cached_sym = target_binder
+        .file_locals
+        .get("Cached")
+        .expect("Cached symbol");
+    let cached_decl = target_binder
+        .get_symbol(cached_sym)
+        .expect("Cached symbol data")
+        .declarations[0];
+    {
+        let requester_binder = Arc::make_mut(&mut requester_binder);
+        Arc::make_mut(&mut requester_binder.symbol_arenas)
+            .insert(cached_sym, Arc::clone(&target_arena));
+        Arc::make_mut(&mut requester_binder.declaration_arenas)
+            .entry((cached_sym, cached_decl))
+            .or_default()
+            .push(Arc::clone(&target_arena));
+    }
+
+    let mut ctx = CheckerContext::new_with_shared_def_store(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+        Arc::new(DefinitionStore::new()),
+    );
+    ctx.share_owner_symbol_type_results = true;
+    ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+    let mut state = CheckerState { ctx };
+    let target_file_idx = state
+        .ctx
+        .get_file_idx_for_arena(target_arena.as_ref())
+        .expect("target arena should be indexed") as u32;
+    let scope = state.ctx.source_file_symbol_type_cache_scope();
+    state.ctx.cache_stable_source_file_symbol_arena_type(
+        cached_sym,
+        target_file_idx,
+        scope,
+        TypeId::NUMBER,
+        Vec::new(),
+    );
+
+    let decl_node = target_arena.get(cached_decl).expect("alias node");
+    let type_alias = target_arena
+        .get_type_alias(decl_node)
+        .expect("alias declaration");
+    let resolved = state
+        .resolve_cross_arena_type_alias_body_with_checker(
+            target_arena.as_ref(),
+            cached_sym,
+            type_alias,
+        )
+        .expect("stable cache should satisfy alias resolution");
+
+    assert_eq!(
+        resolved,
+        TypeId::NUMBER,
+        "alias fallback should read the stable source-file cache instead of \
+         constructing a child checker and lowering the body again",
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_resolved_alias_dependencies() {
     let (generic_arena, generic_binder, types) = parse_bound_source(
         r#"
