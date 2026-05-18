@@ -2,6 +2,7 @@
 //! delegating type resolution to child checkers, tracking cross-file targets,
 //! and cross-file interface declaration merging.
 use crate::state::CheckerState;
+use crate::state_type_analysis::cross_file_direct::is_direct_lowering_source_file_arena;
 use crate::symbols_domain::name_text::expression_name_text_in_arena;
 use crate::types_domain::queries::lib_resolution::keyword_syntax_to_type_id;
 use tsz_binder::{SymbolId, symbol_flags};
@@ -764,6 +765,12 @@ impl<'a> CheckerState<'a> {
                     (arena, binder, file_idx)
                 })
             };
+            // Even when the shared symbol-arena cache is ineligible (programs with module
+            // augmentations, cross-file delegation paths), allow direct option-bag lowering
+            // for source-file arenas. The structural check inside
+            // `direct_cross_file_interface_lowering` is the safety gate: it rejects
+            // heritage, generics, computed names, and sibling cycles. Results that miss
+            // shared-cache eligibility land in `lib_delegation_cache` (per-checker).
             if let Some((symbol_arena, delegate_binder, _delegate_file_idx)) = direct_target
                 && let Some((direct_type, direct_params)) = self
                     .direct_cross_file_interface_lowering(
@@ -771,7 +778,8 @@ impl<'a> CheckerState<'a> {
                         delegate_binder,
                         symbol_arena,
                         false,
-                        symbol_type_cache_from_symbol_arena,
+                        symbol_type_cache_from_symbol_arena
+                            || is_direct_lowering_source_file_arena(symbol_arena),
                     )
             {
                 self.ctx.symbol_types.insert(sym_id, direct_type);

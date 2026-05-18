@@ -190,7 +190,7 @@ fn is_direct_lowering_declaration_arena(arena: &NodeArena) -> bool {
     })
 }
 
-pub(super) fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
+pub(crate) fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
     arena
         .source_files
         .first()
