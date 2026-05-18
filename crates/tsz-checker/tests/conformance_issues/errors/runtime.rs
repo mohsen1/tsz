@@ -1564,11 +1564,11 @@ fn assert_ts18013_uses_class_name(source: &str, class_name: &str, expected_count
 
 /// TS18013 must use the actual class name for generic class instances
 /// (`C<number>`). The display-type-to-class resolver previously only handled
-/// uninstantiated instance types, brand-bearing object shapes, and `Lazy(DefId)`
-/// — so any `TypeData::Application(base, args)` for an instance type fell
+/// uninstantiated instance types, brand-bearing object shapes, and lazy
+/// references — so a generic instance stored in its application form fell
 /// through to the `"the class"` fallback whenever the class references itself
 /// under multiple instantiations like `bar(x: C<T>)`, `baz(x: C<number>)`,
-/// which forces the instance type to stay in `Application` form. Source:
+/// which forces the instance type to stay in application form. Source:
 /// conformance test `privateNamesInGenericClasses.ts`.
 #[test]
 fn test_ts18013_uses_class_name_for_generic_class_instance() {
