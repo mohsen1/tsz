@@ -90,27 +90,29 @@ files that exercise recursive `Lazy(DefId)` resolution.
 
 ---
 
-### 2. ⏳ Checker bypasses a known binder bug
+### 2. ✅ Checker bypasses a known binder bug
 
 **Files**
 
-- `crates/tsz-checker/src/symbols/symbol_resolver.rs:458-462, 728-732`
+- `crates/tsz-binder/src/state/resolution.rs` —
+  `resolve_name_in_lib_module_locals`
+- `crates/tsz-checker/src/symbols/symbol_resolver.rs` — `resolve_identifier_symbol_inner`
+  fallback and `resolve_identifier_symbol_in_type_position_inner` pre-probe
 
-**Failure mode** Comments explicitly say "the binder's method has a bug" and
-the checker reaches into `lib_contexts.file_locals` directly to bypass it.
-This creates two symbol-resolution truths (binder vs. checker fallback);
-shadowing, merged symbols, and DefId mapping can diverge.
+**Resolution** The binder now owns the lib-`file_locals` probe via a single
+`resolve_name_in_lib_module_locals` method. The checker's two
+`lib_contexts.iter()` loops are gone; both call sites use the binder API and
+contribute only their type-system policy (string-literal-module filter for
+the identifier path, namespace/module/alias classification for the
+type-position path) through the `accept` callback. Phase 3 of
+`merge_lib_contexts_into_binder` still excludes module-scoped external-module
+lib `file_locals` from the global hoist; the new probe is the legitimate
+binder-owned hatch for callers that need those module-scoped symbols.
 
-**Fix plan**
-
-- **PR #B**: fix the binder's lib-lookup behavior in
-  `crates/tsz-binder/...`. Add binder-level regression tests that lock the
-  fixed semantic.
-- Remove the checker-side `lib_contexts.file_locals` bypass and rerun
-  conformance to confirm no regressions.
-
-**Verification** Binder unit tests + targeted conformance on tests that today
-depend on the bypass.
+**Verification** `tsz-binder` regression tests for the probe in
+`tests/lib_merge_external_module_tests.rs` (hoisted-global match,
+absent-name short-circuit, accept-callback ID substitution). Conformance
+runs through CI.
 
 ---
 
@@ -461,8 +463,9 @@ hide perf and stylistic debt.
 
 If only five items are landed, fix these in this order:
 
-1. **Item 2** (#B): Checker directly bypasses a known binder bug
-   (`crates/tsz-checker/src/symbols/symbol_resolver.rs:458-462, 728-732`)
+1. **Item 2** (#B): ✅ Resolved — `resolve_name_in_lib_module_locals` in
+   `crates/tsz-binder/src/state/resolution.rs` now owns the lib-`file_locals`
+   probe; the checker call sites consume it via accept callbacks.
 2. **Item 1** (#A): Semantic registrations silently disappear on RefCell
    borrow failure (`crates/tsz-checker/src/context/def_mapping.rs:451-565`)
 3. **Item 3** (#C): One environment is cloned over another to repair missed
