@@ -17,6 +17,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeSubstitution;
 
 impl<'a> CheckerState<'a> {
     /// Walk every `{...expr}` spread attribute on a JSX element and emit
@@ -1125,7 +1126,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     if !base_type_params.is_empty() {
-                        let substitution = tsz_solver::TypeSubstitution::from_args(
+                        let substitution = TypeSubstitution::from_args(
                             self.ctx.types,
                             &base_type_params,
                             &type_args,

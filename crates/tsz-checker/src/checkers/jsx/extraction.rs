@@ -8,6 +8,7 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn apply_jsx_library_managed_attributes(
@@ -638,8 +639,8 @@ impl<'a> CheckerState<'a> {
         let (body_type, type_params) = {
             let env = self.ctx.type_env.borrow();
             (
-                tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types),
-                tsz_solver::TypeResolver::get_lazy_type_params(&*env, def_id).unwrap_or_default(),
+                TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types),
+                TypeResolver::get_lazy_type_params(&*env, def_id).unwrap_or_default(),
             )
         };
         let body_type = body_type?;

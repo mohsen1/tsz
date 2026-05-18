@@ -322,6 +322,42 @@ fn test_accessor_pair_combined() {
 }
 
 #[test]
+fn accessor_body_tail_comment_survives_accessor_boundary_comment() {
+    let source = r#"class C {
+            get x() {
+                return 1; // keep body
+            } // keep accessor
+            set x(value: number) {
+                this.value = value; // keep setter body
+            } // keep setter accessor
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    assert!(
+        output.contains("return 1; // keep body"),
+        "Getter body-tail comment should stay inside the lowered getter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("} // keep accessor"),
+        "Getter accessor-boundary comment should stay on the lowered descriptor function.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("this.value = value; // keep setter body"),
+        "Setter body-tail comment should stay inside the lowered setter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("} // keep setter accessor"),
+        "Setter accessor-boundary comment should stay on the lowered descriptor function.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return 1; // keep accessor")
+            && !output.contains("this.value = value; // keep setter accessor"),
+        "Accessor-boundary comments must not be attached to the final body statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_static_accessor_combined() {
     let source = r#"class Config {
             static _instance: Config | null = null;

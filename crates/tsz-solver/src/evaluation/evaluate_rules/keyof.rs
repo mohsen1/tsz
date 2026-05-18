@@ -13,6 +13,7 @@ use crate::types::{
     TupleElement, TypeData, TypeId, TypeListId,
 };
 use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::{
@@ -126,7 +127,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.interner().literal_string_atom(key.name)
     }
 
-    fn push_remapped_key_type(&mut self, key_types: &mut Vec<TypeId>, remapped_key: TypeId) {
+    fn push_remapped_key_type(
+        &mut self,
+        key_types: &mut SmallVec<[TypeId; 8]>,
+        remapped_key: TypeId,
+    ) {
         if remapped_key == TypeId::STRING {
             key_types.push(TypeId::STRING);
             key_types.push(TypeId::NUMBER);
@@ -141,7 +146,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         mapped: &MappedType,
     ) -> Option<TypeId> {
         let name_type = mapped.name_type?;
-        let mut key_types = Vec::new();
+        let mut key_types: SmallVec<[TypeId; 8]> = SmallVec::new();
 
         let constraint_source = crate::keyof_inner_type(self.interner(), mapped.constraint)
             .or_else(|| {
@@ -225,7 +230,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         } else if key_types.len() == 1 {
             Some(key_types[0])
         } else {
-            Some(self.interner().union(key_types))
+            Some(self.interner().union(key_types.into_vec()))
         }
     }
 
@@ -265,7 +270,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let member_list = self.interner().type_list(members);
 
                 // Recursively compute keyof for each member (this resolves Lazy/Ref/etc.)
-                let mut key_types: Vec<TypeId> = Vec::with_capacity(member_list.len());
+                let mut key_types: SmallVec<[TypeId; 4]> =
+                    SmallVec::with_capacity(member_list.len());
                 for &member in member_list.iter() {
                     key_types.push(self.recurse_keyof(member));
                 }
@@ -276,7 +282,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     intersection
                 } else {
                     // Fallback: use general intersection
-                    self.interner().intersection(key_types)
+                    self.interner().intersection(key_types.into_vec())
                 };
             }
             _ => {}
@@ -307,14 +313,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.recurse_keyof(narrowed_operand);
                     };
                     let member_list = self.interner().type_list(members);
-                    let mut key_types: Vec<TypeId> = Vec::with_capacity(member_list.len());
+                    let mut key_types: SmallVec<[TypeId; 4]> =
+                        SmallVec::with_capacity(member_list.len());
                     for &member in member_list.iter() {
                         key_types.push(self.recurse_keyof(member));
                     }
                     if let Some(intersection) = self.intersect_keyof_sets(&key_types) {
                         intersection
                     } else {
-                        self.interner().intersection(key_types)
+                        self.interner().intersection(key_types.into_vec())
                     }
                 }
                 TypeData::Mapped(mapped_id) => {
@@ -756,7 +763,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let members = self.interner().type_list(members).to_vec();
         // Use recurse_keyof to respect depth limits
         // Use loop instead of closure to allow mutable self access
-        let mut key_sets: Vec<TypeId> = Vec::with_capacity(members.len());
+        let mut key_sets: SmallVec<[TypeId; 4]> = SmallVec::with_capacity(members.len());
         for (member_idx, &member) in members.iter().enumerate() {
             let narrowed_member = narrow_keyof_intersection_member_by_literal_discriminants(
                 self.interner(),
@@ -766,7 +773,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             );
             key_sets.push(self.recurse_keyof(narrowed_member));
         }
-        self.interner().union(key_sets)
+        self.interner().union(key_sets.into_vec())
     }
 
     /// Get the keyof keys for an array type (includes all array methods and number index).
