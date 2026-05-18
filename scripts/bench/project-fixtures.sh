@@ -4,7 +4,145 @@
 # project-compile guards. Keep fixture pins and generated tsconfig shapes here
 # so benchmark rows and compile guards cannot silently drift.
 
-TSZ_PROJECT_FIXTURES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [ -z "${TSZ_PROJECT_FIXTURES_ROOT:-}" ] && [ -n "${BASH_SOURCE[0]:-}" ]; then
+  TSZ_PROJECT_FIXTURES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+elif [ -z "${TSZ_PROJECT_FIXTURES_ROOT:-}" ] && [ -n "${SCRIPT_DIR:-}" ]; then
+  TSZ_PROJECT_FIXTURES_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+elif [ -z "${TSZ_PROJECT_FIXTURES_ROOT:-}" ] && [ -n "${ROOT_DIR:-}" ]; then
+  TSZ_PROJECT_FIXTURES_ROOT="$(cd "$ROOT_DIR" && pwd)"
+elif [ -z "${TSZ_PROJECT_FIXTURES_ROOT:-}" ]; then
+  TSZ_PROJECT_FIXTURES_ROOT="$(cd "$(pwd)" && pwd)"
+fi
+
+TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_FIXTURES_ROOT/scripts/bench/project-rows.mjs"
+
+# Canonical project row groups for runners that share fixture handling.
+# Keep row names here aligned with the project-corpus workflows.
+TSZ_COMPILE_GUARD_REQUIRED_ROWS=(
+  "utility-types-project"
+  "ts-essentials-project"
+  "rxjs-project"
+  "type-fest-project"
+)
+
+TSZ_COMPILE_GUARD_CANARY_ROWS=(
+  "ts-toolbelt-project"
+  "zod-project"
+  "kysely-project"
+  "type-challenges-project"
+  "type-challenges-solutions-project"
+)
+
+tsz_sync_project_row_groups() {
+  if ! command -v node >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local required_rows
+  local canary_rows
+
+  required_rows="$(TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
+import { pathToFileURL } from "node:url";
+const rowModule = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS || process.cwd() + "/scripts/bench/project-rows.mjs"));
+console.log(rowModule.COMPILE_GUARD_REQUIRED_ROWS.join("\n"));
+NODE
+  )"
+  canary_rows="$(TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
+import { pathToFileURL } from "node:url";
+const rowModule = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS || process.cwd() + "/scripts/bench/project-rows.mjs"));
+console.log(rowModule.COMPILE_CANARY_PROJECT_ROWS.join("\n"));
+NODE
+  )"
+
+  TSZ_COMPILE_GUARD_REQUIRED_ROWS=()
+  if [ -n "$required_rows" ]; then
+    while IFS= read -r row_name; do
+      [ -n "$row_name" ] && TSZ_COMPILE_GUARD_REQUIRED_ROWS+=("$row_name")
+    done <<< "$required_rows"
+  fi
+
+  TSZ_COMPILE_GUARD_CANARY_ROWS=()
+  if [ -n "$canary_rows" ]; then
+    while IFS= read -r row_name; do
+      [ -n "$row_name" ] && TSZ_COMPILE_GUARD_CANARY_ROWS+=("$row_name")
+    done <<< "$canary_rows"
+  fi
+}
+
+tsz_project_owner_families_json() {
+  TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
+import { pathToFileURL } from "node:url";
+const rowModule = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS || process.cwd() + "/scripts/bench/project-rows.mjs"));
+const { COMPATIBILITY_CORPUS_ROWS } = rowModule;
+
+const entries = [];
+for (const row of COMPATIBILITY_CORPUS_ROWS) {
+  entries.push([row.name, row.family]);
+}
+console.log(JSON.stringify(Object.fromEntries(entries)));
+NODE
+}
+
+tsz_validate_project_row_metadata() {
+  TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
+import { pathToFileURL } from "node:url";
+const rowModule = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS || process.cwd() + "/scripts/bench/project-rows.mjs"));
+const { PROJECT_ROW_DEFINITIONS } = rowModule;
+
+const requiredFields = [
+  "name",
+  "label",
+  "owner",
+  "family",
+  "readme_candidates",
+  "fixture_dir",
+  "source_dir",
+  "guard_set",
+  "benchmark_set",
+  "category",
+];
+
+const failures = [];
+
+for (const row of PROJECT_ROW_DEFINITIONS) {
+  for (const field of requiredFields) {
+    if (!(field in row) || typeof row[field] === "undefined") {
+      failures.push(row.name + ": missing field " + field);
+    }
+  }
+
+  if (typeof row.name !== "string" || !row.name) {
+    failures.push("project row: invalid name");
+  }
+
+  if (typeof row.benchmark_set !== "string") {
+    failures.push(row.name + ": benchmark_set must be a string");
+  }
+}
+
+if (failures.length > 0) {
+  for (const failure of failures) {
+    console.error(failure);
+  }
+  process.exit(1);
+}
+NODE
+}
+
+tsz_project_readme_candidates_json() {
+  TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
+import { pathToFileURL } from "node:url";
+const rowModule = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS || process.cwd() + "/scripts/bench/project-rows.mjs"));
+const { COMPATIBILITY_CORPUS_ROWS } = rowModule;
+
+const entries = [];
+for (const row of COMPATIBILITY_CORPUS_ROWS) {
+  const candidates = row.readme_candidates || ["README.md"];
+  entries.push([row.name, candidates]);
+}
+console.log(JSON.stringify(Object.fromEntries(entries)));
+NODE
+}
 
 # External project fixture repositories and pinned refs.
 : "${UTILITY_TYPES_REPO:=https://github.com/piotrwitek/utility-types.git}"
@@ -27,9 +165,53 @@ TSZ_PROJECT_FIXTURES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 : "${LARGE_TS_REF:=e1b22bda18664a507ed0da19c155e0365d585b18}"
 : "${TYPE_CHALLENGES_REPO:=https://github.com/type-challenges/type-challenges.git}"
 : "${TYPE_CHALLENGES_REF:=0b0b0b18bcb7ac42dc22ce26ffb438231d4754b1}"
+: "${TYPE_CHALLENGES_EXPECTED_GENERATED:=190}"
+: "${TYPE_CHALLENGES_EXPECTED_TEST_CASES:=190}"
 : "${TYPE_CHALLENGES_SOLUTIONS_REPO:=https://github.com/ghaiklor/type-challenges-solutions.git}"
 : "${TYPE_CHALLENGES_SOLUTIONS_REF:=91a6d2986650475f29eeb3bd18ebd025128aa07e}"
 : "${TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED:=78}"
+
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|%s|%s\n' "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF"
+      ;;
+    ts-toolbelt-project)
+      printf 'ts-toolbelt|%s|%s\n' "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF"
+      ;;
+    ts-essentials-project)
+      printf 'ts-essentials|%s|%s\n' "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF"
+      ;;
+    rxjs-project)
+      printf 'rxjs|%s|%s\n' "$RXJS_REPO" "$RXJS_REF"
+      ;;
+    type-fest-project)
+      printf 'type-fest|%s|%s\n' "$TYPE_FEST_REPO" "$TYPE_FEST_REF"
+      ;;
+    zod-project)
+      printf 'zod|%s|%s\n' "$ZOD_REPO" "$ZOD_REF"
+      ;;
+    kysely-project)
+      printf 'kysely|%s|%s\n' "$KYSELY_REPO" "$KYSELY_REF"
+      ;;
+    nextjs)
+      printf 'nextjs|%s|%s\n' "$NEXTJS_REPO" "$NEXTJS_REF"
+      ;;
+    large-ts-repo)
+      printf 'large-ts-repo|%s|%s\n' "$LARGE_TS_REPO" "$LARGE_TS_REF"
+      ;;
+    type-challenges-project)
+      printf 'type-challenges|%s|%s\n' "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF"
+      ;;
+    type-challenges-solutions-project)
+      printf 'type-challenges-solutions|%s|%s\n' "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF"
+      ;;
+    type-challenges-assertion-candidates|type-challenges-assertions-tsc-clean)
+      printf 'type-challenges|%s|%s\n' "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF"
+      printf 'type-challenges-solutions|%s|%s\n' "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF"
+      ;;
+  esac
+}
 
 tsz_ensure_git_fixture() {
   local name="$1"

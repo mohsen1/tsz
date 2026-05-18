@@ -32,6 +32,8 @@ jobs:
       rust_cache_refresh: ${{ steps.gate.outputs.rust_cache_refresh }}
       required_summary: ${{ steps.gate.outputs.required_summary }}
       bench_shell_only: ${{ steps.gate.outputs.bench_shell_only }}
+      perf_tool_only: ${{ steps.gate.outputs.perf_tool_only }}
+      arch_tool_only: ${{ steps.gate.outputs.arch_tool_only }}
       compiler_checks_required: ${{ steps.gate.outputs.compiler_checks_required }}
       unit_packages: ${{ steps.gate.outputs.unit_packages }}
     steps:
@@ -47,6 +49,8 @@ jobs:
           rust_cache_refresh=false
           cache_key_changed=false
           bench_shell_only=false
+          perf_tool_only=false
+          arch_tool_only=false
           compiler_checks_required=true
           unit_packages=""
           if [[ "${{ github.event_name }}" == "pull_request" ]]; then
@@ -114,11 +118,11 @@ jobs:
                   should_run=false
                 fi
                 compiler_paths=$(printf '%s\n' "$all_paths" \
-                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
+                  | grep -E '^(Cargo\.(lock|toml)|\.cargo/|rust-toolchain|crates/clippy\.toml|crates/(conformance|tsz-(binder|checker|cli|common|core|emitter|lowering|lsp|parser|scanner|solver|wasm))(/|$)|benches/|tests/|TypeScript/|scripts/(conformance|emit|fourslash|tsc|dts|snapshot)|scripts/ci/(gcp-full-ci|github-suite|gcp-cache|suite-metadata|build-dist|dist|wasm)[^/]*\.sh)' \
                   || true)
                 if [[ -z "$compiler_paths" ]]; then
                   compiler_checks_required=false
-                  echo "PR diff has no compiler/runtime paths; unit and conformance remain visible but are not required by CI Summary."
+                  echo "PR diff has no compiler/runtime paths; compiler suites are skipped and not required by CI Summary."
                 fi
               fi
             fi
@@ -140,6 +144,46 @@ jobs:
                 should_run=false
                 full_run=false
                 bench_shell_only=true
+              fi
+            fi
+            # Perf-tool Python script-only changes do not need Rust compiler CI.
+            # Keep the required CI Summary alive, but replace lint/unit/dist/wasm
+            # jobs with a cheap Python smoke job below. CI workflow edits, Cargo
+            # files, Rust crates, shell scripts, and non-perf scripts still take
+            # the normal path.
+            if [[ "$should_run" == "true" && -n "${all_paths:-}" ]]; then
+              perf_tool_paths=$(printf '%s\n' "$all_paths" \
+                | grep -E '^scripts/perf/[^/]+\.py$' \
+                || true)
+              non_perf_tool_paths=$(printf '%s\n' "$all_paths" \
+                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^scripts/perf/[^/]+\.py$' \
+                || true)
+              if [[ -n "$perf_tool_paths" && -z "$non_perf_tool_paths" ]]; then
+                echo "PR diff only changes perf Python tools/docs — running perf tool smoke only:"
+                printf '%s\n' "$perf_tool_paths" | sort -u | sed 's/^/  /'
+                should_run=false
+                full_run=false
+                perf_tool_only=true
+              fi
+            fi
+            # Arch-tool Python script-only changes do not need Rust compiler CI.
+            # Keep the required CI Summary alive, but replace lint/unit/dist/wasm
+            # jobs with a cheap Python smoke job below. CI workflow edits, Cargo
+            # files, Rust crates, shell scripts, and non-arch scripts still take
+            # the normal path.
+            if [[ "$should_run" == "true" && -n "${all_paths:-}" ]]; then
+              arch_tool_paths=$(printf '%s\n' "$all_paths" \
+                | grep -E '^scripts/arch/[^/]+\.py$' \
+                || true)
+              non_arch_tool_paths=$(printf '%s\n' "$all_paths" \
+                | grep -vE '(^|/)[^/]+\.md$|^(LICENSE|CHANGELOG|CONTRIBUTING|CODE_OF_CONDUCT)([.-][^/]*)?$|^docs/|^\.gitignore$|^\.editorconfig$|^scripts/arch/[^/]+\.py$' \
+                || true)
+              if [[ -n "$arch_tool_paths" && -z "$non_arch_tool_paths" ]]; then
+                echo "PR diff only changes arch Python tools/docs — running arch tool smoke only:"
+                printf '%s\n' "$arch_tool_paths" | sort -u | sed 's/^/  /'
+                should_run=false
+                full_run=false
+                arch_tool_only=true
               fi
             fi
             # P4 — draft-phase fast-fail: narrow the unit job to the touched
@@ -320,13 +364,15 @@ jobs:
           echo "rust_cache_refresh=${rust_cache_refresh}" >> "$GITHUB_OUTPUT"
           echo "required_summary=${required_summary}" >> "$GITHUB_OUTPUT"
           echo "bench_shell_only=${bench_shell_only}" >> "$GITHUB_OUTPUT"
+          echo "perf_tool_only=${perf_tool_only}" >> "$GITHUB_OUTPUT"
+          echo "arch_tool_only=${arch_tool_only}" >> "$GITHUB_OUTPUT"
           echo "compiler_checks_required=${compiler_checks_required}" >> "$GITHUB_OUTPUT"
           echo "unit_packages=${unit_packages}" >> "$GITHUB_OUTPUT"
 
   project-corpus-pr-body:
     name: project-corpus-pr-body
     needs: gate
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.gate.outputs.should_run == 'true'
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -354,15 +400,32 @@ jobs:
             if [[ "$page" -gt 30 ]]; then break; fi
           done
 
+          title=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.title // ""')
+          wip_label_count=$(gh api \
+            "repos/${REPOSITORY}/pulls/${PR_NUMBER}" \
+            --jq '[.labels[]?.name | select(. == "WIP")] | length')
+          if [[ "${wip_label_count}" != "0" ]] || [[ "${title}" =~ (^|[[:space:]])\[WIP\]([[:space:]]|$) ]]; then
+            echo "Ready PRs must not carry WIP status."
+            echo "Remove the WIP label/title marker only after implementation and verification are complete."
+            exit 1
+          fi
+
+          body=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
+          if ! grep -Eq '^[[:space:]]*AgentName:[[:space:]]*[^[:space:]]+' <<<"$body"; then
+            echo "Ready PRs must include a plain AgentName signature in the PR body."
+            echo "Missing field:"
+            echo "  AgentName: <stable agent name>"
+            exit 1
+          fi
+
           semantic_paths=$(printf '%s\n' "$changed_paths" \
             | grep -E '^(crates/(tsz-(binder|checker|cli|core|emitter|lsp|parser|scanner|solver|transforms)|tsz-website)/|scripts/(bench|ci|conformance|emit|fourslash)/|\.github/workflows/bench\.yml|\.github/workflows/ci\.yml)' \
             || true)
           if [[ -z "$semantic_paths" ]]; then
-            echo "No semantic, benchmark, or dashboard paths changed; project corpus fields are optional."
+            echo "Agent metadata is present. No semantic, benchmark, or dashboard paths changed; project corpus fields are optional."
             exit 0
           fi
 
-          body=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
           missing=()
           if ! grep -Eq '^##[[:space:]]+Project Corpus Impact[[:space:]]*$' <<<"$body"; then
             missing+=("## Project Corpus Impact")
@@ -383,7 +446,7 @@ jobs:
             exit 1
           fi
 
-          echo "Project corpus impact metadata is present."
+          echo "Agent and project corpus impact metadata are present."
 
   bench-script-smoke:
     name: bench-script-smoke
@@ -398,6 +461,60 @@ jobs:
       - name: Check bench shell syntax
         shell: bash
         run: bash -n scripts/bench/*.sh
+
+  perf-tool-smoke:
+    name: perf-tool-smoke
+    needs: gate
+    if: needs.gate.outputs.perf_tool_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Check perf Python tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/perf/*.py
+          tests=()
+          while IFS= read -r test_file; do
+            tests+=("$test_file")
+          done < <(find scripts/perf -maxdepth 1 -type f -name 'test_*.py' | sort)
+          if [[ "${#tests[@]}" -eq 0 ]]; then
+            echo "No scripts/perf/test_*.py files found."
+            exit 0
+          fi
+          for test_file in "${tests[@]}"; do
+            python3 "$test_file"
+          done
+
+  arch-tool-smoke:
+    name: arch-tool-smoke
+    needs: gate
+    if: needs.gate.outputs.arch_tool_only == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Check arch Python tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m py_compile scripts/arch/*.py
+          tests=()
+          while IFS= read -r test_file; do
+            tests+=("$test_file")
+          done < <(find scripts/arch -maxdepth 1 -type f -name 'test_*.py' | sort)
+          if [[ "${#tests[@]}" -eq 0 ]]; then
+            echo "No scripts/arch/test_*.py files found."
+            exit 0
+          fi
+          for test_file in "${tests[@]}"; do
+            python3 "$test_file"
+          done
 
   lint:
     name: lint
@@ -467,7 +584,7 @@ jobs:
   dist-binaries:
     name: dist-binaries
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
     env:
@@ -502,7 +619,7 @@ jobs:
   project-compile-guard:
     name: project-compile-guard
     needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     env:
@@ -530,6 +647,12 @@ jobs:
             .target/project-compile-guard/*.log
             .target/project-compile-guard/project-compatibility.jsonl
             .target/project-compile-guard/project-compatibility-summary.json
+            .target/project-compile-guard/type-challenges-readiness-pairing.json
+            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-classification.json
+            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-manifest.json
+            .target/project-compile-guard/type-challenges-assertions-tsc-clean/**
+            .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-template-manifest.json
+            .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-test-cases-manifest.json
             .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
           retention-days: 7
           if-no-files-found: warn
@@ -537,7 +660,7 @@ jobs:
   project-compile-canary:
     name: project-compile-canary
     needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     continue-on-error: true
@@ -569,6 +692,12 @@ jobs:
             .target/project-compile-guard/*.log
             .target/project-compile-guard/project-compatibility.jsonl
             .target/project-compile-guard/project-compatibility-summary.json
+            .target/project-compile-guard/type-challenges-readiness-pairing.json
+            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-classification.json
+            .target/project-compile-guard/type-challenges-assertions/type-challenges-assertions-manifest.json
+            .target/project-compile-guard/type-challenges-assertions-tsc-clean/**
+            .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-template-manifest.json
+            .target/project-compile-guard/type-challenges/.tsz-compile/type-challenges-test-cases-manifest.json
             .target/project-compile-guard/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json
           retention-days: 7
           if-no-files-found: warn
@@ -577,7 +706,7 @@ jobs:
   wasm:
     name: wasm
     needs: gate
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
     env:
@@ -601,7 +730,7 @@ jobs:
   wasm-web:
     name: wasm-web
     needs: [gate, wasm]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -616,7 +745,7 @@ jobs:
   node-harness-prep:
     name: node-harness-prep
     needs: gate
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
     env:
@@ -647,91 +776,47 @@ jobs:
           compression-level: 1
 
   unit:
-    # Single nextest job (no sharding). The nextest-archive shard architecture
-    # was tried in #1657 and reverted in 7984876d7b for two reasons:
-    #   1. Many fixture-loading tests use `if !path.exists() { return }` and
-    #      silently pass when workspace source isn't on the shard runner.
-    #   2. The archive upload/download overhead (~3+ min) dominated the
-    #      modest test-execution savings.
-    # Today the bottleneck is compile (~14 min) not test execution (~3 min),
-    # so sharding test execution is not the lever. Re-evaluate sharding once
-    # the sccache silent-exit issue is fixed (then compile drops to seconds
-    # on cache hit and sharding becomes worth the overhead).
-    #
-    # Keep sccache disabled here because the tsz-checker lib-test target can
-    # exit silently when built through sccache from a restored warm target
-    # cache. Still restore the GCS cargo-home and ci-unit target cache so PRs
-    # do not rebuild third-party dependencies from scratch on every run;
-    # gcp-cache refreshes source mtimes after restore so workspace test
-    # binaries are revalidated.
-    #
-    # `_TSZ_CI_UNIT_PACKAGES_OVERRIDE` (set by the gate as `unit_packages`) is
-    # a space-separated list of crate names. When non-empty, the unit script
-    # runs unit tests for just those crates instead of the full workspace.
-    # tsz-checker is special-cased to run declared integration targets without
-    # compiling its oversized lib-test artifact.
+    # Required unit context. Run on the Cloud Build private pool instead of
+    # the 8-vCPU self-hosted runner: the old local path repeatedly hit
+    # linker/process kills while the same suite passed through Cloud Build.
+    # Keep the status name as `unit` so branch protection remains stable.
     name: unit
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
-    env:
-      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-      CARGO_INCREMENTAL: "0"
-      TSZ_CI_DISABLE_SCCACHE: "1"
-      TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "1"
-      _TSZ_CI_UNIT_PACKAGES_OVERRIDE: ${{ needs.gate.outputs.unit_packages }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Run unit suite
-        run: scripts/ci/github-suite.sh unit
-
-  unit-cloudbuild:
-    # EXPERIMENT: run the unit suite on Cloud Build private pool
-    # `tsz-ci-build-pool` (e2-highcpu-32, 32 vCPU × 32 GiB) and compare wall
-    # clock against the Cloud Run `unit` job above. The compile is the
-    # bottleneck (~12 min on 8 vCPU); 4× the cores should drop it to ~4 min.
-    #
-    # Submitted as a parallel job — the existing `unit` is still required for
-    # green CI. Promote unit-cloudbuild and demote `unit` after a week of
-    # apples-to-apples timing data.
-    #
-    # Budget: ~$0.024/min × ~5 min × 200 runs/day ≈ $720/month at full PR
-    # cadence. Under the $1k approved cap.
-    #
-    # continue-on-error keeps a Cloud Build flake from blocking the workflow.
-    # Not in the required-status set, so failure here is informational only.
-    name: unit-cloudbuild
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 45
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Submit unit build to Cloud Build pool
+      - name: Submit required unit suite to Cloud Build pool
         # `gcloud builds submit` tars the working directory, uploads it to the
         # default tsz-ci_cloudbuild GCS staging bucket, then triggers the
-        # private-pool build. The previous attempt pointed at the
-        # thirdface-ai-oauth_cloudbuild bucket — the tsz-gh-runners SA cannot
-        # write there.
+        # private-pool build.
         run: |
           set -euo pipefail
-          # Keep this experimental workflow job bounded even if Cloud Build submit
-          # stalls waiting for a worker reservation. This keeps PR feedback moving
-          # even when the private pool is saturated.
-          if ! timeout 25m gcloud builds submit \
+          timeout 25m gcloud builds submit \
             --project=tsz-ci \
             --region=us-central1 \
             --config=cloudbuild-unit.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
-            .; then
-            echo "Cloud Build unit submit did not complete within timeout or failed; continuing without blocking required CI."
-          fi
+            .
+
+  unit-cloudbuild:
+    # Compatibility status for dashboards and branch-protection rules that may
+    # still look for the experimental Cloud Build context. The Cloud Build unit
+    # suite is now executed by the required `unit` job above.
+    name: unit-cloudbuild
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Report promoted unit path
+        run: echo "Cloud Build unit suite is enforced by the required unit job."
 
   conformance:
     # Conformance shards consume the dist-fast binaries artifact and run the
@@ -740,7 +825,7 @@ jobs:
     # does not compete with the unit-archive compile for rustc capacity.
     name: conformance-${{ matrix.shard }}
     needs: [gate, dist-binaries]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 75
     strategy:
@@ -748,6 +833,7 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3, 4, 5]
     env:
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
       _TSZ_CI_CONFORMANCE_SHARD_INDEX: ${{ matrix.shard }}
       _TSZ_CI_CONFORMANCE_SHARD_COUNT: 6
       TSZ_CI_CONFORMANCE_SHARDS: 6
@@ -769,14 +855,23 @@ jobs:
         run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
       - name: Run conformance shard
         run: scripts/ci/github-suite.sh conformance
+      - name: Upload conformance shard result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-shard-${{ matrix.shard }}
+          path: .ci-metrics/conformance.json
+          if-no-files-found: warn
+          retention-days: 1
 
   conformance-aggregate:
     name: conformance-aggregate
     needs: [gate, conformance]
-    if: needs.gate.outputs.full_run == 'true' && !cancelled()
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
       GITHUB_SHA: ${{ github.sha }}
       _TSZ_CI_CONFORMANCE_SHARD_COUNT: 6
       TSZ_CI_CONFORMANCE_SHARDS: 6
@@ -785,13 +880,19 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Download conformance shard results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: conformance-shard-*
+          path: .conformance-shards
+          merge-multiple: false
       - name: Aggregate conformance results
         run: scripts/ci/github-suite.sh conformance-aggregate
 
   conformance-snapshot-gate:
     name: conformance-snapshot-gate
     needs: gate
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -812,7 +913,7 @@ jobs:
   emit:
     name: emit
     needs: [gate, dist-binaries, node-harness-prep]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
     env:
@@ -856,7 +957,7 @@ jobs:
     # the expected max shard work from ~328s at 4 shards to ~219s at 6 shards.
     name: fourslash-${{ matrix.shard }}
     needs: [gate, dist-binaries, node-harness-prep]
-    if: needs.gate.outputs.full_run == 'true'
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 20
     strategy:
@@ -903,7 +1004,7 @@ jobs:
   fourslash-aggregate:
     name: fourslash-aggregate
     needs: [gate, fourslash]
-    if: needs.gate.outputs.full_run == 'true' && !cancelled()
+    if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.fourslash.result != 'skipped' && needs.fourslash.result != 'cancelled'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -922,6 +1023,8 @@ jobs:
     needs:
       - gate
       - bench-script-smoke
+      - perf-tool-smoke
+      - arch-tool-smoke
       - lint
       - cargo-shear
       - cargo-deny
@@ -954,10 +1057,33 @@ jobs:
           should_run = gate.get("outputs", {}).get("should_run") == "true"
           full_run = gate.get("outputs", {}).get("full_run") == "true"
           bench_shell_only = gate.get("outputs", {}).get("bench_shell_only") == "true"
+          perf_tool_only = gate.get("outputs", {}).get("perf_tool_only") == "true"
+          arch_tool_only = gate.get("outputs", {}).get("arch_tool_only") == "true"
           compiler_checks_required = gate.get("outputs", {}).get("compiler_checks_required") != "false"
 
-          if gate.get("result") != "success":
-              print(f"gate did not pass: {gate.get('result')}")
+          gate_result = gate.get("result")
+          if gate_result != "success":
+              non_success = {
+                  name: data.get("result")
+                  for name, data in needs.items()
+                  if name != "gate" and data.get("result") not in ("success", "skipped")
+              }
+              if gate_result == "cancelled" and all(
+                  result == "cancelled" for result in non_success.values()
+              ):
+                  print(
+                      "CI run superseded by a newer push before gate completed: "
+                      f"gate cancelled and {len(non_success)} downstream job(s) "
+                      "cancelled, none failed. Treating as neutral — the "
+                      "superseding run provides the final status."
+                  )
+                  sys.exit(0)
+              print(f"gate did not pass: {gate_result}")
+              sys.exit(1)
+
+          pr_body = needs.get("project-corpus-pr-body")
+          if pr_body and pr_body.get("result") not in ("success", "skipped"):
+              print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
               sys.exit(1)
 
           if not should_run:
@@ -968,42 +1094,66 @@ jobs:
                       sys.exit(1)
                   print("Bench shell-only CI passed: bench-script-smoke.")
                   sys.exit(0)
+              if perf_tool_only:
+                  perf_smoke = needs.get("perf-tool-smoke", {})
+                  if perf_smoke.get("result") != "success":
+                      print(f"perf-tool-smoke did not pass: {perf_smoke.get('result')}")
+                      sys.exit(1)
+                  print("Perf tool-only CI passed: perf-tool-smoke.")
+                  sys.exit(0)
+              if arch_tool_only:
+                  arch_smoke = needs.get("arch-tool-smoke", {})
+                  if arch_smoke.get("result") != "success":
+                      print(f"arch-tool-smoke did not pass: {arch_smoke.get('result')}")
+                      sys.exit(1)
+                  print("Arch tool-only CI passed: arch-tool-smoke.")
+                  sys.exit(0)
               print("CI gated off; summary passes because jobs were intentionally skipped.")
               sys.exit(0)
 
-          required = {"lint", "cargo-shear", "cargo-deny", "dist-binaries"}
+          required = {"lint", "cargo-shear", "cargo-deny"}
           if compiler_checks_required:
-              required.add("unit")
+              required.update({"dist-binaries", "unit"})
           else:
               print("Compiler checks are non-required for this non-compiler diff.")
-          pr_body = needs.get("project-corpus-pr-body")
-          if pr_body and pr_body.get("result") not in ("success", "skipped"):
-              print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
-              sys.exit(1)
 
-          if full_run:
+          if full_run and compiler_checks_required:
               required.update({
                   "project-compile-guard",
                   "conformance-snapshot-gate",
               })
-              if compiler_checks_required:
-                  required.update({
-                      "wasm",
-                      "wasm-web",
-                      "node-harness-prep",
-                      "conformance-aggregate",
-                      "emit",
-                      "fourslash-aggregate",
-                  })
+              required.update({
+                  "wasm",
+                  "wasm-web",
+                  "node-harness-prep",
+                  "conformance-aggregate",
+                  "emit",
+                  "fourslash-aggregate",
+              })
 
           failures = []
+          cancelled_required = []
           for name, data in needs.items():
               if name == "gate" or name not in required:
                   continue
-              if data.get("result") != "success":
-                  failures.append(f"{name}: {data.get('result')}")
+              result = data.get("result")
+              if result != "success":
+                  failures.append(f"{name}: {result}")
+                  if result == "cancelled":
+                      cancelled_required.append(name)
 
           if failures:
+              # If every required-job non-success is "cancelled" and there are no
+              # actual failures or timeouts, this run was superseded by a newer push
+              # (concurrency cancel-in-progress). Exit 0 so the superseding run can
+              # provide the authoritative result without this stale run blocking merge.
+              if len(cancelled_required) == len(failures):
+                  print(
+                      f"CI run superseded by a newer push: "
+                      f"{len(cancelled_required)} required job(s) cancelled, none failed. "
+                      "Treating as neutral — the superseding run provides the final status."
+                  )
+                  sys.exit(0)
               print("Required CI jobs did not pass:")
               for failure in failures:
                   print(f"  - {failure}")
@@ -1012,5 +1162,5 @@ jobs:
           if full_run:
               print("All required CI jobs passed.")
           else:
-              print("Draft/light CI passed: lint, cargo-shear, cargo-deny, dist-binaries, and unit.")
+              print("Draft/light CI passed for all required checks.")
           PY

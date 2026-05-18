@@ -16,6 +16,7 @@ use crate::type_queries::{InstanceTypeKind, classify_for_instance_type};
 use crate::types::TypeId;
 use crate::utils::{TypeIdExt, intersection_or_single, union_or_single};
 use crate::visitor::{application_id, intersection_list_id, lazy_def_id, union_list_id};
+use smallvec::SmallVec;
 use tracing::{Level, span, trace};
 
 impl<'a> NarrowingContext<'a> {
@@ -158,7 +159,7 @@ impl<'a> NarrowingContext<'a> {
                 // PERF: Reuse a single SubtypeChecker across all member checks
                 // instead of allocating 4 hash sets per is_subtype_of call.
                 let mut checker = SubtypeChecker::new(self.db.as_type_database());
-                let mut filtered_members: Vec<TypeId> = Vec::new();
+                let mut filtered_members: SmallVec<[TypeId; 4]> = SmallVec::new();
                 for &member in &*members {
                     // Check if member is assignable to instance type
                     checker.reset();
@@ -273,7 +274,11 @@ impl<'a> NarrowingContext<'a> {
                     trace!("Union member {} excluded by instanceof check", member.0);
                 }
 
-                union_or_single(self.db, filtered_members)
+                match filtered_members.len() {
+                    0 => TypeId::NEVER,
+                    1 => filtered_members[0],
+                    _ => self.db.union(filtered_members.into_vec()),
+                }
             } else {
                 // Non-union type: use standard narrowing with intersection fallback
                 let narrowed = self.narrow_to_type(resolved_source, instance_type);
@@ -309,7 +314,7 @@ impl<'a> NarrowingContext<'a> {
                 let members = self.db.type_list(members_id);
                 // PERF: Reuse a single SubtypeChecker across all member checks
                 let mut checker = SubtypeChecker::new(self.db.as_type_database());
-                let mut filtered_members: Vec<TypeId> = Vec::new();
+                let mut filtered_members: SmallVec<[TypeId; 4]> = SmallVec::new();
                 for &member in &*members {
                     // Exclude members that are definitely subtypes of the instance type
                     checker.reset();
@@ -318,7 +323,11 @@ impl<'a> NarrowingContext<'a> {
                     }
                 }
 
-                union_or_single(self.db, filtered_members)
+                match filtered_members.len() {
+                    0 => TypeId::NEVER,
+                    1 => filtered_members[0],
+                    _ => self.db.union(filtered_members.into_vec()),
+                }
             } else {
                 // Non-union: use standard exclusion
                 self.narrow_excluding_type(resolved_source, instance_type)

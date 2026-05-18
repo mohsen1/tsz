@@ -27,6 +27,7 @@ use crate::visitor::{
     object_with_index_shape_id, union_list_id,
 };
 use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 use tracing::{Level, span, trace};
 use tsz_common::interner::Atom;
 
@@ -795,7 +796,7 @@ impl<'a> NarrowingContext<'a> {
         let (_resolved, members, property_evaluator) =
             self.resolve_members_and_evaluator(union_type);
 
-        let mut matching: Vec<TypeId> = Vec::new();
+        let mut matching: SmallVec<[TypeId; 4]> = SmallVec::new();
 
         for &member in &members {
             if member.is_any_or_unknown() {
@@ -854,7 +855,11 @@ impl<'a> NarrowingContext<'a> {
             return union_type;
         }
 
-        union_or_single_preserve(self.db, matching)
+        match matching.len() {
+            0 => TypeId::NEVER,
+            1 => matching[0],
+            _ => union_or_single_preserve(self.db, matching.into_vec()),
+        }
     }
 
     /// - `union_type`: The union type to narrow
@@ -917,7 +922,7 @@ impl<'a> NarrowingContext<'a> {
             members.len()
         );
 
-        let mut matching: Vec<TypeId> = Vec::new();
+        let mut matching: SmallVec<[TypeId; 4]> = SmallVec::new();
         // Track whether any member actually has the discriminant property.
         // If no member has the property, discriminant narrowing is inapplicable
         // and we should return the original type instead of `never`.
@@ -1078,7 +1083,7 @@ impl<'a> NarrowingContext<'a> {
                 matching.len(),
                 members.len()
             );
-            self.db.union(matching)
+            self.db.union(matching.into_vec())
         }
     }
 

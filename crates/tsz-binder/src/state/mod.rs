@@ -13,6 +13,7 @@ use crate::modules::resolution_debug::ModuleResolutionDebugger;
 use crate::{FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable};
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::mem::size_of;
 use std::sync::Arc;
 use std::sync::RwLock;
 use tsz_common::common::ScriptTarget;
@@ -77,6 +78,30 @@ impl<T> std::ops::Deref for CloneableRwLock<T> {
 
 type ExportCacheStorage = CloneableRwLock<ExportCache>;
 type IdentifierCacheStorage = CloneableRwLock<IdentifierCache>;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct BinderResolutionCacheStatistics {
+    pub export_cache_entries: usize,
+    pub identifier_cache_entries: usize,
+}
+
+impl BinderResolutionCacheStatistics {
+    #[must_use]
+    pub const fn total_entries(&self) -> usize {
+        self.export_cache_entries + self.identifier_cache_entries
+    }
+
+    #[must_use]
+    pub const fn estimated_size_bytes(&self) -> usize {
+        const BUCKET_OVERHEAD: usize = 8;
+        let export_entry =
+            BUCKET_OVERHEAD + (2 * size_of::<String>()) + size_of::<Option<SymbolId>>();
+        let identifier_entry =
+            BUCKET_OVERHEAD + size_of::<(usize, u32)>() + size_of::<Option<SymbolId>>();
+        (self.export_cache_entries * export_entry)
+            + (self.identifier_cache_entries * identifier_entry)
+    }
+}
 
 /// Bitflags tracking which language features are used in a source file.
 ///
@@ -951,6 +976,27 @@ impl BinderState {
             .write()
             .expect("not poisoned")
             .clear();
+    }
+
+    /// Return entry counts for regenerable binder resolution caches.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either resolution cache lock is poisoned.
+    #[must_use]
+    pub fn resolution_cache_statistics(&self) -> BinderResolutionCacheStatistics {
+        BinderResolutionCacheStatistics {
+            export_cache_entries: self
+                .resolved_export_cache
+                .read()
+                .expect("resolved_export_cache RwLock poisoned")
+                .len(),
+            identifier_cache_entries: self
+                .resolved_identifier_cache
+                .read()
+                .expect("resolved_identifier_cache RwLock poisoned")
+                .len(),
+        }
     }
 }
 

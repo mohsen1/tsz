@@ -21,6 +21,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeEnvironment;
 
 // =============================================================================
 // Constructor Type Checking Utilities
@@ -1002,7 +1003,7 @@ impl<'a> CheckerState<'a> {
         &self,
         source: TypeId,
         target: TypeId,
-        _env: Option<&tsz_solver::TypeEnvironment>,
+        _env: Option<&TypeEnvironment>,
     ) -> Option<bool> {
         // Helper to check if a TypeId is abstract
         // This handles both TypeQuery types (before resolution) and resolved Callable types
@@ -1072,7 +1073,7 @@ impl<'a> CheckerState<'a> {
     fn constructor_access_level(
         &self,
         type_id: TypeId,
-        env: Option<&tsz_solver::TypeEnvironment>,
+        env: Option<&TypeEnvironment>,
         visited: &mut FxHashSet<TypeId>,
     ) -> Option<MemberAccessLevel> {
         if !visited.insert(type_id) {
@@ -1172,7 +1173,7 @@ impl<'a> CheckerState<'a> {
     fn constructor_access_level_for_type(
         &self,
         type_id: TypeId,
-        env: Option<&tsz_solver::TypeEnvironment>,
+        env: Option<&TypeEnvironment>,
     ) -> Option<MemberAccessLevel> {
         let mut visited = FxHashSet::default();
         self.constructor_access_level(type_id, env, &mut visited)
@@ -1182,7 +1183,7 @@ impl<'a> CheckerState<'a> {
         &self,
         source: TypeId,
         target: TypeId,
-        env: Option<&tsz_solver::TypeEnvironment>,
+        env: Option<&TypeEnvironment>,
     ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
         let source_level = self.constructor_access_level_for_type(source, env);
         let target_level = self.constructor_access_level_for_type(target, env);
@@ -1203,7 +1204,7 @@ impl<'a> CheckerState<'a> {
         &self,
         source: TypeId,
         target: TypeId,
-        env: Option<&tsz_solver::TypeEnvironment>,
+        env: Option<&TypeEnvironment>,
     ) -> Option<bool> {
         if self
             .constructor_accessibility_mismatch(source, target, env)
@@ -1261,7 +1262,7 @@ impl<'a> CheckerState<'a> {
     fn resolve_type_env_symbol(
         &self,
         symbol: tsz_solver::SymbolRef,
-        env: Option<&tsz_solver::TypeEnvironment>,
+        env: Option<&TypeEnvironment>,
     ) -> Option<TypeId> {
         if let Some(env) = env {
             return env.get(symbol);
