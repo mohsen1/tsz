@@ -4678,6 +4678,24 @@ const r2 = maybe(undefined, () => "hi");
 }
 
 #[test]
+fn cross_nullish_source_still_infers_into_t() {
+    let source = r#"
+declare function f<T>(x: T | null): T;
+const a = f(undefined);
+const checkA: undefined = a;
+
+declare function g<T>(x: T | undefined): T;
+const b = g(null);
+const checkB: null = b;
+"#;
+    let diags = relevant_strict_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "opposite nullish source should infer into T, not be explained by the other nullish arm. Got: {diags:#?}"
+    );
+}
+
+#[test]
 fn non_nullish_in_t_or_null_still_constrains_t() {
     let source = r#"
 function withDefault<T>(value: T | null, f: () => T): T { return value ?? f(); }
