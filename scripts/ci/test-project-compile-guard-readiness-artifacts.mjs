@@ -466,22 +466,14 @@ withTempDir((dir) => {
   });
 
   assert.equal(result.status, 1, result.stdout || result.stderr);
-  assert.match(result.stderr, /type-challenges-assertions-tsc-clean failed the tsc oracle check/);
+  assert.match(
+    result.stderr,
+    /tsc-clean assertion classification tsc status \(fail\) must be pass/,
+  );
 
   const rows = readJsonl(path.join(fixtureRoot, "project-compatibility.jsonl"));
   const cleanRow = rows.find((row) => row.name === "type-challenges-assertions-tsc-clean");
-  assert.ok(cleanRow, "expected tsc-clean assertion project row");
-  assertRequiredCompatibilityFields(cleanRow);
-  assert.equal(cleanRow.state, "yellow");
-  assert.equal(cleanRow.exit_class, "fixture invalid");
-  assert.equal(cleanRow.phase, "fixture setup");
-  assert.equal(cleanRow.diagnostic_status, "tsc clean subset failed");
-  assert.deepEqual(cleanRow.exit_codes.tsc, [1]);
-  assert.deepEqual(cleanRow.exit_codes.tsz, []);
-  assert.equal(cleanRow.assertion_clean_subset.total_candidates, 1);
-  assert.equal(cleanRow.assertion_clean_subset.generated_assertions, 1);
-  assert.equal(cleanRow.assertion_clean_subset.tsc_status, "fail");
-  assert.equal(cleanRow.assertion_clean_subset.tsz_status, "pass");
+  assert.equal(cleanRow, undefined);
 });
 
 withTempDir((dir) => {
