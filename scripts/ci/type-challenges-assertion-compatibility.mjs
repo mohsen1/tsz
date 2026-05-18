@@ -115,11 +115,16 @@ function validateCandidateOutputPath(value, label) {
     fail(`${label} must be a non-empty relative path`);
   }
   const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
+  const segments = normalized.split("/");
   if (
     path.isAbsolute(value) ||
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:(?:\/|$)/.test(normalized) ||
     normalized === "" ||
     normalized === "." ||
-    normalized.split("/").includes("..")
+    segments.includes("") ||
+    segments.includes(".") ||
+    segments.includes("..")
   ) {
     fail(`${label} must stay inside the assertion candidate directory: ${value}`);
   }
