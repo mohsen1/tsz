@@ -617,7 +617,7 @@ fn delegate_source_file_type_alias_caches_generic_params() {
     );
 }
 
-fn assert_explicit_cross_file_source_alias_lowers(alias_name: &str, source: &str) {
+fn assert_explicit_cross_file_source_alias_rejects_direct_lowering(alias_name: &str, source: &str) {
     let (target_arena, target_binder, types) = parse_bound_source_with_name("target.ts", source);
     let (requester_arena, requester_binder, _) = parse_bound_source_with_name(
         "requester.ts",
@@ -650,33 +650,23 @@ fn assert_explicit_cross_file_source_alias_lowers(alias_name: &str, source: &str
     ctx.set_global_symbol_file_index(Arc::new(symbol_file_index));
     let mut state = CheckerState { ctx };
 
-    let (ty, params) = state
-        .delegate_cross_arena_symbol_resolution(alias_sym)
-        .unwrap_or_else(|| panic!("{alias_name} should resolve through explicit file target"));
-
-    assert_ne!(ty, TypeId::UNKNOWN);
-    assert_ne!(ty, TypeId::ERROR);
-    assert_eq!(
-        params.len(),
-        2,
-        "{alias_name} should preserve both generic type parameters",
-    );
-    assert_eq!(
-        state.ctx.cached_cross_file_symbol_type(alias_sym, 1),
-        Some((ty, params)),
-        "explicit cross-file alias result should be cached by file target",
+    assert!(
+        state
+            .direct_source_file_type_alias_result(alias_sym, Some(1), true)
+            .is_none(),
+        "{alias_name} should stay on the child-checker path",
     );
 }
 
 #[test]
-fn delegate_explicit_cross_file_source_alias_lowers_generic_conditionals() {
-    assert_explicit_cross_file_source_alias_lowers(
+fn direct_source_file_type_alias_rejects_generic_conditionals() {
+    assert_explicit_cross_file_source_alias_rejects_direct_lowering(
         "ExcludeLike",
         r#"
                 export type ExcludeLike<T, U> = T extends U ? never : T;
             "#,
     );
-    assert_explicit_cross_file_source_alias_lowers(
+    assert_explicit_cross_file_source_alias_rejects_direct_lowering(
         "Drop",
         r#"
                 export type Drop<A, B> = A extends B ? never : A;

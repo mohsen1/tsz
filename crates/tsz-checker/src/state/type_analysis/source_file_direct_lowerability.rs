@@ -1,7 +1,7 @@
 //! Structural guards for direct source-file type lowering.
 
 use tsz_parser::NodeIndex;
-use tsz_parser::parser::node::{NodeAccess, NodeArena, TypeAliasData};
+use tsz_parser::parser::node::{NodeArena, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
 
 pub(super) fn is_scope_independent(arena: &NodeArena, node_idx: NodeIndex) -> bool {
@@ -123,64 +123,24 @@ pub(super) fn is_generic_direct_lowerable(
                     })
             })
         }
-        k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
-            arena.get_conditional_type(node).is_some_and(|conditional| {
-                let mut true_branch_names = type_param_names.to_vec();
-                collect_infer_type_param_names(
-                    arena,
-                    conditional.extends_type,
-                    &mut true_branch_names,
-                );
-                is_generic_direct_lowerable(arena, conditional.check_type, type_param_names)
-                    && is_generic_direct_lowerable(
-                        arena,
-                        conditional.extends_type,
-                        type_param_names,
-                    )
-                    && is_generic_direct_lowerable(arena, conditional.true_type, &true_branch_names)
-                    && is_generic_direct_lowerable(arena, conditional.false_type, type_param_names)
-            })
-        }
-        k if k == syntax_kind_ext::INFER_TYPE => {
-            arena.get_infer_type(node).is_some_and(|infer_type| {
-                let Some(type_param_node) = arena.get(infer_type.type_parameter) else {
-                    return false;
-                };
-                let Some(type_param) = arena.get_type_parameter(type_param_node) else {
-                    return false;
-                };
-                type_param.constraint.is_none() && type_param.default.is_none()
-            })
-        }
-        k if k == syntax_kind_ext::ARRAY_TYPE => arena.get_array_type(node).is_some_and(|array| {
-            is_generic_direct_lowerable(arena, array.element_type, type_param_names)
-        }),
-        k if k == syntax_kind_ext::TUPLE_TYPE => arena.get_tuple_type(node).is_some_and(|tuple| {
-            tuple
-                .elements
-                .nodes
-                .iter()
-                .copied()
-                .all(|element| is_generic_direct_lowerable(arena, element, type_param_names))
-        }),
-        k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
-            arena.get_composite_type(node).is_some_and(|composite| {
-                composite
-                    .types
-                    .nodes
-                    .iter()
-                    .copied()
-                    .all(|member| is_generic_direct_lowerable(arena, member, type_param_names))
-            })
-        }
-        // Source-file object, mapped, and callable bodies can carry
-        // file-local binding, contextual, and recursive mapped-type behavior
-        // that the child checker already handles correctly. Keep those on the
-        // mature path until direct lowering has a semantic proof for them.
-        k if k == syntax_kind_ext::TYPE_LITERAL
+        // Source-file conditional, composite, object, mapped, callable,
+        // indexed-access, and type-operator bodies can carry file-local
+        // binding, contextual, distributive, and recursive mapped-type
+        // behavior that the child checker already handles correctly. Keep
+        // those on the mature path until direct lowering has a semantic proof
+        // for them.
+        k if k == syntax_kind_ext::CONDITIONAL_TYPE
+            || k == syntax_kind_ext::INFER_TYPE
+            || k == syntax_kind_ext::ARRAY_TYPE
+            || k == syntax_kind_ext::TUPLE_TYPE
+            || k == syntax_kind_ext::UNION_TYPE
+            || k == syntax_kind_ext::INTERSECTION_TYPE
+            || k == syntax_kind_ext::TYPE_LITERAL
             || k == syntax_kind_ext::MAPPED_TYPE
             || k == syntax_kind_ext::FUNCTION_TYPE
-            || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
+            || k == syntax_kind_ext::CONSTRUCTOR_TYPE
+            || k == syntax_kind_ext::TYPE_OPERATOR
+            || k == syntax_kind_ext::INDEXED_ACCESS_TYPE =>
         {
             false
         }
@@ -190,17 +150,6 @@ pub(super) fn is_generic_direct_lowerable(
         {
             arena.get_wrapped_type(node).is_some_and(|wrapped| {
                 is_generic_direct_lowerable(arena, wrapped.type_node, type_param_names)
-            })
-        }
-        k if k == syntax_kind_ext::TYPE_OPERATOR => {
-            arena.get_type_operator(node).is_some_and(|operator| {
-                is_generic_direct_lowerable(arena, operator.type_node, type_param_names)
-            })
-        }
-        k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
-            arena.get_indexed_access_type(node).is_some_and(|indexed| {
-                is_generic_direct_lowerable(arena, indexed.object_type, type_param_names)
-                    && is_generic_direct_lowerable(arena, indexed.index_type, type_param_names)
             })
         }
         _ => false,
@@ -226,24 +175,4 @@ fn type_parameter_name(arena: &NodeArena, param_idx: NodeIndex) -> Option<String
     let name_node = arena.get(param.name)?;
     let ident = arena.get_identifier(name_node)?;
     Some(ident.escaped_text.to_string())
-}
-
-fn collect_infer_type_param_names(arena: &NodeArena, root: NodeIndex, names: &mut Vec<String>) {
-    let mut stack = vec![root];
-    while let Some(idx) = stack.pop() {
-        let Some(node) = arena.get(idx) else {
-            continue;
-        };
-        if node.kind == syntax_kind_ext::INFER_TYPE
-            && let Some(infer_type) = arena.get_infer_type(node)
-            && let Some(type_param_node) = arena.get(infer_type.type_parameter)
-            && let Some(type_param) = arena.get_type_parameter(type_param_node)
-            && let Some(name_node) = arena.get(type_param.name)
-            && let Some(ident) = arena.get_identifier(name_node)
-            && !names.iter().any(|name| name == &ident.escaped_text)
-        {
-            names.push(ident.escaped_text.to_string());
-        }
-        stack.extend(arena.get_children(idx));
-    }
 }
