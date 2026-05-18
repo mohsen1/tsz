@@ -154,8 +154,8 @@ function ensureManifestEntries(label, manifest) {
   const generated = Number(manifest?.generated);
   const expectedGenerated = Number(manifest?.expectedGenerated);
   const requiredChallengeFields = label === "solution"
-    ? ["level", "title"]
-    : ["level", "slug"];
+    ? ["id", "level", "title"]
+    : ["id", "level", "slug"];
 
   if (!Array.isArray(entries) || entries.length === 0) {
     console.error(`error: Type Challenges ${label} manifest has no entries`);
