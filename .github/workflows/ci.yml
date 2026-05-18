@@ -792,12 +792,14 @@ jobs:
       - name: Submit required unit suite to Cloud Build pool
         # `gcloud builds submit` tars the working directory, uploads it to the
         # default tsz-ci_cloudbuild GCS staging bucket, then triggers the
-        # private-pool build.
+        # private-pool build. Keep polling coarse enough that concurrent PR
+        # unit jobs do not exhaust Cloud Build get-request quota.
         run: |
           set -euo pipefail
           timeout 25m gcloud builds submit \
             --project=tsz-ci \
             --region=us-central1 \
+            --polling-interval=10 \
             --config=cloudbuild-unit.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             .
