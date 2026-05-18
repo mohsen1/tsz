@@ -157,6 +157,7 @@ await fs.writeFile(artifact, `${JSON.stringify({
           rejected_from_full_corpus: 68,
           tsc_status: "pass",
           tsz_status: "pass",
+          comparison_status: "both-pass",
           tsc_diagnostic_free: 10,
           tsz_diagnostic_free: 10,
         },
@@ -297,12 +298,17 @@ try {
     compatibilityDashboard,
     /clean manifest: type-challenges-assertions-tsc-clean\/type-challenges-assertions-tsc-clean-manifest\.json/,
   );
+  assert.match(
+    compatibilityDashboard,
+    /clean classification: type-challenges-assertions-tsc-clean\/type-challenges-assertions-tsc-clean-classification\.json/,
+  );
   assert.match(compatibilityDashboard, /clean total candidates: 78/);
   assert.match(compatibilityDashboard, /clean subset: 10/);
   assert.match(compatibilityDashboard, /clean references solutions: 9/);
   assert.match(compatibilityDashboard, /clean rejected from full corpus: 68/);
   assert.match(compatibilityDashboard, /clean tsc: pass/);
   assert.match(compatibilityDashboard, /clean tsz: pass/);
+  assert.match(compatibilityDashboard, /clean comparison: both-pass/);
   assert.match(compatibilityDashboard, /clean tsz diagnostic-free: 10/);
   assert.match(compatibilityDashboard, /both accepted: 5/);
   assert.match(compatibilityDashboard, /both rejected: 60/);
