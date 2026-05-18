@@ -12,7 +12,6 @@ TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
 TypeScript/tests/cases/compiler/excessPropertyCheckIntersectionWithRecursiveType.ts
 TypeScript/tests/cases/compiler/excessivelyLargeTupleSpread.ts
-TypeScript/tests/cases/compiler/inDoesNotOperateOnPrimitiveTypes.ts
 TypeScript/tests/cases/compiler/inferenceFromParameterlessLambda.ts
 TypeScript/tests/cases/compiler/instantiationExpressionErrorNoCrash.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
