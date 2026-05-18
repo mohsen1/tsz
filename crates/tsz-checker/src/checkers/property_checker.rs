@@ -1464,7 +1464,7 @@ mod tests {
     }
 
     #[test]
-    fn union_same_protected_declaring_class_inside_method_no_error() {
+    fn union_same_protected_declaring_class_inside_method_does_not_emit_ts2339() {
         let diagnostics = check_diagnostics(
             r#"
             class Base { protected prop: number = 0; }
