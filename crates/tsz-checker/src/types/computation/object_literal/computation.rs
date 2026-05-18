@@ -20,52 +20,11 @@ use tsz_solver::{PropertyInfo, TypeId, Visibility};
 const SPREAD_DISPLAY_ORDER_OFFSET: u32 = 1_000_000;
 const SPREAD_DISPLAY_ORDER_STRIDE: u32 = 10_000;
 
-fn rebase_spread_display_property_order(props: &[PropertyInfo], base: u32) -> Vec<PropertyInfo> {
-    let mut props = props.to_vec();
-    props.sort_by_key(|prop| prop.declaration_order);
-    for (index, prop) in props.iter_mut().enumerate() {
-        prop.declaration_order = base.saturating_add(index as u32);
-    }
-    props
-}
-
-fn remove_synthetic_missing_union_spread_props(member_props: &mut [Vec<PropertyInfo>]) {
-    let mut required_names = rustc_hash::FxHashSet::default();
-    for props in member_props.iter() {
-        for prop in props {
-            if !prop.optional {
-                required_names.insert(prop.name);
-            }
-        }
-    }
-    if required_names.is_empty() {
-        return;
-    }
-
-    // Conditional object literal unions are completed with `p?: undefined`
-    // placeholders for display/type-union balance. In an object spread, that
-    // placeholder means the branch omits `p`; it should not materialize as a
-    // spread property when another branch supplies a required `p`.
-    for props in member_props {
-        props.retain(|prop| {
-            !(prop.optional
-                && prop.type_id == TypeId::UNDEFINED
-                && required_names.contains(&prop.name))
-        });
-    }
-}
-
-/// Whether a contextual type is "literal-permissive" — i.e., does not
-/// constrain literal property types and therefore should not suppress
-/// the object-literal property widening that tsc performs for non-fresh
-/// literal contexts.
-///
-/// `unknown`, `any`, and `never` fall into this bucket: tsc's
-/// `isLiteralOfContextualType` returns `false` for them, so a property
-/// like `a: 1` in `{ a: 1 } satisfies unknown` widens to `number`.
-fn is_literal_permissive_context(ctx: TypeId) -> bool {
-    ctx == TypeId::UNKNOWN || ctx == TypeId::ANY || ctx == TypeId::NEVER
-}
+use crate::query_boundaries::spread::{
+    merge_spread_property_into_map, rebase_spread_display_property_order,
+    remove_synthetic_missing_union_spread_props,
+};
+use crate::query_boundaries::type_computation::core::is_literal_permissive_contextual_type;
 
 impl<'a> CheckerState<'a> {
     fn object_literal_property_is_typed_variable_initializer(
@@ -131,7 +90,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let property_context_preserves_literal =
-            property_context_type.is_some_and(|ct| !is_literal_permissive_context(ct));
+            property_context_type.is_some_and(|ct| !is_literal_permissive_contextual_type(ct));
         !property_context_preserves_literal && !had_object_context
     }
 
@@ -173,77 +132,6 @@ impl<'a> CheckerState<'a> {
             return init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION;
         }
         false
-    }
-
-    /// Merge a single spread-contributed property into the running
-    /// `properties` map.
-    ///
-    /// tsc's spread merge rule is asymmetric on the *later* property's
-    /// optionality:
-    /// - When the later property is **required**, it fully overrides the
-    ///   earlier one (the runtime always sees the later value).
-    /// - When the later property is **optional**, the runtime may skip
-    ///   it, so the earlier contribution still applies. The merged read
-    ///   type is the union of both, the merged write type is the union
-    ///   of both write types, and the merged property is required iff
-    ///   *some* contributor was required. `readonly` is intersected.
-    ///
-    /// The unconditional-override path that this replaces broke the
-    /// optional-later case in
-    /// `compiler/conformance/types/spread/objectSpreadStrictNull.ts`,
-    /// where `{ ...definiteString, ...optionalNumber }` should produce
-    /// `{ sn: string | number }`, not `{ sn?: number }`.
-    fn merge_spread_property(
-        &self,
-        properties: &mut rustc_hash::FxHashMap<tsz_common::interner::Atom, PropertyInfo>,
-        prop: &PropertyInfo,
-    ) {
-        use std::collections::hash_map::Entry;
-        match properties.entry(prop.name) {
-            Entry::Vacant(slot) => {
-                slot.insert(prop.clone());
-            }
-            Entry::Occupied(mut slot) => {
-                if prop.optional {
-                    let earlier = slot.get().clone();
-                    let (spread_type, spread_write_type) =
-                        if !self.ctx.exact_optional_property_types() && !earlier.optional {
-                            (
-                                crate::query_boundaries::common::remove_undefined(
-                                    self.ctx.types,
-                                    prop.type_id,
-                                ),
-                                crate::query_boundaries::common::remove_undefined(
-                                    self.ctx.types,
-                                    prop.write_type,
-                                ),
-                            )
-                        } else {
-                            (prop.type_id, prop.write_type)
-                        };
-                    let merged_type = self.ctx.types.union2(earlier.type_id, spread_type);
-                    let merged_write = self.ctx.types.union2(earlier.write_type, spread_write_type);
-                    slot.insert(PropertyInfo {
-                        name: prop.name,
-                        type_id: merged_type,
-                        write_type: merged_write,
-                        // Required wins on optionality.
-                        optional: earlier.optional && prop.optional,
-                        readonly: earlier.readonly && prop.readonly,
-                        is_method: prop.is_method,
-                        is_class_prototype: false,
-                        visibility: prop.visibility,
-                        parent_id: prop.parent_id,
-                        declaration_order: prop.declaration_order,
-                        is_string_named: prop.is_string_named,
-                        is_symbol_named: prop.is_symbol_named,
-                        single_quoted_name: prop.single_quoted_name,
-                    });
-                } else {
-                    slot.insert(prop.clone());
-                }
-            }
-        }
     }
 
     fn variable_declaration_for_symbol_decl(
@@ -866,8 +754,8 @@ impl<'a> CheckerState<'a> {
                     // false for these types, so property literals widen normally
                     // (e.g., `{ a: 1 } satisfies unknown` produces `{ a: number }`,
                     // not `{ a: 1 }`).
-                    let had_object_context =
-                        contextual_type.is_some_and(|ct| !is_literal_permissive_context(ct));
+                    let had_object_context = contextual_type
+                        .is_some_and(|ct| !is_literal_permissive_contextual_type(ct));
                     // When the outer contextual type is a union with a non-nullish
                     // non-object member (e.g. `string | FullRule`), tsc does not
                     // provide a contextual type for function-like property initializers.
@@ -1493,10 +1381,10 @@ impl<'a> CheckerState<'a> {
                     let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
 
                     // Set contextual type for shorthand property value.
-                    // See note above on `is_literal_permissive_context` — treat
+                    // See note above on `is_literal_permissive_contextual_type` — treat
                     // `unknown`/`any`/`never` as "no real context" for widening.
-                    let had_object_context =
-                        contextual_type.is_some_and(|ct| !is_literal_permissive_context(ct));
+                    let had_object_context = contextual_type
+                        .is_some_and(|ct| !is_literal_permissive_contextual_type(ct));
                     if let Some(diag_target) = jsdoc_declared_type.or(property_context_type) {
                         self.ctx
                             .object_literal_tracking
@@ -2892,16 +2780,22 @@ impl<'a> CheckerState<'a> {
                         let spread_order_base = spread_display_order_base;
                         spread_display_order_base =
                             spread_display_order_base.saturating_sub(SPREAD_DISPLAY_ORDER_STRIDE);
+                        let exact_optional = self.ctx.exact_optional_property_types();
                         for member_props in all_member_props {
                             let member_props = rebase_spread_display_property_order(
-                                &member_props,
+                                member_props,
                                 spread_order_base,
                             );
                             if union_spread_branches.is_empty() {
                                 // First union spread: fork from the main properties
                                 let mut branch = properties.clone();
                                 for prop in member_props {
-                                    self.merge_spread_property(&mut branch, &prop);
+                                    merge_spread_property_into_map(
+                                        self.ctx.types,
+                                        exact_optional,
+                                        &mut branch,
+                                        &prop,
+                                    );
                                 }
                                 new_branches.push(branch);
                             } else {
@@ -2909,7 +2803,12 @@ impl<'a> CheckerState<'a> {
                                 for existing in &union_spread_branches {
                                     let mut branch = existing.clone();
                                     for prop in &member_props {
-                                        self.merge_spread_property(&mut branch, prop);
+                                        merge_spread_property_into_map(
+                                            self.ctx.types,
+                                            exact_optional,
+                                            &mut branch,
+                                            prop,
+                                        );
                                     }
                                     new_branches.push(branch);
                                 }
@@ -3036,19 +2935,30 @@ impl<'a> CheckerState<'a> {
                         }
 
                         let spread_props_for_display = rebase_spread_display_property_order(
-                            &spread_props,
+                            spread_props,
                             spread_display_order_base,
                         );
                         spread_display_order_base =
                             spread_display_order_base.saturating_sub(SPREAD_DISPLAY_ORDER_STRIDE);
+                        let exact_optional = self.ctx.exact_optional_property_types();
                         for prop in &spread_props_for_display {
-                            self.merge_spread_property(&mut properties, prop);
+                            merge_spread_property_into_map(
+                                self.ctx.types,
+                                exact_optional,
+                                &mut properties,
+                                prop,
+                            );
                         }
 
                         // Also apply non-union spread to any existing union branches
                         for branch in &mut union_spread_branches {
                             for prop in &spread_props_for_display {
-                                self.merge_spread_property(branch, prop);
+                                merge_spread_property_into_map(
+                                    self.ctx.types,
+                                    exact_optional,
+                                    branch,
+                                    prop,
+                                );
                             }
                         }
                     }

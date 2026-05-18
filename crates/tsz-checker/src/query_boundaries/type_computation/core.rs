@@ -137,6 +137,13 @@ pub(crate) fn compute_template_expression_type(
     tsz_solver::expression_ops::compute_template_expression_type(db, texts, parts)
 }
 
+/// `unknown`, `any`, and `never` do not constrain literal property types;
+/// tsc's `isLiteralOfContextualType` returns `false` for them, so `a: 1`
+/// in `{ a: 1 } satisfies unknown` widens to `number`.
+pub(crate) fn is_literal_permissive_contextual_type(ctx: TypeId) -> bool {
+    ctx == TypeId::UNKNOWN || ctx == TypeId::ANY || ctx == TypeId::NEVER
+}
+
 pub(crate) fn is_fresh_literal_indexed_object(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     let Some(shape_id) = tsz_solver::visitor::object_with_index_shape_id(db, type_id) else {
         return false;
