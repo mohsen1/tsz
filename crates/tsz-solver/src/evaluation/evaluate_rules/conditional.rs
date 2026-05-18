@@ -1965,6 +1965,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.evaluate(cond.false_type);
             };
 
+            // tsc unions hits for the same infer variable across multiple property slots.
+            if let Some(existing) = subst.get(info.name) {
+                inferred = self.interner().union2(existing, inferred);
+            }
+
             subst.insert(info.name, inferred);
 
             if let Some(constraint) = info.constraint {

@@ -2577,3 +2577,164 @@ fn test_conditional_array_extends_same_array_is_true() {
         "string[] extends string[] should be true branch"
     );
 }
+
+// =============================================================================
+// Co-located infer union tests
+// (same infer var in multiple property positions → union of inferred types)
+// =============================================================================
+
+fn make_infer(interner: &TypeInterner, name: &str) -> TypeId {
+    interner.infer(TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    })
+}
+
+/// `{ a: string; b: number } extends { a: infer U; b: infer U } ? U : never`
+/// → `string | number`
+///
+/// When the same infer variable (`U`) appears in multiple property slots,
+/// `eval_conditional_object_multi_prop_infer` must union the inferred types.
+#[test]
+fn test_colocated_infer_two_props_unions_inferred_types() {
+    let interner = TypeInterner::new();
+    let infer_u = make_infer(&interner, "U");
+
+    let extends_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), infer_u),
+        PropertyInfo::new(interner.intern_string("b"), infer_u),
+    ]);
+    let check_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
+    ]);
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_u,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(result, interner.union2(TypeId::STRING, TypeId::NUMBER));
+}
+
+/// Same rule, renamed variable (`K`) — proves the fix is not keyed on spelling.
+#[test]
+fn test_colocated_infer_two_props_renamed_var_still_unions() {
+    let interner = TypeInterner::new();
+    let infer_k = make_infer(&interner, "K");
+
+    let extends_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("x"), infer_k),
+        PropertyInfo::new(interner.intern_string("y"), infer_k),
+    ]);
+    let check_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("x"), TypeId::BOOLEAN),
+        PropertyInfo::new(interner.intern_string("y"), TypeId::NUMBER),
+    ]);
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_k,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(result, interner.union2(TypeId::BOOLEAN, TypeId::NUMBER));
+}
+
+/// When both co-located positions carry the same type, the result is that type
+/// (no spurious duplication in the union).
+#[test]
+fn test_colocated_infer_same_type_both_positions_no_union() {
+    let interner = TypeInterner::new();
+    let infer_v = make_infer(&interner, "V");
+
+    let extends_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("p"), infer_v),
+        PropertyInfo::new(interner.intern_string("q"), infer_v),
+    ]);
+    let check_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("p"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("q"), TypeId::STRING),
+    ]);
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_v,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(result, TypeId::STRING);
+}
+
+/// Three co-located positions — proves generality beyond the two-prop case.
+#[test]
+fn test_colocated_infer_three_props_unions_all() {
+    let interner = TypeInterner::new();
+    let infer_w = make_infer(&interner, "W");
+
+    let extends_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), infer_w),
+        PropertyInfo::new(interner.intern_string("b"), infer_w),
+        PropertyInfo::new(interner.intern_string("c"), infer_w),
+    ]);
+    let check_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("c"), TypeId::BOOLEAN),
+    ]);
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_w,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    let expected = interner.union2(
+        interner.union2(TypeId::STRING, TypeId::NUMBER),
+        TypeId::BOOLEAN,
+    );
+    assert_eq!(result, expected);
+}
+
+/// Separate infer variables (`A` and `B`) must not be unioned together.
+#[test]
+fn test_separate_infer_vars_not_unioned() {
+    let interner = TypeInterner::new();
+    let infer_a = make_infer(&interner, "A");
+    let infer_b = make_infer(&interner, "B");
+
+    let extends_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("first"), infer_a),
+        PropertyInfo::new(interner.intern_string("second"), infer_b),
+    ]);
+    let check_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("first"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("second"), TypeId::NUMBER),
+    ]);
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_a,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(result, TypeId::STRING);
+}
