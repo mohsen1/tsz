@@ -66,6 +66,29 @@ function validateEvidencePath(value, label) {
   }
 }
 
+function validateSourceMetadata(source, label) {
+  if (source?.repository && source?.ref) {
+    return;
+  }
+
+  fail(
+    [
+      `candidate manifest sources.${label} is missing source metadata`,
+      `${source?.repository || "<missing repository>"} @ ${source?.ref || "<missing ref>"}`,
+    ].join("\n"),
+  );
+}
+
+function validateCandidateManifestSources(manifest) {
+  if (!manifest?.sources || typeof manifest.sources !== "object") {
+    fail("candidate manifest is missing sources");
+  }
+
+  for (const label of ["templates", "testCases", "solutions"]) {
+    validateSourceMetadata(manifest.sources[label], label);
+  }
+}
+
 function validateSelectedEntryEvidence(entry, index) {
   validateEvidencePath(entry?.solution?.output, `selected entries[${index}].solution.output`);
   validateEvidencePath(entry?.solution?.source, `selected entries[${index}].solution.source`);
@@ -266,6 +289,7 @@ if (tsc.status === "pass" || tsc.status === "fail") {
 
 const selectedEntries = originalEntries.filter((entry) => tscAcceptedFiles.has(entry.output));
 selectedEntries.forEach(validateSelectedEntryEvidence);
+validateCandidateManifestSources(candidateManifest);
 const selectedEntriesReferencingSolutionDeclaration = selectedEntries.filter(
   (entry) => entry.assertion?.hasReferencedSolutionDeclaration === true,
 );
