@@ -76,6 +76,41 @@ class CacheVisibilityReportTests(unittest.TestCase):
         self.assertEqual(candidates[0].owner, "<module>")
         self.assertEqual(candidates[0].name, "ScopeCache")
 
+    def test_exact_cache_field_names_are_reported(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.write(
+                root,
+                "src/lib.rs",
+                "\n".join(
+                    [
+                        "pub struct LibLoader {",
+                        "    cache: FxHashMap<String, String>,",
+                        "    not_cache: Vec<String>,",
+                        "}",
+                        "impl LibLoader {",
+                        "    pub fn cache_size(&self) -> usize { self.cache.len() }",
+                        "}",
+                    ]
+                )
+                + "\n",
+            )
+            candidates = self.module.scan([root / "src"])
+
+        self.assertEqual([candidate.name for candidate in candidates], ["cache"])
+        self.assertEqual(candidates[0].owner, "LibLoader")
+        self.assertFalse(candidates[0].needs_review)
+
+    def test_exact_cache_type_alias_is_reported(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.write(root, "src/lib.rs", "type Cache = FxHashMap<u32, bool>;\n")
+            candidates = self.module.scan([root / "src"])
+
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0].owner, "<module>")
+        self.assertEqual(candidates[0].name, "Cache")
+
     def test_generic_statistics_method_does_not_cover_unmentioned_cache(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
