@@ -14,6 +14,10 @@
 use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
 use crate::def::DefId;
+use crate::diagnostics::display_provenance::{
+    self, AliasApplicationPriority, AliasApplicationProvenance,
+    FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
+};
 use crate::instantiation::instantiate::instantiate_generic;
 use crate::relations::subtype::{NoopResolver, TypeResolver};
 #[cfg(test)]
@@ -1202,7 +1206,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.interner.lookup(display_origin),
                             Some(TypeData::Application(_))
                         )
-                        && self.interner.get_display_alias(result).is_some();
+                        && display_provenance::display_alias(self.interner, result).is_some();
                     if !skip_type_alias_repaint && !keep_existing_conditional_branch_alias {
                         if prefer_application_display_alias
                             || (self.expand_application_display_alias_args
@@ -1211,10 +1215,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     Some(TypeData::Application(_))
                                 ))
                         {
-                            self.interner
-                                .store_display_alias_preferring_application(result, display_origin);
+                            display_provenance::record_alias_application(
+                                self.interner,
+                                AliasApplicationProvenance {
+                                    evaluated: result,
+                                    application: display_origin,
+                                },
+                                AliasApplicationPriority::PreferApplication,
+                            );
                         } else {
-                            self.interner.store_display_alias(result, display_origin);
+                            display_provenance::record_alias_application(
+                                self.interner,
+                                AliasApplicationProvenance {
+                                    evaluated: result,
+                                    application: display_origin,
+                                },
+                                AliasApplicationPriority::PreserveExisting,
+                            );
                         }
                     }
 
@@ -1231,8 +1248,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             Some(crate::types::TypeData::Application(_))
                         )
                     {
-                        self.interner
-                            .store_display_alias(original_type_id, branch_app);
+                        display_provenance::record_alias_application(
+                            self.interner,
+                            AliasApplicationProvenance {
+                                evaluated: original_type_id,
+                                application: branch_app,
+                            },
+                            AliasApplicationPriority::PreserveExisting,
+                        );
                     }
                 }
             }
@@ -1287,8 +1310,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return;
         }
 
-        self.interner
-            .store_display_alias_preferring_application(instantiated, original_type_id);
+        display_provenance::record_alias_application(
+            self.interner,
+            AliasApplicationProvenance {
+                evaluated: instantiated,
+                application: original_type_id,
+            },
+            AliasApplicationPriority::PreferApplication,
+        );
     }
 
     /// Record a back-reference from an evaluated structural form to its
@@ -1352,8 +1381,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if !Self::is_structural_display_alias_result(self.interner, evaluated) {
             return;
         }
-        self.interner
-            .store_display_alias_preferring_application(evaluated, original_type_id);
+        display_provenance::record_alias_application(
+            self.interner,
+            AliasApplicationProvenance {
+                evaluated,
+                application: original_type_id,
+            },
+            AliasApplicationPriority::PreferApplication,
+        );
     }
 
     fn is_structural_display_alias_result(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -1880,7 +1915,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             original_members,
         );
         if !display_vec.is_empty() {
-            self.interner.store_display_properties(result, display_vec);
+            display_provenance::record_fresh_object_literal_display(
+                self.interner,
+                FreshObjectLiteralDisplayProvenance {
+                    type_id: result,
+                    properties: display_vec,
+                },
+            );
         }
     }
 
@@ -1906,7 +1947,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.simplify_union_members(&mut evaluated_members);
 
         let result = self.interner.union(evaluated_members.clone());
-        self.interner.store_union_origin(result, evaluated_members);
+        display_provenance::record_union_origin(
+            self.interner,
+            UnionOriginProvenance {
+                union_type_id: result,
+                origin_members: evaluated_members,
+            },
+        );
         result
     }
 
@@ -2350,7 +2397,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     )
                 );
                 if operand_is_named {
-                    self.interner().store_display_alias(result, keyof_type);
+                    display_provenance::record_alias_application(
+                        self.interner(),
+                        AliasApplicationProvenance {
+                            evaluated: result,
+                            application: keyof_type,
+                        },
+                        AliasApplicationPriority::PreserveExisting,
+                    );
                 }
             }
         }
