@@ -60,6 +60,24 @@ use tsz_scanner::SyntaxKind;
 type ModuleExportEntry = FxHashMap<String, (String, Option<String>)>;
 type Reexports = FxHashMap<String, ModuleExportEntry>;
 
+enum LibSourceText {
+    Owned(String),
+    Static(&'static str),
+}
+
+impl LibSourceText {
+    fn as_str(&self) -> &str {
+        match self {
+            Self::Owned(text) => text,
+            Self::Static(text) => text,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.as_str().len()
+    }
+}
+
 fn build_sym_to_decl_indices(declaration_arenas: &DeclarationArenaMap) -> SymToDeclIndicesMap {
     let mut sym_to_decl_indices: SymToDeclIndicesMap = FxHashMap::default();
     for &(sym_id, decl_idx) in declaration_arenas.keys() {
@@ -1074,7 +1092,7 @@ pub fn load_lib_files_for_binding_strict(
     }
 
     let mut loaded = FxHashSet::default();
-    let mut file_contents: Vec<(String, String)> = Vec::new();
+    let mut file_contents: Vec<(String, LibSourceText)> = Vec::new();
     for path in lib_files {
         collect_lib_files_recursive_cached(path, &mut loaded, &mut file_contents, &file_cache)?;
     }
@@ -1096,13 +1114,13 @@ pub fn load_lib_files_for_binding_strict(
 }
 
 fn parse_and_bind_lib_files(
-    file_contents: Vec<(String, String)>,
+    file_contents: Vec<(String, LibSourceText)>,
 ) -> Vec<Result<Arc<lib_loader::LibFile>>> {
     #[cfg(target_arch = "wasm32")]
     {
         return file_contents
             .into_iter()
-            .map(|(file_name, source_text)| parse_and_bind_lib_file(file_name, source_text))
+            .map(|(file_name, source_text)| parse_and_bind_lib_source(file_name, source_text))
             .collect();
     }
 
@@ -1116,7 +1134,7 @@ fn parse_and_bind_lib_files(
         if worker_count <= 1 {
             return file_contents
                 .into_iter()
-                .map(|(file_name, source_text)| parse_and_bind_lib_file(file_name, source_text))
+                .map(|(file_name, source_text)| parse_and_bind_lib_source(file_name, source_text))
                 .collect();
         }
 
@@ -1128,12 +1146,14 @@ fn parse_and_bind_lib_files(
             Ok(pool) => pool.install(|| {
                 file_contents
                     .into_par_iter()
-                    .map(|(file_name, source_text)| parse_and_bind_lib_file(file_name, source_text))
+                    .map(|(file_name, source_text)| {
+                        parse_and_bind_lib_source(file_name, source_text)
+                    })
                     .collect()
             }),
             Err(_) => file_contents
                 .into_par_iter()
-                .map(|(file_name, source_text)| parse_and_bind_lib_file(file_name, source_text))
+                .map(|(file_name, source_text)| parse_and_bind_lib_source(file_name, source_text))
                 .collect(),
         }
     }
@@ -1210,6 +1230,18 @@ fn parse_and_bind_lib_file_borrowed(
     parse_and_bind_lib_file_with_source(file_name, Cow::Borrowed(source_text))
 }
 
+fn parse_and_bind_lib_source(
+    file_name: String,
+    source_text: LibSourceText,
+) -> Result<Arc<lib_loader::LibFile>> {
+    match source_text {
+        LibSourceText::Owned(source_text) => parse_and_bind_lib_file(file_name, source_text),
+        LibSourceText::Static(source_text) => {
+            parse_and_bind_lib_file_with_source(file_name, Cow::Borrowed(source_text))
+        }
+    }
+}
+
 fn parse_and_bind_lib_file_with_source(
     file_name: String,
     source_text: Cow<'_, str>,
@@ -1262,7 +1294,7 @@ fn parse_and_bind_lib_file_with_source(
 fn collect_lib_files_recursive_cached(
     path: &Path,
     loaded: &mut FxHashSet<PathBuf>,
-    file_contents: &mut Vec<(String, String)>,
+    file_contents: &mut Vec<(String, LibSourceText)>,
     file_cache: &FxHashMap<PathBuf, String>,
 ) -> Result<()> {
     // Skip canonicalize (stat syscall) when using embedded content.
@@ -1287,21 +1319,25 @@ fn collect_lib_files_recursive_cached(
     let embedded_key = basename.strip_prefix("lib.").unwrap_or(basename);
     let source_text = if let Some(cached) = file_cache.get(&lib_path) {
         // File was read from disk (custom lib dir with non-standard files) — use it
-        cached.clone()
+        LibSourceText::Owned(cached.clone())
     } else if lib_path.exists() {
-        std::fs::read_to_string(&lib_path)
-            .with_context(|| format!("failed to read lib file {}", lib_path.display()))?
+        LibSourceText::Owned(
+            std::fs::read_to_string(&lib_path)
+                .with_context(|| format!("failed to read lib file {}", lib_path.display()))?,
+        )
     } else if let Some(embedded) = crate::embedded_libs::get_lib_content(embedded_key) {
         // Built-in embedded content — zero I/O, comment-stripped for faster parsing
-        embedded.to_string()
+        LibSourceText::Static(embedded)
     } else {
         // Fallback to disk read
-        std::fs::read_to_string(&lib_path)
-            .with_context(|| format!("failed to read lib file {}", lib_path.display()))?
+        LibSourceText::Owned(
+            std::fs::read_to_string(&lib_path)
+                .with_context(|| format!("failed to read lib file {}", lib_path.display()))?,
+        )
     };
 
     // Resolve references before adding this file (dependencies come first)
-    for ref_lib in parse_lib_references(&source_text) {
+    for ref_lib in parse_lib_references(source_text.as_str()) {
         if let Some(ref_path) = resolve_lib_reference_path(&lib_path, &ref_lib) {
             collect_lib_files_recursive_cached(&ref_path, loaded, file_contents, file_cache)?;
         }
