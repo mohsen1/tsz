@@ -724,6 +724,121 @@ fn test_exported_namespace_import_initializer_preserves_typeof_alias() {
 }
 
 #[test]
+fn test_json_module_imports_infer_declaration_shapes() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "tsz-json-module-import-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp json fixture dir");
+    std::fs::write(
+        dir.join("package.json"),
+        r#"{
+    "name": "pkg",
+    "version": "0.0.1",
+    "type": "module",
+    "default": "misedirection"
+}"#,
+    )
+    .expect("write json fixture");
+
+    let source = r#"
+import pkg from "./package.json" with { type: "json" };
+export const name = pkg.name;
+import * as ns from "./package.json" with { type: "json" };
+export const thing = ns;
+export const name2 = ns.default.name;
+"#;
+    let index_path = dir.join("index.ts");
+    let mut parser = ParserState::new(
+        index_path.to_string_lossy().into_owned(),
+        source.to_string(),
+    );
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, index_path.to_string_lossy().into_owned());
+    let output = emitter.emit(root);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        output.contains("export declare const name: string;"),
+        "Expected default JSON import property access to infer the property type: {output}"
+    );
+    assert!(
+        output.contains(
+            "export declare const thing: {\n    default: {\n        name: string;\n        version: string;\n        type: string;\n        default: string;\n    };\n};"
+        ),
+        "Expected namespace JSON import value to inline the JSON module namespace shape: {output}"
+    );
+    assert!(
+        output.contains("export declare const name2: string;"),
+        "Expected namespace JSON default property access to infer the nested property type: {output}"
+    );
+    assert!(
+        !output.contains("import * as ns from \"./package.json\";"),
+        "Expected JSON namespace import to be elided once its type is inlined: {output}"
+    );
+}
+
+#[test]
+fn test_json_module_imports_survive_when_alias_is_public_surface() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "tsz-json-module-public-import-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp json fixture dir");
+    std::fs::write(dir.join("package.json"), r#"{ "name": "pkg" }"#).expect("write json fixture");
+
+    let source = r#"
+import pkg from "./package.json" with { type: "json" };
+export type Pkg = typeof pkg;
+export { pkg };
+"#;
+    let index_path = dir.join("index.ts");
+    let mut parser = ParserState::new(
+        index_path.to_string_lossy().into_owned(),
+        source.to_string(),
+    );
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, index_path.to_string_lossy().into_owned());
+    let output = emitter.emit(root);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        output.contains(r#"import pkg from "./package.json";"#),
+        "Expected public JSON import alias to survive declaration emit: {output}"
+    );
+    assert!(
+        output.contains("export type Pkg = typeof pkg;"),
+        "Expected type query to keep referencing the JSON import alias: {output}"
+    );
+    assert!(
+        output.contains("export { pkg };"),
+        "Expected value export specifier to keep referencing the JSON import alias: {output}"
+    );
+}
+
+#[test]
 fn test_call_expression_recovers_return_type_from_callee_type() {
     let source = r#"
     export const a = helper.x();
@@ -1459,6 +1574,290 @@ function rawr(dino: RexOrRaptor) {
         output.contains("declare function rawr(dino: RexOrRaptor): \"ROAAAAR!\" | \"yip yip!\";"),
         "Expected string literal returns from guarded branches to emit as a union: {output}"
     );
+}
+
+#[test]
+fn test_mutable_array_literal_binding_widens_homogeneous_literals() {
+    let source = r#"
+let [hello, brave] = ["Hello", "Brave"];
+let [one, two] = [1, 2];
+let [yes, no] = [true, false];
+export let [ma, mb] = ["A", 1];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let tuple_types = [
+        interner.tuple(vec![
+            TupleElement {
+                type_id: interner.literal_string("Hello"),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.literal_string("Brave"),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]),
+        interner.tuple(vec![
+            TupleElement {
+                type_id: interner.literal_number(1.0),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.literal_number(2.0),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]),
+        interner.tuple(vec![
+            TupleElement {
+                type_id: interner.literal_boolean(true),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.literal_boolean(false),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]),
+        interner.tuple(vec![
+            TupleElement {
+                type_id: interner.literal_string("A"),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.literal_number(1.0),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]),
+    ];
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    for (decl_idx, tuple_type) in variable_declarations_from_source(&parser, root)
+        .into_iter()
+        .zip(tuple_types)
+    {
+        let decl = parser
+            .arena
+            .get(decl_idx)
+            .and_then(|node| parser.arena.get_variable_declaration(node))
+            .expect("missing variable declaration");
+        type_cache.node_types.insert(decl.initializer.0, tuple_type);
+    }
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare let hello: string, brave: string;"),
+        "Expected mutable string array binding literals to widen: {output}"
+    );
+    assert!(
+        output.contains("declare let one: number, two: number;"),
+        "Expected mutable number array binding literals to widen: {output}"
+    );
+    assert!(
+        output.contains("declare let yes: boolean, no: boolean;"),
+        "Expected mutable boolean array binding literals to widen: {output}"
+    );
+    assert!(
+        output.contains("export declare let ma: string, mb: number;"),
+        "Expected mutable mixed array binding literals to widen per binding: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_const_literal_variables_preserve_literal_union() {
+    let output = emit_dts_with_binding(
+        r#"
+const string: "string" = "string";
+const number: "number" = "number";
+const boolean: "boolean" = "boolean";
+
+const stringOrNumber = string || number;
+const stringOrBoolean = string || boolean;
+const booleanOrNumber = number || boolean;
+const stringOrBooleanOrNumber = stringOrBoolean || number;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const stringOrNumber: \"string\" | \"number\";"),
+        "Expected `||` over literal-typed consts to preserve both arms: {output}"
+    );
+    assert!(
+        output.contains("declare const stringOrBoolean: \"string\" | \"boolean\";"),
+        "Expected `||` to preserve string and boolean literal arms: {output}"
+    );
+    assert!(
+        output.contains("declare const booleanOrNumber: \"number\" | \"boolean\";"),
+        "Expected `||` to preserve source declaration order for operands: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare const stringOrBooleanOrNumber: \"string\" | \"number\" | \"boolean\";"
+        ),
+        "Expected chained `||` to merge prior literal unions in declaration order: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_drops_falsy_left_literal_from_dts_union() {
+    let output = emit_dts_with_binding(
+        r#"
+const empty: "" = "";
+const fallback: "fallback" = "fallback";
+const value = empty || fallback;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value: \"fallback\";"),
+        "Expected `||` declaration inference to exclude a known-falsy left literal: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_reference_respects_annotated_widened_surface() {
+    let output = emit_dts_with_binding(
+        r#"
+const a: "a" = "a";
+const b: "b" = "b";
+const c: "c" = "c";
+let ab: string = a || b;
+export const y = ab || c;
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const y: string;"),
+        "Expected referenced annotated short-circuit declarations to expose their declared surface: {output}"
+    );
+    assert!(
+        !output.contains("export declare const y: \"a\" | \"b\" | \"c\";"),
+        "Annotated referenced declarations must not be expanded through their initializer: {output}"
+    );
+}
+
+#[test]
+fn test_nullish_coalescing_drops_nullish_left_from_dts_union() {
+    let output = emit_dts_with_binding(
+        r#"
+const maybe: "value" | undefined = undefined as any;
+const fallback: "fallback" = "fallback";
+const value = maybe ?? fallback;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value: \"value\" | \"fallback\";"),
+        "Expected `??` declaration inference to remove nullish left arms and keep fallback: {output}"
+    );
+}
+
+#[test]
+fn test_const_asserted_array_literal_binding_preserves_literals() {
+    let source = r#"let [hello, brave] = ["Hello", "Brave"] as const;"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let tuple_type = interner.tuple(vec![
+        TupleElement {
+            type_id: interner.literal_string("Hello"),
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: interner.literal_string("Brave"),
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let decl_idx = variable_declarations_from_source(&parser, root)
+        .into_iter()
+        .next()
+        .expect("missing variable declaration");
+    let decl = parser
+        .arena
+        .get(decl_idx)
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing variable declaration");
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(decl.initializer.0, tuple_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare let hello: \"Hello\", brave: \"Brave\";"),
+        "Expected const-asserted array binding literals to stay literal: {output}"
+    );
+}
+
+fn variable_declarations_from_source(parser: &ParserState, root: NodeIndex) -> Vec<NodeIndex> {
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let mut declarations = Vec::new();
+    for &stmt_idx in &source_file.statements.nodes {
+        let Some(stmt_node) = parser.arena.get(stmt_idx) else {
+            continue;
+        };
+        let variable_stmt_idx =
+            if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_DECLARATION {
+                parser
+                    .arena
+                    .get_export_decl(stmt_node)
+                    .map(|export| export.export_clause)
+                    .unwrap_or(stmt_idx)
+            } else {
+                stmt_idx
+            };
+        let Some(stmt) = parser
+            .arena
+            .get(variable_stmt_idx)
+            .and_then(|node| parser.arena.get_variable(node))
+        else {
+            continue;
+        };
+        for &decl_list_idx in &stmt.declarations.nodes {
+            let Some(decl_list) = parser
+                .arena
+                .get(decl_list_idx)
+                .and_then(|node| parser.arena.get_variable(node))
+            else {
+                continue;
+            };
+            declarations.extend(decl_list.declarations.nodes.iter().copied());
+        }
+    }
+    declarations
 }
 
 #[test]

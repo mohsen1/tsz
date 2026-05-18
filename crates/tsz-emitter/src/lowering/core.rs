@@ -1,6 +1,6 @@
 use crate::context::emit::EmitContext;
 use crate::context::plan::{EmitPlan, EmitPlanBuilder};
-use crate::context::transform::{TransformContext, TransformDirective};
+use crate::context::transform::{IdentifierId, TransformContext, TransformDirective};
 use crate::emitter::JsxEmit;
 use crate::jsx_pragmas::{JsxPragmaFacts, JsxRuntimePragma};
 use std::sync::Arc;
@@ -63,6 +63,10 @@ pub struct LoweringPass<'a> {
     /// Used to determine if a namespace/enum IIFE should fold exports into the
     /// closing argument (e.g., `(A || (exports.A = A = {}))`).
     pub(super) re_exported_names: rustc_hash::FxHashSet<String>,
+    /// Export names from local `export { local as exported }` clauses, keyed by
+    /// the local name. Namespace IIFE folding needs the exported name in the
+    /// `exports.<name>` slot while keeping the local namespace binding unchanged.
+    pub(super) re_exported_export_names: rustc_hash::FxHashMap<String, Vec<IdentifierId>>,
     /// Stack of enclosing non-arrow function body node indices.
     /// When an arrow function captures `this`, the top of this stack is the
     /// scope that needs `var _this = this;`.
@@ -98,6 +102,7 @@ impl<'a> LoweringPass<'a> {
             in_assignment_target: false,
             in_es5_class: false,
             re_exported_names: rustc_hash::FxHashSet::default(),
+            re_exported_export_names: rustc_hash::FxHashMap::default(),
             enclosing_function_bodies: Vec::new(),
             enclosing_capture_names: Vec::new(),
             current_source_text: None,
@@ -499,7 +504,7 @@ impl<'a> LoweringPass<'a> {
         )
     }
 
-    fn import_has_value_usage_after_node(
+    pub(super) fn import_has_value_usage_after_node(
         &self,
         node: &Node,
         clause: &tsz_parser::parser::node::ImportClauseData,
@@ -691,8 +696,11 @@ impl<'a> LoweringPass<'a> {
             return;
         }
 
+        let is_top_level_export = self.namespace_depth == 0;
+
         // Detect CommonJS helpers: export * from "mod"
-        if self.is_commonjs()
+        if is_top_level_export
+            && self.is_commonjs()
             && export_decl.module_specifier.is_some()
             && export_decl.export_clause.is_none()
         {
@@ -703,7 +711,8 @@ impl<'a> LoweringPass<'a> {
 
         // Detect CommonJS helpers: export * as ns from "mod"
         // In CJS with esModuleInterop, this needs __importStar + __createBinding.
-        if self.is_commonjs()
+        if is_top_level_export
+            && self.is_commonjs()
             && self.ctx.options.es_module_interop
             && export_decl.module_specifier.is_some()
             && export_decl.export_clause.is_some()
@@ -720,7 +729,8 @@ impl<'a> LoweringPass<'a> {
 
         // Detect CommonJS helpers: export { default } from "mod" or export { default as X } from "mod"
         // In CJS with esModuleInterop, re-exporting `default` needs __importDefault.
-        if self.is_commonjs()
+        if is_top_level_export
+            && self.is_commonjs()
             && self.ctx.options.es_module_interop
             && export_decl.module_specifier.is_some()
             && let Some(clause_node) = self.arena.get(export_decl.export_clause)
@@ -817,6 +827,15 @@ impl<'a> LoweringPass<'a> {
                         if self.ctx.needs_es2022_lowering && self.class_has_private_members(class) {
                             self.mark_class_helpers(export_decl.export_clause, heritage);
                         }
+                        let target_supports_native_decorators = self.ctx.options.target
+                            == ScriptTarget::ESNext
+                            && self.ctx.options.use_define_for_class_fields;
+                        if !self.ctx.options.legacy_decorators
+                            && !target_supports_native_decorators
+                            && self.class_has_decorators(class)
+                        {
+                            self.mark_tc39_decorator_helpers(class);
+                        }
                         TransformDirective::CommonJSExportDefaultExpr
                     };
                     self.transforms.insert(export_decl.export_clause, directive);
@@ -897,6 +916,7 @@ impl<'a> LoweringPass<'a> {
         let mut directives = Vec::new();
         if self.ctx.target_es5 {
             if func.is_async {
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 if func.asterisk_token {
                     self.mark_async_generator_helpers();
                 } else {
@@ -905,12 +925,10 @@ impl<'a> LoweringPass<'a> {
                 directives.push(TransformDirective::ES5AsyncFunction { function_node });
             } else if func.asterisk_token {
                 self.transforms.helpers_mut().generator = true;
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 directives.push(TransformDirective::ES5GeneratorFunction { function_node });
             } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-                // Mark rest helper if parameters have rest
-                if self.function_parameters_need_rest_helper(&func.parameters) {
-                    self.transforms.helpers_mut().mark_rest();
-                }
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 directives.push(TransformDirective::ES5FunctionParameters { function_node });
             }
         } else if func.is_async
@@ -924,9 +942,7 @@ impl<'a> LoweringPass<'a> {
                 self.mark_async_helpers();
             }
         } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-            if self.function_parameters_need_rest_helper(&func.parameters) {
-                self.transforms.helpers_mut().mark_rest();
-            }
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             directives.push(TransformDirective::ES5FunctionParameters { function_node });
         }
 
@@ -1052,28 +1068,7 @@ impl<'a> LoweringPass<'a> {
             self.transforms.helpers_mut().set_function_name = true;
         }
         if has_tc39_decorators {
-            let needs_prop_key = self.class_has_computed_decorated_member(class);
-            let needs_set_function_name = self.class_has_private_decorated_member(class);
-            // __setFunctionName is needed when there are class-level decorators
-            // AND we're in ES2015 mode (IIFE pattern with __setFunctionName call).
-            // In ES2022+ mode, it's not used for class decorators.
-            let needs_class_set_fn_name = (self.ctx.target_es5 || self.ctx.needs_es2022_lowering)
-                && class.modifiers.as_ref().is_some_and(|mods| {
-                    mods.nodes.iter().any(|&mod_idx| {
-                        self.arena
-                            .get(mod_idx)
-                            .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-                    })
-                });
-            let helpers = self.transforms.helpers_mut();
-            helpers.es_decorate = true;
-            helpers.run_initializers = true;
-            if needs_prop_key {
-                helpers.prop_key = true;
-            }
-            if needs_set_function_name || needs_class_set_fn_name {
-                helpers.set_function_name = true;
-            }
+            self.mark_tc39_decorator_helpers(class);
         }
 
         // Determine the base transform
@@ -1280,15 +1275,14 @@ impl<'a> LoweringPass<'a> {
             } else {
                 self.mark_async_helpers();
             }
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             TransformDirective::ES5AsyncFunction { function_node: idx }
         } else if self.ctx.target_es5 && func.asterisk_token {
             self.transforms.helpers_mut().generator = true;
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             TransformDirective::ES5GeneratorFunction { function_node: idx }
         } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-            // Mark rest helper if parameters have rest
-            if self.function_parameters_need_rest_helper(&func.parameters) {
-                self.transforms.helpers_mut().mark_rest();
-            }
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             TransformDirective::ES5FunctionParameters { function_node: idx }
         } else {
             TransformDirective::Identity
@@ -1445,6 +1439,8 @@ impl<'a> LoweringPass<'a> {
 
         // Get the namespace root name for merging detection
         let namespace_name = self.get_module_root_name_text(module_decl.name);
+        let namespace_has_runtime_value =
+            emit_utils::module_body_has_runtime_value_declarations(self.arena, module_decl.body);
 
         // Check if this name has already been declared (class/enum/function/namespace)
         // If so, we should NOT emit 'var' for this namespace
@@ -1460,8 +1456,8 @@ impl<'a> LoweringPass<'a> {
             .is_some_and(|n| self.re_exported_names.contains(n));
 
         // Track this name as declared
-        if let Some(name) = namespace_name {
-            self.declared_names.insert(name);
+        if namespace_has_runtime_value && let Some(ref name) = namespace_name {
+            self.declared_names.insert(name.clone());
         }
         let is_exported = self.is_commonjs()
             && !self.has_export_assignment
@@ -1488,8 +1484,10 @@ impl<'a> LoweringPass<'a> {
 
         let final_directive = if is_exported {
             if let Some(export_name) = module_name {
+                let export_names =
+                    self.commonjs_export_names_for_local(namespace_name.as_deref(), export_name);
                 let export_directive = TransformDirective::CommonJSExport {
-                    names: Arc::from(vec![export_name]),
+                    names: export_names,
                     is_default: false,
                     inner: Box::new(TransformDirective::Identity),
                 };
@@ -1606,6 +1604,7 @@ impl<'a> LoweringPass<'a> {
             if arrow.is_async {
                 self.mark_async_helpers();
             }
+            self.mark_function_parameter_transform_helpers(&arrow.parameters);
 
             // If this arrow function captures lexical `this`, increment the
             // capture level so that nested `this` references get substituted.
@@ -1641,9 +1640,7 @@ impl<'a> LoweringPass<'a> {
         } else if !arrow.is_async
             && self.function_parameters_need_body_prologue_transform(&arrow.parameters)
         {
-            if self.function_parameters_need_rest_helper(&arrow.parameters) {
-                self.transforms.helpers_mut().rest = true;
-            }
+            self.mark_function_parameter_transform_helpers(&arrow.parameters);
             self.transforms.insert(
                 idx,
                 TransformDirective::ES5FunctionParameters { function_node: idx },
@@ -1706,6 +1703,9 @@ impl<'a> LoweringPass<'a> {
                 self.visit(mod_idx);
             }
             self.transforms.helpers_mut().decorate = prev_decorate;
+        }
+        if ctor.body.is_some() {
+            self.mark_function_parameter_transform_helpers(&ctor.parameters);
         }
         for &param_idx in &ctor.parameters.nodes {
             self.visit(param_idx);
@@ -1922,6 +1922,7 @@ impl<'a> LoweringPass<'a> {
 
         if self.ctx.target_es5 {
             if func.is_async {
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 if func.asterisk_token {
                     self.mark_async_generator_helpers();
                 } else {
@@ -1933,14 +1934,13 @@ impl<'a> LoweringPass<'a> {
                 );
             } else if func.asterisk_token {
                 self.transforms.helpers_mut().generator = true;
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 self.transforms.insert(
                     idx,
                     TransformDirective::ES5GeneratorFunction { function_node: idx },
                 );
             } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-                if self.function_parameters_need_rest_helper(&func.parameters) {
-                    self.transforms.helpers_mut().mark_rest();
-                }
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 self.transforms.insert(
                     idx,
                     TransformDirective::ES5FunctionParameters { function_node: idx },
@@ -1958,9 +1958,7 @@ impl<'a> LoweringPass<'a> {
                 self.mark_async_helpers();
             }
         } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
-            if self.function_parameters_need_rest_helper(&func.parameters) {
-                self.transforms.helpers_mut().mark_rest();
-            }
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             self.transforms.insert(
                 idx,
                 TransformDirective::ES5FunctionParameters { function_node: idx },

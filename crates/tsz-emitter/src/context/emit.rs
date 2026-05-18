@@ -138,6 +138,10 @@ pub struct ModuleTransformState {
     /// `exports.A = A;` emission in `export { A }` re-export handling.
     pub iife_exported_names: FxHashSet<String>,
 
+    /// Export names already folded for a local namespace binding. This keeps
+    /// `export { N as Alias }` from suppressing unrelated aliases of `N`.
+    pub iife_exported_bindings: FxHashMap<String, FxHashSet<String>>,
+
     /// Names whose `exports.X = X;` was already emitted inline after their
     /// declaration. Used to suppress duplicate emission in `export { X }` clauses.
     pub inline_exported_names: FxHashSet<String>,

@@ -1768,6 +1768,10 @@ function generateCharts(data, mode = "projects") {
   );
 
   let html = "";
+  if (mode === "projects" && visibleCategories.length === 0) {
+    html += `<div class="bench-placeholder">No successful project benchmark timing pairs are available in this artifact yet. Project rows below are still tracked for compile readiness.</div>\n`;
+  }
+
   for (const category of visibleCategories) {
     const entries = entriesForCategory(category);
     const slug = categorySlug(category);
