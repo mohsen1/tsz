@@ -493,6 +493,19 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
     cleanSubsetClassification.compilers,
     "tsc-clean assertion classification",
   );
+  const cleanTsc = cleanSubsetClassification.compilers?.tsc || {};
+  if (cleanTsc.status !== "pass") {
+    fail(
+      `tsc-clean assertion classification tsc status (${cleanTsc.status}) must be pass`,
+    );
+  }
+  const cleanTscDiagnosticFree =
+    cleanTsc.candidateDiagnostics?.candidatesWithoutDiagnostics;
+  if (cleanTscDiagnosticFree !== acceptedAssertions) {
+    fail(
+      `tsc-clean assertion classification tsc candidatesWithoutDiagnostics (${cleanTscDiagnosticFree}) must match manifest tscAcceptedAssertions (${acceptedAssertions})`,
+    );
+  }
 }
 const tsc = report.compilers?.tsc || {};
 const tsz = report.compilers?.tsz || {};
