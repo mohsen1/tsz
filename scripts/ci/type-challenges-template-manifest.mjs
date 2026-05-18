@@ -16,7 +16,13 @@ const ref = process.env.TYPE_CHALLENGES_REF;
 const expectedGenerated = Number(process.env.TYPE_CHALLENGES_EXPECTED_GENERATED);
 const CHALLENGE_LEVELS = new Set(["warm", "easy", "medium", "hard", "extreme"]);
 
-if (!repository || !ref || !Number.isInteger(expectedGenerated)) {
+if (
+  typeof repository !== "string" ||
+  repository.trim() === "" ||
+  typeof ref !== "string" ||
+  ref.trim() === "" ||
+  !Number.isInteger(expectedGenerated)
+) {
   console.error("error: missing Type Challenges repository, ref, or expected count");
   process.exit(1);
 }
@@ -95,6 +101,10 @@ const entries = walkTemplates(questionsDir)
 
     if (!fs.existsSync(outputPath)) {
       console.error(`error: manifest output does not exist: ${output}`);
+      process.exit(1);
+    }
+    if (!fs.statSync(outputPath).isFile()) {
+      console.error(`error: manifest output is not a file: ${output}`);
       process.exit(1);
     }
 

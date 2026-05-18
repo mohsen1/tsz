@@ -926,6 +926,26 @@ impl<'a> Printer<'a> {
         let name_node = self.arena.get(prop.name);
         let is_computed = name_node
             .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+        if self.is_tc39_decorated_anonymous_class_expression(prop.initializer) {
+            if is_computed {
+                if let Some(computed) = name_node.and_then(|n| self.arena.get_computed_property(n))
+                {
+                    self.write("[");
+                    let name_expr =
+                        self.emit_tc39_named_class_computed_property_name(computed.expression);
+                    self.write("]");
+                    self.write(": ");
+                    self.emit_with_tc39_class_expression_name(prop.initializer, name_expr, true);
+                    return;
+                }
+            } else if let Some(name) = self.tc39_class_expression_name_from_property_name(prop.name)
+            {
+                self.emit_decl_name(prop.name);
+                self.write(": ");
+                self.emit_with_tc39_class_expression_name(prop.initializer, name, false);
+                return;
+            }
+        }
         if is_computed {
             self.emit(prop.name);
         } else {
@@ -970,6 +990,22 @@ impl<'a> Printer<'a> {
         if self.is_static_block_await_identifier(shorthand.name) {
             self.emit(shorthand.name);
             self.write(": ");
+            return;
+        }
+
+        if shorthand.equals_token
+            && self.is_tc39_decorated_anonymous_class_expression(
+                shorthand.object_assignment_initializer,
+            )
+            && let Some(name) = self.tc39_class_expression_name_from_property_name(shorthand.name)
+        {
+            self.emit(shorthand.name);
+            self.write(" = ");
+            self.emit_with_tc39_class_expression_name(
+                shorthand.object_assignment_initializer,
+                name,
+                false,
+            );
             return;
         }
 
@@ -1040,6 +1076,74 @@ impl<'a> Printer<'a> {
             self.write(" = ");
             self.emit(shorthand.object_assignment_initializer);
         }
+    }
+
+    pub(in crate::emitter) fn is_tc39_decorated_anonymous_class_expression(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return false;
+        }
+        let Some(class) = self.arena.get_class(node) else {
+            return false;
+        };
+        let target_supports_native_decorators = self.ctx.options.target == ScriptTarget::ESNext
+            && self.ctx.options.use_define_for_class_fields;
+        class.name.is_none()
+            && !self.ctx.options.legacy_decorators
+            && !target_supports_native_decorators
+            && !self.collect_class_decorators(&class.modifiers).is_empty()
+    }
+
+    pub(in crate::emitter) fn emit_with_tc39_class_expression_name(
+        &mut self,
+        class_expr: NodeIndex,
+        name: String,
+        is_expression: bool,
+    ) {
+        let previous = self
+            .pending_tc39_class_expression_name
+            .replace((name, is_expression));
+        self.emit(class_expr);
+        self.pending_tc39_class_expression_name = previous;
+    }
+
+    pub(in crate::emitter) fn emit_tc39_named_class_computed_property_name(
+        &mut self,
+        expression: NodeIndex,
+    ) -> String {
+        let temp = self.make_unique_name_hoisted();
+        self.write(&temp);
+        self.write(" = ");
+        self.write_helper("__propKey");
+        self.write("(");
+        self.emit(expression);
+        self.write(")");
+        temp
+    }
+
+    pub(in crate::emitter) fn tc39_class_expression_name_from_property_name(
+        &self,
+        name: NodeIndex,
+    ) -> Option<String> {
+        let name_node = self.arena.get(name)?;
+        if name_node.kind == SyntaxKind::Identifier as u16
+            || name_node.kind == SyntaxKind::PrivateIdentifier as u16
+        {
+            let ident = self.arena.get_identifier(name_node)?;
+            return (!ident.escaped_text.is_empty()).then(|| ident.escaped_text.clone());
+        }
+        if name_node.kind == SyntaxKind::StringLiteral as u16
+            || name_node.kind == SyntaxKind::NumericLiteral as u16
+        {
+            let literal = self.arena.get_literal(name_node)?;
+            return Some(literal.text.clone());
+        }
+        None
     }
 
     fn node_text_contains_node(&self, node_idx: tsz_parser::parser::NodeIndex) -> bool {

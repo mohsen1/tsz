@@ -67,6 +67,32 @@ function toExitCodes(value) {
   return codes;
 }
 
+function fixtureSourcesFrom(value) {
+  const sources = [];
+  const seen = new Set();
+  const lines = String(value || "").split(/\r?\n/);
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const parts = line.split("|").map((part) => part.trim());
+    if (parts.length !== 3 || parts.some((part) => part === "")) {
+      throw new Error(
+        `COMPAT_FIXTURE_SOURCES line ${index + 1} must be name|repository|ref: ${line}`,
+      );
+    }
+    const [name, repository, ref] = parts;
+    const key = `${name}\0${repository}\0${ref}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    sources.push({
+      name,
+      repository,
+      ref,
+    });
+  }
+  return sources;
+}
+
 function subsystemForCode(code) {
   for (const [subsystem, codes] of DIAGNOSTIC_SUBSYSTEM_RULES) {
     if (codes.has(code)) return subsystem;
@@ -250,7 +276,19 @@ function lastSuccessfulPhaseFrom({ exitClass, diagnosticStatus }) {
 
 function rowStateFrom({ exitClass, diagnosticStatus }) {
   if (exitClass === "exit success" && diagnosticStatus === "none") return "green";
-  if (exitClass === "nonzero exit") return "red";
+  if (exitClass === "fixture invalid" || exitClass === "tsz unavailable") return "gray";
+  if (String(diagnosticStatus || "").toLowerCase().includes("diagnostic mismatch")) {
+    return "yellow";
+  }
+  if (
+    exitClass === "nonzero exit" ||
+    exitClass === "timeout" ||
+    exitClass === "oom" ||
+    exitClass === "crash" ||
+    exitClass === "runner error"
+  ) {
+    return "red";
+  }
   return "yellow";
 }
 
@@ -351,6 +389,7 @@ function readRows(input) {
 
 function readOptionalJson(file) {
   if (!file || !fs.existsSync(file)) return null;
+  if (!fs.statSync(file).isFile()) return null;
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
@@ -416,6 +455,14 @@ function record() {
     diagnosticSubsystems,
     diagnosticCodes,
   });
+  let fixtureSources;
+  try {
+    fixtureSources = fixtureSourcesFrom(process.env.COMPAT_FIXTURE_SOURCES);
+  } catch (error) {
+    console.error(`error: ${error.message}`);
+    process.exit(1);
+  }
+
   const row = {
     name: projectName,
     state,
@@ -441,6 +488,7 @@ function record() {
     },
     files_reached: toNumber(process.env.COMPAT_FILES_REACHED),
     peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
+    fixture_sources: fixtureSources,
   };
   const assertionMetadata = typeChallengesCleanAssertionMetadata(projectName);
   if (assertionMetadata) {

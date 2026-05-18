@@ -36,38 +36,54 @@ function normalizeManifestPath(value, label) {
   if (typeof value !== "string" || value.trim() === "") {
     fail(`${label} must be a non-empty relative path`);
   }
-  const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
+  const normalizedInput = value.replace(/\\/g, "/").replace(/^\.\//, "");
+  const segments = normalizedInput.split("/");
   if (
     path.isAbsolute(value) ||
-    normalized === "" ||
-    normalized === "." ||
-    normalized.split("/").includes("..")
+    normalizedInput === "" ||
+    normalizedInput === "." ||
+    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
   ) {
     fail(`${label} must stay inside the assertion candidate directory: ${value}`);
   }
+  const normalized = segments.join("/");
   if (!normalized.startsWith("assertions/")) {
     fail(`${label} must be under assertions/: ${normalized}`);
   }
   return normalized;
 }
 
+function normalizeManifestId(value, label) {
+  if (typeof value !== "string" || value.trim() === "") {
+    fail(`${label} must be a non-empty string`);
+  }
+  return value;
+}
+
 function validateEvidencePath(value, label) {
   if (typeof value !== "string" || value.trim() === "") {
     fail(`${label} must be a non-empty relative path`);
   }
-  const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
+  const normalizedInput = value.replace(/\\/g, "/").replace(/^\.\//, "");
+  const segments = normalizedInput.split("/");
   if (
     path.isAbsolute(value) ||
-    normalized === "" ||
-    normalized === "." ||
-    normalized.split("/").includes("..")
+    /^[A-Za-z]:\//.test(normalizedInput) ||
+    normalizedInput === "" ||
+    normalizedInput === "." ||
+    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
   ) {
     fail(`${label} must be a relative source path: ${value}`);
   }
 }
 
 function validateSourceMetadata(source, label) {
-  if (source?.repository && source?.ref) {
+  if (
+    typeof source?.repository === "string" &&
+    source.repository.trim() !== "" &&
+    typeof source?.ref === "string" &&
+    source.ref.trim() !== ""
+  ) {
     return;
   }
 
@@ -87,6 +103,21 @@ function validateCandidateManifestSources(manifest) {
   for (const label of ["templates", "testCases", "solutions"]) {
     validateSourceMetadata(manifest.sources[label], label);
   }
+
+  const templateSource = manifest.sources.templates;
+  const testCaseSource = manifest.sources.testCases;
+  if (
+    templateSource.repository !== testCaseSource.repository ||
+    templateSource.ref !== testCaseSource.ref
+  ) {
+    fail(
+      [
+        "candidate manifest template and test-case sources come from different snapshots",
+        `templates: ${templateSource.repository} @ ${templateSource.ref}`,
+        `testCases: ${testCaseSource.repository} @ ${testCaseSource.ref}`,
+      ].join("\n"),
+    );
+  }
 }
 
 function validateClassificationManifestSources(candidateManifest, classificationManifest) {
@@ -97,7 +128,12 @@ function validateClassificationManifestSources(candidateManifest, classification
   for (const label of ["templates", "testCases", "solutions"]) {
     const candidateSource = candidateManifest.sources[label];
     const classificationSource = classificationManifest.sources[label];
-    if (!classificationSource?.repository || !classificationSource?.ref) {
+    if (
+      typeof classificationSource?.repository !== "string" ||
+      classificationSource.repository.trim() === "" ||
+      typeof classificationSource?.ref !== "string" ||
+      classificationSource.ref.trim() === ""
+    ) {
       fail(
         [
           `classification candidateManifest.sources.${label} is missing source metadata`,
@@ -170,8 +206,16 @@ function validateInputs(candidateManifest, classification) {
 
   const entries = candidateManifest.entries.map((entry, index) => ({
     ...entry,
+    id: normalizeManifestId(entry?.id, `candidate manifest entries[${index}].id`),
     output: normalizeManifestPath(entry?.output, `candidate manifest entries[${index}].output`),
   }));
+  const duplicateIds = duplicates(entries.map((entry) => entry.id));
+  if (duplicateIds.length > 0) {
+    reportFileSetError(
+      "assertion candidate manifest reported duplicate candidate ids",
+      duplicateIds,
+    );
+  }
   const duplicateOutputs = duplicates(entries.map((entry) => entry.output));
   if (duplicateOutputs.length > 0) {
     reportFileSetError(
@@ -215,6 +259,10 @@ function validateInputs(candidateManifest, classification) {
 function copyRequiredFile(from, to, label) {
   if (!fs.existsSync(from)) {
     console.error(`error: ${label} does not exist: ${from}`);
+    process.exit(1);
+  }
+  if (!fs.statSync(from).isFile()) {
+    console.error(`error: ${label} is not a file: ${from}`);
     process.exit(1);
   }
   fs.mkdirSync(path.dirname(to), { recursive: true });
