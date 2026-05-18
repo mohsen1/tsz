@@ -1321,5 +1321,9 @@ path = "tests/static_readonly_unique_symbol_tests.rs"
 name = "issue_7681_super_decorator_tests"
 path = "tests/issue_7681_super_decorator_tests.rs"
 
+[[test]]
+name = "operator_literal_annotation_display_tests"
+path = "tests/operator_literal_annotation_display_tests.rs"
+
 [lints]
 workspace = true
