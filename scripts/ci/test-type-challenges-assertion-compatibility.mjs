@@ -556,6 +556,36 @@ withTempDir((dir) => {
           status: "pass",
           candidateDiagnostics: {
             totalCandidates: 2,
+            candidatesWithDiagnostics: 2,
+            candidatesWithoutDiagnostics: 0,
+            filesWithDiagnostics: ["assertions/one.ts", "./assertions/one.ts"],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc candidateDiagnostics\.filesWithDiagnostics contains duplicate files: assertions\/one\.ts/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 2,
             candidatesWithDiagnostics: 1,
             candidatesWithoutDiagnostics: 1,
             filesWithDiagnostics: ["assertions/one.ts"],

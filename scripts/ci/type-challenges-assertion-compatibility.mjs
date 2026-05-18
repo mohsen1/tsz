@@ -436,12 +436,18 @@ for (const [compiler, diagnostics] of [
           `assertion classification ${compiler} candidateDiagnostics.filesWithDiagnostics length (${filesWithDiagnostics.length}) does not match candidatesWithDiagnostics (${diagnostics.candidatesWithDiagnostics})`,
         );
       }
-      filesWithDiagnostics.forEach((file, index) => {
+      const normalizedDiagnosticFiles = filesWithDiagnostics.map((file, index) =>
         validateCandidateOutputPath(
           file,
           `assertion classification ${compiler} candidateDiagnostics.filesWithDiagnostics[${index}]`,
+        ),
+      );
+      const duplicateDiagnosticFiles = duplicatedValues(normalizedDiagnosticFiles);
+      if (duplicateDiagnosticFiles.length > 0) {
+        fail(
+          `assertion classification ${compiler} candidateDiagnostics.filesWithDiagnostics contains duplicate files: ${duplicateDiagnosticFiles.join(", ")}`,
         );
-      });
+      }
     } else if (
       Number.isInteger(diagnostics.candidatesWithDiagnostics) &&
       diagnostics.candidatesWithDiagnostics > 0
