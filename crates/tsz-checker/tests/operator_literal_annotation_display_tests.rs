@@ -119,3 +119,37 @@ function f<T extends string | bigint>(a: T) {
         );
     }
 }
+
+/// A short identifier-like annotation that resolves to a type alias is not a
+/// type parameter. The operator message should render the widened operand type.
+#[test]
+fn short_type_alias_annotation_shows_widened_number() {
+    let msgs = check_source_code_messages(
+        r"
+type N = number;
+function f(a: N) {
+    return false < a;
+}
+type Num = number;
+function g(a: Num) {
+    return false < a;
+}
+",
+    );
+    let op_errors: Vec<_> = msgs.iter().filter(|(c, _)| *c == 2365).collect();
+    assert_eq!(
+        op_errors.len(),
+        2,
+        "Expected two TS2365 errors for alias-annotated parameters; got: {msgs:?}"
+    );
+    for (_, msg) in &op_errors {
+        assert!(
+            msg.contains("number"),
+            "Expected alias annotation to render widened 'number'; got: {msg}"
+        );
+        assert!(
+            !msg.contains("'N'") && !msg.contains("'Num'"),
+            "Alias annotation names must not be preserved as type-parameter text; got: {msg}"
+        );
+    }
+}
