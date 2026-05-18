@@ -116,6 +116,8 @@ impl<'a> ClassES5Emitter<'a> {
 
     pub fn set_printer_options(&mut self, options: crate::emitter::PrinterOptions) {
         self.transformer.set_module_kind(options.module);
+        self.transformer
+            .set_downlevel_iteration(options.downlevel_iteration);
         self.printer_options = Some(options);
     }
 

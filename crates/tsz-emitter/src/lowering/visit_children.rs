@@ -284,6 +284,9 @@ impl<'a> LoweringPass<'a> {
                     {
                         self.transforms.helpers_mut().metadata = true;
                     }
+                    if method.body.is_some() {
+                        self.mark_function_parameter_transform_helpers(&method.parameters);
+                    }
                     if let Some(mods) = &method.modifiers {
                         // For overload signatures (no body), save/restore the decorate
                         // flag to prevent decorator visits from triggering helper emission.
@@ -372,6 +375,9 @@ impl<'a> LoweringPass<'a> {
                         for &mod_idx in &mods.nodes {
                             self.visit(mod_idx);
                         }
+                    }
+                    if accessor.body.is_some() {
+                        self.mark_function_parameter_transform_helpers(&accessor.parameters);
                     }
                     self.visit(accessor.name);
                     for &param_idx in &accessor.parameters.nodes {

@@ -7,6 +7,15 @@
 use super::*;
 
 impl<'a> LoweringPass<'a> {
+    pub(super) fn mark_function_parameter_transform_helpers(&mut self, params: &NodeList) {
+        if self.function_parameters_need_rest_helper(params) {
+            self.transforms.helpers_mut().mark_rest();
+        }
+        if self.function_parameters_need_downlevel_read_helper(params) {
+            self.transforms.helpers_mut().mark_read();
+        }
+    }
+
     pub(super) fn function_parameters_need_body_prologue_transform(
         &self,
         params: &NodeList,
@@ -129,6 +138,50 @@ impl<'a> LoweringPass<'a> {
                 .iter()
                 .copied()
                 .any(|element| self.parameter_expression_generates_function_temp(element));
+        }
+
+        false
+    }
+
+    fn function_parameters_need_downlevel_read_helper(&self, params: &NodeList) -> bool {
+        self.ctx.target_es5
+            && self.ctx.options.downlevel_iteration
+            && params.nodes.iter().any(|&param_idx| {
+                let Some(param_node) = self.arena.get(param_idx) else {
+                    return false;
+                };
+                let Some(param) = self.arena.get_parameter(param_node) else {
+                    return false;
+                };
+                self.binding_pattern_needs_downlevel_read_helper(param.name)
+            })
+    }
+
+    fn binding_pattern_needs_downlevel_read_helper(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+            && let Some(pattern) = self.arena.get_binding_pattern(node)
+            && !pattern.elements.nodes.is_empty()
+        {
+            return true;
+        }
+
+        if (node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+            || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+            && let Some(pattern) = self.arena.get_binding_pattern(node)
+        {
+            return pattern.elements.nodes.iter().copied().any(|elem_idx| {
+                let Some(elem_node) = self.arena.get(elem_idx) else {
+                    return false;
+                };
+                let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                    return false;
+                };
+                self.binding_pattern_needs_downlevel_read_helper(elem.name)
+            });
         }
 
         false
