@@ -525,7 +525,8 @@ impl<'a> IRPrinter<'a> {
             match node.kind {
                 k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => return true,
                 k if k == syntax_kind_ext::TYPE_ASSERTION
-                    || k == syntax_kind_ext::AS_EXPRESSION =>
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
                 {
                     if let Some(ta) = arena.get_type_assertion(node) {
                         idx = ta.expression;
@@ -533,7 +534,76 @@ impl<'a> IRPrinter<'a> {
                         return false;
                     }
                 }
+                k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+                {
+                    return Self::erased_object_literal_access_chain_needs_parens(arena, idx);
+                }
+                k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                    return Self::erased_object_literal_access_chain_needs_parens(arena, idx);
+                }
                 k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => return false,
+                _ => return false,
+            }
+        }
+    }
+
+    fn erased_object_literal_access_chain_needs_parens(arena: &NodeArena, idx: NodeIndex) -> bool {
+        let Some(node) = arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                arena.get_access_expr(node).is_some_and(|access| {
+                    Self::erased_object_literal_access_chain_needs_parens(arena, access.expression)
+                })
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                arena.get_call_expr(node).is_some_and(|call| {
+                    Self::erased_object_literal_access_chain_needs_parens(arena, call.expression)
+                })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                arena.get_parenthesized(node).is_some_and(|paren| {
+                    Self::erased_object_literal_access_chain_needs_parens(arena, paren.expression)
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                Self::type_assertion_wraps_object_literal(arena, idx)
+            }
+            _ => false,
+        }
+    }
+
+    fn type_assertion_wraps_object_literal(arena: &NodeArena, mut idx: NodeIndex) -> bool {
+        loop {
+            let Some(node) = arena.get(idx) else {
+                return false;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    if let Some(ta) = arena.get_type_assertion(node) {
+                        idx = ta.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    if let Some(paren) = arena.get_parenthesized(node) {
+                        idx = paren.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => return true,
                 _ => return false,
             }
         }

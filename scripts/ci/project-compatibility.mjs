@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import {
+  normalizePath,
+  semanticFamiliesForFile,
+} from "./type-challenges-semantic-families.mjs";
 
 const DIAGNOSTIC_SUBSYSTEM_RULES = [
   ["project-config", new Set(["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"])],
@@ -28,6 +32,22 @@ const OWNER_TRACK_BY_SUBSYSTEM = new Map([
   ["unclassified diagnostic", "Track 1 triage"],
 ]);
 
+const TYPE_CHALLENGES_PROJECT_ROWS = new Set([
+  "type-challenges-project",
+  "type-challenges-solutions-project",
+  "type-challenges-assertions-tsc-clean",
+]);
+
+function ownerTrackForSubsystem(subsystem) {
+  if (subsystem?.startsWith("type-challenges ")) {
+    if (subsystem.includes("indexed access")) {
+      return "Track 5 Type Challenges keyspace/indexed access";
+    }
+    return "Track 2/3 Type Challenges type-level semantics";
+  }
+  return OWNER_TRACK_BY_SUBSYSTEM.get(subsystem);
+}
+
 function toNumber(value) {
   if (value === undefined || value === null || value === "") return null;
   const parsed = Number(value);
@@ -45,6 +65,32 @@ function toExitCodes(value) {
     codes.push(parsed);
   }
   return codes;
+}
+
+function fixtureSourcesFrom(value) {
+  const sources = [];
+  const seen = new Set();
+  const lines = String(value || "").split(/\r?\n/);
+  for (const [index, rawLine] of lines.entries()) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const parts = line.split("|").map((part) => part.trim());
+    if (parts.length !== 3 || parts.some((part) => part === "")) {
+      throw new Error(
+        `COMPAT_FIXTURE_SOURCES line ${index + 1} must be name|repository|ref: ${line}`,
+      );
+    }
+    const [name, repository, ref] = parts;
+    const key = `${name}\0${repository}\0${ref}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    sources.push({
+      name,
+      repository,
+      ref,
+    });
+  }
+  return sources;
 }
 
 function subsystemForCode(code) {
@@ -77,6 +123,112 @@ function diagnosticSubsystemsFrom(deltas) {
   return [...groups.values()];
 }
 
+function parseDiagnosticDelta(line) {
+  const withoutLabel = String(line || "").replace(/^[a-z][\w-]*:\s+/, "");
+  const parenMatch = withoutLabel.match(
+    /^(.+?)\((\d+),(\d+)\):\s+(?:error\s+)?(TS\d{4,5})/,
+  );
+  if (parenMatch) {
+    return {
+      path: parenMatch[1],
+      code: parenMatch[4],
+    };
+  }
+
+  const colonMatch = withoutLabel.match(
+    /^(.+?):(\d+):(\d+)(?:\s+-)?\s+(?:error\s+)?(TS\d{4,5})/,
+  );
+  if (colonMatch) {
+    return {
+      path: colonMatch[1],
+      code: colonMatch[4],
+    };
+  }
+  return {
+    path: null,
+    code: null,
+  };
+}
+
+function sourceRootsForTypeChallenges() {
+  const roots = [];
+  const add = (value) => {
+    if (!value) return;
+    const resolved = path.resolve(value);
+    if (!roots.includes(resolved)) roots.push(resolved);
+  };
+  add(process.env.COMPAT_SOURCE_ROOT);
+  add(process.env.COMPAT_FIXTURE_ROOT);
+  return roots;
+}
+
+function typeChallengesFamiliesForFile(file, sourceRoots, sourceCache) {
+  if (!file) return ["unknown"];
+  const normalized = normalizePath(file).replace(/^\.\//, "");
+
+  for (const root of sourceRoots) {
+    const families = semanticFamiliesForFile(normalized, root, sourceCache);
+    if (!(families.length === 1 && families[0] === "unknown")) {
+      return families;
+    }
+  }
+
+  if (path.isAbsolute(file)) {
+    for (const root of sourceRoots) {
+      const families = semanticFamiliesForFile(file, root, sourceCache);
+      if (!(families.length === 1 && families[0] === "unknown")) {
+        return families;
+      }
+    }
+  }
+
+  return ["unknown"];
+}
+
+function typeChallengesDiagnosticSubsystemsFrom(projectName, deltas) {
+  if (!TYPE_CHALLENGES_PROJECT_ROWS.has(projectName)) {
+    return [];
+  }
+
+  const groups = new Map();
+  const sourceRoots = sourceRootsForTypeChallenges();
+  const sourceCache = new Map();
+  for (const line of deltas) {
+    const diagnostic = parseDiagnosticDelta(line);
+    const codes = diagnostic.code
+      ? [diagnostic.code]
+      : [...line.matchAll(/\bTS\d{4,5}\b/g)].map((match) => match[0]);
+    const lineCodes = codes.length ? codes : ["uncoded"];
+    const families = typeChallengesFamiliesForFile(diagnostic.path, sourceRoots, sourceCache);
+    if (families.length === 1 && families[0] === "unknown") {
+      continue;
+    }
+
+    for (const family of families) {
+      const subsystem = `type-challenges ${family}`;
+      if (!groups.has(subsystem)) {
+        groups.set(subsystem, { subsystem, codes: [], count: 0, examples: [] });
+      }
+      const group = groups.get(subsystem);
+      group.count += 1;
+      for (const code of lineCodes) {
+        if (code !== "uncoded" && !group.codes.includes(code) && group.codes.length < 8) {
+          group.codes.push(code);
+        }
+      }
+      if (group.examples.length < 3) {
+        group.examples.push(line);
+      }
+    }
+  }
+  return [...groups.values()];
+}
+
+function diagnosticSubsystemsForProject(projectName, deltas) {
+  const typeChallengesSubsystems = typeChallengesDiagnosticSubsystemsFrom(projectName, deltas);
+  return typeChallengesSubsystems.length ? typeChallengesSubsystems : diagnosticSubsystemsFrom(deltas);
+}
+
 function diagnosticCodesFrom(deltas) {
   const codes = [];
   const seen = new Set();
@@ -101,6 +253,9 @@ function knownBlockersFrom({ exitClass, phase, diagnosticSubsystems, diagnosticC
   if (exitClass === "timeout") add("timeout during project check");
   if (exitClass === "oom") add("OOM or killed during project check");
   if (exitClass === "crash") add("compiler crash during project check");
+  if (exitClass === "fixture invalid") add("reference fixture invalid");
+  if (exitClass === "runner error") add("benchmark runner error");
+  if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
   if (phase && phase !== "check") add(`${phase} phase blocker`);
 
   for (const group of diagnosticSubsystems) {
@@ -121,7 +276,19 @@ function lastSuccessfulPhaseFrom({ exitClass, diagnosticStatus }) {
 
 function rowStateFrom({ exitClass, diagnosticStatus }) {
   if (exitClass === "exit success" && diagnosticStatus === "none") return "green";
-  if (exitClass === "nonzero exit") return "red";
+  if (exitClass === "fixture invalid" || exitClass === "tsz unavailable") return "gray";
+  if (String(diagnosticStatus || "").toLowerCase().includes("diagnostic mismatch")) {
+    return "yellow";
+  }
+  if (
+    exitClass === "nonzero exit" ||
+    exitClass === "timeout" ||
+    exitClass === "oom" ||
+    exitClass === "crash" ||
+    exitClass === "runner error"
+  ) {
+    return "red";
+  }
   return "yellow";
 }
 
@@ -129,9 +296,12 @@ function ownerTrackFrom({ exitClass, diagnosticSubsystems }) {
   if (exitClass === "timeout") return "Track 1 runtime/timeout triage";
   if (exitClass === "oom") return "Track 1 residency triage";
   if (exitClass === "crash") return "Track 1 crash triage";
+  if (exitClass === "fixture invalid") return "Track 1 project-corpus harness/config";
+  if (exitClass === "runner error") return "Track 1 benchmark runner";
+  if (exitClass === "tsz unavailable") return "Track 1 benchmark runner";
 
   const primary = diagnosticSubsystems[0]?.subsystem;
-  return OWNER_TRACK_BY_SUBSYSTEM.get(primary) || "Track 1 triage";
+  return ownerTrackForSubsystem(primary) || "Track 1 triage";
 }
 
 function relativeToFixture(value) {
@@ -217,6 +387,53 @@ function readRows(input) {
   return result;
 }
 
+function readOptionalJson(file) {
+  if (!file || !fs.existsSync(file)) return null;
+  if (!fs.statSync(file).isFile()) return null;
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function typeChallengesCleanAssertionMetadata(projectName) {
+  if (projectName !== "type-challenges-assertions-tsc-clean") return null;
+
+  const manifestPath = process.env.COMPAT_TYPE_CHALLENGES_CLEAN_MANIFEST || "";
+  const classificationPath =
+    process.env.COMPAT_TYPE_CHALLENGES_CLEAN_CLASSIFICATION || "";
+  const manifest = readOptionalJson(manifestPath);
+  if (!manifest) return null;
+
+  const classification = readOptionalJson(classificationPath);
+  const counts = manifest.counts || {};
+  const tsc = classification?.compilers?.tsc || {};
+  const tsz = classification?.compilers?.tsz || {};
+
+  return {
+    manifest_path: relativeToFixture(manifestPath),
+    classification_path: classification ? relativeToFixture(classificationPath) : null,
+    source_candidate_manifest: manifest.sourceCandidateManifest || null,
+    source_classification: manifest.sourceClassification || null,
+    total_candidates: counts.totalCandidates ?? null,
+    generated_assertions: counts.tscAcceptedAssertions ?? null,
+    assertions_referencing_solution_declaration:
+      counts.tscAcceptedAssertionsReferencingSolutionDeclaration ?? null,
+    assertions_missing_solution_declaration_reference:
+      counts.tscAcceptedAssertionsMissingSolutionDeclarationReference ?? null,
+    rejected_from_full_corpus: counts.tscRejectedAssertions ?? null,
+    missing_accepted_manifest_entries:
+      counts.missingAcceptedManifestEntries ?? null,
+    tsc_status: tsc.status ?? manifest.sourceClassification?.tscStatus ?? null,
+    tsz_status: tsz.status ?? manifest.sourceClassification?.tszStatus ?? null,
+    comparison_status:
+      classification?.comparison?.status ??
+      manifest.sourceClassification?.comparisonStatus ??
+      null,
+    tsc_diagnostic_free:
+      tsc.candidateDiagnostics?.candidatesWithoutDiagnostics ?? null,
+    tsz_diagnostic_free:
+      tsz.candidateDiagnostics?.candidatesWithoutDiagnostics ?? null,
+  };
+}
+
 function record() {
   const delta = process.env.COMPAT_DIAGNOSTIC_DELTA || "";
   const diagnosticDeltas = delta
@@ -225,7 +442,8 @@ function record() {
     .filter(Boolean)
     .slice(0, 20);
 
-  const diagnosticSubsystems = diagnosticSubsystemsFrom(diagnosticDeltas);
+  const projectName = process.env.COMPAT_NAME || "";
+  const diagnosticSubsystems = diagnosticSubsystemsForProject(projectName, diagnosticDeltas);
   const diagnosticCodes = diagnosticCodesFrom(diagnosticDeltas);
   const exitClass = process.env.COMPAT_EXIT_CLASS || "unknown";
   const diagnosticStatus = process.env.COMPAT_DIAGNOSTIC_STATUS || "unknown";
@@ -237,8 +455,16 @@ function record() {
     diagnosticSubsystems,
     diagnosticCodes,
   });
+  let fixtureSources;
+  try {
+    fixtureSources = fixtureSourcesFrom(process.env.COMPAT_FIXTURE_SOURCES);
+  } catch (error) {
+    console.error(`error: ${error.message}`);
+    process.exit(1);
+  }
+
   const row = {
-    name: process.env.COMPAT_NAME || "",
+    name: projectName,
     state,
     exit_class: exitClass,
     first_failure_class: state === "green" ? null : knownBlockers[0] || exitClass,
@@ -256,13 +482,18 @@ function record() {
     reduced_repro_path: repro.reduced_repro_path,
     repro,
     exit_codes: {
-      tsc: [],
+      tsc: toExitCodes(process.env.COMPAT_TSC_EXIT_CODES),
       tsz: toExitCodes(process.env.COMPAT_TSZ_EXIT_CODES),
-      tsgo: [],
+      tsgo: toExitCodes(process.env.COMPAT_TSGO_EXIT_CODES),
     },
     files_reached: toNumber(process.env.COMPAT_FILES_REACHED),
     peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
+    fixture_sources: fixtureSources,
   };
+  const assertionMetadata = typeChallengesCleanAssertionMetadata(projectName);
+  if (assertionMetadata) {
+    row.assertion_clean_subset = assertionMetadata;
+  }
 
   fs.appendFileSync(process.env.COMPAT_JSONL_FILE, `${JSON.stringify(row)}\n`, "utf8");
 }

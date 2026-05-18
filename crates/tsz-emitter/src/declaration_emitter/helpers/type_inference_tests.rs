@@ -1,5 +1,8 @@
 use super::DeclarationEmitter;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tsz_parser::parser::ParserState;
+
+static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn simultaneous_word_replacement_does_not_rewrite_inserted_import_paths() {
@@ -83,6 +86,69 @@ fn import_type_text_helpers_accept_single_quoted_specifiers() {
         emitter.parse_import_type_text("import('nested').NestedProps"),
         Some(("nested".to_string(), "NestedProps".to_string()))
     );
+}
+
+#[test]
+fn types_versions_self_back_reference_detection_requires_package_root_reexport() {
+    let temp_id = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "tsz-types-versions-self-ref-{}-{}",
+        std::process::id(),
+        temp_id
+    ));
+    let package_root = root.join("node_modules").join("ext");
+    let types_dir = package_root.join("ts3.1");
+    std::fs::create_dir_all(&types_dir).expect("create typesVersions dir");
+    std::fs::write(
+        package_root.join("package.json"),
+        r#"{
+            "name": "ext",
+            "version": "1.0.0",
+            "typesVersions": {
+                ">=3.1.0-0": { "*": ["ts3.1/*"] }
+            }
+        }"#,
+    )
+    .expect("write package json");
+    std::fs::write(types_dir.join("index.d.ts"), r#"export * from "../";"#)
+        .expect("write self back-reference");
+
+    assert!(
+        DeclarationEmitter::package_root_has_types_versions_self_back_reference(&package_root),
+        "Expected root typesVersions index re-exporting the parent package root to be detected"
+    );
+
+    std::fs::write(types_dir.join("index.d.ts"), r#"export * from "../other";"#)
+        .expect("rewrite non-root re-export");
+    assert!(
+        !DeclarationEmitter::package_root_has_types_versions_self_back_reference(&package_root),
+        "Subpath re-exports should not make the package root fall back to any"
+    );
+
+    let subpath_types_dir = package_root.join("ts3.1").join("sub");
+    std::fs::create_dir_all(&subpath_types_dir).expect("create subpath typesVersions dir");
+    std::fs::write(
+        package_root.join("package.json"),
+        r#"{
+            "name": "ext",
+            "version": "1.0.0",
+            "typesVersions": {
+                ">=3.1.0-0": { "sub/*": ["ts3.1/sub/*"] }
+            }
+        }"#,
+    )
+    .expect("rewrite package json");
+    std::fs::write(
+        subpath_types_dir.join("index.d.ts"),
+        r#"export * from "../";"#,
+    )
+    .expect("write subpath back-reference");
+    assert!(
+        !DeclarationEmitter::package_root_has_types_versions_self_back_reference(&package_root),
+        "Subpath-only typesVersions mappings should not make root imports fall back to any"
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 #[test]
