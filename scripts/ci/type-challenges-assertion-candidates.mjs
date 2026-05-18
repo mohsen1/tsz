@@ -126,13 +126,20 @@ function requiredString(value, label) {
 
 function ensureRelativePath(value, label) {
   const text = requiredString(value, label);
-  const segments = text.split(/[\\/]+/);
-  if (!path.isAbsolute(text) && !segments.includes("..")) {
-    return text;
+  const normalized = text.replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
+  const segments = normalized.split("/");
+  if (
+    !path.isAbsolute(text) &&
+    !/^[A-Za-z]:\//.test(normalized) &&
+    normalized !== "" &&
+    normalized !== "." &&
+    segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..")
+  ) {
+    return normalized;
   }
 
   console.error(
-    `error: Type Challenges pairing report ${label} must be a relative path: ${text}`,
+    `error: Type Challenges pairing report ${label} must be a relative path inside the pairing root: ${text}`,
   );
   process.exit(1);
 }
