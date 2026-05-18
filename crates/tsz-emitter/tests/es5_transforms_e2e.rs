@@ -720,7 +720,7 @@ fn es5_downlevel_iteration_nested_array_parameter_reads_each_array_pattern() {
         "Array binding parameters with rest should read the parameter without a fixed limit.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("__read(_c, 1)"),
+        output.contains("__read(_b[0], 1)"),
         "Nested array binding patterns should also read their iterable source before indexing.\nOutput:\n{output}"
     );
     assert!(
