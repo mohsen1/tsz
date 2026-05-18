@@ -1323,6 +1323,28 @@ class ArchGuardSnapshotRollbackTests(unittest.TestCase):
             hits[5],
         )
 
+    def test_flags_split_chain_diagnostics_methods(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/split.rs": (
+                    "self.ctx\n"
+                    "    .rollback_diagnostics_filtered(&snap, |_| true);\n"
+                ),
+                "crates/tsz-checker/src/named_context.rs": (
+                    "checker_context\n"
+                    "    .rollback_diagnostics(&snap);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_snapshot_rollback_file_count([root], (), 0)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertTrue(any("split.rs" in hit for hit in hits), hits)
+        self.assertTrue(any("named_context.rs" in hit for hit in hits), hits)
+        self.assertIn(
+            "total snapshot-rollback caller files outside speculation.rs: 2",
+            hits[2],
+        )
+
     def test_flags_snapshot_restorers(self):
         root = self._make_tree(
             {

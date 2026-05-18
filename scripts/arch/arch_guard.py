@@ -733,7 +733,7 @@ _QUERY_BOUNDARY_COMMON_REFERENCE_PATTERN = re.compile(
 # already require the narrow `DiagnosticState` capability.
 _SPECULATION_ROLLBACK_PATTERN = re.compile(
     r"\.rollback_full\b"
-    r"|\b\w*ctx\.rollback_diagnostics(?:_filtered)?\b"
+    r"|\.\s*rollback_diagnostics(?:_filtered)?\b"
     r"|\.rollback_and_replace_diagnostics\b"
     r"|\.rollback_return_type\b"
     r"|\.restore_ts2454_state\b"
