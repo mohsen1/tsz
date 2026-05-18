@@ -790,6 +790,10 @@ name = "self_namespace_import_alias_leak_tests"
 path = "tests/self_namespace_import_alias_leak_tests.rs"
 
 [[test]]
+name = "self_referencing_alias_member_inheritance_tests"
+path = "tests/self_referencing_alias_member_inheritance_tests.rs"
+
+[[test]]
 name = "contextual_typing_tests"
 path = "tests/contextual_typing_tests.rs"
 
