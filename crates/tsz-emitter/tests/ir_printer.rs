@@ -116,6 +116,7 @@ fn test_emit_function_expr() {
 fn test_emit_es5_class_iife() {
     let class = IRNode::ES5ClassIIFE {
         name: "Point".into(),
+        binding_name: None,
         base_class: None,
         super_param: None,
         body: vec![
@@ -149,6 +150,7 @@ fn test_emit_es5_class_iife() {
 fn test_emit_es5_class_with_extends() {
     let class = IRNode::ES5ClassIIFE {
         name: "Child".into(),
+        binding_name: None,
         base_class: Some(Box::new(IRNode::id("Parent"))),
         super_param: Some("_super".into()),
         body: vec![

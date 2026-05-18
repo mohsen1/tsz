@@ -264,6 +264,27 @@ impl<'a> ClassES5Emitter<'a> {
         self.emit_class_internal(class_idx, Some(name))
     }
 
+    /// Emit a class declaration with a different outer binding name while
+    /// preserving the class's own lexical name inside the generated IIFE.
+    pub fn emit_class_with_binding_name(
+        &mut self,
+        class_idx: NodeIndex,
+        binding_name: &str,
+    ) -> String {
+        let mut ir = match self.transformer.transform_class_to_ir(class_idx) {
+            Some(ir) => ir,
+            None => return String::new(),
+        };
+        if let IRNode::ES5ClassIIFE {
+            binding_name: ref mut class_binding_name,
+            ..
+        } = ir
+        {
+            *class_binding_name = Some(binding_name.to_string().into());
+        }
+        self.emit_class_ir(class_idx, Some(binding_name), ir)
+    }
+
     fn emit_class_internal(&mut self, class_idx: NodeIndex, override_name: Option<&str>) -> String {
         let ir = if let Some(name) = override_name {
             self.transformer
@@ -272,11 +293,20 @@ impl<'a> ClassES5Emitter<'a> {
             self.transformer.transform_class_to_ir(class_idx)
         };
 
-        let mut ir = match ir {
+        let ir = match ir {
             Some(ir) => ir,
             None => return String::new(),
         };
 
+        self.emit_class_ir(class_idx, override_name, ir)
+    }
+
+    fn emit_class_ir(
+        &mut self,
+        class_idx: NodeIndex,
+        override_name: Option<&str>,
+        mut ir: IRNode,
+    ) -> String {
         if !self.externally_hoisted_decls.is_empty()
             && let IRNode::ES5ClassIIFE {
                 ref mut weakmap_decls,
