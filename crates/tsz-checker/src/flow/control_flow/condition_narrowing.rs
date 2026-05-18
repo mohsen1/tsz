@@ -984,9 +984,7 @@ impl<'a> FlowAnalyzer<'a> {
                 if self.is_matching_reference(condition_ref, target) {
                     if is_true_branch {
                         // Remove null/undefined (truthy narrowing)
-                        let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                        let narrowed = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
-                        return narrowed;
+                        return flow_boundary::narrow_non_nullish(self.interner, type_id);
                     }
                     // False branch - keep only falsy types (use Solver for NaN handling)
                     return narrowing.narrow_to_falsy(type_id);
@@ -1797,9 +1795,7 @@ impl<'a> FlowAnalyzer<'a> {
             };
             if is_true_branch {
                 // x holds the truthy result → remove null/undefined
-                let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                let narrowed = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
-                return Some(narrowed);
+                return Some(flow_boundary::narrow_non_nullish(self.interner, type_id));
             }
             // x holds the falsy result → keep only falsy types
             return Some(narrowing.narrow_to_falsy(type_id));
