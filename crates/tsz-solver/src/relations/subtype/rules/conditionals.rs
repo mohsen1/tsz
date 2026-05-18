@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use crate::types::{ConditionalType, IntrinsicKind, TypeData, TypeId};
+use crate::types::{ConditionalType, ConditionalTypeId, IntrinsicKind, TypeData, TypeId};
 use crate::visitor::{
     conditional_type_id, contains_type_parameter_named, intrinsic_kind, type_param_info,
 };
@@ -256,12 +256,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// ```
     pub(crate) fn conditional_branches_subtype(
         &mut self,
+        cond_id: ConditionalTypeId,
         cond: &ConditionalType,
         target: TypeId,
     ) -> SubtypeResult {
         // Strategy 1: Try default constraint of the conditional type.
         // This matches tsc's getConstraintOfConditionalType / getDefaultConstraintOfConditionalType.
-        let constraint = self.get_conditional_constraint(cond);
+        let constraint = self.get_conditional_constraint(cond_id, cond);
         if let Some(constraint) = constraint
             && self.check_subtype(constraint, target).is_true()
         {
@@ -367,7 +368,22 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Currently handles these patterns:
     /// - `T extends U ? T : Y` → `(T & U) | Y` (Extract pattern)
     /// - Other patterns: returns the general `X | Y` union
-    fn get_conditional_constraint(&self, cond: &ConditionalType) -> Option<TypeId> {
+    fn get_conditional_constraint(
+        &mut self,
+        cond_id: ConditionalTypeId,
+        cond: &ConditionalType,
+    ) -> Option<TypeId> {
+        if let Some(cached) = self.conditional_constraint_cache.get(&cond_id) {
+            return *cached;
+        }
+
+        let constraint = self.compute_conditional_constraint(cond);
+        self.conditional_constraint_cache
+            .insert(cond_id, constraint);
+        constraint
+    }
+
+    fn compute_conditional_constraint(&mut self, cond: &ConditionalType) -> Option<TypeId> {
         // Compute the default constraint for deferred conditional types.
         //
         // Deferred conditionals arise when:
@@ -487,7 +503,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// // Outer constraint: (T & V) & U = T & U & V
     /// ```
     fn get_nested_conditional_constraint(
-        &self,
+        &mut self,
         ty: TypeId,
         outer_check_type: TypeId,
     ) -> Option<TypeId> {
@@ -499,7 +515,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if inner.check_type == outer_check_type {
                 // Same check_type — compute the inner conditional's constraint.
                 // This recurses for arbitrary depth of nesting.
-                return self.get_conditional_constraint(&inner);
+                return self.get_conditional_constraint(inner_cond_id, &inner);
             }
         }
         None

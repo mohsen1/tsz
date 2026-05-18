@@ -887,6 +887,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
     fn visit_conditional(&mut self, cond_id: u32) -> Self::Output {
         // Conditional types require special handling
         self.checker.conditional_branches_subtype(
+            ConditionalTypeId(cond_id),
             self.checker
                 .interner
                 .conditional_type(ConditionalTypeId(cond_id))

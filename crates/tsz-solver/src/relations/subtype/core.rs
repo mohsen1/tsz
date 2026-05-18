@@ -21,8 +21,8 @@ use crate::objects::{PropertyCollectionResult, collect_properties};
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo, SymbolRef, TemplateSpan,
-    TypeData, TypeId, TypeListId,
+    ConditionalTypeId, IntrinsicKind, LiteralValue, ObjectFlags, ObjectShape, PropertyInfo,
+    SymbolRef, TemplateSpan, TypeData, TypeId, TypeListId,
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
@@ -265,6 +265,12 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// immutable for a single checker, so a per-checker cache avoids repeating the
     /// variance visitor for the same `DefId` inside recursive conditional checks.
     pub(crate) computed_variance_cache: FxHashMap<DefId, Arc<[crate::types::Variance]>>,
+    /// Default constraints for conditional types in this relation walk.
+    ///
+    /// Conditional source subtyping can compare the same deferred conditional
+    /// against many targets. The default constraint depends only on the
+    /// conditional type shape and interner, so cache both `Some` and `None`.
+    pub(crate) conditional_constraint_cache: FxHashMap<ConditionalTypeId, Option<TypeId>>,
     /// Optional tracer for collecting subtype failure diagnostics.
     /// When `Some`, enables detailed failure reason collection for error messages.
     /// When `None`, disables tracing for maximum performance (default).
@@ -340,6 +346,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             eval_cache: FxHashMap::default(),
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             computed_variance_cache: FxHashMap::default(),
+            conditional_constraint_cache: FxHashMap::default(),
             tracer: None,
             type_param_equivalences: Vec::new(),
         }
@@ -389,6 +396,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             eval_cache: FxHashMap::default(),
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             computed_variance_cache: FxHashMap::default(),
+            conditional_constraint_cache: FxHashMap::default(),
             tracer: None,
             type_param_equivalences: Vec::new(),
         }
@@ -502,6 +510,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.def_guard.reset();
         self.sym_visiting.clear();
         self.eval_cache.clear();
+        self.conditional_constraint_cache.clear();
     }
 
     /// Whether the recursion depth was exceeded during subtype checking.
@@ -957,7 +966,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             let source_cond = self.interner.get_conditional(source_cond_id);
-            return self.conditional_branches_subtype(&source_cond, target);
+            return self.conditional_branches_subtype(source_cond_id, &source_cond, target);
         }
 
         if let Some(target_cond_id) = conditional_type_id(self.interner, target) {
