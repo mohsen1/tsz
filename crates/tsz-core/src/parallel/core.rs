@@ -5356,6 +5356,10 @@ fn affected_lib_interface_names(
     checker_lib_files: &[Arc<LibFile>],
 ) -> FxHashSet<String> {
     let seed_interfaces = collect_user_global_interface_seeds(program);
+    if seed_interfaces.is_empty() {
+        return FxHashSet::default();
+    }
+
     let mut affected = seed_interfaces.clone();
     let user_member_names = collect_user_global_interface_member_names(program);
     let mut inheritance_graph: FxHashMap<String, FxHashSet<String>> = FxHashMap::default();
