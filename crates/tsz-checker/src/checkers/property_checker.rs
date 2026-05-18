@@ -1477,10 +1477,7 @@ mod tests {
         "#,
         );
 
-        assert!(
-            !has_code(&diagnostics, 2339),
-            "union sharing same protected declaring class should not emit TS2339"
-        );
+        assert!(!has_code(&diagnostics, 2339));
     }
 
     #[test]
