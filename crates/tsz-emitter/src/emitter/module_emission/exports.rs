@@ -1,5 +1,6 @@
 use super::super::{ModuleKind, Printer};
 use super::core::{CjsExportAssignmentValue, CjsExportVariableSchedule};
+use crate::emitter::declarations::class::class_has_self_references;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::NodeList;
@@ -996,11 +997,10 @@ impl<'a> Printer<'a> {
                         if !legacy_decorators.is_empty()
                             && let Some(name) = self.get_identifier_text_opt(class.name)
                         {
-                            // Clear pending_commonjs_class_export_name to avoid duplicate
-                            // exports.X = X; — the decorator assignment path handles the
-                            // pre-assignment itself via emit_commonjs_pre_assignment=true.
-                            self.pending_commonjs_class_export_name = None;
                             if self.ctx.target_es5 {
+                                // ES5 class export lowering is handled by the ES5 class emitter,
+                                // so keep this pending hook from leaking into later nodes.
+                                self.pending_commonjs_class_export_name = None;
                                 // Check for member decorators too
                                 let has_member_decorators =
                                     class.members.nodes.iter().any(|&m_idx| {
@@ -1116,23 +1116,35 @@ impl<'a> Printer<'a> {
                                 self.write(";");
                                 self.write_line();
                             } else {
+                                let needs_alias = class_has_self_references(
+                                    self.arena,
+                                    self.source_text_for_map(),
+                                    &name,
+                                    &class.members.nodes,
+                                );
+                                let alias_name = if needs_alias {
+                                    let alias = self.make_unique_name_from_base(&name);
+                                    if !self.hoisted_assignment_temps.contains(&alias) {
+                                        self.hoisted_assignment_temps.push(alias.clone());
+                                    }
+                                    Some(alias)
+                                } else {
+                                    None
+                                };
+                                self.pending_commonjs_class_export_name =
+                                    Some((export.export_clause, name.clone()));
                                 self.emit_class_es6_with_options(
                                     clause_node,
                                     export.export_clause,
                                     true,
                                     Some(("let", name.clone())),
-                                    None,
-                                    None,
-                                    false,
+                                    alias_name.as_deref(),
+                                    alias_name.as_deref(),
+                                    true,
                                 );
-                                self.write_line();
-                                // CommonJS export assignment
-                                self.write("exports.");
-                                self.write(&name);
-                                self.write(" = ");
-                                self.write(&name);
-                                self.write(";");
-                                self.write_line();
+                                if !self.writer.is_at_line_start() {
+                                    self.write_line();
+                                }
                                 // Emit __decorate call for ES2015+
                                 let members = class.members.nodes.clone();
                                 self.emit_legacy_class_decorator_assignment(
@@ -1141,7 +1153,7 @@ impl<'a> Printer<'a> {
                                     true,  // commonjs_exported
                                     false, // commonjs_default
                                     false, // emit_commonjs_pre_assignment (already emitted above)
-                                    None,
+                                    alias_name.as_deref(),
                                     &members,
                                 );
                             }
@@ -1284,12 +1296,14 @@ impl<'a> Printer<'a> {
                             // `export = X` sets module.exports but named exports like
                             // `export enum E` still get their own exports.E binding.
                             self.pending_cjs_namespace_export_fold = true;
+                            self.pending_cjs_namespace_export_name = None;
                         }
                         self.emit_module_declaration(clause_node, export.export_clause);
                         // If the flag was consumed (instantiated namespace),
                         // no separate export needed. If still set, the namespace
                         // was non-instantiated/skipped, clear it.
                         self.pending_cjs_namespace_export_fold = false;
+                        self.pending_cjs_namespace_export_name = None;
                     } else {
                         self.emit_module_declaration(clause_node, export.export_clause);
                     }
@@ -1337,8 +1351,15 @@ impl<'a> Printer<'a> {
                                 if self
                                     .ctx
                                     .module_state
-                                    .iife_exported_names
-                                    .contains(&local_name)
+                                    .iife_exported_bindings
+                                    .get(&local_name)
+                                    .is_some_and(|exports| exports.contains(&export_name))
+                                    || (export_name == local_name
+                                        && self
+                                            .ctx
+                                            .module_state
+                                            .iife_exported_names
+                                            .contains(&local_name))
                                 {
                                     continue;
                                 }

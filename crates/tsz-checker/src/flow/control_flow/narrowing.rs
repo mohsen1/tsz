@@ -220,9 +220,7 @@ impl<'a> FlowAnalyzer<'a> {
             if self.contains_optional_chain(predicate_target)
                 && self.is_optional_chain_prefix(predicate_target, target)
             {
-                let narrowing = self.make_narrowing_context();
-                let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                return Some(narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED));
+                return Some(flow_boundary::narrow_non_nullish(self.interner, type_id));
             }
             // Handle assertion predicates where the asserted condition is itself
             // a call with a type predicate (or a negation thereof).
@@ -869,8 +867,7 @@ impl<'a> FlowAnalyzer<'a> {
                         .any(|m| *m == TypeId::NULL || *m == TypeId::UNDEFINED)
                 );
                 if is_nonnullable_shaped && source_is_nullable {
-                    let excluded = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                    let excluded = narrowing.narrow_excluding_type(excluded, TypeId::UNDEFINED);
+                    let excluded = flow_boundary::narrow_non_nullish(self.interner, type_id);
                     if excluded != type_id && excluded != TypeId::NEVER {
                         return excluded;
                     }
