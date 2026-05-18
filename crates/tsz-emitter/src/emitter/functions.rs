@@ -25,6 +25,12 @@ impl<'a> Printer<'a> {
                 self.arena.get(func.body).map_or(node.end, |body| body.pos),
             );
 
+        let emit_invalid_namespace_static =
+            self.should_emit_invalid_namespace_static_modifier(node, &func.modifiers);
+        if emit_invalid_namespace_static {
+            self.write("static ");
+        }
+
         if func.is_async && self.ctx.needs_async_lowering && !has_generator_asterisk {
             let func_name = if func.name.is_some() {
                 self.get_identifier_text_idx(func.name)

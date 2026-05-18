@@ -43,6 +43,12 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let emit_invalid_namespace_static =
+            self.should_emit_invalid_namespace_static_modifier(node, &func.modifiers);
+        if emit_invalid_namespace_static {
+            self.write("static ");
+        }
+
         if func.is_async && self.ctx.needs_async_lowering && !func.asterisk_token {
             let func_name = if func.name.is_some() {
                 self.get_identifier_text_idx(func.name)
