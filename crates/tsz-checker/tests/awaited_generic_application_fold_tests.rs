@@ -132,3 +132,88 @@ function checkNull(x: Awaited<null>): null {
         "Awaited<NonThenable> must equal NonThenable; got: {codes:?}"
     );
 }
+
+// ── User-defined PromiseLike unwrappers (issue #6374) ─────────────────────────
+
+#[test]
+fn user_defined_my_awaited_folds_promise_to_value() {
+    let source = r#"
+type MyAwaited<T> = T extends PromiseLike<infer U> ? MyAwaited<U> : T;
+const x: MyAwaited<Promise<string>> = "hello";
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2322),
+        "MyAwaited<Promise<string>> must fold to string; got: {codes:?}"
+    );
+}
+
+#[test]
+fn user_defined_resolved_alias_folds_promise_to_value() {
+    let source = r#"
+type Resolved<T> = T extends PromiseLike<infer U> ? Resolved<U> : T;
+const x: Resolved<Promise<number>> = 42;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2322),
+        "Resolved<Promise<number>> must fold to number; got: {codes:?}"
+    );
+}
+
+#[test]
+fn user_defined_unwrap_alias_folds_nested_promise() {
+    let source = r#"
+type Unwrap<T> = T extends PromiseLike<infer U> ? Unwrap<U> : T;
+const x: Unwrap<Promise<Promise<string>>> = "hello";
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2322),
+        "Unwrap<Promise<Promise<string>>> must fold to string; got: {codes:?}"
+    );
+}
+
+#[test]
+fn user_defined_awaited_alias_non_promise_conditional_not_treated_as_awaited() {
+    // If `IsString` were mistakenly treated as Awaited-like, `IsString<PromiseLike<string>>`
+    // would evaluate to `IsString<string>` = `true`, and assigning `true` would produce
+    // NO error.  Any error here confirms the unwrapper check is not a false positive.
+    let source = r#"
+type IsString<T> = T extends string ? true : false;
+const bad: IsString<PromiseLike<string>> = true;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.is_empty(),
+        "IsString<PromiseLike<string>> = true must produce a diagnostic; if codes is empty \
+         IsString was incorrectly treated as an Awaited unwrapper; got: {codes:?}"
+    );
+}
+
+#[test]
+fn user_defined_awaited_alias_non_thenable_passes_through() {
+    let source = r#"
+type MyAwaited<T> = T extends PromiseLike<infer U> ? MyAwaited<U> : T;
+const x: MyAwaited<string> = "hello";
+const y: MyAwaited<number> = 42;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2322),
+        "MyAwaited<NonThenable> must equal the non-thenable itself; got: {codes:?}"
+    );
+}
+
+#[test]
+fn user_defined_flatten_alias_with_promise_like_extends_folds() {
+    let source = r#"
+type Flatten<X> = X extends PromiseLike<infer V> ? Flatten<V> : X;
+const x: Flatten<Promise<boolean>> = true;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        !codes.contains(&2322),
+        "Flatten<Promise<boolean>> must fold to boolean; got: {codes:?}"
+    );
+}

@@ -211,7 +211,6 @@ impl<'a> CheckerState<'a> {
     fn is_awaited_application_base(&self, base: TypeId) -> bool {
         if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && symbol.escaped_name.as_str() == "Awaited"
             && self.is_standard_or_conditional_awaited_alias(sym_id, symbol)
         {
             return true;
@@ -221,8 +220,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 {
-                    return symbol.escaped_name.as_str() == "Awaited"
-                        && self.is_standard_or_conditional_awaited_alias(sym_id, symbol);
+                    return self.is_standard_or_conditional_awaited_alias(sym_id, symbol);
                 }
                 false
             }
@@ -230,11 +228,41 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if `sym_id` names a type alias that behaves like the built-in `Awaited<T>`.
+    ///
+    /// Two cases are accepted:
+    ///
+    /// (a) **Standard-library origin, named `Awaited`** — the exact built-in.
+    ///
+    /// (b) **User-defined recursive `PromiseLike` unwrapper** — a type alias that
+    ///     has exactly one type parameter and a conditional body whose extends
+    ///     clause references a builtin `PromiseLike`-like type.  For example:
+    ///     `type MyAwaited<T> = T extends PromiseLike<infer U> ? MyAwaited<U> : T`.
+    ///
+    /// Note: standard-library types that are NOT named `Awaited` (e.g. `Promise`,
+    /// `Array`) must NOT be recognised here — they are `PromiseLike`-compatible but
+    /// are not unwrappers, and treating them as `Awaited` would incorrectly evaluate
+    /// `Promise<string>` as `string` in contexts like
+    /// `type IsString<T> = T extends string ? true : false`.
     fn is_standard_or_conditional_awaited_alias(&self, sym_id: SymbolId, symbol: &Symbol) -> bool {
+        // Case (a): the exact built-in Awaited<T> from the standard library.
         if self.symbol_has_standard_lib_origin(sym_id) {
-            return true;
+            return symbol.escaped_name.as_str() == "Awaited";
         }
 
+        // Case (b): user-defined alias with the same recursive-unwrapper shape.
+        self.is_user_defined_promiselike_unwrapper(symbol)
+    }
+
+    /// Check whether `symbol` is a user-defined single-param conditional type
+    /// alias whose extends clause references a builtin `PromiseLike`-like type.
+    ///
+    /// Structural rule: `type F<T> = T extends PromiseLike<infer U> ? F<U> : T`
+    /// (or any spelling of the `PromiseLike` name — `Promise`, `Thenable`, etc.).
+    fn is_user_defined_promiselike_unwrapper(&self, symbol: &Symbol) -> bool {
+        if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) || symbol.declarations.is_empty() {
+            return false;
+        }
         let decl_arena = if symbol.decl_file_idx != u32::MAX {
             self.ctx.get_arena_for_file(symbol.decl_file_idx)
         } else {
@@ -245,14 +273,24 @@ impl<'a> CheckerState<'a> {
             let Some(type_alias) = decl_arena.get_type_alias_at(decl_idx) else {
                 return false;
             };
-            let has_single_type_param = type_alias
+            if type_alias
                 .type_parameters
                 .as_ref()
-                .is_some_and(|params| params.nodes.len() == 1);
-            has_single_type_param
-                && decl_arena.get(type_alias.type_node).is_some_and(|node| {
-                    node.kind == tsz_parser::parser::syntax_kind_ext::CONDITIONAL_TYPE
-                })
+                .is_none_or(|params| params.nodes.len() != 1)
+            {
+                return false;
+            }
+            let Some(body_node) = decl_arena.get(type_alias.type_node) else {
+                return false;
+            };
+            if body_node.kind != tsz_parser::parser::syntax_kind_ext::CONDITIONAL_TYPE {
+                return false;
+            }
+            // Excludes unrelated conditionals like `type IsString<T> = T extends string ? true : false`.
+            let Some(cond) = decl_arena.get_conditional_type(body_node) else {
+                return false;
+            };
+            Self::type_node_contains_builtin_promise_like_name(decl_arena, cond.extends_type)
         })
     }
 
