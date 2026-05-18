@@ -598,11 +598,20 @@ impl<'a> CheckerState<'a> {
                     merged = params;
                     continue;
                 }
-                // Merge defaults across declarations of a merged class/interface.
-                // tsc spreads type-parameter defaults across all merged declarations:
-                // a default specified on any declaration applies for the unsupplied
-                // position. Only fill missing slots so the leftmost-with-default wins.
+                // Merge constraints/defaults across declarations of a merged
+                // class/interface. `tsc` makes a constraint/default specified on one
+                // declaration visible to sibling declarations at the same positional
+                // type-parameter slot. Only fill missing slots so the leftmost
+                // declaration still owns explicit facts on that slot.
                 for (slot, incoming) in merged.iter_mut().zip(params.iter()) {
+                    if slot.constraint.is_none() && incoming.constraint.is_some() {
+                        *slot = tsz_solver::TypeParamInfo {
+                            name: slot.name,
+                            constraint: incoming.constraint,
+                            default: slot.default,
+                            is_const: slot.is_const,
+                        };
+                    }
                     if slot.default.is_none() && incoming.default.is_some() {
                         *slot = tsz_solver::TypeParamInfo {
                             name: slot.name,
