@@ -2470,6 +2470,10 @@ fn erased_object_literal_access_wraps_arrow_concise_body() {
     let source = r#"
 const prop = (x: string) => ({ "1": "one", "2": "two" } as { [key: string]: string }).x;
 const elem = (x: string) => ({ "1": "one", "2": "two" } as { [key: string]: string })[x];
+const nested = () => ({ a: { b: 1 } } as any).a.b;
+const bracket = () => ({ a: { b: 1 } } as any)["a"].b;
+const call = () => ({ f() { return 1; } } as any).f();
+const plain = () => ({ a: 1 }).a;
 "#;
     let output = parse_lower_print(
         source,
@@ -2486,6 +2490,26 @@ const elem = (x: string) => ({ "1": "one", "2": "two" } as { [key: string]: stri
     assert!(
         output.contains("const elem = (x) => ({ \"1\": \"one\", \"2\": \"two\" }[x]);"),
         "Arrow element access must be grouped so the object literal is not parsed as a block.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const nested = () => ({ a: { b: 1 } }.a.b);"),
+        "Nested property access rooted at an erased object assertion must be grouped.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const bracket = () => ({ a: { b: 1 } }[\"a\"].b);"),
+        "Nested element access rooted at an erased object assertion must be grouped.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const call = () => (({ f() { return 1; } }.f()));"),
+        "Call chains rooted at an erased object assertion must be grouped.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const plain = () => ({ a: 1 }).a;"),
+        "Already-parenthesized plain object access must not be double-wrapped.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("const plain = () => (({ a: 1 }).a);"),
+        "Plain parenthesized access should not be treated as erased assertion output.\nOutput:\n{output}"
     );
     assert!(
         !output.contains("=> { \"1\": \"one\", \"2\": \"two\" }"),
