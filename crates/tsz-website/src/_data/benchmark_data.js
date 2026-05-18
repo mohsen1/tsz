@@ -1965,6 +1965,9 @@ export function getProjectCompatibilityDashboard() {
       if (cleanSubset.tsz_status) {
         parts.push(`tsc-clean tsz: ${cleanSubset.tsz_status}`);
       }
+      if (cleanSubset.comparison_status) {
+        parts.push(`tsc-clean comparison: ${cleanSubset.comparison_status}`);
+      }
     }
 
     const counts = candidates.file_comparison?.counts;

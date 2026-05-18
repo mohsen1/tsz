@@ -353,6 +353,7 @@ withTempDir((dir) => {
       rejected_from_full_corpus: 1,
       tsc_status: "pass",
       tsz_status: "pass",
+      comparison_status: "match",
       tsc_diagnostic_free: 1,
       tsz_diagnostic_free: 1,
     },
