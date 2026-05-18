@@ -65,6 +65,39 @@ function validateCandidateManifestSources(manifest) {
   }
 }
 
+function validateCleanManifestSources(manifest) {
+  if (!manifest?.sources || typeof manifest.sources !== "object") {
+    fail("tsc-clean assertion manifest is missing sources");
+  }
+
+  for (const label of ["templates", "testCases", "solutions"]) {
+    const source = manifest.sources[label];
+    if (!source?.repository || !source?.ref) {
+      fail(
+        [
+          `tsc-clean assertion manifest.sources.${label} is missing source metadata`,
+          `${source?.repository || "<missing repository>"} @ ${source?.ref || "<missing ref>"}`,
+        ].join("\n"),
+      );
+    }
+  }
+}
+
+function validateCleanClassificationSources(cleanManifest, classificationManifest) {
+  for (const label of ["templates", "testCases", "solutions"]) {
+    const manifestSource = cleanManifest.sources[label];
+    const classificationSource = classificationManifest.sources[label];
+    if (
+      classificationSource.repository !== manifestSource.repository ||
+      classificationSource.ref !== manifestSource.ref
+    ) {
+      fail(
+        `tsc-clean assertion classification candidateManifest.sources.${label} (${classificationSource.repository} @ ${classificationSource.ref}) does not match manifest sources.${label} (${manifestSource.repository} @ ${manifestSource.ref})`,
+      );
+    }
+  }
+}
+
 function validateReport(report) {
   validateClassificationCompilerReport(report);
   if (!report.comparison || typeof report.comparison !== "object") {
@@ -201,6 +234,11 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
   const acceptedAssertions = cleanSubsetManifest.counts.tscAcceptedAssertions;
   const cleanCounts = cleanSubsetManifest.counts;
   const classificationCounts = cleanSubsetClassification.candidateManifest?.counts || {};
+  validateCleanManifestSources(cleanSubsetManifest);
+  validateCleanClassificationSources(
+    cleanSubsetManifest,
+    cleanSubsetClassification.candidateManifest,
+  );
   const generatedAssertions =
     classificationCounts.tscAcceptedAssertions;
   if (
