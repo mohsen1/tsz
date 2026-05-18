@@ -1058,6 +1058,11 @@ pub struct PerfCounters {
     /// `(files_checked - 1)` and `checker_state_constructed` falls by the
     /// same amount versus the baseline construction-per-file path.
     pub file_session_resets: AtomicU64,
+    /// File-session memo for declared type parameters used by type-reference
+    /// validation. Hits avoid re-walking declarations and rebuilding equivalent
+    /// lowering helper shapes for the same owning file/symbol/name tuple.
+    pub declared_reference_type_params_cache_hits: AtomicU64,
+    pub declared_reference_type_params_cache_misses: AtomicU64,
 
     // ─── overlay copy ────────────────────────────────────────────────────
     pub copy_symbol_file_targets_calls: AtomicU64,
@@ -1175,6 +1180,8 @@ impl PerfCounters {
             with_parent_cache_by_reason: [const { AtomicU64::new(0) };
                 CHECKER_CREATION_REASON_COUNT],
             file_session_resets: AtomicU64::new(0),
+            declared_reference_type_params_cache_hits: AtomicU64::new(0),
+            declared_reference_type_params_cache_misses: AtomicU64::new(0),
             copy_symbol_file_targets_calls: AtomicU64::new(0),
             copy_symbol_file_targets_entries_total: AtomicU64::new(0),
             copy_symbol_file_targets_entries_max: AtomicU64::new(0),
@@ -1729,6 +1736,30 @@ pub fn record_cross_file_type_params_cache_miss() {
     }
     counters()
         .cross_file_type_params_cache_misses
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a hit on the checker file-session memo for declared type parameters
+/// used during type-reference validation.
+#[inline]
+pub fn record_declared_reference_type_params_cache_hit() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .declared_reference_type_params_cache_hits
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a miss on the checker file-session memo for declared type parameters
+/// used during type-reference validation.
+#[inline]
+pub fn record_declared_reference_type_params_cache_miss() {
+    if !enabled_fast() {
+        return;
+    }
+    counters()
+        .declared_reference_type_params_cache_misses
         .fetch_add(1, Ordering::Relaxed);
 }
 
@@ -2349,6 +2380,9 @@ impl PerfCounters {
              overlay len ≥ 10k          {:>12}\n  \
              overlay len ≥ 100k         {:>12}\n  \
              overlay len ≥ 1M           {:>12}\n\
+             Type-reference validation:\n  \
+             declared params cache hits {:>12}\n  \
+             declared params cache misses{:>11}\n\
              compute_type_of_symbol:\n  \
              total calls                {:>12}\n  \
              cache hits                 {:>12}\n  \
@@ -2394,6 +2428,10 @@ impl PerfCounters {
             snap.overlay.len_ge_10k,
             snap.overlay.len_ge_100k,
             snap.overlay.len_ge_1m,
+            snap.checker
+                .declared_reference_type_params_cache_hits,
+            snap.checker
+                .declared_reference_type_params_cache_misses,
             snap.checker.compute_type_of_symbol_calls,
             snap.checker.compute_type_of_symbol_cache_hits,
             snap.checker
@@ -3168,6 +3206,8 @@ pub struct CheckerCounters {
     /// session-reuse path (T2.1.B). Reuse vs. construct is the comparison
     /// against `state_constructed`.
     pub file_session_resets: u64,
+    pub declared_reference_type_params_cache_hits: u64,
+    pub declared_reference_type_params_cache_misses: u64,
     pub compute_type_of_symbol_calls: u64,
     pub compute_type_of_symbol_cache_hits: u64,
     pub compute_type_of_symbol_interface_simple_object_fastpath_hits: u64,
@@ -3348,6 +3388,12 @@ impl PerfCounters {
                 state_constructed: load(&c.checker_state_constructed),
                 with_parent_cache_constructed: load(&c.checker_state_with_parent_cache_constructed),
                 file_session_resets: load(&c.file_session_resets),
+                declared_reference_type_params_cache_hits: load(
+                    &c.declared_reference_type_params_cache_hits,
+                ),
+                declared_reference_type_params_cache_misses: load(
+                    &c.declared_reference_type_params_cache_misses,
+                ),
                 compute_type_of_symbol_calls: load(&c.compute_type_of_symbol_calls),
                 compute_type_of_symbol_cache_hits: load(&c.compute_type_of_symbol_cache_hits),
                 compute_type_of_symbol_interface_simple_object_fastpath_hits: load(

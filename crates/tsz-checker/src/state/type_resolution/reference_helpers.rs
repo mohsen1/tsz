@@ -43,8 +43,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> Vec<tsz_solver::TypeParamInfo> {
-        let declared =
-            self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
+        let declared = self.declared_reference_type_params_for_symbol(sym_id, expected_name);
         if !declared.is_empty() {
             return declared;
         }
@@ -56,8 +55,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         expected_name: &str,
     ) -> usize {
-        let declared =
-            self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
+        let declared = self.declared_reference_type_params_for_symbol(sym_id, expected_name);
         if !declared.is_empty() {
             return declared
                 .iter()
@@ -65,6 +63,37 @@ impl<'a> CheckerState<'a> {
                 .count();
         }
         self.count_required_type_params(sym_id)
+    }
+
+    fn declared_reference_type_params_for_symbol(
+        &mut self,
+        sym_id: SymbolId,
+        expected_name: &str,
+    ) -> Vec<tsz_solver::TypeParamInfo> {
+        let expected_atom = self.ctx.types.intern_string(expected_name);
+        let owner_file_key = self
+            .ctx
+            .resolve_symbol_file_index(sym_id)
+            .map_or(self.ctx.current_file_idx as u32, |file_idx| file_idx as u32);
+        let cache_key = (owner_file_key, sym_id.0, expected_atom.0);
+        if let Some(cached) = self
+            .ctx
+            .type_reference_validation_caches
+            .declared_type_params
+            .get(&cache_key)
+        {
+            tsz_common::perf_counters::record_declared_reference_type_params_cache_hit();
+            return cached.clone();
+        }
+
+        tsz_common::perf_counters::record_declared_reference_type_params_cache_miss();
+        let declared =
+            self.extract_declared_type_params_for_reference_symbol(sym_id, expected_name);
+        self.ctx
+            .type_reference_validation_caches
+            .declared_type_params
+            .insert(cache_key, declared.clone());
+        declared
     }
 
     pub(crate) fn symbol_has_declared_type_meaning(&self, sym_id: SymbolId) -> bool {
