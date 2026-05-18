@@ -696,9 +696,11 @@ impl<'a> TypeInstantiator<'a> {
 
         let type_params = self.instantiate_type_params_if_changed(&sig.type_params);
         let local_start = self.local_type_params.len();
-        for type_param in type_params.as_deref().unwrap_or(&sig.type_params) {
-            self.local_type_params
-                .push((type_param.name, self.interner.type_param(*type_param)));
+        if let Some(type_params) = &type_params {
+            for type_param in type_params {
+                self.local_type_params
+                    .push((type_param.name, self.interner.type_param(*type_param)));
+            }
         }
         let type_predicate = sig
             .type_predicate
@@ -765,7 +767,7 @@ impl<'a> TypeInstantiator<'a> {
                         shadowed = ?self.shadowed.iter().map(|a| self.interner.resolve_atom_ref(*a)).collect::<Vec<_>>(),
                         "instantiate TypeParameter: SHADOWED"
                     );
-                    return self.interner.intern(*key);
+                    return type_id;
                 }
                 if let Some(substituted) = self.substitution.get(info.name) {
                     tracing::trace!(
@@ -793,8 +795,8 @@ impl<'a> TypeInstantiator<'a> {
                             }
                         }
                     }
-                    // No substitution and no instantiated constraint, return original
-                    self.interner.intern(*key)
+                    // No substitution and no instantiated constraint, return original.
+                    type_id
                 }
             }
 
@@ -1060,12 +1062,11 @@ impl<'a> TypeInstantiator<'a> {
                 let instantiated_type_params =
                     self.instantiate_type_params_if_changed(&shape.type_params);
                 let local_start = self.local_type_params.len();
-                for type_param in instantiated_type_params
-                    .as_deref()
-                    .unwrap_or(&shape.type_params)
-                {
-                    self.local_type_params
-                        .push((type_param.name, self.interner.type_param(*type_param)));
+                if let Some(type_params) = &instantiated_type_params {
+                    for type_param in type_params {
+                        self.local_type_params
+                            .push((type_param.name, self.interner.type_param(*type_param)));
+                    }
                 }
                 let type_predicate = shape
                     .type_predicate

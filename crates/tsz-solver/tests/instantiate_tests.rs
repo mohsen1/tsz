@@ -78,6 +78,31 @@ fn test_instantiate_type_parameter() {
 }
 
 #[test]
+fn instantiate_without_substitution_preserves_fresh_type_param_identity() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let info = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let fresh = interner.fresh_type_param(info);
+    let canonical = interner.type_param(info);
+
+    assert_ne!(
+        fresh, canonical,
+        "fresh declaration-scoped type params must not collapse to canonical params"
+    );
+
+    let result = instantiate_type(&interner, fresh, &TypeSubstitution::new());
+    assert_eq!(
+        result, fresh,
+        "no-op instantiation should preserve the original TypeId identity"
+    );
+}
+
+#[test]
 fn test_instantiate_array() {
     let interner = TypeInterner::new();
     let t_name = interner.intern_string("T");
@@ -345,6 +370,53 @@ fn test_instantiate_function_shadowed_type_params() {
         is_method: false,
     });
     assert_eq!(result, expected);
+}
+
+#[test]
+fn instantiate_shadowed_function_preserves_fresh_type_param_identity() {
+    let interner = TypeInterner::new();
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let fresh_t = interner.fresh_type_param(t_param);
+    let canonical_t = interner.type_param(t_param);
+    let func = interner.function(FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("value")),
+            type_id: fresh_t,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: fresh_t,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    assert_ne!(
+        fresh_t, canonical_t,
+        "test setup requires a fresh declaration-scoped parameter"
+    );
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, TypeId::STRING);
+    let result = instantiate_type(&interner, func, &subst);
+
+    let Some(TypeData::Function(shape_id)) = interner.lookup(result) else {
+        panic!(
+            "expected function result, got {:?}",
+            interner.lookup(result)
+        );
+    };
+    let shape = interner.function_shape(shape_id);
+    assert_eq!(shape.params[0].type_id, fresh_t);
+    assert_eq!(shape.return_type, fresh_t);
 }
 
 #[test]
