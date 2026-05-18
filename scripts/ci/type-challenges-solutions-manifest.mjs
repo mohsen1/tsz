@@ -18,7 +18,13 @@ const expectedGenerated = Number(
 );
 const CHALLENGE_LEVELS = new Set(["warm", "easy", "medium", "hard", "extreme"]);
 
-if (!repository || !ref || !Number.isInteger(expectedGenerated)) {
+if (
+  typeof repository !== "string" ||
+  repository.trim() === "" ||
+  typeof ref !== "string" ||
+  ref.trim() === "" ||
+  !Number.isInteger(expectedGenerated)
+) {
   console.error(
     "error: missing Type Challenges solutions repository, ref, or expected count",
   );
