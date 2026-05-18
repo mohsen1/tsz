@@ -18,6 +18,7 @@ use super::helpers::JsNamespaceExportAlias;
 use crate::output::source_writer::{SourcePosition, SourceWriter};
 use crate::type_cache_view::TypeCacheView;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_common::comments::CommentRange;
@@ -65,6 +66,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) current_arena: Option<Arc<NodeArena>>,
     /// The current file's path (for calculating relative import paths)
     pub(super) current_file_path: Option<String>,
+    /// Parsed JSON module values keyed by resolved source path.
+    pub(super) json_module_value_cache: FxHashMap<PathBuf, Arc<serde_json::Value>>,
     /// Map of arena address -> file path (for resolving foreign symbol locations)
     pub(super) arena_to_path: FxHashMap<usize, String>,
     /// Map of file index -> file path (fallback for resolving symbol source via `decl_file_idx`)
@@ -159,6 +162,9 @@ pub struct DeclarationEmitter<'a> {
     pub(super) js_local_export_aliases: Vec<NodeIndex>,
     /// JS local renamed export declarations skipped at their source position.
     pub(super) js_skipped_local_export_aliases: FxHashSet<NodeIndex>,
+    /// JS function declarations with signature-bearing JSDoc whose public
+    /// surface is owned by a trailing local export alias group.
+    pub(super) js_deferred_local_export_alias_function_statements: FxHashSet<NodeIndex>,
     /// Top-level JS bindings referenced by an explicit `export = name` assignment.
     pub(super) js_export_equals_names: FxHashSet<String>,
     /// JS `export = name` assignments already emitted ahead of their declaration.

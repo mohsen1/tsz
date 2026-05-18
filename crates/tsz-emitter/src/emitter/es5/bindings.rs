@@ -52,7 +52,10 @@ impl<'a> Printer<'a> {
         }
 
         let prev_emit_missing_initializer_as_void_0 = self.emit_missing_initializer_as_void_0;
-        if is_block_scoped && !self.in_for_initializer {
+        if is_block_scoped
+            && !self.in_for_initializer
+            && self.loop_body_missing_initializer_function_depth == Some(self.function_scope_depth)
+        {
             self.emit_missing_initializer_as_void_0 = true;
         }
 

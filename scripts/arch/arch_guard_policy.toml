@@ -1,0 +1,343 @@
+# arch_guard_policy.toml — declarative policy for scripts/arch/arch_guard.py.
+#
+# Two check families live here:
+#
+#   [[pattern_checks]]   — scan Rust source files for forbidden patterns.
+#   [[manifest_checks]]  — scan specific Cargo.toml files for forbidden patterns.
+#
+# Adding a new guard rule is a TOML-only change; the engine in arch_guard.py
+# does not need editing for simple pattern/threshold cases.
+#
+# Regex patterns use TOML *literal strings* (single-quoted).  Backslashes are
+# preserved as-is, so regex metacharacters such as \b, \s, \( need no extra
+# escaping — write the regex exactly as you would in a Python r-string.
+#
+# Fields for [[pattern_checks]]
+#   name                  (required) human-readable description surfaced in failures
+#   base                  (required) path relative to repo root to search
+#   pattern               (required) regex pattern (TOML literal string)
+#   exclude_dirs          (optional) directory *names* (not paths) to skip entirely
+#   exclude_files         (optional) repo-root-relative file paths to skip
+#   exclude_test_files    (optional, default false) skip *_tests.rs and test_*.rs files
+#   ignore_comment_lines  (optional, default false) skip lines whose first non-space is //
+#
+# Fields for [[manifest_checks]]
+#   name    (required) human-readable description
+#   file    (required) path relative to repo root
+#   pattern (required) regex pattern (TOML literal string); ^ and $ match per line
+
+# ---------------------------------------------------------------------------
+# pattern_checks
+# ---------------------------------------------------------------------------
+
+[[pattern_checks]]
+name = "Production code must not branch on conformance fixture identity"
+base = "crates"
+pattern = '\bTSZ_CONFORMANCE_TEST\b|\bconformance_test_name\b|\btest_path\.contains\s*\(|False Positive Suppressions'
+exclude_dirs = ["conformance", "tests"]
+exclude_test_files = true
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Root boundary: no tsz_solver module re-export alias"
+base = "src"
+pattern = '\bpub\s+use\s+tsz_solver\s+as\s+solver\s*;'
+
+[[pattern_checks]]
+name = "Root boundary: no direct TypeKey internal usage in production code"
+base = "src"
+pattern = '\btsz_solver::TypeKey\b|\btsz_solver::types::TypeKey\b|\bTypeKey::'
+exclude_dirs = ["tests"]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Checker boundary: direct lookup() outside query boundaries/tests"
+base = "crates/tsz-checker"
+pattern = '\.lookup\s*\('
+exclude_dirs = ["query_boundaries", "tests"]
+exclude_files = [
+  # These files use .lookup() in tracing::trace! macros for debug output only
+  "crates/tsz-checker/src/types/computation/complex.rs",
+  # Pre-existing: class member lookup in class_checker
+  "crates/tsz-checker/src/classes/class_checker.rs",
+  "crates/tsz-checker/src/classes/class_checker_compat.rs",
+  # Pre-existing: property access lookup
+  "crates/tsz-checker/src/checkers/property_checker.rs",
+  "crates/tsz-checker/src/state/state_checking/property.rs",
+  # Pre-existing: type computation access lookup
+  "crates/tsz-checker/src/types/computation/access.rs",
+  # Pre-existing baseline debt
+  "crates/tsz-checker/src/types/property_access_type/resolve.rs",
+  "crates/tsz-checker/src/types/class_type/core.rs",
+  "crates/tsz-checker/src/types/queries/lib_resolution.rs",
+  "crates/tsz-checker/src/context/cross_file_query.rs",
+]
+
+[[pattern_checks]]
+name = "Checker legacy surface must stay removed"
+base = "crates/tsz-checker/src"
+pattern = '\bmod\s+types\s*;|\bpub\s+mod\s+types\s*;|\bpub\s+mod\s+arena\s*;|\bpub\s+use\s+arena::TypeArena\b'
+exclude_dirs = ["tests", "jsdoc"]
+
+[[pattern_checks]]
+name = "Checker boundary: direct TypeKey inspection outside query boundaries/tests"
+base = "crates/tsz-checker"
+pattern = '^\s*(match|if let|if matches!|matches!\().*TypeKey::'
+exclude_dirs = ["query_boundaries", "tests"]
+
+[[pattern_checks]]
+name = "Checker boundary: direct TypeKey import/intern usage"
+base = "crates/tsz-checker"
+pattern = '\buse\s+tsz_solver::.*TypeKey|\bintern\(\s*TypeKey::|\bintern\(\s*tsz_solver::TypeKey::|\bTypeKey::'
+exclude_dirs = ["tests"]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Checker boundary: direct solver internal imports"
+base = "crates/tsz-checker"
+pattern = '\btsz_solver::types::'
+exclude_dirs = ["tests"]
+exclude_files = [
+  # Pre-existing baseline debt
+  "crates/tsz-checker/src/query_boundaries/class.rs",
+  "crates/tsz-checker/src/query_boundaries/property_access.rs",
+]
+
+[[pattern_checks]]
+name = "Checker boundary: ObjectFlags must not be imported (use ObjectShape builder methods)"
+base = "crates/tsz-checker/src"
+pattern = '\buse\s+tsz_solver::.*ObjectFlags\b|\bObjectFlags::'
+exclude_dirs = ["tests"]
+exclude_files = [
+  # Pre-existing: type_environment uses ObjectFlags for const enum checks
+  "crates/tsz-checker/src/state/type_environment/core.rs",
+  # Pre-existing: namespace_checker creates enum namespace objects with ENUM_NAMESPACE flag
+  "crates/tsz-checker/src/declarations/namespace_checker.rs",
+  # Pre-existing baseline debt
+  "crates/tsz-checker/src/query_boundaries/common.rs",
+  "crates/tsz-checker/src/types/property_access_augmentation.rs",
+  "crates/tsz-checker/src/types/class_type/core.rs",
+]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Checker boundary: direct solver relation queries outside query boundaries/tests"
+base = "crates/tsz-checker"
+pattern = '\btsz_solver::(is_subtype_of|is_assignable_to)\s*\('
+exclude_dirs = ["query_boundaries", "tests"]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Checker boundary: direct CallEvaluator usage outside query boundaries/tests"
+base = "crates/tsz-checker"
+pattern = '\btsz_solver::CallEvaluator\b|\bCallEvaluator::new\s*\('
+exclude_dirs = ["query_boundaries", "tests"]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Checker boundary: direct CompatChecker construction outside query boundaries/tests"
+base = "crates/tsz-checker"
+pattern = '\bCompatChecker::new\s*\(|\bCompatChecker::with_resolver\s*\('
+exclude_dirs = ["query_boundaries", "tests"]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Checker query boundary: call_checker must not construct CompatChecker directly"
+base = "crates/tsz-checker/src/query_boundaries"
+pattern = '\bCompatChecker::with_resolver\s*\('
+exclude_files = [
+  "crates/tsz-checker/src/query_boundaries/assignability.rs",
+]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Checker query boundary: call_checker must not use concrete CallEvaluator<CompatChecker>"
+base = "crates/tsz-checker/src/query_boundaries"
+pattern = '\bCallEvaluator::<\s*tsz_solver::CompatChecker\s*>::'
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Checker boundary: raw interner access"
+base = "crates/tsz-checker"
+pattern = '\.intern\s*\('
+exclude_dirs = ["tests"]
+
+[[pattern_checks]]
+name = "Code quality: no bare .unwrap() in checker production code (use .expect())"
+base = "crates/tsz-checker/src"
+pattern = '\.unwrap\(\)'
+exclude_dirs = ["tests"]
+exclude_test_files = true
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Code quality: no bare .unwrap() in solver production code (use .expect())"
+base = "crates/tsz-solver/src"
+pattern = '\.unwrap\(\)'
+exclude_dirs = ["tests"]
+exclude_test_files = true
+exclude_files = [
+  # Inline #[cfg(test)] modules at the bottom of these files
+  "crates/tsz-solver/src/type_queries/flow.rs",
+  # Inline/adjacent test modules under src/
+  "crates/tsz-solver/src/type_queries/data/tests.rs",
+]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Code quality: no bare .unwrap() in binder production code (use .expect())"
+base = "crates/tsz-binder/src"
+pattern = '\.unwrap\(\)'
+exclude_dirs = ["tests"]
+exclude_test_files = true
+exclude_files = [
+  # state/tests.rs is a #[path = "tests.rs"] test module
+  "crates/tsz-binder/src/state/tests.rs",
+]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Solver dependency direction freeze"
+base = "crates/tsz-solver"
+pattern = '\btsz_parser::\b|\btsz_checker::\b'
+exclude_dirs = ["tests"]
+
+[[pattern_checks]]
+name = "Binder dependency direction freeze"
+base = "crates/tsz-binder"
+pattern = '\btsz_solver::\b'
+exclude_dirs = ["tests"]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Emitter dependency direction freeze"
+base = "crates/tsz-emitter"
+pattern = '\btsz_checker::\b'
+exclude_dirs = ["tests"]
+
+[[pattern_checks]]
+name = "Emitter boundary: direct TypeKey import/match"
+base = "crates/tsz-emitter"
+pattern = '\bTypeKey::|\buse\s+tsz_solver::.*TypeKey'
+exclude_dirs = ["tests"]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Emitter boundary: direct lookup() on solver interner"
+base = "crates/tsz-emitter"
+pattern = '\.lookup\s*\('
+exclude_dirs = ["tests"]
+exclude_files = [
+  # Pre-existing baseline debt
+  "crates/tsz-emitter/src/declaration_emitter/helpers/mod.rs",
+  "crates/tsz-emitter/src/declaration_emitter/helpers/type_printing.rs",
+]
+
+[[pattern_checks]]
+name = "Non-solver crates must not depend on TypeKey internals"
+base = "crates"
+pattern = '\buse\s+tsz_solver::.*TypeKey|\bTypeKey::'
+exclude_dirs = ["tsz-solver", "tests"]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+# std::time::Instant panics at runtime on wasm32-unknown-unknown (no clock);
+# use web_time::Instant which is a drop-in replacement on all platforms.
+name = "WASM compat: std::time::Instant banned in WASM-compiled crates (use web_time::Instant)"
+base = "crates"
+pattern = '\buse\s+std::time::Instant\b|\buse\s+std::time::\{[^}]*\bInstant\b|\bstd::time::Instant::'
+exclude_dirs = ["tsz-cli", "tsz-core", "conformance", "tests"]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+# std::time::SystemTime also panics on wasm32-unknown-unknown.
+name = "WASM compat: std::time::SystemTime banned in WASM-compiled crates"
+base = "crates"
+pattern = '\buse\s+std::time::SystemTime\b|\buse\s+std::time::\{[^}]*\bSystemTime\b|\bstd::time::SystemTime::'
+exclude_dirs = ["tsz-cli", "tsz-core", "conformance", "tests"]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Non-solver/non-lowering crates must not inspect TypeData internals in production code"
+base = "crates"
+pattern = '\buse\s+tsz_solver::.*TypeData\b|\bTypeData::'
+exclude_dirs = ["tsz-solver", "tsz-lowering", "tsz-core", "tests"]
+exclude_files = [
+  # query_boundaries is the canonical boundary layer — TypeData matching here is intentional.
+  "crates/tsz-checker/src/query_boundaries/state/type_environment.rs",
+  "crates/tsz-checker/src/query_boundaries/class.rs",
+  "crates/tsz-checker/src/query_boundaries/type_rewrite.rs",
+  # Pre-existing baseline debt
+  "crates/tsz-checker/src/types/class_type/core.rs",
+  "crates/tsz-emitter/src/declaration_emitter/helpers/mod.rs",
+  "crates/tsz-emitter/src/declaration_emitter/helpers/type_printing.rs",
+  "crates/tsz-lsp/src/signature_help.rs",
+]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "Core boundary: wasm bindings must stay in current wasm surface files"
+base = "crates/tsz-core/src"
+pattern = '\bwasm_bindgen\b|\bserde_wasm_bindgen\b|\bJsValue\b'
+exclude_dirs = ["tests"]
+exclude_files = [
+  # Transitional baseline: core lib exports the wasm API today.
+  "crates/tsz-core/src/lib.rs",
+  # Explicit wasm API module surface.
+  "crates/tsz-core/src/api/wasm/code_actions.rs",
+  "crates/tsz-core/src/api/wasm/compiler_options.rs",
+  "crates/tsz-core/src/api/wasm/core_utils.rs",
+  "crates/tsz-core/src/api/wasm/parser.rs",
+  "crates/tsz-core/src/api/wasm/program.rs",
+  "crates/tsz-core/src/api/wasm/program_results.rs",
+  "crates/tsz-core/src/api/wasm/transforms.rs",
+]
+ignore_comment_lines = true
+
+[[pattern_checks]]
+name = "LSP boundary: direct lookup() on solver interner"
+base = "crates/tsz-lsp"
+pattern = '\.lookup\s*\('
+exclude_dirs = ["tests"]
+exclude_files = [
+  # file_id_allocator.lookup() is not a solver interner lookup
+  "crates/tsz-lsp/src/project/core.rs",
+  # Pre-existing baseline debt
+  "crates/tsz-lsp/src/signature_help.rs",
+]
+
+[[pattern_checks]]
+name = "Checker test boundary: no direct solver internal type inspection in integration tests"
+base = "crates/tsz-checker/tests"
+pattern = '\btsz_solver::types::|\bTypeData::|\buse\s+tsz_solver::TypeData\b'
+exclude_files = [
+  "crates/tsz-checker/tests/architecture_contract_tests.rs",
+]
+
+[[pattern_checks]]
+name = "Checker test boundary: no direct solver internal type inspection in src tests"
+base = "crates/tsz-checker/src/tests"
+pattern = '\btsz_solver::types::|\bTypeData::|\buse\s+tsz_solver::TypeData\b'
+exclude_files = [
+  "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
+]
+ignore_comment_lines = true
+
+# ---------------------------------------------------------------------------
+# manifest_checks — pattern matches in specific Cargo.toml files
+# ---------------------------------------------------------------------------
+
+[[manifest_checks]]
+name = "Emitter manifest dependency freeze"
+file = "crates/tsz-emitter/Cargo.toml"
+pattern = '^\s*tsz-checker\s*='
+
+[[manifest_checks]]
+name = "Binder manifest dependency freeze"
+file = "crates/tsz-binder/Cargo.toml"
+pattern = '^\s*tsz-solver\s*='
+
+[[manifest_checks]]
+name = "Checker manifest: legacy type arena feature must stay removed"
+file = "crates/tsz-checker/Cargo.toml"
+pattern = '^\s*legacy-type-arena\s*='

@@ -584,7 +584,7 @@ jobs:
   dist-binaries:
     name: dist-binaries
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
     env:
@@ -776,91 +776,47 @@ jobs:
           compression-level: 1
 
   unit:
-    # Single nextest job (no sharding). The nextest-archive shard architecture
-    # was tried in #1657 and reverted in 7984876d7b for two reasons:
-    #   1. Many fixture-loading tests use `if !path.exists() { return }` and
-    #      silently pass when workspace source isn't on the shard runner.
-    #   2. The archive upload/download overhead (~3+ min) dominated the
-    #      modest test-execution savings.
-    # Today the bottleneck is compile (~14 min) not test execution (~3 min),
-    # so sharding test execution is not the lever. Re-evaluate sharding once
-    # the sccache silent-exit issue is fixed (then compile drops to seconds
-    # on cache hit and sharding becomes worth the overhead).
-    #
-    # Keep sccache disabled here because the tsz-checker lib-test target can
-    # exit silently when built through sccache from a restored warm target
-    # cache. Still restore the GCS cargo-home and ci-unit target cache so PRs
-    # do not rebuild third-party dependencies from scratch on every run;
-    # gcp-cache refreshes source mtimes after restore so workspace test
-    # binaries are revalidated.
-    #
-    # `_TSZ_CI_UNIT_PACKAGES_OVERRIDE` (set by the gate as `unit_packages`) is
-    # a space-separated list of crate names. When non-empty, the unit script
-    # runs unit tests for just those crates instead of the full workspace.
-    # tsz-checker is special-cased to run declared integration targets without
-    # compiling its oversized lib-test artifact.
+    # Required unit context. Run on the Cloud Build private pool instead of
+    # the 8-vCPU self-hosted runner: the old local path repeatedly hit
+    # linker/process kills while the same suite passed through Cloud Build.
+    # Keep the status name as `unit` so branch protection remains stable.
     name: unit
     needs: gate
     if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 45
-    env:
-      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
-      CARGO_INCREMENTAL: "0"
-      TSZ_CI_DISABLE_SCCACHE: "1"
-      TSZ_CI_CACHE_SAVE_CARGO_TARGETS: "1"
-      _TSZ_CI_UNIT_PACKAGES_OVERRIDE: ${{ needs.gate.outputs.unit_packages }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Run unit suite
-        run: scripts/ci/github-suite.sh unit
-
-  unit-cloudbuild:
-    # EXPERIMENT: run the unit suite on Cloud Build private pool
-    # `tsz-ci-build-pool` (e2-highcpu-32, 32 vCPU × 32 GiB) and compare wall
-    # clock against the Cloud Run `unit` job above. The compile is the
-    # bottleneck (~12 min on 8 vCPU); 4× the cores should drop it to ~4 min.
-    #
-    # Submitted as a parallel job — the existing `unit` is still required for
-    # green CI. Promote unit-cloudbuild and demote `unit` after a week of
-    # apples-to-apples timing data.
-    #
-    # Budget: ~$0.024/min × ~5 min × 200 runs/day ≈ $720/month at full PR
-    # cadence. Under the $1k approved cap.
-    #
-    # continue-on-error keeps a Cloud Build flake from blocking the workflow.
-    # Not in the required-status set, so failure here is informational only.
-    name: unit-cloudbuild
-    needs: gate
-    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
-    runs-on: [self-hosted, tsz-cloud-run]
-    timeout-minutes: 45
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-      - name: Submit unit build to Cloud Build pool
+      - name: Submit required unit suite to Cloud Build pool
         # `gcloud builds submit` tars the working directory, uploads it to the
         # default tsz-ci_cloudbuild GCS staging bucket, then triggers the
-        # private-pool build. The previous attempt pointed at the
-        # thirdface-ai-oauth_cloudbuild bucket — the tsz-gh-runners SA cannot
-        # write there.
+        # private-pool build.
         run: |
           set -euo pipefail
-          # Keep this experimental workflow job bounded even if Cloud Build submit
-          # stalls waiting for a worker reservation. This keeps PR feedback moving
-          # even when the private pool is saturated.
-          if ! timeout 25m gcloud builds submit \
+          timeout 25m gcloud builds submit \
             --project=tsz-ci \
             --region=us-central1 \
             --config=cloudbuild-unit.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
-            .; then
-            echo "Cloud Build unit submit did not complete within timeout or failed; continuing without blocking required CI."
-          fi
+            .
+
+  unit-cloudbuild:
+    # Compatibility status for dashboards and branch-protection rules that may
+    # still look for the experimental Cloud Build context. The Cloud Build unit
+    # suite is now executed by the required `unit` job above.
+    name: unit-cloudbuild
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
+    runs-on: [self-hosted, tsz-cloud-run]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Report promoted unit path
+        run: echo "Cloud Build unit suite is enforced by the required unit job."
 
   conformance:
     # Conformance shards consume the dist-fast binaries artifact and run the
@@ -912,7 +868,6 @@ jobs:
     name: conformance-aggregate
     needs: [gate, conformance]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled'
-    continue-on-error: true
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
@@ -1156,9 +1111,9 @@ jobs:
               print("CI gated off; summary passes because jobs were intentionally skipped.")
               sys.exit(0)
 
-          required = {"lint", "cargo-shear", "cargo-deny", "dist-binaries"}
+          required = {"lint", "cargo-shear", "cargo-deny"}
           if compiler_checks_required:
-              required.add("unit")
+              required.update({"dist-binaries", "unit"})
           else:
               print("Compiler checks are non-required for this non-compiler diff.")
 
@@ -1207,5 +1162,5 @@ jobs:
           if full_run:
               print("All required CI jobs passed.")
           else:
-              print("Draft/light CI passed: lint, cargo-shear, cargo-deny, dist-binaries, and unit.")
+              print("Draft/light CI passed for all required checks.")
           PY

@@ -776,6 +776,12 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// to expand type alias Applications (variance-aware inference).
     fn as_type_resolver(&self) -> &dyn TypeResolver;
 
+    /// Allocate a declaration-scoped type parameter whose identity must not be
+    /// collapsed with another same-shaped declaration.
+    fn fresh_type_param(&self, info: TypeParamInfo) -> TypeId {
+        self.as_type_database().type_param(info)
+    }
+
     /// Expose the checked construction surface for type constructors.
     #[inline]
     fn factory(&self) -> TypeFactory<'_> {
@@ -1183,6 +1189,10 @@ impl QueryDatabase for TypeInterner {
 
     fn as_type_resolver(&self) -> &dyn TypeResolver {
         self
+    }
+
+    fn fresh_type_param(&self, info: TypeParamInfo) -> TypeId {
+        Self::fresh_type_param(self, info)
     }
 
     fn register_array_base_type(&self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
