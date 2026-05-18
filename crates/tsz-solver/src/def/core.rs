@@ -32,6 +32,7 @@ type CrossFileQueryCacheKey = (u8, u32, u32, u32, u64);
 type CrossFileQueryCacheValue = (TypeId, Arc<Vec<TypeParamInfo>>);
 type DefDashMap<K, V> = DashMap<K, V, FxBuildHasher>;
 type DefDashSet<K> = DashSet<K, FxBuildHasher>;
+type SymbolMappingsSnapshot = Arc<[(u32, DefId)]>;
 
 // =============================================================================
 // DefId - Solver-Owned Definition Identifier
@@ -578,7 +579,7 @@ pub struct DefinitionStore {
     /// Project checking warms many per-file checker contexts from the same shared
     /// store. Caching this snapshot avoids collecting the same `DashMap` into a
     /// fresh `Vec` for every checker while preserving generation-based invalidation.
-    symbol_mappings_snapshot: Mutex<Option<(u64, Arc<[(u32, DefId)]>)>>,
+    symbol_mappings_snapshot: Mutex<Option<(u64, SymbolMappingsSnapshot)>>,
 
     /// Reverse index: body `TypeId` -> `DefId` for non-generic type aliases.
     ///
@@ -1372,14 +1373,14 @@ impl DefinitionStore {
     /// The snapshot is rebuilt only when the store generation changes. If a writer
     /// mutates the store while we are collecting, we retry so the cached generation
     /// cannot point at a partially stale snapshot.
-    pub fn all_symbol_mappings_snapshot(&self) -> Arc<[(u32, DefId)]> {
+    pub fn all_symbol_mappings_snapshot(&self) -> SymbolMappingsSnapshot {
         loop {
             let generation_before = self.generation();
             if let Some(snapshot) = self.cached_symbol_mappings_snapshot(generation_before) {
                 return snapshot;
             }
 
-            let mappings: Arc<[(u32, DefId)]> = self
+            let mappings: SymbolMappingsSnapshot = self
                 .symbol_only_index
                 .iter()
                 .map(|entry| (*entry.key(), *entry.value()))
@@ -1395,10 +1396,10 @@ impl DefinitionStore {
                 .symbol_mappings_snapshot
                 .lock()
                 .expect("symbol mappings snapshot lock poisoned");
-            if let Some((cached_generation, snapshot)) = cached.as_ref() {
-                if *cached_generation == generation_after {
-                    return Arc::clone(snapshot);
-                }
+            if let Some((cached_generation, snapshot)) = cached.as_ref()
+                && *cached_generation == generation_after
+            {
+                return Arc::clone(snapshot);
             }
 
             *cached = Some((generation_after, Arc::clone(&mappings)));
@@ -1406,7 +1407,7 @@ impl DefinitionStore {
         }
     }
 
-    fn cached_symbol_mappings_snapshot(&self, generation: u64) -> Option<Arc<[(u32, DefId)]>> {
+    fn cached_symbol_mappings_snapshot(&self, generation: u64) -> Option<SymbolMappingsSnapshot> {
         let cached = self
             .symbol_mappings_snapshot
             .lock()
