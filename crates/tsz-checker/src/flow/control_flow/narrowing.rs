@@ -41,6 +41,12 @@ impl<'a> FlowAnalyzer<'a> {
     ) -> bool {
         let left = self.skip_parenthesized(left);
         let target = self.skip_parenthesized(target);
+        if !check_property_access
+            && self.is_plain_identifier_reference(target)
+            && self.is_member_access_reference(left)
+        {
+            return false;
+        }
         if self.is_matching_reference(left, target) {
             return true;
         }
@@ -163,6 +169,20 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         false
+    }
+
+    fn is_plain_identifier_reference(&self, idx: NodeIndex) -> bool {
+        self.arena
+            .get(idx)
+            .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+    }
+
+    fn is_member_access_reference(&self, idx: NodeIndex) -> bool {
+        self.arena.get(idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::QUALIFIED_NAME
+        })
     }
 
     pub(crate) fn array_mutation_affects_reference(

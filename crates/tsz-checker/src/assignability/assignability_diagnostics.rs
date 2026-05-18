@@ -12,6 +12,15 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Legacy boolean-only relation guard for diagnostic code paths.
+    ///
+    /// Keep these calls grep-distinct from diagnostic decisions that need
+    /// `RelationOutcome` failure classification, weak-union handling, or depth
+    /// reporting.
+    fn diagnostic_relation_boolean_guard(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.is_assignable_to(source, target)
+    }
+
     fn has_explicit_any_generic_variable_annotation(&self, diag_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(diag_idx) else {
             return false;
@@ -315,7 +324,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
@@ -347,7 +356,7 @@ impl<'a> CheckerState<'a> {
         // try checking T against the target.
         if let Some(inner) =
             crate::query_boundaries::common::readonly_inner_type(self.ctx.types, source)
-            && self.is_assignable_to(inner, target)
+            && self.diagnostic_relation_boolean_guard(inner, target)
         {
             return true;
         }
@@ -577,7 +586,7 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
         let display_target = self.ctx.types.intersect_types_raw2(source, target);
@@ -612,7 +621,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check assignability using the actual types (return types)
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
 
@@ -771,7 +780,7 @@ impl<'a> CheckerState<'a> {
         // Reset the relation depth flag before the assignability check so we
         // can detect fresh depth exceedance from this particular relation.
         self.ctx.relation_depth_exceeded.set(false);
-        let assignable = self.is_assignable_to(source, target);
+        let assignable = self.diagnostic_relation_boolean_guard(source, target);
         // TS2859: if the solver hit its recursion/complexity limit during the check
         // (including the constituent-count overflow guard in check_subtype_inner),
         // emit "Excessive complexity comparing types" regardless of whether the
@@ -1005,7 +1014,7 @@ impl<'a> CheckerState<'a> {
             self.error_type_not_assignable_with_reason_at_anchor(source, target, diag_idx);
             return false;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
@@ -1053,7 +1062,7 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
 
@@ -1096,7 +1105,7 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
         }
-        if self.is_assignable_to(source, target) {
+        if self.diagnostic_relation_boolean_guard(source, target) {
             return true;
         }
 
@@ -1147,7 +1156,7 @@ impl<'a> CheckerState<'a> {
         let checker_only_mismatch = self
             .checker_only_assignability_failure_reason(source, target)
             .is_some();
-        if self.is_assignable_to(source, target) && !checker_only_mismatch {
+        if self.diagnostic_relation_boolean_guard(source, target) && !checker_only_mismatch {
             return true;
         }
         if self.should_suppress_partial_self_argument_mismatch(source, target) {
@@ -2098,6 +2107,24 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+        // `S[T1]` vs `S[T2]` where T1/T2 are distinct type parameters
+        // collapses to the same evaluated shape (the constraint), so the
+        // structural pipeline loses the IndexAccess form before it can
+        // produce the TS2322 + TS5075 elaboration chain. Detect the
+        // mismatch on the unevaluated inputs and surface it directly.
+        if let Some(reason) =
+            crate::query_boundaries::assignability::index_access_pair_distinct_type_param_keys_failure_reason(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                source,
+                target,
+            )
+        {
+            return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+                weak_union_violation: false,
+                failure_reason: Some(reason),
+            };
+        }
         let (prepared_source, prepared_target) = self.prepare_assignability_inputs(source, target);
 
         // Keep failure analysis on the same relation boundary as `is_assignable_to`
