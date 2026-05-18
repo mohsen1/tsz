@@ -1086,10 +1086,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     } else {
                         self.evaluate(instantiated)
                     };
-                    let evaluated = crate::type_queries::prune_impossible_object_union_members(
-                        self.interner,
-                        evaluated,
-                    );
                     if prefer_application_display_alias {
                         self.store_intermediate_application_display_alias(
                             instantiated,
