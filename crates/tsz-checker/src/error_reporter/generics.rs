@@ -573,7 +573,9 @@ impl<'a> CheckerState<'a> {
             let ready_type_arg_constraint = self.resolve_lazy_type(type_arg_constraint);
             let ready_type_arg_constraint =
                 self.evaluate_type_for_assignability(ready_type_arg_constraint);
-            if self.is_assignable_to_no_weak_checks(ready_type_arg_constraint, ready_constraint) {
+            if self
+                .relation_boolean_guard_no_weak_checks(ready_type_arg_constraint, ready_constraint)
+            {
                 return;
             }
         }
@@ -730,10 +732,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let prop_value = self.evaluate_type_for_assignability(prop.type_id);
-            if !self.is_assignable_to(prop_value, resolved_constraint)
-                && !self.is_assignable_to(prop.type_id, constraint)
-                && !self.is_assignable_to(prop_value, constraint)
-                && !self.is_assignable_to(prop.type_id, resolved_constraint)
+            if !self.relation_boolean_guard(prop_value, resolved_constraint)
+                && !self.relation_boolean_guard(prop.type_id, constraint)
+                && !self.relation_boolean_guard(prop_value, constraint)
+                && !self.relation_boolean_guard(prop.type_id, resolved_constraint)
             {
                 return false;
             }

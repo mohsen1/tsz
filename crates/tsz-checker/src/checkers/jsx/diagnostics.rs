@@ -1078,7 +1078,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if `string` is assignable to the children type.
-        if self.is_assignable_to(TypeId::STRING, children_type) {
+        if self.relation_boolean_guard(TypeId::STRING, children_type) {
             return;
         }
 

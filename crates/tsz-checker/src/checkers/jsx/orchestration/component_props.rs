@@ -693,7 +693,7 @@ impl<'a> CheckerState<'a> {
                 if !crate::query_boundaries::common::is_template_literal_type(
                     self.ctx.types,
                     key_type,
-                ) || !self.is_assignable_to(tag_literal, key_type)
+                ) || !self.relation_boolean_guard(tag_literal, key_type)
                 {
                     continue;
                 }
@@ -714,15 +714,15 @@ impl<'a> CheckerState<'a> {
             let mut i = 0;
             while i < best_matches.len() {
                 let (best_key, _) = best_matches[i];
-                let candidate_more_specific = self.is_assignable_to(candidate_key, best_key)
-                    && !self.is_assignable_to(best_key, candidate_key);
+                let candidate_more_specific = self.relation_boolean_guard(candidate_key, best_key)
+                    && !self.relation_boolean_guard(best_key, candidate_key);
                 if candidate_more_specific {
                     best_matches.swap_remove(i);
                     continue;
                 }
 
-                let best_more_specific = self.is_assignable_to(best_key, candidate_key)
-                    && !self.is_assignable_to(candidate_key, best_key);
+                let best_more_specific = self.relation_boolean_guard(best_key, candidate_key)
+                    && !self.relation_boolean_guard(candidate_key, best_key);
                 if best_more_specific {
                     candidate_is_best = false;
                     break;
@@ -851,7 +851,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let tag_type = self.ctx.types.literal_string(tag);
-        if self.is_assignable_to(tag_type, element_type) {
+        if self.relation_boolean_guard(tag_type, element_type) {
             return;
         }
 
@@ -894,7 +894,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
         let tag_type = self.ctx.types.literal_string(tag);
-        if self.is_assignable_to(tag_type, evaluated) {
+        if self.relation_boolean_guard(tag_type, evaluated) {
             return;
         }
 

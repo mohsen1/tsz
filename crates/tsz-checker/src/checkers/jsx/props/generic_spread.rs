@@ -83,7 +83,7 @@ impl<'a> CheckerState<'a> {
             };
             let expected_type =
                 crate::query_boundaries::common::remove_undefined(self.ctx.types, expected_type);
-            !self.is_assignable_to(*actual_type, expected_type)
+            !self.relation_boolean_guard(*actual_type, expected_type)
         });
 
         let has_alias_string_prop_mismatch = provided_attrs.iter().any(|(name, actual_type)| {
@@ -99,7 +99,7 @@ impl<'a> CheckerState<'a> {
 
         if !has_explicit_prop_mismatch
             && !has_alias_string_prop_mismatch
-            && self.is_assignable_to(attrs_type, props_type)
+            && self.relation_boolean_guard(attrs_type, props_type)
         {
             return false;
         }

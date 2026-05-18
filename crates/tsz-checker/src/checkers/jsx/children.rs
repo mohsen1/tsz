@@ -119,7 +119,7 @@ impl<'a> CheckerState<'a> {
             && precise_children_type != children_type
             && !children_type_is_originally_compound
             && !self.type_requires_multiple_children(children_type)
-            && !self.is_assignable_to(synthesized_children_type, precise_children_type)
+            && !self.relation_boolean_guard(synthesized_children_type, precise_children_type)
         {
             children_type = precise_children_type;
         }
@@ -158,7 +158,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(raw_zero_param_child_type) =
                             self.raw_single_jsx_zero_param_callback_type(attributes_idx)
                         && !matches!(raw_zero_param_child_type, TypeId::ANY | TypeId::ERROR)
-                        && !self.is_assignable_to(raw_zero_param_child_type, children_type)
+                        && !self.relation_boolean_guard(raw_zero_param_child_type, children_type)
                     {
                         self.check_jsx_single_child_assignable(
                             attributes_idx,
@@ -545,7 +545,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        self.is_assignable_to(actual_child_type, children_type)
+        self.relation_boolean_guard(actual_child_type, children_type)
     }
 
     fn single_jsx_child_is_function_like(&self, attributes_idx: NodeIndex) -> bool {
@@ -1163,7 +1163,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn children_type_accepts_text(&mut self, children_type: TypeId) -> bool {
-        self.is_assignable_to(TypeId::STRING, children_type)
+        self.relation_boolean_guard(TypeId::STRING, children_type)
     }
 
     fn check_jsx_multiple_children_assignable(
@@ -1212,7 +1212,7 @@ impl<'a> CheckerState<'a> {
         if actual_children_type == TypeId::ANY || actual_children_type == TypeId::ERROR {
             return;
         }
-        if self.is_assignable_to(actual_children_type, children_type) {
+        if self.relation_boolean_guard(actual_children_type, children_type) {
             return;
         }
 
@@ -1237,7 +1237,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.is_assignable_to(actual_child_type, children_type) {
+        if self.relation_boolean_guard(actual_child_type, children_type) {
             return;
         }
 
@@ -1412,14 +1412,14 @@ impl<'a> CheckerState<'a> {
             if matches!(actual_child_type, TypeId::ANY | TypeId::ERROR) {
                 continue;
             }
-            if self.is_assignable_to(actual_child_type, expected_child_type) {
+            if self.relation_boolean_guard(actual_child_type, expected_child_type) {
                 continue;
             }
             // Fallback: when a child doesn't match the extracted array element type,
             // also check against the original (unfiltered) children type. This handles
             // cases where the children type is a union including non-array members like
             // `{}` (from ReactFragment) that subsume the child type.
-            if self.is_assignable_to(actual_child_type, original_children_type) {
+            if self.relation_boolean_guard(actual_child_type, original_children_type) {
                 continue;
             }
 
@@ -1510,8 +1510,8 @@ impl<'a> CheckerState<'a> {
 
         let resolved_target = self.resolve_type_for_property_access(target_type);
         let resolved_instance = self.resolve_type_for_property_access(instance_type);
-        if !(self.is_assignable_to(resolved_instance, resolved_target)
-            && self.is_assignable_to(resolved_target, resolved_instance))
+        if !(self.relation_boolean_guard(resolved_instance, resolved_target)
+            && self.relation_boolean_guard(resolved_target, resolved_instance))
         {
             return false;
         }
@@ -1703,7 +1703,7 @@ impl<'a> CheckerState<'a> {
         // Array<ReactNode>` is a member of the union, but we can't detect it structurally
         // because it's an interface extending Array rather than a direct Array type.
         let array_of_children = self.ctx.types.factory().array(type_id);
-        if self.is_assignable_to(array_of_children, type_id) {
+        if self.relation_boolean_guard(array_of_children, type_id) {
             return true;
         }
 

@@ -242,7 +242,7 @@ impl<'a> CheckerState<'a> {
                                 Some(attr_type) => {
                                     *attr_type == TypeId::ANY
                                         || *attr_type == TypeId::ERROR
-                                        || self.is_assignable_to(*attr_type, expected)
+                                        || self.relation_boolean_guard(*attr_type, expected)
                                 }
                                 None => expected != TypeId::NEVER && expected != TypeId::ERROR,
                             }
@@ -584,7 +584,7 @@ impl<'a> CheckerState<'a> {
                     }
                     if let Some(expected_type) = expected_special_type {
                         if attr_data.initializer.is_none() {
-                            if !self.is_assignable_to(TypeId::BOOLEAN_TRUE, expected_type) {
+                            if !self.relation_boolean_guard(TypeId::BOOLEAN_TRUE, expected_type) {
                                 use crate::diagnostics::{
                                     diagnostic_codes, diagnostic_messages, format_message,
                                 };
@@ -850,7 +850,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(entry) = provided_attrs.last_mut() {
                         entry.1 = TypeId::BOOLEAN_TRUE;
                     }
-                    if !self.is_assignable_to(TypeId::BOOLEAN_TRUE, expected_type) {
+                    if !self.relation_boolean_guard(TypeId::BOOLEAN_TRUE, expected_type) {
                         use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
@@ -992,7 +992,7 @@ impl<'a> CheckerState<'a> {
                     if is_special_named_attr {
                         if actual_type != TypeId::ANY
                             && actual_type != TypeId::ERROR
-                            && !self.is_assignable_to(actual_type, expected_type)
+                            && !self.relation_boolean_guard(actual_type, expected_type)
                         {
                             needs_special_attr_object_assignability = true;
                         }
@@ -1184,7 +1184,8 @@ impl<'a> CheckerState<'a> {
                     spread_type,
                 ) {
                     spread_covers_all = true;
-                } else if !skip_prop_checks && self.is_assignable_to(spread_type, props_type) {
+                } else if !skip_prop_checks && self.relation_boolean_guard(spread_type, props_type)
+                {
                     // The solver reports the spread is structurally assignable to the
                     // whole props type, so all required members are satisfied — including
                     // ones inherited from Object.prototype (toString, valueOf, …) that
@@ -1493,7 +1494,7 @@ impl<'a> CheckerState<'a> {
             && !suppress_for_primitive_props_with_missing_ia_required
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-            if !self.is_assignable_to(attrs_type, props_type) {
+            if !self.relation_boolean_guard(attrs_type, props_type) {
                 self.report_jsx_synthesized_props_assignability_error(
                     attrs_type,
                     &display_target,
@@ -1550,9 +1551,9 @@ impl<'a> CheckerState<'a> {
         // Checking a synthesized object (which loses the type parameter identity)
         // against the type parameter would produce a false TS2322.
         let spread_satisfies_type_param = props_is_type_param
-            && spread_entries
-                .iter()
-                .any(|&(spread_type, _, _, _)| self.is_assignable_to(spread_type, props_type));
+            && spread_entries.iter().any(|&(spread_type, _, _, _)| {
+                self.relation_boolean_guard(spread_type, props_type)
+            });
         let reported_type_param_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_class_missing_props_assignability
@@ -1564,7 +1565,7 @@ impl<'a> CheckerState<'a> {
             && !spread_satisfies_type_param
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-            if !self.is_assignable_to(attrs_type, props_type) {
+            if !self.relation_boolean_guard(attrs_type, props_type) {
                 // tsc uses just the type parameter name here (e.g. "P"), not the
                 // full "IntrinsicAttributes & P" display target. The IntrinsicAttributes
                 // intersection check for spread attributes is handled separately by
@@ -1635,7 +1636,7 @@ impl<'a> CheckerState<'a> {
                 && self.jsx_props_type_is_library_managed_attributes_application(raw_props_type)
             {
                 let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-                if !self.is_assignable_to(attrs_type, raw_props_type) {
+                if !self.relation_boolean_guard(attrs_type, raw_props_type) {
                     let mut target = self.format_type(raw_props_type);
                     if target.starts_with("LibraryManagedAttributes<")
                         && target.ends_with(", Element>")
@@ -1918,7 +1919,7 @@ impl<'a> CheckerState<'a> {
                         if *attr_type == TypeId::ANY || *attr_type == TypeId::ERROR {
                             return true;
                         }
-                        self.is_assignable_to(*attr_type, expected)
+                        self.relation_boolean_guard(*attr_type, expected)
                     }
                     // PropertyNotFound or other results: still compatible
                     // (excess property checking is separate)
@@ -2006,7 +2007,7 @@ impl<'a> CheckerState<'a> {
                     })
                     .collect();
                 let attrs_type = self.ctx.types.factory().object(properties);
-                if self.is_assignable_to(attrs_type, props_type) {
+                if self.relation_boolean_guard(attrs_type, props_type) {
                     return;
                 }
                 // tsc anchors JSX union props errors at the tag name (e.g., <TextComponent>),

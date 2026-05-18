@@ -2041,7 +2041,7 @@ impl<'a> CheckerState<'a> {
             let is_incompatible = if first_type == TypeId::ANY || current_type == TypeId::ANY {
                 first_type != current_type
             } else {
-                !self.are_mutually_assignable(first_type, current_type)
+                !self.relation_boolean_guard_mutual(first_type, current_type)
             };
             if is_incompatible {
                 let first_type_str = self.format_type(first_type);

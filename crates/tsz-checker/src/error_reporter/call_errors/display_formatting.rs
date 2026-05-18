@@ -3041,6 +3041,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn types_overlap_for_diagnostic_display(&mut self, left: TypeId, right: TypeId) -> bool {
-        self.is_assignable_to(left, right) || self.is_assignable_to(right, left)
+        self.relation_boolean_guard_either_direction(left, right)
     }
 }

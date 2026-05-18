@@ -739,7 +739,7 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if self.is_assignable_to(source_render, target_render) {
+        if self.relation_boolean_guard(source_render, target_render) {
             return true;
         }
 
@@ -752,7 +752,7 @@ impl<'a> CheckerState<'a> {
         source_returns.iter().any(|&source_return| {
             target_returns
                 .iter()
-                .any(|&target_return| self.is_assignable_to(source_return, target_return))
+                .any(|&target_return| self.relation_boolean_guard(source_return, target_return))
         })
     }
 
@@ -790,7 +790,7 @@ impl<'a> CheckerState<'a> {
                 element_type,
                 TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN | TypeId::NEVER
             ) {
-                if self.is_assignable_to(component_type, element_type) {
+                if self.relation_boolean_guard(component_type, element_type) {
                     return;
                 }
                 self.report_invalid_jsx_component_return_type(tag_name_idx);
@@ -898,7 +898,7 @@ impl<'a> CheckerState<'a> {
                             if return_type != TypeId::NEVER && self.ctx.strict_null_checks() {
                                 all_valid = false;
                             }
-                        } else if !self.is_assignable_to(non_null_return, element_type) {
+                        } else if !self.relation_boolean_guard(non_null_return, element_type) {
                             all_valid = false;
                         }
                     }
@@ -972,7 +972,7 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 ret
                             };
-                            self.is_assignable_to(check_ret, t)
+                            self.relation_boolean_guard(check_ret, t)
                                 || (!is_call_sig
                                     && self
                                         .jsx_construct_return_can_use_render_fallback(check_ret, t))
@@ -1043,7 +1043,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if !self.is_assignable_to(non_null_return, jsx_element_type) {
+        if !self.relation_boolean_guard(non_null_return, jsx_element_type) {
             self.report_invalid_jsx_component_return_type(tag_name_idx);
         }
     }

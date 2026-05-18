@@ -416,7 +416,7 @@ impl<'a> CheckerState<'a> {
             // is not assignable to type parameters like `P`, so we can't just assume
             // empty attrs match when the shape can't be resolved.
             let attrs_type = self.build_attrs_object_type_from_info(&info.attrs);
-            return self.is_assignable_to(attrs_type, props_type);
+            return self.relation_boolean_guard(attrs_type, props_type);
         };
 
         let has_string_index = shape.string_index.is_some();
@@ -493,7 +493,7 @@ impl<'a> CheckerState<'a> {
             // and explicit-excess checks have already passed, defer to the
             // canonical assignability gate before rejecting the overload.
             let attrs_type = self.build_attrs_object_type_from_info(&info.attrs);
-            return self.is_assignable_to(attrs_type, props_type);
+            return self.relation_boolean_guard(attrs_type, props_type);
         }
 
         true
@@ -584,7 +584,7 @@ impl<'a> CheckerState<'a> {
     /// keeps overload matching aligned with the canonical generic-constraint
     /// path without naming any particular helper alias.
     fn jsx_attr_assignable_to_expected(&mut self, attr_type: TypeId, expected: TypeId) -> bool {
-        self.is_assignable_to(attr_type, expected)
+        self.relation_boolean_guard(attr_type, expected)
             || self.jsx_attr_assignable_after_referenced_constraints(attr_type, expected)
     }
 
@@ -630,8 +630,8 @@ impl<'a> CheckerState<'a> {
         }
         let restricted = self.resolve_lazy_type(restricted);
         let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
-        self.is_assignable_to(restricted_evaluated, expected)
-            || self.is_assignable_to(restricted, expected)
+        self.relation_boolean_guard(restricted_evaluated, expected)
+            || self.relation_boolean_guard(restricted, expected)
     }
 
     /// Return the target-side write surface for a JSX attribute.

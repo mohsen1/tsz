@@ -2123,6 +2123,56 @@ impl<'a> CheckerState<'a> {
         self.execute_relation_request(&request)
     }
 
+    // Named boolean gate helpers — use instead of bare `is_assignable_to*` at
+    // sites that decide control flow or display without triggering a diagnostic.
+    // Distinct names let the arch guard separate gate calls from diagnostic
+    // decisions that should use `assign_relation_outcome`.
+
+    /// Boolean assignability gate.
+    pub(crate) fn relation_boolean_guard(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.is_assignable_to(source, target)
+    }
+
+    /// Boolean bivariant assignability gate.
+    pub(crate) fn relation_boolean_guard_bivariant(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_bivariant(source, target)
+    }
+
+    /// Boolean assignability gate using the per-env resolver.
+    pub(crate) fn relation_boolean_guard_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_with_env(source, target)
+    }
+
+    /// Returns `true` when `a` is assignable to `b` OR `b` is assignable to `a`.
+    ///
+    /// Use for comparability/overlap checks (tsc's `isTypeComparableTo` semantics).
+    /// Distinct from `relation_boolean_guard_mutual` which requires BOTH directions.
+    pub(crate) fn relation_boolean_guard_either_direction(&mut self, a: TypeId, b: TypeId) -> bool {
+        self.is_assignable_to(a, b) || self.is_assignable_to(b, a)
+    }
+
+    /// Returns `true` when `left` is assignable to `right` AND `right` to `left`.
+    pub(crate) fn relation_boolean_guard_mutual(&mut self, left: TypeId, right: TypeId) -> bool {
+        self.is_assignable_to(left, right) && self.is_assignable_to(right, left)
+    }
+
+    /// Boolean assignability gate that skips weak type checks (TS2559).
+    pub(crate) fn relation_boolean_guard_no_weak_checks(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_no_weak_checks(source, target)
+    }
+
     /// Check if source type is assignable to target type.
     ///
     /// This is the main entry point for assignability checking, used throughout

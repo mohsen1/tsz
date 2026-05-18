@@ -157,7 +157,7 @@ impl<'a> CheckerState<'a> {
             .iter()
             .zip(inner_target.params.iter())
             .any(|(source_param, target_param)| {
-                !self.is_assignable_to(target_param.type_id, source_param.type_id)
+                !self.relation_boolean_guard(target_param.type_id, source_param.type_id)
             })
     }
 

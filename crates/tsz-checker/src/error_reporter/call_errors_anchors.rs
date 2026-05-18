@@ -192,7 +192,7 @@ impl<'a> CheckerState<'a> {
                     || arg_type == widened_actual_type;
                 let mismatches_expected = expected_type != TypeId::ERROR
                     && expected_type != TypeId::UNKNOWN
-                    && !self.is_assignable_to(arg_type, expected_type);
+                    && !self.relation_boolean_guard(arg_type, expected_type);
 
                 if matches_actual {
                     actual_matches.push(arg_idx);
@@ -287,7 +287,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             saw_expected = true;
-            if self.is_assignable_to(first_arg_type, expected_type) {
+            if self.relation_boolean_guard(first_arg_type, expected_type) {
                 return false;
             }
         }
@@ -373,7 +373,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if !self.is_assignable_to(source_prop_type, target_prop_type) {
+            if !self.relation_boolean_guard(source_prop_type, target_prop_type) {
                 return self
                     .literal_argument_mismatch_anchor(prop_value_idx, target_prop_type)
                     .or(Some(prop_name_idx));
@@ -445,7 +445,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if !self.is_assignable_to(elem_type, target_element_type) {
+            if !self.relation_boolean_guard(elem_type, target_element_type) {
                 return Some(elem_idx);
             }
         }

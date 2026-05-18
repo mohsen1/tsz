@@ -1839,9 +1839,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
         for &candidate_return in rest {
-            if !self.are_mutually_assignable(*first_return, candidate_return)
-                || !self.are_mutually_assignable(candidate_return, *first_return)
-            {
+            if !self.relation_boolean_guard_mutual(*first_return, candidate_return) {
                 self.error_at_node(
                 expr_idx,
                 crate::diagnostics::diagnostic_messages::BASE_CONSTRUCTORS_MUST_ALL_HAVE_THE_SAME_RETURN_TYPE,
