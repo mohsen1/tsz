@@ -887,7 +887,7 @@ impl<'a> CheckerState<'a> {
         let (generic_inference_arg_types, sanitized_generic_inference) = if is_generic_call {
             self.sanitize_generic_inference_arg_types(callee_expr, args, &arg_types)
         } else {
-            (arg_types.clone(), false)
+            (std::borrow::Cow::Borrowed(arg_types.as_slice()), false)
         };
         let generic_inference_arg_source_markers = if is_generic_call {
             self.call_arg_source_type_annotation_markers(args, generic_inference_arg_types.len())

@@ -11,7 +11,9 @@ use crate::caches::db::QueryDatabase;
 use crate::caches::subtype_reduction_cache::SubtypeReductionKey;
 use crate::is_subtype_of;
 use crate::relations::subtype::SubtypeChecker;
-use crate::types::{IntrinsicKind, ObjectFlags, PropertyInfo, TemplateSpan, TypeData, TypeId};
+use crate::types::{
+    IntrinsicKind, ObjectFlags, PropertyInfo, TemplateSpan, TypeData, TypeId, Visibility,
+};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_common::interner::Atom;
@@ -854,6 +856,14 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
         return hit;
     }
 
+    if subtype_reduction_proven_noop_by_unique_required_fields(interner, types) {
+        let result: Arc<[TypeId]> = Arc::from(types.to_vec());
+        if let (Some(db), Some(key)) = (query_db, cache_key) {
+            db.insert_subtype_reduction_cache(key, result.clone());
+        }
+        return result;
+    }
+
     let result: Arc<[TypeId]> = if let Some(res) = resolver {
         let mut keep = vec![true; len];
         let mut checker = SubtypeChecker::with_resolver(interner, res);
@@ -911,6 +921,61 @@ fn remove_subtypes_for_bct<R: TypeResolver>(
         db.insert_subtype_reduction_cache(key, result.clone());
     }
     result
+}
+
+fn subtype_reduction_proven_noop_by_unique_required_fields(
+    interner: &dyn TypeDatabase,
+    types: &[TypeId],
+) -> bool {
+    if types.len() <= 1 {
+        return true;
+    }
+
+    let mut shapes = Vec::with_capacity(types.len());
+    let mut property_counts = FxHashMap::default();
+
+    for &type_id in types {
+        let shape_id = match interner.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
+            _ => return false,
+        };
+        let shape = interner.object_shape(shape_id);
+        if shape.string_index.is_some() || shape.number_index.is_some() {
+            return false;
+        }
+        for property in &shape.properties {
+            *property_counts.entry(property.name).or_insert(0usize) += 1;
+        }
+        shapes.push(shape);
+    }
+
+    shapes.iter().all(|shape| {
+        shape.properties.iter().any(|property| {
+            property_can_prove_missing_required_field(property)
+                && property_counts.get(&property.name).copied() == Some(1)
+        })
+    })
+}
+
+fn property_can_prove_missing_required_field(property: &PropertyInfo) -> bool {
+    !property.optional
+        && !property.is_method
+        && !property.is_class_prototype
+        && property.visibility == Visibility::Public
+        && property_type_can_prove_object_base_incompatible(property.type_id)
+}
+
+const fn property_type_can_prove_object_base_incompatible(type_id: TypeId) -> bool {
+    matches!(
+        type_id,
+        TypeId::BOOLEAN
+            | TypeId::NUMBER
+            | TypeId::STRING
+            | TypeId::BIGINT
+            | TypeId::SYMBOL
+            | TypeId::BOOLEAN_TRUE
+            | TypeId::BOOLEAN_FALSE
+    )
 }
 
 fn is_constructor_like<R: TypeResolver>(

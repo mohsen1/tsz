@@ -25,6 +25,7 @@ use crate::types::{LiteralValue, TypeData, TypeId};
 use crate::visitor::{
     TypeVisitor, intersection_list_id, literal_value, type_param_info, union_list_id,
 };
+use smallvec::SmallVec;
 use tracing::{Level, span};
 
 impl<'a> NarrowingContext<'a> {
@@ -374,7 +375,7 @@ impl<'a> NarrowingContext<'a> {
 
         // Handle Unions - recursively narrow each member and collect falsy components
         if let UnionMembersKind::Union(members) = classify_for_union_members(self.db, resolved) {
-            let falsy_members: Vec<TypeId> = members
+            let falsy_members: SmallVec<[TypeId; 4]> = members
                 .iter()
                 .map(|&m| self.narrow_to_falsy(m))
                 .filter(|&m| m != TypeId::NEVER)
@@ -385,7 +386,7 @@ impl<'a> NarrowingContext<'a> {
             } else if falsy_members.len() == 1 {
                 falsy_members[0]
             } else {
-                self.db.union(falsy_members)
+                self.db.union(falsy_members.into_vec())
             };
         }
 
@@ -443,7 +444,7 @@ impl<'a> NarrowingContext<'a> {
 
         // Handle unions: map each member
         if let UnionMembersKind::Union(members) = classify_for_union_members(self.db, resolved) {
-            let falsy_members: Vec<TypeId> = members
+            let falsy_members: SmallVec<[TypeId; 4]> = members
                 .iter()
                 .map(|&m| self.extract_definitely_falsy_type(m))
                 .filter(|&m| m != TypeId::NEVER)
@@ -453,7 +454,7 @@ impl<'a> NarrowingContext<'a> {
             } else if falsy_members.len() == 1 {
                 falsy_members[0]
             } else {
-                self.db.union(falsy_members)
+                self.db.union(falsy_members.into_vec())
             };
         }
 

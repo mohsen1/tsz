@@ -14,6 +14,7 @@ mod overload_resolution;
 use crate::query_boundaries::common::{AssignabilityChecker, CallResult};
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
 /// Call-local context carrying the callable type during argument collection.
 ///
@@ -184,7 +185,7 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
             })
     }
 
-    fn type_resolver(&self) -> Option<&dyn tsz_solver::TypeResolver> {
+    fn type_resolver(&self) -> Option<&dyn TypeResolver> {
         Some(&self.state.ctx)
     }
 

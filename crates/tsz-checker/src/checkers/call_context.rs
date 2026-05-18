@@ -533,6 +533,10 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
         contextual_type: Option<TypeId>,
     ) -> bool {
+        if contextual_type.is_none() {
+            return false;
+        }
+
         let return_type_params =
             self.collect_type_param_names_for_context_overlap(shape.return_type);
 

@@ -5,6 +5,7 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
+use tsz_solver::computation::ContextualTypeContext;
 
 impl<'a> CheckerState<'a> {
     /// Logical argument list for a call-shaped expression.
@@ -413,7 +414,7 @@ impl<'a> CheckerState<'a> {
             _ => return None,
         };
         let arr = self.ctx.arena.get_literal_expr(arg_node)?.clone();
-        let ctx_helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+        let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             param_type,
             self.ctx.compiler_options.no_implicit_any,
