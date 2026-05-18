@@ -225,7 +225,8 @@ impl<'a> Printer<'a> {
                 && let Some(base) = self.arena.get(access.expression)
                 && base.kind == SyntaxKind::SuperKeyword as u16
             {
-                self.write("_super.prototype.");
+                self.emit_es5_super_property_base();
+                self.write(".");
                 self.emit(access.name_or_argument);
                 self.write(".call(");
                 if self.ctx.arrow_state.this_capture_depth > 0 {
@@ -247,7 +248,8 @@ impl<'a> Printer<'a> {
                 && let Some(base) = self.arena.get(access.expression)
                 && base.kind == SyntaxKind::SuperKeyword as u16
             {
-                self.write("_super.prototype[");
+                self.emit_es5_super_property_base();
+                self.write("[");
                 self.emit(access.name_or_argument);
                 self.write("].call(");
                 if self.ctx.arrow_state.this_capture_depth > 0 {

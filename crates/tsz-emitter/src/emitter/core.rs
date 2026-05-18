@@ -694,6 +694,14 @@ pub struct Printer<'a> {
     /// Depth counter for members emitted from class syntax.
     pub(crate) class_member_emit_depth: u32,
 
+    /// Function-scope depth of the class member currently providing ES5 `super`
+    /// home-object semantics. Nested non-arrow functions have a greater depth
+    /// and intentionally fall back to tsc's invalid-super recovery path.
+    pub(crate) es5_super_home_function_depth: Option<u32>,
+
+    /// Whether the active ES5 `super` home is a static class member.
+    pub(crate) es5_super_home_is_static: bool,
+
     /// Whether the current root source file has a JavaScript-like extension.
     pub(crate) is_current_root_js_source: bool,
 
@@ -1084,6 +1092,8 @@ impl<'a> Printer<'a> {
             paren_is_direct_call_callee: false,
             object_literal_accessor_depth: 0,
             class_member_emit_depth: 0,
+            es5_super_home_function_depth: None,
+            es5_super_home_is_static: false,
             is_current_root_js_source: false,
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),

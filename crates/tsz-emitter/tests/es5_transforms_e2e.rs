@@ -653,6 +653,98 @@ fn test_class_extends_to_iife() {
 }
 
 #[test]
+fn es5_invalid_super_property_access_uses_recovery_base() {
+    let output = emit_es5(
+        r#"
+class NoBase {
+    constructor() {
+        var a = super.prototype;
+        var b = super.hasOwnProperty("");
+    }
+
+    fn() {
+        var a = super.prototype;
+        var b = super.hasOwnProperty("");
+    }
+
+    m = super.prototype;
+    n = super.hasOwnProperty("");
+
+    static static1() {
+        super.hasOwnProperty("");
+    }
+}
+
+var obj = { n: super.wat, p: super.foo() };
+"#,
+    );
+
+    assert!(
+        output.contains("this.m = _super.prototype.prototype;"),
+        "Instance field super property access in an invalid no-base class should lower through _super.prototype.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("this.n = _super.prototype.hasOwnProperty.call(this, \"\");"),
+        "Instance field super calls in an invalid no-base class should bind this through _super.prototype.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var a = _super.prototype.prototype;")
+            && output.contains("var b = _super.prototype.hasOwnProperty.call(this, \"\");"),
+        "Constructor and instance method super access should use the instance home-object base.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "NoBase.static1 = function () {\n        _super.hasOwnProperty.call(this, \"\");"
+        ),
+        "Static method super calls should lower through the static _super base.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var obj = { n: _super.wat, p: _super.foo.call(this) };"),
+        "Top-level invalid super in an object literal should use tsc's recovery _super base.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_nested_non_arrow_functions_use_super_recovery_base() {
+    let output = emit_es5(
+        r#"
+class Base {
+    publicFunc() { }
+}
+class Derived extends Base {
+    fn() {
+        super.publicFunc();
+        function inner() {
+            super.publicFunc();
+        }
+        var x = {
+            test: function () { return super.publicFunc(); }
+        };
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("_super.prototype.publicFunc.call(this);"),
+        "Immediate instance method super calls should use _super.prototype.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function inner() {\n            _super.publicFunc.call(this);"),
+        "Nested function declarations should use tsc's invalid-super recovery base.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("test: function () { return _super.publicFunc.call(this); }"),
+        "Nested function expressions should use tsc's invalid-super recovery base.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("function inner() {\n            _super.prototype.publicFunc.call(this);")
+            && !output.contains("return _super.prototype.publicFunc.call(this); }"),
+        "Nested non-arrow functions must not inherit the enclosing method's instance super base.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_class_static_method() {
     let output = emit_es5("class Counter {\n    static count() { return 0; }\n}\n");
     assert!(
