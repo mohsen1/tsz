@@ -2030,21 +2030,7 @@ impl<'a> CheckerState<'a> {
         let raw_source = self.substitute_this_type_if_needed(source);
         let raw_target = self.substitute_this_type_if_needed(target);
         let source = self.evaluate_type_for_assignability(raw_source);
-        let target = crate::query_boundaries::assignability::homomorphic_mapped_projection_target(
-            self.ctx.types,
-            &self.ctx,
-            raw_source,
-            raw_target,
-        )
-        .or_else(|| {
-            crate::query_boundaries::assignability::homomorphic_mapped_projection_target(
-                self.ctx.types,
-                &self.ctx,
-                source,
-                raw_target,
-            )
-        })
-        .unwrap_or_else(|| self.evaluate_type_for_assignability(raw_target));
+        let target = self.evaluate_type_for_assignability(raw_target);
         (source, target)
     }
 
@@ -2064,6 +2050,19 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::assignability::execute_relation;
 
         let flags = self.ctx.pack_relation_flags();
+
+        if self
+            .homomorphic_mapped_display_source_assignable_to_target(request.source, request.target)
+        {
+            return crate::query_boundaries::assignability::RelationOutcome {
+                related: true,
+                depth_exceeded: false,
+                failure: None,
+                weak_union_violation: false,
+                property_classification: None,
+            };
+        }
+
         let overrides = CheckerOverrideProvider::new(self, None);
 
         let mut outcome = execute_relation(
@@ -2103,6 +2102,16 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
+        if self.homomorphic_mapped_display_source_assignable_to_target(source, target) {
+            return crate::query_boundaries::assignability::RelationOutcome {
+                related: true,
+                depth_exceeded: false,
+                failure: None,
+                weak_union_violation: false,
+                property_classification: None,
+            };
+        }
+
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let request =
             crate::query_boundaries::assignability::RelationRequest::assign(source, target);
@@ -2198,6 +2207,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if self.homomorphic_mapped_display_source_assignable_to_target(source, target) {
+            return true;
+        }
+
         // Variance-aware fast path: when both source and target are Application
         // types with the same base (e.g., Covariant<A> vs Covariant<B>), check
         // type arguments using computed variance BEFORE structural expansion.
@@ -2220,6 +2233,10 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.same_base_application_to_constrained_type_param_target(source, target) {
+            return false;
+        }
+
+        if self.same_type_alias_application_args_reject(source, target) {
             return false;
         }
 
@@ -2594,6 +2611,27 @@ impl<'a> CheckerState<'a> {
 
     fn application_display_info(&self, type_id: TypeId) -> Option<(TypeId, Vec<TypeId>)> {
         self.application_info_or_display_alias(type_id)
+    }
+
+    fn homomorphic_mapped_display_source_assignable_to_target(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let source_display = self.application_display_info(source);
+        let target_display = self.application_display_info(target);
+        let source = source_display
+            .map(|(base, args)| self.ctx.types.application(base, args))
+            .unwrap_or(source);
+        let target = target_display
+            .map(|(base, args)| self.ctx.types.application(base, args))
+            .unwrap_or(target);
+        crate::query_boundaries::assignability::homomorphic_mapped_source_assignable_to_target(
+            self.ctx.types,
+            &self.ctx,
+            source,
+            target,
+        )
     }
 
     /// Type assertion overlap uses tsc's comparable relation, not ordinary

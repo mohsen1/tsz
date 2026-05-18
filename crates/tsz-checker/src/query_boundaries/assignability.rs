@@ -202,6 +202,212 @@ pub(crate) fn contextual_callable_member_has_unclassified_generic_parameter_drif
         && tsz_solver::contains_type_parameters(db, member_param.type_id)
 }
 
+pub(crate) fn homomorphic_mapped_source_assignable_to_target<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let type_db = db.as_type_database();
+    let Some(source_candidate) = instantiate_mapped_candidate(db, resolver, source) else {
+        return false;
+    };
+    let Some(source_mapped) = tsz_solver::type_queries::get_mapped_type(type_db, source_candidate)
+    else {
+        return false;
+    };
+
+    if source_mapped.name_type.is_some()
+        || source_mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add)
+    {
+        return false;
+    }
+
+    let Some(source_base) = tsz_solver::keyof_inner_type(type_db, source_mapped.constraint) else {
+        return false;
+    };
+
+    let source_key = type_db.type_param(source_mapped.type_param);
+    let source_indexed_value = type_db.index_access(source_base, source_key);
+    let source_indexed_value_eval = db.evaluate_type(source_indexed_value);
+    let source_template = source_mapped.template;
+    let source_template_eval = db.evaluate_type(source_template);
+    let source_template_expanded = instantiate_alias_candidate(db, resolver, source_template);
+    let source_template_expanded_eval =
+        source_template_expanded.map(|expanded| db.evaluate_type(expanded));
+
+    if let Some(target_candidate) = instantiate_mapped_candidate(db, resolver, target)
+        && let Some(target_mapped) =
+            tsz_solver::type_queries::get_mapped_type(type_db, target_candidate)
+    {
+        let Some(target_base) = tsz_solver::keyof_inner_type(type_db, target_mapped.constraint)
+        else {
+            return false;
+        };
+        if !homomorphic_sources_match(type_db, source_base, target_base) {
+            return false;
+        }
+        let mut target_template = target_mapped.template;
+        let target_key_substitution =
+            TypeSubstitution::single(target_mapped.type_param.name, source_key);
+        target_template = tsz_solver::instantiate_type_cached(
+            type_db,
+            Some(db),
+            target_template,
+            &target_key_substitution,
+        );
+        if target_mapped.optional_modifier == Some(tsz_solver::MappedModifier::Add)
+            && source_mapped.optional_modifier != Some(tsz_solver::MappedModifier::Add)
+        {
+            target_template = type_db.union2(target_template, TypeId::UNDEFINED);
+        }
+        let target_template_eval = db.evaluate_type(target_template);
+        return mapped_templates_structurally_assignable(
+            type_db,
+            source_template,
+            source_template_eval,
+            target_template,
+            target_template_eval,
+        ) || source_template_expanded.is_some_and(|expanded| {
+            mapped_templates_structurally_assignable(
+                type_db,
+                expanded,
+                source_template_expanded_eval.unwrap_or(expanded),
+                target_template,
+                target_template_eval,
+            )
+        });
+    }
+
+    homomorphic_sources_match(type_db, source_base, target)
+        && mapped_templates_structurally_assignable(
+            type_db,
+            source_template,
+            source_template_eval,
+            source_indexed_value,
+            source_indexed_value_eval,
+        )
+        || (homomorphic_sources_match(type_db, source_base, target)
+            && source_template_expanded.is_some_and(|expanded| {
+                mapped_templates_structurally_assignable(
+                    type_db,
+                    expanded,
+                    source_template_expanded_eval.unwrap_or(expanded),
+                    source_indexed_value,
+                    source_indexed_value_eval,
+                )
+            }))
+}
+
+fn instantiate_alias_candidate<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let type_db = db.as_type_database();
+    let app = tsz_solver::type_queries::get_type_application(type_db, type_id)?;
+    let def_id = tsz_solver::type_queries::get_lazy_def_id(type_db, app.base)?;
+    let type_params = resolver.get_lazy_type_params(def_id)?;
+    if type_params.is_empty() {
+        return None;
+    }
+    let body = resolver.resolve_lazy(def_id, type_db)?;
+    let substitution = TypeSubstitution::from_args(type_db, &type_params, &app.args);
+    Some(tsz_solver::instantiate_type_cached(
+        type_db,
+        Some(db),
+        body,
+        &substitution,
+    ))
+}
+
+fn instantiate_mapped_candidate<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let type_db = db.as_type_database();
+    if tsz_solver::type_queries::get_mapped_type(type_db, type_id).is_some() {
+        return Some(type_id);
+    }
+    instantiate_alias_candidate(db, resolver, type_id)
+}
+
+fn homomorphic_sources_match(
+    db: &dyn tsz_solver::TypeDatabase,
+    left: TypeId,
+    right: TypeId,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    if let (Some(left_param), Some(right_param)) = (
+        tsz_solver::type_param_info(db, left),
+        tsz_solver::type_param_info(db, right),
+    ) {
+        return left_param.name == right_param.name;
+    }
+    if let (Some((left_obj, left_idx)), Some((right_obj, right_idx))) = (
+        tsz_solver::index_access_parts(db, left),
+        tsz_solver::index_access_parts(db, right),
+    ) {
+        return homomorphic_sources_match(db, left_obj, right_obj)
+            && homomorphic_sources_match(db, left_idx, right_idx);
+    }
+    false
+}
+
+fn mapped_template_structurally_assignable(
+    db: &dyn tsz_solver::TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    if source == target {
+        return true;
+    }
+    if source == TypeId::NEVER {
+        return true;
+    }
+    if let Some(tsz_solver::TypeData::Conditional(cond_id)) = db.lookup(source) {
+        let cond = db.conditional_type(cond_id);
+        return mapped_template_structurally_assignable(db, cond.true_type, target)
+            && mapped_template_structurally_assignable(db, cond.false_type, target);
+    }
+    if let (Some((source_obj, source_idx)), Some((target_obj, target_idx))) = (
+        tsz_solver::index_access_parts(db, source),
+        tsz_solver::index_access_parts(db, target),
+    ) {
+        return homomorphic_sources_match(db, source_obj, target_obj)
+            && homomorphic_sources_match(db, source_idx, target_idx);
+    }
+    if let Some(target_members_id) = tsz_solver::union_list_id(db, target) {
+        return db
+            .type_list(target_members_id)
+            .iter()
+            .any(|member| mapped_template_structurally_assignable(db, source, *member));
+    }
+    if let Some(source_members_id) = tsz_solver::intersection_list_id(db, source) {
+        return db
+            .type_list(source_members_id)
+            .iter()
+            .any(|member| mapped_template_structurally_assignable(db, *member, target));
+    }
+    false
+}
+
+fn mapped_templates_structurally_assignable(
+    db: &dyn tsz_solver::TypeDatabase,
+    source: TypeId,
+    source_eval: TypeId,
+    target: TypeId,
+    target_eval: TypeId,
+) -> bool {
+    mapped_template_structurally_assignable(db, source, target)
+        || mapped_template_structurally_assignable(db, source_eval, target)
+        || mapped_template_structurally_assignable(db, source, target_eval)
+        || mapped_template_structurally_assignable(db, source_eval, target_eval)
+}
+
 // ---------------------------------------------------------------------------
 // RelationRequest: unified policy descriptor for relation queries
 // ---------------------------------------------------------------------------
