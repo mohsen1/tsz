@@ -570,8 +570,20 @@ name = "nonnull_contextual_type_arg_inference_tests"
 path = "tests/nonnull_contextual_type_arg_inference_tests.rs"
 
 [[test]]
-name = "conformance_issues"
-path = "tests/conformance_issues.rs"
+name = "conformance_issues_errors"
+path = "tests/conformance_issues_errors.rs"
+
+[[test]]
+name = "conformance_issues_features"
+path = "tests/conformance_issues_features.rs"
+
+[[test]]
+name = "conformance_issues_modules"
+path = "tests/conformance_issues_modules.rs"
+
+[[test]]
+name = "conformance_issues_types"
+path = "tests/conformance_issues_types.rs"
 
 [[test]]
 name = "export_equals_display_order_tests"
