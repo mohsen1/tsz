@@ -135,6 +135,12 @@ function validateReport(report) {
   if (!report.comparison || typeof report.comparison !== "object") {
     fail("assertion classification report is missing comparison");
   }
+  if (
+    typeof report.comparison.status !== "string" ||
+    report.comparison.status.trim() === ""
+  ) {
+    fail("assertion classification comparison.status must be a non-empty string");
+  }
   if (!report.candidateManifest || typeof report.candidateManifest !== "object") {
     fail("assertion classification report is missing candidateManifest");
   }
