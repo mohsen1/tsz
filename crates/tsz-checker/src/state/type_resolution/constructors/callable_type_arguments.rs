@@ -1,6 +1,7 @@
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeList;
+use tsz_solver::computation::TypeSubstitution;
 use tsz_solver::{CallableShape, TypeId};
 
 impl<'a> CheckerState<'a> {
@@ -138,7 +139,7 @@ impl<'a> CheckerState<'a> {
                                 .default
                                 .or(param.constraint)
                                 .unwrap_or(TypeId::UNKNOWN);
-                            let substitution = tsz_solver::TypeSubstitution::from_args(
+                            let substitution = TypeSubstitution::from_args(
                                 self.ctx.types,
                                 &sig.type_params[..param_index],
                                 &args,
@@ -190,7 +191,7 @@ impl<'a> CheckerState<'a> {
                         .default
                         .or(param.constraint)
                         .unwrap_or(TypeId::UNKNOWN);
-                    let substitution = tsz_solver::TypeSubstitution::from_args(
+                    let substitution = TypeSubstitution::from_args(
                         self.ctx.types,
                         &sig.type_params[..param_index],
                         &args,

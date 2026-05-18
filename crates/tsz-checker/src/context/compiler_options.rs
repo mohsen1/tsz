@@ -6,6 +6,7 @@
 use crate::query_boundaries::common::JudgeConfig;
 use tsz_common::file_extensions::is_ts_declaration_file_name;
 use tsz_parser::parser::NodeIndex;
+use tsz_solver::computation::{CompatChecker, TypeResolver};
 
 use super::CheckerContext;
 
@@ -234,9 +235,9 @@ impl<'a> CheckerContext<'a> {
 
     /// Apply standard compiler options to a `CompatChecker`, including `query_db`.
     /// This wires the `CompilerOptions` (via `JudgeConfig`) and the `QueryDatabase`.
-    pub fn configure_compat_checker<'b, R: tsz_solver::TypeResolver>(
+    pub fn configure_compat_checker<'b, R: TypeResolver>(
         &'b self,
-        checker: &mut tsz_solver::CompatChecker<'b, R>,
+        checker: &mut CompatChecker<'b, R>,
     ) {
         // Apply configuration from options
         checker.apply_config(&self.as_judge_config());

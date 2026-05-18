@@ -5306,6 +5306,51 @@ fn test_namespace_checker_no_raw_lazy_construction() {
         "namespace_checker.rs has {lazy_count} .lazy() calls (allowed: {ALLOWED_LAZY_COUNT}). \
          Namespace types should use structural object types \
          (build_namespace_object_type) or stable-identity helpers. \
-         Only pure-namespace sub-members may use Lazy(DefId) to avoid recursion."
+        Only pure-namespace sub-members may use Lazy(DefId) to avoid recursion."
+    );
+}
+
+/// Guard: diagnostic-bearing assignability paths should use named
+/// `RelationOutcome` helpers instead of locally constructing relation requests.
+#[test]
+fn test_assignability_diagnostics_route_through_relation_outcome_helpers() {
+    let checker_src = fs::read_to_string("src/assignability/assignability_checker.rs")
+        .expect("failed to read src/assignability/assignability_checker.rs");
+    for helper in [
+        "fn assign_relation_outcome",
+        "fn call_arg_relation_outcome",
+        "fn bivariant_callbacks_relation_outcome",
+    ] {
+        assert!(
+            checker_src.contains(helper),
+            "assignability_checker.rs must expose {helper} for diagnostic relation decisions"
+        );
+    }
+
+    let diagnostic_files = [
+        "src/assignability/assignability_diagnostics.rs",
+        "src/assignability/assignment_checker/destructuring.rs",
+    ];
+    let forbidden = [
+        "RelationRequest::assign(",
+        "RelationRequest::call_arg(",
+        "RelationRequest::bivariant_callbacks(",
+    ];
+
+    let mut violations = Vec::new();
+    for path in diagnostic_files {
+        let source = fs::read_to_string(path)
+            .unwrap_or_else(|_| panic!("failed to read {path} for architecture guard"));
+        for pattern in forbidden {
+            if source.contains(pattern) {
+                violations.push(format!("{path} contains {pattern}"));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "diagnostic assignability paths should call named RelationOutcome helpers; violations:\n{}",
+        violations.join("\n")
     );
 }
