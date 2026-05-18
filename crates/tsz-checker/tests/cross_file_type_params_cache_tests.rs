@@ -20,7 +20,7 @@
 //! test harness, not of the cache itself — so end-to-end proof of slow-path
 //! avoidance lands in the PR body via the bench fixtures.
 
-use crate::context::CheckerOptions;
+use tsz_checker::context::CheckerOptions;
 use tsz_common::common::ModuleKind;
 use tsz_common::interner::Atom;
 use tsz_solver::TypeParamInfo;
@@ -47,7 +47,7 @@ fn cache_helper_returns_an_empty_dashmap_when_no_cross_file_resolution() {
         }
         export const x: Wrapper = { v: 1 };
     "#;
-    let (_diags, cache) = crate::test_utils::check_multi_file_with_type_params_cache(
+    let (_diags, cache) = tsz_checker::test_utils::check_multi_file_with_type_params_cache(
         &[("file.ts", file)],
         "file.ts",
         opts(),
@@ -90,7 +90,7 @@ fn no_constraint_no_default_generic_takes_arena_only_fast_path() {
         declare const o: Outer<string>;
         o.inner.bar("ok");
     "#;
-    let (_diags, cache) = crate::test_utils::check_multi_file_with_type_params_cache(
+    let (_diags, cache) = tsz_checker::test_utils::check_multi_file_with_type_params_cache(
         &[("file2.ts", file2), ("file1.ts", file1)],
         "file2.ts",
         opts(),
@@ -118,7 +118,7 @@ fn scope_independent_constraint_and_default_take_arena_only_fast_path() {
         declare const value: Value;
         value;
     "#;
-    let (_diags, cache) = crate::test_utils::check_multi_file_with_type_params_cache(
+    let (_diags, cache) = tsz_checker::test_utils::check_multi_file_with_type_params_cache(
         &[("file2.ts", file2), ("file1.ts", file1)],
         "file2.ts",
         opts(),
@@ -143,7 +143,7 @@ fn cache_stores_only_positive_type_param_results() {
     // `Option<Vec<TypeParamInfo>>`. If a future refactor reintroduces
     // negative entries, this test should fail to compile until the
     // correctness risk is re-audited.
-    let cache: crate::context::CrossFileTypeParamsCache =
+    let cache: tsz_checker::context::CrossFileTypeParamsCache =
         std::sync::Arc::new(dashmap::DashMap::new());
     let key = (0u32, tsz_parser::parser::NodeIndex::NONE);
     cache.insert(key, Vec::<tsz_solver::TypeParamInfo>::new());
@@ -154,10 +154,10 @@ fn cache_stores_only_positive_type_param_results() {
 
 #[test]
 fn cache_statistics_report_entries_and_size() {
-    let cache: crate::context::CrossFileTypeParamsCache =
+    let cache: tsz_checker::context::CrossFileTypeParamsCache =
         std::sync::Arc::new(dashmap::DashMap::new());
 
-    let empty = crate::context::cross_file_type_params_cache_statistics(&cache);
+    let empty = tsz_checker::context::cross_file_type_params_cache_statistics(&cache);
     assert_eq!(empty.entries, 0);
     assert_eq!(empty.type_param_entries, 0);
     assert_eq!(empty.estimated_size_bytes(), 0);
@@ -174,7 +174,7 @@ fn cache_statistics_report_entries_and_size() {
         vec![TypeParamInfo::simple(Atom(3))],
     );
 
-    let populated = crate::context::cross_file_type_params_cache_statistics(&cache);
+    let populated = tsz_checker::context::cross_file_type_params_cache_statistics(&cache);
     assert_eq!(populated.entries, 2);
     assert_eq!(populated.type_param_entries, 3);
     assert!(
@@ -199,5 +199,5 @@ fn cache_field_is_optional_and_off_by_default() {
     // Simply ensure this returns without panic — the bare
     // `check_multi_file` path runs with `cross_file_type_params_cache`
     // = None.
-    let _ = crate::test_utils::check_multi_file(&[("file.ts", file)], "file.ts", opts());
+    let _ = tsz_checker::test_utils::check_multi_file(&[("file.ts", file)], "file.ts", opts());
 }

@@ -862,6 +862,10 @@ name = "cross_file_intrinsic_identifier_tests"
 path = "tests/cross_file_intrinsic_identifier_tests.rs"
 
 [[test]]
+name = "cross_file_type_params_cache_tests"
+path = "tests/cross_file_type_params_cache_tests.rs"
+
+[[test]]
 name = "cross_file_lib_interface_identity_tests"
 path = "tests/cross_file_lib_interface_identity_tests.rs"
 
