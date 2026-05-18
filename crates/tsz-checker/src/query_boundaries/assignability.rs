@@ -368,8 +368,7 @@ fn mapped_template_structurally_assignable(
     if source == TypeId::NEVER {
         return true;
     }
-    if let Some(tsz_solver::TypeData::Conditional(cond_id)) = db.lookup(source) {
-        let cond = db.conditional_type(cond_id);
+    if let Some(cond) = tsz_solver::type_queries::get_conditional_type(db, source) {
         return mapped_template_structurally_assignable(db, cond.true_type, target)
             && mapped_template_structurally_assignable(db, cond.false_type, target);
     }
