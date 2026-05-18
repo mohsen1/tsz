@@ -1,6 +1,7 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn application_info_or_display_alias(
@@ -192,8 +193,7 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(cached);
             }
-            if let Some(declared) = tsz_solver::TypeResolver::get_type_param_variance(&self.ctx, d)
-            {
+            if let Some(declared) = TypeResolver::get_type_param_variance(&self.ctx, d) {
                 self.ctx
                     .types
                     .insert_type_param_variance(d, declared.clone());
