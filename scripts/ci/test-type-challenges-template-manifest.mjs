@@ -75,6 +75,32 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
+  writeTemplate(dir, "questions/00013-warm-hello-world/template.ts");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      MANIFEST_SCRIPT,
+      path.join(dir, "source"),
+      path.join(dir, "compile"),
+      path.join(dir, "compile", "type-challenges-template-manifest.json"),
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        TYPE_CHALLENGES_REPO: "   ",
+        TYPE_CHALLENGES_REF: "fixture-ref",
+        TYPE_CHALLENGES_EXPECTED_GENERATED: "1",
+      },
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /missing Type Challenges repository, ref, or expected count/);
+});
+
+withTempDir((dir) => {
   writeTemplate(dir, "questions/custom-shape/template.ts");
 
   const result = spawnSync(
