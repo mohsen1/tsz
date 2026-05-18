@@ -68,9 +68,9 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        self.open_bracket();
+        self.write("[");
         self.emit_comma_separated(&tuple.elements.nodes);
-        self.close_bracket();
+        self.write("]");
     }
 
     pub(in crate::emitter) fn emit_function_type(&mut self, node: &Node) {
@@ -88,10 +88,9 @@ impl<'a> Printer<'a> {
         }
 
         // Parameters
-        self.open_paren();
+        self.write("(");
         self.emit_comma_separated(&func_type.parameters.nodes);
-        self.close_paren();
-        self.write(" => ");
+        self.write(") => ");
 
         // Return type
         self.emit(func_type.type_annotation);
@@ -119,10 +118,9 @@ impl<'a> Printer<'a> {
         }
 
         // Parameters
-        self.open_paren();
+        self.write("(");
         self.emit_comma_separated(&func_type.parameters.nodes);
-        self.close_paren();
-        self.write(" => ");
+        self.write(") => ");
 
         // Return type
         self.emit(func_type.type_annotation);
@@ -139,7 +137,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.open_brace();
+        self.write("{");
         self.write_line();
         self.increase_indent();
 
@@ -150,7 +148,7 @@ impl<'a> Printer<'a> {
         }
 
         self.decrease_indent();
-        self.close_brace();
+        self.write("}");
     }
 
     pub(in crate::emitter) fn emit_parenthesized_type(&mut self, node: &Node) {
@@ -158,9 +156,9 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        self.open_paren();
+        self.write("(");
         self.emit(paren_type.type_node);
-        self.close_paren();
+        self.write(")");
     }
 
     pub(in crate::emitter) fn emit_type_parameter(&mut self, node: &Node) {
@@ -243,11 +241,11 @@ impl<'a> Printer<'a> {
             self.write(">");
         }
 
-        self.open_paren();
+        self.write("(");
         if let Some(ref params) = sig.parameters {
             self.emit_comma_separated(&params.nodes);
         }
-        self.close_paren();
+        self.write(")");
 
         if sig.type_annotation.is_some() {
             self.write(": ");
@@ -268,11 +266,11 @@ impl<'a> Printer<'a> {
             self.write(">");
         }
 
-        self.open_paren();
+        self.write("(");
         if let Some(ref params) = sig.parameters {
             self.emit_comma_separated(&params.nodes);
         }
-        self.close_paren();
+        self.write(")");
 
         if sig.type_annotation.is_some() {
             self.write(": ");
@@ -295,11 +293,11 @@ impl<'a> Printer<'a> {
             self.write(">");
         }
 
-        self.open_paren();
+        self.write("(");
         if let Some(ref params) = sig.parameters {
             self.emit_comma_separated(&params.nodes);
         }
-        self.close_paren();
+        self.write(")");
 
         if sig.type_annotation.is_some() {
             self.write(": ");
@@ -315,9 +313,9 @@ impl<'a> Printer<'a> {
         // Emit modifiers (readonly)
         self.emit_class_member_modifiers(&sig.modifiers);
 
-        self.open_bracket();
+        self.write("[");
         self.emit_comma_separated(&sig.parameters.nodes);
-        self.close_bracket();
+        self.write("]");
 
         if sig.type_annotation.is_some() {
             self.write(": ");
@@ -347,9 +345,9 @@ impl<'a> Printer<'a> {
             return;
         };
         self.emit(idx.object_type);
-        self.open_bracket();
+        self.write("[");
         self.emit(idx.index_type);
-        self.close_bracket();
+        self.write("]");
     }
 
     pub(in crate::emitter) fn emit_infer_type(&mut self, node: &Node) {
@@ -371,7 +369,7 @@ impl<'a> Printer<'a> {
         let Some(mapped) = self.arena.get_mapped_type(node) else {
             return;
         };
-        self.open_brace();
+        self.write("{");
         self.write_line();
         self.increase_indent();
 
@@ -384,7 +382,7 @@ impl<'a> Printer<'a> {
             }
         }
 
-        self.open_bracket();
+        self.write("[");
         if let Some(tp_node) = self.arena.get(mapped.type_parameter)
             && let Some(tp) = self.arena.get_type_parameter(tp_node)
         {
@@ -398,7 +396,7 @@ impl<'a> Printer<'a> {
             self.write(" as ");
             self.emit(mapped.name_type);
         }
-        self.close_bracket();
+        self.write("]");
 
         // Question modifier
         if let Some(qt_node) = self.arena.get(mapped.question_token) {
@@ -414,7 +412,7 @@ impl<'a> Printer<'a> {
         self.write(";");
         self.write_line();
         self.decrease_indent();
-        self.close_brace();
+        self.write("}");
     }
 
     pub(in crate::emitter) fn emit_named_tuple_member(&mut self, node: &Node) {
