@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn async_generator_method_forwarding_scopes_temps_and_super_capture() {
-        let source = "async function* f1(x, y = z) {}\nclass Sub extends Super { async *m(x, y = z, { ...w }) { super.foo(); } }\n";
+        let source = "async function* f1(x, y = z) {}\nasync function* f2({ [z]: x }) {}\nclass Sub extends Super { async *m(x, y = z, { ...w }) { super.foo(); } }\n";
 
         let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
@@ -245,6 +245,7 @@ mod tests {
 
         assert!(
             output.contains("function f1(x_1)")
+                && output.contains("function f2(_a)")
                 && output.contains("m(x_1) { const _super = Object.create(null, {"),
             "Lowered async generators should use function-local placeholder temp scopes.\nOutput:\n{output}"
         );
