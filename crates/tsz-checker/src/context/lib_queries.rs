@@ -437,6 +437,21 @@ impl<'a> CheckerContext<'a> {
             .any(|lib_ctx| Arc::ptr_eq(&lib_ctx.arena, symbol_arena))
     }
 
+    /// Structural predicate for suppressing the simple-object
+    /// `RejectMissingInterfaceDecl` / declaration-provenance residue counter.
+    ///
+    /// Returns true when the symbol has no local interface declaration and
+    /// is, by binder-recorded provenance, an actual or cloned-lib symbol.
+    /// The predicate never inspects the symbol's name: §25 forbids a name
+    /// allowlist here.
+    pub fn simple_object_missing_interface_decl_residue_is_lib_provenance_case(
+        &self,
+        sym_id: SymbolId,
+        has_local_interface_decl: bool,
+    ) -> bool {
+        !has_local_interface_decl && self.symbol_is_from_actual_or_cloned_lib(sym_id)
+    }
+
     /// Check if a symbol originates from an actual standard lib file, including
     /// driver paths where binding and checking use separately parsed lib arenas.
     pub fn symbol_is_from_actual_or_cloned_lib(&self, sym_id: SymbolId) -> bool {

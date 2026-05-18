@@ -2861,6 +2861,16 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
     // Symbols from nested scopes should NEVER be merged across files/scopes
     let mut merged_symbols: FxHashMap<Atom, SymbolId> = FxHashMap::default();
 
+    // Track nested-symbol merging keyed by (global_parent_id, name_atom).
+    // A nested symbol (e.g., `Intl.ResolvedDateTimeFormatOptions`) declared in two
+    // sibling lib files (lib.es5.d.ts + lib.es2021.intl.d.ts) must collapse into
+    // one merged symbol once their parent namespace has merged. Without this,
+    // each lib file allocates its own copy of `ResolvedDateTimeFormatOptions`,
+    // causing one declaration's members (e.g. `dateStyle`) to win and the
+    // other's members (e.g. `calendar`) to silently disappear from the merged
+    // namespace shape returned by `resolvedOptions(): ResolvedDateTimeFormatOptions`.
+    let mut nested_merged: FxHashMap<(SymbolId, Atom), SymbolId> = FxHashMap::default();
+
     // ==========================================================================
     // PHASE 1: Remap lib symbols to global arena
     // ==========================================================================
@@ -2970,10 +2980,63 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
                         new_id
                     }
                 } else {
-                    // Nested symbol - always allocate new, never merge
-
-                    // NOTE: Don't add to merged_symbols - nested symbols should never be cross-file merged
-                    global_symbols.alloc_from(lib_sym)
+                    // Nested symbol (e.g. a namespace member). Two lib files may
+                    // declare the same nested name under a parent that *itself*
+                    // has merged across files — for example
+                    // `interface Intl.ResolvedDateTimeFormatOptions` is split
+                    // across lib.es5.d.ts and lib.es2021.intl.d.ts, both inside
+                    // the merged `Intl` namespace. Without merging the nested
+                    // pair, interface lowering only sees one lib's declaration
+                    // body and members from the other lib (e.g. `calendar` from
+                    // es5) silently disappear from the resolved shape.
+                    //
+                    // Keyed by (global parent id, name): unrelated `Foo`s nested
+                    // inside *different* namespaces have different parent ids
+                    // and therefore do not collide.
+                    let nested_key = lib_symbol_remap
+                        .get(&(lib_binder_ptr, lib_sym.parent))
+                        .copied()
+                        .map(|gp| (gp, name_interner.intern(&lib_sym.escaped_name)));
+                    let existing_mergeable = nested_key
+                        .and_then(|key| nested_merged.get(&key).copied())
+                        .filter(|&existing_id| {
+                            global_symbols.get(existing_id).is_some_and(|existing| {
+                                can_merge_symbols_cross_file(existing.flags, lib_sym.flags)
+                            })
+                        });
+                    if let Some(existing_id) = existing_mergeable {
+                        if let Some(existing_mut) = global_symbols.get_mut(existing_id) {
+                            if let Some(ref aug_nodes) = global_aug_nodes {
+                                // External module lib binder: only fold in declarations
+                                // from `declare global` blocks, never module-scoped ones.
+                                let filtered: Vec<_> = lib_sym
+                                    .declarations
+                                    .iter()
+                                    .copied()
+                                    .filter(|d| aug_nodes.contains(d))
+                                    .collect();
+                                if !filtered.is_empty() {
+                                    append_unique_declarations(
+                                        &mut existing_mut.declarations,
+                                        &filtered,
+                                    );
+                                }
+                            } else {
+                                existing_mut.flags |= lib_sym.flags;
+                                append_unique_declarations(
+                                    &mut existing_mut.declarations,
+                                    &lib_sym.declarations,
+                                );
+                            }
+                        }
+                        existing_id
+                    } else {
+                        let new_id = global_symbols.alloc_from(lib_sym);
+                        if let Some(key) = nested_key {
+                            nested_merged.insert(key, new_id);
+                        }
+                        new_id
+                    }
                 };
 
                 // Store the remapping

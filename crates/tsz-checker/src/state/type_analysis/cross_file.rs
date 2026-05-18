@@ -801,10 +801,12 @@ impl<'a> CheckerState<'a> {
                 } else {
                     None
                 };
+            let allow_direct_source_alias =
+                symbol_type_cache_from_symbol_arena || needs_cross_file_delegation;
             if let Some((direct_type, direct_params)) = self.direct_source_file_type_alias_result(
                 sym_id,
                 direct_target_file_idx,
-                symbol_type_cache_from_symbol_arena,
+                allow_direct_source_alias,
             ) {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
                 if let Some(file_idx) = symbol_type_cache_file_idx {

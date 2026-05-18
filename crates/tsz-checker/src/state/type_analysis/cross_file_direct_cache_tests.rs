@@ -1,6 +1,7 @@
 use crate::context::{CheckerContext, CheckerOptions};
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
@@ -94,5 +95,72 @@ fn delegate_source_file_type_alias_caches_generic_params() {
             .cached_stable_source_file_symbol_arena_type(leaf_sym, target_file_idx, scope),
         Some((ty, params)),
         "stable source-file symbol-arena cache hits must preserve generic params",
+    );
+}
+
+fn assert_explicit_cross_file_source_alias_lowers(alias_name: &str, source: &str) {
+    let (target_arena, target_binder, types) = parse_bound_source_with_name("target.ts", source);
+    let (requester_arena, requester_binder, _) = parse_bound_source_with_name(
+        "requester.ts",
+        "// synthetic requester with explicit symbol-file ownership only",
+    );
+    let alias_sym = target_binder
+        .file_locals
+        .get(alias_name)
+        .unwrap_or_else(|| panic!("{alias_name} symbol"));
+
+    let mut ctx = CheckerContext::new_with_shared_def_store(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+        Arc::new(DefinitionStore::new()),
+    );
+    ctx.share_owner_symbol_type_results = true;
+    ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+    let mut symbol_file_index = FxHashMap::default();
+    symbol_file_index.insert(alias_sym, 1);
+    ctx.set_global_symbol_file_index(Arc::new(symbol_file_index));
+    let mut state = CheckerState { ctx };
+
+    let (ty, params) = state
+        .delegate_cross_arena_symbol_resolution(alias_sym)
+        .unwrap_or_else(|| panic!("{alias_name} should resolve through explicit file target"));
+
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert_eq!(
+        params.len(),
+        2,
+        "{alias_name} should preserve both generic type parameters",
+    );
+    assert_eq!(
+        state.ctx.cached_cross_file_symbol_type(alias_sym, 1),
+        Some((ty, params)),
+        "explicit cross-file alias result should be cached by file target",
+    );
+}
+
+#[test]
+fn delegate_explicit_cross_file_source_alias_lowers_generic_conditionals() {
+    assert_explicit_cross_file_source_alias_lowers(
+        "ExcludeLike",
+        r#"
+                export type ExcludeLike<T, U> = T extends U ? never : T;
+            "#,
+    );
+    assert_explicit_cross_file_source_alias_lowers(
+        "Drop",
+        r#"
+                export type Drop<A, B> = A extends B ? never : A;
+            "#,
     );
 }

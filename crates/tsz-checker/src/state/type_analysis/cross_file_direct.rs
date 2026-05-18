@@ -14,15 +14,16 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::def::{DefId, DefKind};
 use tsz_solver::{TypeId, TypeParamInfo};
 
+pub(crate) use super::cross_file_direct_files::{
+    DeclarationFileCacheClass, classify_declaration_file_for_cache,
+    is_builtin_lib_declaration_arena, is_builtin_lib_file_name,
+    is_direct_actual_lib_declaration_arena,
+};
 use super::cross_file_direct_files::{
     allow_actual_lib_declaration_proof_bypass, allow_generic_actual_lib_direct_fallback,
     is_direct_actual_lib_alias_body_admitted, is_direct_actual_lib_value_interface_name,
     is_direct_lowering_declaration_arena, is_direct_lowering_source_file_arena,
     is_direct_type_alias_declaration_arena, iterator_object_has_global_augmentations,
-};
-pub(crate) use super::cross_file_direct_files::{
-    is_builtin_lib_declaration_arena, is_builtin_lib_file_name,
-    is_direct_actual_lib_declaration_arena,
 };
 
 struct DirectActualLibAliasBodyProof {
