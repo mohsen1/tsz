@@ -1586,10 +1586,7 @@ impl<'a> TypeLowering<'a> {
                         _ => {
                             if let Some(prop) = self.lower_type_element(idx) {
                                 properties.push(prop);
-                            } else if let Some(node) = self.arena.get(idx)
-                                && let Some(sig) = self.arena.get_signature(node)
-                                && self.is_unresolved_computed_property_name(sig.name)
-                            {
+                            } else if self.is_unresolved_computed_property_name(sig.name) {
                                 has_late_bound_members = true;
                             }
                         }
@@ -1999,10 +1996,7 @@ impl<'a> TypeLowering<'a> {
                     _ => {
                         if let Some(prop) = self.lower_type_element(idx) {
                             parts.merge_property(prop);
-                        } else if let Some(node) = self.arena.get(idx)
-                            && let Some(sig) = self.arena.get_signature(node)
-                            && self.is_unresolved_computed_property_name(sig.name)
-                        {
+                        } else if self.is_unresolved_computed_property_name(sig.name) {
                             parts.has_late_bound_members = true;
                         }
                     }
