@@ -153,6 +153,12 @@ pub struct QueryCacheStatistics {
     pub subtype_reduction_cache_hits: u64,
     /// Number of times the subtype-reduction cache was probed and missed.
     pub subtype_reduction_cache_misses: u64,
+    /// Number of memoized intersection-to-merged-object results.
+    pub intersection_merge_cache_entries: usize,
+    /// Number of times the intersection merge cache returned a hit.
+    pub intersection_merge_cache_hits: u64,
+    /// Number of times the intersection merge cache was probed and missed.
+    pub intersection_merge_cache_misses: u64,
     /// Relation (subtype + assignability) cache statistics.
     pub relation: RelationCacheStats,
 }
@@ -173,6 +179,9 @@ impl QueryCacheStatistics {
         self.subtype_reduction_cache_entries += other.subtype_reduction_cache_entries;
         self.subtype_reduction_cache_hits += other.subtype_reduction_cache_hits;
         self.subtype_reduction_cache_misses += other.subtype_reduction_cache_misses;
+        self.intersection_merge_cache_entries += other.intersection_merge_cache_entries;
+        self.intersection_merge_cache_hits += other.intersection_merge_cache_hits;
+        self.intersection_merge_cache_misses += other.intersection_merge_cache_misses;
         self.relation.subtype_hits += other.relation.subtype_hits;
         self.relation.subtype_misses += other.relation.subtype_misses;
         self.relation.subtype_entries += other.relation.subtype_entries;
@@ -238,6 +247,9 @@ impl QueryCacheStatistics {
         // pointed-at slice is amortized via Arc sharing across hits.
         let subtype_reduction = self.subtype_reduction_cache_entries * (BUCKET_OVERHEAD + 73);
 
+        // intersection_merge_cache: TypeId -> Option<TypeId>
+        let intersection_merge = self.intersection_merge_cache_entries * (BUCKET_OVERHEAD + 12);
+
         eval + app_eval
             + elem
             + spread
@@ -248,6 +260,7 @@ impl QueryCacheStatistics {
             + assignability
             + instantiation
             + subtype_reduction
+            + intersection_merge
     }
 }
 
@@ -311,6 +324,13 @@ impl std::fmt::Display for QueryCacheStatistics {
             self.subtype_reduction_cache_hits,
             self.subtype_reduction_cache_misses,
         )?;
+        writeln!(
+            f,
+            "  intersection_merge:     {} entries ({} hits, {} misses)",
+            self.intersection_merge_cache_entries,
+            self.intersection_merge_cache_hits,
+            self.intersection_merge_cache_misses,
+        )?;
         write!(
             f,
             "  estimated_size:         {} bytes ({:.1} KB)",
@@ -371,6 +391,8 @@ pub struct QueryCache<'a> {
     instantiation_cache_misses: Cell<u64>,
     subtype_reduction_cache_hits: Cell<u64>,
     subtype_reduction_cache_misses: Cell<u64>,
+    intersection_merge_cache_hits: Cell<u64>,
+    intersection_merge_cache_misses: Cell<u64>,
     no_unchecked_indexed_access: Cell<bool>,
     exact_optional_property_types: Cell<bool>,
     /// Optional shared cross-file cache for multi-file project checking.
@@ -419,6 +441,8 @@ impl<'a> QueryCache<'a> {
             instantiation_cache_misses: Cell::new(0),
             subtype_reduction_cache_hits: Cell::new(0),
             subtype_reduction_cache_misses: Cell::new(0),
+            intersection_merge_cache_hits: Cell::new(0),
+            intersection_merge_cache_misses: Cell::new(0),
             no_unchecked_indexed_access: Cell::new(interner.no_unchecked_indexed_access()),
             exact_optional_property_types: Cell::new(interner.exact_optional_property_types()),
             shared,
@@ -472,6 +496,9 @@ impl<'a> QueryCache<'a> {
             subtype_reduction_cache_entries: self.subtype_reduction_cache.len(),
             subtype_reduction_cache_hits: self.subtype_reduction_cache_hits.get(),
             subtype_reduction_cache_misses: self.subtype_reduction_cache_misses.get(),
+            intersection_merge_cache_entries: self.intersection_merge_cache.borrow().len(),
+            intersection_merge_cache_hits: self.intersection_merge_cache_hits.get(),
+            intersection_merge_cache_misses: self.intersection_merge_cache_misses.get(),
             relation: self.relation_cache_stats(),
         }
     }
@@ -598,6 +625,15 @@ impl<'a> QueryCache<'a> {
                 + std::mem::size_of::<SubtypeReductionKey>()
                 + std::mem::size_of::<std::sync::Arc<[TypeId]>>());
 
+        // intersection_merge_cache: TypeId -> Option<TypeId>
+        {
+            let map = self.intersection_merge_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<TypeId>()
+                    + std::mem::size_of::<Option<TypeId>>());
+        }
+
         size
     }
 
@@ -610,6 +646,8 @@ impl<'a> QueryCache<'a> {
         self.instantiation_cache_misses.set(0);
         self.subtype_reduction_cache_hits.set(0);
         self.subtype_reduction_cache_misses.set(0);
+        self.intersection_merge_cache_hits.set(0);
+        self.intersection_merge_cache_misses.set(0);
     }
 
     pub fn probe_subtype_cache(&self, key: RelationCacheKey) -> RelationCacheProbe {
@@ -1693,10 +1731,19 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn lookup_intersection_merge(&self, intersection_id: TypeId) -> Option<Option<TypeId>> {
-        self.intersection_merge_cache
+        let result = self
+            .intersection_merge_cache
             .borrow()
             .get(&intersection_id)
-            .copied()
+            .copied();
+        if result.is_some() {
+            self.intersection_merge_cache_hits
+                .set(self.intersection_merge_cache_hits.get() + 1);
+        } else {
+            self.intersection_merge_cache_misses
+                .set(self.intersection_merge_cache_misses.get() + 1);
+        }
+        result
     }
 
     fn insert_intersection_merge(&self, intersection_id: TypeId, result: Option<TypeId>) {

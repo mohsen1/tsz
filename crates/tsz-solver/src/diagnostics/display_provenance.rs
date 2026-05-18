@@ -5,6 +5,8 @@
 //! algorithms should record provenance through these typed functions instead
 //! of calling interner side-table methods directly.
 
+#![allow(dead_code)]
+
 use crate::caches::db::TypeDatabase;
 use crate::types::{PropertyInfo, TypeId};
 
@@ -87,6 +89,33 @@ mod tests {
         );
 
         assert_eq!(display_alias(&interner, evaluated), Some(application));
+    }
+
+    #[test]
+    fn alias_application_can_prefer_application_alias() {
+        let interner = TypeInterner::new();
+        let evaluated = interner.object(vec![]);
+        let first = interner.application(TypeId::STRING, vec![TypeId::NUMBER]);
+        let preferred = interner.application(TypeId::STRING, vec![TypeId::BOOLEAN]);
+
+        record_alias_application(
+            &interner,
+            AliasApplicationProvenance {
+                evaluated,
+                application: first,
+            },
+            AliasApplicationPriority::PreserveExisting,
+        );
+        record_alias_application(
+            &interner,
+            AliasApplicationProvenance {
+                evaluated,
+                application: preferred,
+            },
+            AliasApplicationPriority::PreferApplication,
+        );
+
+        assert_eq!(display_alias(&interner, evaluated), Some(preferred));
     }
 
     #[test]

@@ -82,7 +82,7 @@ impl EvaluationRequest {
 mod tests {
     use super::{EvaluationOptions, EvaluationRequest};
     use crate::TypeInterner;
-    use crate::evaluation::evaluate::evaluate_type_with_request;
+    use crate::evaluation::evaluate::TypeEvaluator;
     use crate::types::TypeId;
 
     #[test]
@@ -115,13 +115,18 @@ mod tests {
         let array = interner.array(TypeId::STRING);
         let indexed = interner.index_access(array, TypeId::NUMBER);
 
-        let default_result = evaluate_type_with_request(&interner, EvaluationRequest::new(indexed));
+        let mut evaluator = TypeEvaluator::new(&interner);
+        let default_request = EvaluationRequest::new(indexed);
+        evaluator.set_no_unchecked_indexed_access(default_request.no_unchecked_indexed_access());
+        let default_result = evaluator.evaluate(default_request.type_id());
         assert_eq!(default_result, TypeId::STRING);
 
-        let no_unchecked_result = evaluate_type_with_request(
-            &interner,
-            EvaluationRequest::new(indexed).with_no_unchecked_indexed_access(true),
-        );
+        let no_unchecked_request =
+            EvaluationRequest::new(indexed).with_no_unchecked_indexed_access(true);
+        evaluator.reset();
+        evaluator
+            .set_no_unchecked_indexed_access(no_unchecked_request.no_unchecked_indexed_access());
+        let no_unchecked_result = evaluator.evaluate(no_unchecked_request.type_id());
         let expected = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
         assert_eq!(no_unchecked_result, expected);
     }
