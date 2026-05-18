@@ -88,6 +88,54 @@ fn async_es5_uses_ambient_value_for_custom_promise_constructor() {
 }
 
 #[test]
+fn async_es5_arrow_computed_object_value_arrow_captures_generator_this() {
+    let output = emit_es5(
+        "class A {\n\
+             b = async (...args: any[]) => {\n\
+                 await Promise.resolve();\n\
+                 const obj = { [\"a\"]: () => this };\n\
+             };\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("return __awaiter(_this,"),
+        "Class field async arrow should pass the captured instance to __awaiter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var obj;\n                var _a;\n                var _this = this;"),
+        "Nested arrow after await should get a generator-callback lexical this capture.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a[\"a\"] = function () { return _this; }"),
+        "Computed object value arrow should return the generator callback capture.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_nested_regular_function_arrow_owns_this_capture() {
+    let output = emit_es5(
+        "class A {\n\
+             b = async () => {\n\
+                 await Promise.resolve();\n\
+                 const f = function () { return () => this; };\n\
+             };\n\
+         }\n",
+    );
+
+    assert!(
+        !output.contains("var f;\n                var _this = this;"),
+        "Async generator callback should not capture `this` for arrows inside a nested regular function.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "f = function () {\n                            var _this = this;\n                            return function () { return _this; };\n                        };"
+        ),
+        "Nested regular function should own the `_this` capture for its lowered arrow.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn class_method_for_of_delegates_es5_statement_lowering() {
     let output = emit_es5_with_comments(
         r#"

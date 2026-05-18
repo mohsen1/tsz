@@ -6,6 +6,7 @@
 
 use crate::transforms::ir::{IRNode, IRParam};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -379,8 +380,21 @@ impl<'a> AsyncES5Transformer<'a> {
             // SuperKeyword: `super`
             k if k == SyntaxKind::SuperKeyword as u16 => IRNode::Super,
 
-            // FUNCTION_EXPRESSION: `function foo() { ... }` or `async function() { ... }`
-            k if k == syntax_kind_ext::FUNCTION_EXPRESSION => self.convert_function_expression(idx),
+            // FUNCTION_EXPRESSION: `function foo() { ... }` or `async function() { ... }`.
+            // Parser recovery can keep arrow-shaped function data under this
+            // node kind, so honor the arrow marker before treating it as a
+            // regular function boundary.
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION => {
+                if self
+                    .arena
+                    .get_function(node)
+                    .is_some_and(|func| func.equals_greater_than_token)
+                {
+                    self.convert_arrow_function(idx)
+                } else {
+                    self.convert_function_expression(idx)
+                }
+            }
 
             // ARROW_FUNCTION: `() => { ... }` or `async () => expr`
             k if k == syntax_kind_ext::ARROW_FUNCTION => self.convert_arrow_function(idx),
@@ -598,8 +612,20 @@ impl<'a> AsyncES5Transformer<'a> {
         // Convert parameters
         let params = self.convert_parameters(&func.parameters.nodes);
 
-        // Convert body to IR statements
-        let body = self.convert_function_body(func.body);
+        // Convert body to IR statements. Regular function expressions form a
+        // new `this` boundary, so arrows inside them need a capture local to
+        // this function instead of the surrounding async generator callback.
+        let needs_local_this_capture = self.contains_arrow_this_reference(func.body);
+        let mut body = self.convert_function_body(func.body);
+        if needs_local_this_capture {
+            body.insert(
+                0,
+                IRNode::VarDecl {
+                    name: "_this".into(),
+                    initializer: Some(Box::new(IRNode::This { captured: false })),
+                },
+            );
+        }
 
         IRNode::FunctionExpr {
             name: name.map(Into::into),
@@ -607,6 +633,30 @@ impl<'a> AsyncES5Transformer<'a> {
             body,
             is_expression_body: false,
             body_source_range: None,
+        }
+    }
+
+    fn contains_arrow_this_reference(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::ARROW_FUNCTION => {
+                tsz_parser::syntax::transform_utils::contains_this_reference(self.arena, idx)
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::CLASS_EXPRESSION =>
+            {
+                false
+            }
+            _ => self
+                .arena
+                .get_children(idx)
+                .into_iter()
+                .any(|child_idx| self.contains_arrow_this_reference(child_idx)),
         }
     }
 
@@ -668,7 +718,9 @@ impl<'a> AsyncES5Transformer<'a> {
         };
 
         let previous_this_capture = self.captures_this_references();
-        if self.captures_lexical_this() {
+        let captures_generator_this = self.captures_lexical_this()
+            || tsz_parser::syntax::transform_utils::contains_this_reference(self.arena, idx);
+        if captures_generator_this {
             self.set_capture_this_references(true);
         }
 

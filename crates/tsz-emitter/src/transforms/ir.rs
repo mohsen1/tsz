@@ -811,11 +811,23 @@ impl EnumMember {
 // Builder helpers for IR construction
 // =========================================================================
 
+fn function_body_declares_var(body: &[IRNode], name: &str) -> bool {
+    body.iter().any(|node| match node {
+        IRNode::VarDecl { name: var_name, .. } => var_name.as_ref() == name,
+        IRNode::VarDeclList(decls) => decls.iter().any(|decl| match decl {
+            IRNode::VarDecl { name: var_name, .. } => var_name.as_ref() == name,
+            _ => false,
+        }),
+        _ => false,
+    })
+}
+
 impl IRNode {
     /// Return whether this `IR` subtree references `name` as an identifier.
     pub fn contains_identifier(&self, name: &str) -> bool {
         match self {
             Self::Identifier(ident) => ident.as_ref() == name,
+            Self::This { captured } => *captured && name == "_this",
             Self::BinaryExpr { left, right, .. }
             | Self::LogicalOr { left, right }
             | Self::LogicalAnd { left, right } => {
@@ -872,14 +884,26 @@ impl IRNode {
             | Self::FunctionDecl {
                 parameters, body, ..
             } => {
-                parameters
+                if parameters
                     .iter()
                     .any(|param| param.contains_identifier(name))
-                    || body.iter().any(|node| node.contains_identifier(name))
+                {
+                    return true;
+                }
+                if function_body_declares_var(body, name) {
+                    return false;
+                }
+                body.iter().any(|node| node.contains_identifier(name))
             }
-            Self::VarDecl { initializer, .. } => initializer
-                .as_ref()
-                .is_some_and(|init| init.contains_identifier(name)),
+            Self::VarDecl {
+                name: var_name,
+                initializer,
+            } => {
+                var_name.as_ref() == name
+                    || initializer
+                        .as_ref()
+                        .is_some_and(|init| init.contains_identifier(name))
+            }
             Self::ReturnStatement(expr) => expr
                 .as_ref()
                 .is_some_and(|expr| expr.contains_identifier(name)),
@@ -1090,7 +1114,6 @@ impl IRNode {
             | Self::NullLiteral
             | Self::Undefined
             | Self::RuntimeHelper(_)
-            | Self::This { .. }
             | Self::Super
             | Self::ImportMeta
             | Self::EmptyStatement

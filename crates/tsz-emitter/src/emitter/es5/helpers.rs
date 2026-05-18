@@ -1872,7 +1872,7 @@ impl<'a> Printer<'a> {
         &mut self,
         hoisted_var_groups: &[Vec<String>],
         generator_body: &str,
-        this_expr: &str,
+        _this_expr: &str,
     ) {
         for group in hoisted_var_groups {
             if group.is_empty() {
@@ -1889,7 +1889,7 @@ impl<'a> Printer<'a> {
             self.write_line();
         }
 
-        if this_expr != "this" && generator_body.contains("return _this") {
+        if generator_body.contains("_this") {
             self.write("var _this = this;");
             self.write_line();
         }
