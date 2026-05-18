@@ -438,23 +438,34 @@ impl<'a> Printer<'a> {
         let resolved_target = self
             .resolve_const_enum_alias_target(&target, ns_prefix)
             .unwrap_or(target);
+        let alias_key = if ns_prefix.is_empty() {
+            alias_name
+        } else {
+            format!("{ns_prefix}.{alias_name}")
+        };
         self.const_enum_import_aliases
-            .insert(alias_name, resolved_target);
+            .insert(alias_key, resolved_target);
     }
 
     fn resolve_const_enum_alias_target(&self, target: &str, ns_prefix: &str) -> Option<String> {
+        if !ns_prefix.is_empty() {
+            let qualified = format!("{ns_prefix}.{target}");
+            if self.const_enum_values.contains_key(&qualified) {
+                return Some(qualified);
+            }
+            if let Some(alias_target) = self.const_enum_import_aliases.get(&qualified) {
+                return Some(alias_target.clone());
+            }
+        }
+
         if self.const_enum_values.contains_key(target) {
             return Some(target.to_string());
         }
-
-        if ns_prefix.is_empty() {
-            return None;
+        if let Some(alias_target) = self.const_enum_import_aliases.get(target) {
+            return Some(alias_target.clone());
         }
 
-        let qualified = format!("{ns_prefix}.{target}");
-        self.const_enum_values
-            .contains_key(&qualified)
-            .then_some(qualified)
+        None
     }
 
     pub(in crate::emitter) fn qualified_name_to_string(&self, idx: NodeIndex) -> String {

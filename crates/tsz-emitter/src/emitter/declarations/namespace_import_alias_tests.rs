@@ -117,3 +117,99 @@ fn namespace_relative_const_enum_aliases_inline_and_elide_es5() {
         "ES5 const enum aliases should still inline at usage sites.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn sibling_namespaces_keep_local_const_enum_alias_scope() {
+    let source = "namespace A {\n  export const enum E { X = 1 }\n  import Local = E;\n  export const a = Local.X;\n}\nnamespace B {\n  export const enum E { X = 2 }\n  import Local = E;\n  export const b = Local.X;\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("A.a = 1 /* Local.X */;"),
+        "Alias `Local` in namespace A should resolve to A.E.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("B.b = 2 /* Local.X */;"),
+        "Alias `Local` in namespace B should resolve to B.E.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn sibling_namespaces_keep_local_const_enum_alias_scope_es5() {
+    let source = "namespace A {\n  export const enum E { X = 1 }\n  import Local = E;\n  export const a = Local.X;\n}\nnamespace B {\n  export const enum E { X = 2 }\n  import Local = E;\n  export const b = Local.X;\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrintOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("A.a = 1 /* Local.X */;"),
+        "ES5 alias `Local` in namespace A should resolve to A.E.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("B.b = 2 /* Local.X */;"),
+        "ES5 alias `Local` in namespace B should resolve to B.E.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn chained_import_alias_to_const_enum_is_elided_es5() {
+    let source = "namespace Root.Child {\n  export const enum E { A = 1 }\n}\nnamespace Root {\n  import A = Child.E;\n  import B = A;\n  export const value = B.A;\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrintOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("var A =") && !output.contains("var B ="),
+        "ES5 import aliases chained to a const enum should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Root.value = 1 /* B.A */;"),
+        "ES5 chained const enum alias should still inline at usage sites.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn erased_import_alias_preserves_trailing_standalone_comment_es5() {
+    let source = "namespace Root {\n  export interface I {}\n  import Local = I;\n  // keep me\n  export const value = 1;\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrintOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("// keep me"),
+        "Standalone trailing comments after erased import aliases should be preserved.\nOutput:\n{output}"
+    );
+}

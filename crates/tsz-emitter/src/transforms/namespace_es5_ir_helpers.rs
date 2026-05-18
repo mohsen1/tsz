@@ -101,17 +101,6 @@ pub(super) fn is_namespace_like(arena: &NodeArena, node: &tsz_parser::parser::no
     false
 }
 
-pub(super) fn is_namespace_import_equals_statement(arena: &NodeArena, node: &Node) -> bool {
-    if node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-        return true;
-    }
-    node.kind == syntax_kind_ext::EXPORT_DECLARATION
-        && arena
-            .get_export_decl(node)
-            .and_then(|export| arena.get(export.export_clause))
-            .is_some_and(|inner| inner.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
-}
-
 pub(super) use crate::transforms::emit_utils::identifier_text as get_identifier_text;
 
 /// Convert function parameters to IR parameters (without type annotations)
@@ -1206,15 +1195,27 @@ pub(super) fn namespace_body_by_name(
 }
 
 pub(super) fn entity_path_has_runtime_value(arena: &NodeArena, path: &[String]) -> Option<bool> {
+    entity_path_has_runtime_value_with_depth(arena, path, 0)
+}
+
+fn entity_path_has_runtime_value_with_depth(
+    arena: &NodeArena,
+    path: &[String],
+    depth: usize,
+) -> Option<bool> {
     if path.is_empty() {
         return None;
+    }
+    if depth > 16 {
+        return Some(true);
     }
 
     if path.len() >= 2 {
         let namespace_path = &path[..path.len() - 1];
         let member_name = path.last()?;
         if let Some(body) = namespace_body_by_name(arena, namespace_path)
-            && let Some(runtime) = namespace_member_has_runtime_value(arena, body, member_name)
+            && let Some(runtime) =
+                namespace_member_has_runtime_value(arena, body, namespace_path, member_name, depth)
         {
             return Some(runtime);
         }
@@ -1226,7 +1227,9 @@ pub(super) fn entity_path_has_runtime_value(arena: &NodeArena, path: &[String]) 
 fn namespace_member_has_runtime_value(
     arena: &NodeArena,
     body_idx: NodeIndex,
+    namespace_path: &[String],
     name: &str,
+    depth: usize,
 ) -> Option<bool> {
     let body_node = arena.get(body_idx)?;
 
@@ -1234,7 +1237,7 @@ fn namespace_member_has_runtime_value(
         if get_identifier_text(arena, module.name).as_deref() == Some(name) {
             return Some(namespace_body_has_runtime_value(arena, module.body));
         }
-        return namespace_member_has_runtime_value(arena, module.body, name);
+        return namespace_member_has_runtime_value(arena, module.body, namespace_path, name, depth);
     }
 
     let block_data = arena.get_module_block(body_node)?;
@@ -1245,7 +1248,9 @@ fn namespace_member_has_runtime_value(
         let Some(stmt_node) = arena.get(stmt_idx) else {
             continue;
         };
-        if let Some(runtime) = statement_has_runtime_value_for_name(arena, stmt_node, name) {
+        if let Some(runtime) =
+            statement_has_runtime_value_for_name(arena, stmt_node, name, namespace_path, depth)
+        {
             if runtime {
                 return Some(true);
             }
@@ -1283,12 +1288,34 @@ fn statement_has_runtime_value_for_name(
     arena: &NodeArena,
     stmt_node: &Node,
     name: &str,
+    namespace_path: &[String],
+    depth: usize,
 ) -> Option<bool> {
     match stmt_node.kind {
         k if k == syntax_kind_ext::EXPORT_DECLARATION => {
             let export = arena.get_export_decl(stmt_node)?;
             let inner = arena.get(export.export_clause)?;
-            statement_has_runtime_value_for_name(arena, inner, name)
+            statement_has_runtime_value_for_name(arena, inner, name, namespace_path, depth)
+        }
+        k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+            let import = arena.get_import_decl(stmt_node)?;
+            if get_identifier_text(arena, import.import_clause).as_deref() != Some(name) {
+                return None;
+            }
+            let target_parts = collect_qualified_name_parts(arena, import.module_specifier)?;
+            if !namespace_path.is_empty() {
+                let mut relative_parts = namespace_path.to_vec();
+                relative_parts.extend(target_parts.iter().cloned());
+                if let Some(runtime) =
+                    entity_path_has_runtime_value_with_depth(arena, &relative_parts, depth + 1)
+                {
+                    return Some(runtime);
+                }
+            }
+            Some(
+                entity_path_has_runtime_value_with_depth(arena, &target_parts, depth + 1)
+                    .unwrap_or(true),
+            )
         }
         k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
             let iface = arena.get_interface(stmt_node)?;

@@ -979,17 +979,49 @@ impl<'a> Printer<'a> {
                 return Some(r);
             }
         }
-        if let Some(current_namespace) = self.current_namespace_name.as_deref()
-            && let Some(local_path) = enum_path.strip_prefix(&format!("{current_namespace}."))
-            && let Some(target) = self.const_enum_import_aliases.get(local_path)
+        if let Some(current_namespace) = self.current_namespace_source_path.as_deref()
+            && let Some(target) = self
+                .const_enum_import_aliases
+                .get(&format!("{current_namespace}.{enum_path}"))
             && let Some(r) =
                 self.lookup_scoped_const_enum_alias_target_values(target, None, access_pos)
         {
             return Some(r);
         }
+        if let Some(current_namespace) = self.current_namespace_name.as_deref()
+            && let Some(local_path) = enum_path.strip_prefix(&format!("{current_namespace}."))
+        {
+            if let Some(source_namespace) = self.current_namespace_source_path.as_deref()
+                && let Some(target) = self
+                    .const_enum_import_aliases
+                    .get(&format!("{source_namespace}.{local_path}"))
+                && let Some(r) =
+                    self.lookup_scoped_const_enum_alias_target_values(target, None, access_pos)
+            {
+                return Some(r);
+            }
+            if let Some(target) = self.const_enum_import_aliases.get(local_path)
+                && let Some(r) =
+                    self.lookup_scoped_const_enum_alias_target_values(target, None, access_pos)
+            {
+                return Some(r);
+            }
+        }
         if let Some(dot_pos) = enum_path.find('.') {
             let first = &enum_path[..dot_pos];
             let rest = &enum_path[dot_pos + 1..];
+            if let Some(current_namespace) = self.current_namespace_source_path.as_deref()
+                && let Some(target) = self
+                    .const_enum_import_aliases
+                    .get(&format!("{current_namespace}.{first}"))
+                && let Some(r) = self.lookup_scoped_const_enum_alias_target_values(
+                    target,
+                    Some(rest),
+                    access_pos,
+                )
+            {
+                return Some(r);
+            }
             if let Some(target) = self.const_enum_import_aliases.get(first) {
                 if let Some(r) = self.lookup_scoped_const_enum_alias_target_values(
                     target,
