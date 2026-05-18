@@ -84,10 +84,32 @@ impl<'a> LoweringPass<'a> {
                     spec.name
                 };
                 if let Some(name) = self.get_identifier_text_ref(local_name_idx) {
-                    self.re_exported_names.insert(name.to_string());
+                    let local_name = name.to_string();
+                    self.re_exported_names.insert(local_name.clone());
+                    if let Some(export_name_id) = self.get_identifier_id(spec.name) {
+                        self.re_exported_export_names
+                            .entry(local_name)
+                            .or_default()
+                            .push(export_name_id);
+                    }
                 }
             }
         }
+    }
+
+    pub(super) fn commonjs_export_names_for_local(
+        &self,
+        local_name: Option<&str>,
+        fallback_name: IdentifierId,
+    ) -> Arc<[IdentifierId]> {
+        if let Some(local_name) = local_name
+            && let Some(export_names) = self.re_exported_export_names.get(local_name)
+            && !export_names.is_empty()
+        {
+            return Arc::from(export_names.clone());
+        }
+
+        Arc::from(vec![fallback_name])
     }
 
     pub(super) const fn is_commonjs(&self) -> bool {

@@ -19,6 +19,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeParamInfo;
+use tsz_solver::computation::TypeResolver;
 use tsz_solver::{TypeId, TypePredicateTarget};
 
 impl<'a> CheckerState<'a> {
@@ -83,10 +84,9 @@ impl<'a> CheckerState<'a> {
         if name == "Array"
             && self.ctx.share_owner_symbol_type_results
             && !self.lib_name_has_local_augmentation(name)
-            && let Some(ty) = tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types)
+            && let Some(ty) = TypeResolver::get_array_base_type(&self.ctx.types)
         {
-            let params =
-                tsz_solver::TypeResolver::get_array_base_type_params(&self.ctx.types).to_vec();
+            let params = TypeResolver::get_array_base_type_params(&self.ctx.types).to_vec();
             if !params.is_empty() {
                 return (Some(ty), params);
             }
