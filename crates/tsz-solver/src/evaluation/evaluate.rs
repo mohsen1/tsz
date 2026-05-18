@@ -25,6 +25,7 @@ use crate::types::{
 };
 use crate::visitors::visitor_predicates::contains_type_matching;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 
 /// Controls which subtype direction makes a member redundant when simplifying
 /// a union or intersection.
@@ -73,6 +74,11 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// pattern thousands of times while checking whether the application-level
     /// infer fast path applies.
     contains_infer_cache: FxHashMap<TypeId, bool>,
+    /// PERF: Cache fallback expansion of application-shaped infer patterns.
+    /// `match_infer_pattern` may try the same `Promise<infer U>`-style pattern
+    /// against many non-matching sources; a fresh `ApplicationEvaluator` has an
+    /// empty cache each time, so keep the stable expansion on this evaluator.
+    infer_pattern_application_expansion_cache: RefCell<FxHashMap<TypeId, TypeId>>,
     /// Ceiling for eager mapped-key expansion before bailing out.
     max_mapped_keys: usize,
     /// When true, flag `depth_exceeded` on Application cycle detection.
@@ -168,6 +174,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
             contains_infer_cache: FxHashMap::default(),
+            infer_pattern_application_expansion_cache: RefCell::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
             flag_depth_on_app_cycle: false,
             expand_application_display_alias_args: false,
@@ -230,6 +237,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             suppress_this_binding: false,
             conditional_subtype_cache: FxHashMap::default(),
             contains_infer_cache: FxHashMap::default(),
+            infer_pattern_application_expansion_cache: RefCell::default(),
             max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
             flag_depth_on_app_cycle: false,
             expand_application_display_alias_args: false,
@@ -307,6 +315,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.cache.clear();
         self.guard.reset();
         self.def_depth.clear();
+        self.infer_pattern_application_expansion_cache
+            .borrow_mut()
+            .clear();
     }
 
     // =========================================================================
@@ -370,6 +381,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     #[inline]
     pub(crate) fn cache_contains_infer(&mut self, type_id: TypeId, result: bool) {
         self.contains_infer_cache.insert(type_id, result);
+    }
+
+    /// PERF: Look up cached fallback expansion for an application infer pattern.
+    #[inline]
+    pub(crate) fn cached_infer_pattern_application_expansion(
+        &self,
+        pattern: TypeId,
+    ) -> Option<TypeId> {
+        self.infer_pattern_application_expansion_cache
+            .borrow()
+            .get(&pattern)
+            .copied()
+    }
+
+    /// PERF: Cache fallback expansion for an application infer pattern.
+    #[inline]
+    pub(crate) fn cache_infer_pattern_application_expansion(
+        &self,
+        pattern: TypeId,
+        expanded: TypeId,
+    ) {
+        self.infer_pattern_application_expansion_cache
+            .borrow_mut()
+            .insert(pattern, expanded);
     }
 
     /// Check if `no_unchecked_indexed_access` is enabled.

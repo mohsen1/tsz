@@ -1364,8 +1364,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Fallback: Structural expansion
                 // Expand the pattern Application to its structural form and recurse
                 // This handles cases like: Reducer<infer S> matching a structural function type
-                let evaluator = ApplicationEvaluator::new(self.interner(), self.resolver());
-                let expanded_pattern = evaluator.evaluate_or_original(pattern);
+                let expanded_pattern = if let Some(cached) =
+                    self.cached_infer_pattern_application_expansion(pattern)
+                {
+                    cached
+                } else {
+                    let evaluator = ApplicationEvaluator::new(self.interner(), self.resolver());
+                    let expanded = evaluator.evaluate_or_original(pattern);
+                    self.cache_infer_pattern_application_expansion(pattern, expanded);
+                    expanded
+                };
 
                 // Only recurse if expansion actually changed the type
                 if expanded_pattern != pattern {
