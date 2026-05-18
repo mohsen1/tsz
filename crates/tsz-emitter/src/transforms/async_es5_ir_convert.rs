@@ -102,7 +102,7 @@ impl<'a> AsyncES5Transformer<'a> {
         if start >= end {
             return None;
         }
-        let raw = text[start..end].trim_end();
+        let raw = text.get(start..end)?.trim_end();
         let quote = raw.as_bytes().first().copied()?;
         if !matches!(quote, b'\'' | b'"') || raw.as_bytes().last().copied() != Some(quote) {
             return None;

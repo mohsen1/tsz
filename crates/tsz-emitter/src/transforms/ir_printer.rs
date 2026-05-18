@@ -110,11 +110,20 @@ impl<'a> IRPrinter<'a> {
 
     /// Check if a generator switch case should stay on the `case N:` line.
     fn is_generator_inline_case_statement(node: &IRNode) -> bool {
-        matches!(node, IRNode::ThrowStatement(_))
-            || matches!(
-                node,
-                IRNode::ReturnStatement(Some(expr)) if matches!(expr.as_ref(), IRNode::GeneratorOp { .. })
-            )
+        match node {
+            IRNode::ThrowStatement(expr) => Self::is_generator_inline_throw_expression(expr),
+            IRNode::ReturnStatement(Some(expr)) => {
+                matches!(expr.as_ref(), IRNode::GeneratorOp { .. })
+            }
+            _ => false,
+        }
+    }
+
+    fn is_generator_inline_throw_expression(expr: &IRNode) -> bool {
+        matches!(
+            expr,
+            IRNode::Identifier(_) | IRNode::CallExpr { .. } | IRNode::GeneratorSent
+        )
     }
 
     fn emit_namespace_bound_enum_iife(
