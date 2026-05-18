@@ -32,6 +32,10 @@ function readRequiredFile(file, label) {
     console.error(`error: ${label} does not exist: ${file}`);
     process.exit(1);
   }
+  if (!fs.statSync(file).isFile()) {
+    console.error(`error: ${label} is not a file: ${file}`);
+    process.exit(1);
+  }
   return fs.readFileSync(file, "utf8");
 }
 
@@ -103,7 +107,14 @@ function ensurePairingReportShape(report) {
 
   for (const label of ["templates", "testCases", "solutions"]) {
     const source = report?.sources?.[label];
-    if (source?.repository && source?.ref) continue;
+    if (
+      typeof source?.repository === "string" &&
+      source.repository.trim() !== "" &&
+      typeof source?.ref === "string" &&
+      source.ref.trim() !== ""
+    ) {
+      continue;
+    }
 
     console.error(
       [

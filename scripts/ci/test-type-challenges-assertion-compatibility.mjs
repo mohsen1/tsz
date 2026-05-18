@@ -474,6 +474,10 @@ withTempDir((dir) => {
   assert.equal(row.exit_class, "fixture invalid");
   assert.equal(row.first_failure_class, "assertion corpus not tsc-clean");
   assert.deepEqual(row.known_blockers, ["assertion corpus not tsc-clean"]);
+  assert.deepEqual(row.fixture_sources, [
+    { name: "type-challenges", repository: "type", ref: "type-ref" },
+    { name: "type-challenges-solutions", repository: "solutions", ref: "solutions-ref" },
+  ]);
   assert.deepEqual(row.diagnostic_codes, ["TS2344"]);
   assert.deepEqual(row.diagnostic_subsystems, [
     {
@@ -685,6 +689,36 @@ withTempDir((dir) => {
   assert.match(
     result.stderr,
     /assertion classification comparison\.status must be a non-empty string/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 1,
+            candidatesWithDiagnostics: 1,
+            candidatesWithoutDiagnostics: 0,
+            filesWithDiagnostics: ["assertions//one.ts"],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc candidateDiagnostics\.filesWithDiagnostics\[0\] must stay inside the assertion candidate directory/,
   );
   assert.equal(fs.existsSync(outFile), false);
 });
