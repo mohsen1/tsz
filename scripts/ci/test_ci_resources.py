@@ -10,13 +10,14 @@ import os
 import pathlib
 import subprocess
 import unittest
+from typing import Optional
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "ci" / "ci-resources.sh"
 
 
 def call_function(func_name: str, *args: str, host_cpus: int = 8, shard_count: int = 4,
-                  env_overrides: dict | None = None) -> subprocess.CompletedProcess:
+                  env_overrides: Optional[dict[str, str]] = None) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["HOST_CPUS"] = str(host_cpus)
     env["SHARD_COUNT"] = str(shard_count)

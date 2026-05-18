@@ -1053,6 +1053,76 @@ def extract_project_dashboard_row_names(text: str) -> Optional[list[str]]:
     return re.findall(r'\bname:\s*"([^"]+)"', match.group("body"))
 
 
+def extract_project_row_definitions(text: str) -> Optional[list[dict[str, Optional[str]]]]:
+    """Extract project row metadata from `PROJECT_ROW_DEFINITIONS`.
+
+    The architecture guard intentionally stays lightweight and avoids executing
+    project scripts. This parser only reads the scalar fields needed by the
+    Track 1 drift checks.
+    """
+    match = re.search(
+        r"\b(?:export\s+)?const\s+PROJECT_ROW_DEFINITIONS\s*=\s*\[(?P<body>.*?)\]\s*;",
+        text,
+        re.DOTALL,
+    )
+    if match is None:
+        return None
+
+    rows: list[dict[str, Optional[str]]] = []
+    for object_match in re.finditer(r"\{(?P<object>.*?)\}", match.group("body"), re.DOTALL):
+        body = object_match.group("object")
+        name_match = re.search(r'\bname:\s*"([^"]+)"', body)
+        if name_match is None:
+            continue
+
+        row: dict[str, Optional[str]] = {"name": name_match.group(1)}
+        for field in ("benchmark_set", "guard_set"):
+            field_match = re.search(rf'\b{field}:\s*(?:"([^"]+)"|null)', body)
+            if field_match is None:
+                row[field] = None
+            else:
+                row[field] = field_match.group(1)
+        rows.append(row)
+
+    return rows
+
+
+def project_rows_by_field(
+    definitions: Optional[list[dict[str, Optional[str]]]],
+    field: str,
+    value: str,
+) -> list[str]:
+    if definitions is None:
+        return []
+    return [row["name"] for row in definitions if row.get(field) == value and row.get("name")]
+
+
+def project_row_names(definitions: Optional[list[dict[str, Optional[str]]]]) -> list[str]:
+    if definitions is None:
+        return []
+    return [row["name"] for row in definitions if row.get("name")]
+
+
+def project_required_rows(
+    text: str,
+    definitions: Optional[list[dict[str, Optional[str]]]],
+) -> Optional[list[str]]:
+    rows = extract_js_array_strings(text, "REQUIRED_PROJECT_ROWS")
+    if rows is not None:
+        return rows
+    return project_rows_by_field(definitions, "benchmark_set", "required") or None
+
+
+def project_compile_canary_rows(
+    text: str,
+    definitions: Optional[list[dict[str, Optional[str]]]],
+) -> Optional[list[str]]:
+    rows = extract_js_array_strings(text, "COMPILE_CANARY_PROJECT_ROWS")
+    if rows is not None:
+        return rows
+    return project_rows_by_field(definitions, "guard_set", "canary") or None
+
+
 def scan_project_dashboard_rows(path: pathlib.Path) -> list[str]:
     """Ensure every expected project benchmark row is present in the dashboard.
 
@@ -1071,9 +1141,12 @@ def scan_project_dashboard_rows(path: pathlib.Path) -> list[str]:
         return [f"{relative_path(path)}:0 benchmark data file is missing"]
 
     text = path.read_text(encoding="utf-8", errors="ignore")
-    expected = extract_js_array_strings(text, "REQUIRED_PROJECT_ROWS")
-    canary = extract_js_array_strings(text, "COMPILE_CANARY_PROJECT_ROWS")
+    definitions = extract_project_row_definitions(text)
+    expected = project_required_rows(text, definitions)
+    canary = project_compile_canary_rows(text, definitions)
     dashboard = extract_project_dashboard_row_names(text)
+    if dashboard is None:
+        dashboard = project_row_names(definitions) or None
     rel = relative_path(path)
     hits: list[str] = []
 
@@ -1191,8 +1264,9 @@ def scan_project_fixture_sources(
         return [f"{fixture_rel}:0 project fixture metadata file is missing"]
 
     row_text = row_path.read_text(encoding="utf-8", errors="ignore")
-    required = extract_js_array_strings(row_text, "REQUIRED_PROJECT_ROWS")
-    canary = extract_js_array_strings(row_text, "COMPILE_CANARY_PROJECT_ROWS")
+    definitions = extract_project_row_definitions(row_text)
+    required = project_required_rows(row_text, definitions)
+    canary = project_compile_canary_rows(row_text, definitions)
     if required is None:
         hits.append(f"{row_rel}:0 missing REQUIRED_PROJECT_ROWS array")
         required = []
@@ -1232,7 +1306,11 @@ def scan_project_fixture_sources(
 
 def extract_project_compile_guard_rows(text: str) -> list[str]:
     """Extract row names routed through `should_check_project`."""
-    return re.findall(r'\bshould_check_project\s+"([^"]+)"', text)
+    return [
+        name
+        for name in re.findall(r'\bshould_check_project\s+"([^"]+)"', text)
+        if not name.startswith("$")
+    ]
 
 
 def extract_project_benchmark_rows(text: str) -> list[str]:
@@ -1259,8 +1337,9 @@ def scan_project_inclusion_policy(
         return [f"{bench_rel}:0 benchmark runner is missing"]
 
     row_text = row_path.read_text(encoding="utf-8", errors="ignore")
-    required = extract_js_array_strings(row_text, "REQUIRED_PROJECT_ROWS")
-    canary = extract_js_array_strings(row_text, "COMPILE_CANARY_PROJECT_ROWS")
+    definitions = extract_project_row_definitions(row_text)
+    required = project_required_rows(row_text, definitions)
+    canary = project_compile_canary_rows(row_text, definitions)
     if required is None:
         hits.append(f"{row_rel}:0 missing REQUIRED_PROJECT_ROWS array")
         required = []
@@ -1272,6 +1351,10 @@ def scan_project_inclusion_policy(
 
     compile_text = compile_guard_path.read_text(encoding="utf-8", errors="ignore")
     compile_rows = extract_project_compile_guard_rows(compile_text)
+    if 'for name in "${TSZ_COMPILE_GUARD_REQUIRED_ROWS[@]}"' in compile_text:
+        compile_rows.extend(project_rows_by_field(definitions, "guard_set", "required"))
+    if 'for name in "${TSZ_COMPILE_GUARD_CANARY_ROWS[@]}"' in compile_text:
+        compile_rows.extend(project_rows_by_field(definitions, "guard_set", "canary"))
     compile_set = set(compile_rows)
     manifest_set = set(manifest_rows)
     expected_compile_rows = sorted(set(manifest_rows) - BENCHMARK_ONLY_PROJECT_ROWS)
