@@ -249,6 +249,10 @@ function copyRequiredFile(from, to, label) {
     console.error(`error: ${label} does not exist: ${from}`);
     process.exit(1);
   }
+  if (!fs.statSync(from).isFile()) {
+    console.error(`error: ${label} is not a file: ${from}`);
+    process.exit(1);
+  }
   fs.mkdirSync(path.dirname(to), { recursive: true });
   fs.copyFileSync(from, to);
 }
