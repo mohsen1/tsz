@@ -126,7 +126,6 @@ impl<'a> ES5ClassTransformer<'a> {
         let params = self.extract_parameters(&accessor_data.parameters);
 
         let body_source_range = self.arena.pos_end_at(accessor_data.body);
-
         let body = if accessor_data.body.is_none() {
             vec![]
         } else {
@@ -187,7 +186,6 @@ impl<'a> ES5ClassTransformer<'a> {
         } else {
             None // Force multi-line when destructuring prologue exists
         };
-
         let mut body = if accessor_data.body.is_none() {
             vec![]
         } else {

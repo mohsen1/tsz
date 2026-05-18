@@ -182,6 +182,10 @@ impl<'a> NamespaceES5Emitter<'a> {
         self.transformer.set_default_exported_func_names(names);
     }
 
+    pub fn set_commonjs_export_name(&mut self, name: Option<String>) {
+        self.transformer.set_commonjs_export_name(name);
+    }
+
     pub(crate) fn set_const_enum_facts(
         &mut self,
         values: FxHashMap<String, Vec<ScopedConstEnum>>,

@@ -14,6 +14,7 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     fn simple_member_name_in_arena(arena: &NodeArena, member_idx: NodeIndex) -> Option<String> {
@@ -1225,7 +1226,7 @@ impl<'a> CheckerState<'a> {
         let prop_atom = self.ctx.types.intern_string(prop_name);
         let cache_key = (
             mapped_type,
-            tsz_solver::TypeResolver::resolver_generation(&self.ctx),
+            TypeResolver::resolver_generation(&self.ctx),
             prop_atom,
         );
 

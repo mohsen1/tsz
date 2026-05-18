@@ -7,6 +7,7 @@
 use tracing::trace;
 use tsz_binder::SymbolId;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 use tsz_solver::def::DefId;
 
 use crate::context::CheckerContext;
@@ -735,7 +736,7 @@ impl<'a> CheckerContext<'a> {
         if body_changed || params_changed || no_type_params_changed {
             self.clear_type_evaluation_caches_for_def(def_id);
         }
-        let declared_variances = tsz_solver::TypeResolver::get_type_param_variance(self, def_id);
+        let declared_variances = TypeResolver::get_type_param_variance(self, def_id);
         self.with_envs_for_register("insert_def_with_params", |env| {
             env.insert_def_with_params(def_id, body, params.clone());
             if let Some(variances) = declared_variances.clone() {

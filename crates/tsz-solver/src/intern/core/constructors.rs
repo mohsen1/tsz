@@ -1419,6 +1419,11 @@ impl TypeInterner {
         self.intern(TypeData::TypeParameter(info))
     }
 
+    /// Allocate a fresh declaration-scoped type parameter.
+    pub fn fresh_type_param(&self, info: TypeParamInfo) -> TypeId {
+        self.intern_fresh(TypeData::TypeParameter(info))
+    }
+
     /// Intern an unresolved type name that should behave like an error type
     /// while preserving its source spelling for diagnostics.
     pub fn unresolved_type_name(&self, name: Atom) -> TypeId {

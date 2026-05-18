@@ -110,6 +110,7 @@ pub struct NamespaceES5Transformer<'a> {
     /// (e.g., from computed property lowering inside object literals)
     hoisted_temps: RefCell<Vec<String>>,
     default_exported_func_names: std::collections::HashSet<String>,
+    commonjs_export_name: Option<String>,
     const_enum_values: FxHashMap<String, Vec<ScopedConstEnum>>,
     const_enum_import_aliases: FxHashMap<String, String>,
     remove_comments: bool,
@@ -128,6 +129,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             emit_decorator_metadata: false,
             hoisted_temps: RefCell::new(Vec::new()),
             default_exported_func_names: std::collections::HashSet::new(),
+            commonjs_export_name: None,
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),
             remove_comments: false,
@@ -146,6 +148,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             emit_decorator_metadata: false,
             hoisted_temps: RefCell::new(Vec::new()),
             default_exported_func_names: std::collections::HashSet::new(),
+            commonjs_export_name: None,
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),
             remove_comments: false,
@@ -176,6 +179,10 @@ impl<'a> NamespaceES5Transformer<'a> {
 
     pub fn set_default_exported_func_names(&mut self, names: std::collections::HashSet<String>) {
         self.default_exported_func_names = names;
+    }
+
+    pub fn set_commonjs_export_name(&mut self, name: Option<String>) {
+        self.commonjs_export_name = name;
     }
 
     pub(crate) fn set_const_enum_facts(
@@ -586,6 +593,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs && !merges_with_default_func,
+            commonjs_export_name: self.commonjs_export_name.clone().map(Into::into),
             system_export_names: Vec::new(),
             should_declare_var,
             default_export_merge,
@@ -1976,6 +1984,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
+            commonjs_export_name: self.commonjs_export_name.clone().map(Into::into),
             system_export_names: Vec::new(),
             should_declare_var,
             default_export_merge: false,

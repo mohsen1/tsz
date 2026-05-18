@@ -8,6 +8,7 @@ use crate::context::TypingRequest;
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, node::NodeAccess, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::ContextualTypeContext;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 impl<'a> CheckerState<'a> {
@@ -557,7 +558,7 @@ impl<'a> CheckerState<'a> {
             && let Some(jsdoc_callable_type) =
                 self.jsdoc_callable_type_annotation_for_function(func_idx)
         {
-            let ctx_helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+            let ctx_helper = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 jsdoc_callable_type,
                 self.ctx.compiler_options.no_implicit_any,

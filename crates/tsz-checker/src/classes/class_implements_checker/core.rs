@@ -12,6 +12,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::TypeResolver;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 impl<'a> CheckerState<'a> {
@@ -107,7 +108,7 @@ impl<'a> CheckerState<'a> {
         if use_global_array_members {
             let display_name = array_display_name(self);
 
-            if let Some(array_base) = tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types)
+            if let Some(array_base) = TypeResolver::get_array_base_type(&self.ctx.types)
                 && let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
                     self.ctx.types,
                     array_base,
@@ -115,7 +116,7 @@ impl<'a> CheckerState<'a> {
             {
                 let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
                     self.ctx.types,
-                    tsz_solver::TypeResolver::get_array_base_type_params(&self.ctx.types),
+                    TypeResolver::get_array_base_type_params(&self.ctx.types),
                     type_args,
                 );
                 let properties = shape

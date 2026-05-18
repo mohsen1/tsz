@@ -13,6 +13,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{CallExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::TypeEnvironment;
 use tsz_solver::{GuardSense, ParamInfo, TupleElement, TypeId, TypePredicate};
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
@@ -221,7 +222,7 @@ pub struct FlowAnalyzer<'a> {
     /// Optional cache for flow analysis results to avoid redundant graph traversals
     pub(crate) flow_cache: Option<&'a RefCell<FlowCache>>,
     /// Optional `TypeEnvironment` for resolving Lazy types during narrowing
-    pub(crate) type_environment: Option<&'a RefCell<tsz_solver::TypeEnvironment>>,
+    pub(crate) type_environment: Option<&'a RefCell<TypeEnvironment>>,
     /// Cache for switch-reference relevance checks.
     /// Key: (`switch_expr_node`, `reference_node`) -> whether switch can narrow reference.
     switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
@@ -658,10 +659,7 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Set the `TypeEnvironment` for resolving Lazy types during narrowing.
-    pub const fn with_type_environment(
-        mut self,
-        type_env: &'a RefCell<tsz_solver::TypeEnvironment>,
-    ) -> Self {
+    pub const fn with_type_environment(mut self, type_env: &'a RefCell<TypeEnvironment>) -> Self {
         self.type_environment = Some(type_env);
         self
     }
