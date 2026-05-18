@@ -1611,6 +1611,36 @@ export const COMPATIBILITY_CORPUS_ROWS = [
 """
         self.assertEqual(self._write_and_scan(body), [])
 
+    def test_shared_project_row_definitions_pass(self):
+        body = """
+export const PROJECT_ROW_DEFINITIONS = [
+  {
+    name: "utility-types-project",
+    benchmark_set: "required",
+    guard_set: "required",
+  },
+  {
+    name: "zod-project",
+    benchmark_set: "canary",
+    guard_set: "canary",
+  },
+];
+
+export const REQUIRED_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.benchmark_set === "required")
+  .map((row) => row.name);
+
+export const COMPILE_CANARY_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.guard_set === "canary")
+  .map((row) => row.name);
+
+export const COMPATIBILITY_CORPUS_ROWS = PROJECT_ROW_DEFINITIONS.map((row) => ({
+  name: row.name,
+  label: row.label,
+}));
+"""
+        self.assertEqual(self._write_and_scan(body), [])
+
     def test_missing_dashboard_row_is_reported(self):
         body = """
 export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
@@ -1691,6 +1721,48 @@ tsz_project_fixture_sources() {
     type-challenges-assertions-tsc-clean)
       printf 'type-challenges|repo|ref\\n'
       printf 'type-challenges-solutions|repo|ref\\n'
+      ;;
+  esac
+}
+"""
+        self.assertEqual(self._write_and_scan(rows, fixtures), [])
+
+    def test_shared_project_row_definitions_with_sources_pass(self):
+        rows = """
+export const PROJECT_ROW_DEFINITIONS = [
+  {
+    name: "utility-types-project",
+    benchmark_set: "required",
+    guard_set: "required",
+  },
+  {
+    name: "vite-vanilla-ts-app",
+    benchmark_set: "required",
+    guard_set: null,
+  },
+  {
+    name: "type-challenges-project",
+    benchmark_set: "canary",
+    guard_set: "canary",
+  },
+];
+
+export const REQUIRED_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.benchmark_set === "required")
+  .map((row) => row.name);
+
+export const COMPILE_CANARY_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.guard_set === "canary")
+  .map((row) => row.name);
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|repo|ref\\n'
+      ;;
+    type-challenges-project)
+      printf 'type-challenges|repo|ref\\n'
       ;;
   esac
 }
@@ -1848,6 +1920,50 @@ if should_check_project "type-challenges-assertion-candidates"; then :; fi
 """
         bench = """
 run_isolated "utility-types-project" run_utility_types_project_benchmarks
+run_isolated "vite-vanilla-ts-app" run_vite_app_project_benchmarks
+"""
+        self.assertEqual(self._write_and_scan(rows, compile_guard, bench), [])
+
+    def test_shared_project_row_definitions_with_dynamic_loops_pass(self):
+        rows = """
+export const PROJECT_ROW_DEFINITIONS = [
+  {
+    name: "utility-types-project",
+    benchmark_set: "required",
+    guard_set: "required",
+  },
+  {
+    name: "zod-project",
+    benchmark_set: "canary",
+    guard_set: "canary",
+  },
+  {
+    name: "vite-vanilla-ts-app",
+    benchmark_set: "required",
+    guard_set: null,
+  },
+];
+
+export const REQUIRED_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.benchmark_set === "required")
+  .map((row) => row.name);
+
+export const COMPILE_CANARY_PROJECT_ROWS = PROJECT_ROW_DEFINITIONS
+  .filter((row) => row.guard_set === "canary")
+  .map((row) => row.name);
+"""
+        compile_guard = """
+for name in "${TSZ_COMPILE_GUARD_REQUIRED_ROWS[@]}"; do
+  if should_check_project "$name"; then :; fi
+done
+if should_check_project "vite-vanilla-ts-app"; then :; fi
+for name in "${TSZ_COMPILE_GUARD_CANARY_ROWS[@]}"; do
+  if should_check_project "$name"; then :; fi
+done
+"""
+        bench = """
+run_isolated "utility-types-project" run_utility_types_project_benchmarks
+run_isolated "zod-project" run_zod_project_benchmarks
 run_isolated "vite-vanilla-ts-app" run_vite_app_project_benchmarks
 """
         self.assertEqual(self._write_and_scan(rows, compile_guard, bench), [])
