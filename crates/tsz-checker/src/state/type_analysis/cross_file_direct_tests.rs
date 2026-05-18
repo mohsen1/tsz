@@ -682,7 +682,7 @@ fn delegate_explicit_cross_file_source_alias_lowers_generic_conditionals() {
 }
 
 #[test]
-fn direct_source_file_type_alias_rejects_complex_generic_typeof_and_self_references() {
+fn direct_source_file_type_alias_lowers_alias_applications() {
     let (generic_arena, generic_binder, types) = parse_bound_source(
         r#"
                 type Maybe<X> = X | null;
@@ -709,22 +709,71 @@ fn direct_source_file_type_alias_rejects_complex_generic_typeof_and_self_referen
         Arc::clone(&generic_binder),
     ]));
     let box_sym = generic_binder.file_locals.get("Box").expect("Box symbol");
-    assert!(
-        state
-            .direct_source_file_type_alias_result(box_sym, Some(1), true)
-            .is_none(),
-        "generic/alias-dependent source aliases stay on the child-checker path",
-    );
+    let (box_type, box_params) = state
+        .direct_source_file_type_alias_result(box_sym, Some(1), true)
+        .expect("generic alias applications should lower directly");
+    assert_ne!(box_type, TypeId::UNKNOWN);
+    assert_ne!(box_type, TypeId::ERROR);
+    assert_eq!(box_params.len(), 1);
+
     let wrapped_sym = generic_binder
         .file_locals
         .get("Wrapped")
         .expect("Wrapped symbol");
-    assert!(
-        state
-            .direct_source_file_type_alias_result(wrapped_sym, Some(1), true)
-            .is_none(),
-        "alias-dependent source aliases stay on the child-checker path",
+    let (wrapped_type, wrapped_params) = state
+        .direct_source_file_type_alias_result(wrapped_sym, Some(1), true)
+        .expect("concrete alias applications should lower directly");
+    assert_ne!(wrapped_type, TypeId::UNKNOWN);
+    assert_ne!(wrapped_type, TypeId::ERROR);
+    assert!(wrapped_params.is_empty());
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_indexed_type_literal_body() {
+    let (target_arena, target_binder, types) = parse_bound_source(
+        r#"
+                export type PickMatch<T, U, Flag extends 'yes' | 'no'> =
+                    T extends unknown
+                    ? { yes: T & U, no: never }[Flag]
+                    : never;
+            "#,
     );
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import { PickMatch } from './target';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+    let pick_match = target_binder
+        .file_locals
+        .get("PickMatch")
+        .expect("PickMatch symbol");
+
+    let (ty, params) = state
+        .direct_source_file_type_alias_result(pick_match, Some(1), true)
+        .expect("indexed type-literal aliases should lower directly");
+
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert_eq!(params.len(), 3);
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_typeof_and_self_references() {
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import { FromValue } from './target';");
 
     let (typeof_arena, typeof_binder, types) = parse_bound_source(
         r#"
