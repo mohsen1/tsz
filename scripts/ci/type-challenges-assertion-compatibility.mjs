@@ -114,6 +114,8 @@ function validateCandidateOutputPath(value, label) {
   if (!normalized.startsWith("assertions/")) {
     fail(`${label} must be under assertions/: ${normalized}`);
   }
+
+  return normalized;
 }
 
 function duplicatedValues(values) {
@@ -464,6 +466,7 @@ if (
   }
 }
 const candidateFileComparisonCounts = comparison.candidateFileComparison?.counts || {};
+const normalizedCandidateFileComparison = {};
 if (comparison.candidateFileComparison) {
   const candidateFileComparisonTotal = comparison.candidateFileComparison.totalCandidates;
   const bucketEntries = [];
@@ -501,14 +504,16 @@ if (comparison.candidateFileComparison) {
         `assertion classification candidateFileComparison.${field} length (${files.length}) does not match counts.${field} (${count})`,
       );
     }
-    files.forEach((file, index) => {
-      validateCandidateOutputPath(
+    const normalizedFiles = files.map((file, index) => {
+      const normalized = validateCandidateOutputPath(
         file,
         `assertion classification candidateFileComparison.${field}[${index}]`,
       );
-      bucketEntries.push({ field, file });
+      bucketEntries.push({ field, file: normalized });
+      return normalized;
     });
-    const duplicateFiles = duplicatedValues(files);
+    normalizedCandidateFileComparison[field] = normalizedFiles;
+    const duplicateFiles = duplicatedValues(normalizedFiles);
     if (duplicateFiles.length > 0) {
       fail(
         `assertion classification candidateFileComparison.${field} contains duplicate files: ${duplicateFiles.join(", ")}`,
@@ -566,13 +571,13 @@ const candidateFileComparison = comparison.candidateFileComparison
   ? {
       total_candidates: comparison.candidateFileComparison.totalCandidates ?? null,
       counts: comparison.candidateFileComparison.counts ?? {},
-      both_accepted: relCandidateFiles(comparison.candidateFileComparison.bothAccepted),
-      both_rejected: relCandidateFiles(comparison.candidateFileComparison.bothRejected),
+      both_accepted: relCandidateFiles(normalizedCandidateFileComparison.bothAccepted),
+      both_rejected: relCandidateFiles(normalizedCandidateFileComparison.bothRejected),
       tsc_accepted_tsz_rejected: relCandidateFiles(
-        comparison.candidateFileComparison.tscAcceptedTszRejected,
+        normalizedCandidateFileComparison.tscAcceptedTszRejected,
       ),
       tsc_rejected_tsz_accepted: relCandidateFiles(
-        comparison.candidateFileComparison.tscRejectedTszAccepted,
+        normalizedCandidateFileComparison.tscRejectedTszAccepted,
       ),
     }
   : null;
