@@ -803,6 +803,22 @@ const value: object & { x: string } = { z: "abc" };
 }
 
 #[test]
+fn concrete_mapped_type_inside_intersection_reports_excess_property() {
+    let source = r#"
+type M = { [P in keyof { a: number }]: number } & { b?: number };
+const x: M = { a: 1, extra: 1 };
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2353 = diags.iter().find(|d| d.0 == 2353).expect("expected TS2353");
+    assert!(
+        ts2353.1.contains("'extra'"),
+        "Expected TS2353 for excess property 'extra', got: {}",
+        ts2353.1
+    );
+}
+
+#[test]
 fn generic_intersection_target_skips_excess_property_check() {
     let source = r#"
 interface IFoo {}

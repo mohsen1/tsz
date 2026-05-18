@@ -23,9 +23,59 @@ pub(crate) fn type_has_free_type_parameters_for_key_space(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> bool {
-    if let Some(mapped) = tsz_solver::type_queries::get_mapped_type(db, type_id) {
-        return tsz_solver::type_queries::contains_type_parameters_db(db, mapped.constraint);
+    type_has_free_type_parameters_for_key_space_inner(db, type_id, 0)
+}
+
+fn type_has_free_type_parameters_for_key_space_inner(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    depth: usize,
+) -> bool {
+    if depth > 32 {
+        return tsz_solver::type_queries::contains_type_parameters_db(db, type_id);
     }
+
+    if let Some(mapped) = tsz_solver::type_queries::get_mapped_type(db, type_id) {
+        return type_has_free_type_parameters_for_key_space_inner(db, mapped.constraint, depth + 1)
+            || mapped.name_type.is_some_and(|name_type| {
+                type_has_free_type_parameters_for_key_space_inner(db, name_type, depth + 1)
+            });
+    }
+
+    if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id) {
+        return members.iter().any(|&member| {
+            type_has_free_type_parameters_for_key_space_inner(db, member, depth + 1)
+        });
+    }
+
+    if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id) {
+        return members.iter().any(|&member| {
+            type_has_free_type_parameters_for_key_space_inner(db, member, depth + 1)
+        });
+    }
+
+    if let Some(app) = tsz_solver::type_queries::get_type_application(db, type_id) {
+        return type_has_free_type_parameters_for_key_space_inner(db, app.base, depth + 1)
+            || app
+                .args
+                .iter()
+                .any(|&arg| type_has_free_type_parameters_for_key_space_inner(db, arg, depth + 1));
+    }
+
+    if let Some((object_type, index_type)) =
+        tsz_solver::type_queries::get_index_access_types(db, type_id)
+    {
+        return type_has_free_type_parameters_for_key_space_inner(db, object_type, depth + 1)
+            || type_has_free_type_parameters_for_key_space_inner(db, index_type, depth + 1);
+    }
+
+    if let Some(cond) = tsz_solver::type_queries::get_conditional_type(db, type_id) {
+        return type_has_free_type_parameters_for_key_space_inner(db, cond.check_type, depth + 1)
+            || type_has_free_type_parameters_for_key_space_inner(db, cond.extends_type, depth + 1)
+            || type_has_free_type_parameters_for_key_space_inner(db, cond.true_type, depth + 1)
+            || type_has_free_type_parameters_for_key_space_inner(db, cond.false_type, depth + 1);
+    }
+
     tsz_solver::type_queries::contains_type_parameters_db(db, type_id)
 }
 
