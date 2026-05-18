@@ -449,6 +449,22 @@ for (const [compiler, diagnostics] of [
       );
     }
   }
+  const byCandidate = diagnostics.byCandidate;
+  if (byCandidate !== null && byCandidate !== undefined) {
+    if (!Array.isArray(byCandidate)) {
+      fail(
+        `assertion classification ${compiler} candidateDiagnostics.byCandidate must be an array`,
+      );
+    }
+    byCandidate.forEach((entry, index) => {
+      if (entry?.file !== null && entry?.file !== undefined) {
+        validateCandidateOutputPath(
+          entry.file,
+          `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].file`,
+        );
+      }
+    });
+  }
 }
 if (
   Number.isInteger(tscCandidateDiagnostics.candidatesWithoutDiagnostics) &&
