@@ -27,6 +27,37 @@ pub(super) enum DuplicateDeclarationOrigin {
 }
 
 impl<'a> CheckerState<'a> {
+    fn is_global_symbol_constructor_interface_group(
+        &self,
+        scope: tsz_binder::SymbolId,
+        declarations: &[NodeIndex],
+    ) -> bool {
+        if scope != tsz_binder::SymbolId::NONE || self.ctx.binder.is_external_module() {
+            return false;
+        }
+
+        declarations.iter().all(|&decl_idx| {
+            let Some(node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            let Some(interface) = self.ctx.arena.get_interface(node) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get(interface.name)
+                .and_then(|name| self.ctx.arena.get_identifier(name))
+                .is_some_and(|ident| ident.escaped_text == "SymbolConstructor")
+        })
+    }
+
+    fn is_symbol_constructor_symbol_refinement_pair(&self, left: TypeId, right: TypeId) -> bool {
+        (left == TypeId::SYMBOL
+            && crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, right))
+            || (right == TypeId::SYMBOL
+                && crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, left))
+    }
+
     fn function_decl_has_body_for_duplicate_symbol(
         &self,
         sym_id: tsz_binder::SymbolId,
@@ -1195,19 +1226,21 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // Interfaces and functions can merge across module augmentation;
-                    // the cross-file interface-member-conflict pass handles mismatches.
-                    // Re-export specifiers (`export { X [as Y] } from "mod"`) are not
-                    // local declarations — they only appear in the exports table — so
-                    // they cannot duplicate anything in the local scope.
+                    // Targeted module augmentations allow merging: interface+interface,
+                    // function+function (overloads), and import aliases (which are not local
+                    // declarations — they reference the source module's export and never
+                    // conflict with an augmentation of that same source module).
+                    // Property-vs-method mismatches are handled by the dedicated cross-file
+                    // interface-member conflict pass above.
                     if (decl_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation
                         || other_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation)
                         && (((decl_flags & symbol_flags::INTERFACE) != 0
                             && (other_flags & symbol_flags::INTERFACE) != 0)
                             || ((decl_flags & symbol_flags::FUNCTION) != 0
                                 && (other_flags & symbol_flags::FUNCTION) != 0)
-                            || self.is_reexport_specifier(decl_idx)
-                            || self.is_reexport_specifier(other_idx))
+                            || (decl_is_local && self.node_is_import_alias(decl_flags, decl_idx))
+                            || (other_is_local
+                                && self.node_is_import_alias(other_flags, other_idx)))
                     {
                         continue;
                     }
@@ -1315,10 +1348,9 @@ impl<'a> CheckerState<'a> {
                     // Import alias referencing a remote non-alias declaration
                     // is not a conflict — suppress the false duplicate.
                     if !same_source_file {
-                        let decl_is_import_alias = (decl_flags & symbol_flags::ALIAS) != 0
-                            && self.is_import_alias_node(decl_idx);
-                        let other_is_import_alias = (other_flags & symbol_flags::ALIAS) != 0
-                            && self.is_import_alias_node(other_idx);
+                        let decl_is_import_alias = self.node_is_import_alias(decl_flags, decl_idx);
+                        let other_is_import_alias =
+                            self.node_is_import_alias(other_flags, other_idx);
                         if (decl_is_import_alias && (other_flags & symbol_flags::ALIAS) == 0)
                             || (other_is_import_alias && (decl_flags & symbol_flags::ALIAS) == 0)
                         {
@@ -2494,7 +2526,7 @@ impl<'a> CheckerState<'a> {
                 .push(decl_idx);
         }
 
-        for (_, mut declarations_in_scope) in declarations_by_scope {
+        for (scope, mut declarations_in_scope) in declarations_by_scope {
             if declarations_in_scope.len() <= 1 {
                 continue;
             }
@@ -2505,6 +2537,8 @@ impl<'a> CheckerState<'a> {
             if !self.interface_type_parameters_are_group_merge_compatible(&declarations_in_scope) {
                 continue;
             }
+            let allow_symbol_constructor_refinement =
+                self.is_global_symbol_constructor_interface_group(scope, &declarations_in_scope);
 
             declarations_in_scope.sort_by_key(|&decl_idx| {
                 self.ctx
@@ -2702,6 +2736,14 @@ impl<'a> CheckerState<'a> {
                         // Method overloads (multiple methods with same name) are valid
                         // and don't need compatibility checking here.
                         if !*is_method {
+                            if allow_symbol_constructor_refinement
+                                && self.is_symbol_constructor_symbol_refinement_pair(
+                                    existing_type,
+                                    *property_type,
+                                )
+                            {
+                                continue;
+                            }
                             let compatible_both_ways = self
                                 .is_assignable_to(existing_type, *property_type)
                                 && self.is_assignable_to(*property_type, existing_type);

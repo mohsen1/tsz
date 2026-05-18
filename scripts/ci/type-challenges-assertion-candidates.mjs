@@ -32,6 +32,10 @@ function readRequiredFile(file, label) {
     console.error(`error: ${label} does not exist: ${file}`);
     process.exit(1);
   }
+  if (!fs.statSync(file).isFile()) {
+    console.error(`error: ${label} is not a file: ${file}`);
+    process.exit(1);
+  }
   return fs.readFileSync(file, "utf8");
 }
 
@@ -103,12 +107,35 @@ function ensurePairingReportShape(report) {
 
   for (const label of ["templates", "testCases", "solutions"]) {
     const source = report?.sources?.[label];
-    if (source?.repository && source?.ref) continue;
+    if (
+      typeof source?.repository === "string" &&
+      source.repository.trim() !== "" &&
+      typeof source?.ref === "string" &&
+      source.ref.trim() !== ""
+    ) {
+      continue;
+    }
 
     console.error(
       [
         `error: Type Challenges pairing report is missing ${label} source metadata`,
         `${source?.repository || "<missing repository>"} @ ${source?.ref || "<missing ref>"}`,
+      ].join("\n"),
+    );
+    process.exit(1);
+  }
+
+  const templateSource = report.sources.templates;
+  const testCaseSource = report.sources.testCases;
+  if (
+    templateSource.repository !== testCaseSource.repository ||
+    templateSource.ref !== testCaseSource.ref
+  ) {
+    console.error(
+      [
+        "error: Type Challenges pairing report template and test-case sources come from different snapshots",
+        `templates: ${templateSource.repository} @ ${templateSource.ref}`,
+        `testCases: ${testCaseSource.repository} @ ${testCaseSource.ref}`,
       ].join("\n"),
     );
     process.exit(1);
@@ -177,6 +204,40 @@ function ensureChallengeId(entry, expectedId, label) {
       `error: Type Challenges pairing report ${label} challenge id mismatch`,
       `expected: ${expectedId}`,
       `actual: ${actualId == null ? "<missing>" : String(actualId)}`,
+    ].join("\n"),
+  );
+  process.exit(1);
+}
+
+function challengeField(entry, field) {
+  const value = entry?.challenge?.[field];
+  return value == null ? "" : String(value);
+}
+
+function ensurePairedChallengeMetadataMatches(pair, index) {
+  const templateLevel = challengeField(pair.template, "level");
+  const testCaseLevel = challengeField(pair.testCase, "level");
+  const templateSlug = challengeField(pair.template, "slug");
+  const testCaseSlug = challengeField(pair.testCase, "slug");
+  const solutionLevel = challengeField(pair.solution, "level");
+
+  const mismatches = [];
+  if (templateLevel !== testCaseLevel) {
+    mismatches.push(`template/test-case level: ${templateLevel || "<missing>"} vs ${testCaseLevel || "<missing>"}`);
+  }
+  if (templateSlug !== testCaseSlug) {
+    mismatches.push(`template/test-case slug: ${templateSlug || "<missing>"} vs ${testCaseSlug || "<missing>"}`);
+  }
+  if (solutionLevel && templateLevel && solutionLevel !== templateLevel) {
+    mismatches.push(`solution/template level: ${solutionLevel} vs ${templateLevel}`);
+  }
+
+  if (mismatches.length === 0) return;
+
+  console.error(
+    [
+      `error: Type Challenges pairing report paired challenge metadata mismatch for pair ${index}`,
+      ...mismatches,
     ].join("\n"),
   );
   process.exit(1);
@@ -256,6 +317,8 @@ function validatePairs(pairs) {
         ),
       },
     };
+
+    ensurePairedChallengeMetadataMatches(normalized, index);
 
     const output = path.join("assertions", candidateFileName(normalized));
     if (outputs.has(output)) {

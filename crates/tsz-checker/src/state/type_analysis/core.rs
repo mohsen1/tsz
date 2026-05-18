@@ -1808,8 +1808,6 @@ impl<'a> CheckerState<'a> {
 
         // First pass: Add all type parameters to scope WITHOUT resolving constraints
         // This allows self-referential constraints like T extends Box<T>
-        let factory = self.ctx.types.factory();
-
         for &param_idx in &list.nodes {
             let Some(node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -1854,7 +1852,7 @@ impl<'a> CheckerState<'a> {
                 shadowed_class_param = true;
             }
 
-            let type_id = factory.type_param(info);
+            let type_id = self.ctx.types.fresh_type_param(info);
             if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&data.name.0)
                 && let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0)
             {
@@ -1963,7 +1961,7 @@ impl<'a> CheckerState<'a> {
                     is_const,
                 };
 
-                let constrained_type_id = factory.type_param(info);
+                let constrained_type_id = self.ctx.types.fresh_type_param(info);
                 if let Some(&sym_id) = self.ctx.binder.node_symbols.get(&data.name.0)
                     && let Some(def_id) = self.ctx.definition_store.find_def_by_symbol(sym_id.0)
                 {

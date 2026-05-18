@@ -59,21 +59,28 @@ function requiredRelativeManifestPath(value, label) {
   if (typeof value !== "string" || value.trim() === "") {
     fail(`manifest ${label} must be a non-empty relative path`);
   }
-  const normalized = normalizePath(value).replace(/^\.\//, "");
-  const segments = normalized.split("/");
+  const normalizedInput = String(value).replace(/\\/g, "/").replace(/^\.\//, "");
+  const segments = normalizedInput.split("/");
   if (
     path.isAbsolute(value) ||
-    normalized.startsWith("/") ||
-    /^[A-Za-z]:(?:\/|$)/.test(normalized) ||
-    normalized === "" ||
-    normalized === "." ||
+    normalizedInput.startsWith("/") ||
+    /^[A-Za-z]:(?:\/|$)/.test(normalizedInput) ||
+    normalizedInput === "" ||
+    normalizedInput === "." ||
     segments.includes("") ||
     segments.includes(".") ||
     segments.includes("..")
   ) {
     fail(`manifest ${label} must be a relative path inside the candidate directory: ${value}`);
   }
-  return normalized;
+  return segments.join("/");
+}
+
+function requiredManifestString(value, label) {
+  if (typeof value !== "string" || value.trim() === "") {
+    fail(`manifest ${label} must be a non-empty string`);
+  }
+  return value;
 }
 
 function requiredCount(value, label) {
@@ -113,6 +120,21 @@ function validateManifestSources(manifest) {
   }
   for (const label of ["templates", "testCases", "solutions"]) {
     validateSourceMetadata(manifest.sources[label], label);
+  }
+
+  const templateSource = manifest.sources.templates;
+  const testCaseSource = manifest.sources.testCases;
+  if (
+    templateSource.repository !== testCaseSource.repository ||
+    templateSource.ref !== testCaseSource.ref
+  ) {
+    fail(
+      [
+        "manifest template and test-case sources come from different snapshots",
+        `templates: ${templateSource.repository} @ ${templateSource.ref}`,
+        `testCases: ${testCaseSource.repository} @ ${testCaseSource.ref}`,
+      ].join("\n"),
+    );
   }
 }
 
@@ -216,7 +238,14 @@ function validateCandidateManifest(manifest) {
   }
 
   const seenOutputs = new Set();
+  const seenIds = new Set();
   const entries = manifest.entries.map((entry, index) => {
+    const id = requiredManifestString(entry?.id, `entries[${index}].id`);
+    if (seenIds.has(id)) {
+      fail(`duplicate assertion candidate id in manifest: ${id}`);
+    }
+    seenIds.add(id);
+
     const output = requiredRelativeManifestPath(entry?.output, `entries[${index}].output`);
     if (!output.startsWith("assertions/")) {
       fail(`manifest entries[${index}].output must be under assertions/: ${output}`);
@@ -234,9 +263,13 @@ function validateCandidateManifest(manifest) {
     ) {
       fail(`manifest assertion candidate does not exist inside candidate directory: ${output}`);
     }
+    if (!fs.statSync(outputPath).isFile()) {
+      fail(`manifest assertion candidate is not a file inside candidate directory: ${output}`);
+    }
 
     return {
       ...entry,
+      id,
       output,
     };
   });
@@ -664,6 +697,10 @@ const manifest = validateCandidateManifest(readJson(candidateManifestPath));
 const tsconfig = path.join(candidateDir, "tsconfig.tsz-guard.json");
 if (!fs.existsSync(tsconfig)) {
   console.error(`error: assertion candidate tsconfig does not exist: ${tsconfig}`);
+  process.exit(1);
+}
+if (!fs.statSync(tsconfig).isFile()) {
+  console.error(`error: assertion candidate tsconfig is not a file: ${tsconfig}`);
   process.exit(1);
 }
 

@@ -1,12 +1,28 @@
+use crate::output::printer::{PrintOptions, Printer};
 use crate::transforms::emit_utils::sanitize_module_name;
 use crate::transforms::ir::IRNode;
 use crate::transforms::module_commonjs::*;
 use crate::transforms::module_commonjs_ir::CommonJsTransformContext;
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::{NodeIndex, ParserState};
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     (parser, root)
+}
+
+fn print_commonjs(source: &str) -> String {
+    let (parser, root) = parse_test_source(source);
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    printer.finish().code
 }
 
 fn parse_collect_exports(source: &str) -> Vec<String> {
@@ -91,6 +107,34 @@ fn test_emit_exports_init_empty() {
     let mut output = String::new();
     emit_exports_init(&mut output, &[]).expect("emit to buffer should succeed");
     assert!(output.is_empty(), "Expected no output for empty exports");
+}
+
+#[test]
+fn cjs_erased_import_type_outer_attribute_recovery_emits_empty_statement() {
+    let source = r#"export type Test = typeof import("./a.json", {
+  with: {
+    type: "json"
+  },,
+});"#;
+    let output = print_commonjs(source);
+
+    assert_eq!(
+        output,
+        "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\n;\n"
+    );
+}
+
+#[test]
+fn cjs_erased_import_type_valid_and_inner_attribute_trailing_commas_stay_erased() {
+    let source = r#"export type A = typeof import("./a.json", { with: { type: "json" }, });
+export type B = typeof import("./a.json", { with: { type: "json", } });
+export type C = typeof import("./a.json", { with: { type: "json",, } });"#;
+    let output = print_commonjs(source);
+
+    assert_eq!(
+        output,
+        "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\n"
+    );
 }
 
 #[test]

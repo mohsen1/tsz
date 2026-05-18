@@ -706,35 +706,39 @@ jobs:
           fi
           pnpm config set store-dir "$PNPM_STORE_DIR"
 
+      - name: Bench shard prelude (cleanup + headroom check)
+        shell: bash
+        run: scripts/ci/bench-shard-prelude.sh prelude --label '${{ matrix.label }}'
+
       - name: Run benchmark shard
         shell: bash
         run: |
-          set -uo pipefail
-
-          (
-            while true; do
-              echo "::group::resource snapshot $(date -Is)"
-              echo "load:"; uptime || true
-              echo "memory:"; free -h || true
-              echo "disk:"; df -h || true
-              echo "top processes:"; ps -eo pid,ppid,%cpu,%mem,rss,cmd --sort=-rss 2>/dev/null | head -20 || true
-              echo "::endgroup::"
-              sleep 30
-            done
-          ) &
-          _monitor_pid=$!
-          trap 'kill "$_monitor_pid" 2>/dev/null || true' EXIT
+          set -euo pipefail
 
           export TSZ="$GITHUB_WORKSPACE/.target-bench/dist/tsz"
           if [[ '${{ matrix.label }}' == 'projects' ]]; then
             export NEXTJS_BENCHMARK_ENABLED=1
           fi
           echo "Using prepared benchmark TSZ binary: $TSZ"
-          ./scripts/bench/bench-vs-tsgo.sh \
-            --filter '${{ matrix.filter }}' \
-            --json \
-            --json-file "$GITHUB_WORKSPACE/bench-results-${{ matrix.label }}.json" \
+
+          # Wrap the bench in safe-run.sh so a runaway shard is killed before
+          # the OS OOM-killer reaches the runner agent (issue #7601). 85%
+          # leaves ~15% headroom for the runner agent and sshd; 30s sampling
+          # is plenty for multi-minute shards.
+          scripts/safe-run.sh --limit "${TSZ_BENCH_MEMORY_LIMIT:-85%}" --interval 30 -- \
+            ./scripts/bench/bench-vs-tsgo.sh \
+              --filter '${{ matrix.filter }}' \
+              --json \
+              --json-file "$GITHUB_WORKSPACE/bench-results-${{ matrix.label }}.json" \
             2>&1 | tee "$GITHUB_WORKSPACE/bench-run-${{ matrix.label }}.log"
+
+      - name: Capture shard failure diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          scripts/ci/bench-shard-prelude.sh postmortem \
+            --label '${{ matrix.label }}' \
+            --output "$GITHUB_WORKSPACE/bench-postmortem-${{ matrix.label }}.log"
 
       - name: Upload benchmark shard artifacts
         if: always()
@@ -744,6 +748,7 @@ jobs:
           path: |
             bench-results-${{ matrix.label }}.json
             bench-run-${{ matrix.label }}.log
+            bench-postmortem-${{ matrix.label }}.log
           retention-days: 7
           if-no-files-found: warn
           compression-level: 1
