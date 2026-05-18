@@ -383,6 +383,7 @@ if (
 const tscCandidateDiagnostics = tsc.candidateDiagnostics || {};
 const tszCandidateDiagnostics = tsz.candidateDiagnostics || {};
 const normalizedCandidateDiagnosticFiles = {};
+const normalizedCandidateExampleFiles = {};
 for (const [compiler, diagnostics] of [
   ["tsc", tscCandidateDiagnostics],
   ["tsz", tszCandidateDiagnostics],
@@ -483,14 +484,16 @@ for (const [compiler, diagnostics] of [
         `assertion classification ${compiler} candidateDiagnostics.byCandidate must be an array`,
       );
     }
+    const exampleFiles = [];
     byCandidate.forEach((entry, index) => {
       if (entry?.file !== null && entry?.file !== undefined) {
-        validateCandidateOutputPath(
+        exampleFiles[index] = validateCandidateOutputPath(
           entry.file,
           `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].file`,
         );
       }
     });
+    normalizedCandidateExampleFiles[compiler] = exampleFiles;
   }
 }
 if (
@@ -644,22 +647,25 @@ const candidateExamplesFor = (compiler, result) => {
   if (!Array.isArray(candidates)) {
     return [];
   }
-  return candidates.slice(0, 5).map((entry) => ({
-    compiler,
-    file: entry.file ? relCandidateFile(entry.file) : null,
-    candidate_id: entry.candidate?.id ?? null,
-    error_count: entry.errorCount ?? null,
-    codes: (entry.codes || []).map((code) => code.key).filter(Boolean).slice(0, 5),
-    semantic_families: entry.semanticFamilies || [],
-    first_error: entry.firstErrors?.[0]
-      ? {
-          line: entry.firstErrors[0].line ?? null,
-          column: entry.firstErrors[0].column ?? null,
-          code: entry.firstErrors[0].code ?? null,
-          message: entry.firstErrors[0].message ?? null,
-        }
-      : null,
-  }));
+  return candidates.slice(0, 5).map((entry, index) => {
+    const normalizedFile = normalizedCandidateExampleFiles[compiler]?.[index];
+    return {
+      compiler,
+      file: normalizedFile ? relCandidateFile(normalizedFile) : null,
+      candidate_id: entry.candidate?.id ?? null,
+      error_count: entry.errorCount ?? null,
+      codes: (entry.codes || []).map((code) => code.key).filter(Boolean).slice(0, 5),
+      semantic_families: entry.semanticFamilies || [],
+      first_error: entry.firstErrors?.[0]
+        ? {
+            line: entry.firstErrors[0].line ?? null,
+            column: entry.firstErrors[0].column ?? null,
+            code: entry.firstErrors[0].code ?? null,
+            message: entry.firstErrors[0].message ?? null,
+          }
+        : null,
+    };
+  });
 };
 const diagnosticCandidateExamples = [
   ...candidateExamplesFor("tsc", tsc),
