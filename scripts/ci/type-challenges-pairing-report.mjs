@@ -127,6 +127,10 @@ function ensureManifestShape(label, manifest, expectedFixture, expectedPath) {
   process.exit(1);
 }
 
+function normalizeManifestPath(value) {
+  return String(value).replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
+}
+
 function ensureManifestEntries(label, manifest) {
   const entries = manifest?.entries;
   const generated = Number(manifest?.generated);
@@ -165,13 +169,14 @@ function ensureManifestEntries(label, manifest) {
       );
       process.exit(1);
     }
-    if (outputs.has(output)) {
+    const normalizedOutput = normalizeManifestPath(output);
+    if (outputs.has(normalizedOutput)) {
       console.error(
-        `error: Type Challenges ${label} manifest contains duplicate output path ${output}`,
+        `error: Type Challenges ${label} manifest contains duplicate output path ${normalizedOutput}`,
       );
       process.exit(1);
     }
-    outputs.add(output);
+    outputs.add(normalizedOutput);
 
     if (!source) {
       console.error(
@@ -179,13 +184,14 @@ function ensureManifestEntries(label, manifest) {
       );
       process.exit(1);
     }
-    if (sources.has(source)) {
+    const normalizedSource = normalizeManifestPath(source);
+    if (sources.has(normalizedSource)) {
       console.error(
-        `error: Type Challenges ${label} manifest contains duplicate source path ${source}`,
+        `error: Type Challenges ${label} manifest contains duplicate source path ${normalizedSource}`,
       );
       process.exit(1);
     }
-    sources.add(source);
+    sources.add(normalizedSource);
   }
 }
 

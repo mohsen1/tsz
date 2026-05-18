@@ -384,7 +384,7 @@ withTempDir((dir) => {
       "questions/**/template.ts",
       [
         { id: "13", source: "questions/00013-warm-hello-world/template.ts" },
-        { id: "189", source: "questions/00013-warm-hello-world/template.ts" },
+        { id: "189", source: ".\\questions\\00013-warm-hello-world\\template.ts" },
       ],
       ({ id }) => ({ challenge: { id, level: "easy", slug: `case-${id}` } }),
     ),
@@ -522,7 +522,7 @@ withTempDir((dir) => {
       "en/*.md",
       [
         { id: "13", source: "en/hello-world.md" },
-        { id: "189", source: "en/hello-world.md" },
+        { id: "189", source: ".\\en\\hello-world.md" },
       ],
       ({ id }) => ({ output: `solutions/${id}.ts` }),
     ),
