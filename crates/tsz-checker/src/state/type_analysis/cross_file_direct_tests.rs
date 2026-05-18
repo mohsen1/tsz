@@ -718,7 +718,7 @@ fn direct_source_file_type_alias_result_for(
 fn direct_source_file_type_alias_lowers_alias_applications() {
     let source = r#"
                 type Maybe<X> = X | null;
-                export type Box<T> = { value: Maybe<T> };
+                export type Box<T> = Maybe<T>;
                 export type Wrapped = Maybe<string>;
             "#;
     let (box_type, box_params) = direct_source_file_type_alias_result_for(source, "Box")
@@ -849,40 +849,38 @@ fn direct_source_file_type_alias_rejects_unresolved_alias_applications() {
 }
 
 #[test]
-fn direct_source_file_type_alias_lowers_indexed_type_literal_body() {
-    let (ty, params) = direct_source_file_type_alias_result_for(
-        r#"
+fn direct_source_file_type_alias_rejects_indexed_type_literal_body() {
+    assert!(
+        direct_source_file_type_alias_result_for(
+            r#"
                 export type PickMatch<T, U, Flag extends 'yes' | 'no'> =
                     T extends unknown
                     ? { yes: T & U, no: never }[Flag]
                     : never;
             "#,
-        "PickMatch",
-    )
-    .expect("indexed type-literal aliases should lower directly");
-
-    assert_ne!(ty, TypeId::UNKNOWN);
-    assert_ne!(ty, TypeId::ERROR);
-    assert_eq!(params.len(), 3);
+            "PickMatch",
+        )
+        .is_none(),
+        "source-file type literals stay on the child-checker path",
+    );
 }
 
 #[test]
-fn direct_source_file_type_alias_lowers_mapped_type_body() {
-    let (ty, params) = direct_source_file_type_alias_result_for(
-        r#"
+fn direct_source_file_type_alias_rejects_mapped_type_body() {
+    assert!(
+        direct_source_file_type_alias_result_for(
+            r#"
                 type Clean<T> = T;
                 type Cast<A, B> = A & B;
                 type LocalList = readonly unknown[];
                 export type Gaps<L extends LocalList> =
                     Cast<Clean<{ [K in keyof L]?: L[K] | null }>, LocalList>;
             "#,
-        "Gaps",
-    )
-    .expect("mapped type aliases should lower directly");
-
-    assert_ne!(ty, TypeId::UNKNOWN);
-    assert_ne!(ty, TypeId::ERROR);
-    assert_eq!(params.len(), 1);
+            "Gaps",
+        )
+        .is_none(),
+        "source-file mapped types stay on the child-checker path",
+    );
 }
 
 #[test]

@@ -1,7 +1,6 @@
 //! Structural guards for direct source-file type lowering.
 
 use tsz_parser::NodeIndex;
-use tsz_parser::parser::base::NodeList;
 use tsz_parser::parser::node::{NodeAccess, NodeArena, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
 
@@ -175,67 +174,16 @@ pub(super) fn is_generic_direct_lowerable(
                     .all(|member| is_generic_direct_lowerable(arena, member, type_param_names))
             })
         }
-        k if k == syntax_kind_ext::TYPE_LITERAL => {
-            arena.get_type_literal(node).is_some_and(|type_literal| {
-                type_literal.members.nodes.iter().copied().all(|member| {
-                    type_literal_member_is_generic_direct_lowerable(arena, member, type_param_names)
-                })
-            })
-        }
-        k if k == syntax_kind_ext::MAPPED_TYPE => {
-            arena.get_mapped_type(node).is_some_and(|mapped| {
-                let Some(mapped_param_name) = type_parameter_name(arena, mapped.type_parameter)
-                else {
-                    return false;
-                };
-                let Some(mapped_param_node) = arena.get(mapped.type_parameter) else {
-                    return false;
-                };
-                let Some(mapped_param) = arena.get_type_parameter(mapped_param_node) else {
-                    return false;
-                };
-                let mut mapped_scope_names = type_param_names.to_vec();
-                mapped_scope_names.push(mapped_param_name);
-
-                let constraint_lowerable = mapped_param.constraint.is_none()
-                    || is_generic_direct_lowerable(
-                        arena,
-                        mapped_param.constraint,
-                        type_param_names,
-                    );
-                let default_lowerable = mapped_param.default.is_none()
-                    || is_generic_direct_lowerable(arena, mapped_param.default, type_param_names);
-                let name_type_lowerable = mapped.name_type.is_none()
-                    || is_generic_direct_lowerable(arena, mapped.name_type, &mapped_scope_names);
-                let template_lowerable = mapped.type_node.is_none()
-                    || is_generic_direct_lowerable(arena, mapped.type_node, &mapped_scope_names);
-                let members_lowerable = mapped
-                    .members
-                    .as_ref()
-                    .is_none_or(|members| members.nodes.is_empty());
-
-                constraint_lowerable
-                    && default_lowerable
-                    && name_type_lowerable
-                    && template_lowerable
-                    && members_lowerable
-            })
-        }
-        k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
-            arena.get_function_type(node).is_some_and(|function_type| {
-                function_type.type_parameters.is_none()
-                    && parameters_are_generic_direct_lowerable(
-                        arena,
-                        &function_type.parameters,
-                        type_param_names,
-                    )
-                    && (function_type.type_annotation.is_none()
-                        || is_generic_direct_lowerable(
-                            arena,
-                            function_type.type_annotation,
-                            type_param_names,
-                        ))
-            })
+        // Source-file object, mapped, and callable bodies can carry
+        // file-local binding, contextual, and recursive mapped-type behavior
+        // that the child checker already handles correctly. Keep those on the
+        // mature path until direct lowering has a semantic proof for them.
+        k if k == syntax_kind_ext::TYPE_LITERAL
+            || k == syntax_kind_ext::MAPPED_TYPE
+            || k == syntax_kind_ext::FUNCTION_TYPE
+            || k == syntax_kind_ext::CONSTRUCTOR_TYPE =>
+        {
+            false
         }
         k if k == syntax_kind_ext::PARENTHESIZED_TYPE
             || k == syntax_kind_ext::OPTIONAL_TYPE
@@ -271,65 +219,6 @@ pub(super) fn type_alias_type_param_names(
         .flat_map(|params| params.nodes.iter().copied())
         .filter_map(|param_idx| type_parameter_name(arena, param_idx))
         .collect()
-}
-
-fn parameters_are_generic_direct_lowerable(
-    arena: &NodeArena,
-    parameters: &NodeList,
-    type_param_names: &[String],
-) -> bool {
-    parameters.nodes.iter().copied().all(|param_idx| {
-        let Some(param_node) = arena.get(param_idx) else {
-            return false;
-        };
-        let Some(param) = arena.get_parameter(param_node) else {
-            return false;
-        };
-        param.type_annotation.is_none()
-            || is_generic_direct_lowerable(arena, param.type_annotation, type_param_names)
-    })
-}
-
-fn type_literal_member_is_generic_direct_lowerable(
-    arena: &NodeArena,
-    member_idx: NodeIndex,
-    type_param_names: &[String],
-) -> bool {
-    let Some(member_node) = arena.get(member_idx) else {
-        return false;
-    };
-
-    if let Some(signature) = arena.get_signature(member_node) {
-        if signature.type_parameters.is_some() {
-            return false;
-        }
-        if let Some(name_node) = arena.get(signature.name)
-            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-        {
-            return false;
-        }
-        let params_lowerable = signature.parameters.as_ref().is_none_or(|params| {
-            parameters_are_generic_direct_lowerable(arena, params, type_param_names)
-        });
-        return params_lowerable
-            && (signature.type_annotation.is_none()
-                || is_generic_direct_lowerable(
-                    arena,
-                    signature.type_annotation,
-                    type_param_names,
-                ));
-    }
-
-    if let Some(index_sig) = arena.get_index_signature(member_node) {
-        return parameters_are_generic_direct_lowerable(
-            arena,
-            &index_sig.parameters,
-            type_param_names,
-        ) && (index_sig.type_annotation.is_none()
-            || is_generic_direct_lowerable(arena, index_sig.type_annotation, type_param_names));
-    }
-
-    false
 }
 
 fn type_parameter_name(arena: &NodeArena, param_idx: NodeIndex) -> Option<String> {
