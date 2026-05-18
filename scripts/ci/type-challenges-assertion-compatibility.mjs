@@ -130,6 +130,16 @@ function duplicatedValues(values) {
   return [...duplicates].sort();
 }
 
+function validateCompilerStatus(status, label) {
+  if (typeof status !== "string" || status.trim() === "") {
+    fail(`${label} status must be a non-empty string`);
+  }
+  const allowedStatuses = new Set(["pass", "fail", "timeout", "error", "unavailable"]);
+  if (!allowedStatuses.has(status)) {
+    fail(`${label} status must be one of ${[...allowedStatuses].join(", ")}: ${status}`);
+  }
+}
+
 function validateReport(report) {
   validateClassificationCompilerReport(report);
   if (!report.comparison || typeof report.comparison !== "object") {
@@ -305,11 +315,7 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
   }
   for (const compiler of ["tsc", "tsz"]) {
     const status = cleanSubsetClassification.compilers?.[compiler]?.status;
-    if (typeof status !== "string" || status.trim() === "") {
-      fail(
-        `tsc-clean assertion classification ${compiler} status must be a non-empty string`,
-      );
-    }
+    validateCompilerStatus(status, `tsc-clean assertion classification ${compiler}`);
     const totalCandidates =
       cleanSubsetClassification.compilers?.[compiler]?.candidateDiagnostics?.totalCandidates;
     if (!Number.isInteger(totalCandidates)) {
@@ -345,9 +351,7 @@ for (const [compiler, result] of [
   ["tsc", tsc],
   ["tsz", tsz],
 ]) {
-  if (typeof result.status !== "string" || result.status.trim() === "") {
-    fail(`assertion classification ${compiler} status must be a non-empty string`);
-  }
+  validateCompilerStatus(result.status, `assertion classification ${compiler}`);
 }
 if (!Number.isInteger(counts.pairedSolutions)) {
   fail("assertion classification candidateManifest.counts.pairedSolutions must be an integer");
