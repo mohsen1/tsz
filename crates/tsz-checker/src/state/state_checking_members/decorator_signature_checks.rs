@@ -3,7 +3,7 @@
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 /// Decorator-type sentinels that short-circuit signature validation. `ERROR`
@@ -50,12 +50,13 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        let this_type = self.decorator_node_receiver_type(decorator_node);
         let (result, _, _) = self.resolve_call_with_checker_adapter(
             resolved,
             &[first_arg, TypeId::ANY],
             false,
             None,
-            None,
+            this_type,
         );
 
         if !matches!(result, CallResult::Success(_)) {
@@ -225,8 +226,9 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or_else(|| vec![TypeId::ANY, TypeId::OBJECT])
         };
 
+        let this_type = self.decorator_expression_receiver_type(decorator_expr);
         let (result, _, _) =
-            self.resolve_call_with_checker_adapter(resolved, &arg_types, false, None, None);
+            self.resolve_call_with_checker_adapter(resolved, &arg_types, false, None, this_type);
 
         let return_type = match result {
             CallResult::Success(return_type) => Some(return_type),
@@ -604,8 +606,9 @@ impl<'a> CheckerState<'a> {
         } else {
             &[TypeId::ANY, TypeId::STRING]
         };
+        let this_type = self.decorator_node_receiver_type(decorator_node);
         let (result, _, _) =
-            self.resolve_call_with_checker_adapter(resolved, arg_types, false, None, None);
+            self.resolve_call_with_checker_adapter(resolved, arg_types, false, None, this_type);
 
         let return_type = match result {
             CallResult::Success(return_type) => Some(return_type),
@@ -727,12 +730,13 @@ impl<'a> CheckerState<'a> {
             TypeId::STRING
         };
 
+        let this_type = self.decorator_node_receiver_type(decorator_node);
         let (result, _, _) = self.resolve_call_with_checker_adapter(
             resolved,
             &[TypeId::ANY, key_arg, TypeId::NUMBER],
             false,
             None,
-            None,
+            this_type,
         );
 
         if !matches!(result, CallResult::Success(_)) {
@@ -751,5 +755,51 @@ impl<'a> CheckerState<'a> {
             return ident.escaped_text.to_string();
         }
         "decorator".to_string()
+    }
+
+    /// Receiver `this`-type for a decorator expression, used when validating
+    /// the decorator's call signature.
+    ///
+    /// tsc's `resolveDecorator` resolves the decorator as if it were called
+    /// with the synthetic argument list and the receiver of the decorator
+    /// expression bound to `this`. When the expression is
+    /// `<receiver>.<name>` or `<receiver>[<arg>]` (modulo parentheses), the
+    /// receiver's type is the implicit `this` of the call. Decorator
+    /// signatures whose method declarations include an explicit
+    /// `this: T` parameter type-check against that receiver — without this
+    /// binding, the call resolution wrongly rejects every `@<recv>.<method>`
+    /// decorator whose declaration carries an explicit `this` constraint
+    /// (TS1241 + TS1270).
+    ///
+    /// Returns `None` when the decorator expression is not a property /
+    /// element access (e.g. a bare identifier, call expression, or arrow
+    /// function literal) — in those shapes there is no syntactic receiver,
+    /// and the existing no-`this`-binding behavior is correct.
+    pub(crate) fn decorator_expression_receiver_type(
+        &mut self,
+        decorator_expr: NodeIndex,
+    ) -> Option<TypeId> {
+        let unwrapped = self.ctx.arena.skip_parenthesized(decorator_expr);
+        let node = self.ctx.arena.get(unwrapped)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let receiver_type = self.compute_type_of_node(access.expression);
+        // Skip permissive / unresolved receivers — they over-permit the call
+        // signature check (and may mask genuine TS1241 cascades elsewhere).
+        if decorator_type_is_unchecked(receiver_type) {
+            return None;
+        }
+        Some(receiver_type)
+    }
+
+    /// [`Self::decorator_expression_receiver_type`] addressed by the
+    /// decorator `Modifier` node instead of its expression.
+    fn decorator_node_receiver_type(&mut self, decorator_node: NodeIndex) -> Option<TypeId> {
+        let expr = self.ctx.arena.get_decorator_at(decorator_node)?.expression;
+        self.decorator_expression_receiver_type(expr)
     }
 }
