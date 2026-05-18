@@ -146,6 +146,36 @@ export interface State<in out T> {
 }
 
 #[test]
+fn variance_recovery_modifiers_are_preserved_in_dts() {
+    let output = emit_dts(
+        r#"type T20<public T> = T;
+class C {
+    in a = 0;
+    out b = 0;
+}
+let Anon = class <out T> {
+    value!: T;
+};"#,
+    );
+    assert!(
+        output.contains("type T20<public T> = T;"),
+        "invalid type-parameter modifier should be preserved: {output}"
+    );
+    assert!(
+        output.contains("in a: number;"),
+        "recovered `in` class-member modifier should be preserved: {output}"
+    );
+    assert!(
+        output.contains("out b: number;"),
+        "recovered `out` class-member modifier should be preserved: {output}"
+    );
+    assert!(
+        output.contains("new <out T>()"),
+        "class-expression constructor type parameters should keep variance: {output}"
+    );
+}
+
+#[test]
 fn probe_abstract_construct_signature_in_interface() {
     // Abstract construct signature in type
     let output = emit_dts("export type AbstractCtor = abstract new <T>() => T;");

@@ -30,6 +30,10 @@ dashmap = { workspace = true }
 stacker = "0.1.23"
 
 [[test]]
+name = "extract_alias_distributive_mapped_tests"
+path = "tests/extract_alias_distributive_mapped_tests.rs"
+
+[[test]]
 name = "generic_multi_prop_object_literal_tests"
 path = "tests/generic_multi_prop_object_literal_tests.rs"
 
@@ -258,6 +262,10 @@ name = "ts2300_tests"
 path = "tests/ts2300_tests.rs"
 
 [[test]]
+name = "ts2300_reexport_augmentation_tests"
+path = "tests/ts2300_reexport_augmentation_tests.rs"
+
+[[test]]
 name = "ts2304_tests"
 path = "tests/ts2304_tests.rs"
 
@@ -462,6 +470,10 @@ name = "ts2353_generic_constraint_excess_property_tests"
 path = "tests/ts2353_generic_constraint_excess_property_tests.rs"
 
 [[test]]
+name = "relational_operator_type_display_tests"
+path = "tests/relational_operator_type_display_tests.rs"
+
+[[test]]
 name = "ts2677_intersection_predicate_tests"
 path = "tests/ts2677_intersection_predicate_tests.rs"
 
@@ -566,8 +578,20 @@ name = "nonnull_contextual_type_arg_inference_tests"
 path = "tests/nonnull_contextual_type_arg_inference_tests.rs"
 
 [[test]]
-name = "conformance_issues"
-path = "tests/conformance_issues.rs"
+name = "conformance_issues_errors"
+path = "tests/conformance_issues_errors.rs"
+
+[[test]]
+name = "conformance_issues_features"
+path = "tests/conformance_issues_features.rs"
+
+[[test]]
+name = "conformance_issues_modules"
+path = "tests/conformance_issues_modules.rs"
+
+[[test]]
+name = "conformance_issues_types"
+path = "tests/conformance_issues_types.rs"
 
 [[test]]
 name = "export_equals_display_order_tests"
@@ -686,8 +710,16 @@ name = "typeof_instantiation_expression_tests"
 path = "tests/typeof_instantiation_expression_tests.rs"
 
 [[test]]
-name = "ts2344_class_constructor_constraint"
-path = "tests/ts2344_class_constructor_constraint.rs"
+name = "ts2344_class_constructor_constraint_call"
+path = "tests/ts2344_class_constructor_constraint_call.rs"
+
+[[test]]
+name = "ts2344_class_constructor_constraint_expr"
+path = "tests/ts2344_class_constructor_constraint_expr.rs"
+
+[[test]]
+name = "ts2344_class_constructor_constraint_visibility"
+path = "tests/ts2344_class_constructor_constraint_visibility.rs"
 
 [[test]]
 name = "ts2344_accessor_constraint"
@@ -788,6 +820,10 @@ path = "tests/json_namespace_import_tests.rs"
 [[test]]
 name = "self_namespace_import_alias_leak_tests"
 path = "tests/self_namespace_import_alias_leak_tests.rs"
+
+[[test]]
+name = "self_referencing_alias_member_inheritance_tests"
+path = "tests/self_referencing_alias_member_inheritance_tests.rs"
 
 [[test]]
 name = "contextual_typing_tests"
@@ -894,6 +930,10 @@ name = "large_union_index_merge_regression_tests"
 path = "tests/large_union_index_merge_regression_tests.rs"
 
 [[test]]
+name = "global_augmentation_lib_interface_merge_tests"
+path = "tests/global_augmentation_lib_interface_merge_tests.rs"
+
+[[test]]
 name = "ts2451_type_only_namespace_merge_tests"
 path = "tests/ts2451_type_only_namespace_merge_tests.rs"
 
@@ -904,6 +944,10 @@ path = "tests/ts2490_unique_symbol_iterator_tests.rs"
 [[test]]
 name = "ts2506_cross_file_cycle_tests"
 path = "tests/ts2506_cross_file_cycle_tests.rs"
+
+[[test]]
+name = "ts2527_unique_symbol_via_reexport_tests"
+path = "tests/ts2527_unique_symbol_via_reexport_tests.rs"
 
 [[test]]
 name = "intersection_primitive_member_assignability_tests"
@@ -1134,6 +1178,10 @@ name = "template_literal_union_separator_tests"
 path = "tests/template_literal_union_separator_tests.rs"
 
 [[test]]
+name = "template_literal_infer_type_arg_tests"
+path = "tests/template_literal_infer_type_arg_tests.rs"
+
+[[test]]
 name = "object_element_access_diagnostics_tests"
 path = "tests/object_element_access_diagnostics_tests.rs"
 
@@ -1160,6 +1208,10 @@ path = "tests/lib_global_namespace_shadowing_tests.rs"
 [[test]]
 name = "symbol_index_signature_tests"
 path = "tests/symbol_index_signature_tests.rs"
+
+[[test]]
+name = "non_unique_symbol_late_bound_member_tests"
+path = "tests/non_unique_symbol_late_bound_member_tests.rs"
 
 [[test]]
 name = "ts2855_static_super_field_tests"
@@ -1318,8 +1370,32 @@ name = "static_readonly_unique_symbol_tests"
 path = "tests/static_readonly_unique_symbol_tests.rs"
 
 [[test]]
+name = "issue_7681_super_decorator_tests"
+path = "tests/issue_7681_super_decorator_tests.rs"
+
+[[test]]
+name = "index_signature_argument_assignability_tests"
+path = "tests/index_signature_argument_assignability_tests.rs"
+
+[[test]]
 name = "operator_literal_annotation_display_tests"
 path = "tests/operator_literal_annotation_display_tests.rs"
+
+[[test]]
+name = "operator_literal_annotation_widen_tests"
+path = "tests/operator_literal_annotation_widen_tests.rs"
+
+[[test]]
+name = "flow_dp_memoization_tests"
+path = "tests/flow_dp_memoization_tests.rs"
+
+[[test]]
+name = "public_package_unique_symbol_emit_tests"
+path = "tests/public_package_unique_symbol_emit_tests.rs"
+
+[[test]]
+name = "ts2536_keyof_string_index_signature_tests"
+path = "tests/ts2536_keyof_string_index_signature_tests.rs"
 
 [lints]
 workspace = true

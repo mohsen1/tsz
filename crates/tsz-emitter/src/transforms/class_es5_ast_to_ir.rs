@@ -24,12 +24,16 @@ pub struct AstToIr<'a> {
     transforms: Option<TransformContext>,
     /// Current `this` substitution to use when lowering static initializer contexts.
     current_this_substitution: Cell<Option<ThisSubstitution>>,
+    /// Capture alias for lexical `this` inside arrows within the current member body.
+    lexical_this_capture_alias: Cell<Option<ThisSubstitution>>,
     /// Whether we're inside a derived class (has extends clause) — needed for super lowering
     has_super: bool,
     /// Generated super parameter name for the class IIFE.
     super_name: String,
-    /// Whether we're inside a static member — super access uses `_super.X` (no .prototype)
-    is_static: bool,
+    /// Whether super access should use `_super.X` instead of `_super.prototype.X`.
+    /// This is also enabled while converting nested non-arrow functions, where
+    /// invalid `super` references follow tsc's recovery emit path.
+    is_static: Cell<bool>,
     /// Optional identifier substitution for class self-references in decorated class bodies.
     identifier_substitution: Option<(String, String)>,
     /// Counter for generating unique temp variable names (shared with caller)
@@ -43,6 +47,10 @@ pub struct AstToIr<'a> {
     /// Static block recovery mode where bare `await` identifiers are emitted
     /// as recovered `yield` tokens, matching `tsc` downlevel emit.
     emit_await_as_yield: bool,
+    /// Do not attach trailing comments that begin at or after this source
+    /// position. Used when converting statements inside a method/accessor body
+    /// so comments after the body closing brace stay on the descriptor.
+    trailing_comment_limit: Cell<Option<u32>>,
 }
 
 impl<'a> AstToIr<'a> {
@@ -53,15 +61,17 @@ impl<'a> AstToIr<'a> {
             this_captured: Cell::new(false),
             transforms: None,
             current_this_substitution: Cell::new(None),
+            lexical_this_capture_alias: Cell::new(None),
             has_super: false,
             super_name: "_super".to_string(),
-            is_static: false,
+            is_static: Cell::new(false),
             identifier_substitution: None,
             temp_var_counter: Cell::new(0),
             hoisted_temps: RefCell::new(Vec::new()),
             dynamic_import_promise_counter: Cell::new(1),
             module_kind: ModuleKind::None,
             emit_await_as_yield: false,
+            trailing_comment_limit: Cell::new(None),
         }
     }
 
@@ -77,8 +87,8 @@ impl<'a> AstToIr<'a> {
     }
 
     /// Set whether we're inside a static member (affects super property access)
-    pub const fn with_static(mut self, is_static: bool) -> Self {
-        self.is_static = is_static;
+    pub fn with_static(self, is_static: bool) -> Self {
+        self.is_static.set(is_static);
         self
     }
 
@@ -103,6 +113,11 @@ impl<'a> AstToIr<'a> {
         self
     }
 
+    pub fn with_trailing_comment_limit(self, limit: Option<u32>) -> Self {
+        self.trailing_comment_limit.set(limit);
+        self
+    }
+
     pub const fn with_source_text(mut self, source_text: &'a str) -> Self {
         self.source_text = Some(source_text);
         self
@@ -111,6 +126,13 @@ impl<'a> AstToIr<'a> {
     /// Set the current class alias for `this` substitution
     pub fn with_class_alias(self, alias: Option<String>) -> Self {
         self.current_this_substitution
+            .set(alias.map(ThisSubstitution::Identifier));
+        self
+    }
+
+    /// Set the member-body lexical `this` capture alias for nested arrows.
+    pub fn with_lexical_this_capture_alias(self, alias: Option<String>) -> Self {
+        self.lexical_this_capture_alias
             .set(alias.map(ThisSubstitution::Identifier));
         self
     }
@@ -229,7 +251,23 @@ impl<'a> AstToIr<'a> {
         let Some(source_text) = self.source_text else {
             return statement;
         };
+        if let Some(comment_text) = self.included_trailing_line_comment(node, source_text) {
+            return IRNode::Sequence(vec![
+                statement,
+                IRNode::TrailingComment(comment_text.into()),
+            ]);
+        }
         for comment in crate::emitter::get_trailing_comment_ranges(source_text, node.end as usize) {
+            if !self.comment_starts_before_limit(comment.pos) {
+                continue;
+            }
+            let gap_start = (node.end as usize).min(source_text.len());
+            let gap_end = (comment.pos as usize).min(source_text.len());
+            if gap_start > gap_end
+                || !Self::can_attach_trailing_comment_gap(&source_text[gap_start..gap_end])
+            {
+                continue;
+            }
             let comment_text = &source_text[comment.pos as usize..comment.end as usize];
             let trimmed = comment_text.trim_start();
             if trimmed.starts_with("//") || trimmed.starts_with("/*") {
@@ -239,12 +277,19 @@ impl<'a> AstToIr<'a> {
                 ]);
             }
         }
-        let line_start = (node.pos as usize).min(source_text.len());
+        if node.kind == syntax_kind_ext::RETURN_STATEMENT {
+            return statement;
+        }
+        let line_start = (node.end as usize).min(source_text.len());
         let line_end = source_text[line_start..]
             .find(['\n', '\r'])
             .map_or(source_text.len(), |offset| line_start + offset);
         let line = &source_text[line_start..line_end];
-        if let Some(comment_start) = Self::line_comment_start(line) {
+        if let Some(comment_start) = Self::attached_line_comment_start(node.kind, line) {
+            let comment_pos = line_start + comment_start;
+            if !self.comment_starts_before_limit(comment_pos as u32) {
+                return statement;
+            }
             let comment_text = &line[comment_start..];
             return IRNode::Sequence(vec![
                 statement,
@@ -252,6 +297,75 @@ impl<'a> AstToIr<'a> {
             ]);
         }
         statement
+    }
+
+    fn included_trailing_line_comment(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+        source_text: &str,
+    ) -> Option<String> {
+        let node_start = (node.pos as usize).min(source_text.len());
+        let node_end = self
+            .trailing_comment_limit
+            .get()
+            .map_or(node.end as usize, |limit| {
+                (limit as usize).min(node.end as usize)
+            })
+            .min(source_text.len());
+        if node_start >= node_end {
+            return None;
+        }
+
+        let mut scan_end = node_end;
+        while scan_end > node_start {
+            let Some(ch) = source_text[..scan_end].chars().next_back() else {
+                break;
+            };
+            if !ch.is_whitespace() {
+                break;
+            }
+            scan_end -= ch.len_utf8();
+        }
+        if node_start >= scan_end {
+            return None;
+        }
+
+        let line_start = source_text[..scan_end]
+            .rfind(['\n', '\r'])
+            .map_or(node_start, |offset| (offset + 1).max(node_start));
+        let line = &source_text[line_start..scan_end];
+        let comment_start = Self::line_comment_start(line)?;
+        let comment_pos = line_start + comment_start;
+        if comment_pos < node_start || !self.comment_starts_before_limit(comment_pos as u32) {
+            return None;
+        }
+        Some(line[comment_start..].trim_end().to_string())
+    }
+
+    fn comment_starts_before_limit(&self, comment_pos: u32) -> bool {
+        self.trailing_comment_limit
+            .get()
+            .is_none_or(|limit| comment_pos < limit)
+    }
+
+    fn attached_line_comment_start(node_kind: u16, line_suffix: &str) -> Option<usize> {
+        let comment_start = Self::line_comment_start(line_suffix)?;
+        let gap = &line_suffix[..comment_start];
+        let gap_belongs_to_statement = if node_kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+            Self::expression_statement_trailing_comment_gap(gap)
+        } else {
+            Self::can_attach_trailing_comment_gap(gap)
+        };
+        gap_belongs_to_statement.then_some(comment_start)
+    }
+
+    fn expression_statement_trailing_comment_gap(gap: &str) -> bool {
+        gap.bytes()
+            .all(|byte| matches!(byte, b' ' | b'\t' | b';' | b')' | b']' | b'}'))
+    }
+
+    fn can_attach_trailing_comment_gap(gap: &str) -> bool {
+        gap.chars().all(|ch| ch.is_whitespace() || ch == ';')
     }
 
     fn line_comment_start(line: &str) -> Option<usize> {
@@ -591,6 +705,7 @@ impl<'a> AstToIr<'a> {
         // Function declarations have their own `this`; class/static-block
         // substitutions must not leak into their bodies.
         let prev_substitution = self.current_this_substitution.take();
+        let prev_static = self.is_static.replace(true);
         let body = if func.body.is_none() {
             vec![]
         } else if let Some(body_node) = self.arena.get(func.body)
@@ -605,6 +720,7 @@ impl<'a> AstToIr<'a> {
         } else {
             vec![]
         };
+        self.is_static.set(prev_static);
         self.current_this_substitution.set(prev_substitution);
         self.temp_var_counter.set(saved_temp_counter);
 
@@ -932,6 +1048,7 @@ impl<'a> AstToIr<'a> {
             initializer: Box::new(initializer),
             expression: Box::new(self.convert_expression(loop_data.expression)),
             body: Box::new(self.convert_statement(loop_data.statement)),
+            multiline_body: false,
         }
     }
 
@@ -998,35 +1115,31 @@ impl<'a> AstToIr<'a> {
 
             // Check for bare super(args) → _this = _super.call(this, args) || this
             // This handles super() in expression contexts (e.g. computed property names).
-            if self.has_super {
-                let callee_node = self.arena.get(call.expression);
-                if let Some(cn) = callee_node
-                    && cn.kind == SyntaxKind::SuperKeyword as u16
-                {
-                    let mut call_args = vec![IRNode::this()];
-                    call_args.extend(args);
-                    // _this = _super.call(this, args...) || this
-                    return IRNode::assign(
-                        IRNode::id("_this"),
-                        IRNode::logical_or(
-                            IRNode::call(
-                                IRNode::prop(IRNode::id(self.super_name.clone()), "call"),
-                                call_args,
-                            ),
-                            IRNode::this(),
+            if self.has_super
+                && let Some(cn) = self.arena.get(call.expression)
+                && cn.kind == SyntaxKind::SuperKeyword as u16
+            {
+                let mut call_args = vec![IRNode::this()];
+                call_args.extend(args);
+                // _this = _super.call(this, args...) || this
+                return IRNode::assign(
+                    IRNode::id("_this"),
+                    IRNode::logical_or(
+                        IRNode::call(
+                            IRNode::prop(IRNode::id(self.super_name.clone()), "call"),
+                            call_args,
                         ),
-                    );
-                }
+                        IRNode::this(),
+                    ),
+                );
             }
 
             // Check for super.method(args) or super[expr](args) → _super.prototype.method.call(this, args)
-            if self.has_super
-                && let Some(super_call) = self.try_convert_super_method_call(
-                    call.expression,
-                    args.clone(),
-                    node.is_optional_chain(),
-                )
-            {
+            if let Some(super_call) = self.try_convert_super_method_call(
+                call.expression,
+                args.clone(),
+                node.is_optional_chain(),
+            ) {
                 return super_call;
             }
 
@@ -1149,7 +1262,7 @@ impl<'a> AstToIr<'a> {
             let obj_node = self.arena.get(access.expression)?;
             if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
                 let method_name = get_identifier_text(self.arena, access.name_or_argument)?;
-                let super_proto_method = if self.is_static {
+                let super_proto_method = if self.is_static.get() {
                     // Static: _super.method
                     IRNode::PropertyAccess {
                         object: Box::new(IRNode::id(self.super_name.clone())),
@@ -1190,7 +1303,7 @@ impl<'a> AstToIr<'a> {
             let obj_node = self.arena.get(access.expression)?;
             if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
                 let index_expr = self.convert_expression(access.name_or_argument);
-                let super_base = if self.is_static {
+                let super_base = if self.is_static.get() {
                     IRNode::id(self.super_name.clone())
                 } else {
                     IRNode::PropertyAccess {
@@ -1286,12 +1399,11 @@ impl<'a> AstToIr<'a> {
         // PropertyAccessExpression uses AccessExprData
         if let Some(access) = self.arena.get_access_expr(node) {
             // Check for super.property → _super.prototype.property (instance) or _super.property (static)
-            if self.has_super
-                && let Some(obj_node) = self.arena.get(access.expression)
+            if let Some(obj_node) = self.arena.get(access.expression)
                 && obj_node.kind == SyntaxKind::SuperKeyword as u16
                 && let Some(name) = get_identifier_text(self.arena, access.name_or_argument)
             {
-                return if self.is_static {
+                return if self.is_static.get() {
                     IRNode::PropertyAccess {
                         object: Box::new(IRNode::id(self.super_name.clone())),
                         property: name.into(),
@@ -1326,12 +1438,11 @@ impl<'a> AstToIr<'a> {
         // ElementAccessExpression uses AccessExprData
         if let Some(access) = self.arena.get_access_expr(node) {
             // Check for super[expr] → _super.prototype[expr] (instance) or _super[expr] (static)
-            if self.has_super
-                && let Some(obj_node) = self.arena.get(access.expression)
+            if let Some(obj_node) = self.arena.get(access.expression)
                 && obj_node.kind == SyntaxKind::SuperKeyword as u16
             {
                 let index = self.convert_expression(access.name_or_argument);
-                let super_base = if self.is_static {
+                let super_base = if self.is_static.get() {
                     IRNode::id(self.super_name.clone())
                 } else {
                     IRNode::PropertyAccess {
@@ -1512,7 +1623,10 @@ impl<'a> AstToIr<'a> {
                 .iter()
                 .filter_map(|&p| self.convert_object_property(p))
                 .collect();
-            IRNode::object(props)
+            IRNode::ObjectLiteral {
+                properties: props,
+                source_range: Some((node.pos, node.end)),
+            }
         } else {
             IRNode::ASTRef(idx)
         }
@@ -1852,6 +1966,7 @@ impl<'a> AstToIr<'a> {
             // Regular function expressions have their own `this`, so we must
             // clear the class alias (it should NOT substitute `this` inside).
             let prev_substitution = self.current_this_substitution.take();
+            let prev_static = self.is_static.replace(true);
 
             let body = if func.body.is_none() {
                 vec![]
@@ -1869,6 +1984,7 @@ impl<'a> AstToIr<'a> {
             };
 
             // Restore previous alias
+            self.is_static.set(prev_static);
             self.current_this_substitution.set(prev_substitution);
             self.temp_var_counter.set(saved_temp_counter);
             let mut body = body;
@@ -1938,9 +2054,14 @@ impl<'a> AstToIr<'a> {
             // Save previous state and set captured flag if needed
             let prev_captured = self.this_captured.get();
             let prev_substitution = self.current_this_substitution.take();
+            let lexical_this_capture_alias = self.lexical_this_capture_alias.take();
+            self.lexical_this_capture_alias
+                .set(lexical_this_capture_alias.clone());
             let this_substitution = class_alias.map(ThisSubstitution::Identifier).or_else(|| {
                 if captures_this {
-                    prev_substitution.clone()
+                    prev_substitution
+                        .clone()
+                        .or_else(|| lexical_this_capture_alias.clone())
                 } else {
                     None
                 }
@@ -2145,5 +2266,48 @@ impl<'a> AstToIr<'a> {
             left.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                 || left.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AstToIr;
+    use tsz_parser::parser::syntax_kind_ext;
+
+    #[test]
+    fn attached_line_comment_start_allows_statement_trailing_comments() {
+        assert_eq!(
+            AstToIr::attached_line_comment_start(syntax_kind_ext::VARIABLE_STATEMENT, " // ok"),
+            Some(1)
+        );
+        assert_eq!(
+            AstToIr::attached_line_comment_start(syntax_kind_ext::VARIABLE_STATEMENT, "; // ok"),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn attached_line_comment_start_rejects_comments_after_parent_delimiters() {
+        assert_eq!(
+            AstToIr::attached_line_comment_start(
+                syntax_kind_ext::VARIABLE_STATEMENT,
+                " } // not inner",
+            ),
+            None
+        );
+        assert_eq!(
+            AstToIr::attached_line_comment_start(
+                syntax_kind_ext::VARIABLE_STATEMENT,
+                " }) // not inner",
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn can_attach_trailing_comment_gap_rejects_parent_delimiters() {
+        assert!(AstToIr::can_attach_trailing_comment_gap(" ; "));
+        assert!(!AstToIr::can_attach_trailing_comment_gap(" } "));
+        assert!(!AstToIr::can_attach_trailing_comment_gap(" }) "));
     }
 }
