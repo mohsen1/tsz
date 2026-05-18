@@ -479,20 +479,23 @@ checker_integration_test_args() {
   local test_name
   while IFS= read -r test_name; do
     printf -- '--test\n%s\n' "$test_name"
-  done < <(
-    cargo metadata --no-deps --format-version 1 \
-      | jq -r '.packages[]
-          | select(.name == "tsz-checker")
-          | .targets[]
-          | select(.kind[]? == "test")
-          | .name' \
-      | sort
-  )
+  done < <(checker_integration_test_names)
+}
+
+checker_integration_test_names() {
+  cargo metadata --no-deps --format-version 1 \
+    | jq -r '.packages[]
+        | select(.name == "tsz-checker")
+        | .targets[]
+        | select(.kind[]? == "test")
+        | .name' \
+    | sort
 }
 
 run_unit_tests() {
   ci_section "Workspace nextest suites"
-  local package package_names checker_selected general_pkg_args checker_test_args
+  local package package_names checker_selected general_pkg_args
+  local checker_batch_size checker_batch_names checker_batch_args
   mapfile -t package_names < <(unit_test_packages)
   if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
     echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
@@ -518,10 +521,42 @@ run_unit_tests() {
     # The checker lib-test binary is larger than the 32 GiB CI runners can
     # link reliably. Keep checker integration tests in unit CI while avoiding
     # that monolithic `rustc --test crates/tsz-checker/src/lib.rs` artifact.
-    mapfile -t checker_test_args < <(checker_integration_test_args)
-    cargo nextest run --profile ci --cargo-profile ci-unit \
-      --build-jobs "$CARGO_BUILD_JOBS" \
-      -p tsz-checker "${checker_test_args[@]}"
+    #
+    # Cargo also struggles when one command asks it to link every checker
+    # integration target. Batch the declared targets so each `cargo test
+    # --no-run` phase has a bounded link set while preserving the same test
+    # coverage.
+    checker_batch_size="${TSZ_CI_CHECKER_TEST_BATCH_SIZE:-40}"
+    if ! [[ "$checker_batch_size" =~ ^[0-9]+$ ]] || (( checker_batch_size < 1 )); then
+      echo "error: TSZ_CI_CHECKER_TEST_BATCH_SIZE must be a positive integer" >&2
+      return 2
+    fi
+    checker_batch_names=()
+    while IFS= read -r test_name; do
+      checker_batch_names+=("$test_name")
+      if (( ${#checker_batch_names[@]} >= checker_batch_size )); then
+        checker_batch_args=()
+        for test_name in "${checker_batch_names[@]}"; do
+          checker_batch_args+=(--test "$test_name")
+        done
+        echo "info: checker integration batch (${#checker_batch_names[@]} targets): ${checker_batch_names[*]}"
+        cargo nextest run --profile ci --cargo-profile ci-unit \
+          --build-jobs "$CARGO_BUILD_JOBS" \
+          -p tsz-checker "${checker_batch_args[@]}"
+        checker_batch_names=()
+      fi
+    done < <(checker_integration_test_names)
+
+    if (( ${#checker_batch_names[@]} > 0 )); then
+      checker_batch_args=()
+      for test_name in "${checker_batch_names[@]}"; do
+        checker_batch_args+=(--test "$test_name")
+      done
+      echo "info: checker integration batch (${#checker_batch_names[@]} targets): ${checker_batch_names[*]}"
+      cargo nextest run --profile ci --cargo-profile ci-unit \
+        --build-jobs "$CARGO_BUILD_JOBS" \
+        -p tsz-checker "${checker_batch_args[@]}"
+    fi
   fi
 }
 
@@ -649,6 +684,7 @@ build_test_binaries() {
   fi
 
   cargo build --profile dist-fast \
+    --jobs "$CARGO_BUILD_JOBS" \
     -p tsz-cli \
     -p tsz-conformance \
     --bin tsz \
@@ -1059,6 +1095,12 @@ run_conformance_aggregate() {
   local expected_shards="${_TSZ_CI_CONFORMANCE_SHARD_COUNT:-${TSZ_CI_CONFORMANCE_SHARDS:-32}}"
   local tmp_dir
   tmp_dir="$(mktemp -d)"
+  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  local prefix=""
+  if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
+    prefix="${bucket%/}/conformance-runs/${run_key}"
+  fi
 
   # Prefer GitHub Actions artifacts (downloaded by the workflow's download-artifact step)
   # over GCS, which requires SA key permissions that may not be available.
@@ -1090,13 +1132,10 @@ run_conformance_aggregate() {
   fi
 
   if [[ "$using_artifacts" -eq 0 ]]; then
-    local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-    local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
-    if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
+    if [[ -z "$prefix" ]]; then
       echo "error: cannot aggregate — no artifact dir and no GCS bucket/run key available" >&2
       return 1
     fi
-    local prefix="${bucket%/}/conformance-runs/${run_key}"
     ensure_gcs_auth
     echo "Downloading shard results from ${prefix}/shard-*.json ..."
     local dl_attempt dl_rc=1
@@ -1186,7 +1225,7 @@ run_conformance_aggregate() {
     > "$METRICS_DIR/conformance.json"
   publish_latest_metric conformance "$METRICS_DIR/conformance.json"
 
-  if gsutil -q cp "${prefix}/timings-shard-*.json" "$tmp_dir/" 2>/dev/null; then
+  if [[ -n "$prefix" ]] && gsutil -q cp "${prefix}/timings-shard-*.json" "$tmp_dir/" 2>/dev/null; then
     jq -s '
       {
         summary: {
@@ -1214,7 +1253,7 @@ _check_conformance_regression_allowlist() {
     return 1
   fi
 
-  if ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+  if [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
     echo "error: conformance regression deficit ${expected_deficit}, but per-shard failure lists are unavailable" >&2
     return 1
   fi
@@ -1283,7 +1322,7 @@ _show_conformance_regressions() {
   local snapshot="scripts/conformance/conformance-detail.json"
 
   # Download all per-shard failure lists (best-effort; non-fatal if missing).
-  if ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+  if [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
     echo "(no per-shard failure lists available — upload may have been skipped)" >&2
     return
   fi
