@@ -2082,6 +2082,31 @@ fn node_esm_exported_import_equals_require_uses_export_list() {
     );
 }
 
+#[test]
+fn es_module_declare_export_import_equals_recovers_export_var() {
+    let source = r#"namespace x {
+    interface c {}
+}
+declare export import a = x.c;
+var b: a;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ES2015,
+        target: ScriptTarget::ES2015,
+        always_strict: true,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert_eq!(output.trim_end(), "export var a = x.c;\nvar b;");
+}
+
 /// A file without any module syntax or import.meta should NOT get __esModule.
 #[test]
 fn no_import_meta_no_esmodule_marker() {

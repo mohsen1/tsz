@@ -1559,6 +1559,12 @@ impl<'a> Printer<'a> {
                             module_node.kind == SyntaxKind::StringLiteral as u16
                                 || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
                         });
+                if self
+                    .arena
+                    .has_modifier(&import_data.modifiers, SyntaxKind::ExportKeyword)
+                {
+                    return false;
+                }
                 if self.recovered_module_syntax_block_depth > 0 {
                     return !is_external;
                 }
