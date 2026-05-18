@@ -308,6 +308,18 @@ if (cleanSubsetManifest) {
   if (!Array.isArray(cleanSubsetEntries)) {
     fail("tsc-clean assertion manifest entries must be an array");
   }
+  const cleanSubsetOutputs = cleanSubsetEntries.map((entry, index) =>
+    validateCandidateOutputPath(
+      entry?.output,
+      `tsc-clean assertion manifest entries[${index}].output`,
+    ),
+  );
+  const duplicateCleanSubsetOutputs = duplicatedValues(cleanSubsetOutputs);
+  if (duplicateCleanSubsetOutputs.length > 0) {
+    fail(
+      `tsc-clean assertion manifest entries contain duplicate outputs: ${duplicateCleanSubsetOutputs.join(", ")}`,
+    );
+  }
   const cleanSubsetCounts = cleanSubsetManifest.counts;
   const acceptedAssertions = cleanSubsetCounts.tscAcceptedAssertions;
   const acceptedReferencingSolutionDeclaration =
