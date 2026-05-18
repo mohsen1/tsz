@@ -241,12 +241,26 @@ impl<'a> AstToIr<'a> {
                 ]);
             }
         }
+        if node.kind == syntax_kind_ext::RETURN_STATEMENT {
+            return statement;
+        }
         let line_start = (node.pos as usize).min(source_text.len());
         let line_end = source_text[line_start..]
             .find(['\n', '\r'])
             .map_or(source_text.len(), |offset| line_start + offset);
         let line = &source_text[line_start..line_end];
         if let Some(comment_start) = Self::line_comment_start(line) {
+            let comment_abs = line_start + comment_start;
+            let gap_start = (node.end as usize).min(comment_abs);
+            let gap = &source_text[gap_start..comment_abs];
+            let gap_belongs_to_statement = if node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+                Self::expression_statement_trailing_comment_gap(gap)
+            } else {
+                gap.bytes().all(|byte| matches!(byte, b' ' | b'\t' | b';'))
+            };
+            if !gap_belongs_to_statement {
+                return statement;
+            }
             let comment_text = &line[comment_start..];
             return IRNode::Sequence(vec![
                 statement,
@@ -254,6 +268,11 @@ impl<'a> AstToIr<'a> {
             ]);
         }
         statement
+    }
+
+    fn expression_statement_trailing_comment_gap(gap: &str) -> bool {
+        gap.bytes()
+            .all(|byte| matches!(byte, b' ' | b'\t' | b';' | b')' | b']' | b'}'))
     }
 
     fn line_comment_start(line: &str) -> Option<usize> {
