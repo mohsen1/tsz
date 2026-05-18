@@ -646,6 +646,19 @@ PROJECT_DASHBOARD_ROW_CHECKS = [
     ),
 ]
 
+PROJECT_FIXTURE_SOURCE_CHECKS = [
+    (
+        "Project corpus fixtures: pinned rows must record fixture source refs (Track 1)",
+        ROOT / "scripts" / "bench" / "project-rows.mjs",
+        ROOT / "scripts" / "bench" / "project-fixtures.sh",
+    ),
+]
+
+GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE = {
+    "vite-vanilla-ts-app",
+    "nextjs-fresh-app",
+}
+
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/mod.rs",
@@ -1142,6 +1155,81 @@ def scan_project_dashboard_rows(path: pathlib.Path) -> list[str]:
     duplicates = sorted({name for name in dashboard if dashboard.count(name) > 1})
     for name in duplicates:
         hits.append(f"{rel}:0 duplicate compatibility dashboard row for {name}")
+
+    return hits
+
+
+def extract_project_fixture_source_case_names(text: str) -> Optional[list[str]]:
+    """Extract row names handled by `tsz_project_fixture_sources`."""
+    match = re.search(
+        r"\btsz_project_fixture_sources\s*\(\)\s*\{(?P<body>.*?)^\}",
+        text,
+        re.DOTALL | re.MULTILINE,
+    )
+    if match is None:
+        return None
+
+    names: list[str] = []
+    for line in match.group("body").splitlines():
+        case_match = re.match(r"^\s*([A-Za-z0-9_.-]+(?:\|[A-Za-z0-9_.-]+)*)\)\s*$", line)
+        if case_match is None:
+            continue
+        names.extend(case_match.group(1).split("|"))
+    return names
+
+
+def scan_project_fixture_sources(
+    row_path: pathlib.Path,
+    fixture_path: pathlib.Path,
+) -> list[str]:
+    """Ensure pinned project rows have fixture source/ref metadata.
+
+    `scripts/bench/project-rows.mjs` owns the public project row inventory.
+    `scripts/bench/project-fixtures.sh` owns the pinned external fixture refs
+    and exposes `tsz_project_fixture_sources` so benchmark/CI compatibility
+    rows carry reproducibility metadata.
+    """
+    hits: list[str] = []
+    row_rel = relative_path(row_path)
+    fixture_rel = relative_path(fixture_path)
+
+    if not row_path.exists():
+        return [f"{row_rel}:0 project row manifest is missing"]
+    if not fixture_path.exists():
+        return [f"{fixture_rel}:0 project fixture metadata file is missing"]
+
+    row_text = row_path.read_text(encoding="utf-8", errors="ignore")
+    required = extract_js_array_strings(row_text, "REQUIRED_PROJECT_ROWS")
+    canary = extract_js_array_strings(row_text, "COMPILE_CANARY_PROJECT_ROWS")
+    if required is None:
+        hits.append(f"{row_rel}:0 missing REQUIRED_PROJECT_ROWS array")
+        required = []
+    if canary is None:
+        hits.append(f"{row_rel}:0 missing COMPILE_CANARY_PROJECT_ROWS array")
+        canary = []
+
+    fixture_text = fixture_path.read_text(encoding="utf-8", errors="ignore")
+    source_cases = extract_project_fixture_source_case_names(fixture_text)
+    if source_cases is None:
+        hits.append(f"{fixture_rel}:0 missing tsz_project_fixture_sources function")
+        source_cases = []
+
+    expected_rows = sorted(
+        (set(required) | set(canary)) - GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE,
+    )
+    expected_set = set(expected_rows)
+    source_set = set(source_cases)
+
+    for name in expected_rows:
+        if name not in source_set:
+            hits.append(f"{fixture_rel}:0 missing fixture source metadata for {name}")
+
+    for name in sorted(source_set - expected_set):
+        hits.append(f"{fixture_rel}:0 stale fixture source metadata for {name}")
+
+    duplicates = sorted({name for name in source_cases if source_cases.count(name) > 1})
+    for name in duplicates:
+        hits.append(f"{fixture_rel}:0 duplicate fixture source metadata for {name}")
 
     return hits
 
@@ -1753,6 +1841,12 @@ def main() -> int:
 
     for name, file_path in PROJECT_DASHBOARD_ROW_CHECKS:
         hits = scan_project_dashboard_rows(file_path)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, row_path, fixture_path in PROJECT_FIXTURE_SOURCE_CHECKS:
+        hits = scan_project_fixture_sources(row_path, fixture_path)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))

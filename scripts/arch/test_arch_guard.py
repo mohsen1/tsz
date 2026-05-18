@@ -1474,6 +1474,114 @@ export const COMPATIBILITY_CORPUS_ROWS = [
             self.assertEqual(hits, [], f"{name}: {hits[:5]}")
 
 
+class ArchGuardProjectFixtureSourceTests(unittest.TestCase):
+    """Cover Track 1 fixture source/ref metadata checks."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _write_and_scan(self, rows_body: str, fixtures_body: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            row_path = root / "project-rows.mjs"
+            fixture_path = root / "project-fixtures.sh"
+            row_path.write_text(rows_body, encoding="utf-8")
+            fixture_path.write_text(fixtures_body, encoding="utf-8")
+            return self.arch_guard.scan_project_fixture_sources(row_path, fixture_path)
+
+    def test_pinned_project_rows_with_sources_pass(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project", "vite-vanilla-ts-app"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-assertions-tsc-clean"];
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|repo|ref\\n'
+      ;;
+    type-challenges-assertions-tsc-clean)
+      printf 'type-challenges|repo|ref\\n'
+      printf 'type-challenges-solutions|repo|ref\\n'
+      ;;
+  esac
+}
+"""
+        self.assertEqual(self._write_and_scan(rows, fixtures), [])
+
+    def test_missing_source_metadata_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-project"];
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|repo|ref\\n'
+      ;;
+  esac
+}
+"""
+        hits = self._write_and_scan(rows, fixtures)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("missing fixture source metadata for type-challenges-project", hits[0])
+
+    def test_stale_source_metadata_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|repo|ref\\n'
+      ;;
+    removed-project)
+      printf 'removed|repo|ref\\n'
+      ;;
+  esac
+}
+"""
+        hits = self._write_and_scan(rows, fixtures)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("stale fixture source metadata for removed-project", hits[0])
+
+    def test_duplicate_source_metadata_case_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|repo|ref\\n'
+      ;;
+    utility-types-project)
+      printf 'utility-types|repo|ref\\n'
+      ;;
+  esac
+}
+"""
+        hits = self._write_and_scan(rows, fixtures)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("duplicate fixture source metadata for utility-types-project", hits[0])
+
+    def test_check_is_registered(self):
+        names = [entry[0] for entry in self.arch_guard.PROJECT_FIXTURE_SOURCE_CHECKS]
+        self.assertTrue(
+            any("Track 1" in name for name in names),
+            "Project fixture source check missing from PROJECT_FIXTURE_SOURCE_CHECKS",
+        )
+
+    def test_real_project_fixture_sources_cover_expected_rows(self):
+        for name, row_path, fixture_path in self.arch_guard.PROJECT_FIXTURE_SOURCE_CHECKS:
+            hits = self.arch_guard.scan_project_fixture_sources(row_path, fixture_path)
+            self.assertEqual(hits, [], f"{name}: {hits[:5]}")
+
+
 class ArchGuardRegexLineCountTests(unittest.TestCase):
     """Cover Track 10 count ratchets in `REGEX_LINE_COUNT_CHECKS`.
 
