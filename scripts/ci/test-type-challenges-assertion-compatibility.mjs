@@ -263,6 +263,7 @@ withTempDir((dir) => {
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
       counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 1,
@@ -512,6 +513,7 @@ withTempDir((dir) => {
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
       counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 1,
@@ -749,6 +751,87 @@ withTempDir((dir) => {
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
       counts: {
+        totalCandidates: 1,
+        tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
+        tscRejectedAssertions: 0,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+    cleanSubsetClassification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: cleanCandidateManifest(),
+      compilers: {
+        tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 1 } },
+        tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 1 } },
+      },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /tsc-clean assertion manifest is missing sources/);
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const manifestSources = candidateSources();
+  manifestSources.solutions = {
+    repository: "solutions",
+    ref: "stale-solutions-ref",
+  };
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      sources: manifestSources,
+      counts: {
+        totalCandidates: 1,
+        tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
+        tscRejectedAssertions: 0,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+    cleanSubsetClassification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: cleanCandidateManifest(),
+      compilers: {
+        tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 1 } },
+        tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 1 } },
+      },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /candidateManifest\.sources\.solutions .* does not match manifest sources\.solutions/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 2,
         tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
@@ -835,6 +918,7 @@ withTempDir((dir) => {
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
       counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 1,
@@ -862,6 +946,7 @@ withTempDir((dir) => {
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
       counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 1,
@@ -896,6 +981,7 @@ withTempDir((dir) => {
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
       counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 1,
@@ -934,6 +1020,7 @@ withTempDir((dir) => {
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
       counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 1,
@@ -973,6 +1060,7 @@ withTempDir((dir) => {
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
       counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 1,
@@ -1018,6 +1106,7 @@ withTempDir((dir) => {
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
       counts: {
         totalCandidates: 2,
         tscAcceptedAssertions: 1,
