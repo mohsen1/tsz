@@ -1699,6 +1699,113 @@ run_isolated "nextjs" run_nextjs_benchmarks
             self.assertEqual(hits, [], f"{name}: {hits[:5]}")
 
 
+class ArchGuardProjectConfigWriterTests(unittest.TestCase):
+    """Cover Track 1 shared project config writer drift checks."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _write_and_scan(self, fixture_body: str, compile_body: str, bench_body: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            fixture_path = root / "project-fixtures.sh"
+            compile_path = root / "project-compile-guard.sh"
+            bench_path = root / "bench-vs-tsgo.sh"
+            fixture_path.write_text(fixture_body, encoding="utf-8")
+            compile_path.write_text(compile_body, encoding="utf-8")
+            bench_path.write_text(bench_body, encoding="utf-8")
+
+            original = self.arch_guard.PROJECT_CONFIG_WRITERS
+            try:
+                self.arch_guard.PROJECT_CONFIG_WRITERS = {
+                    "utility-types-project": "tsz_write_utility_types_config",
+                    "nextjs": "tsz_write_nextjs_config",
+                }
+                return self.arch_guard.scan_project_config_writers(
+                    fixture_path,
+                    compile_path,
+                    bench_path,
+                )
+            finally:
+                self.arch_guard.PROJECT_CONFIG_WRITERS = original
+
+    def test_shared_config_writer_usage_passes(self):
+        fixtures = """
+tsz_write_utility_types_config() { :; }
+tsz_write_nextjs_config() { :; }
+"""
+        compile_guard = "tsz_write_utility_types_config \"$out\""
+        bench = """
+tsz_write_utility_types_config "$out"
+tsz_write_nextjs_config "$out"
+"""
+        self.assertEqual(self._write_and_scan(fixtures, compile_guard, bench), [])
+
+    def test_missing_shared_writer_is_reported(self):
+        fixtures = 'tsz_write_nextjs_config() { :; }'
+        compile_guard = "tsz_write_utility_types_config \"$out\""
+        bench = """
+tsz_write_utility_types_config "$out"
+tsz_write_nextjs_config "$out"
+"""
+        hits = self._write_and_scan(fixtures, compile_guard, bench)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("missing shared config writer tsz_write_utility_types_config", hits[0])
+
+    def test_compile_guard_missing_writer_use_is_reported(self):
+        fixtures = """
+tsz_write_utility_types_config() { :; }
+tsz_write_nextjs_config() { :; }
+"""
+        compile_guard = ""
+        bench = """
+tsz_write_utility_types_config "$out"
+tsz_write_nextjs_config "$out"
+"""
+        hits = self._write_and_scan(fixtures, compile_guard, bench)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("utility-types-project does not use shared config writer", hits[0])
+
+    def test_benchmark_missing_writer_use_is_reported(self):
+        fixtures = """
+tsz_write_utility_types_config() { :; }
+tsz_write_nextjs_config() { :; }
+"""
+        compile_guard = "tsz_write_utility_types_config \"$out\""
+        bench = 'tsz_write_nextjs_config "$out"'
+        hits = self._write_and_scan(fixtures, compile_guard, bench)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("utility-types-project does not use shared config writer", hits[0])
+
+    def test_benchmark_only_row_does_not_require_compile_guard_writer_use(self):
+        fixtures = """
+tsz_write_utility_types_config() { :; }
+tsz_write_nextjs_config() { :; }
+"""
+        compile_guard = 'tsz_write_utility_types_config "$out"'
+        bench = """
+tsz_write_utility_types_config "$out"
+tsz_write_nextjs_config "$out"
+"""
+        self.assertEqual(self._write_and_scan(fixtures, compile_guard, bench), [])
+
+    def test_check_is_registered(self):
+        names = [entry[0] for entry in self.arch_guard.PROJECT_CONFIG_WRITER_CHECKS]
+        self.assertTrue(
+            any("Track 1" in name for name in names),
+            "Project config writer check missing from PROJECT_CONFIG_WRITER_CHECKS",
+        )
+
+    def test_real_project_config_writers_are_shared(self):
+        for name, fixture_path, compile_path, bench_path in self.arch_guard.PROJECT_CONFIG_WRITER_CHECKS:
+            hits = self.arch_guard.scan_project_config_writers(
+                fixture_path,
+                compile_path,
+                bench_path,
+            )
+            self.assertEqual(hits, [], f"{name}: {hits[:5]}")
+
+
 class ArchGuardRegexLineCountTests(unittest.TestCase):
     """Cover Track 10 count ratchets in `REGEX_LINE_COUNT_CHECKS`.
 

@@ -663,6 +663,26 @@ PROJECT_INCLUSION_POLICY_CHECKS = [
     ),
 ]
 
+PROJECT_CONFIG_WRITER_CHECKS = [
+    (
+        "Project corpus config shape: shared rows must use shared config writers (Track 1)",
+        ROOT / "scripts" / "bench" / "project-fixtures.sh",
+        ROOT / "scripts" / "ci" / "project-compile-guard.sh",
+        ROOT / "scripts" / "bench" / "bench-vs-tsgo.sh",
+    ),
+]
+
+PROJECT_CONFIG_WRITERS = {
+    "utility-types-project": "tsz_write_utility_types_config",
+    "ts-toolbelt-project": "tsz_write_ts_toolbelt_config",
+    "ts-essentials-project": "tsz_write_ts_essentials_config",
+    "rxjs-project": "tsz_write_rxjs_config",
+    "type-fest-project": "tsz_write_type_fest_config",
+    "zod-project": "tsz_write_zod_config",
+    "kysely-project": "tsz_write_kysely_config",
+    "nextjs": "tsz_write_nextjs_config",
+}
+
 GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE = {
     "vite-vanilla-ts-app",
     "nextjs-fresh-app",
@@ -1319,6 +1339,47 @@ def scan_project_inclusion_policy(
     return hits
 
 
+def scan_project_config_writers(
+    fixture_path: pathlib.Path,
+    compile_guard_path: pathlib.Path,
+    bench_path: pathlib.Path,
+) -> list[str]:
+    """Ensure shared project rows use shared config writer functions."""
+    hits: list[str] = []
+    fixture_rel = relative_path(fixture_path)
+    compile_rel = relative_path(compile_guard_path)
+    bench_rel = relative_path(bench_path)
+
+    if not fixture_path.exists():
+        return [f"{fixture_rel}:0 project fixture metadata file is missing"]
+    if not compile_guard_path.exists():
+        return [f"{compile_rel}:0 project compile guard is missing"]
+    if not bench_path.exists():
+        return [f"{bench_rel}:0 benchmark runner is missing"]
+
+    fixture_text = fixture_path.read_text(encoding="utf-8", errors="ignore")
+    compile_text = compile_guard_path.read_text(encoding="utf-8", errors="ignore")
+    bench_text = bench_path.read_text(encoding="utf-8", errors="ignore")
+
+    for row, writer in sorted(PROJECT_CONFIG_WRITERS.items()):
+        if not re.search(rf"\b{re.escape(writer)}\s*\(\)", fixture_text):
+            hits.append(f"{fixture_rel}:0 missing shared config writer {writer} for {row}")
+
+        if row not in BENCHMARK_ONLY_PROJECT_ROWS and not re.search(
+            rf"\b{re.escape(writer)}\b",
+            compile_text,
+        ):
+            hits.append(f"{compile_rel}:0 {row} does not use shared config writer {writer}")
+
+        if row not in COMPILE_GUARD_ONLY_PROJECT_ROWS and not re.search(
+            rf"\b{re.escape(writer)}\b",
+            bench_text,
+        ):
+            hits.append(f"{bench_rel}:0 {row} does not use shared config writer {writer}")
+
+    return hits
+
+
 def scan_regex_line_count(
     search_roots: list[pathlib.Path],
     pattern: re.Pattern[str],
@@ -1938,6 +1999,12 @@ def main() -> int:
 
     for name, row_path, compile_guard_path, bench_path in PROJECT_INCLUSION_POLICY_CHECKS:
         hits = scan_project_inclusion_policy(row_path, compile_guard_path, bench_path)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, fixture_path, compile_guard_path, bench_path in PROJECT_CONFIG_WRITER_CHECKS:
+        hits = scan_project_config_writers(fixture_path, compile_guard_path, bench_path)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
