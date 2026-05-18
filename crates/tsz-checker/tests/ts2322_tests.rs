@@ -7833,6 +7833,41 @@ fn test_ts2322_fbounded_wrong_element_type_errors() {
     );
 }
 
+const TREE_BTREE_INTERFACES: &str = r#"
+        interface Tree<T extends Tree<T>> {
+            children: T[];
+        }
+        interface BTree extends Tree<BTree> {
+            value: number;
+        }
+    "#;
+
+#[test]
+fn test_ts2322_fbounded_no_parent_field_empty_array_no_error() {
+    // Minimal F-bounded pattern without a parent field — empty array should
+    // adopt the contextual element type from the heritage clause.
+    let source = format!("{TREE_BTREE_INTERFACES}const bt: BTree = {{ value: 1, children: [] }};");
+    let diags = get_all_diagnostics(&source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322: empty array in minimal F-bounded object literal should adopt contextual type: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_fbounded_no_parent_field_wrong_element_type_errors() {
+    // When the element type is wrong, TS2322 must still fire.
+    let source =
+        format!("{TREE_BTREE_INTERFACES}const bt: BTree = {{ value: 1, children: [42] }};");
+    let diags = get_all_diagnostics(&source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322 >= 1,
+        "Expected TS2322: number is not assignable to BTree: {diags:?}"
+    );
+}
+
 #[test]
 fn test_ts2345_concrete_value_to_never_param_errors() {
     // Negative: concrete types remain non-assignable to never (the fix must not loosen this).
