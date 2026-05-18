@@ -1,37 +1,12 @@
 //! Suspension-discovery and await-presence analysis for the async ES5
 //! IR transformer.
 //!
-//! This phase walks the AST without mutating the transformer to answer
-//! the predicate questions that the lowering passes (`process_*`,
-//! `transform_*`, `lower_*`) rely on:
-//!
-//! * "Does this expression suspend?" via [`suspension_kind`] and
-//!   [`is_suspension_expression`].
-//! * "Does this sub-tree contain any await/yield?" via
-//!   [`body_contains_await`], [`contains_await_recursive`], and
-//!   [`computed_name_contains_await`].
-//! * "Where is the first suspension point inside this expression?" via
-//!   [`find_suspension_expression`].
-//! * "Does this parameter list need the default-param await rewrite?"
-//!   via [`param_initializer_has_top_level_await`] and
-//!   [`first_await_default_param_name`].
-//! * "Does the source text of this node mention `yield`?" via
-//!   [`node_text_contains`] and [`node_text_contains_yield`].
-//!
-//! Every method takes `&self` and never constructs IR. The lowering
-//! passes consume these predicates and then decide whether to emit a
-//! switch case, a `yield`, or a passthrough.
-//!
-//! [`suspension_kind`]: AsyncES5Transformer::suspension_kind
-//! [`is_suspension_expression`]: AsyncES5Transformer::is_suspension_expression
-//! [`body_contains_await`]: AsyncES5Transformer::body_contains_await
-//! [`contains_await_recursive`]: AsyncES5Transformer::contains_await_recursive
-//! [`computed_name_contains_await`]: AsyncES5Transformer::computed_name_contains_await
-//! [`find_suspension_expression`]: AsyncES5Transformer::find_suspension_expression
-//! [`param_initializer_has_top_level_await`]: AsyncES5Transformer::param_initializer_has_top_level_await
-//! [`first_await_default_param_name`]: AsyncES5Transformer::first_await_default_param_name
-//! [`node_text_contains`]: AsyncES5Transformer::node_text_contains
-//! [`node_text_contains_yield`]: AsyncES5Transformer::node_text_contains_yield
+//! Every method here takes `&self`, walks the AST, and returns a
+//! predicate or a `NodeIndex`. None of them construct IR or mutate the
+//! transformer. Walks stop at nested function/method bodies so an
+//! inner async function never falsely flags its enclosing scope.
+//! Lowering passes consume these predicates and then decide whether to
+//! emit a switch case, a `yield`, or a passthrough.
 
 use super::AsyncES5Transformer;
 use tsz_parser::parser::NodeIndex;

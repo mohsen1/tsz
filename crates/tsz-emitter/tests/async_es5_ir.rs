@@ -487,21 +487,20 @@ fn first_function_body(parser: &mut ParserState) -> NodeIndex {
     func.body
 }
 
-fn body_contains_await(source: &str) -> bool {
+fn body_suspends(source: &str, generator_mode: bool) -> bool {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let body_idx = first_function_body(&mut parser);
     let mut transformer = AsyncES5Transformer::new(&parser.arena);
-    transformer.set_source_text(source);
+    transformer.generator_mode = generator_mode;
     transformer.body_contains_await(body_idx)
 }
 
-fn generator_body_contains_yield(source: &str) -> bool {
-    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
-    let body_idx = first_function_body(&mut parser);
-    let mut transformer = AsyncES5Transformer::new(&parser.arena);
-    transformer.generator_mode = true;
-    transformer.set_source_text(source);
-    transformer.body_contains_await(body_idx)
+fn body_contains_await(source: &str) -> bool {
+    body_suspends(source, false)
+}
+
+fn body_contains_yield_in_generator(source: &str) -> bool {
+    body_suspends(source, true)
 }
 
 #[test]
@@ -584,17 +583,14 @@ fn discovery_body_contains_await_sees_computed_property_await() {
 #[test]
 fn discovery_generator_mode_classifies_yield_as_suspension() {
     // In generator mode, `yield` is the suspension point, not `await`.
-    assert!(generator_body_contains_yield("function* f() { yield 1; }"));
+    assert!(body_contains_yield_in_generator(
+        "function* f() { yield 1; }"
+    ));
 }
 
 #[test]
-fn discovery_generator_mode_ignores_plain_await_call() {
-    // A plain function call named `await` should not be detected as a
-    // suspension in generator mode (there is no real syntactic await
-    // here — `await(x)` is just a call expression at parse time only
-    // in non-strict contexts; in this test we keep the source free of
-    // `await` to avoid ambiguity).
-    assert!(!generator_body_contains_yield("function* f() { x(); }"));
+fn discovery_generator_mode_ignores_body_without_yield() {
+    assert!(!body_contains_yield_in_generator("function* f() { x(); }"));
 }
 
 #[test]
