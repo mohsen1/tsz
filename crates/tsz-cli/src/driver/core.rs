@@ -24,7 +24,7 @@ use tsz::checker::diagnostics::{
 };
 use tsz::checker::state::CheckerState;
 use tsz::lib_loader::LibFile;
-use tsz::module_resolver::ModuleResolver;
+use tsz::module_resolver::{ImportKind, ImportingModuleKind, ModuleResolver};
 use tsz::span::Span;
 use tsz_binder::state::BinderStateScopeInputs;
 use tsz_common::common::{ModuleKind, NewLineKind, ScriptTarget};
@@ -1358,6 +1358,7 @@ fn compile_inner(
     let SourceReadResult {
         sources: all_sources,
         dependencies,
+        module_resolutions,
         type_reference_errors,
         resolution_mode_errors,
     } = {
@@ -1772,7 +1773,7 @@ fn compile_inner(
     // return path.
     let collect_compile_stats =
         args.diagnostics || args.extended_diagnostics || args.generate_trace.is_some();
-    let collected = collect_diagnostics(
+    let collected = collect_diagnostics_with_source_resolutions(
         &program,
         &resolved,
         &base_dir,
@@ -1782,6 +1783,7 @@ fn compile_inner(
         &parallel_type_caches,
         has_deprecation_diagnostics,
         collect_compile_stats,
+        Some(&module_resolutions),
     );
     let mut diagnostics: Vec<Diagnostic> = collected.diagnostics;
     let check_duration = collect_diagnostics_start.elapsed();
@@ -3074,8 +3076,9 @@ pub(crate) use sources::{
     resolve_tsconfig_path,
 };
 use sources::{
-    SourceEntry, SourceReadResult, build_discovery_options, collect_type_root_files,
-    read_source_files, sources_have_no_default_lib,
+    SourceEntry, SourceModuleResolution, SourceModuleResolutionKey, SourceReadResult,
+    build_discovery_options, collect_type_root_files, read_source_files,
+    sources_have_no_default_lib,
 };
 
 #[path = "check.rs"]
@@ -3084,7 +3087,7 @@ mod check;
 mod check_module_graph;
 #[path = "check_utils.rs"]
 mod check_utils;
-use check::{collect_diagnostics, load_checker_libs};
+use check::{collect_diagnostics_with_source_resolutions, load_checker_libs};
 
 pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs) -> Result<()> {
     apply_cli_overrides_with_config_options(options, args, None)

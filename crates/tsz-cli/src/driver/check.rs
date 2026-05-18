@@ -482,6 +482,7 @@ fn has_large_wildcard_barrel(program: &MergedProgram, work_items: &[usize]) -> b
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(super) fn collect_diagnostics(
     program: &MergedProgram,
     options: &ResolvedCompilerOptions,
@@ -492,6 +493,35 @@ pub(super) fn collect_diagnostics(
     type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
     has_deprecation_diagnostics: bool,
     collect_compile_stats: bool,
+) -> CollectDiagnosticsResult {
+    collect_diagnostics_with_source_resolutions(
+        program,
+        options,
+        base_dir,
+        cache,
+        checker_libs,
+        typescript_dom_replacement_globals,
+        type_cache_output,
+        has_deprecation_diagnostics,
+        collect_compile_stats,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn collect_diagnostics_with_source_resolutions(
+    program: &MergedProgram,
+    options: &ResolvedCompilerOptions,
+    base_dir: &Path,
+    cache: Option<&mut CompilationCache>,
+    checker_libs: &CheckerLibSet,
+    typescript_dom_replacement_globals: (bool, bool, bool),
+    type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
+    has_deprecation_diagnostics: bool,
+    collect_compile_stats: bool,
+    source_module_resolutions: Option<
+        &FxHashMap<SourceModuleResolutionKey, SourceModuleResolution>,
+    >,
 ) -> CollectDiagnosticsResult {
     let _collect_span =
         tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
@@ -687,6 +717,41 @@ pub(super) fn collect_diagnostics(
                     *resolution_mode_override,
                 );
                 let request_kind_key = checker_resolution_request_kind(*import_kind);
+                if let Some(discovered) = source_module_resolutions.and_then(|resolutions| {
+                    resolutions.get(&SourceModuleResolutionKey {
+                        containing_file: file_path.to_path_buf(),
+                        specifier: specifier.clone(),
+                        import_kind: *import_kind,
+                        resolution_mode_override: *resolution_mode_override,
+                    })
+                }) {
+                    resolved_module_specifiers.insert((file_idx, specifier.clone()));
+                    let canonical = if should_apply_duplicate_package_redirect(file_path) {
+                        package_redirects
+                            .get(&discovered.canonical_path)
+                            .cloned()
+                            .unwrap_or_else(|| discovered.canonical_path.clone())
+                    } else {
+                        discovered.canonical_path.clone()
+                    };
+                    if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                        resolved_module_paths.insert((file_idx, specifier.clone()), target_idx);
+                        resolved_module_request_paths.insert(
+                            (
+                                file_idx,
+                                specifier.clone(),
+                                request_mode_key,
+                                request_kind_key,
+                            ),
+                            target_idx,
+                        );
+                        if discovered.resolved_using_ts_extension {
+                            resolved_module_ts_extension_flags
+                                .insert((file_idx, specifier.clone()), true);
+                        }
+                    }
+                    continue;
+                }
 
                 let result = module_resolver.lookup(
                     &request,
@@ -4779,6 +4844,7 @@ declare namespace Intl {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -5070,6 +5136,7 @@ const elem = <div className={class1, class2}/>;
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -5189,6 +5256,7 @@ const q: PromiseLike<number> = p;
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -5269,6 +5337,7 @@ async function f() {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -5352,6 +5421,7 @@ type Recurse2 = {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -5445,6 +5515,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -5692,6 +5763,7 @@ export const x = foo();
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -5794,6 +5866,7 @@ export type RowToColumns<TColumns> = {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -6432,6 +6505,7 @@ let x2: string = f;
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -6543,6 +6617,7 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) => typeHandlers[p.t]?.(p
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -6641,6 +6716,7 @@ const nestedTuple = type([["ark", "|>", (x) => x.length]])
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -6729,6 +6805,7 @@ m(item => item.id < 5);
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -6811,6 +6888,7 @@ interface Buzz { id: number; buzz: string }
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -6900,6 +6978,7 @@ const obj: {field: Rule} = {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -7021,6 +7100,7 @@ function foo() {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
@@ -7252,6 +7332,7 @@ interface Node {
         let SourceReadResult {
             sources,
             dependencies: _,
+            module_resolutions: _,
             type_reference_errors,
             resolution_mode_errors,
         } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
