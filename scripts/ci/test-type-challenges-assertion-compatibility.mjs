@@ -530,6 +530,71 @@ withTempDir((dir) => {
     classification: {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "passing" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /assertion classification tsc status must be one of pass, fail, timeout, error, unavailable: passing/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
+      counts: {
+        totalCandidates: 1,
+        tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
+        tscRejectedAssertions: 0,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+    cleanSubsetClassification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: cleanCandidateManifest(),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: { totalCandidates: 1, candidatesWithoutDiagnostics: 1 },
+        },
+        tsz: {
+          status: "passing",
+          candidateDiagnostics: { totalCandidates: 1, candidatesWithoutDiagnostics: 1 },
+        },
+      },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc-clean assertion classification tsz status must be one of pass, fail, timeout, error, unavailable: passing/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
       compilers: {
         tsc: {
           status: "pass",
