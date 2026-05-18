@@ -310,6 +310,9 @@ pub struct Printer<'a> {
     /// Emit `void 0` for missing initializers during recovery.
     pub(crate) emit_missing_initializer_as_void_0: bool,
 
+    /// Current declaration list is being printed in a `for` header.
+    pub(crate) in_for_initializer: bool,
+
     /// Source text for detecting single-line constructs
     pub(crate) source_text: Option<&'a str>,
 
@@ -1065,6 +1068,7 @@ impl<'a> Printer<'a> {
             transforms: TransformContext::new(), // Empty by default, can be set later
             emit_plan,
             emit_missing_initializer_as_void_0: false,
+            in_for_initializer: false,
             source_text: None,
             jsx_pragmas: crate::jsx_pragmas::JsxPragmaFacts::default(),
             source_map_text: None,

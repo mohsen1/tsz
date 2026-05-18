@@ -51,6 +51,11 @@ impl<'a> Printer<'a> {
             }
         }
 
+        let prev_emit_missing_initializer_as_void_0 = self.emit_missing_initializer_as_void_0;
+        if is_block_scoped && !self.in_for_initializer {
+            self.emit_missing_initializer_as_void_0 = true;
+        }
+
         self.write("var");
 
         let mut first = true;
@@ -94,6 +99,8 @@ impl<'a> Printer<'a> {
                 self.emit(decl_idx);
             }
         }
+
+        self.emit_missing_initializer_as_void_0 = prev_emit_missing_initializer_as_void_0;
     }
 
     fn emit_using_variable_declaration_list_es5(

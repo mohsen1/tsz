@@ -191,6 +191,12 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let scoped_initializer =
+            self.ctx.target_es5 && self.for_initializer_is_block_scoped(loop_stmt.initializer);
+        if scoped_initializer {
+            self.ctx.block_scope_state.enter_scope();
+        }
+
         // ES5: Check if closures capture loop variables (let/const) —
         // if so, emit the _loop_N IIFE pattern instead of a plain for-loop.
         // Capture can happen with let/const from the initializer OR the body.
@@ -209,6 +215,9 @@ impl<'a> Printer<'a> {
                         &body_info.block_scoped_vars,
                     )
             {
+                if scoped_initializer {
+                    self.pre_register_for_initializer_block_scoped_bindings(loop_stmt.initializer);
+                }
                 self.emit_for_statement_with_capture(
                     node,
                     loop_stmt,
@@ -216,6 +225,9 @@ impl<'a> Printer<'a> {
                     &init_vars,
                     &body_info,
                 );
+                if scoped_initializer {
+                    self.ctx.block_scope_state.exit_scope();
+                }
                 return;
             }
         }
@@ -281,7 +293,7 @@ impl<'a> Printer<'a> {
             // Rewritten from `var x = y` to `x = y`; the declaration is hoisted
             // at the top of the generated async generator body.
         } else {
-            self.emit(loop_stmt.initializer);
+            self.emit_for_header_initializer(loop_stmt.initializer);
         }
         // Map first `;` in for-header
         self.pending_source_pos = semi1_src;
@@ -323,6 +335,9 @@ impl<'a> Printer<'a> {
         }
         self.write(")");
         self.emit_loop_body(loop_stmt.statement);
+        if scoped_initializer {
+            self.ctx.block_scope_state.exit_scope();
+        }
     }
 
     fn recovered_empty_for_header_body_comment(
@@ -392,7 +407,7 @@ impl<'a> Printer<'a> {
             // Rewritten from `var x in y` to `x in y`; the declaration is hoisted
             // at the top of the generated async generator body.
         } else {
-            self.emit(for_in_of.initializer);
+            self.emit_for_header_initializer(for_in_of.initializer);
         }
         self.write(" in ");
         self.emit(for_in_of.expression);
@@ -508,7 +523,7 @@ impl<'a> Printer<'a> {
             // Rewritten from `var x of y` to `x of y`; the declaration is hoisted
             // at the top of the generated async generator body.
         } else {
-            self.emit(for_in_of.initializer);
+            self.emit_for_header_initializer(for_in_of.initializer);
         }
         self.write(" of ");
         self.emit(for_in_of.expression);
@@ -708,7 +723,7 @@ impl<'a> Printer<'a> {
         // Only strip `var`, not `let`/`const`
         let is_var = !node_flags::is_let_or_const(init_node.flags as u32);
         if !is_var {
-            self.emit(initializer);
+            self.emit_for_header_initializer(initializer);
             return;
         }
         // Emit just the variable names (without `var` keyword)
@@ -727,6 +742,43 @@ impl<'a> Printer<'a> {
                 continue;
             };
             self.emit(decl.name);
+        }
+    }
+
+    fn emit_for_header_initializer(&mut self, initializer: NodeIndex) {
+        let prev_in_for_initializer = self.in_for_initializer;
+        self.in_for_initializer = true;
+        self.emit(initializer);
+        self.in_for_initializer = prev_in_for_initializer;
+    }
+
+    fn for_initializer_is_block_scoped(&self, initializer: NodeIndex) -> bool {
+        self.arena.get(initializer).is_some_and(|init| {
+            init.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                && node_flags::is_let_or_const(init.flags as u32)
+        })
+    }
+
+    fn pre_register_for_initializer_block_scoped_bindings(&mut self, initializer: NodeIndex) {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            || !node_flags::is_let_or_const(init_node.flags as u32)
+        {
+            return;
+        }
+        let Some(decl_list) = self.arena.get_variable(init_node) else {
+            return;
+        };
+        for &decl_idx in &decl_list.declarations.nodes {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            self.pre_register_binding_name(decl.name);
         }
     }
 
