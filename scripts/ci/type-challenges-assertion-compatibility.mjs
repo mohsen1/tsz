@@ -653,6 +653,12 @@ for (const [compiler, diagnostics] of [
         });
       }
     });
+    const duplicateExampleFiles = duplicatedValues(exampleFiles.filter(Boolean));
+    if (duplicateExampleFiles.length > 0) {
+      fail(
+        `assertion classification ${compiler} candidateDiagnostics.byCandidate contains duplicate files: ${duplicateExampleFiles.join(", ")}`,
+      );
+    }
     normalizedCandidateExampleFiles[compiler] = exampleFiles;
   }
 }
