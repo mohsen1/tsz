@@ -8,6 +8,7 @@ use crate::types::{
 use crate::visitor::TypeVisitor;
 use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use std::cell::{Cell, RefCell};
 use tracing::debug;
 
@@ -980,7 +981,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             let params = (0..effective_arg_count)
                 .filter_map(|index| {
-                    let mut param_types: Vec<TypeId> = signatures
+                    let mut param_types: SmallVec<[TypeId; 4]> = signatures
                         .iter()
                         .filter_map(|sig| {
                             extract_param_type_at_for_call(
@@ -992,25 +993,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         })
                         .collect();
                     if param_types.len() > 1 && param_types.iter().any(|&ty| ty != TypeId::ANY) {
-                        param_types.retain(|&ty| ty != TypeId::ANY);
+                        param_types.retain(|ty| *ty != TypeId::ANY);
                     }
                     match param_types.len() {
                         0 => None,
                         1 => Some(ParamInfo::unnamed(param_types[0])),
-                        _ => Some(ParamInfo::unnamed(db.union_literal_reduce(param_types))),
+                        _ => Some(ParamInfo::unnamed(
+                            db.union_literal_reduce(param_types.into_vec()),
+                        )),
                     }
                 })
                 .collect();
 
-            let mut return_types: Vec<TypeId> =
+            let mut return_types: SmallVec<[TypeId; 4]> =
                 signatures.iter().map(|sig| sig.return_type).collect();
             if return_types.len() > 1 && return_types.iter().any(|&ty| ty != TypeId::ANY) {
-                return_types.retain(|&ty| ty != TypeId::ANY);
+                return_types.retain(|ty| *ty != TypeId::ANY);
             }
             let return_type = match return_types.len() {
                 0 => first.return_type,
                 1 => return_types[0],
-                _ => db.union_literal_reduce(return_types),
+                _ => db.union_literal_reduce(return_types.into_vec()),
             };
 
             let type_params = if signatures
@@ -1028,12 +1031,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             {
                 first.this_type
             } else {
-                let this_types: Vec<_> =
+                let this_types: SmallVec<[TypeId; 4]> =
                     signatures.iter().filter_map(|sig| sig.this_type).collect();
                 match this_types.len() {
                     0 => None,
                     1 => Some(this_types[0]),
-                    _ => Some(db.union_literal_reduce(this_types)),
+                    _ => Some(db.union_literal_reduce(this_types.into_vec())),
                 }
             };
 
@@ -1083,7 +1086,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             let params = (0..effective_arg_count)
                 .filter_map(|index| {
-                    let mut param_types: Vec<TypeId> = shapes
+                    let mut param_types: SmallVec<[TypeId; 4]> = shapes
                         .iter()
                         .filter_map(|shape| {
                             extract_param_type_at_for_call(
@@ -1095,25 +1098,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         })
                         .collect();
                     if param_types.len() > 1 && param_types.iter().any(|&ty| ty != TypeId::ANY) {
-                        param_types.retain(|&ty| ty != TypeId::ANY);
+                        param_types.retain(|ty| *ty != TypeId::ANY);
                     }
                     match param_types.len() {
                         0 => None,
                         1 => Some(ParamInfo::unnamed(param_types[0])),
-                        _ => Some(ParamInfo::unnamed(db.union_literal_reduce(param_types))),
+                        _ => Some(ParamInfo::unnamed(
+                            db.union_literal_reduce(param_types.into_vec()),
+                        )),
                     }
                 })
                 .collect();
 
-            let mut return_types: Vec<TypeId> =
+            let mut return_types: SmallVec<[TypeId; 4]> =
                 shapes.iter().map(|shape| shape.return_type).collect();
             if return_types.len() > 1 && return_types.iter().any(|&ty| ty != TypeId::ANY) {
-                return_types.retain(|&ty| ty != TypeId::ANY);
+                return_types.retain(|ty| *ty != TypeId::ANY);
             }
             let return_type = match return_types.len() {
                 0 => first.return_type,
                 1 => return_types[0],
-                _ => db.union_literal_reduce(return_types),
+                _ => db.union_literal_reduce(return_types.into_vec()),
             };
 
             let this_type = if shapes
@@ -1122,12 +1127,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             {
                 first.this_type
             } else {
-                let this_types: Vec<_> =
+                let this_types: SmallVec<[TypeId; 4]> =
                     shapes.iter().filter_map(|shape| shape.this_type).collect();
                 match this_types.len() {
                     0 => None,
                     1 => Some(this_types[0]),
-                    _ => Some(db.union_literal_reduce(this_types)),
+                    _ => Some(db.union_literal_reduce(this_types.into_vec())),
                 }
             };
 

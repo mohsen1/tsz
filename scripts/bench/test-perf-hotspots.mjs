@@ -35,3 +35,9 @@ for (const [name, filter] of [
 
 assert.equal(fullFilter.test("DeepPartial optional-chain N=400"), true);
 assert.equal(quickFilter.test("DeepPartial optional-chain N=50"), true);
+
+assert.match(
+  script,
+  /tsgo-winner-report\.mjs"\s+"\$JSON_FILE"\s+"\$WINNER_REPORT"/,
+  "perf-hotspots.sh should emit a green tsgo-winner summary beside benchmark JSON",
+);

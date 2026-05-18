@@ -504,6 +504,34 @@ fn format_union_of_intersections_factors_common_type_parameter() {
 }
 
 #[test]
+fn format_union_of_intersections_display_order_independent_of_alloc_order() {
+    // Regression: the previous code round-tripped through `interner.union()`,
+    // which re-sorts by alloc-order and discards the numeric display sort.
+    // When `one` is interned before `two` (lower alloc-order), that round-trip
+    // would produce `0 | 1 | 2` instead of the correct `0 | 2 | 1`.
+    // The sibling test `format_union_of_intersections_factors_common_type_parameter`
+    // happened to pass even with the bug because it interned `two` before `one`.
+    let db = TypeInterner::new();
+    let k = db.type_param(TypeParamInfo {
+        name: db.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let one = db.literal_number(1.0); // interned first → lower alloc-order than two
+    let two = db.literal_number(2.0);
+    let zero = db.literal_number(0.0);
+
+    let union = db.union(vec![
+        db.intersection2(k, zero),
+        db.intersection2(k, two),
+        db.intersection2(k, one),
+    ]);
+    let mut fmt = TypeFormatter::new(&db);
+    assert_eq!(fmt.format(union), "K & (0 | 2 | 1)");
+}
+
+#[test]
 fn format_union_of_intersections_does_not_factor_different_common_parts() {
     let db = TypeInterner::new();
     let t = db.type_param(TypeParamInfo {

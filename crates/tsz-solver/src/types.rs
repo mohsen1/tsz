@@ -1558,6 +1558,21 @@ pub struct CallableShape {
     pub is_abstract: bool,
 }
 
+impl CallableShape {
+    /// Return the last signature for a construct or call pattern, or `None` if absent.
+    ///
+    /// Callables like `DateConstructor` carry both kinds; callers select by the
+    /// pattern's kind rather than assuming only one signature type is present.
+    #[inline]
+    pub fn last_sig_for(&self, is_construct: bool) -> Option<&CallSignature> {
+        if is_construct {
+            self.construct_signatures.last()
+        } else {
+            self.call_signatures.last()
+        }
+    }
+}
+
 impl PartialEq for CallableShape {
     fn eq(&self, other: &Self) -> bool {
         // Include symbol in equality check to ensure different classes get different TypeIds
