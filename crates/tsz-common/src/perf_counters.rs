@@ -3566,6 +3566,7 @@ mod json_tests {
             "by_reason",
             "delegate_miss_classification",
             "delegate_declaration_file_miss_residues",
+            "delegate_source_file_miss_residues",
             "alias_shortcut_outcomes",
             "compute_type_of_symbol_source_outcomes",
             "compute_type_of_symbol_kind_outcomes",
