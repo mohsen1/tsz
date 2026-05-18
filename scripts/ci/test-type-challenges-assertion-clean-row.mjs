@@ -143,6 +143,29 @@ withTempDir((dir) => {
     rows[0].repro.tsconfig_path,
     "type-challenges-assertions-tsc-clean/tsconfig.tsz-guard.json",
   );
+  assert.equal(
+    rows[0].assertion_clean_subset.manifest_path,
+    "type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-manifest.json",
+  );
+  assert.equal(
+    rows[0].assertion_clean_subset.classification_path,
+    "type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-classification.json",
+  );
+  assert.equal(rows[0].assertion_clean_subset.total_candidates, 1);
+  assert.equal(rows[0].assertion_clean_subset.generated_assertions, 1);
+  assert.equal(
+    rows[0].assertion_clean_subset.assertions_referencing_solution_declaration,
+    1,
+  );
+  assert.equal(
+    rows[0].assertion_clean_subset.assertions_missing_solution_declaration_reference,
+    0,
+  );
+  assert.equal(rows[0].assertion_clean_subset.rejected_from_full_corpus, 0);
+  assert.equal(rows[0].assertion_clean_subset.tsc_status, "pass");
+  assert.equal(rows[0].assertion_clean_subset.tsz_status, "pass");
+  assert.equal(rows[0].assertion_clean_subset.tsc_diagnostic_free, 1);
+  assert.equal(rows[0].assertion_clean_subset.tsz_diagnostic_free, 1);
 
   assert.equal(
     fs.existsSync(
