@@ -207,7 +207,7 @@ fn evaluation_engine_keeps_request_stage_boundary() {
         "evaluation module must keep its named request stage"
     );
     assert!(
-        request_rs.contains("pub type EvaluationCacheKey")
+        request_rs.contains("pub struct EvaluationCacheKey")
             && request_rs.contains("pub struct EvaluationOptions")
             && request_rs.contains("pub struct EvaluationRequest"),
         "evaluation/request.rs must own the typed request, options, and cache-key stage"
