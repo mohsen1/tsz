@@ -12,6 +12,7 @@ pub mod iterable_checker;
 pub mod jsx;
 pub mod parameter_checker;
 pub mod promise_checker;
+mod promise_checker_awaited_alias;
 mod promise_checker_object_normalization;
 pub mod property_checker;
 pub mod signature_builder;

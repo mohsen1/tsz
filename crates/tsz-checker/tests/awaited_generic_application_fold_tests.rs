@@ -192,6 +192,35 @@ const bad: IsString<PromiseLike<string>> = true;
 }
 
 #[test]
+fn user_defined_promiselike_predicate_not_treated_as_awaited() {
+    let source = r#"
+type IsThenable<T> = T extends PromiseLike<infer U> ? true : false;
+const ok: IsThenable<Promise<string>> = true;
+const bad: IsThenable<Promise<string>> = "hello";
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "PromiseLike predicate conditionals must not be folded as Awaited-like unwrappers; \
+         got: {codes:?}"
+    );
+}
+
+#[test]
+fn user_defined_promiselike_transform_not_treated_as_awaited() {
+    let source = r#"
+type PromiseValueOrFlag<T> = T extends PromiseLike<infer U> ? { value: U } : false;
+const ok: PromiseValueOrFlag<Promise<string>> = { value: "hello" };
+const bad: PromiseValueOrFlag<Promise<string>> = "hello";
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "PromiseLike transforms must not be folded as Awaited-like unwrappers; got: {codes:?}"
+    );
+}
+
+#[test]
 fn user_defined_awaited_alias_non_thenable_passes_through() {
     let source = r#"
 type MyAwaited<T> = T extends PromiseLike<infer U> ? MyAwaited<U> : T;
