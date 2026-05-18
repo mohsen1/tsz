@@ -187,6 +187,15 @@ if (cleanSubsetClassification) {
   ) {
     fail("tsc-clean assertion classification report is missing comparison");
   }
+  const cleanComparisonStatus = cleanSubsetClassification.comparison.status;
+  if (
+    typeof cleanComparisonStatus !== "string" ||
+    cleanComparisonStatus.trim() === ""
+  ) {
+    fail(
+      "tsc-clean assertion classification comparison.status must be a non-empty string",
+    );
+  }
 }
 if (cleanSubsetManifest && cleanSubsetClassification) {
   const acceptedAssertions = cleanSubsetManifest.counts.tscAcceptedAssertions;
