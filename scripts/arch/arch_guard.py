@@ -577,7 +577,7 @@ ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
             ROOT / "crates" / "tsz-cli" / "src",
         ],
         ("crates/tsz-checker/src/query_boundaries/",),
-        97,
+        0,
     ),
 ]
 
@@ -651,6 +651,30 @@ REGEX_LINE_COUNT_CHECKS = [
         [ROOT / "crates" / "tsz-emitter" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
         3,
+    ),
+    (
+        "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
+        re.compile(r"^pub use (?:[A-Za-z_][A-Za-z0-9_]*::)+\*;"),
+        14,
+    ),
+    (
+        "Checker relation boundary: raw diagnostic assignability predicates (#8227)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "assignability"
+            / "assignability_diagnostics.rs",
+            ROOT / "crates" / "tsz-checker" / "src" / "error_reporter",
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "jsx",
+        ],
+        re.compile(
+            r"\b(?:self|self\.ctx\.types|self\.interner)"
+            r"\.is_assignable_to(?:_[A-Za-z0-9_]+)?\s*\("
+        ),
+        144,
     ),
 ]
 
@@ -1721,11 +1745,12 @@ def scan_regex_line_count(
     for base in search_roots:
         if not base.exists():
             continue
-        for path in base.rglob("*.rs"):
+        paths = [base] if base.is_file() else base.rglob("*.rs")
+        for path in paths:
             try:
                 rel_to_root = path.relative_to(ROOT).as_posix()
             except ValueError:
-                rel_to_root = path.relative_to(base).as_posix()
+                rel_to_root = path.name if base.is_file() else path.relative_to(base).as_posix()
             parts = set(rel_to_root.split("/"))
             if EXCLUDE_DIRS.intersection(parts):
                 continue

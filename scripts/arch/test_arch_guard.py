@@ -2256,6 +2256,61 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("rendered.rs:1", hits[0])
         self.assertIn("rendered.rs:2", hits[1])
 
+    def test_flags_raw_diagnostic_assignability_predicates(self):
+        pattern, _max_lines = self._check_by_name("#8227")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/error_reporter/diagnostic.rs": (
+                    "if self.is_assignable_to(source, target) {}\n"
+                    "if self.ctx.types.is_assignable_to(source, target) {}\n"
+                    "if self.is_assignable_to_with_env(source, target) {}\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 4, f"unexpected hits: {hits!r}")
+        self.assertIn("diagnostic.rs:1", hits[0])
+        self.assertIn("diagnostic.rs:2", hits[1])
+        self.assertIn("diagnostic.rs:3", hits[2])
+
+    def test_flags_root_solver_wildcard_compat_reexports(self):
+        pattern, _max_lines = self._check_by_name("#8204")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/lib.rs": (
+                    "pub use evaluation::evaluate::*;\n"
+                    "pub mod query {\n"
+                    "    pub use crate::visitors::visitor::*;\n"
+                    "}\n"
+                    "// pub use operations::*;\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("lib.rs:1", hits[0])
+
+    def test_scan_regex_line_count_accepts_file_roots(self):
+        pattern, _max_lines = self._check_by_name("#8227")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/assignability/assignability_diagnostics.rs": (
+                    "if self.is_assignable_to(source, target) {}\n"
+                ),
+            }
+        )
+        file_root = (
+            root
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "assignability"
+            / "assignability_diagnostics.rs"
+        )
+        hits = self.arch_guard.scan_regex_line_count([file_root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("assignability_diagnostics.rs:1", hits[0])
+
     def test_excludes_tests_and_comment_lines(self):
         pattern, _max_lines = self._check_by_name("source_text.contains")
         root = self._make_tree(
@@ -2292,6 +2347,8 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertTrue(any("Emitter boundary" in name for name in names))
         self.assertTrue(any("file-name/path" in name for name in names))
         self.assertTrue(any("rendered type strings" in name for name in names))
+        self.assertTrue(any("#8227" in name for name in names))
+        self.assertTrue(any("#8204" in name for name in names))
 
     def test_real_counts_pass_at_pinned_caps(self):
         """The pinned caps must match the live count (no off-by-one)."""
