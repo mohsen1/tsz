@@ -429,6 +429,12 @@ for (const [compiler, result] of [
         );
       }
     });
+    const duplicateCodes = duplicatedValues(diagnostics.byCode.map((entry) => entry.key));
+    if (duplicateCodes.length > 0) {
+      fail(
+        `assertion classification ${compiler}.diagnostics.byCode contains duplicate codes: ${duplicateCodes.join(", ")}`,
+      );
+    }
   }
 }
 for (const [compiler, diagnostics] of [
