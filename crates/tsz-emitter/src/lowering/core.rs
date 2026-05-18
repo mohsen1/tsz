@@ -691,8 +691,11 @@ impl<'a> LoweringPass<'a> {
             return;
         }
 
+        let is_top_level_export = self.namespace_depth == 0;
+
         // Detect CommonJS helpers: export * from "mod"
-        if self.is_commonjs()
+        if is_top_level_export
+            && self.is_commonjs()
             && export_decl.module_specifier.is_some()
             && export_decl.export_clause.is_none()
         {
@@ -703,7 +706,8 @@ impl<'a> LoweringPass<'a> {
 
         // Detect CommonJS helpers: export * as ns from "mod"
         // In CJS with esModuleInterop, this needs __importStar + __createBinding.
-        if self.is_commonjs()
+        if is_top_level_export
+            && self.is_commonjs()
             && self.ctx.options.es_module_interop
             && export_decl.module_specifier.is_some()
             && export_decl.export_clause.is_some()
@@ -720,7 +724,8 @@ impl<'a> LoweringPass<'a> {
 
         // Detect CommonJS helpers: export { default } from "mod" or export { default as X } from "mod"
         // In CJS with esModuleInterop, re-exporting `default` needs __importDefault.
-        if self.is_commonjs()
+        if is_top_level_export
+            && self.is_commonjs()
             && self.ctx.options.es_module_interop
             && export_decl.module_specifier.is_some()
             && let Some(clause_node) = self.arena.get(export_decl.export_clause)

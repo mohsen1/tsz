@@ -129,6 +129,42 @@ fn commonjs_type_only_reexport_skips_void_zero_preamble() {
     );
 }
 
+#[test]
+fn namespace_export_star_does_not_emit_commonjs_reexport_helpers() {
+    let source = r#"class Aaa {
+}
+namespace Aaa {
+export class SomeType {
+}
+}
+namespace Bbb {
+export class SomeType {
+}
+export * from Aaa;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        !output.contains("__exportStar") && !output.contains("__createBinding"),
+        "Namespace-scoped export star should be erased in JS and should not request CommonJS re-export helpers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Bbb.SomeType = SomeType;"),
+        "Namespace value members should still emit normally.\nOutput:\n{output}"
+    );
+}
+
 /// moduleDetection=force should also cause "use strict" to be emitted
 /// for CJS modules (since the file is now treated as a module).
 #[test]
