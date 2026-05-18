@@ -401,7 +401,6 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(type_idx) else {
             return;
         };
-        let factory = self.ctx.types.factory();
 
         match node.kind {
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
@@ -601,23 +600,8 @@ impl<'a> CheckerState<'a> {
                             7039,
                         );
                     }
-                    let mut param_binding: Option<(String, Option<TypeId>)> = None;
-                    if let Some(param_node) = self.ctx.arena.get(mapped.type_parameter)
-                        && let Some(param) = self.ctx.arena.get_type_parameter(param_node)
-                        && let Some(name_node) = self.ctx.arena.get(param.name)
-                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    {
-                        let name = ident.escaped_text.clone();
-                        let atom = self.ctx.types.intern_string(&name);
-                        let type_id = factory.type_param(tsz_solver::TypeParamInfo {
-                            name: atom,
-                            constraint: None,
-                            default: None,
-                            is_const: false,
-                        });
-                        let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
-                        param_binding = Some((name, previous));
-                    }
+                    let param_binding =
+                        self.push_mapped_type_param_provisional(mapped.type_parameter);
                     let is_direct_self_constraint = param_binding
                         .as_ref()
                         .and_then(|(name, _)| {
@@ -665,13 +649,7 @@ impl<'a> CheckerState<'a> {
                             self.check_type_member_for_missing_names(member_idx);
                         }
                     }
-                    if let Some((name, previous)) = param_binding {
-                        if let Some(prev_type) = previous {
-                            self.ctx.type_parameter_scope.insert(name, prev_type);
-                        } else {
-                            self.ctx.type_parameter_scope.remove(&name);
-                        }
-                    }
+                    self.pop_mapped_type_param_provisional(param_binding);
                 }
             }
             k if k == syntax_kind_ext::TYPE_PREDICATE => {

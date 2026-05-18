@@ -12,6 +12,7 @@ mod index_signature_key_helpers;
 mod index_signature_type_helpers;
 mod index_signature_validity;
 mod interface_checks;
+mod mapped_type_param_provisional;
 mod member_access;
 mod member_declaration_checks;
 mod mixin_member_access;
