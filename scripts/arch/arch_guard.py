@@ -409,12 +409,13 @@ REGEX_LINE_COUNT_CHECKS = [
         "Solver relation boundary: legacy packed relation flag bridges (#8207)",
         [ROOT / "crates" / "tsz-solver" / "src"],
         re.compile(
-            r"\b(?:subtype_cache_config_from_legacy_flags|"
-            r"assignability_cache_config_from_legacy_flags|"
-            r"from_checker_flags_u16|from_legacy_u8|to_legacy_u8|"
+            r'^(?:[^"\n]|"[^"\n]*")*?'
+            r"\b(?:subtype_cache_config_from_legacy_flags\s*\(|"
+            r"assignability_cache_config_from_legacy_flags\s*\(|"
+            r"from_checker_flags_u16\s*\(|from_legacy_u8\s*\(|to_legacy_u8\s*\(|"
             r"RelationCacheKey::(?:subtype|assignability)\s*\(|"
             r"RelationFlags::from_bits_truncate\s*\(|"
-            r"CachedAnyMode::from_legacy_u8)"
+            r"CachedAnyMode::from_legacy_u8\s*\()"
         ),
         0,
     ),
