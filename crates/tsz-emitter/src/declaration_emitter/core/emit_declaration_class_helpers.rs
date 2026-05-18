@@ -1,10 +1,11 @@
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::node::ClassData;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
 
 use crate::declaration_emitter::core::emit_members::ClassMemberKind;
 
-use super::DeclarationEmitter;
+use super::{ClassMethodDeclarationKey, DeclarationEmitter};
 
 /// Precomputed facts about a class declaration for use during DTS emit.
 ///
@@ -14,7 +15,7 @@ use super::DeclarationEmitter;
 pub(in crate::declaration_emitter) struct ClassDeclarationSummary {
     pub extends_another: bool,
     pub has_constructor_overloads: bool,
-    pub method_names_with_overloads: FxHashSet<String>,
+    pub method_names_with_overloads: FxHashSet<ClassMethodDeclarationKey>,
 }
 
 impl<'a> DeclarationEmitter<'a> {
@@ -26,15 +27,17 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         class: &ClassData,
     ) -> ClassDeclarationSummary {
-        let extends_another = self.class_extends_expression(class).is_some();
+        let extends_another = self.class_has_extends_clause(class);
 
         let mut has_constructor_overloads = false;
-        let mut overload_names: FxHashSet<String> = FxHashSet::default();
+        let mut overload_names: FxHashSet<ClassMethodDeclarationKey> = FxHashSet::default();
         // Collect accessor and method-impl computed names to compute the
         // accessor-shadowed set: tsc suppresses a method impl whose computed
         // name also appears on a get/set accessor.
-        let mut accessor_computed_names: FxHashSet<String> = FxHashSet::default();
-        let mut method_impl_computed_names: FxHashSet<String> = FxHashSet::default();
+        let mut accessor_computed_names: FxHashSet<ClassMethodDeclarationKey> =
+            FxHashSet::default();
+        let mut method_impl_computed_names: FxHashSet<ClassMethodDeclarationKey> =
+            FxHashSet::default();
 
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
@@ -52,14 +55,22 @@ impl<'a> DeclarationEmitter<'a> {
                     if let Some(method) = self.arena.get_method_decl(member_node) {
                         if method.body.is_none() {
                             if let Some(name) = self.get_function_name(member_idx) {
-                                overload_names.insert(name);
+                                overload_names.insert(ClassMethodDeclarationKey::new(
+                                    self.arena.is_static(&method.modifiers),
+                                    name,
+                                ));
                             }
                         } else if let Some(name_node) = self.arena.get(method.name) {
                             if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
                                 if let Some(text) =
                                     self.get_source_slice(name_node.pos, name_node.end)
                                 {
-                                    method_impl_computed_names.insert(text);
+                                    method_impl_computed_names.insert(
+                                        ClassMethodDeclarationKey::new(
+                                            self.arena.is_static(&method.modifiers),
+                                            text,
+                                        ),
+                                    );
                                 }
                             }
                         }
@@ -73,7 +84,9 @@ impl<'a> DeclarationEmitter<'a> {
                                     if let Some(text) =
                                         self.get_source_slice(name_node.pos, name_node.end)
                                     {
-                                        accessor_computed_names.insert(text);
+                                        accessor_computed_names.insert(
+                                            ClassMethodDeclarationKey::new(info.is_static, text),
+                                        );
                                     }
                                 }
                             }
@@ -95,6 +108,16 @@ impl<'a> DeclarationEmitter<'a> {
             has_constructor_overloads,
             method_names_with_overloads: overload_names,
         }
+    }
+
+    fn class_has_extends_clause(&self, class: &ClassData) -> bool {
+        class.heritage_clauses.as_ref().is_some_and(|clauses| {
+            clauses.nodes.iter().copied().any(|clause_idx| {
+                self.arena
+                    .get_heritage_clause_at(clause_idx)
+                    .is_some_and(|heritage| heritage.token == SyntaxKind::ExtendsKeyword as u16)
+            })
+        })
     }
 }
 

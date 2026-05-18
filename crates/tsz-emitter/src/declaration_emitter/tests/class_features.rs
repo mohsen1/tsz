@@ -568,6 +568,61 @@ fn test_class_method_overloads_summary_suppresses_implementation() {
 }
 
 #[test]
+fn test_static_method_implementation_survives_instance_overload_same_name() {
+    // Static and instance declarations occupy different d.ts sides; an
+    // instance overload must not suppress a same-name static implementation.
+    let output = emit_dts(
+        r#"
+    export class Parser {
+        static parse(): number { return 1; }
+        parse(x: string): string;
+        parse(x: any): string { return String(x); }
+    }
+    "#,
+    );
+
+    assert!(
+        output.contains("static parse(): number;"),
+        "Expected static implementation declaration to remain: {output}"
+    );
+    assert!(
+        output.contains("parse(x: string): string;"),
+        "Expected instance overload signature: {output}"
+    );
+    assert!(
+        !output.contains("parse(x: any)"),
+        "Expected instance implementation signature to be suppressed: {output}"
+    );
+}
+
+#[test]
+fn test_instance_method_implementation_survives_static_overload_same_name() {
+    // Same-name static overloads must not suppress the instance-side method.
+    let output = emit_dts(
+        r#"
+    export class Parser {
+        parse(): number { return 1; }
+        static parse(x: string): string;
+        static parse(x: any): string { return String(x); }
+    }
+    "#,
+    );
+
+    assert!(
+        output.contains("parse(): number;"),
+        "Expected instance implementation declaration to remain: {output}"
+    );
+    assert!(
+        output.contains("static parse(x: string): string;"),
+        "Expected static overload signature: {output}"
+    );
+    assert!(
+        !output.contains("static parse(x: any)"),
+        "Expected static implementation signature to be suppressed: {output}"
+    );
+}
+
+#[test]
 fn test_private_method_overloads_emit_marker_once() {
     // Private methods with overloads should emit exactly one `private name;` stub,
     // regardless of how many overload signatures appear.

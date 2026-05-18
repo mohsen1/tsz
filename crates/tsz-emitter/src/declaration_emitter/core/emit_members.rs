@@ -5,7 +5,7 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::type_queries;
 
-use super::DeclarationEmitter;
+use super::{ClassMethodDeclarationKey, DeclarationEmitter};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::declaration_emitter) enum ClassMemberKind {
@@ -43,6 +43,9 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Get method name as string for overload tracking
         let method_name = self.get_function_name(method_idx);
+        let method_key = method_name.as_ref().map(|name| {
+            ClassMethodDeclarationKey::new(self.arena.is_static(&method.modifiers), name.clone())
+        });
 
         let is_private = self
             .arena
@@ -52,9 +55,9 @@ impl<'a> DeclarationEmitter<'a> {
             if is_private {
                 // Private overloads collapse to a single `private foo;` stub.
                 // emitted_private_method_markers gates emission to the first encounter.
-                let already_emitted = method_name
+                let already_emitted = method_key
                     .as_ref()
-                    .is_some_and(|n| !self.emitted_private_method_markers.insert(n.clone()));
+                    .is_some_and(|key| !self.emitted_private_method_markers.insert(key.clone()));
                 if !already_emitted {
                     self.write_indent();
                     self.emit_member_modifiers(&method.modifiers);
@@ -65,8 +68,8 @@ impl<'a> DeclarationEmitter<'a> {
                 self.skip_comments_in_node(method_node.pos, method_node.end);
                 return;
             }
-        } else if let Some(ref name) = method_name
-            && self.method_names_with_overloads.contains(name)
+        } else if let Some(ref key) = method_key
+            && self.method_names_with_overloads.contains(key)
         {
             self.skip_comments_in_node(method_node.pos, method_node.end);
             return;

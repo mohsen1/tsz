@@ -29,6 +29,18 @@ use tsz_solver::TypeInterner;
 
 pub(crate) type JsNestedModuleExportNamespaces = FxHashMap<NodeIndex, Vec<(NodeIndex, NodeIndex)>>;
 
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(super) struct ClassMethodDeclarationKey {
+    pub is_static: bool,
+    pub name: String,
+}
+
+impl ClassMethodDeclarationKey {
+    pub const fn new(is_static: bool, name: String) -> Self {
+        Self { is_static, name }
+    }
+}
+
 /// Declaration emitter for .d.ts files
 pub struct DeclarationEmitter<'a> {
     pub(super) arena: &'a NodeArena,
@@ -117,12 +129,13 @@ pub struct DeclarationEmitter<'a> {
     pub(super) class_has_constructor_overloads: bool,
     /// Track whether current class extends another class
     pub(super) class_extends_another: bool,
-    /// Track method names that have overload signatures in current class (to skip implementation signatures)
-    pub(super) method_names_with_overloads: FxHashSet<String>,
+    /// Track current-class method implementations that should be suppressed,
+    /// including overload implementations and accessor-shadowed computed methods.
+    pub(super) method_names_with_overloads: FxHashSet<ClassMethodDeclarationKey>,
     /// Private method names that have already had their `private name;` marker
     /// emitted in the current class declaration. Reset at each class emit site
     /// before calling any member emit functions.
-    pub(super) emitted_private_method_markers: FxHashSet<String>,
+    pub(super) emitted_private_method_markers: FxHashSet<ClassMethodDeclarationKey>,
     pub(super) all_comments: Vec<CommentRange>,
     pub(super) comment_emit_idx: usize,
     pub(super) current_statement_jsdoc_chain: Vec<String>,
