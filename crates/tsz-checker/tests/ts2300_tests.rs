@@ -1287,6 +1287,47 @@ declare module "./source" {
 }
 
 #[test]
+fn reexport_class_plus_interface_module_augmentation_no_ts2300() {
+    let source_ts = r#"export class C {
+    x = 1;
+}
+"#;
+    let test_ts = r#"export { C as PublicC } from "./source";
+declare module "./source" {
+    interface C {
+        y: number;
+    }
+}
+"#;
+
+    let ts2300 =
+        check_for_ts2300_multi_file(&[("source.ts", source_ts), ("test.ts", test_ts)], "test.ts");
+    assert!(
+        ts2300.is_empty(),
+        "`export {{C as PublicC}}` + interface augmentation should NOT produce TS2300, got: {ts2300:?}"
+    );
+}
+
+#[test]
+fn reexport_type_alias_plus_interface_module_augmentation_ts2300() {
+    let source_ts = "export type C = { x: number };\n";
+    let test_ts = r#"export { C as PublicC } from "./source";
+declare module "./source" {
+    interface C {
+        y: number;
+    }
+}
+"#;
+
+    let ts2300 =
+        check_for_ts2300_multi_file(&[("source.ts", source_ts), ("test.ts", test_ts)], "test.ts");
+    assert!(
+        !ts2300.is_empty(),
+        "`export {{C as PublicC}}` + interface augmentation of a type alias should produce TS2300"
+    );
+}
+
+#[test]
 fn same_file_merging_interfaces_no_ts2300() {
     let diags = verify_errors(
         "interface Config { port: number; }\ninterface Config { host: string; }",
