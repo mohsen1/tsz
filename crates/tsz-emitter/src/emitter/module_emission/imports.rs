@@ -1401,7 +1401,16 @@ impl<'a> Printer<'a> {
         is_external: bool,
         is_exported_var: bool,
     ) {
-        if is_exported_var {
+        let is_es_module_output = matches!(
+            self.ctx.options.module,
+            ModuleKind::ES2015 | ModuleKind::ES2020 | ModuleKind::ES2022 | ModuleKind::ESNext
+        );
+
+        if is_exported_var && !is_external && is_es_module_output {
+            self.write("export var ");
+            self.emit_decl_name(import_clause);
+            self.write(" = ");
+        } else if is_exported_var {
             // Emit directly as `exports.b = ...;` — the identifier substitution
             // in emit() will produce `exports.b`.
             self.emit(import_clause);

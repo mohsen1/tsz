@@ -4,6 +4,7 @@ use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     // =========================================================================
@@ -1721,16 +1722,22 @@ impl<'a> Printer<'a> {
                 {
                     true
                 } else if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-                    // Only external module imports (`import x = require("mod")`)
-                    // count as runtime module syntax. Namespace aliases
-                    // (`import x = M.A`) are erased and should not suppress
-                    // deferred `export {};` emission.
+                    // External module imports (`import x = require("mod")`) and
+                    // exported aliases count as runtime module syntax. Plain
+                    // namespace aliases (`import x = M.A`) are erased and should
+                    // not suppress deferred `export {};` emission.
                     self.arena
                         .get_import_decl(stmt_node)
-                        .and_then(|import_data| self.arena.get(import_data.module_specifier))
-                        .is_some_and(|spec_node| {
-                            spec_node.is_string_literal()
-                                || spec_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                        .is_some_and(|import_data| {
+                            self.arena
+                                .has_modifier(&import_data.modifiers, SyntaxKind::ExportKeyword)
+                                || self.arena.get(import_data.module_specifier).is_some_and(
+                                    |spec_node| {
+                                        spec_node.is_string_literal()
+                                            || spec_node.kind
+                                                == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                                    },
+                                )
                         })
                 } else {
                     false
