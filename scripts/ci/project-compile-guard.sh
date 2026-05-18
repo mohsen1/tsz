@@ -19,6 +19,10 @@ LAST_PEAK_RSS_BYTES=0
 
 # shellcheck source=scripts/bench/project-fixtures.sh
 source "$ROOT_DIR/scripts/bench/project-fixtures.sh"
+tsz_sync_project_row_groups
+if command -v node >/dev/null 2>&1; then
+  tsz_validate_project_row_metadata
+fi
 
 if [[ ! -x "$TSZ_BIN" ]]; then
   echo "error: TSZ_BIN is not executable: $TSZ_BIN" >&2
@@ -373,30 +377,71 @@ should_check_project() {
   [[ -z "$PROJECT_FILTER" || "$name" =~ $PROJECT_FILTER ]]
 }
 
+run_project_row() {
+  local name="$1"
+
+  case "$name" in
+    utility-types-project)
+      ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$FIXTURE_ROOT/utility-types"
+      write_utility_types_config
+      check_project "$name" "$FIXTURE_ROOT/utility-types/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/utility-types/src"
+      ;;
+    ts-essentials-project)
+      ensure_git_fixture "ts-essentials" "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF" "$FIXTURE_ROOT/ts-essentials"
+      write_ts_essentials_config
+      check_project "$name" "$FIXTURE_ROOT/ts-essentials/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ts-essentials/lib"
+      ;;
+    rxjs-project)
+      ensure_git_fixture "rxjs" "$RXJS_REPO" "$RXJS_REF" "$FIXTURE_ROOT/rxjs"
+      write_rxjs_config
+      check_project "$name" "$FIXTURE_ROOT/rxjs/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/rxjs/$(tsz_rxjs_src_root "$FIXTURE_ROOT/rxjs")"
+      ;;
+    type-fest-project)
+      ensure_git_fixture "type-fest" "$TYPE_FEST_REPO" "$TYPE_FEST_REF" "$FIXTURE_ROOT/type-fest"
+      write_type_fest_config
+      check_project "$name" "$FIXTURE_ROOT/type-fest/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-fest/source"
+      ;;
+    ts-toolbelt-project)
+      ensure_git_fixture "ts-toolbelt" "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF" "$FIXTURE_ROOT/ts-toolbelt"
+      write_ts_toolbelt_config
+      check_project "$name" "$FIXTURE_ROOT/ts-toolbelt/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ts-toolbelt/sources"
+      ;;
+    zod-project)
+      ensure_git_fixture "zod" "$ZOD_REPO" "$ZOD_REF" "$FIXTURE_ROOT/zod"
+      write_zod_config
+      check_project "$name" "$FIXTURE_ROOT/zod/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/zod"
+      ;;
+    kysely-project)
+      ensure_git_fixture "kysely" "$KYSELY_REPO" "$KYSELY_REF" "$FIXTURE_ROOT/kysely"
+      write_kysely_config
+      check_project "$name" "$FIXTURE_ROOT/kysely/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/kysely/src"
+      ;;
+    type-challenges-project)
+      ensure_git_fixture "type-challenges" "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF" "$FIXTURE_ROOT/type-challenges"
+      write_type_challenges_config
+      check_project "$name" "$FIXTURE_ROOT/type-challenges/.tsz-compile/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-challenges/.tsz-compile/questions"
+      ;;
+    type-challenges-solutions-project)
+      ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
+      write_type_challenges_solutions_config
+      check_project "$name" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/solutions"
+      ;;
+    *)
+      echo "error: unknown project row in compile-guard map: $name" >&2
+      return 1
+      ;;
+  esac
+}
+
 run_required_projects() {
-if should_check_project "utility-types-project"; then
-  ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$FIXTURE_ROOT/utility-types"
-  write_utility_types_config
-  check_project "utility-types-project" "$FIXTURE_ROOT/utility-types/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/utility-types/src"
-fi
-
-if should_check_project "ts-essentials-project"; then
-  ensure_git_fixture "ts-essentials" "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF" "$FIXTURE_ROOT/ts-essentials"
-  write_ts_essentials_config
-  check_project "ts-essentials-project" "$FIXTURE_ROOT/ts-essentials/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ts-essentials/lib"
-fi
-
-if should_check_project "rxjs-project"; then
-  ensure_git_fixture "rxjs" "$RXJS_REPO" "$RXJS_REF" "$FIXTURE_ROOT/rxjs"
-  write_rxjs_config
-  check_project "rxjs-project" "$FIXTURE_ROOT/rxjs/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/rxjs/$(tsz_rxjs_src_root "$FIXTURE_ROOT/rxjs")"
-fi
-
-if should_check_project "type-fest-project"; then
-  ensure_git_fixture "type-fest" "$TYPE_FEST_REPO" "$TYPE_FEST_REF" "$FIXTURE_ROOT/type-fest"
-  write_type_fest_config
-  check_project "type-fest-project" "$FIXTURE_ROOT/type-fest/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-fest/source"
-fi
+  local name
+  for name in "${TSZ_COMPILE_GUARD_REQUIRED_ROWS[@]}"; do
+    if should_check_project "$name"; then
+      if ! run_project_row "$name"; then
+        return 1
+      fi
+    fi
+  done
 
 if [[ "$INCLUDE_GENERATED_APPS" == "1" ]] \
   && { should_check_project "vite-vanilla-ts-app" || should_check_project "nextjs-fresh-app"; }; then
@@ -418,35 +463,14 @@ fi
 }
 
 run_canary_projects() {
-if should_check_project "ts-toolbelt-project"; then
-  ensure_git_fixture "ts-toolbelt" "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF" "$FIXTURE_ROOT/ts-toolbelt"
-  write_ts_toolbelt_config
-  check_project "ts-toolbelt-project" "$FIXTURE_ROOT/ts-toolbelt/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/ts-toolbelt/sources"
-fi
-
-if should_check_project "zod-project"; then
-  ensure_git_fixture "zod" "$ZOD_REPO" "$ZOD_REF" "$FIXTURE_ROOT/zod"
-  write_zod_config
-  check_project "zod-project" "$FIXTURE_ROOT/zod/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/zod"
-fi
-
-if should_check_project "kysely-project"; then
-  ensure_git_fixture "kysely" "$KYSELY_REPO" "$KYSELY_REF" "$FIXTURE_ROOT/kysely"
-  write_kysely_config
-  check_project "kysely-project" "$FIXTURE_ROOT/kysely/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/kysely/src"
-fi
-
-if should_check_project "type-challenges-project"; then
-  ensure_git_fixture "type-challenges" "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF" "$FIXTURE_ROOT/type-challenges"
-  write_type_challenges_config
-  check_project "type-challenges-project" "$FIXTURE_ROOT/type-challenges/.tsz-compile/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-challenges/.tsz-compile/questions"
-fi
-
-if should_check_project "type-challenges-solutions-project"; then
-  ensure_git_fixture "type-challenges-solutions" "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF" "$FIXTURE_ROOT/type-challenges-solutions"
-  write_type_challenges_solutions_config
-  check_project "type-challenges-solutions-project" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/tsconfig.tsz-guard.json" "$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/solutions"
-fi
+  local name
+  for name in "${TSZ_COMPILE_GUARD_CANARY_ROWS[@]}"; do
+    if should_check_project "$name"; then
+      if ! run_project_row "$name"; then
+        return 1
+      fi
+    fi
+  done
 }
 
 case "$PROJECT_SET" in

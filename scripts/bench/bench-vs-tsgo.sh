@@ -60,6 +60,11 @@ TSC_NPM_SPEC="${TSC_NPM_SPEC:-}"
 EXTERNAL_BENCH_DIR="${EXTERNAL_BENCH_DIR:-$BENCH_TARGET_DIR/external}"
 # shellcheck source=scripts/bench/project-fixtures.sh
 source "$SCRIPT_DIR/project-fixtures.sh"
+# Keep benchmark/CI project metadata aligned with a single source of truth.
+tsz_sync_project_row_groups
+if command -v node >/dev/null 2>&1; then
+    tsz_validate_project_row_metadata
+fi
 # Project fixture pins live in project-fixtures.sh for benchmark/CI parity.
 UTILITY_TYPES_DIR="$EXTERNAL_BENCH_DIR/utility-types"
 TS_TOOLBELT_DIR="$EXTERNAL_BENCH_DIR/ts-toolbelt"
@@ -1733,7 +1738,14 @@ export_results_json() {
     mkdir -p "$(dirname "$out_file")"
 
     local expanded_csv
+    local project_readme_candidates_json="{}"
+    local project_owner_families_json
+
     expanded_csv="$(echo -e "$RESULTS_CSV")"
+    project_owner_families_json="$(tsz_project_owner_families_json)"
+    if command -v node >/dev/null 2>&1; then
+      project_readme_candidates_json="$(tsz_project_readme_candidates_json)"
+    fi
 
     RESULTS_CSV_EXPANDED="$expanded_csv" \
     QUICK_MODE_VALUE="$QUICK_MODE" \
@@ -1754,48 +1766,40 @@ export_results_json() {
     BENCHMARKS_RUN_VALUE="$BENCHMARKS_RUN" \
     COMPATIBILITY_JSONL_VALUE="$PROJECT_COMPATIBILITY_JSONL" \
     BENCHMARK_SOURCES_JSONL_VALUE="${BENCHMARK_SOURCES_JSONL:-}" \
+    PROJECT_OWNER_FAMILIES_JSON_VALUE="$project_owner_families_json" \
+    PROJECT_README_CANDIDATES_JSON_VALUE="$project_readme_candidates_json" \
     node - "$out_file" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 const outFile = process.argv[2];
-
-const PROJECT_OWNER_FAMILIES = {
-  "kysely-project": "contextual generics, guards, indexed/property access",
-  "zod-project": "recursive conditionals, object guards, class/generic identity",
-  "ts-toolbelt-project": "recursive type evaluation pressure",
-  "type-fest-project": "mapped/conditional/key-space utility surface",
-  "ts-essentials-project": "utility types plus recursive JSON shapes",
-  "large-ts-repo": "residency/runtime/project graph stress",
-  nextjs: "module graph plus generated app dependencies",
-  "nextjs-fresh-app": "generated app-router dependency graph",
-  "vite-vanilla-ts-app": "generated Vite dependency graph",
-  "rxjs-project": "reactive library generic project surface",
-  "utility-types-project": "utility type project surface",
-};
+const PROJECT_OWNER_FAMILIES = JSON.parse(process.env.PROJECT_OWNER_FAMILIES_JSON_VALUE || "{}");
+const projectOwnerFamilies = PROJECT_OWNER_FAMILIES;
+const PROJECT_README_CANDIDATES = JSON.parse(process.env.PROJECT_README_CANDIDATES_JSON_VALUE || "{}");
+const projectReadmeCandidates = PROJECT_README_CANDIDATES;
 
 function readProjectReadmes() {
-  const candidates = {
-    "large-ts-repo": [[process.env.LARGE_TS_DIR_VALUE, "README.md"]],
-    nextjs: [[process.env.NEXTJS_DIR_VALUE, "README.md"]],
-    "nextjs-fresh-app": [[process.env.NEXT_APP_BENCH_DIR_VALUE, "README.md"]],
-    "vite-vanilla-ts-app": [[process.env.VITE_APP_BENCH_DIR_VALUE, "README.md"]],
-    "rxjs-project": [[process.env.RXJS_DIR_VALUE, "README.md"]],
-    "type-fest-project": [
-      [process.env.TYPE_FEST_DIR_VALUE, "readme.md"],
-      [process.env.TYPE_FEST_DIR_VALUE, "README.md"],
-    ],
-    "zod-project": [[process.env.ZOD_DIR_VALUE, "README.md"]],
-    "utility-types-project": [[process.env.UTILITY_TYPES_DIR_VALUE, "README.md"]],
-    "ts-toolbelt-project": [[process.env.TS_TOOLBELT_DIR_VALUE, "README.md"]],
-    "ts-essentials-project": [[process.env.TS_ESSENTIALS_DIR_VALUE, "README.md"]],
+  const readmes = new Map();
+
+  const directories = {
+    "large-ts-repo": process.env.LARGE_TS_DIR_VALUE,
+    nextjs: process.env.NEXTJS_DIR_VALUE,
+    "nextjs-fresh-app": process.env.NEXT_APP_BENCH_DIR_VALUE,
+    "vite-vanilla-ts-app": process.env.VITE_APP_BENCH_DIR_VALUE,
+    "rxjs-project": process.env.RXJS_DIR_VALUE,
+    "type-fest-project": process.env.TYPE_FEST_DIR_VALUE,
+    "zod-project": process.env.ZOD_DIR_VALUE,
+    "utility-types-project": process.env.UTILITY_TYPES_DIR_VALUE,
+    "ts-toolbelt-project": process.env.TS_TOOLBELT_DIR_VALUE,
+    "ts-essentials-project": process.env.TS_ESSENTIALS_DIR_VALUE,
   };
 
-  const readmes = new Map();
-  for (const [name, paths] of Object.entries(candidates)) {
-    for (const [dir, file] of paths) {
-      if (!dir) continue;
+  for (const [name, directory] of Object.entries(directories)) {
+    const candidates = Array.isArray(projectReadmeCandidates[name]) ? projectReadmeCandidates[name] : [];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      if (!directory) continue;
       try {
-        const text = fs.readFileSync(path.join(dir, file), "utf8").trim();
+        const text = fs.readFileSync(path.join(directory, candidate), "utf8").trim();
         if (text) {
           readmes.set(name, text.length > 18000 ? `${text.slice(0, 18000).trimEnd()}\n\n...` : text);
           break;
@@ -1840,7 +1844,7 @@ function readSourceRows() {
 }
 
 function fallbackCompatibility(row) {
-  if (!PROJECT_OWNER_FAMILIES[row.name]) return null;
+  if (!projectOwnerFamilies[row.name]) return null;
   const status = String(row.status || "").toLowerCase();
   if (!status) {
     return {
@@ -2031,7 +2035,7 @@ function compatibilityFor(row, compatibilityRows) {
             tsgo: Array.isArray(recorded.exit_codes.tsgo) ? recorded.exit_codes.tsgo : [],
           }
         : { tsc: [], tsz: [], tsgo: [] },
-      semantic_owner_family: PROJECT_OWNER_FAMILIES[row.name] || "not classified",
+      semantic_owner_family: projectOwnerFamilies[row.name] || "not classified",
       files_reached: recorded.files_reached ?? null,
       peak_memory_bytes: recorded.peak_memory_bytes ?? null,
     },
@@ -2059,7 +2063,7 @@ const rows = csv
       name,
       lines: toNumber(lines),
       kb: toNumber(kb),
-      ...(PROJECT_OWNER_FAMILIES[name] ? { project_files: compatibilityRows.get(name)?.files_reached ?? null } : {}),
+      ...(projectOwnerFamilies[name] ? { project_files: compatibilityRows.get(name)?.files_reached ?? null } : {}),
       tsz_ms: toNumber(tszMs),
       tsgo_ms: toNumber(tsgoMs),
       tsz_lps: toNumber(tszLps),
