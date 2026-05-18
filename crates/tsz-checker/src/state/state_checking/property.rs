@@ -1,3 +1,4 @@
+use crate::query_boundaries::key_constraints;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
@@ -268,20 +269,19 @@ impl<'a> CheckerState<'a> {
         // appropriate branch. Force one more evaluation pass via judge_evaluate so
         // the downstream type handlers see the concrete branch type (an intersection
         // or object) rather than the raw conditional.
-        let evaluated_target =
-            if crate::query_boundaries::common::conditional_type_has_concrete_condition(
-                self.ctx.types,
-                raw_evaluated,
-            ) {
-                let branch = self.judge_evaluate(raw_evaluated);
-                if branch != raw_evaluated {
-                    branch
-                } else {
-                    raw_evaluated
-                }
+        let evaluated_target = if key_constraints::conditional_type_has_concrete_condition(
+            self.ctx.types,
+            raw_evaluated,
+        ) {
+            let branch = self.judge_evaluate(raw_evaluated);
+            if branch != raw_evaluated {
+                branch
             } else {
                 raw_evaluated
-            };
+            }
+        } else {
+            raw_evaluated
+        };
 
         if crate::query_boundaries::common::type_is_conditional_type_result_with_unresolved_inference(
             self.ctx.types,

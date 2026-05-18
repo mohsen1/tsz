@@ -9,6 +9,7 @@ use crate::computation::complex::is_contextually_sensitive;
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::call as call_checker;
 use crate::query_boundaries::common;
+use crate::query_boundaries::key_constraints;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
@@ -77,7 +78,7 @@ impl<'a> CheckerState<'a> {
         type_id == TypeId::UNKNOWN
             || type_id == TypeId::ERROR
             || common::contains_infer_types(self.ctx.types, type_id)
-            || common::type_has_free_type_parameters_for_key_space(self.ctx.types, type_id)
+            || key_constraints::type_has_free_type_parameters_for_key_space(self.ctx.types, type_id)
     }
 
     pub(crate) fn is_immediate_call_or_new_callee(&self, idx: NodeIndex) -> bool {

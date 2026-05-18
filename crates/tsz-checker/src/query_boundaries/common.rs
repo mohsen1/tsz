@@ -3,7 +3,6 @@ use tsz_solver::{
     TypePredicate,
 };
 
-// Re-export solver value types used by checker call computation.
 pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 pub(crate) use tsz_solver::type_queries::{
@@ -305,10 +304,6 @@ pub(crate) fn contains_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) 
 pub(crate) fn is_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_mapped_type(db, type_id)
 }
-
-pub(crate) use super::key_constraints::{
-    conditional_type_has_concrete_condition, type_has_free_type_parameters_for_key_space,
-};
 
 /// Check if a type is a generic application type with type parameters in its arguments.
 /// For example, `Options<State, Actions>` where `State` or `Actions` are type parameters.
