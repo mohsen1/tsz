@@ -577,7 +577,7 @@ ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
             ROOT / "crates" / "tsz-cli" / "src",
         ],
         ("crates/tsz-checker/src/query_boundaries/",),
-        2,
+        0,
     ),
 ]
 
@@ -651,6 +651,12 @@ REGEX_LINE_COUNT_CHECKS = [
         [ROOT / "crates" / "tsz-emitter" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
         3,
+    ),
+    (
+        "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
+        re.compile(r"^pub use (?:[A-Za-z_][A-Za-z0-9_]*::)+\*;"),
+        14,
     ),
     (
         "Checker relation boundary: raw diagnostic assignability predicates (#8227)",
