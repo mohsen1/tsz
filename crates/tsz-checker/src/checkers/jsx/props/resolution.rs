@@ -962,7 +962,7 @@ impl<'a> CheckerState<'a> {
                     if let (Some((start, end)), Some(snap)) =
                         (function_param_diagnostic_span, spec_snap)
                     {
-                        snap.rollback_filtered(&mut self.ctx, |diag| {
+                        snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
                             !(matches!(
                                 diag.code,
                                 7006 | 7019

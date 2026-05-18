@@ -114,7 +114,7 @@ impl<'a> CheckerState<'a> {
         if attrs_info.has_any_spread {
             let has_non_zero_param = sigs.iter().any(|s| !s.params.is_empty());
             if has_non_zero_param {
-                snap.rollback(&mut self.ctx);
+                snap.rollback(&mut self.ctx.diagnostic_state());
                 return;
             }
         }
@@ -131,7 +131,7 @@ impl<'a> CheckerState<'a> {
             // overloads fail on arg count when any attributes exist.
             if sig.params.is_empty() {
                 if !has_any_attrs {
-                    snap.rollback(&mut self.ctx);
+                    snap.rollback(&mut self.ctx.diagnostic_state());
                     self.check_jsx_sfc_return_type(instantiated_return, tag_name_idx);
                     return;
                 }
@@ -178,7 +178,7 @@ impl<'a> CheckerState<'a> {
             ) {
                 // Found a matching overload — done.
                 // Roll back speculative diagnostics from attribute collection.
-                snap.rollback(&mut self.ctx);
+                snap.rollback(&mut self.ctx.diagnostic_state());
                 self.check_jsx_sfc_return_type(instantiated_return, tag_name_idx);
                 return;
             }
@@ -202,7 +202,7 @@ impl<'a> CheckerState<'a> {
         // No overload matched — roll back speculative diagnostics and emit TS2769.
         // tsc often anchors at the tag name, but when every non-0-param overload
         // fails on the same explicit attribute, anchor that attribute instead.
-        snap.rollback(&mut self.ctx);
+        snap.rollback(&mut self.ctx.diagnostic_state());
         let anchor_idx =
             if considered_overload_failures > 0 && all_overload_failures_share_explicit_anchor {
                 shared_explicit_anchor_name
