@@ -2359,16 +2359,19 @@ fn test_rendered_type_decision_patterns_do_not_grow() {
 
             let formats_type =
                 line.contains("format_type(") || line.contains("format_type_diagnostic(");
-            let inspects_rendered = line.contains(".contains(") || line.contains(".starts_with(");
+            let inspects_rendered = line.contains(".contains(")
+                || line.contains(".starts_with(")
+                || line.contains(".ends_with(")
+                || line.contains(".as_str()");
             if formats_type && inspects_rendered {
                 rendered_decisions.push(format!("{}:{}", path.display(), line_num + 1));
             }
         }
     }
 
-    const RENDERED_TYPE_DECISION_LINE_CEILING: usize = 5;
+    const RENDERED_TYPE_DECISION_LINE_CEILING: usize = 0;
     assert!(
-        rendered_decisions.len() <= RENDERED_TYPE_DECISION_LINE_CEILING,
+        rendered_decisions.len() == RENDERED_TYPE_DECISION_LINE_CEILING,
         "Rendered-type semantic decision patterns grew to {} lines (ceiling: {}). \
          Route new decisions through structural solver/query-boundary facts instead \
          of inspecting formatted type strings. Rendered decision lines:\n  {}",
