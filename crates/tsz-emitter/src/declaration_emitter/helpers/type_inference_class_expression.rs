@@ -263,10 +263,13 @@ impl<'a> DeclarationEmitter<'a> {
         );
 
         let constructor_type = if use_arrow_form {
-            let arrow_type = Self::constructor_arrow_type_text(&params_text, members, is_abstract);
+            let prefix = if is_abstract { "abstract new" } else { "new" };
+            let construct_head = self.class_expression_construct_head(prefix, class, &params_text);
+            let arrow_type = Self::constructor_arrow_type_text(&construct_head, members);
             Self::constructor_static_intersection_type_text(&arrow_type, &static_members)
         } else {
-            Self::constructor_object_type_text(&params_text, members, &static_members)
+            let construct_head = self.class_expression_construct_head("new", class, &params_text);
+            Self::constructor_object_type_text(&construct_head, members, &static_members)
         };
 
         if let Some(base_type_text) = base_type_text {
@@ -280,24 +283,23 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    fn constructor_arrow_type_text(params_text: &str, members: &str, is_abstract: bool) -> String {
-        let prefix = if is_abstract { "abstract new " } else { "new " };
+    fn constructor_arrow_type_text(construct_head: &str, members: &str) -> String {
         if members.is_empty() {
-            format!("{prefix}({params_text}) => {{}}")
+            format!("{construct_head} => {{}}")
         } else {
-            format!("{prefix}({params_text}) => {{\n{members}\n}}")
+            format!("{construct_head} => {{\n{members}\n}}")
         }
     }
 
     fn constructor_object_type_text(
-        params_text: &str,
+        construct_head: &str,
         members: &str,
         static_members: &str,
     ) -> String {
         let mut constructor_type = if members.is_empty() {
-            format!("{{\n    new ({params_text}): {{}};\n")
+            format!("{{\n    {construct_head}: {{}};\n")
         } else {
-            format!("{{\n    new ({params_text}): {{\n{members}\n    }};\n")
+            format!("{{\n    {construct_head}: {{\n{members}\n    }};\n")
         };
         if !static_members.is_empty() {
             constructor_type.push_str(static_members);
@@ -490,8 +492,9 @@ impl<'a> DeclarationEmitter<'a> {
             );
         }
 
+        let construct_head = self.class_expression_construct_head("new", class, &params_text);
         let constructor_type =
-            Self::constructor_object_type_text(&params_text, &instance_members, &static_members);
+            Self::constructor_object_type_text(&construct_head, &instance_members, &static_members);
 
         if let Some(base_type_text) = extends_parameter_type_text {
             Some(format!("{constructor_type} & {base_type_text}"))
@@ -508,6 +511,28 @@ impl<'a> DeclarationEmitter<'a> {
             .get(member_idx)
             .and_then(|member_node| self.arena.get_index_signature(member_node))
             .is_some_and(|index| self.arena.is_static(&index.modifiers))
+    }
+
+    fn class_expression_construct_head(
+        &self,
+        prefix: &str,
+        class: &tsz_parser::parser::node::ClassData,
+        params_text: &str,
+    ) -> String {
+        let type_params = class
+            .type_parameters
+            .as_ref()
+            .map(|type_params| {
+                let mut scratch = self.scratch_declaration_emitter();
+                scratch.emit_type_parameters(type_params);
+                scratch.writer.take_output()
+            })
+            .unwrap_or_default();
+        if type_params.is_empty() {
+            format!("{prefix} ({params_text})")
+        } else {
+            format!("{prefix} {type_params}({params_text})")
+        }
     }
 
     fn strip_static_prefix_from_class_expression_static_members(members: &str) -> String {
