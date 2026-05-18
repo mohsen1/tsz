@@ -121,6 +121,8 @@ function validateClassificationManifestSources(candidateManifest, classification
 function validateSelectedEntryEvidence(entry, index) {
   validateEvidencePath(entry?.solution?.output, `selected entries[${index}].solution.output`);
   validateEvidencePath(entry?.solution?.source, `selected entries[${index}].solution.source`);
+  validateEvidencePath(entry?.template?.output, `selected entries[${index}].template.output`);
+  validateEvidencePath(entry?.template?.source, `selected entries[${index}].template.source`);
   validateEvidencePath(entry?.testCase?.output, `selected entries[${index}].testCase.output`);
   validateEvidencePath(entry?.testCase?.source, `selected entries[${index}].testCase.source`);
 
