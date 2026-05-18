@@ -86,7 +86,12 @@ function optionalCount(value, label) {
 }
 
 function validateSourceMetadata(source, label) {
-  if (source?.repository && source?.ref) {
+  if (
+    typeof source?.repository === "string" &&
+    source.repository.trim() !== "" &&
+    typeof source?.ref === "string" &&
+    source.ref.trim() !== ""
+  ) {
     return;
   }
   fail(
