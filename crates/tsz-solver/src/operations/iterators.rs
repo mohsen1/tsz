@@ -11,6 +11,7 @@ use crate::visitor::{
     array_element_type, object_shape_id, object_with_index_shape_id, readonly_inner_type,
     tuple_list_id,
 };
+use smallvec::SmallVec;
 
 /// Information about an iterator type extracted from a type.
 ///
@@ -360,8 +361,8 @@ pub fn extract_iterator_result_value_types(
     match db.lookup(iterator_result_type) {
         Some(TypeData::Union(list_id)) => {
             let members = db.type_list(list_id);
-            let mut yield_types = Vec::new();
-            let mut return_types = Vec::new();
+            let mut yield_types: SmallVec<[TypeId; 2]> = SmallVec::new();
+            let mut return_types: SmallVec<[TypeId; 2]> = SmallVec::new();
 
             for &member_id in members.iter() {
                 let member_id = db.evaluate_type(member_id);

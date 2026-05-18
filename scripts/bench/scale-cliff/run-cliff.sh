@@ -12,8 +12,11 @@
 #   scripts/bench/scale-cliff/run-cliff.sh                  # default
 #   scripts/bench/scale-cliff/run-cliff.sh --skip 003,004   # skip listed
 #   scripts/bench/scale-cliff/run-cliff.sh --tsz /path/tsz  # use specific binary
+#   scripts/bench/scale-cliff/run-cliff.sh --json-file /tmp/cliff.json
 #
-# Output: scripts/bench/scale-cliff/results/cliff-<timestamp>.csv
+# Output:
+#   scripts/bench/scale-cliff/results/cliff-<timestamp>.csv
+#   scripts/bench/scale-cliff/results/cliff-<timestamp>.json
 # =============================================================================
 set -euo pipefail
 
@@ -23,11 +26,17 @@ RESULTS_DIR="$SCRIPT_DIR/results"
 
 TSZ_BIN="${TSZ_BIN:-/Users/mohsen/.cache/tsz-target/release/tsz}"
 SKIP=""
+CSV_FILE=""
+JSON_FILE=""
+JSON_OUTPUT=true
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --skip) SKIP="$2"; shift 2 ;;
         --tsz)  TSZ_BIN="$2"; shift 2 ;;
+        --csv-file) CSV_FILE="$2"; shift 2 ;;
+        --json-file) JSON_FILE="$2"; shift 2 ;;
+        --no-json) JSON_OUTPUT=false; shift ;;
         *) echo "unknown arg: $1"; exit 1 ;;
     esac
 done
@@ -45,7 +54,12 @@ fi
 
 mkdir -p "$RESULTS_DIR"
 TIMESTAMP="$(date +%Y%m%d-%H%M%S)"
-CSV="$RESULTS_DIR/cliff-${TIMESTAMP}.csv"
+CSV="${CSV_FILE:-$RESULTS_DIR/cliff-${TIMESTAMP}.csv}"
+JSON="${JSON_FILE:-$RESULTS_DIR/cliff-${TIMESTAMP}.json}"
+mkdir -p "$(dirname "$CSV")"
+if [[ "$JSON_OUTPUT" == true ]]; then
+    mkdir -p "$(dirname "$JSON")"
+fi
 
 # CSV header — column names match the dump labels so a downstream awk/sql is
 # straightforward.
@@ -56,7 +70,8 @@ CSV="$RESULTS_DIR/cliff-${TIMESTAMP}.csv"
     printf ",overlay_copy_calls,overlay_entries_copied"
     printf ",compute_type_of_symbol_calls"
     printf ",resolver_lookup_calls,resolver_pj_reads"
-    printf ",ratio_checkers_per_file,ratio_overlay_per_file,ratio_delegations_per_file,ratio_compute_per_file\n"
+    printf ",ratio_checkers_per_file,ratio_overlay_per_file,ratio_delegations_per_file,ratio_compute_per_file"
+    printf ",status,exit_code\n"
 } >"$CSV"
 
 # Pull a labeled value from a tsz extendedDiagnostics + counter dump.
@@ -92,10 +107,18 @@ run_one() {
     local out
     out=$(mktemp)
     echo "  benching $name ($file_count .ts files)"
+    local exit_code
+    set +e
     TSZ_PERF_COUNTERS=1 "$TSZ_BIN" \
         --extendedDiagnostics --noEmit \
         -p "$tsconfig" \
-        >"$out" 2>&1 || true
+        >"$out" 2>&1
+    exit_code=$?
+    set -e
+    local status="ok"
+    if (( exit_code != 0 )); then
+        status="failed"
+    fi
 
     local total_s check_s parse_bind_s io_read_s mem_kb
     total_s=$(extract_seconds "Total time" "$out")
@@ -164,8 +187,9 @@ run_one() {
             "$compute_calls"
         printf ",%s,%s" \
             "$resolver_lookup" "$resolver_pj"
-        printf ",%s,%s,%s,%s\n" \
-            "$ratio_checkers" "$ratio_overlay" "$ratio_delegations" "$ratio_compute"
+        printf ",%s,%s,%s,%s,%s,%s\n" \
+            "$ratio_checkers" "$ratio_overlay" "$ratio_delegations" "$ratio_compute" \
+            "$status" "$exit_code"
     } >>"$CSV"
 
     rm -f "$out"
@@ -184,7 +208,14 @@ for name in monorepo-001 monorepo-002 monorepo-003 monorepo-004 monorepo-005 mon
     run_one "$name"
 done
 
+if [[ "$JSON_OUTPUT" == true ]]; then
+    python3 "$SCRIPT_DIR/csv-to-json.py" "$CSV" --json-file "$JSON" --tsz-bin "$TSZ_BIN"
+fi
+
 echo
 echo "CSV: $CSV"
+if [[ "$JSON_OUTPUT" == true ]]; then
+    echo "JSON: $JSON"
+fi
 echo
 column -s, -t "$CSV"

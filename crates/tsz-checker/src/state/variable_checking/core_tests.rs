@@ -1189,6 +1189,81 @@ type T7<S extends 'a'|'b', L extends 'a'> = {[key in AB[S]]: true}[L];
             "Expected no TS2322 when index constraint is within keyof: {ts2322:?}"
         );
     }
+
+    /// Regression: nested mapped type `{ [P in K]: T[P] }` inside `[K in keyof T]`,
+    /// when the inner mapped is passed as a type argument to *any* generic, must
+    /// not surface TS2536 for `T[P]`. The bug was that `check_type_for_missing_names`
+    /// pushed `K` into `type_parameter_scope` as a no-constraint provisional,
+    /// stomping on the proper provisional installed by `check_type_node`. Later
+    /// indexed-access well-formedness then walked the constraint chain
+    /// `P → K → ??` and aborted at the no-constraint K, falsely reporting TS2536.
+    #[test]
+    fn nested_mapped_with_generic_type_argument_no_ts2536() {
+        let source = r#"
+type Wrap<X> = { wrapped: X };
+type Probe<T> = {
+  [K in keyof T]: Wrap<{ [P in K]: T[P] }>;
+};
+        "#;
+        let ts2536 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2536)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2536.len(),
+            0,
+            "TS2536 must not fire for T[P] inside Wrap<{{[P in K]:T[P]}}>: {ts2536:?}"
+        );
+    }
+
+    /// Same shape with renamed iteration variables — the fix must apply to the
+    /// structural rule, not to the literal `K`/`P` spellings.
+    #[test]
+    fn nested_mapped_with_generic_type_argument_renamed_no_ts2536() {
+        let source = r#"
+type Wrap<X> = { wrapped: X };
+type Probe<U> = {
+  [Outer in keyof U]: Wrap<{ [Inner in Outer]: U[Inner] }>;
+};
+        "#;
+        let ts2536 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2536)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2536.len(),
+            0,
+            "TS2536 must not fire for U[Inner] with renamed iteration vars: {ts2536:?}"
+        );
+    }
+
+    /// Higher-order conditional shape from issue #6562. The outer evaluation
+    /// (`Equal2` returning `never`/`true`) is a separate bug; this test asserts
+    /// only that the false TS2536 on `T[P]` does not surface.
+    #[test]
+    fn nested_mapped_in_higher_order_conditional_no_ts2536() {
+        let source = r#"
+type Equal2<X, Y> =
+  (<Z>() => Z extends X ? 1 : 2) extends (<Z>() => Z extends Y ? 1 : 2)
+    ? true
+    : false;
+type MutableKeys<T> = {
+  [K in keyof T]-?: Equal2<
+    { [P in K]: T[P] },
+    { -readonly [P in K]: T[P] }
+  > extends true ? K : never;
+}[keyof T];
+        "#;
+        let ts2536 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2536)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2536.len(),
+            0,
+            "TS2536 must not fire for the higher-order MutableKeys pattern: {ts2536:?}"
+        );
+    }
 }
 
 /// Tests for namespace+interface merge typeof resolution.
@@ -1484,6 +1559,214 @@ mod ts2502_alias_prior_decl_tests {
             errors.len(),
             1,
             "Expected 1 TS2502 for lone const self-reference: {errors:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod function_type_nested_check_tests {
+    use crate::context::CheckerOptions;
+    use crate::test_utils::{
+        check_source_diagnostics, check_source_with_libs, diagnostic_codes, diagnostic_count,
+        load_default_lib_files,
+    };
+
+    /// TS2536 inside a function return type must be reported.
+    /// Rule: tsc validates all nested type nodes in function/constructor return
+    /// types (and parameter types) in the scope of the function's own type
+    /// parameters. Any indexed-access expression `T[P]` where `P` is not a
+    /// subtype of `keyof T` must emit TS2536 regardless of whether it appears
+    /// inside a function return type, a constructor return type, a parameter
+    /// type annotation, or any nesting of those.
+    ///
+    /// Pattern used: `{ [P in T]: T[P] }` (P iterates over T itself, the same
+    /// unconstrained type param as the object). tsc emits TS2536 because T is
+    /// not a valid key domain for T. The same pattern triggers TS2536 when the
+    /// mapped type is at the top level (covered by `mapped_template_invalid_key_index_reports_ts2536`).
+    #[test]
+    fn ts2536_in_function_return_type_reported() {
+        let source = "type Bad<T> = () => { [P in T]: T[P] };";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            1,
+            "Expected TS2536 for T[P] (P in T) inside function return type"
+        );
+    }
+
+    /// Same rule with a different iteration variable name — the fix must not be
+    /// keyed on the variable name.
+    #[test]
+    fn ts2536_in_function_return_type_different_var_name() {
+        let source = "type Bad<T> = () => { [Key in T]: T[Key] };";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            1,
+            "Expected TS2536 for T[Key] (Key in T) inside function return type (variable name variant)"
+        );
+    }
+
+    /// TS2536 inside a constructor return type must also be reported.
+    #[test]
+    fn ts2536_in_constructor_return_type_reported() {
+        let source = "type BadCtor<T> = new () => { [Q in T]: T[Q] };";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            1,
+            "Expected TS2536 for T[Q] (Q in T) inside constructor return type"
+        );
+    }
+
+    /// TS2536 inside a parameter type annotation must be reported.
+    #[test]
+    fn ts2536_in_function_parameter_type_reported() {
+        let source = "type BadParam<T> = (x: { [P in T]: T[P] }) => void;";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            1,
+            "Expected TS2536 for T[P] (P in T) inside parameter type annotation"
+        );
+    }
+
+    /// When the outer mapped type's key (`K` from `keyof T`) is used as the
+    /// constraint of an inner mapped type inside a function return type, no
+    /// TS2536 must be emitted because `K` is constrained to `keyof T`.
+    /// Regression guard for false positives introduced by the fix.
+    #[test]
+    fn no_ts2536_when_outer_mapped_key_constrains_inner_index() {
+        let source = "type Ok<T> = { [K in keyof T]: () => { [P in K[]]: T[K] } };";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            0,
+            "Expected no TS2536 when outer mapped key constrains inner index"
+        );
+    }
+
+    /// TS2536 inside a doubly-nested return type must be reported (recursive
+    /// traversal through nested function types).
+    #[test]
+    fn ts2536_in_nested_function_return_type_reported() {
+        let source = "type Nested<T> = () => () => { [P in T]: T[P] };";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            1,
+            "Expected TS2536 for T[P] (P in T) inside doubly-nested function return type"
+        );
+    }
+
+    /// A valid indexed access in a function return type with `keyof` constraint
+    /// must not emit any diagnostic. This covers the OUTER alias type parameter path
+    /// (K is an outer-scope param of the alias itself).
+    #[test]
+    fn no_ts2536_for_valid_indexed_access_in_function_return() {
+        let source = "type Getter<T, K extends keyof T> = () => T[K];";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            0,
+            "Expected no TS2536 for valid T[K] (K extends keyof T) in function return type"
+        );
+    }
+
+    /// An INNER generic function type with `K extends keyof T` must not emit TS2536.
+    /// This specifically tests that the constraint-preserving scope push is used:
+    /// with a constraint-dropping push, K would look unconstrained and `T[K]`
+    /// would incorrectly trigger TS2536.
+    #[test]
+    fn no_ts2536_for_inner_generic_function_with_keyof_constraint() {
+        let source = "type F<T> = <K extends keyof T>() => T[K];";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            0,
+            "Expected no TS2536 for inner generic <K extends keyof T>() => T[K]"
+        );
+    }
+
+    /// An INNER generic constructor type with `K extends keyof T` must not emit TS2536.
+    #[test]
+    fn no_ts2536_for_inner_generic_constructor_with_keyof_constraint() {
+        let source = "type C<T> = new <K extends keyof T>() => T[K];";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            0,
+            "Expected no TS2536 for inner generic constructor new <K extends keyof T>() => T[K]"
+        );
+    }
+
+    /// An inner generic function type with a defaulted `K extends keyof T = keyof T`
+    /// must not emit TS2536 for parameter or return type annotations.
+    #[test]
+    fn no_ts2536_for_inner_generic_function_with_defaulted_keyof_constraint() {
+        let source = "type F<T> = <K extends keyof T = keyof T>(x: T[K]) => T[K];";
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_count(&diags, 2536),
+            0,
+            "Expected no TS2536 for inner generic <K extends keyof T = keyof T>(x: T[K]) => T[K]"
+        );
+    }
+
+    #[test]
+    fn merged_interface_function_constraints_keep_returntype_valid() {
+        let libs = load_default_lib_files();
+        for source in [
+            r#"
+                export namespace ns {
+                    interface Function<T extends (...args: any) => any> {
+                        throttle(): Function<T>;
+                    }
+                    interface Function<T> {
+                        unary(): Function<() => ReturnType<T>>;
+                    }
+                }
+            "#,
+            r#"
+                export namespace ns {
+                    interface Function<T> {
+                        unary(): Function<() => ReturnType<T>>;
+                    }
+                    interface Function<T extends (...args: any) => any> {
+                        throttle(): Function<T>;
+                    }
+                }
+            "#,
+        ] {
+            let diags = check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs);
+            assert_eq!(
+                diagnostic_codes(&diags),
+                Vec::<u32>::new(),
+                "expected merged interface function constraints to stay valid, got {diags:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn mapped_type_inference_from_apparent_type_keeps_only_assignment_error() {
+        let source = r#"
+            type Obj = {
+                [s: string]: number;
+            };
+
+            type foo = <T>(target: { [K in keyof T]: T[K] }) => void;
+            type bar = <U extends string[]>(source: { [K in keyof U]: Obj[K] }) => void;
+
+            declare let f: foo;
+            declare let b: bar;
+            b = f;
+        "#;
+
+        let diags = check_source_diagnostics(source);
+        assert_eq!(
+            diagnostic_codes(&diags),
+            vec![2322],
+            "expected only the assignment error, got {diags:?}"
         );
     }
 }
