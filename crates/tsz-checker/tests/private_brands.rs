@@ -908,3 +908,124 @@ class C {
         "Expected no errors for valid #field in expressions. Got: {errors:?}"
     );
 }
+
+const GENERIC_CLASS_SOURCE: &str = r#"class C<T> {
+    #foo: T;
+    constructor(t: T) {
+        this.#foo = t;
+    }
+    #method() {
+        return this.#foo;
+    }
+    get #prop() {
+        return this.#foo;
+    }
+}
+
+declare let cs: C<string>;
+declare let cn: C<number>;
+
+  cs.#foo;
+  cs.#method;
+  cs.#prop;
+cn = cs;
+cs = cn;
+"#;
+
+#[test]
+fn test_private_names_in_generic_classes() {
+    let diagnostics = collect_private_brand_diagnostics(GENERIC_CLASS_SOURCE);
+
+    let ts18013: Vec<_> = diagnostics.iter().filter(|d| d.code == 18013).collect();
+    assert_eq!(
+        ts18013.len(),
+        3,
+        "Expected 3 TS18013. Got: {diagnostics:#?}"
+    );
+    for name in &["#foo", "#method", "#prop"] {
+        let expected = format!(
+            "Property '{name}' is not accessible outside class 'C' because it has a private identifier."
+        );
+        assert!(
+            ts18013.iter().any(|d| d.message_text == expected),
+            "Expected TS18013 for {name}. Got: {ts18013:#?}"
+        );
+    }
+
+    let ts2322: Vec<_> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(ts2322.len(), 2, "Expected 2 TS2322. Got: {diagnostics:#?}");
+    assert!(
+        ts2322
+            .iter()
+            .any(|d| d.message_text == "Type 'C<string>' is not assignable to type 'C<number>'."),
+        "Expected TS2322 for C<string>->C<number>. Got: {ts2322:#?}"
+    );
+    assert!(
+        ts2322
+            .iter()
+            .any(|d| d.message_text == "Type 'C<number>' is not assignable to type 'C<string>'."),
+        "Expected TS2322 for C<number>->C<string>. Got: {ts2322:#?}"
+    );
+
+    let unexpected: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code != 18013 && d.code != 2322)
+        .collect();
+    assert!(
+        unexpected.is_empty(),
+        "Got unexpected diagnostics (only 18013 and 2322 expected): {unexpected:#?}"
+    );
+}
+
+#[test]
+fn test_private_names_in_generic_classes_different_type_param_names() {
+    for type_param in &["T", "K", "U", "Value"] {
+        let source = format!(
+            r#"class Container<{type_param}> {{
+    #data: {type_param};
+    constructor(v: {type_param}) {{
+        this.#data = v;
+    }}
+    #transform() {{
+        return this.#data;
+    }}
+}}
+
+declare let c1: Container<string>;
+declare let c2: Container<number>;
+
+c1 = c2;
+c2 = c1;
+"#
+        );
+
+        let diagnostics = collect_private_brand_diagnostics(&source);
+        let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
+        assert_eq!(
+            ts2322_count, 2,
+            "Expected 2 TS2322 for Container<string> vs Container<number> with type param '{type_param}'.\nGot: {diagnostics:#?}"
+        );
+    }
+}
+
+#[test]
+fn test_private_getter_and_method_outside_generic_class() {
+    let source = r#"class Box<T> {
+    #value: T;
+    constructor(v: T) { this.#value = v; }
+    #getValue() { return this.#value; }
+    get #current() { return this.#value; }
+}
+
+declare let b: Box<string>;
+b.#getValue;
+b.#current;
+"#;
+
+    let diagnostics = collect_private_brand_diagnostics(source);
+    let ts18013_count = diagnostics.iter().filter(|d| d.code == 18013).count();
+    assert_eq!(
+        ts18013_count, 2,
+        "Expected 2 TS18013 for #getValue and #current outside Box. Got: {diagnostics:#?}"
+    );
+}
