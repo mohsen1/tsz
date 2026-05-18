@@ -392,6 +392,11 @@ impl SourceWriter {
             .saturating_mul(self.indent_str.len() as u32)
     }
 
+    /// Get the configured width of one indentation level in columns.
+    pub const fn indent_unit_width(&self) -> u32 {
+        self.indent_str.len() as u32
+    }
+
     // =========================================================================
     // Position Tracking
     // =========================================================================
