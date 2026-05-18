@@ -724,6 +724,121 @@ fn test_exported_namespace_import_initializer_preserves_typeof_alias() {
 }
 
 #[test]
+fn test_json_module_imports_infer_declaration_shapes() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "tsz-json-module-import-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp json fixture dir");
+    std::fs::write(
+        dir.join("package.json"),
+        r#"{
+    "name": "pkg",
+    "version": "0.0.1",
+    "type": "module",
+    "default": "misedirection"
+}"#,
+    )
+    .expect("write json fixture");
+
+    let source = r#"
+import pkg from "./package.json" with { type: "json" };
+export const name = pkg.name;
+import * as ns from "./package.json" with { type: "json" };
+export const thing = ns;
+export const name2 = ns.default.name;
+"#;
+    let index_path = dir.join("index.ts");
+    let mut parser = ParserState::new(
+        index_path.to_string_lossy().into_owned(),
+        source.to_string(),
+    );
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, index_path.to_string_lossy().into_owned());
+    let output = emitter.emit(root);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        output.contains("export declare const name: string;"),
+        "Expected default JSON import property access to infer the property type: {output}"
+    );
+    assert!(
+        output.contains(
+            "export declare const thing: {\n    default: {\n        name: string;\n        version: string;\n        type: string;\n        default: string;\n    };\n};"
+        ),
+        "Expected namespace JSON import value to inline the JSON module namespace shape: {output}"
+    );
+    assert!(
+        output.contains("export declare const name2: string;"),
+        "Expected namespace JSON default property access to infer the nested property type: {output}"
+    );
+    assert!(
+        !output.contains("import * as ns from \"./package.json\";"),
+        "Expected JSON namespace import to be elided once its type is inlined: {output}"
+    );
+}
+
+#[test]
+fn test_json_module_imports_survive_when_alias_is_public_surface() {
+    let unique = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("system clock should be after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!(
+        "tsz-json-module-public-import-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("create temp json fixture dir");
+    std::fs::write(dir.join("package.json"), r#"{ "name": "pkg" }"#).expect("write json fixture");
+
+    let source = r#"
+import pkg from "./package.json" with { type: "json" };
+export type Pkg = typeof pkg;
+export { pkg };
+"#;
+    let index_path = dir.join("index.ts");
+    let mut parser = ParserState::new(
+        index_path.to_string_lossy().into_owned(),
+        source.to_string(),
+    );
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, index_path.to_string_lossy().into_owned());
+    let output = emitter.emit(root);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    assert!(
+        output.contains(r#"import pkg from "./package.json";"#),
+        "Expected public JSON import alias to survive declaration emit: {output}"
+    );
+    assert!(
+        output.contains("export type Pkg = typeof pkg;"),
+        "Expected type query to keep referencing the JSON import alias: {output}"
+    );
+    assert!(
+        output.contains("export { pkg };"),
+        "Expected value export specifier to keep referencing the JSON import alias: {output}"
+    );
+}
+
+#[test]
 fn test_call_expression_recovers_return_type_from_callee_type() {
     let source = r#"
     export const a = helper.x();
