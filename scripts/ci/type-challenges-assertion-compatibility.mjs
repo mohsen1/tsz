@@ -62,6 +62,25 @@ function validateSourceMetadata(source, label) {
   );
 }
 
+function validateTemplateAndTestCaseSourcesMatch(sources, label) {
+  const templateSource = sources.templates;
+  const testCaseSource = sources.testCases;
+  if (
+    templateSource.repository === testCaseSource.repository &&
+    templateSource.ref === testCaseSource.ref
+  ) {
+    return;
+  }
+
+  fail(
+    [
+      `${label} template and test-case sources come from different snapshots`,
+      `templates: ${templateSource.repository} @ ${templateSource.ref}`,
+      `testCases: ${testCaseSource.repository} @ ${testCaseSource.ref}`,
+    ].join("\n"),
+  );
+}
+
 function validateCandidateManifestSources(manifest) {
   if (!manifest?.sources || typeof manifest.sources !== "object") {
     fail("assertion classification candidateManifest is missing sources");
@@ -70,6 +89,10 @@ function validateCandidateManifestSources(manifest) {
   for (const label of ["templates", "testCases", "solutions"]) {
     validateSourceMetadata(manifest.sources[label], label);
   }
+  validateTemplateAndTestCaseSourcesMatch(
+    manifest.sources,
+    "assertion classification candidateManifest",
+  );
 }
 
 function validateCleanManifestSources(manifest) {
@@ -93,6 +116,10 @@ function validateCleanManifestSources(manifest) {
       );
     }
   }
+  validateTemplateAndTestCaseSourcesMatch(
+    manifest.sources,
+    "tsc-clean assertion manifest",
+  );
 }
 
 function validateCleanClassificationSources(cleanManifest, classificationManifest) {
