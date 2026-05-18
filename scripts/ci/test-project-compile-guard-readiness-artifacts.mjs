@@ -533,7 +533,7 @@ withTempDir((dir) => {
   const rows = readJsonl(path.join(fixtureRoot, "project-compatibility.jsonl"));
   assert.equal(rows.length, 1);
   assert.equal(rows[0].name, "type-challenges-solutions-project");
-  assert.equal(rows[0].state, "yellow");
+  assert.equal(rows[0].state, "gray");
   assert.equal(rows[0].exit_class, "fixture invalid");
   assert.equal(rows[0].phase, "fixture setup");
   assert.equal(rows[0].diagnostic_status, "tsc fixture failed");
@@ -657,7 +657,7 @@ withTempDir((dir) => {
   const rows = readJsonl(path.join(fixtureRoot, "project-compatibility.jsonl"));
   assert.equal(rows.length, 1);
   assert.equal(rows[0].name, "type-challenges-solutions-project");
-  assert.equal(rows[0].state, "yellow");
+  assert.equal(rows[0].state, "gray");
   assert.equal(rows[0].exit_class, "fixture invalid");
   assert.equal(rows[0].phase, "fixture setup");
   assert.equal(rows[0].diagnostic_status, "tsc oracle unavailable");

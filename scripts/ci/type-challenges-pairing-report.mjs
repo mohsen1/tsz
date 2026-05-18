@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import path from "node:path";
 
 const [templateManifestPath, testCasesManifestPath, solutionsManifestPath, outputPath] =
   process.argv.slice(2);
@@ -131,13 +132,30 @@ function normalizeManifestPath(value) {
   return String(value).replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
 }
 
+function validateRelativeManifestPath(value, label) {
+  const normalized = normalizeManifestPath(value);
+  if (
+    path.isAbsolute(value) ||
+    /^[A-Za-z]:\//.test(normalized) ||
+    normalized === "" ||
+    normalized === "." ||
+    normalized
+      .split("/")
+      .some((segment) => segment.length === 0 || segment === "." || segment === "..")
+  ) {
+    console.error(`error: Type Challenges ${label} must stay inside the manifest root: ${value}`);
+    process.exit(1);
+  }
+  return normalized;
+}
+
 function ensureManifestEntries(label, manifest) {
   const entries = manifest?.entries;
   const generated = Number(manifest?.generated);
   const expectedGenerated = Number(manifest?.expectedGenerated);
   const requiredChallengeFields = label === "solution"
-    ? ["level", "title"]
-    : ["level", "slug"];
+    ? ["id", "level", "title"]
+    : ["id", "level", "slug"];
 
   if (!Array.isArray(entries) || entries.length === 0) {
     console.error(`error: Type Challenges ${label} manifest has no entries`);
@@ -172,7 +190,10 @@ function ensureManifestEntries(label, manifest) {
       );
       process.exit(1);
     }
-    const normalizedOutput = normalizeManifestPath(output);
+    const normalizedOutput = validateRelativeManifestPath(
+      output,
+      `${label} manifest entry ${index + 1} output path`,
+    );
     if (outputs.has(normalizedOutput)) {
       console.error(
         `error: Type Challenges ${label} manifest contains duplicate output path ${normalizedOutput}`,
@@ -187,7 +208,10 @@ function ensureManifestEntries(label, manifest) {
       );
       process.exit(1);
     }
-    const normalizedSource = normalizeManifestPath(source);
+    const normalizedSource = validateRelativeManifestPath(
+      source,
+      `${label} manifest entry ${index + 1} source path`,
+    );
     if (sources.has(normalizedSource)) {
       console.error(
         `error: Type Challenges ${label} manifest contains duplicate source path ${normalizedSource}`,

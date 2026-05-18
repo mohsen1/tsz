@@ -221,6 +221,44 @@ withTempDir((dir) => {
     manifest(
       "questions/**/template.ts",
       [{ id: "13", source: "questions/00013-warm-hello-world/template.ts" }],
+      ({ level, slug }) => ({ challenge: { id: "", level, slug } }),
+    ),
+  );
+  writeJson(
+    testCases,
+    manifest("questions/**/test-cases.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/test-cases.ts" },
+    ]),
+  );
+  writeJson(
+    solutions,
+    manifest("en/*.md", [{ id: "13", source: "en/hello-world.md" }]),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, output],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /template manifest entry 1 has no challenge id/);
+  assert.ok(!fs.existsSync(output));
+});
+
+withTempDir((dir) => {
+  const templates = path.join(dir, "templates.json");
+  const testCases = path.join(dir, "test-cases.json");
+  const solutions = path.join(dir, "solutions.json");
+  const output = path.join(dir, "pairing.json");
+
+  writeJson(
+    templates,
+    manifest(
+      "questions/**/template.ts",
+      [{ id: "13", source: "questions/00013-warm-hello-world/template.ts" }],
       () => ({}),
       { ref: "" },
     ),
@@ -246,6 +284,46 @@ withTempDir((dir) => {
   );
   assert.equal(result.status, 1);
   assert.match(result.stderr, /<missing ref>/);
+  assert.ok(!fs.existsSync(output));
+});
+
+withTempDir((dir) => {
+  const templates = path.join(dir, "templates.json");
+  const testCases = path.join(dir, "test-cases.json");
+  const solutions = path.join(dir, "solutions.json");
+  const output = path.join(dir, "pairing.json");
+
+  writeJson(
+    templates,
+    manifest("questions/**/template.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/template.ts" },
+    ]),
+  );
+  writeJson(
+    testCases,
+    manifest("questions/**/test-cases.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/test-cases.ts" },
+    ]),
+  );
+  writeJson(
+    solutions,
+    manifest(
+      "en/*.md",
+      [{ id: "13", source: "en/hello-world.md" }],
+      ({ level, slug }) => ({ challenge: { level, title: slug } }),
+    ),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, output],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /solution manifest entry 1 has no challenge id/);
   assert.ok(!fs.existsSync(output));
 });
 
@@ -472,6 +550,47 @@ withTempDir((dir) => {
     manifest(
       "questions/**/template.ts",
       [{ id: "13", source: "questions/00013-warm-hello-world/template.ts" }],
+      () => ({ output: "../outside.ts" }),
+    ),
+  );
+  writeJson(
+    testCases,
+    manifest("questions/**/test-cases.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/test-cases.ts" },
+    ]),
+  );
+  writeJson(
+    solutions,
+    manifest("en/*.md", [{ id: "13", source: "en/hello-world.md" }]),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, output],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /template manifest entry 1 output path must stay inside the manifest root/,
+  );
+  assert.ok(!fs.existsSync(output));
+});
+
+withTempDir((dir) => {
+  const templates = path.join(dir, "templates.json");
+  const testCases = path.join(dir, "test-cases.json");
+  const solutions = path.join(dir, "solutions.json");
+  const output = path.join(dir, "pairing.json");
+
+  writeJson(
+    templates,
+    manifest(
+      "questions/**/template.ts",
+      [{ id: "13", source: "questions/00013-warm-hello-world/template.ts" }],
       () => ({ source: "" }),
     ),
   );
@@ -496,6 +615,47 @@ withTempDir((dir) => {
   );
   assert.equal(result.status, 1);
   assert.match(result.stderr, /template manifest entry 1 has no source path/);
+  assert.ok(!fs.existsSync(output));
+});
+
+withTempDir((dir) => {
+  const templates = path.join(dir, "templates.json");
+  const testCases = path.join(dir, "test-cases.json");
+  const solutions = path.join(dir, "solutions.json");
+  const output = path.join(dir, "pairing.json");
+
+  writeJson(
+    templates,
+    manifest(
+      "questions/**/template.ts",
+      [{ id: "13", source: "questions/00013-warm-hello-world/template.ts" }],
+      () => ({ source: "/tmp/template.ts" }),
+    ),
+  );
+  writeJson(
+    testCases,
+    manifest("questions/**/test-cases.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/test-cases.ts" },
+    ]),
+  );
+  writeJson(
+    solutions,
+    manifest("en/*.md", [{ id: "13", source: "en/hello-world.md" }]),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, output],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /template manifest entry 1 source path must stay inside the manifest root/,
+  );
   assert.ok(!fs.existsSync(output));
 });
 

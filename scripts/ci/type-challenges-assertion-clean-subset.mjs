@@ -51,16 +51,25 @@ function normalizeManifestPath(value, label) {
   return normalized;
 }
 
+function normalizeManifestId(value, label) {
+  if (typeof value !== "string" || value.trim() === "") {
+    fail(`${label} must be a non-empty string`);
+  }
+  return value;
+}
+
 function validateEvidencePath(value, label) {
   if (typeof value !== "string" || value.trim() === "") {
     fail(`${label} must be a non-empty relative path`);
   }
   const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
+  const segments = normalized.split("/");
   if (
     path.isAbsolute(value) ||
+    /^[A-Za-z]:\//.test(normalized) ||
     normalized === "" ||
     normalized === "." ||
-    normalized.split("/").includes("..")
+    segments.some((segment) => segment === "." || segment === "..")
   ) {
     fail(`${label} must be a relative source path: ${value}`);
   }
@@ -170,8 +179,16 @@ function validateInputs(candidateManifest, classification) {
 
   const entries = candidateManifest.entries.map((entry, index) => ({
     ...entry,
+    id: normalizeManifestId(entry?.id, `candidate manifest entries[${index}].id`),
     output: normalizeManifestPath(entry?.output, `candidate manifest entries[${index}].output`),
   }));
+  const duplicateIds = duplicates(entries.map((entry) => entry.id));
+  if (duplicateIds.length > 0) {
+    reportFileSetError(
+      "assertion candidate manifest reported duplicate candidate ids",
+      duplicateIds,
+    );
+  }
   const duplicateOutputs = duplicates(entries.map((entry) => entry.output));
   if (duplicateOutputs.length > 0) {
     reportFileSetError(
