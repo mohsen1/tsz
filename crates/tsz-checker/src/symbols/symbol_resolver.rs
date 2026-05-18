@@ -489,71 +489,21 @@ impl<'a> CheckerState<'a> {
             "Binder resolution result"
         );
 
-        // IMPORTANT: If the binder didn't find the symbol, check lib_contexts directly as a fallback.
-        //
-        // # Why this fallback exists (and why it is NOT a bug)
-        //
-        // The binder's `resolve_identifier_with_filter` deliberately gates its
-        // `lib_binders` traversal on `!self.lib_symbols_merged`. After
-        // `merge_lib_contexts_into_binder` runs, the main binder's `file_locals`
-        // is supposed to carry every globally-visible lib symbol — so the
-        // binder skips re-walking `lib_binders` to avoid re-introducing the
-        // symbols it just merged.
-        //
-        // Phase 3 of the merge intentionally EXCLUDES file_locals belonging to
-        // external-module lib files unless the name appears in the lib's
-        // `global_augmentations` map (`crates/tsz-binder/src/state/lib_merge.rs`,
-        // around the `is_external_module && !global_augmentations.contains_key`
-        // check). This prevents module-scoped names like the `class Iterator`
-        // in `es2025.iterator.d.ts` from contaminating the global scope of
-        // user code that doesn't explicitly augment.
-        //
-        // BUT: some lookups DO need access to those module-scoped lib symbols
-        // (e.g. when generators.rs walks the iterator chain). The fallback
-        // below queries `lib_contexts.file_locals` directly so those callers
-        // can find the symbol. `should_skip_lib_symbol` filters the candidates
-        // to keep the global pollution boundary intact.
-        //
-        // Robustness audit (PR #B, item 2 in
-        // `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md`): the audit's
-        // initial framing ("the binder has a bug") was misleading — the
-        // skip-after-merge is deliberate, and the divergence is a coordinated
-        // policy. A future restructure should hoist the merge-phase filter and
-        // the checker-side fallback into a single declarative resolver
-        // boundary so the policy is co-located.
+        // Last-resort probe through the binder for module-scoped lib symbols
+        // that Phase 3 of `merge_lib_contexts_into_binder` excluded from the
+        // global hoist. String-literal ambient modules are only reachable
+        // via import, so the accept callback filters them out.
         if result.is_none() && !ignore_libs {
-            // Get the identifier name
             let name = self.ctx.arena.get_identifier_at(idx)?.escaped_text.as_str();
-            // Check lib_contexts directly for global symbols
-            for (lib_idx, lib_ctx) in self.ctx.lib_contexts.iter().enumerate() {
-                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
-                    trace!(
-                        name = name,
-                        lib_idx = lib_idx,
-                        lib_sym_id = ?lib_sym_id,
-                        "Found symbol in lib_context"
-                    );
-                    if !should_skip_lib_symbol(lib_sym_id) {
-                        // Use file binder's sym_id for correct ID space after lib merge.
-                        // Never return lib-context SymbolIds directly: they may collide with
-                        // unrelated symbols in the current binder ID space.
-                        let Some(file_sym_id) = self.ctx.binder.file_locals.get(name) else {
-                            continue;
-                        };
-                        // Filter out string-literal ambient module symbols (e.g., `declare module "foobar"`)
-                        // — they should not resolve as bare identifiers.
-                        if self.is_string_literal_module_symbol(file_sym_id, &lib_binders) {
-                            continue;
-                        }
-                        trace!(
-                            name = name,
-                            file_sym_id = ?file_sym_id,
-                            lib_sym_id = ?lib_sym_id,
-                            "Returning symbol from lib_contexts fallback"
-                        );
-                        return Some(file_sym_id);
-                    }
-                }
+            if let Some(file_sym_id) = self.ctx.binder.resolve_name_in_lib_module_locals(
+                name,
+                &lib_binders,
+                |file_sym_id, _flags| {
+                    (!self.is_string_literal_module_symbol(file_sym_id, &lib_binders))
+                        .then_some(file_sym_id)
+                },
+            ) {
+                return Some(file_sym_id);
             }
         }
 
@@ -823,83 +773,50 @@ impl<'a> CheckerState<'a> {
             false
         };
 
-        // IMPORTANT: Check lib_contexts directly BEFORE calling binder's resolve_identifier_with_filter.
-        //
-        // The binder's `resolve_identifier_with_filter` skips `lib_binders` when
-        // `self.lib_symbols_merged == true`. The skip is deliberate (see the
-        // long comment at `resolve_identifier_symbol` above for why), but the
-        // merge phase intentionally excludes external-module lib file_locals
-        // unless the name is in `global_augmentations`. For type-position
-        // resolution we still need access to those module-scoped lib symbols
-        // (e.g. lib types referenced from user augmentations), so we probe
-        // `lib_contexts.file_locals` directly here.
-        //
-        // The `name_in_local_scope` short-circuit ensures local declarations
-        // (namespaces, modules) shadow global lib types — without it, an
-        // ambient `class Iterator` in a target lib would mask a user-defined
-        // namespace-local `Iterator`.
-        //
-        // Robustness audit (PR #B, item 2): see the matching comment at
-        // `resolve_identifier_symbol`. This is the type-position twin of
-        // that bypass.
-        if !ignore_libs && !name_in_local_scope {
-            for lib_ctx in self.ctx.lib_contexts.iter() {
-                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
-                    // After lib merge, the file binder has the same symbols with
-                    // potentially different IDs. Use file binder's ID for returns,
-                    // and skip symbols not present in current binder ID space.
-                    let Some(sym_id) = self.ctx.binder.file_locals.get(name) else {
-                        continue;
-                    };
-                    if !should_skip_lib_symbol(sym_id) {
-                        // Check flags using lib binder (lib_sym_id is valid in lib binder)
-                        let flags = lib_ctx.binder.get_symbol(lib_sym_id).map_or(0, |s| s.flags);
-
-                        // Namespaces and modules are value-only but should be allowed in type position
-                        let is_namespace_or_module = (flags
-                            & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
-                            != 0;
-
-                        if is_namespace_or_module {
-                            return TypeSymbolResolution::Type(sym_id);
-                        }
-
-                        // For ALIAS symbols, resolve to the target
-                        if flags & symbol_flags::ALIAS != 0 {
-                            let mut visited = AliasCycleTracker::new();
-                            if let Some(target_sym_id) =
-                                self.resolve_alias_symbol(sym_id, &mut visited)
-                            {
-                                // Check the target symbol's flags
-                                let target_flags = self
-                                    .ctx
-                                    .binder
-                                    .get_symbol_with_libs(target_sym_id, &lib_binders)
-                                    .map_or(0, |s| s.flags);
-                                if (target_flags
-                                    & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
-                                    != 0
-                                {
-                                    return TypeSymbolResolution::Type(target_sym_id);
-                                }
+        // Probe lib `file_locals` for type-position resolution.
+        // `name_in_local_scope` short-circuits so user-defined namespaces
+        // shadow ambient lib types. Aliases pointing at a namespace/module
+        // re-route through the target; value-only lib symbols are recorded
+        // for the post-resolve value-only fallback.
+        const NS_OR_MODULE: u32 = symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE;
+        if !ignore_libs
+            && !name_in_local_scope
+            && let Some(sym_id) = self.ctx.binder.resolve_name_in_lib_module_locals(
+                name,
+                &lib_binders,
+                |file_sym_id, flags| {
+                    if flags & NS_OR_MODULE != 0 {
+                        return Some(file_sym_id);
+                    }
+                    if flags & symbol_flags::ALIAS != 0 {
+                        let mut visited = AliasCycleTracker::new();
+                        if let Some(target_sym_id) =
+                            self.resolve_alias_symbol(file_sym_id, &mut visited)
+                        {
+                            let target_flags = self
+                                .ctx
+                                .binder
+                                .get_symbol_with_libs(target_sym_id, &lib_binders)
+                                .map_or(0, |s| s.flags);
+                            if target_flags & NS_OR_MODULE != 0 {
+                                return Some(target_sym_id);
                             }
-                        }
-
-                        // Check if this is a value-only symbol
-                        let is_value_only = (self.alias_resolves_to_value_only(sym_id, None)
-                            || self.symbol_is_value_only(sym_id, None))
-                            && !self.symbol_is_type_only(sym_id, None);
-                        if is_value_only {
-                            if value_only_candidate.get().is_none() {
-                                value_only_candidate.set(Some(sym_id));
-                            }
-                        } else {
-                            // Valid type symbol found in lib
-                            return TypeSymbolResolution::Type(sym_id);
                         }
                     }
-                }
-            }
+                    let is_value_only = (self.alias_resolves_to_value_only(file_sym_id, None)
+                        || self.symbol_is_value_only(file_sym_id, None))
+                        && !self.symbol_is_type_only(file_sym_id, None);
+                    if is_value_only {
+                        if value_only_candidate.get().is_none() {
+                            value_only_candidate.set(Some(file_sym_id));
+                        }
+                        return None;
+                    }
+                    Some(file_sym_id)
+                },
+            )
+        {
+            return TypeSymbolResolution::Type(sym_id);
         }
 
         let accept_type_symbol = |sym_id: SymbolId| -> bool {

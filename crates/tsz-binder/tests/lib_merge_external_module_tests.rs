@@ -245,3 +245,111 @@ fn module_scoped_symbols_excluded_from_file_locals() {
         "Module-scoped type should NOT be in file_locals"
     );
 }
+
+#[test]
+fn resolve_name_in_lib_module_locals_finds_hoisted_global() {
+    // Two-lib setup mirroring the runtime: a base lib defines `Iterator`,
+    // and an external-module extension contributes a `declare global { var
+    // Iterator }` augmentation. The probe must return the main-binder
+    // SymbolId, expose the lib symbol flags to the accept callback, and
+    // short-circuit on the first accepted candidate.
+    let (base_arena, base_binder) = bind_source("interface Iterator<T> { next(): T; }");
+    let (ext_arena, ext_binder) = bind_source(
+        "export {};
+        declare global {
+            var Iterator: { new<T>(): Iterator<T> };
+        }",
+    );
+
+    let mut main_binder = BinderState::new();
+    let base_ctx = make_lib_context(&base_arena, &base_binder);
+    let ext_ctx = make_lib_context(&ext_arena, &ext_binder);
+    main_binder.merge_lib_contexts_into_binder(&[base_ctx, ext_ctx]);
+
+    let main_iter_id = main_binder
+        .file_locals
+        .get("Iterator")
+        .expect("Iterator should be in main file_locals after merge");
+
+    let lib_binders: Vec<Arc<BinderState>> = vec![Arc::new(base_binder), Arc::new(ext_binder)];
+
+    let mut visit_count = 0;
+    let mut seen_flags = Vec::new();
+    let resolved =
+        main_binder.resolve_name_in_lib_module_locals("Iterator", &lib_binders, |id, flags| {
+            visit_count += 1;
+            seen_flags.push(flags);
+            Some(id)
+        });
+    assert_eq!(resolved, Some(main_iter_id));
+    assert_eq!(visit_count, 1, "should stop at first accepted candidate");
+    assert!(
+        seen_flags[0] & symbol_flags::INTERFACE != 0,
+        "callback must receive lib symbol flags ({:#x})",
+        seen_flags[0]
+    );
+
+    let mut total_visits = 0;
+    let result =
+        main_binder.resolve_name_in_lib_module_locals("Iterator", &lib_binders, |_id, _flags| {
+            total_visits += 1;
+            None
+        });
+    assert_eq!(result, None);
+    assert_eq!(
+        total_visits, 2,
+        "reject-all must visit every lib binder that has the name"
+    );
+}
+
+#[test]
+fn resolve_name_in_lib_module_locals_returns_none_when_name_absent() {
+    // Module-scoped lib symbols excluded by Phase 3 of the merge are absent
+    // from the main binder's file_locals. The probe must return None without
+    // invoking the accept callback (no point asking policy about a symbol
+    // that has no current-binder ID).
+    let (lib_arena, lib_binder) = bind_source("interface SomeGlobal {}");
+    let mut main_binder = BinderState::new();
+    let lib_ctx = make_lib_context(&lib_arena, &lib_binder);
+    main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+    assert!(!main_binder.file_locals.has("Nonexistent"));
+
+    let lib_binders: Vec<Arc<BinderState>> = vec![Arc::new(lib_binder)];
+    let mut accept_calls = 0;
+    let result =
+        main_binder.resolve_name_in_lib_module_locals("Nonexistent", &lib_binders, |id, _| {
+            accept_calls += 1;
+            Some(id)
+        });
+    assert_eq!(result, None);
+    assert_eq!(accept_calls, 0);
+}
+
+#[test]
+fn resolve_name_in_lib_module_locals_callback_can_substitute_sym_id() {
+    // The accept callback may return a different SymbolId than `file_sym_id`
+    // — for example, the alias target. The probe returns the callback's
+    // chosen id verbatim. Use a second real binder symbol as the substitute
+    // so the returned id refers to a valid declaration.
+    let (lib_arena, lib_binder) = bind_source(
+        "interface Anchor {}
+         interface Substitute {}",
+    );
+    let mut main_binder = BinderState::new();
+    let lib_ctx = make_lib_context(&lib_arena, &lib_binder);
+    main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+
+    let anchor_id = main_binder.file_locals.get("Anchor").expect("Anchor");
+    let substitute_id = main_binder
+        .file_locals
+        .get("Substitute")
+        .expect("Substitute");
+    assert_ne!(anchor_id, substitute_id);
+
+    let lib_binders: Vec<Arc<BinderState>> = vec![Arc::new(lib_binder)];
+    let result =
+        main_binder.resolve_name_in_lib_module_locals("Anchor", &lib_binders, |_id, _flags| {
+            Some(substitute_id)
+        });
+    assert_eq!(result, Some(substitute_id));
+}
