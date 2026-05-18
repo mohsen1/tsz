@@ -771,6 +771,44 @@ fn direct_source_file_type_alias_lowers_indexed_type_literal_body() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_mapped_type_body() {
+    let (target_arena, target_binder, types) = parse_bound_source(
+        r#"
+                type Clean<T> = T;
+                export type Gaps<L extends unknown[]> =
+                    Clean<{ [K in keyof L]?: L[K] | null }>;
+            "#,
+    );
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import { Gaps } from './target';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+    let gaps = target_binder.file_locals.get("Gaps").expect("Gaps symbol");
+
+    let (ty, params) = state
+        .direct_source_file_type_alias_result(gaps, Some(1), true)
+        .expect("mapped type aliases should lower directly");
+
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert_eq!(params.len(), 1);
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_typeof_and_self_references() {
     let (requester_arena, requester_binder, _) =
         parse_bound_source("import { FromValue } from './target';");
