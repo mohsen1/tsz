@@ -719,9 +719,78 @@ impl<'a> ES5ClassTransformer<'a> {
     /// Used in derived constructors after `super()` where `this` → `_this`.
     fn convert_statement_this_captured(&self, idx: NodeIndex) -> IRNode {
         let converter = self.make_converter().with_this_captured(true);
-        let result = converter.convert_statement(idx);
+        let mut result = converter.convert_statement(idx);
+        Self::rewrite_bare_constructor_returns_to_this(&mut result);
         self.collect_from_converter(&converter);
         result
+    }
+
+    fn rewrite_bare_constructor_returns_to_this(node: &mut IRNode) {
+        if matches!(
+            node,
+            IRNode::FunctionExpr { .. }
+                | IRNode::FunctionDecl { .. }
+                | IRNode::ES5ClassIIFE { .. }
+                | IRNode::ES5ClassAssignment { .. }
+                | IRNode::StaticBlockIIFE { .. }
+                | IRNode::AwaiterCall { .. }
+                | IRNode::GeneratorBody { .. }
+        ) {
+            return;
+        }
+
+        match node {
+            IRNode::ReturnStatement(expr @ None) => {
+                *expr = Some(Box::new(IRNode::id("_this")));
+            }
+            IRNode::IfStatement {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::rewrite_bare_constructor_returns_to_this(then_branch);
+                if let Some(else_branch) = else_branch {
+                    Self::rewrite_bare_constructor_returns_to_this(else_branch);
+                }
+            }
+            IRNode::Block(statements) | IRNode::Sequence(statements) => {
+                for statement in statements {
+                    Self::rewrite_bare_constructor_returns_to_this(statement);
+                }
+            }
+            IRNode::SwitchStatement { cases, .. } => {
+                for case in cases {
+                    for statement in &mut case.statements {
+                        Self::rewrite_bare_constructor_returns_to_this(statement);
+                    }
+                }
+            }
+            IRNode::ForStatement { body, .. }
+            | IRNode::ForInOfStatement { body, .. }
+            | IRNode::WhileStatement { body, .. }
+            | IRNode::DoWhileStatement { body, .. }
+            | IRNode::LabeledStatement {
+                statement: body, ..
+            } => {
+                Self::rewrite_bare_constructor_returns_to_this(body);
+            }
+            IRNode::TryStatement {
+                try_block,
+                catch_clause,
+                finally_block,
+            } => {
+                Self::rewrite_bare_constructor_returns_to_this(try_block);
+                if let Some(catch_clause) = catch_clause {
+                    for statement in &mut catch_clause.body {
+                        Self::rewrite_bare_constructor_returns_to_this(statement);
+                    }
+                }
+                if let Some(finally_block) = finally_block {
+                    Self::rewrite_bare_constructor_returns_to_this(finally_block);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Convert an AST expression to IR (avoids `ASTRef` when possible)
@@ -2538,9 +2607,55 @@ impl<'a> ES5ClassTransformer<'a> {
             body.insert(0, IRNode::VarDeclList(var_decls));
         }
 
+        let remaining_can_complete_normally = if super_stmt_idx.is_some() {
+            self.statements_can_complete_normally(
+                &block.statements.nodes[(super_stmt_position + 1)..],
+            )
+        } else {
+            true
+        };
+
         // return _this;
-        if super_stmt_idx.is_some() {
+        if super_stmt_idx.is_some() && remaining_can_complete_normally {
             body.push(IRNode::ret(Some(IRNode::id("_this"))));
+        }
+    }
+
+    fn statements_can_complete_normally(&self, statements: &[NodeIndex]) -> bool {
+        for &stmt_idx in statements {
+            if !self.statement_can_complete_normally(stmt_idx) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn statement_can_complete_normally(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(stmt_idx) else {
+            return true;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::RETURN_STATEMENT
+                || k == syntax_kind_ext::THROW_STATEMENT =>
+            {
+                false
+            }
+            k if k == syntax_kind_ext::BLOCK => self
+                .arena
+                .get_block(node)
+                .is_none_or(|block| self.statements_can_complete_normally(&block.statements.nodes)),
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                let Some(if_stmt) = self.arena.get_if_statement(node) else {
+                    return true;
+                };
+                if if_stmt.else_statement.is_none() {
+                    return true;
+                }
+                self.statement_can_complete_normally(if_stmt.then_statement)
+                    || self.statement_can_complete_normally(if_stmt.else_statement)
+            }
+            _ => true,
         }
     }
 

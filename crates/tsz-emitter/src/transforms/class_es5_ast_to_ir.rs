@@ -1512,7 +1512,10 @@ impl<'a> AstToIr<'a> {
                 .iter()
                 .filter_map(|&p| self.convert_object_property(p))
                 .collect();
-            IRNode::object(props)
+            IRNode::ObjectLiteral {
+                properties: props,
+                source_range: Some((node.pos, node.end)),
+            }
         } else {
             IRNode::ASTRef(idx)
         }

@@ -1011,13 +1011,23 @@ impl<'a> IRPrinter<'a> {
                 if let Some(else_br) = else_branch {
                     self.write_line();
                     self.write_indent();
-                    self.write("else ");
-                    if let IRNode::Block(stmts) = else_br.as_ref()
-                        && stmts.is_empty()
-                    {
-                        self.emit_empty_block_multiline();
-                    } else {
-                        self.emit_node(else_br);
+                    self.write("else");
+                    match else_br.as_ref() {
+                        IRNode::Block(stmts) if stmts.is_empty() => {
+                            self.write(" ");
+                            self.emit_empty_block_multiline();
+                        }
+                        IRNode::Block(_) | IRNode::IfStatement { .. } => {
+                            self.write(" ");
+                            self.emit_node(else_br);
+                        }
+                        _ => {
+                            self.write_line();
+                            self.increase_indent();
+                            self.write_indent();
+                            self.emit_node(else_br);
+                            self.decrease_indent();
+                        }
                     }
                 }
             }
