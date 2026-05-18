@@ -21,6 +21,7 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_ROOTS = (
+    "crates/tsz-binder/src",
     "crates/tsz-checker/src",
     "crates/tsz-core/src",
     "crates/tsz-lsp/src",

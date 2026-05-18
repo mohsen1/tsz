@@ -105,6 +105,9 @@ class CacheVisibilityReportTests(unittest.TestCase):
         self.assertFalse(by_name["eval_cache"].needs_review)
         self.assertTrue(by_name["intersection_merge_cache"].needs_review)
 
+    def test_default_roots_include_binder_cache_surfaces(self):
+        self.assertIn("crates/tsz-binder/src", self.module.DEFAULT_ROOTS)
+
     def test_cli_json_output_is_machine_readable(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
