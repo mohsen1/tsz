@@ -371,7 +371,15 @@ impl<'a> Printer<'a> {
             }
             es5_emitter
                 .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
-            let output = es5_emitter.emit_class(idx);
+            let output = if class.name.is_none() {
+                if let Some(class_name) = self.anonymous_default_export_name.clone() {
+                    es5_emitter.emit_class_with_name(idx, &class_name)
+                } else {
+                    es5_emitter.emit_class(idx)
+                }
+            } else {
+                es5_emitter.emit_class(idx)
+            };
             self.sync_es5_class_emitter_state(&mut es5_emitter);
             let mappings = es5_emitter.take_mappings();
             if !mappings.is_empty() && self.writer.has_source_map() {
