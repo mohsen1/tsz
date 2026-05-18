@@ -371,19 +371,25 @@ impl<'a> CheckerState<'a> {
                     && let Some(parameter) = self.ctx.arena.get_parameter(node)
                     && parameter.type_annotation.is_some()
                     && let Some(annotation_node) = self.ctx.arena.get(parameter.type_annotation)
+                    && let Some(type_ref) = self.ctx.arena.get_type_ref(annotation_node)
+                    && type_ref.type_arguments.is_none()
+                    && let TypeSymbolResolution::Type(annotation_sym_id) = self
+                        .resolve_identifier_symbol_in_type_position_without_tracking(
+                            type_ref.type_name,
+                        )
+                    && self
+                        .ctx
+                        .binder
+                        .get_symbol(annotation_sym_id)
+                        .is_some_and(|symbol| {
+                            symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_PARAMETER)
+                        })
                     && let Some(source) = self.ctx.arena.source_files.first()
                     && let Some(text) = source
                         .text
                         .get(annotation_node.pos as usize..annotation_node.end as usize)
                 {
-                    let text = text.trim();
-                    if text.len() <= 3
-                        && text
-                            .chars()
-                            .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-                    {
-                        return Some(text.to_string());
-                    }
+                    return Some(text.trim().to_string());
                 }
                 let Some(parent) = self.ctx.arena.get_extended(current).map(|ext| ext.parent)
                 else {
