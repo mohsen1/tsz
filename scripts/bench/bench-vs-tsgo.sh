@@ -603,12 +603,7 @@ resolve_tsc_npm_spec() {
         sha="$(git -C "$PROJECT_ROOT/TypeScript" rev-parse HEAD 2>/dev/null || echo "")"
     fi
 
-    if [ -z "$sha" ]; then
-        echo ""
-        return
-    fi
-
-    node -e "const v=require('./scripts/conformance/typescript-versions.json'); const sha=process.argv[1]; const m=v.mappings?.[sha]; console.log(m?.npm || v.default?.npm || '');" "$sha"
+    node -e "const v=require('./scripts/conformance/typescript-versions.json'); const sha=process.argv[1]; const current=v.current && v.mappings?.[v.current]?.npm; const m=sha && v.mappings?.[sha]; console.log(m?.npm || (sha ? v.default?.npm : current) || '');" "$sha"
 }
 
 ensure_tsc() {
@@ -632,8 +627,8 @@ ensure_tsc() {
         resolved_spec="$(resolve_tsc_npm_spec)"
     fi
     if [ -z "$resolved_spec" ]; then
-        echo -e "${RED}✗ Unable to resolve tsc npm spec from TypeScript submodule${NC}"
-        echo "  Set TSC_NPM_SPEC or ensure the TypeScript submodule is present."
+        echo -e "${RED}✗ Unable to resolve tsc npm spec${NC}"
+        echo "  Set TSC_NPM_SPEC or update scripts/conformance/typescript-versions.json."
         exit 1
     fi
 

@@ -584,7 +584,7 @@ jobs:
   dist-binaries:
     name: dist-binaries
     needs: gate
-    if: needs.gate.outputs.should_run == 'true'
+    if: needs.gate.outputs.should_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 30
     env:
@@ -795,7 +795,7 @@ jobs:
         # private-pool build.
         run: |
           set -euo pipefail
-          timeout 25m gcloud beta builds submit \
+          timeout 25m gcloud builds submit \
             --project=tsz-ci \
             --region=us-central1 \
             --config=cloudbuild-unit.yaml \
@@ -1112,9 +1112,9 @@ jobs:
               print("CI gated off; summary passes because jobs were intentionally skipped.")
               sys.exit(0)
 
-          required = {"lint", "cargo-shear", "cargo-deny", "dist-binaries"}
+          required = {"lint", "cargo-shear", "cargo-deny"}
           if compiler_checks_required:
-              required.add("unit")
+              required.update({"dist-binaries", "unit"})
           else:
               print("Compiler checks are non-required for this non-compiler diff.")
 
@@ -1163,5 +1163,5 @@ jobs:
           if full_run:
               print("All required CI jobs passed.")
           else:
-              print("Draft/light CI passed: lint, cargo-shear, cargo-deny, dist-binaries, and unit.")
+              print("Draft/light CI passed for all required checks.")
           PY
