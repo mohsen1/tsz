@@ -7,6 +7,7 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeEnvironment;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn check_indirect_circular_constraints(
@@ -339,7 +340,7 @@ impl<'a> CheckerState<'a> {
     /// assignable to/from numeric enums.
     pub(crate) fn maybe_register_numeric_enum(
         &self,
-        env: &mut tsz_solver::TypeEnvironment,
+        env: &mut TypeEnvironment,
         sym_id: SymbolId,
         def_id: tsz_solver::def::DefId,
     ) {

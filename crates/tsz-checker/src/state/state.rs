@@ -30,6 +30,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeEnvironment;
 
 thread_local! {
     /// Shared depth counter for all cross-arena delegation points.
@@ -108,13 +109,13 @@ pub(crate) enum ParamTypeResolutionMode {
 /// to `CheckerState` methods. Captures the `TypeEnvironment` reference.
 pub(crate) struct CheckerOverrideProvider<'a, 'b> {
     checker: &'a CheckerState<'b>,
-    env: Option<&'a tsz_solver::TypeEnvironment>,
+    env: Option<&'a TypeEnvironment>,
 }
 
 impl<'a, 'b> CheckerOverrideProvider<'a, 'b> {
     pub(crate) const fn new(
         checker: &'a CheckerState<'b>,
-        env: Option<&'a tsz_solver::TypeEnvironment>,
+        env: Option<&'a TypeEnvironment>,
     ) -> Self {
         Self { checker, env }
     }
