@@ -59,7 +59,7 @@ withTempDir((dir) => {
   const [row] = rows;
 
   assert.equal(row.name, "type-fest-project");
-  assert.equal(row.state, "red");
+  assert.equal(row.state, "yellow");
   assert.equal(row.first_failure_class, "evaluation-inference-instantiation");
   assert.equal(row.owner_track, "Track 2/3 conditional, mapped, inference, instantiation");
   assert.equal(row.phase, "check");
@@ -80,6 +80,69 @@ withTempDir((dir) => {
   const jsonl = path.join(dir, "compat.jsonl");
   const result = runProjectCompatibility(["record"], {
     COMPAT_JSONL_FILE: jsonl,
+    COMPAT_NAME: "sample-project",
+    COMPAT_EXIT_CLASS: "runner error",
+    COMPAT_PHASE: "timing",
+    COMPAT_DIAGNOSTIC_STATUS: "benchmark runner failed",
+    COMPAT_DIAGNOSTIC_DELTA: "src/index.ts(1,1): error TS2322: assignability failed",
+    COMPAT_FILES_REACHED: "42",
+    COMPAT_PEAK_MEMORY_BYTES: "1048576",
+    COMPAT_TSC_EXIT_CODES: "0",
+    COMPAT_TSZ_EXIT_CODES: "1 124",
+    COMPAT_TSGO_EXIT_CODES: "0",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const [row] = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
+  assert.equal(row.name, "sample-project");
+  assert.equal(row.state, "red");
+  assert.equal(row.first_failure_class, "benchmark runner error");
+  assert.deepEqual(row.known_blockers, [
+    "benchmark runner error",
+    "timing phase blocker",
+    "relations-assignability",
+  ]);
+  assert.deepEqual(row.exit_codes, { tsc: [0], tsz: [1, 124], tsgo: [0] });
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const cases = [
+    {
+      name: "keyspace",
+      diagnostic: "src/index.ts(1,1): error TS7053: Element implicitly has an 'any' type.",
+      ownerTrack: "Track 5 keyspace/property/indexed access",
+    },
+    {
+      name: "flow",
+      diagnostic: "src/index.ts(2,1): error TS18048: 'value' is possibly 'undefined'.",
+      ownerTrack: "Track 6 flow/narrowing",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = runProjectCompatibility(["record"], {
+      COMPAT_JSONL_FILE: jsonl,
+      COMPAT_NAME: testCase.name,
+      COMPAT_EXIT_CLASS: "nonzero exit",
+      COMPAT_DIAGNOSTIC_STATUS: "diagnostic mismatch",
+      COMPAT_DIAGNOSTIC_DELTA: testCase.diagnostic,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+  }
+
+  const rows = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  assert.equal(rows.length, cases.length);
+  for (const [index, testCase] of cases.entries()) {
+    assert.equal(rows[index].owner_track, testCase.ownerTrack);
+  }
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const result = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: jsonl,
     COMPAT_NAME: "large-ts-repo",
     COMPAT_EXIT_CLASS: "fixture invalid",
     COMPAT_PHASE: "fixture setup",
@@ -89,7 +152,7 @@ withTempDir((dir) => {
 
   assert.equal(result.status, 0, result.stderr);
   const [row] = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map((line) => JSON.parse(line));
-  assert.equal(row.state, "yellow");
+  assert.equal(row.state, "gray");
   assert.equal(row.first_failure_class, "reference fixture invalid");
   assert.equal(row.owner_track, "Track 1 project-corpus harness/config");
   assert.deepEqual(row.known_blockers, [
@@ -222,6 +285,93 @@ withTempDir((dir) => {
 
 withTempDir((dir) => {
   const jsonl = path.join(dir, "compat.jsonl");
+  const cases = [
+    {
+      name: "clean",
+      exitClass: "exit success",
+      diagnosticStatus: "none",
+      expectedState: "green",
+    },
+    {
+      name: "diagnostic",
+      exitClass: "nonzero exit",
+      diagnosticStatus: "diagnostic mismatch or compiler error",
+      expectedState: "yellow",
+    },
+    {
+      name: "timeout",
+      exitClass: "timeout",
+      diagnosticStatus: "compiler timed out",
+      expectedState: "red",
+    },
+    {
+      name: "oom",
+      exitClass: "oom",
+      diagnosticStatus: "compiler OOM or killed",
+      expectedState: "red",
+    },
+    {
+      name: "crash",
+      exitClass: "crash",
+      diagnosticStatus: "compiler crashed",
+      expectedState: "red",
+    },
+    {
+      name: "fixture",
+      exitClass: "fixture invalid",
+      diagnosticStatus: "fixture invalid",
+      expectedState: "gray",
+    },
+    {
+      name: "missing-tsz",
+      exitClass: "tsz unavailable",
+      diagnosticStatus: "runner setup incomplete",
+      expectedState: "gray",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = runProjectCompatibility(["record"], {
+      COMPAT_JSONL_FILE: jsonl,
+      COMPAT_NAME: testCase.name,
+      COMPAT_EXIT_CLASS: testCase.exitClass,
+      COMPAT_DIAGNOSTIC_STATUS: testCase.diagnosticStatus,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+  }
+
+  const rows = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  assert.equal(rows.length, cases.length);
+  for (const [index, testCase] of cases.entries()) {
+    assert.equal(rows[index].state, testCase.expectedState, testCase.name);
+  }
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const diagnosticLines = Array.from(
+    { length: 25 },
+    (_, index) => `src/file-${index}.ts(1,1): error TS2322: mismatch ${index}`,
+  );
+  const result = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: jsonl,
+    COMPAT_NAME: "many-diagnostics",
+    COMPAT_EXIT_CLASS: "nonzero exit",
+    COMPAT_DIAGNOSTIC_STATUS: "diagnostic mismatch",
+    COMPAT_DIAGNOSTIC_DELTA: diagnosticLines.join("\n"),
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const [row] = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  assert.equal(row.diagnostic_deltas.length, 20);
+  assert.equal(row.diagnostic_deltas[0], diagnosticLines[0]);
+  assert.equal(row.diagnostic_deltas[19], diagnosticLines[19]);
+  assert.equal(row.diagnostic_subsystems[0].count, 20);
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
   const summary = path.join(dir, "summary.json");
   fs.writeFileSync(
     jsonl,
@@ -255,5 +405,5 @@ withTempDir((dir) => {
   assert.equal(payload.row_count, 2);
   assert.equal(payload.malformed_jsonl_lines, 1);
   assert.equal(payload.by_state.green, 1);
-  assert.equal(payload.by_state.yellow, 1);
+  assert.equal(payload.by_state.red, 1);
 });
