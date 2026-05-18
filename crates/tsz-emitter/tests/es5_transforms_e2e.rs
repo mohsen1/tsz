@@ -521,6 +521,90 @@ fn es5_class_method_object_rest_parameter_uses_rest_helper() {
 }
 
 #[test]
+fn es5_param_nested_array_patterns_inline_simple_sources() {
+    let output = emit_es5(
+        "function f0(a: any, [a, [b]]: any, { b }: any) { }\n\
+         function f3([c, [c], [[c]]]: any) { }\n",
+    );
+
+    assert!(
+        output.contains("var a = _a[0], b = _a[1][0];"),
+        "Nested array parameter bindings without defaults should read through the source chain.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var c = _a[0], c = _a[1][0], c = _a[2][0][0];"),
+        "Deep nested array parameter bindings should not allocate intermediary value temps.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_c = _a[1]") && !output.contains("_d = _c[0]"),
+        "Simple nested array parameter bindings should not create temp-only source aliases.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_param_nested_object_patterns_inline_simple_sources() {
+    let output = emit_es5(
+        "function f4({ d, d: { d } }: any) { }\n\
+         function f5({ e, e: { e } }: any, { e }: any, [d, e, [[e]]]: any, ...e: any[]) { }\n",
+    );
+
+    assert!(
+        output.contains("var d = _a.d, d = _a.d.d;"),
+        "Nested object parameter bindings without defaults should read through the source chain.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var e = _a.e, e = _a.e.e;"),
+        "Repeated object parameter bindings should keep tsc's direct chained source reads.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var d = _c[0], e = _c[1], e = _c[2][0][0];"),
+        "Object and array parameter prologues should share the same inline nested-source policy.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_b = _a.d") && !output.contains("_d = _a.e"),
+        "Simple nested object parameter bindings should not create temp-only source aliases.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_param_string_literal_nested_object_patterns_keep_temp_path() {
+    let output = emit_es5(
+        "function f({ \"not-ident\": { value } }: any) { }\n\
+         function g({ \"not-ident\": [first] }: any) { }\n",
+    );
+
+    assert!(
+        output.contains("var _b = _a[\"not-ident\"], value = _b.value;"),
+        "String-literal nested object parameter sources should keep the temp path.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _b = _a[\"not-ident\"], first = _b[0];"),
+        "String-literal nested array parameter sources should keep the temp path.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_a[\"not-ident\"].value") && !output.contains("_a[\"not-ident\"][0]"),
+        "String-literal nested parameter sources should not use direct chained reads.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_param_empty_nested_patterns_keep_source_reads() {
+    let output = emit_es5(
+        "function f0([[]]: any) { }\n\
+         function f1({ a: {} }: any) { }\n",
+    );
+
+    assert!(
+        output.contains("var _b = _a[0];"),
+        "Empty nested array parameter patterns should still read the nested source.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _b = _a.a;"),
+        "Empty nested object parameter patterns should still read the nested source.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn invalid_nonlast_object_rest_is_recovery_only() {
     let output = emit_with_target(
         "var {...a, x } = { x: 1 };\n\
