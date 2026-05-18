@@ -1262,6 +1262,14 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn source_file_type_parameter_name(arena: &NodeArena, param_idx: NodeIndex) -> Option<String> {
+        let param_node = arena.get(param_idx)?;
+        let param = arena.get_type_parameter(param_node)?;
+        let name_node = arena.get(param.name)?;
+        let ident = arena.get_identifier(name_node)?;
+        Some(ident.escaped_text.to_string())
+    }
+
     fn source_file_type_node_is_generic_direct_lowerable(
         arena: &NodeArena,
         node_idx: NodeIndex,
@@ -1385,6 +1393,58 @@ impl<'a> CheckerState<'a> {
                     })
                 })
             }
+            k if k == syntax_kind_ext::MAPPED_TYPE => {
+                arena.get_mapped_type(node).is_some_and(|mapped| {
+                    let Some(mapped_param_name) =
+                        Self::source_file_type_parameter_name(arena, mapped.type_parameter)
+                    else {
+                        return false;
+                    };
+                    let Some(mapped_param_node) = arena.get(mapped.type_parameter) else {
+                        return false;
+                    };
+                    let Some(mapped_param) = arena.get_type_parameter(mapped_param_node) else {
+                        return false;
+                    };
+                    let mut mapped_scope_names = type_param_names.to_vec();
+                    mapped_scope_names.push(mapped_param_name);
+
+                    let constraint_lowerable = mapped_param.constraint.is_none()
+                        || Self::source_file_type_node_is_generic_direct_lowerable(
+                            arena,
+                            mapped_param.constraint,
+                            type_param_names,
+                        );
+                    let default_lowerable = mapped_param.default.is_none()
+                        || Self::source_file_type_node_is_generic_direct_lowerable(
+                            arena,
+                            mapped_param.default,
+                            type_param_names,
+                        );
+                    let name_type_lowerable = mapped.name_type.is_none()
+                        || Self::source_file_type_node_is_generic_direct_lowerable(
+                            arena,
+                            mapped.name_type,
+                            &mapped_scope_names,
+                        );
+                    let template_lowerable = mapped.type_node.is_none()
+                        || Self::source_file_type_node_is_generic_direct_lowerable(
+                            arena,
+                            mapped.type_node,
+                            &mapped_scope_names,
+                        );
+                    let members_lowerable = mapped
+                        .members
+                        .as_ref()
+                        .is_none_or(|members| members.nodes.is_empty());
+
+                    constraint_lowerable
+                        && default_lowerable
+                        && name_type_lowerable
+                        && template_lowerable
+                        && members_lowerable
+                })
+            }
             k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
                 arena.get_function_type(node).is_some_and(|function_type| {
                     function_type.type_parameters.is_none()
@@ -1445,13 +1505,7 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .into_iter()
             .flat_map(|params| params.nodes.iter().copied())
-            .filter_map(|param_idx| {
-                let param_node = arena.get(param_idx)?;
-                let param = arena.get_type_parameter(param_node)?;
-                let name_node = arena.get(param.name)?;
-                let ident = arena.get_identifier(name_node)?;
-                Some(ident.escaped_text.to_string())
-            })
+            .filter_map(|param_idx| Self::source_file_type_parameter_name(arena, param_idx))
             .collect()
     }
 
