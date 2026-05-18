@@ -1361,7 +1361,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return false;
         }
 
-        let template_ok = if let Some((template_obj, template_idx)) =
+        if let Some((template_obj, template_idx)) =
             index_access_parts(self.interner, mapped.template)
         {
             type_param_info(self.interner, template_idx).is_some_and(|idx_param| {
@@ -1379,9 +1379,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             self.subtype
                 .check_subtype(source_value_type, mapped.template)
                 .is_true()
-        };
-
-        template_ok
+        }
     }
 
     fn homomorphic_mapped_sources_match(&self, source: TypeId, mapped_source: TypeId) -> bool {
