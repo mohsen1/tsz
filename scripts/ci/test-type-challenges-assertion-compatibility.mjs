@@ -550,6 +550,66 @@ withTempDir((dir) => {
     dir,
     classification: {
       fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: {
+        status: "match",
+        candidateFileComparison: {
+          totalCandidates: 1,
+          counts: {
+            bothAccepted: 1,
+            bothRejected: 0,
+            tscAcceptedTszRejected: 0,
+            tscRejectedTszAccepted: 0,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /candidateFileComparison\.totalCandidates \(1\) does not match generatedAssertions \(2\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: {
+        status: "match",
+        candidateFileComparison: {
+          totalCandidates: 2,
+          counts: {
+            bothAccepted: 1,
+            bothRejected: 1,
+            tscAcceptedTszRejected: 1,
+            tscRejectedTszAccepted: 0,
+          },
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /candidateFileComparison bucket counts \(3\) do not match totalCandidates \(2\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
       candidateManifest: {
         sources: candidateSources(),
         counts: {
