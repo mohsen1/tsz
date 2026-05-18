@@ -1522,6 +1522,35 @@ fn direct_declaration_file_type_alias_lowers_builtin_dom_alias_body() {
     assert_eq!(cached_ty, ty);
     assert!(cached_params.is_empty());
 
+    let value_merged_sym_id = binder
+        .file_locals
+        .get("NodeFilter")
+        .expect("NodeFilter should resolve to a DOM lib type alias");
+    let value_merged_delegate_arena = binder
+        .symbol_arenas
+        .get(&value_merged_sym_id)
+        .map(std::convert::AsRef::as_ref)
+        .expect("NodeFilter should have a delegate arena");
+
+    let (value_merged_ty, value_merged_params) = state
+        .direct_declaration_file_type_alias_result(value_merged_sym_id, value_merged_delegate_arena)
+        .expect("value-merged DOM declaration type alias should lower directly");
+
+    assert!(value_merged_params.is_empty(), "NodeFilter is non-generic",);
+    assert_ne!(value_merged_ty, TypeId::UNKNOWN);
+    assert_ne!(value_merged_ty, TypeId::ERROR);
+    assert!(
+        crate::query_boundaries::common::union_members(&types, value_merged_ty).is_some(),
+        "NodeFilter should lower to its type-alias union body",
+    );
+    let (cached_value_merged_ty, cached_value_merged_params) = state
+        .ctx
+        .lib_delegation_cache
+        .symbol_type(value_merged_sym_id)
+        .expect("value-merged builtin declaration alias should populate the lib delegation cache");
+    assert_eq!(cached_value_merged_ty, value_merged_ty);
+    assert!(cached_value_merged_params.is_empty());
+
     let generic_sym_id = binder
         .file_locals
         .get("ReadableStreamReadResult")

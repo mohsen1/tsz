@@ -1559,8 +1559,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         if symbol.flags
-            & (symbol_flags::VALUE
-                | symbol_flags::CLASS
+            & (symbol_flags::CLASS
                 | symbol_flags::INTERFACE
                 | symbol_flags::VALUE_MODULE
                 | symbol_flags::NAMESPACE_MODULE)
@@ -1568,17 +1567,23 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
-        if symbol.declarations.len() != 1 {
-            return None;
-        }
-
         let name = symbol.escaped_name.clone();
-        let decl_idx = symbol.declarations[0];
-        if !Self::lib_type_alias_declaration_name_matches(symbol_arena, decl_idx, &name) {
-            return None;
+        let mut alias_decl = None;
+        for &decl_idx in &symbol.declarations {
+            if !Self::lib_type_alias_declaration_name_matches(symbol_arena, decl_idx, &name) {
+                continue;
+            }
+            let Some(decl_node) = symbol_arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(type_alias) = symbol_arena.get_type_alias(decl_node) else {
+                continue;
+            };
+            if alias_decl.replace((decl_idx, type_alias)).is_some() {
+                return None;
+            }
         }
-        let decl_node = symbol_arena.get(decl_idx)?;
-        let type_alias = symbol_arena.get_type_alias(decl_node)?;
+        let (decl_idx, type_alias) = alias_decl?;
         if Self::source_file_type_node_contains_kind(
             symbol_arena,
             type_alias.type_node,
