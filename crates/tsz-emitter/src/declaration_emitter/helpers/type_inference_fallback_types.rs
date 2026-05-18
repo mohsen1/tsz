@@ -1,9 +1,23 @@
 //! Fallback expression type lookup helpers for declaration type inference.
 
 use super::super::DeclarationEmitter;
+use serde_json::Value;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+
+#[derive(Clone, Copy)]
+enum JsonImportBindingKind {
+    Default,
+    Namespace,
+}
+
+struct JsonImportBinding {
+    module_specifier: String,
+    kind: JsonImportBindingKind,
+}
 
 impl<'a> DeclarationEmitter<'a> {
     /// Get the type of a node from the type cache, if available.
@@ -354,6 +368,385 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => None,
         }
+    }
+
+    pub(crate) fn json_require_call_type_text(&mut self, expr_idx: NodeIndex) -> Option<String> {
+        let module_specifier = self.bare_require_call_module_specifier(expr_idx)?;
+        if !module_specifier.ends_with(".json") {
+            return None;
+        }
+
+        let json_path = self.resolve_json_require_path(&module_specifier)?;
+        let value = self.read_json_module_value(json_path)?;
+        Some(Self::json_value_declaration_type_text(
+            &value,
+            self.indent_level,
+        ))
+    }
+
+    pub(crate) fn json_import_reference_type_text(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let (binding, access_path) = self.json_import_reference(expr_idx)?;
+        let json_path = self.resolve_json_module_path(&binding.module_specifier)?;
+        let value = self.read_json_module_value(json_path)?;
+
+        match binding.kind {
+            JsonImportBindingKind::Default => {
+                Self::json_value_path_declaration_type_text(&value, &access_path, self.indent_level)
+            }
+            JsonImportBindingKind::Namespace => {
+                if access_path.is_empty() {
+                    return Some(Self::json_namespace_declaration_type_text(
+                        &value,
+                        self.current_file_is_commonjs_node_source(),
+                        self.indent_level,
+                    ));
+                }
+
+                if access_path.first().is_some_and(|name| name == "default") {
+                    return Self::json_value_path_declaration_type_text(
+                        &value,
+                        &access_path[1..],
+                        self.indent_level,
+                    );
+                }
+
+                if self.current_file_is_commonjs_node_source() {
+                    return Self::json_value_path_declaration_type_text(
+                        &value,
+                        &access_path,
+                        self.indent_level,
+                    );
+                }
+
+                None
+            }
+        }
+    }
+
+    fn read_json_module_value(&mut self, json_path: PathBuf) -> Option<Arc<Value>> {
+        if let Some(value) = self.json_module_value_cache.get(&json_path) {
+            return Some(Arc::clone(value));
+        }
+
+        let json_text = std::fs::read_to_string(&json_path).ok()?;
+        let json_text = Self::strip_json_comments_and_trailing_commas(&json_text);
+        let value = Arc::new(serde_json::from_str::<Value>(&json_text).ok()?);
+        self.json_module_value_cache
+            .insert(json_path, Arc::clone(&value));
+        Some(value)
+    }
+
+    fn json_import_reference(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<(JsonImportBinding, Vec<String>)> {
+        let (root_name, access_path) = self.property_access_root_and_path(expr_idx)?;
+        let binding = self.find_json_import_binding(&root_name)?;
+        Some((binding, access_path))
+    }
+
+    fn property_access_root_and_path(&self, expr_idx: NodeIndex) -> Option<(String, Vec<String>)> {
+        let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .get_identifier_text(expr_idx)
+                .map(|name| (name, Vec::new()));
+        }
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.arena.get_access_expr(expr_node)?;
+        let (root_name, mut path) = self.property_access_root_and_path(access.expression)?;
+        path.push(self.get_identifier_text(access.name_or_argument)?);
+        Some((root_name, path))
+    }
+
+    fn find_json_import_binding(&self, alias_name: &str) -> Option<JsonImportBinding> {
+        let source_file_idx = self.current_source_file_idx?;
+        let source_file_node = self.arena.get(source_file_idx)?;
+        let source_file = self.arena.get_source_file(source_file_node)?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+            let Some(import) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            let Some(module_specifier) = self
+                .arena
+                .get(import.module_specifier)
+                .and_then(|node| self.arena.get_literal(node))
+                .map(|literal| literal.text.clone())
+                .filter(|specifier| specifier.ends_with(".json"))
+            else {
+                continue;
+            };
+            let Some(clause_node) = self.arena.get(import.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if clause.is_type_only {
+                continue;
+            }
+
+            if self.get_identifier_text(clause.name).as_deref() == Some(alias_name) {
+                return Some(JsonImportBinding {
+                    module_specifier,
+                    kind: JsonImportBindingKind::Default,
+                });
+            }
+
+            let Some(named_bindings_node) = self.arena.get(clause.named_bindings) else {
+                continue;
+            };
+            let Some(named_bindings) = self.arena.get_named_imports(named_bindings_node) else {
+                continue;
+            };
+            if named_bindings.elements.nodes.is_empty()
+                && self.get_identifier_text(named_bindings.name).as_deref() == Some(alias_name)
+            {
+                return Some(JsonImportBinding {
+                    module_specifier,
+                    kind: JsonImportBindingKind::Namespace,
+                });
+            }
+        }
+
+        None
+    }
+
+    fn resolve_json_require_path(&self, module_specifier: &str) -> Option<PathBuf> {
+        self.resolve_json_module_path(module_specifier)
+    }
+
+    fn resolve_json_module_path(&self, module_specifier: &str) -> Option<PathBuf> {
+        let current_path = Path::new(self.current_file_path.as_deref()?);
+        let base_dir = current_path.parent()?;
+        let candidate = base_dir.join(module_specifier);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        None
+    }
+
+    fn current_file_is_commonjs_node_source(&self) -> bool {
+        self.current_file_path
+            .as_deref()
+            .map(|path| path.to_ascii_lowercase())
+            .is_some_and(|path| path.ends_with(".cts") || path.ends_with(".cjs"))
+    }
+
+    fn json_value_path_declaration_type_text(
+        value: &Value,
+        path: &[String],
+        depth: u32,
+    ) -> Option<String> {
+        if path.is_empty() {
+            return Some(Self::json_value_declaration_type_text(value, depth));
+        }
+        let Value::Object(map) = value else {
+            return None;
+        };
+        let next = map.get(path.first()?)?;
+        Self::json_value_path_declaration_type_text(next, &path[1..], depth)
+    }
+
+    fn json_namespace_declaration_type_text(
+        value: &Value,
+        include_commonjs_named_properties: bool,
+        depth: u32,
+    ) -> String {
+        let member_indent = "    ".repeat((depth + 1) as usize);
+        let closing_indent = "    ".repeat(depth as usize);
+        let mut text = String::from("{\n");
+        text.push_str(&member_indent);
+        text.push_str("default: ");
+        text.push_str(&Self::json_value_declaration_type_text(value, depth + 1));
+        text.push_str(";\n");
+
+        if include_commonjs_named_properties && let Value::Object(map) = value {
+            for (key, value) in map {
+                if key == "default" {
+                    continue;
+                }
+                text.push_str(&member_indent);
+                text.push_str(&Self::json_property_name_text(key));
+                text.push_str(": ");
+                text.push_str(&Self::json_value_declaration_type_text(value, depth + 1));
+                text.push_str(";\n");
+            }
+        }
+
+        text.push_str(&closing_indent);
+        text.push('}');
+        text
+    }
+
+    fn json_value_declaration_type_text(value: &Value, depth: u32) -> String {
+        match value {
+            Value::Null => "null".to_string(),
+            Value::Bool(_) => "boolean".to_string(),
+            Value::Number(_) => "number".to_string(),
+            Value::String(_) => "string".to_string(),
+            Value::Array(items) => {
+                let mut element_types = Vec::new();
+                for item in items {
+                    let item_type = Self::json_value_declaration_type_text(item, depth);
+                    if !element_types.iter().any(|existing| existing == &item_type) {
+                        element_types.push(item_type);
+                    }
+                }
+                if element_types.is_empty() {
+                    "any[]".to_string()
+                } else if element_types.len() == 1 {
+                    format!("{}[]", element_types[0])
+                } else {
+                    format!("({})[]", element_types.join(" | "))
+                }
+            }
+            Value::Object(map) => {
+                if map.is_empty() {
+                    return "{}".to_string();
+                }
+
+                let member_indent = "    ".repeat((depth + 1) as usize);
+                let closing_indent = "    ".repeat(depth as usize);
+                let mut text = String::from("{\n");
+                for (key, value) in map {
+                    text.push_str(&member_indent);
+                    text.push_str(&Self::json_property_name_text(key));
+                    text.push_str(": ");
+                    text.push_str(&Self::json_value_declaration_type_text(value, depth + 1));
+                    text.push_str(";\n");
+                }
+                text.push_str(&closing_indent);
+                text.push('}');
+                text
+            }
+        }
+    }
+
+    fn json_property_name_text(key: &str) -> String {
+        let mut chars = key.chars();
+        let Some(first) = chars.next() else {
+            return "\"\"".to_string();
+        };
+        let valid_start = first == '_' || first == '$' || first.is_ascii_alphabetic();
+        let valid_rest = chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric());
+        if valid_start && valid_rest {
+            key.to_string()
+        } else {
+            serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string())
+        }
+    }
+
+    fn strip_json_comments_and_trailing_commas(text: &str) -> String {
+        let mut without_comments = String::with_capacity(text.len());
+        let mut chars = text.chars().peekable();
+        let mut in_string = false;
+        let mut escaped = false;
+        while let Some(ch) = chars.next() {
+            if in_string {
+                without_comments.push(ch);
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    in_string = false;
+                }
+                continue;
+            }
+
+            if ch == '"' {
+                in_string = true;
+                without_comments.push(ch);
+                continue;
+            }
+
+            if ch == '/' {
+                match chars.peek().copied() {
+                    Some('/') => {
+                        chars.next();
+                        for next in chars.by_ref() {
+                            if next == '\n' {
+                                without_comments.push('\n');
+                                break;
+                            }
+                        }
+                        continue;
+                    }
+                    Some('*') => {
+                        chars.next();
+                        let mut prev = '\0';
+                        for next in chars.by_ref() {
+                            if prev == '*' && next == '/' {
+                                break;
+                            }
+                            prev = next;
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+
+            without_comments.push(ch);
+        }
+
+        let chars: Vec<char> = without_comments.chars().collect();
+        let mut result = String::with_capacity(chars.len());
+        let mut index = 0usize;
+        in_string = false;
+        escaped = false;
+        while index < chars.len() {
+            let ch = chars[index];
+            if in_string {
+                result.push(ch);
+                if escaped {
+                    escaped = false;
+                } else if ch == '\\' {
+                    escaped = true;
+                } else if ch == '"' {
+                    in_string = false;
+                }
+                index += 1;
+                continue;
+            }
+
+            if ch == '"' {
+                in_string = true;
+                result.push(ch);
+                index += 1;
+                continue;
+            }
+
+            if ch == ',' {
+                let mut lookahead = index + 1;
+                while lookahead < chars.len() && chars[lookahead].is_whitespace() {
+                    lookahead += 1;
+                }
+                if lookahead < chars.len() && matches!(chars[lookahead], '}' | ']') {
+                    index += 1;
+                    continue;
+                }
+            }
+
+            result.push(ch);
+            index += 1;
+        }
+        result
     }
 
     fn conditional_unique_symbol_union_type_text(&self, expr_idx: NodeIndex) -> Option<String> {

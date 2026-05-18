@@ -377,3 +377,161 @@ function notNotEquals(u: unknown)  {
         "Expected negated enum equality to narrow unknown in else branches, got: {diagnostics:#?}"
     );
 }
+
+// Loose equality (==) must NOT narrow unknown/any to non-nullish literals.
+// tsc does not treat `u == 42` or `u == true` as a narrowing guard for unknown.
+// Only strict equality (===) narrows; loose equality only narrows for null/undefined.
+
+#[test]
+fn loose_equality_does_not_narrow_unknown_to_number_literal() {
+    // `u == 42` should NOT narrow u: unknown to 42.
+    // Verified against: two names (42/100), both must not narrow.
+    let source = r#"
+type isUnknown<T> = unknown extends T ? true : false;
+type isTrue<T extends true> = T;
+declare const u: unknown;
+if (u == 42) {
+    type A = isTrue<isUnknown<typeof u>>;
+}
+if (u == 100) {
+    type B = isTrue<isUnknown<typeof u>>;
+}
+"#;
+    let codes = diag_codes(source);
+    assert!(
+        !codes.contains(&2344),
+        "Loose == with number literal must not narrow unknown — got TS2344: {codes:?}"
+    );
+}
+
+#[test]
+fn loose_equality_does_not_narrow_unknown_to_boolean_literal() {
+    // `u == true` and `u == false` must NOT narrow u: unknown.
+    let source = r#"
+type isUnknown<T> = unknown extends T ? true : false;
+type isTrue<T extends true> = T;
+declare const u: unknown;
+if (u == true) {
+    type A = isTrue<isUnknown<typeof u>>;
+}
+if (u == false) {
+    type B = isTrue<isUnknown<typeof u>>;
+}
+"#;
+    let codes = diag_codes(source);
+    assert!(
+        !codes.contains(&2344),
+        "Loose == with boolean literal must not narrow unknown — got TS2344: {codes:?}"
+    );
+}
+
+#[test]
+fn loose_equality_does_not_narrow_unknown_to_string_literal() {
+    // `u == "hello"` must NOT narrow u: unknown to "hello".
+    let source = r#"
+type isUnknown<T> = unknown extends T ? true : false;
+type isTrue<T extends true> = T;
+declare const u: unknown;
+if (u == "hello") {
+    type A = isTrue<isUnknown<typeof u>>;
+}
+if (u == "world") {
+    type B = isTrue<isUnknown<typeof u>>;
+}
+"#;
+    let codes = diag_codes(source);
+    assert!(
+        !codes.contains(&2344),
+        "Loose == with string literal must not narrow unknown — got TS2344: {codes:?}"
+    );
+}
+
+#[test]
+fn strict_equality_still_narrows_unknown_to_literal() {
+    // `u === 42` SHOULD narrow u: unknown (strict equality).
+    // This ensures we didn't accidentally disable strict narrowing.
+    let source = r#"
+declare const u: unknown;
+if (u === 42) {
+    const n: 42 = u;
+}
+"#;
+    let codes = diag_codes(source);
+    assert!(
+        !codes.contains(&2322),
+        "Strict === with number literal MUST narrow unknown — got TS2322: {codes:?}"
+    );
+}
+
+#[test]
+fn loose_equality_still_narrows_unknown_to_null_undefined() {
+    // `u == null` SHOULD still narrow u: unknown to null | undefined (NullishEquality).
+    let source = r#"
+declare const u: unknown;
+if (u == null) {
+    const x: null | undefined = u;
+}
+"#;
+    let codes = diag_codes(source);
+    assert!(
+        !codes.contains(&2322),
+        "Loose == null must still narrow unknown to null|undefined — got TS2322: {codes:?}"
+    );
+}
+
+// Switch end-label must not include per-clause flows from fallthrough cases.
+// When all switch cases return/throw, post-switch type must remain the declared type.
+
+#[test]
+fn switch_post_label_does_not_include_empty_fallthrough_clause_flows() {
+    // All cases return or throw, so post-switch is unreachable.
+    // The type at the post-switch position must still be `unknown` (declared type),
+    // not narrowed to the union of the fallthrough case labels.
+    let source = r#"
+type isUnknown<T> = unknown extends T ? true : false;
+type isTrue<T extends true> = T;
+type SomeResponse = 'yes' | 'no' | 'idk';
+function switchResponse(x: unknown): SomeResponse {
+    switch (x) {
+        case 'yes':
+        case 'no':
+        case 'idk':
+            return x;
+        default:
+            throw new Error('unknown response');
+    }
+    type End = isTrue<isUnknown<typeof x>>;
+}
+"#;
+    let codes = diag_codes(source);
+    assert!(
+        !codes.contains(&2344),
+        "Post-switch type must be unknown (not narrowed by fallthrough clauses) — got TS2344: {codes:?}"
+    );
+}
+
+#[test]
+fn switch_post_label_does_not_include_empty_fallthrough_clause_flows_renamed_param() {
+    // Same test with renamed type parameter to verify structural rule, not spelling.
+    let source = r#"
+type isUnknownCheck<V> = unknown extends V ? true : false;
+type isTrue<T extends true> = T;
+type SomeResponse = 'yes' | 'no' | 'idk';
+function switchResponse(value: unknown): SomeResponse {
+    switch (value) {
+        case 'yes':
+        case 'no':
+        case 'idk':
+            return value;
+        default:
+            throw new Error('unknown response');
+    }
+    type End = isTrue<isUnknownCheck<typeof value>>;
+}
+"#;
+    let codes = diag_codes(source);
+    assert!(
+        !codes.contains(&2344),
+        "Post-switch type must be unknown (not narrowed by fallthrough clauses) — got TS2344: {codes:?}"
+    );
+}

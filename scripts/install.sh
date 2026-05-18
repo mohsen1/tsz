@@ -118,6 +118,10 @@ resolve_download() {
             return
         fi
 
+        if [ "${TSZ_INSTALL_REQUIRE_LATEST_CHANNEL:-0}" = "1" ]; then
+            die "latest channel asset is not available for ${TARGET}"
+        fi
+
         warn "latest channel asset is not available for ${TARGET}; falling back to the latest versioned release"
         TAG="$(resolve_github_latest)"
         ASSET="tsz-${TAG}-${TARGET}.tar.gz"
