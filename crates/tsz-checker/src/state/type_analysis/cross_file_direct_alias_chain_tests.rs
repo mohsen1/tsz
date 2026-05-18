@@ -109,18 +109,18 @@ fn direct_source_file_type_alias_lowers_multi_hop_chain() {
 }
 
 #[test]
-fn direct_source_file_type_alias_lowers_chain_with_union_of_local_refs() {
+fn direct_source_file_type_alias_rejects_union_of_local_refs() {
     with_two_file_state(
         "type Str = string;\ntype Num = number;\nexport type Both = Str | Num;",
         "import { Both } from './target';",
         |state, target_binder| {
             let both_sym = target_binder.file_locals.get("Both").expect("Both");
-            let (ty, params) = state
-                .direct_source_file_type_alias_result(both_sym, Some(1), true)
-                .expect("union of local alias refs must lower without a child checker");
-            assert_ne!(ty, TypeId::UNKNOWN);
-            assert_ne!(ty, TypeId::ERROR);
-            assert!(params.is_empty(), "Both should be non-generic");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(both_sym, Some(1), true)
+                    .is_none(),
+                "composite bodies containing local refs must stay on the child-checker path",
+            );
         },
     );
 }
