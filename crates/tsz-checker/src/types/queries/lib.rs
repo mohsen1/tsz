@@ -26,6 +26,9 @@ impl<'a> CheckerState<'a> {
         &self,
         type_name: &str,
     ) -> Option<tsz_solver::DefId> {
+        if self.ctx.file_local_type_shadow_for_lib_name(type_name) {
+            return None;
+        }
         self.ctx.actual_lib_def_id_for_bare_name(type_name)
     }
 

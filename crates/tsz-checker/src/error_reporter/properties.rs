@@ -387,14 +387,30 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let base_def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)?;
-        if self.ctx.actual_lib_def_id_for_bare_name("Pick")? != base_def_id {
+        let is_actual_lib_pick = self.ctx.actual_lib_def_id_for_bare_name("Pick")
+            == Some(base_def_id)
+            || self
+                .ctx
+                .definition_store
+                .get(base_def_id)
+                .is_some_and(|info| {
+                    self.ctx.types.resolve_atom(info.name) == "Pick"
+                        && info.symbol_id.is_some_and(|sym_id| {
+                            self.ctx
+                                .symbol_is_from_actual_or_cloned_lib(tsz_binder::SymbolId(sym_id))
+                        })
+                });
+        if !is_actual_lib_pick {
             return None;
         }
 
         let object_type = args[0];
         let key_type = args[1];
-        let shape =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, object_type)?;
+        let resolved_object_type = self.resolve_lazy_type(object_type);
+        let shape = crate::query_boundaries::common::object_shape_for_type(
+            self.ctx.types,
+            resolved_object_type,
+        )?;
         let keys = crate::query_boundaries::common::union_members(self.ctx.types, key_type)
             .unwrap_or_else(|| vec![key_type]);
         if keys.len() != shape.properties.len() {

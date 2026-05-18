@@ -215,8 +215,20 @@ impl<'a> CheckerContext<'a> {
 
         let Some(symbol_arena) = self.binder.symbol_arenas.get(&sym_id) else {
             return self.binder.symbols.get(sym_id).is_some_and(|symbol| {
+                let has_actual_lib_declaration =
+                    symbol.declarations.iter().copied().any(|decl_idx| {
+                        self.binder
+                            .get_arena_for_declaration(sym_id, decl_idx)
+                            .is_some_and(|decl_arena| {
+                                self.lib_contexts
+                                    .iter()
+                                    .take(self.actual_lib_file_count)
+                                    .any(|lib_ctx| Arc::ptr_eq(&lib_ctx.arena, decl_arena))
+                            })
+                    });
                 symbol.decl_file_idx == u32::MAX
                     && self.binder.file_locals.get(symbol.escaped_name.as_str()) == Some(sym_id)
+                    && has_actual_lib_declaration
             });
         };
 
