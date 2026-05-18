@@ -180,6 +180,22 @@ function validateComparisonStatus(status, label) {
   }
 }
 
+function validateComparisonCompilerStatuses(comparison, compilers, label) {
+  for (const compiler of ["tsc", "tsz"]) {
+    const field = `${compiler}Status`;
+    const comparisonStatus = comparison?.[field];
+    const compilerStatus = compilers?.[compiler]?.status;
+    if (typeof comparisonStatus !== "string" || comparisonStatus.trim() === "") {
+      fail(`${label} comparison.${field} must be a non-empty string`);
+    }
+    if (comparisonStatus !== compilerStatus) {
+      fail(
+        `${label} comparison.${field} (${comparisonStatus}) does not match compilers.${compiler}.status (${compilerStatus})`,
+      );
+    }
+  }
+}
+
 function validateReport(report) {
   validateClassificationCompilerReport(report);
   if (!report.comparison || typeof report.comparison !== "object") {
@@ -379,6 +395,11 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
       );
     }
   }
+  validateComparisonCompilerStatuses(
+    cleanSubsetClassification.comparison,
+    cleanSubsetClassification.compilers,
+    "tsc-clean assertion classification",
+  );
 }
 const tsc = report.compilers?.tsc || {};
 const tsz = report.compilers?.tsz || {};
@@ -391,6 +412,11 @@ for (const [compiler, result] of [
   validateCompilerStatus(result.status, `assertion classification ${compiler}`);
   validateCompilerExitCode(result.exitCode, `assertion classification ${compiler}`);
 }
+validateComparisonCompilerStatuses(
+  comparison,
+  report.compilers,
+  "assertion classification",
+);
 if (!Number.isInteger(counts.pairedSolutions)) {
   fail("assertion classification candidateManifest.counts.pairedSolutions must be an integer");
 }
