@@ -191,6 +191,28 @@ impl<'a> Printer<'a> {
             self.write(")");
         }
 
+        let dot_pos = if let Some(expr_node) = self.arena.get(access.expression) {
+            if let Some(name_node) = self.arena.get(access.name_or_argument) {
+                self.find_char_after_skipping_comments(expr_node.end, name_node.pos, b'.')
+                    .or_else(|| {
+                        self.find_char_after_skipping_comments(expr_node.end, node.end, b'.')
+                    })
+                    .or_else(|| self.property_access_dot_position_from_span(node, access))
+            } else {
+                self.find_char_after(expr_node.end, node.end, b'.')
+            }
+        } else {
+            None
+        };
+
+        if let Some(dot_pos) = dot_pos
+            && let Some(expr_node) = self.arena.get(access.expression)
+            && let Some(name_node) = self.arena.get(access.name_or_argument)
+            && self.emit_property_access_commented_dot(access, expr_node, name_node, dot_pos)
+        {
+            return;
+        }
+
         // Preserve multi-line property access chains from the original source.
         // TypeScript preserves the original line break pattern. If there's a
         // newline between expression end and the property name, we need to
@@ -200,7 +222,7 @@ impl<'a> Printer<'a> {
         if let Some(dot_before_newline) = self.property_access_line_break_position(node, access) {
             if dot_before_newline {
                 // Dot before newline: `expr.\n    name`
-                self.write_dot_token(access.expression);
+                self.write_property_access_dot_token(access.expression, dot_pos);
                 self.write_line();
                 self.increase_indent();
                 self.emit_property_name_without_import_substitution(access.name_or_argument);
@@ -222,7 +244,7 @@ impl<'a> Printer<'a> {
                     self.write_line();
                 }
                 self.increase_indent();
-                self.write_dot_token(access.expression);
+                self.write_property_access_dot_token(access.expression, dot_pos);
                 self.emit_property_name_without_import_substitution(access.name_or_argument);
                 self.decrease_indent();
             }
@@ -249,24 +271,6 @@ impl<'a> Printer<'a> {
             }
         }
 
-        let dot_pos = if let Some(expr_node) = self.arena.get(access.expression) {
-            if let Some(name_node) = self.arena.get(access.name_or_argument) {
-                self.find_char_after_skipping_comments(expr_node.end, name_node.pos, b'.')
-            } else {
-                self.find_char_after(expr_node.end, node.end, b'.')
-            }
-        } else {
-            None
-        };
-
-        if let Some(dot_pos) = dot_pos
-            && let Some(expr_node) = self.arena.get(access.expression)
-            && let Some(name_node) = self.arena.get(access.name_or_argument)
-            && self.emit_property_access_commented_dot(access, expr_node, name_node, dot_pos)
-        {
-            return;
-        }
-
         if let Some(expr_node) = self.arena.get(access.expression)
             && let Some(name_node) = self.arena.get(access.name_or_argument)
         {
@@ -280,7 +284,7 @@ impl<'a> Printer<'a> {
         } else if let Some(expr_node) = self.arena.get(access.expression) {
             self.map_token_after(expr_node.end, node.end, b'.');
         }
-        self.write_dot_token(access.expression);
+        self.write_property_access_dot_token(access.expression, dot_pos);
 
         if let Some(dot_pos) = dot_pos
             && let Some(name_node) = self.arena.get(access.name_or_argument)
@@ -359,17 +363,54 @@ impl<'a> Printer<'a> {
         let newline_before_dot = bytes[before_dot..dot_abs]
             .iter()
             .any(|b| matches!(b, b'\r' | b'\n'));
+        let expression_gap_has_newline = self
+            .arena
+            .get(access.expression)
+            .map(|expr_node| self.find_token_end_before_trivia(expr_node.pos, expr_node.end))
+            .is_some_and(|expr_token_end| {
+                self.source_range_has_newline_local(expr_token_end, dot_abs as u32)
+            });
         let newline_after_dot = bytes[dot_abs + 1..name_abs]
             .iter()
             .any(|b| matches!(b, b'\r' | b'\n'));
 
         if newline_after_dot {
             Some(true)
-        } else if newline_before_dot {
+        } else if newline_before_dot || expression_gap_has_newline {
             Some(false)
         } else {
             None
         }
+    }
+
+    fn property_access_dot_position_from_span(
+        &self,
+        node: &Node,
+        access: &AccessExprData,
+    ) -> Option<u32> {
+        let text = self.source_text?;
+        let name = self.get_identifier_text_idx(access.name_or_argument);
+        if name.is_empty() {
+            return None;
+        }
+
+        let bytes = text.as_bytes();
+        let span_start = std::cmp::min(node.pos as usize, bytes.len());
+        let span_end = std::cmp::min(node.end as usize, bytes.len());
+        if span_start >= span_end {
+            return None;
+        }
+
+        let span = &text[span_start..span_end];
+        let name_abs = span.rfind(&name).map(|rel| span_start + rel)?;
+        let mut cursor = name_abs;
+        while cursor > span_start && matches!(bytes[cursor - 1], b' ' | b'\t' | b'\r' | b'\n') {
+            cursor -= 1;
+        }
+        if cursor == span_start || bytes[cursor - 1] != b'.' {
+            return None;
+        }
+        Some((cursor - 1) as u32)
     }
 
     fn find_char_after_skipping_comments(&self, from: u32, to: u32, ch: u8) -> Option<u32> {
@@ -496,6 +537,49 @@ impl<'a> Printer<'a> {
             }
         }
         self.write(".");
+    }
+
+    pub(in crate::emitter) fn write_property_access_dot_token(
+        &mut self,
+        expr_idx: NodeIndex,
+        dot_pos: Option<u32>,
+    ) {
+        if self.numeric_property_access_has_surviving_separator(expr_idx, dot_pos) {
+            self.write(".");
+        } else {
+            self.write_dot_token(expr_idx);
+        }
+    }
+
+    fn numeric_property_access_has_surviving_separator(
+        &self,
+        expr_idx: NodeIndex,
+        dot_pos: Option<u32>,
+    ) -> bool {
+        let Some(dot_pos) = dot_pos else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != SyntaxKind::NumericLiteral as u16 {
+            return false;
+        }
+        if !self
+            .numeric_literal_emit_text(expr_node)
+            .is_some_and(|text| text.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return false;
+        }
+        let expr_token_end = self.find_token_end_before_trivia(expr_node.pos, expr_node.end);
+        if self.source_range_has_newline_local(expr_token_end, dot_pos) {
+            return true;
+        }
+        !self.ctx.options.remove_comments
+            && self
+                .all_comments
+                .iter()
+                .any(|comment| comment.pos >= expr_token_end && comment.end <= dot_pos)
     }
 
     pub(in crate::emitter) fn emit_element_access(&mut self, node: &Node) {
@@ -1867,6 +1951,125 @@ mod tests {
         assert!(
             output.contains("1..foo"),
             "Plain integer property access must use `..`.\nOutput:\n{output}"
+        );
+    }
+
+    /// A source newline between an integer literal and the property dot
+    /// already disambiguates the access, so tsc keeps a single emitted dot.
+    #[test]
+    fn numeric_literal_property_access_newline_before_dot_uses_single_dot() {
+        let source = "3\n    .foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("3\n    .foo"),
+            "Newline before property dot should use one dot.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("..foo"),
+            "Newline-separated numeric access must not use `..`.\nOutput:\n{output}"
+        );
+    }
+
+    /// A preserved comment between an integer literal and `.` also separates
+    /// the tokens, so the property access writes one dot.
+    #[test]
+    fn numeric_literal_property_access_preserved_comment_before_dot_uses_single_dot() {
+        let source = "0 /* comment */.foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("0 /* comment */.foo"),
+            "Preserved comment should separate integer literal from property dot.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("/* comment */..foo"),
+            "Comment-separated numeric access must not use `..` while comments are preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// A line comment before the dot stays attached to the numeric literal;
+    /// only the following property dot moves to the next line.
+    #[test]
+    fn numeric_literal_property_access_preserved_line_comment_stays_inline() {
+        let source = "3 // comment\n    .foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("3 // comment\n    .foo"),
+            "Line comment before property dot should stay on the numeric literal line.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("3\n    // comment"),
+            "Line comment must not be moved to its own line.\nOutput:\n{output}"
+        );
+    }
+
+    /// When comments are removed, the separator disappears and integer
+    /// property access must go back to `..`.
+    #[test]
+    fn numeric_literal_property_access_removed_comment_before_dot_uses_double_dot() {
+        let source = "0 /* comment */.foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            remove_comments: true,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("0..foo"),
+            "Removed comment should require `..` for integer property access.\nOutput:\n{output}"
+        );
+    }
+
+    /// Removing comments must not erase a source newline that separated an
+    /// integer literal from the property dot.
+    #[test]
+    fn numeric_literal_property_access_removed_comment_after_newline_uses_single_dot() {
+        let source = "3\n    /* comment */ .foo;\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            remove_comments: true,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("3\n    .foo"),
+            "Source newline should still separate integer literal from property dot when comments are removed.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("3..foo"),
+            "Removed comment after newline must not collapse numeric access to `..`.\nOutput:\n{output}"
         );
     }
 
