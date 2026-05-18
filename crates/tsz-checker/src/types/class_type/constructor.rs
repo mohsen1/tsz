@@ -10,6 +10,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::ContextualTypeContext;
 use tsz_solver::{
     CallSignature, CallableShape, IndexSignature, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
     TypePredicate, Visibility,
@@ -767,10 +768,8 @@ impl<'a> CheckerState<'a> {
                         let mut has_contextual_member = false;
                         let member_ctx_type = request.contextual_type.and_then(|ctx_type| {
                             let resolved = self.evaluate_type_for_assignability(ctx_type);
-                            let ctx_helper = tsz_solver::ContextualTypeContext::with_expected(
-                                self.ctx.types,
-                                resolved,
-                            );
+                            let ctx_helper =
+                                ContextualTypeContext::with_expected(self.ctx.types, resolved);
                             ctx_helper
                                 .get_property_type(&name)
                                 .filter(|&mt| mt != TypeId::ANY && !self.type_contains_error(mt))
