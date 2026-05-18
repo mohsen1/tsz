@@ -1330,6 +1330,18 @@ impl<'a> CheckerState<'a> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
+        // The shared DefinitionStore is already the resolver fallback for concrete
+        // DefId bodies. Reuse that body before rebuilding it through a symbol/lib
+        // lookup, but never cache sentinel values or a direct self-lazy placeholder.
+        if let Some(body) = self.ctx.definition_store.get_body(def_id)
+            && body != TypeId::ERROR
+            && body != TypeId::ANY
+            && lazy_def_id(self.ctx.types, body) != Some(def_id)
+        {
+            self.try_insert_def_in_type_env(def_id, body);
+            return Some(body);
+        }
+
         let lib_name = self.ctx.definition_store.get(def_id).and_then(|info| {
             if !matches!(info.kind, tsz_solver::def::DefKind::Interface) {
                 return None;
