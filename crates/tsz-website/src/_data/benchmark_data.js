@@ -436,6 +436,9 @@ function compatibilityRowFor(definition, allResults) {
     assertionCandidates: compatibility.assertion_candidates && typeof compatibility.assertion_candidates === "object"
       ? compatibility.assertion_candidates
       : null,
+    assertionCleanSubset: compatibility.assertion_clean_subset && typeof compatibility.assertion_clean_subset === "object"
+      ? compatibility.assertion_clean_subset
+      : null,
     reductionCandidates: Array.isArray(compatibility.reduction_candidates)
       ? compatibility.reduction_candidates.slice(0, 5)
       : [],
@@ -1909,43 +1912,50 @@ export function getProjectCompatibilityDashboard() {
   };
 
   const assertionCandidateParts = (row) => {
-    const candidates = row.assertionCandidates;
-    if (!candidates || typeof candidates !== "object") return [];
-
     const parts = [];
     const addCount = (label, value) => {
       if (Number.isFinite(Number(value))) {
         parts.push(`${label}: ${fmt(Number(value))}`);
       }
     };
-    addCount("paired solutions", candidates.paired_solutions);
-    addCount("assertions generated", candidates.generated_assertions);
-    addCount(
-      "assertions referencing solutions",
-      candidates.assertions_referencing_solution_declaration,
-    );
-    addCount(
-      "assertions missing solution references",
-      candidates.assertions_missing_solution_declaration_reference,
-    );
-    addCount("tsc clean", candidates.tsc_diagnostic_free);
-    addCount("tsz clean", candidates.tsz_diagnostic_free);
-    const sources = candidates.sources && typeof candidates.sources === "object"
-      ? candidates.sources
-      : {};
-    const addRef = (label, source) => {
-      if (source?.ref) {
-        parts.push(`${label} ref: ${source.ref}`);
+    const addPath = (label, value) => {
+      if (value) {
+        parts.push(`${label}: ${value}`);
       }
     };
-    addRef("templates", sources.templates);
-    addRef("test cases", sources.testCases);
-    addRef("solutions", sources.solutions);
+    const candidates = row.assertionCandidates;
+    if (candidates && typeof candidates === "object") {
+      addCount("paired solutions", candidates.paired_solutions);
+      addCount("assertions generated", candidates.generated_assertions);
+      addCount(
+        "assertions referencing solutions",
+        candidates.assertions_referencing_solution_declaration,
+      );
+      addCount(
+        "assertions missing solution references",
+        candidates.assertions_missing_solution_declaration_reference,
+      );
+      addCount("tsc clean", candidates.tsc_diagnostic_free);
+      addCount("tsz clean", candidates.tsz_diagnostic_free);
+      const sources = candidates.sources && typeof candidates.sources === "object"
+        ? candidates.sources
+        : {};
+      const addRef = (label, source) => {
+        if (source?.ref) {
+          parts.push(`${label} ref: ${source.ref}`);
+        }
+      };
+      addRef("templates", sources.templates);
+      addRef("test cases", sources.testCases);
+      addRef("solutions", sources.solutions);
+    }
 
-    const cleanSubset = candidates.tsc_clean_subset && typeof candidates.tsc_clean_subset === "object"
+    const cleanSubset = candidates?.tsc_clean_subset && typeof candidates.tsc_clean_subset === "object"
       ? candidates.tsc_clean_subset
-      : null;
+      : row.assertionCleanSubset;
     if (cleanSubset) {
+      addPath("tsc-clean manifest", cleanSubset.manifest_path);
+      addPath("tsc-clean classification", cleanSubset.classification_path);
       addCount("tsc-clean subset", cleanSubset.generated_assertions);
       addCount(
         "tsc-clean references solutions",
@@ -1962,18 +1972,21 @@ export function getProjectCompatibilityDashboard() {
       if (cleanSubset.tsz_status) {
         parts.push(`tsc-clean tsz: ${cleanSubset.tsz_status}`);
       }
+      if (cleanSubset.comparison_status) {
+        parts.push(`tsc-clean comparison: ${cleanSubset.comparison_status}`);
+      }
     }
 
-    const counts = candidates.file_comparison?.counts;
-    addCount("both accepted", candidates.both_accepted ?? counts?.bothAccepted);
-    addCount("both rejected", candidates.both_rejected ?? counts?.bothRejected);
+    const counts = candidates?.file_comparison?.counts;
+    addCount("both accepted", candidates?.both_accepted ?? counts?.bothAccepted);
+    addCount("both rejected", candidates?.both_rejected ?? counts?.bothRejected);
     addCount(
       "tsc accepted/tsz rejected",
-      candidates.tsc_accepted_tsz_rejected ?? counts?.tscAcceptedTszRejected,
+      candidates?.tsc_accepted_tsz_rejected ?? counts?.tscAcceptedTszRejected,
     );
     addCount(
       "tsc rejected/tsz accepted",
-      candidates.tsc_rejected_tsz_accepted ?? counts?.tscRejectedTszAccepted,
+      candidates?.tsc_rejected_tsz_accepted ?? counts?.tscRejectedTszAccepted,
     );
     return parts;
   };
