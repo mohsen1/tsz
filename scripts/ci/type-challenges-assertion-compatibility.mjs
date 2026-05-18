@@ -116,6 +116,18 @@ function validateCandidateOutputPath(value, label) {
   }
 }
 
+function duplicatedValues(values) {
+  const seen = new Set();
+  const duplicates = new Set();
+  for (const value of values) {
+    if (seen.has(value)) {
+      duplicates.add(value);
+    }
+    seen.add(value);
+  }
+  return [...duplicates].sort();
+}
+
 function validateReport(report) {
   validateClassificationCompilerReport(report);
   if (!report.comparison || typeof report.comparison !== "object") {
@@ -454,6 +466,7 @@ if (
 const candidateFileComparisonCounts = comparison.candidateFileComparison?.counts || {};
 if (comparison.candidateFileComparison) {
   const candidateFileComparisonTotal = comparison.candidateFileComparison.totalCandidates;
+  const bucketEntries = [];
   if (!Number.isInteger(candidateFileComparisonTotal)) {
     fail(
       "assertion classification candidateFileComparison.totalCandidates must be an integer",
@@ -493,8 +506,28 @@ if (comparison.candidateFileComparison) {
         file,
         `assertion classification candidateFileComparison.${field}[${index}]`,
       );
+      bucketEntries.push({ field, file });
     });
+    const duplicateFiles = duplicatedValues(files);
+    if (duplicateFiles.length > 0) {
+      fail(
+        `assertion classification candidateFileComparison.${field} contains duplicate files: ${duplicateFiles.join(", ")}`,
+      );
+    }
     bucketTotal += count;
+  }
+  const duplicateBucketFiles = duplicatedValues(bucketEntries.map((entry) => entry.file));
+  if (duplicateBucketFiles.length > 0) {
+    const details = duplicateBucketFiles.map((file) => {
+      const fields = bucketEntries
+        .filter((entry) => entry.file === file)
+        .map((entry) => entry.field)
+        .join(", ");
+      return `${file} (${fields})`;
+    });
+    fail(
+      `assertion classification candidateFileComparison buckets overlap: ${details.join("; ")}`,
+    );
   }
   if (bucketTotal !== candidateFileComparisonTotal) {
     fail(
