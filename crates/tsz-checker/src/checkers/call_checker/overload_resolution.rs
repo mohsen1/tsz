@@ -233,8 +233,8 @@ impl<'a> CheckerState<'a> {
                 is_constructor: false,
                 is_method: sig.is_method,
             };
-            let sig_contextual_type = if self
-                .suppress_generic_return_context_for_direct_arg_overlap(
+            let sig_contextual_type = if contextual_type.is_some()
+                && self.suppress_generic_return_context_for_direct_arg_overlap(
                     &sig_shape,
                     args,
                     contextual_type,
@@ -921,8 +921,8 @@ impl<'a> CheckerState<'a> {
                 is_constructor: false,
                 is_method: sig.is_method,
             };
-            let sig_contextual_type = if self
-                .suppress_generic_return_context_for_direct_arg_overlap(
+            let sig_contextual_type = if contextual_type.is_some()
+                && self.suppress_generic_return_context_for_direct_arg_overlap(
                     &sig_shape,
                     args,
                     contextual_type,

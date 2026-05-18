@@ -40,6 +40,7 @@ pub(crate) mod complex;
 mod complex_constructor_inference;
 pub(crate) mod complex_constructors;
 mod complex_contextual_application;
+mod complex_contextual_new;
 pub(crate) mod complex_js_constructor;
 pub(crate) mod complex_new_target;
 pub(crate) mod contextual;

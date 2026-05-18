@@ -1,10 +1,10 @@
 use super::super::Printer;
-use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
+use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter, emit_utils};
 use rustc_hash::FxHashSet;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::NodeList;
-use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -168,6 +168,293 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn count_top_level_using_es5_resource_initializer_temps(
+        &self,
+        statements: &NodeList,
+        start_idx: usize,
+    ) -> usize {
+        if !self.ctx.target_es5 {
+            return 0;
+        }
+
+        statements.nodes[start_idx..]
+            .iter()
+            .copied()
+            .map(|stmt_idx| self.count_top_level_using_es5_resource_temps_in_statement(stmt_idx))
+            .sum()
+    }
+
+    fn count_top_level_using_es5_resource_temps_in_statement(&self, stmt_idx: NodeIndex) -> usize {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return 0;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                self.count_top_level_using_es5_resource_temps_in_variable(stmt_node)
+            }
+            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
+                self.arena.get_block(stmt_node).map_or(0, |block| {
+                    block
+                        .statements
+                        .nodes
+                        .iter()
+                        .copied()
+                        .map(|child_idx| {
+                            self.count_top_level_using_es5_resource_temps_in_statement(child_idx)
+                        })
+                        .sum()
+                })
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                self.arena.get_if_statement(stmt_node).map_or(0, |if_stmt| {
+                    self.count_top_level_using_es5_resource_temps_in_statement(
+                        if_stmt.then_statement,
+                    ) + self.count_top_level_using_es5_resource_temps_in_statement(
+                        if_stmt.else_statement,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::TRY_STATEMENT => {
+                self.arena.get_try(stmt_node).map_or(0, |try_stmt| {
+                    self.count_top_level_using_es5_resource_temps_in_statement(try_stmt.try_block)
+                        + self.count_top_level_using_es5_resource_temps_in_statement(
+                            try_stmt.catch_clause,
+                        )
+                        + self.count_top_level_using_es5_resource_temps_in_statement(
+                            try_stmt.finally_block,
+                        )
+                })
+            }
+            k if k == syntax_kind_ext::CATCH_CLAUSE => self
+                .arena
+                .get_catch_clause(stmt_node)
+                .map_or(0, |catch_clause| {
+                    self.count_top_level_using_es5_resource_temps_in_statement(catch_clause.block)
+                }),
+            k if k == syntax_kind_ext::FOR_STATEMENT
+                || k == syntax_kind_ext::WHILE_STATEMENT
+                || k == syntax_kind_ext::DO_STATEMENT =>
+            {
+                self.arena.get_loop(stmt_node).map_or(0, |loop_stmt| {
+                    self.count_top_level_using_es5_resource_temps_in_statement(loop_stmt.statement)
+                })
+            }
+            k if k == syntax_kind_ext::FOR_IN_STATEMENT
+                || k == syntax_kind_ext::FOR_OF_STATEMENT =>
+            {
+                self.arena.get_for_in_of(stmt_node).map_or(0, |for_in_of| {
+                    self.count_top_level_using_es5_resource_temps_in_statement(for_in_of.statement)
+                })
+            }
+            k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+                self.arena.get_switch(stmt_node).map_or(0, |switch_stmt| {
+                    self.count_top_level_using_es5_resource_temps_in_statement(
+                        switch_stmt.case_block,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+                self.arena.get_case_clause(stmt_node).map_or(0, |clause| {
+                    clause
+                        .statements
+                        .nodes
+                        .iter()
+                        .copied()
+                        .map(|child_idx| {
+                            self.count_top_level_using_es5_resource_temps_in_statement(child_idx)
+                        })
+                        .sum()
+                })
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => self
+                .arena
+                .get_labeled_statement(stmt_node)
+                .map_or(0, |labeled| {
+                    self.count_top_level_using_es5_resource_temps_in_statement(labeled.statement)
+                }),
+            k if k == syntax_kind_ext::WITH_STATEMENT => self
+                .arena
+                .get_with_statement(stmt_node)
+                .map_or(0, |with_stmt| {
+                    self.count_top_level_using_es5_resource_temps_in_statement(
+                        with_stmt.then_statement,
+                    )
+                }),
+            _ => 0,
+        }
+    }
+
+    fn count_top_level_using_es5_resource_temps_in_variable(&self, node: &Node) -> usize {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return 0;
+        };
+
+        let mut count = 0usize;
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            let flags = decl_list_node.flags as u32;
+            let is_using = (flags & tsz_parser::parser::node_flags::USING) != 0
+                || tsz_parser::parser::node_flags::is_await_using(flags);
+            if !is_using {
+                continue;
+            }
+
+            let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                continue;
+            };
+            for &decl_idx in &decl_list.declarations.nodes {
+                let Some(decl_node) = self.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                count += self.count_es5_resource_expression_hoisted_temps(decl.initializer);
+            }
+        }
+        count
+    }
+
+    fn count_es5_resource_expression_hoisted_temps(&self, idx: NodeIndex) -> usize {
+        if idx.is_none() {
+            return 0;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return 0;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                self.count_es5_resource_object_literal_hoisted_temps(node)
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+                || k == syntax_kind_ext::METHOD_DECLARATION
+                || k == syntax_kind_ext::CONSTRUCTOR
+                || k == syntax_kind_ext::GET_ACCESSOR
+                || k == syntax_kind_ext::SET_ACCESSOR =>
+            {
+                0
+            }
+            _ => self
+                .arena
+                .get_children(idx)
+                .into_iter()
+                .map(|child_idx| self.count_es5_resource_expression_hoisted_temps(child_idx))
+                .sum(),
+        }
+    }
+
+    fn count_es5_resource_object_literal_hoisted_temps(&self, node: &Node) -> usize {
+        let Some(literal) = self.arena.get_literal_expr(node) else {
+            return 0;
+        };
+
+        let elements = &literal.elements.nodes;
+        let mut count = self.count_es5_object_literal_lowering_temp_slots(elements);
+        for &element_idx in elements {
+            count += self.count_es5_resource_object_element_nested_temps(element_idx);
+        }
+        count
+    }
+
+    fn count_es5_object_literal_lowering_temp_slots(&self, elements: &[NodeIndex]) -> usize {
+        if elements.is_empty() {
+            return 0;
+        }
+
+        let has_spread = elements
+            .iter()
+            .copied()
+            .any(|idx| emit_utils::is_spread_element(self.arena, idx));
+        if !has_spread {
+            return usize::from(
+                elements
+                    .iter()
+                    .copied()
+                    .any(|idx| emit_utils::is_computed_property_member(self.arena, idx)),
+            );
+        }
+
+        let mut count = 0usize;
+        let mut segment_has_computed = false;
+        for &element_idx in elements {
+            if emit_utils::is_spread_element(self.arena, element_idx) {
+                if segment_has_computed {
+                    count += 1;
+                    segment_has_computed = false;
+                }
+            } else if emit_utils::is_computed_property_member(self.arena, element_idx) {
+                segment_has_computed = true;
+            }
+        }
+        if segment_has_computed {
+            count += 1;
+        }
+        count
+    }
+
+    fn count_es5_resource_object_element_nested_temps(&self, element_idx: NodeIndex) -> usize {
+        let Some(element_node) = self.arena.get(element_idx) else {
+            return 0;
+        };
+
+        match element_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                let Some(prop) = self.arena.get_property_assignment(element_node) else {
+                    return 0;
+                };
+                self.count_computed_property_name_expression_temps(prop.name)
+                    + self.count_es5_resource_expression_hoisted_temps(prop.initializer)
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let Some(method) = self.arena.get_method_decl(element_node) else {
+                    return 0;
+                };
+                self.count_computed_property_name_expression_temps(method.name)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                let Some(accessor) = self.arena.get_accessor(element_node) else {
+                    return 0;
+                };
+                self.count_computed_property_name_expression_temps(accessor.name)
+            }
+            k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                self.arena.get_spread(element_node).map_or(0, |spread| {
+                    self.count_es5_resource_expression_hoisted_temps(spread.expression)
+                })
+            }
+            k if k == syntax_kind_ext::SPREAD_ELEMENT => self
+                .arena
+                .unary_exprs_ex
+                .get(element_node.data_index as usize)
+                .map_or(0, |spread| {
+                    self.count_es5_resource_expression_hoisted_temps(spread.expression)
+                }),
+            _ => 0,
+        }
+    }
+
+    fn count_computed_property_name_expression_temps(&self, name_idx: NodeIndex) -> usize {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return 0;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return 0;
+        }
+        self.arena
+            .get_computed_property(name_node)
+            .map_or(0, |name| {
+                self.count_es5_resource_expression_hoisted_temps(name.expression)
+            })
+    }
+
     fn reserve_top_level_using_env_names(
         &mut self,
         env_start_id: u32,
@@ -229,6 +516,11 @@ impl<'a> Printer<'a> {
         let outer_error_id = env_start_id + reserved_blocks.len() as u32;
         let (env_name, error_name, result_name) =
             self.reserve_top_level_using_env_names(env_start_id, outer_error_id, &reserved_blocks);
+        let resource_temp_count =
+            self.count_top_level_using_es5_resource_initializer_temps(statements, start_idx);
+        if resource_temp_count > 0 {
+            self.preallocate_hoisted_temp_names(resource_temp_count);
+        }
         let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
 
         if is_es_module_output {
@@ -254,11 +546,22 @@ impl<'a> Printer<'a> {
         } else {
             Some(self.collect_cjs_deferred_export_bindings(statements))
         };
+        let cjs_deferred_export_bindings_all = if is_es_module_output {
+            None
+        } else {
+            Some(self.collect_cjs_deferred_export_bindings_all(statements))
+        };
         let prev_deferred_local_export_bindings = if is_es_module_output {
             None
         } else {
             self.deferred_local_export_bindings
                 .replace(cjs_deferred_export_bindings.unwrap_or_default())
+        };
+        let prev_deferred_local_export_bindings_all = if is_es_module_output {
+            None
+        } else {
+            self.deferred_local_export_bindings_all
+                .replace(cjs_deferred_export_bindings_all.unwrap_or_default())
         };
         let prev_block_using_env = self
             .block_using_env
@@ -289,6 +592,7 @@ impl<'a> Printer<'a> {
         self.block_using_env = prev_block_using_env;
         if !is_es_module_output {
             self.deferred_local_export_bindings = prev_deferred_local_export_bindings;
+            self.deferred_local_export_bindings_all = prev_deferred_local_export_bindings_all;
         }
 
         self.decrease_indent();
@@ -855,11 +1159,13 @@ impl<'a> Printer<'a> {
         seen_local: &mut FxHashSet<String>,
         export_named_bindings: &mut Vec<String>,
     ) {
-        let (name, is_legacy_decorated_class) = match node.kind {
+        let (name, uses_lowered_default_tracker) = match node.kind {
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
                 let Some(class) = self.arena.get_class(node) else {
                     return;
                 };
+                let has_class_decorators =
+                    !self.collect_class_decorators(&class.modifiers).is_empty();
                 let name = self.get_identifier_text_opt(class.name).or_else(|| {
                     if is_default_export {
                         Some(
@@ -873,8 +1179,9 @@ impl<'a> Printer<'a> {
                 });
                 (
                     name,
-                    self.ctx.options.legacy_decorators
-                        && !self.collect_class_decorators(&class.modifiers).is_empty(),
+                    is_default_export
+                        && has_class_decorators
+                        && !self.ctx.options.target.supports_es2025(),
                 )
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
@@ -888,13 +1195,13 @@ impl<'a> Printer<'a> {
         let Some(name) = name else {
             return;
         };
-        if seen_local.insert(name.clone()) {
+        let skip_legacy_default_temp = uses_lowered_default_tracker
+            && !self.ctx.options.legacy_decorators
+            && name == "default_1";
+        if !skip_legacy_default_temp && seen_local.insert(name.clone()) {
             local_names.push(name.clone());
         }
-        if is_default_export
-            && is_legacy_decorated_class
-            && !self.ctx.options.target.supports_es2025()
-        {
+        if uses_lowered_default_tracker {
             if seen_local.insert("_default".to_string()) {
                 local_names.push("_default".to_string());
             }
@@ -1176,7 +1483,7 @@ impl<'a> Printer<'a> {
                     self.write(&env_name);
                     self.write(", ");
                     if decl.initializer.is_some() {
-                        self.emit(decl.initializer);
+                        self.emit_top_level_using_initializer(decl.initializer, &name);
                     } else {
                         self.write("void 0");
                     }
@@ -1293,6 +1600,21 @@ impl<'a> Printer<'a> {
             ");"
         } else {
             ";"
+        }
+    }
+
+    fn mark_top_level_using_inline_cjs_export(
+        &mut self,
+        export_name: Option<&String>,
+        is_es_module_output: bool,
+    ) {
+        if let Some(export_name) = export_name
+            && !is_es_module_output
+        {
+            self.ctx
+                .module_state
+                .inline_exported_names
+                .insert(export_name.clone());
         }
     }
 
@@ -1588,9 +1910,19 @@ impl<'a> Printer<'a> {
         {
             let mut es5_emitter = ClassES5Emitter::new(self.arena);
             es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+            es5_emitter.set_async_generator_inner_name_counts(
+                self.async_generator_inner_name_counts.clone(),
+            );
+            self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
             es5_emitter.set_indent_level(self.writer.indent_level());
             es5_emitter.set_transforms(self.transforms.clone());
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+            es5_emitter.set_printer_options(self.ctx.options.clone());
+            es5_emitter.set_module_kind(
+                self.ctx
+                    .original_module_kind
+                    .unwrap_or(self.ctx.options.module),
+            );
             if let Some(text) = self.source_text_for_map() {
                 es5_emitter.set_source_text(text);
             }
@@ -1602,7 +1934,7 @@ impl<'a> Printer<'a> {
                 emit_decorator_metadata: self.ctx.options.emit_decorator_metadata,
             });
             let mut output = es5_emitter.emit_class_with_name(idx, &binding_name);
-            self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
+            self.sync_es5_class_emitter_state(&mut es5_emitter);
             output = output.replacen(
                 &format!("var {binding_name} = "),
                 &format!("{binding_name} = "),
@@ -1638,6 +1970,48 @@ impl<'a> Printer<'a> {
             }
             return true;
         }
+        if !self.ctx.target_es5
+            && has_decorators
+            && !self.ctx.options.legacy_decorators
+            && !self.ctx.options.target.supports_es2025()
+        {
+            if let Some(expr) = self.capture_tc39_decorated_class_expression(idx, &display_name) {
+                if let Some(export_name) = export_name.as_ref() {
+                    if !is_es_module_output {
+                        self.write_export_binding_start(export_name);
+                    }
+                    if export_name == "default" {
+                        self.write("_default = ");
+                        if class.name.is_some() {
+                            self.write(&binding_name);
+                            self.write(" = ");
+                        }
+                    } else {
+                        self.write(&binding_name);
+                        self.write(" = ");
+                    }
+                    self.write(&expr);
+                    if !is_es_module_output {
+                        self.write_export_binding_end();
+                    } else {
+                        self.write(";");
+                    }
+                } else {
+                    self.write(&binding_name);
+                    self.write(" = ");
+                    self.write(&expr);
+                    self.write(";");
+                }
+                self.mark_top_level_using_inline_cjs_export(
+                    export_name.as_ref(),
+                    is_es_module_output,
+                );
+                if let Some(prev) = prev_anon_default_name {
+                    self.anonymous_default_export_name = prev;
+                }
+                return true;
+            }
+        }
         if self.ctx.options.target.supports_es2025()
             && has_decorators
             && !self.ctx.options.legacy_decorators
@@ -1650,6 +2024,8 @@ impl<'a> Printer<'a> {
                 false,
                 Some(("", binding_name.clone())),
                 None,
+                None,
+                false,
             );
             let after_len = self.writer.len();
             let full_output = self.writer.get_output().to_string();
@@ -1682,6 +2058,22 @@ impl<'a> Printer<'a> {
                 self.write(&binding_name);
                 self.write_export_binding_end();
             }
+            self.mark_top_level_using_inline_cjs_export(export_name.as_ref(), is_es_module_output);
+            if let Some(prev) = prev_anon_default_name {
+                self.anonymous_default_export_name = prev;
+            }
+            return true;
+        }
+        if export_name.is_none() && !self.ctx.target_es5 && !has_decorators {
+            self.emit_class_es6_with_options(
+                node,
+                idx,
+                false,
+                Some(("", binding_name.clone())),
+                None,
+                None,
+                false,
+            );
             if let Some(prev) = prev_anon_default_name {
                 self.anonymous_default_export_name = prev;
             }
@@ -1853,14 +2245,7 @@ impl<'a> Printer<'a> {
                 self.write(";");
             }
         }
-        if let Some(export_name) = export_name.as_ref()
-            && !is_es_module_output
-        {
-            self.ctx
-                .module_state
-                .inline_exported_names
-                .insert(export_name.clone());
-        }
+        self.mark_top_level_using_inline_cjs_export(export_name.as_ref(), is_es_module_output);
         true
     }
 

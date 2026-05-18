@@ -14,6 +14,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::ContextualTypeContext;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 const SPREAD_DISPLAY_ORDER_OFFSET: u32 = 1_000_000;
@@ -64,35 +65,6 @@ fn remove_synthetic_missing_union_spread_props(member_props: &mut [Vec<PropertyI
 /// like `a: 1` in `{ a: 1 } satisfies unknown` widens to `number`.
 fn is_literal_permissive_context(ctx: TypeId) -> bool {
     ctx == TypeId::UNKNOWN || ctx == TypeId::ANY || ctx == TypeId::NEVER
-}
-
-fn is_single_quoted_string_property_name_node(
-    arena: &tsz_parser::parser::node::NodeArena,
-    name_idx: NodeIndex,
-) -> bool {
-    let Some(name_node) = arena.get(name_idx) else {
-        return false;
-    };
-
-    if name_node.kind == SyntaxKind::StringLiteral as u16 {
-        return arena
-            .get_literal(name_node)
-            .and_then(|literal| literal.raw_text.as_deref())
-            .is_some_and(|raw| raw.starts_with('\''));
-    }
-
-    if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-        && let Some(computed) = arena.get_computed_property(name_node)
-        && let Some(expr_node) = arena.get(computed.expression)
-        && expr_node.kind == SyntaxKind::StringLiteral as u16
-    {
-        return arena
-            .get_literal(expr_node)
-            .and_then(|literal| literal.raw_text.as_deref())
-            .is_some_and(|raw| raw.starts_with('\''));
-    }
-
-    false
 }
 
 impl<'a> CheckerState<'a> {
@@ -1305,13 +1277,10 @@ impl<'a> CheckerState<'a> {
                     // Determine if this property was declared with a string key
                     // that looks numeric (e.g. "404" vs 404). This affects DTS
                     // emit quoting: `"404": ...` vs `404: ...`.
+                    let (string_literal_name, single_quoted_name) =
+                        self.ctx.arena.string_property_name_flags(prop.name);
                     let is_string_named =
-                        crate::types_domain::queries::core::is_string_property_name_node(
-                            self.ctx.arena,
-                            prop.name,
-                        ) || self.is_computed_string_property_name(prop.name);
-                    let single_quoted_name =
-                        is_single_quoted_string_property_name_node(self.ctx.arena, prop.name);
+                        string_literal_name || self.is_computed_string_property_name(prop.name);
                     let prop_info = PropertyInfo {
                         name: name_atom,
                         type_id: value_type,
@@ -1839,12 +1808,11 @@ impl<'a> CheckerState<'a> {
                         // body sees concrete `this` types (fixing TS2783 for spreads of
                         // `this.options.suggestion` where Options = { suggestion: Foo }).
                         let method_ctx_this = method_request.contextual_type.and_then(|ctx_ty| {
-                            let ctx_helper =
-                                tsz_solver::ContextualTypeContext::with_expected_and_options(
-                                    self.ctx.types,
-                                    ctx_ty,
-                                    self.ctx.compiler_options.no_implicit_any,
-                                );
+                            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                                self.ctx.types,
+                                ctx_ty,
+                                self.ctx.compiler_options.no_implicit_any,
+                            );
                             ctx_helper.get_this_type()
                         });
                         if let Some(mut method_this) = method_ctx_this {
@@ -1882,12 +1850,11 @@ impl<'a> CheckerState<'a> {
 
                     let contextual_method_param_types =
                         method_request.contextual_type.map(|ctx_ty| {
-                            let ctx_helper =
-                                tsz_solver::ContextualTypeContext::with_expected_and_options(
-                                    self.ctx.types,
-                                    ctx_ty,
-                                    self.ctx.compiler_options.no_implicit_any,
-                                );
+                            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                                self.ctx.types,
+                                ctx_ty,
+                                self.ctx.compiler_options.no_implicit_any,
+                            );
                             let this_atom = self.ctx.types.intern_string("this");
                             let mut contextual_index = 0usize;
                             method
@@ -1977,7 +1944,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     if method_return_this_circularity {
-                        method_diag_snap.rollback(&mut self.ctx);
+                        method_diag_snap.rollback(&mut self.ctx.diagnostic_state());
                         self.invalidate_expression_for_contextual_retry(elem_idx);
                         let refined_method_type = crate::query_boundaries::assignability::get_function_return_type(
                             self.ctx.types,
@@ -2035,7 +2002,7 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.arena.get(*idx).map(|node| node.pos)
                                 })
                                 .collect();
-                        rerun_snap.rollback_filtered(&mut self.ctx, |diag| {
+                        rerun_snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
                             let is_replaced_this_property_error =
                                 diag.code == 2339 && this_property_positions.contains(&diag.start);
                             !is_replaced_this_property_error

@@ -12,7 +12,8 @@ use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
+use tsz_solver::{CachedPropertyType, TypeId};
 
 impl<'a> CheckerState<'a> {
     /// Inner implementation of property access type resolution.
@@ -613,22 +614,22 @@ impl<'a> CheckerState<'a> {
                 .is_none()
             {
                 let resolved_base = self.resolve_type_for_property_access(non_nullish_base);
+                let resolver_generation = TypeResolver::resolver_generation(&self.ctx);
+                let cache_key = |base, name| (base, resolver_generation, name);
 
-                // property_cache stores Option<TypeId>: Some(id) = resolved type,
-                // None = property not found (fall through for TS2339 diagnostics).
                 let cached_property_type = self
                     .ctx
                     .narrowing_cache
                     .property_cache
                     .borrow()
-                    .get(&(resolved_base, prop_atom))
+                    .get(&cache_key(resolved_base, prop_atom))
                     .copied();
-                if let Some(Some(type_id)) = cached_property_type {
+                if let Some(Some(entry)) = cached_property_type {
                     let mut result_type = self.refine_expando_property_read_type(
                         idx,
                         access.expression,
                         property_name,
-                        type_id,
+                        entry.type_id,
                     );
                     if base_nullish.is_some()
                         && !crate::query_boundaries::common::type_contains_undefined(
@@ -699,11 +700,13 @@ impl<'a> CheckerState<'a> {
                                 property_name,
                                 type_id,
                             );
-                            self.ctx
-                                .narrowing_cache
-                                .property_cache
-                                .borrow_mut()
-                                .insert((resolved_base, prop_atom), Some(refined_type_id));
+                            self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
+                                cache_key(resolved_base, prop_atom),
+                                Some(CachedPropertyType::new(
+                                    refined_type_id,
+                                    from_index_signature,
+                                )),
+                            );
                             let mut result_type =
                                 effective_write_result(refined_type_id, write_type);
                             if base_nullish.is_some()
@@ -737,11 +740,10 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                        self.ctx
-                            .narrowing_cache
-                            .property_cache
-                            .borrow_mut()
-                            .insert((resolved_base, prop_atom), property_type);
+                        self.ctx.narrowing_cache.property_cache.borrow_mut().insert(
+                            cache_key(resolved_base, prop_atom),
+                            property_type.map(CachedPropertyType::explicit),
+                        );
                         let mut result_type = property_type.unwrap_or(TypeId::ERROR);
                         if base_nullish.is_some()
                             && !crate::query_boundaries::common::type_contains_undefined(
@@ -763,7 +765,7 @@ impl<'a> CheckerState<'a> {
                             .narrowing_cache
                             .property_cache
                             .borrow_mut()
-                            .insert((resolved_base, prop_atom), None);
+                            .insert(cache_key(resolved_base, prop_atom), None);
                         // Fall through to full diagnostic path.
                     }
                     PropertyAccessResult::IsUnknown => {
@@ -1847,26 +1849,28 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
 
-                    if !used_class_chain_method_type
-                        && direct_class_this_receiver
-                        && let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
-                            self.ctx.types,
+                    if let Some((recovered_type, recovered_method)) = self
+                        .recover_direct_this_class_chain_member(
+                            direct_class_this_receiver,
+                            used_class_chain_method_type,
+                            access.expression,
+                            property_name,
+                            prop_type,
                             object_type_for_access,
-                        )
-                        && let Some(raw_prop) = shape.properties.iter().find(|prop| {
-                            self.ctx.types.resolve_atom_ref(prop.name).as_ref()
-                                == property_name.as_str()
-                        })
-                        && crate::query_boundaries::common::contains_this_type(
-                            self.ctx.types,
-                            raw_prop.type_id,
+                            original_object_type,
                         )
                     {
-                        prop_type = crate::query_boundaries::common::substitute_this_type(
-                            self.ctx.types,
-                            raw_prop.type_id,
-                            self.ctx.types.this_type(),
-                        );
+                        prop_type = recovered_type;
+                        used_class_chain_method_type = recovered_method;
+                    }
+
+                    if let Some(recovered_type) = self.substitute_direct_this_property_shape_type(
+                        direct_class_this_receiver,
+                        used_class_chain_method_type,
+                        object_type_for_access,
+                        property_name,
+                    ) {
+                        prop_type = recovered_type;
                     }
 
                     // Substitute polymorphic `this` type with the receiver type.

@@ -60,6 +60,40 @@ type PropertyType<T extends object, K extends keyof T> = T[K];
 }
 
 #[test]
+fn inherited_generic_method_pick_argument_reports_indexed_access_relation() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+class Component<S> {
+    setState<K extends keyof S>(state: Pick<S, K>) {}
+}
+
+export interface State<T> {
+    a?: T;
+}
+
+class Foo {}
+
+class Comp<T extends Foo, S> extends Component<S & State<T>> {
+    foo(a: T) {
+        this.setState({ a });
+    }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("(S & State<T>)[\"a\"] | undefined")
+        }),
+        "inherited generic method calls should preserve the Pick<S, K> indexed-access TS2322 target.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2345),
+        "should not fall back to a generic call-argument TS2345.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_unconstrained_type_param_emits_ts2536() {
     let diagnostics = compile_and_get_diagnostics_with_lib(
         r"
@@ -193,6 +227,24 @@ type T00 = { [P in P]: string };
     assert!(
         !has_error(&diagnostics, 2304),
         "Should not emit TS2304 for self-reference constraint.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_mapped_type_commented_direct_circular_constraint_reports_ts2313() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type T00 = { [Key in /* comment */ Key]: string };
+",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2313),
+        "Expected TS2313 for comment-separated mapped type parameter self reference.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2304),
+        "Should not emit TS2304 for comment-separated self-reference constraint.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 

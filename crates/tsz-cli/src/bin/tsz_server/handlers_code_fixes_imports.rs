@@ -14,7 +14,7 @@ use super::handlers_code_fixes_utils::{
     resolve_module_path,
 };
 use tsz::lsp::Project;
-use tsz::lsp::code_actions::{CodeActionProvider, ImportCandidate};
+use tsz::lsp::code_actions::{CodeActionProvider, CodeFixRegistry, ImportCandidate};
 use tsz::lsp::position::LineMap;
 use tsz::parser::ParserState;
 
@@ -1083,6 +1083,13 @@ impl Server {
         import_module_specifier_ending: Option<&str>,
         import_module_specifier_preference: Option<&str>,
     ) -> Vec<ImportCandidate> {
+        // No diagnostics → nothing can be fixed by adding an import. Skip the
+        // entire candidate scan (including the expensive "scan everything"
+        // fallback) to avoid O(project) work on getCodeFixes requests that
+        // have no import-eligible errors.
+        if diagnostics.is_empty() {
+            return Vec::new();
+        }
         let mut files = self.open_files.clone();
         let mut external_project_paths = rustc_hash::FxHashSet::default();
         for project_files in self.external_project_files.values() {
@@ -1145,8 +1152,16 @@ impl Server {
         if candidates.is_empty() {
             if fallback_names.is_empty() {
                 // Preserve legacy behavior for diagnostics whose message shape does not
-                // include a directly parseable missing identifier.
-                candidates.extend(project.get_import_candidates_for_prefix(current_file_path, ""));
+                // include a directly parseable missing identifier — but only for codes
+                // that `fixMissingImport` can actually address. Structural errors
+                // unrelated to missing imports must not trigger the O(project) full scan.
+                let has_import_eligible = diagnostics
+                    .iter()
+                    .any(|d| d.code.is_some_and(CodeFixRegistry::is_import_fix_code));
+                if has_import_eligible {
+                    candidates
+                        .extend(project.get_import_candidates_for_prefix(current_file_path, ""));
+                }
             } else {
                 for missing_name in &fallback_names {
                     candidates.extend(

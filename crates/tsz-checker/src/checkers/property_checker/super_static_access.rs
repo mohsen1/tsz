@@ -1,32 +1,15 @@
-use crate::classes_domain::class_summary::ClassMemberKind;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
-    pub(super) fn super_non_method_access_requires_es5_diagnostic(
-        &mut self,
-        object_expr: NodeIndex,
-        class_idx: NodeIndex,
-        property_name: &str,
-        is_static: bool,
-    ) -> bool {
-        self.is_super_expression(object_expr)
-            && !self.ctx.compiler_options.target.supports_es2015()
-            && (matches!(
-                self.class_chain_member_kind_name_only(class_idx, property_name, is_static, true)
-                    .map(|(kind, _)| kind),
-                Some(ClassMemberKind::FieldLike)
-            ) || self.class_chain_has_accessor_member(class_idx, property_name, is_static))
-    }
-
     pub(super) fn super_static_block_reads_base_expando(
         &mut self,
         class_idx: NodeIndex,
         property_name: &str,
     ) -> bool {
-        if self.class_chain_declares_static_member(class_idx, property_name) {
+        if self.class_declares_static_member(class_idx, property_name) {
             return false;
         }
 
@@ -83,74 +66,6 @@ impl<'a> CheckerState<'a> {
                     .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
                     .is_some_and(|name_ident| name_ident.escaped_text == property_name)
             })
-    }
-
-    fn class_chain_declares_static_member(
-        &self,
-        class_idx: NodeIndex,
-        property_name: &str,
-    ) -> bool {
-        use rustc_hash::FxHashSet;
-
-        let mut current = class_idx;
-        let mut visited: FxHashSet<NodeIndex> = FxHashSet::default();
-
-        while visited.insert(current) {
-            if self.class_declares_static_member(current, property_name) {
-                return true;
-            }
-
-            let Some(base_idx) = self.get_base_class_idx(current) else {
-                break;
-            };
-            current = base_idx;
-        }
-
-        false
-    }
-
-    fn class_chain_has_accessor_member(
-        &mut self,
-        class_idx: NodeIndex,
-        property_name: &str,
-        is_static: bool,
-    ) -> bool {
-        use rustc_hash::FxHashSet;
-
-        let mut current = Some(class_idx);
-        let mut visited = FxHashSet::default();
-        while let Some(current_idx) = current {
-            if !visited.insert(current_idx) {
-                break;
-            }
-            let Some(class_data) = self.ctx.arena.get_class_at(current_idx) else {
-                break;
-            };
-            for &member_idx in &class_data.members.nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
-                    continue;
-                };
-                if member_node.kind != syntax_kind_ext::GET_ACCESSOR
-                    && member_node.kind != syntax_kind_ext::SET_ACCESSOR
-                {
-                    continue;
-                }
-                let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
-                    continue;
-                };
-                if self.has_static_modifier(&accessor.modifiers) != is_static {
-                    continue;
-                }
-                if self
-                    .get_property_name(accessor.name)
-                    .is_some_and(|name| name == property_name)
-                {
-                    return true;
-                }
-            }
-            current = self.get_base_class_idx(current_idx);
-        }
-        false
     }
 
     fn class_declares_static_member(&self, class_idx: NodeIndex, property_name: &str) -> bool {

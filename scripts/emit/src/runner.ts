@@ -19,6 +19,8 @@ import ts from 'typescript';
 import { parseBaseline, getEmitDiff, getEmitDiffSummary } from './baseline-parser.js';
 import { CliTranspiler, type LinkInput } from './cli-transpiler.js';
 import { parseTarget, parseModule, inferDefaultModule } from './ts-enums.js';
+import { BaselineBlobReader } from './baseline-blob-reader.js';
+import { buildBlob, isBlobFresh } from './build-baseline-blob.js';
 
 const execFile = promisify(execFileCb);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -505,10 +507,57 @@ async function filterToDtsBaselines(jsFiles: string[]): Promise<string[]> {
   return checks.filter(c => c.hasDts).map(c => c.file);
 }
 
+// Tries to open the baseline blob (if fresh) and falls back to per-file
+// reads otherwise. The blob is a one-time `open()` + offset-sliced reads,
+// vs ~13,800 individual `open()` syscalls.
+//
+// **Default: OFF** (opt in via TSZ_EMIT_BLOB=1).
+// A/B measurement on M4 Max with warm OS file cache (3 cold-result-cache
+// runs each, 13,530 tests): no-blob 19.7/22.0/22.2s vs blob
+// 21.6/21.8/22.2s — statistically equivalent. The per-file path is
+// already fast enough that the blob's JSON-index parse + setup cost
+// erases the syscall savings. Kept as opt-in infrastructure because the
+// expected win is on CI cold disk cache (untested here).
+async function openBaselineSource(): Promise<BaselineBlobReader | null> {
+  if (process.env.TSZ_EMIT_BLOB !== '1') return null;
+  try {
+    if (!await isBlobFresh(BASELINES_DIR, path.join(__dirname, '..', '.baseline-blob-cache', 'baselines.meta.json'))) {
+      if (process.env.TSZ_EMIT_NO_BLOB_BUILD === '1') return null;
+      console.log(pc.dim('  Building baseline blob (one-time cost)...'));
+      await buildBlob(
+        BASELINES_DIR,
+        path.join(__dirname, '..', '.baseline-blob-cache', 'baselines.bin'),
+        path.join(__dirname, '..', '.baseline-blob-cache', 'baselines.idx.json'),
+        path.join(__dirname, '..', '.baseline-blob-cache', 'baselines.meta.json'),
+      );
+    }
+    return await BaselineBlobReader.tryLoad(BASELINES_DIR);
+  } catch {
+    return null;
+  }
+}
+
+async function readBaselineFile(
+  blob: BaselineBlobReader | null,
+  name: string,
+): Promise<string> {
+  if (blob && blob.has(name)) {
+    const buf = await blob.readBaseline(name);
+    if (buf) return buf.toString('utf-8');
+  }
+  return await fs.promises.readFile(path.join(BASELINES_DIR, name), 'utf-8');
+}
+
 async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean): Promise<TestCase[]> {
   if (!fs.existsSync(BASELINES_DIR)) {
     console.error(`Baselines directory not found: ${BASELINES_DIR}`);
     process.exit(1);
+  }
+
+  const blob = await openBaselineSource();
+  if (blob) {
+    const stats = await blob.stats();
+    console.log(pc.dim(`  Baseline blob: ${stats.entries} entries (loaded in 1 open() call)`));
   }
 
   const entries = fs.readdirSync(BASELINES_DIR);
@@ -534,8 +583,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
   const readLimit = pLimit(64);
   const parsedSourceCache = new Map<string, ParsedSourceTest>();
   const results = await Promise.all(jsFiles.map(baselineFile => readLimit(async () => {
-    const baselinePath = path.join(BASELINES_DIR, baselineFile);
-    const baselineContent = await fs.promises.readFile(baselinePath, 'utf-8');
+    const baselineContent = await readBaselineFile(blob, baselineFile);
     const baseline = parseBaseline(baselineContent);
 
     if (!baseline.source || !baseline.js) return null;
@@ -804,6 +852,10 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       declarationMap,
     } as TestCase;
   })));
+
+  // Release the blob's file handle now that discovery is done. Node 25+
+  // makes implicit FH-on-GC closure a hard error; we own the lifetime.
+  if (blob) await blob.close();
 
   // Filter nulls and cap to maxTests
   return results.filter((r): r is TestCase => r !== null).slice(0, maxTests);

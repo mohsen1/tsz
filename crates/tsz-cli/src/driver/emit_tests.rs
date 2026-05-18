@@ -133,6 +133,19 @@ fn test_js_output_path_ignores_out_dir_when_input_is_outside_root_dir() {
 }
 
 #[test]
+fn test_js_output_path_skips_arbitrary_extension_declaration_file() {
+    let path = js_output_path(
+        Path::new("/tmp/project/app"),
+        None,
+        Some(Path::new("/tmp/project/app/dist")),
+        None,
+        Path::new("/tmp/project/app/native.d.node.ts"),
+    );
+
+    assert_eq!(path, None);
+}
+
+#[test]
 fn test_declaration_output_path_ignores_out_dir_when_input_is_outside_root_dir() {
     let path = declaration_output_path(
         Path::new("/tmp/project/app"),
@@ -145,6 +158,18 @@ fn test_declaration_output_path_ignores_out_dir_when_input_is_outside_root_dir()
         path,
         Some(Path::new("/tmp/project/app/src/index.d.ts").into())
     );
+}
+
+#[test]
+fn test_declaration_output_path_skips_arbitrary_extension_declaration_file() {
+    let path = declaration_output_path(
+        Path::new("/tmp/project/app"),
+        None,
+        Some(Path::new("/tmp/project/app/types")),
+        Path::new("/tmp/project/app/native.d.node.ts"),
+    );
+
+    assert_eq!(path, None);
 }
 
 #[test]
@@ -209,6 +234,26 @@ fn test_bundle_declaration_output_wraps_amd_modules_with_fallback_name() {
         bundle_declaration_output(input, tsz_common::common::ModuleKind::AMD, Some("index"));
     let expected = r#"declare module "index" {
     export const value = 1;
+}"#;
+
+    assert_eq!(output, expected);
+}
+
+#[test]
+fn test_bundle_declaration_output_rewrites_inline_amd_import_types() {
+    let input = r#"/** @type {typeof import("./folder/mod1")} */
+export declare const items: (typeof import("./folder/mod1"))[];
+export declare const also: import("../shared/types").Thing;"#;
+
+    let output = bundle_declaration_output(
+        input,
+        tsz_common::common::ModuleKind::AMD,
+        Some("app/index"),
+    );
+    let expected = r#"declare module "app/index" {
+    /** @type {typeof import("./folder/mod1")} */
+    export const items: (typeof import("app/folder/mod1"))[];
+    export const also: import("shared/types").Thing;
 }"#;
 
     assert_eq!(output, expected);

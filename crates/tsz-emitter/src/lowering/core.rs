@@ -1,6 +1,8 @@
 use crate::context::emit::EmitContext;
 use crate::context::plan::{EmitPlan, EmitPlanBuilder};
-use crate::context::transform::{TransformContext, TransformDirective};
+use crate::context::transform::{IdentifierId, TransformContext, TransformDirective};
+use crate::emitter::JsxEmit;
+use crate::jsx_pragmas::{JsxPragmaFacts, JsxRuntimePragma};
 use std::sync::Arc;
 use tsz_common::ScriptTarget;
 use tsz_parser::parser::NodeIndex;
@@ -61,6 +63,10 @@ pub struct LoweringPass<'a> {
     /// Used to determine if a namespace/enum IIFE should fold exports into the
     /// closing argument (e.g., `(A || (exports.A = A = {}))`).
     pub(super) re_exported_names: rustc_hash::FxHashSet<String>,
+    /// Export names from local `export { local as exported }` clauses, keyed by
+    /// the local name. Namespace IIFE folding needs the exported name in the
+    /// `exports.<name>` slot while keeping the local namespace binding unchanged.
+    pub(super) re_exported_export_names: rustc_hash::FxHashMap<String, Vec<IdentifierId>>,
     /// Stack of enclosing non-arrow function body node indices.
     /// When an arrow function captures `this`, the top of this stack is the
     /// scope that needs `var _this = this;`.
@@ -71,6 +77,8 @@ pub struct LoweringPass<'a> {
     pub(super) enclosing_capture_names: Vec<Arc<str>>,
     /// Source text for the source file currently being traversed.
     pub(super) current_source_text: Option<&'a str>,
+    /// File-level JSX pragma facts for the source file currently being traversed.
+    pub(super) current_jsx_pragmas: JsxPragmaFacts,
 }
 
 impl<'a> LoweringPass<'a> {
@@ -94,9 +102,11 @@ impl<'a> LoweringPass<'a> {
             in_assignment_target: false,
             in_es5_class: false,
             re_exported_names: rustc_hash::FxHashSet::default(),
+            re_exported_export_names: rustc_hash::FxHashMap::default(),
             enclosing_function_bodies: Vec::new(),
             enclosing_capture_names: Vec::new(),
             current_source_text: None,
+            current_jsx_pragmas: JsxPragmaFacts::default(),
         }
     }
 
@@ -265,10 +275,17 @@ impl<'a> LoweringPass<'a> {
             self.transforms
                 .insert(idx, TransformDirective::ES5ForOf { for_of_node: idx });
             if for_in_of.await_modifier {
-                self.transforms.helpers_mut().async_values = true;
+                self.transforms.helpers_mut().mark_async_values();
             } else if self.ctx.options.downlevel_iteration {
-                self.transforms.helpers_mut().values = true;
+                self.transforms.helpers_mut().mark_values();
             }
+        }
+        if !self.ctx.options.target.supports_es2025()
+            && crate::transforms::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
+                .is_some()
+        {
+            self.transforms.helpers_mut().add_disposable_resource = true;
+            self.transforms.helpers_mut().dispose_resources = true;
         }
 
         // Check if initializer contains destructuring pattern
@@ -280,7 +297,7 @@ impl<'a> LoweringPass<'a> {
             // Mark __read helper when destructuring is used with downlevelIteration
             // TypeScript emits __read to convert iterator results to arrays for destructuring
             if self.ctx.target_es5 && self.ctx.options.downlevel_iteration {
-                self.transforms.helpers_mut().read = true;
+                self.transforms.helpers_mut().mark_read();
             }
             // Set in_assignment_target to prevent spread in destructuring from triggering __spreadArray
             let prev = self.in_assignment_target;
@@ -331,6 +348,7 @@ impl<'a> LoweringPass<'a> {
             && !clause.is_type_only
         {
             if !self.ctx.options.verbatim_module_syntax
+                && !self.is_classic_jsx_factory_import_clause(clause)
                 && !self.import_has_value_usage_after_node(node, clause)
             {
                 if import_decl.import_clause.is_some() {
@@ -363,7 +381,7 @@ impl<'a> LoweringPass<'a> {
                 } else if has_default {
                     // Default-only import: import d from "mod" -> needs __importDefault
                     let helpers = self.transforms.helpers_mut();
-                    helpers.import_default = true;
+                    helpers.mark_import_default();
                 }
 
                 // Namespace import: import * as ns from "mod" -> needs __importStar
@@ -410,7 +428,7 @@ impl<'a> LoweringPass<'a> {
                             });
                         if has_default_named_import {
                             let helpers = self.transforms.helpers_mut();
-                            helpers.import_default = true;
+                            helpers.mark_import_default();
                         }
                     }
                 }
@@ -423,7 +441,70 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    fn import_has_value_usage_after_node(
+    fn is_classic_jsx_factory_import_clause(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        let roots = self.classic_jsx_factory_roots();
+        if roots.is_empty() {
+            return false;
+        }
+
+        if clause.name.is_some() {
+            let name = emit_utils::identifier_text_or_empty(self.arena, clause.name);
+            if roots.iter().any(|root| root == &name) {
+                return true;
+            }
+        }
+
+        let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
+            return false;
+        };
+        let Some(named_imports) = self.arena.get_named_imports(bindings_node) else {
+            return false;
+        };
+
+        if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
+            let ns_name = emit_utils::identifier_text_or_empty(self.arena, named_imports.name);
+            if roots.iter().any(|root| root == &ns_name) {
+                return true;
+            }
+        }
+
+        named_imports.elements.nodes.iter().any(|&spec_idx| {
+            self.arena
+                .get(spec_idx)
+                .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                .is_some_and(|spec| {
+                    if spec.is_type_only {
+                        return false;
+                    }
+                    let local_name = emit_utils::identifier_text_or_empty(self.arena, spec.name);
+                    roots.iter().any(|root| root == &local_name)
+                })
+        })
+    }
+
+    fn classic_jsx_factory_roots(&self) -> Vec<String> {
+        let uses_classic_factory = match self.current_jsx_pragmas.runtime {
+            Some(JsxRuntimePragma::Classic) => true,
+            Some(JsxRuntimePragma::Automatic) => false,
+            _ => matches!(
+                self.ctx.options.jsx,
+                JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
+            ),
+        };
+        if !uses_classic_factory {
+            return Vec::new();
+        }
+
+        self.current_jsx_pragmas.classic_factory_roots(
+            self.ctx.options.jsx_factory.as_deref(),
+            self.ctx.options.jsx_fragment_factory.as_deref(),
+        )
+    }
+
+    pub(super) fn import_has_value_usage_after_node(
         &self,
         node: &Node,
         clause: &tsz_parser::parser::node::ImportClauseData,
@@ -615,8 +696,11 @@ impl<'a> LoweringPass<'a> {
             return;
         }
 
+        let is_top_level_export = self.namespace_depth == 0;
+
         // Detect CommonJS helpers: export * from "mod"
-        if self.is_commonjs()
+        if is_top_level_export
+            && self.is_commonjs()
             && export_decl.module_specifier.is_some()
             && export_decl.export_clause.is_none()
         {
@@ -627,7 +711,8 @@ impl<'a> LoweringPass<'a> {
 
         // Detect CommonJS helpers: export * as ns from "mod"
         // In CJS with esModuleInterop, this needs __importStar + __createBinding.
-        if self.is_commonjs()
+        if is_top_level_export
+            && self.is_commonjs()
             && self.ctx.options.es_module_interop
             && export_decl.module_specifier.is_some()
             && export_decl.export_clause.is_some()
@@ -644,7 +729,8 @@ impl<'a> LoweringPass<'a> {
 
         // Detect CommonJS helpers: export { default } from "mod" or export { default as X } from "mod"
         // In CJS with esModuleInterop, re-exporting `default` needs __importDefault.
-        if self.is_commonjs()
+        if is_top_level_export
+            && self.is_commonjs()
             && self.ctx.options.es_module_interop
             && export_decl.module_specifier.is_some()
             && let Some(clause_node) = self.arena.get(export_decl.export_clause)
@@ -679,7 +765,7 @@ impl<'a> LoweringPass<'a> {
             });
             if has_default_specifier {
                 let helpers = self.transforms.helpers_mut();
-                helpers.import_default = true;
+                helpers.mark_import_default();
             }
         }
 
@@ -740,6 +826,15 @@ impl<'a> LoweringPass<'a> {
                     } else {
                         if self.ctx.needs_es2022_lowering && self.class_has_private_members(class) {
                             self.mark_class_helpers(export_decl.export_clause, heritage);
+                        }
+                        let target_supports_native_decorators = self.ctx.options.target
+                            == ScriptTarget::ESNext
+                            && self.ctx.options.use_define_for_class_fields;
+                        if !self.ctx.options.legacy_decorators
+                            && !target_supports_native_decorators
+                            && self.class_has_decorators(class)
+                        {
+                            self.mark_tc39_decorator_helpers(class);
                         }
                         TransformDirective::CommonJSExportDefaultExpr
                     };
@@ -821,6 +916,7 @@ impl<'a> LoweringPass<'a> {
         let mut directives = Vec::new();
         if self.ctx.target_es5 {
             if func.is_async {
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 if func.asterisk_token {
                     self.mark_async_generator_helpers();
                 } else {
@@ -829,12 +925,10 @@ impl<'a> LoweringPass<'a> {
                 directives.push(TransformDirective::ES5AsyncFunction { function_node });
             } else if func.asterisk_token {
                 self.transforms.helpers_mut().generator = true;
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 directives.push(TransformDirective::ES5GeneratorFunction { function_node });
-            } else if self.function_parameters_need_es5_transform(&func.parameters) {
-                // Mark rest helper if parameters have rest
-                if self.function_parameters_need_rest_helper(&func.parameters) {
-                    self.transforms.helpers_mut().rest = true;
-                }
+            } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 directives.push(TransformDirective::ES5FunctionParameters { function_node });
             }
         } else if func.is_async
@@ -847,6 +941,9 @@ impl<'a> LoweringPass<'a> {
                 // ES2015/ES2016: async functions need __awaiter (generators are native)
                 self.mark_async_helpers();
             }
+        } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
+            self.mark_function_parameter_transform_helpers(&func.parameters);
+            directives.push(TransformDirective::ES5FunctionParameters { function_node });
         }
 
         directives.push(TransformDirective::CommonJSExportDefaultExpr);
@@ -971,28 +1068,7 @@ impl<'a> LoweringPass<'a> {
             self.transforms.helpers_mut().set_function_name = true;
         }
         if has_tc39_decorators {
-            let needs_prop_key = self.class_has_computed_decorated_member(class);
-            let needs_set_function_name = self.class_has_private_decorated_member(class);
-            // __setFunctionName is needed when there are class-level decorators
-            // AND we're in ES2015 mode (IIFE pattern with __setFunctionName call).
-            // In ES2022+ mode, it's not used for class decorators.
-            let needs_class_set_fn_name = (self.ctx.target_es5 || self.ctx.needs_es2022_lowering)
-                && class.modifiers.as_ref().is_some_and(|mods| {
-                    mods.nodes.iter().any(|&mod_idx| {
-                        self.arena
-                            .get(mod_idx)
-                            .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
-                    })
-                });
-            let helpers = self.transforms.helpers_mut();
-            helpers.es_decorate = true;
-            helpers.run_initializers = true;
-            if needs_prop_key {
-                helpers.prop_key = true;
-            }
-            if needs_set_function_name || needs_class_set_fn_name {
-                helpers.set_function_name = true;
-            }
+            self.mark_tc39_decorator_helpers(class);
         }
 
         // Determine the base transform
@@ -1199,17 +1275,14 @@ impl<'a> LoweringPass<'a> {
             } else {
                 self.mark_async_helpers();
             }
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             TransformDirective::ES5AsyncFunction { function_node: idx }
         } else if self.ctx.target_es5 && func.asterisk_token {
             self.transforms.helpers_mut().generator = true;
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             TransformDirective::ES5GeneratorFunction { function_node: idx }
-        } else if self.ctx.target_es5
-            && self.function_parameters_need_es5_transform(&func.parameters)
-        {
-            // Mark rest helper if parameters have rest
-            if self.function_parameters_need_rest_helper(&func.parameters) {
-                self.transforms.helpers_mut().rest = true;
-            }
+        } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
+            self.mark_function_parameter_transform_helpers(&func.parameters);
             TransformDirective::ES5FunctionParameters { function_node: idx }
         } else {
             TransformDirective::Identity
@@ -1366,6 +1439,8 @@ impl<'a> LoweringPass<'a> {
 
         // Get the namespace root name for merging detection
         let namespace_name = self.get_module_root_name_text(module_decl.name);
+        let namespace_has_runtime_value =
+            emit_utils::module_body_has_runtime_value_declarations(self.arena, module_decl.body);
 
         // Check if this name has already been declared (class/enum/function/namespace)
         // If so, we should NOT emit 'var' for this namespace
@@ -1381,8 +1456,8 @@ impl<'a> LoweringPass<'a> {
             .is_some_and(|n| self.re_exported_names.contains(n));
 
         // Track this name as declared
-        if let Some(name) = namespace_name {
-            self.declared_names.insert(name);
+        if namespace_has_runtime_value && let Some(ref name) = namespace_name {
+            self.declared_names.insert(name.clone());
         }
         let is_exported = self.is_commonjs()
             && !self.has_export_assignment
@@ -1409,8 +1484,10 @@ impl<'a> LoweringPass<'a> {
 
         let final_directive = if is_exported {
             if let Some(export_name) = module_name {
+                let export_names =
+                    self.commonjs_export_names_for_local(namespace_name.as_deref(), export_name);
                 let export_directive = TransformDirective::CommonJSExport {
-                    names: Arc::from(vec![export_name]),
+                    names: export_names,
                     is_default: false,
                     inner: Box::new(TransformDirective::Identity),
                 };
@@ -1473,6 +1550,9 @@ impl<'a> LoweringPass<'a> {
             return;
         };
 
+        let mut es5_captures_this = false;
+        let mut es5_captures_arguments = false;
+
         if self.ctx.target_es5 {
             let malformed_return_type = arrow.type_annotation.is_some()
                 && self
@@ -1490,11 +1570,16 @@ impl<'a> LoweringPass<'a> {
                 return;
             }
 
-            let captures_this = contains_this_reference(self.arena, idx);
+            let contains_this = contains_this_reference(self.arena, idx);
+            let async_arrow_needs_awaiter_this =
+                arrow.is_async && self.enclosing_function_bodies.len() > 1;
+            let captures_this = contains_this || async_arrow_needs_awaiter_this;
             let captures_arguments = contains_arguments_reference(self.arena, idx);
+            es5_captures_this = captures_this;
+            es5_captures_arguments = captures_arguments;
 
             tracing::debug!(
-                "[lowering][arrow] idx={} captures_this={captures_this} is_async={}",
+                "[lowering][arrow] idx={} contains_this={contains_this} captures_this={captures_this} is_async={}",
                 idx.0,
                 arrow.is_async
             );
@@ -1519,11 +1604,14 @@ impl<'a> LoweringPass<'a> {
             if arrow.is_async {
                 self.mark_async_helpers();
             }
+            self.mark_function_parameter_transform_helpers(&arrow.parameters);
 
-            // If this arrow function captures 'this', increment the capture level
-            // so that nested 'this' references get substituted.
+            // If this arrow function captures lexical `this`, increment the
+            // capture level so that nested `this` references get substituted.
             // Also mark the enclosing function body so the emitter inserts
             // `var _this = this;` at the start of that scope.
+            // Async arrows need the lexical thisArg passed to `__awaiter` even
+            // when the generator body does not spell `this`.
             // But NOT when inside an ES5 class — class_es5_ir handles _this
             // capture independently within constructor/method bodies.
             if captures_this {
@@ -1549,6 +1637,14 @@ impl<'a> LoweringPass<'a> {
         } else if self.ctx.needs_async_lowering && arrow.is_async {
             // ES2015/ES2016: arrow syntax is native but async needs lowering
             self.mark_async_helpers();
+        } else if !arrow.is_async
+            && self.function_parameters_need_body_prologue_transform(&arrow.parameters)
+        {
+            self.mark_function_parameter_transform_helpers(&arrow.parameters);
+            self.transforms.insert(
+                idx,
+                TransformDirective::ES5FunctionParameters { function_node: idx },
+            );
         }
 
         for &param_idx in &arrow.parameters.nodes {
@@ -1561,13 +1657,11 @@ impl<'a> LoweringPass<'a> {
 
         // Restore capture level after visiting the arrow function body
         if self.ctx.target_es5 {
-            let captures_this = contains_this_reference(self.arena, idx);
-            if captures_this {
+            if es5_captures_this {
                 self.this_capture_level -= 1;
             }
 
-            let captures_arguments = contains_arguments_reference(self.arena, idx);
-            if captures_arguments {
+            if es5_captures_arguments {
                 self.arguments_capture_level -= 1;
             }
         }
@@ -1609,6 +1703,9 @@ impl<'a> LoweringPass<'a> {
                 self.visit(mod_idx);
             }
             self.transforms.helpers_mut().decorate = prev_decorate;
+        }
+        if ctor.body.is_some() {
+            self.mark_function_parameter_transform_helpers(&ctor.parameters);
         }
         for &param_idx in &ctor.parameters.nodes {
             self.visit(param_idx);
@@ -1722,11 +1819,11 @@ impl<'a> LoweringPass<'a> {
                 if self.call_spread_needs_spread_array(args.nodes.as_slice())
                     || self.ctx.options.downlevel_iteration
                 {
-                    self.transforms.helpers_mut().spread_array = true;
+                    self.transforms.helpers_mut().mark_spread_array();
                     // When downlevelIteration is enabled, spread on iterables
                     // needs __read to convert iterator results to arrays.
                     if self.ctx.options.downlevel_iteration {
-                        self.transforms.helpers_mut().read = true;
+                        self.transforms.helpers_mut().mark_read();
                     }
                 }
             }
@@ -1759,9 +1856,9 @@ impl<'a> LoweringPass<'a> {
                     .insert(idx, TransformDirective::ES5NewSpread { new_expr: idx });
                 // New expressions always need __spreadArray because we
                 // prepend void 0 to the args array for bind().
-                self.transforms.helpers_mut().spread_array = true;
+                self.transforms.helpers_mut().mark_spread_array();
                 if self.ctx.options.downlevel_iteration {
-                    self.transforms.helpers_mut().read = true;
+                    self.transforms.helpers_mut().mark_read();
                 }
             }
         }
@@ -1825,6 +1922,7 @@ impl<'a> LoweringPass<'a> {
 
         if self.ctx.target_es5 {
             if func.is_async {
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 if func.asterisk_token {
                     self.mark_async_generator_helpers();
                 } else {
@@ -1836,14 +1934,13 @@ impl<'a> LoweringPass<'a> {
                 );
             } else if func.asterisk_token {
                 self.transforms.helpers_mut().generator = true;
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 self.transforms.insert(
                     idx,
                     TransformDirective::ES5GeneratorFunction { function_node: idx },
                 );
-            } else if self.function_parameters_need_es5_transform(&func.parameters) {
-                if self.function_parameters_need_rest_helper(&func.parameters) {
-                    self.transforms.helpers_mut().rest = true;
-                }
+            } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
+                self.mark_function_parameter_transform_helpers(&func.parameters);
                 self.transforms.insert(
                     idx,
                     TransformDirective::ES5FunctionParameters { function_node: idx },
@@ -1860,6 +1957,12 @@ impl<'a> LoweringPass<'a> {
                 // ES2015/ES2016: non-generator async functions need __awaiter
                 self.mark_async_helpers();
             }
+        } else if self.function_parameters_need_body_prologue_transform(&func.parameters) {
+            self.mark_function_parameter_transform_helpers(&func.parameters);
+            self.transforms.insert(
+                idx,
+                TransformDirective::ES5FunctionParameters { function_node: idx },
+            );
         }
 
         for &param_idx in &func.parameters.nodes {

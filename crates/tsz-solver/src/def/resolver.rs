@@ -974,6 +974,7 @@ impl TypeResolver for TypeEnvironment {
                 .as_ref()
                 .and_then(|store| store.find_def_by_symbol(def_id.0))
         })?;
+        tsz_common::perf_counters::record_type_environment_raw_symbol_lazy_fallback();
         tracing::trace!(
             target: "tsz::solver::def_id",
             raw_def_id = def_id.0,

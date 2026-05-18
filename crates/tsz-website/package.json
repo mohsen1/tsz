@@ -6,6 +6,7 @@
   "scripts": {
     "build": "node scripts/sync-docs.mjs && node scripts/build-playground.mjs && eleventy",
     "build:playground": "node scripts/build-playground.mjs",
+    "test:benchmarks": "node scripts/benchmark-data-smoke.mjs",
     "dev": "node scripts/dev.mjs",
     "build:legacy": "node build.mjs"
   },

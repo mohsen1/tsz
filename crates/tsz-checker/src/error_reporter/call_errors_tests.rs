@@ -432,6 +432,57 @@ export function css<S extends { [K in keyof S]: string }>(styles: S): string {
 }
 
 #[test]
+fn ts2345_keyof_parameter_display_uses_named_sibling_argument_type() {
+    let source = r#"
+interface Box {
+  first: number;
+  second: number;
+}
+declare const box: Box;
+declare function get<T>(obj: T, key: keyof T): void;
+get(box, "missing");
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text.contains(
+            "Argument of type '\"missing\"' is not assignable to parameter of type 'keyof Box'."
+        ),
+        "Expected keyof parameter display to use the sibling argument's named type, got: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2345_keyof_parameter_display_is_independent_of_type_parameter_name() {
+    let source = r#"
+interface Settings {
+  host: string;
+  port: number;
+}
+declare const settings: Settings;
+declare function read<Value>(value: Value, key: keyof Value): void;
+read(settings, "missing");
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text
+            .contains("parameter of type 'keyof Settings'"),
+        "Expected renamed generic parameter path to display 'keyof Settings', got: {diag:?}"
+    );
+}
+
+#[test]
 fn ts2345_callback_target_display_preserves_unresolved_qualified_type_name() {
     let source = r#"
 declare function readdir(

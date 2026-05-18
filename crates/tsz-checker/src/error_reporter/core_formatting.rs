@@ -1478,7 +1478,9 @@ impl<'a> CheckerState<'a> {
             return target_str.to_string();
         }
 
-        if target_str.contains('<') || self.ts2820_target_contains_alias_surface(target) {
+        if self.ts2820_target_contains_application_surface(target)
+            || self.ts2820_target_contains_alias_surface(target)
+        {
             Self::widen_numeric_member_literals_in_display_text(target_str)
         } else {
             expanded_target_str
@@ -1548,6 +1550,34 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn ts2820_target_contains_application_surface(&self, target: TypeId) -> bool {
+        if self.ts2820_is_named_application_surface(target) {
+            return true;
+        }
+
+        self.ctx
+            .types
+            .get_display_alias(target)
+            .is_some_and(|alias| self.ts2820_is_named_application_surface(alias))
+    }
+
+    fn ts2820_is_named_application_surface(&self, target: TypeId) -> bool {
+        let Some((base, args)) =
+            crate::query_boundaries::common::application_info(self.ctx.types, target)
+        else {
+            return false;
+        };
+        !args.is_empty() && self.ts2820_application_base_has_named_surface(base)
+    }
+
+    fn ts2820_application_base_has_named_surface(&self, base: TypeId) -> bool {
+        crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
+            .or_else(|| self.ctx.definition_store.find_def_for_type(base))
+            .is_some()
+            || self.ctx.types.get_display_alias(base).is_some()
+            || self.lookup_type_alias_name_for_display(base).is_some()
     }
 
     pub(super) fn first_nonpublic_constructor_param_property(
@@ -1918,7 +1948,6 @@ impl<'a> CheckerState<'a> {
         let name = self.ctx.types.resolve_atom_ref(def.name);
         Some(name.to_string())
     }
-
     pub(crate) fn recursive_non_generic_alias_body_name(&self, ty: TypeId) -> String {
         crate::query_boundaries::recursive_alias::recursive_non_generic_type_alias_body_name(
             self.ctx.types.as_type_database(),

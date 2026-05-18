@@ -41,6 +41,12 @@ impl<'a> FlowAnalyzer<'a> {
     ) -> bool {
         let left = self.skip_parenthesized(left);
         let target = self.skip_parenthesized(target);
+        if !check_property_access
+            && self.is_plain_identifier_reference(target)
+            && self.is_member_access_reference(left)
+        {
+            return false;
+        }
         if self.is_matching_reference(left, target) {
             return true;
         }
@@ -165,6 +171,20 @@ impl<'a> FlowAnalyzer<'a> {
         false
     }
 
+    fn is_plain_identifier_reference(&self, idx: NodeIndex) -> bool {
+        self.arena
+            .get(idx)
+            .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+    }
+
+    fn is_member_access_reference(&self, idx: NodeIndex) -> bool {
+        self.arena.get(idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::QUALIFIED_NAME
+        })
+    }
+
     pub(crate) fn array_mutation_affects_reference(
         &self,
         call: &CallExprData,
@@ -220,9 +240,7 @@ impl<'a> FlowAnalyzer<'a> {
             if self.contains_optional_chain(predicate_target)
                 && self.is_optional_chain_prefix(predicate_target, target)
             {
-                let narrowing = self.make_narrowing_context();
-                let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                return Some(narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED));
+                return Some(flow_boundary::narrow_non_nullish(self.interner, type_id));
             }
             // Handle assertion predicates where the asserted condition is itself
             // a call with a type predicate (or a negation thereof).
@@ -869,8 +887,7 @@ impl<'a> FlowAnalyzer<'a> {
                         .any(|m| *m == TypeId::NULL || *m == TypeId::UNDEFINED)
                 );
                 if is_nonnullable_shaped && source_is_nullable {
-                    let excluded = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                    let excluded = narrowing.narrow_excluding_type(excluded, TypeId::UNDEFINED);
+                    let excluded = flow_boundary::narrow_non_nullish(self.interner, type_id);
                     if excluded != type_id && excluded != TypeId::NEVER {
                         return excluded;
                     }
@@ -983,10 +1000,7 @@ impl<'a> FlowAnalyzer<'a> {
         if symbol.has_any_flags(symbol_flags::INTERFACE)
             && symbol.has_any_flags(symbol_flags::VARIABLE)
         {
-            return Some(
-                self.resolve_symbol_to_lazy(symbol_ref)
-                    .unwrap_or_else(|| self.interner.reference(symbol_ref)),
-            );
+            return self.resolve_symbol_to_lazy(symbol_ref);
         }
 
         // For FUNCTION symbols (e.g., JS constructor functions with @constructor),

@@ -444,6 +444,29 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Returns whether the final pending comment before `pos` has a trailing
+    /// newline, without advancing the global comment cursor.
+    pub(in crate::emitter) fn last_pending_comment_before_pos_has_trailing_newline(
+        &self,
+        pos: u32,
+    ) -> bool {
+        if self.ctx.options.remove_comments {
+            return false;
+        }
+        let actual_start = self.skip_trivia_forward(pos, pos + 1024);
+        let mut scan_idx = self.comment_emit_idx;
+        let mut last_has_trailing_newline = false;
+        while scan_idx < self.all_comments.len() {
+            let comment = &self.all_comments[scan_idx];
+            if comment.end > actual_start {
+                break;
+            }
+            last_has_trailing_newline = comment.has_trailing_new_line;
+            scan_idx += 1;
+        }
+        last_has_trailing_newline
+    }
+
     /// Emit comments written between a `...` token and the following operand
     /// or binding name. TSC keeps these comments glued to the spread/rest token
     /// instead of treating them as ordinary leading comments on the operand.

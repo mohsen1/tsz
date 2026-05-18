@@ -90,6 +90,29 @@ function f() {
 }
 
 #[test]
+fn unresolved_await_commented_call_in_sync_function_reports_async_suggestion() {
+    let codes = codes(
+        r#"
+declare function value(): number;
+function f() {
+    const x = await /* comment */ (value());
+}
+"#,
+    );
+
+    assert!(
+        codes.contains(
+            &diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_TO_WRITE_THIS_IN_AN_ASYNC_FUNCTION
+        ),
+        "comment-separated unresolved `await` call callee should report TS2311, got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
+        "comment-separated call syntax should not fall back to generic TS2304, got {codes:?}"
+    );
+}
+
+#[test]
 fn bare_unresolved_await_keeps_generic_cannot_find_name() {
     let codes = codes(
         r#"

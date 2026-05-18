@@ -119,7 +119,7 @@ impl<'a> CheckerState<'a> {
         source_prop_type: TypeId,
         target: TypeId,
         target_prop_type: TypeId,
-    ) -> bool {
+    ) {
         let prop_name_str = self.ctx.types.resolve_atom(prop_name);
         let target_prop_type = self.mapped_object_literal_property_check_type(
             target,
@@ -131,7 +131,7 @@ impl<'a> CheckerState<'a> {
             target_prop_type,
             TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
         ) {
-            return false;
+            return;
         }
 
         // Function-like source values (arrow / function expression / method
@@ -153,7 +153,7 @@ impl<'a> CheckerState<'a> {
                 )
             })
         {
-            return false;
+            return;
         }
 
         // Defer to the regular property-comparison path unless the target is a
@@ -175,7 +175,7 @@ impl<'a> CheckerState<'a> {
                     })
         };
         if !target_is_simple {
-            return false;
+            return;
         }
 
         // Skip when the source object literal contains *any* computed
@@ -196,7 +196,7 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
             })
         {
-            return false;
+            return;
         }
 
         // Use the caller's already-computed source_prop_type rather than
@@ -209,11 +209,11 @@ impl<'a> CheckerState<'a> {
             source_prop_type,
             TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
         ) {
-            return false;
+            return;
         }
 
         if self.is_assignable_to(source_prop_type, target_prop_type) {
-            return false;
+            return;
         }
 
         let target_prop_type_for_message =
@@ -226,7 +226,6 @@ impl<'a> CheckerState<'a> {
             target_prop_type_for_message,
             report_idx,
         );
-        true
     }
 
     fn object_literal_property_value_diagnostic_target_type(&mut self, target: TypeId) -> TypeId {

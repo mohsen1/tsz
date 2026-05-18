@@ -93,7 +93,7 @@ ci_suite_needs_group() {
       [[ "$suite" == "wasm" || "$suite" == "wasm-web" || "$suite" == "wasm-all" ]]
       ;;
     node)
-      [[ "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* || "$suite" == "node-harness-prep" ]]
+      [[ "$suite" == "lint" || "$suite" == conformance* || "$suite" == emit* || "$suite" == fourslash* || "$suite" == "node-harness-prep" ]]
       ;;
     rust_compile)
       ci_suite_needs_rust_compile "$suite"
@@ -137,8 +137,8 @@ ci_suite_caches() {
       echo "cargo-home typescript-source npm scripts-node-modules typescript-harness typescript-node-modules dist-fast-commit"
       ;;
     lint)
-      # Only `cargo clippy` on workspace crates. It does not read the
-      # TypeScript corpus or run Node tooling.
+      # Cargo/workspace lint plus lightweight Node script guardrails.
+      # It does not read the TypeScript corpus or install npm packages.
       echo "cargo-home"
       ;;
     build|unit)

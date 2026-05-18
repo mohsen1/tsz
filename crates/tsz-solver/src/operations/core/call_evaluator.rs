@@ -8,6 +8,7 @@ use crate::types::{
 use crate::visitor::TypeVisitor;
 use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use std::cell::{Cell, RefCell};
 use tracing::debug;
 
@@ -323,16 +324,95 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     /// fresh-object-literal excess property checking against the constraint
     /// shape (#6135).
     ///
-    /// For `f<T extends C>(p: T)` tsc validates the *inferred* T against C;
-    /// extra properties on a fresh object-literal argument become part of T,
-    /// not excess relative to C.
+    /// For `f<T extends C>(p: T)` tsc validates the *inferred* `T` against
+    /// `C`; extra properties on a fresh object-literal argument become part
+    /// of `T`, not excess relative to `C`.
+    ///
+    /// Readonly tuple sources are also allowed against mutable
+    /// array/tuple constraints; see
+    /// [`Self::arg_satisfies_constraint_via_readonly_widening`] and issue
+    /// #5804.
     pub(crate) fn arg_satisfies_type_parameter_constraint(
         &mut self,
         arg_type: TypeId,
         constraint: TypeId,
     ) -> bool {
         let non_fresh = crate::relations::freshness::widen_freshness(self.interner, arg_type);
-        self.checker.is_assignable_to(non_fresh, constraint)
+        if self.checker.is_assignable_to(non_fresh, constraint) {
+            return true;
+        }
+        self.arg_satisfies_constraint_via_readonly_widening(non_fresh, constraint)
+    }
+
+    /// Constraint-boundary loosening for readonly tuple sources against
+    /// mutable array/tuple constraints.
+    ///
+    /// Returns true when `constraint` is structurally a mutable array or
+    /// tuple type (or a union/intersection of such) and `source` is a
+    /// `readonly [...]` tuple whose elements satisfy the constraint after
+    /// the readonly wrapper is stripped.
+    ///
+    /// Scope: this rule only applies to readonly **tuple** sources. Plain
+    /// `ReadonlyArray<X>` / `readonly X[]` sources continue to be rejected
+    /// at the constraint boundary - that matches tsc, which preserves the
+    /// readonly-to-mutable mismatch for unbounded readonly arrays but
+    /// accepts readonly tuples because their element list is fixed and the
+    /// element types themselves can be verified against the constraint's
+    /// element type. The same distinction is enforced by the
+    /// readonly-to-mutable explain path in `subtype::explain` (see the
+    /// `source_inner_is_tuple` short-circuit there).
+    ///
+    /// Renaming the type parameter does not affect behavior because the
+    /// rule is keyed on the structural shape of the constraint, not on any
+    /// identifier name. The loosening is intentionally scoped to the
+    /// generic-call constraint boundary; direct assignments like
+    /// `const a: unknown[] = readonlyTuple` continue to error via the
+    /// standard assignability path (TS4104).
+    pub(crate) fn arg_satisfies_constraint_via_readonly_widening(
+        &mut self,
+        source: TypeId,
+        constraint: TypeId,
+    ) -> bool {
+        use crate::visitor::{readonly_inner_type, tuple_list_id};
+        let Some(inner) = readonly_inner_type(self.interner, source) else {
+            return false;
+        };
+        // Only readonly tuple sources participate: readonly plain arrays
+        // and readonly wrappers over other shapes (objects, mapped types,
+        // etc.) keep their normal assignability behavior.
+        if tuple_list_id(self.interner, inner).is_none() {
+            return false;
+        }
+        if !self.constraint_is_mutable_array_or_tuple_shape(constraint) {
+            return false;
+        }
+        self.checker.is_assignable_to(inner, constraint)
+    }
+
+    /// Recognize constraints whose top-level shape is a mutable
+    /// `Array<X>` / tuple, optionally combined under unions/intersections.
+    /// `ReadonlyArray<X>` / `readonly [...]` constraints are *not* mutable
+    /// and are excluded - the source would already be assignable to them
+    /// without any loosening.
+    fn constraint_is_mutable_array_or_tuple_shape(&self, constraint: TypeId) -> bool {
+        use crate::visitor::{array_element_type, readonly_inner_type, tuple_list_id};
+        if readonly_inner_type(self.interner, constraint).is_some() {
+            return false;
+        }
+        if array_element_type(self.interner, constraint).is_some()
+            || tuple_list_id(self.interner, constraint).is_some()
+        {
+            return true;
+        }
+        match self.interner.lookup(constraint) {
+            Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => self
+                .interner
+                .type_list(list_id)
+                .iter()
+                .copied()
+                .any(|member| self.constraint_is_mutable_array_or_tuple_shape(member)),
+            _ => false,
+        }
     }
 
     pub(crate) fn is_function_union_compat(
@@ -901,7 +981,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             let params = (0..effective_arg_count)
                 .filter_map(|index| {
-                    let mut param_types: Vec<TypeId> = signatures
+                    let mut param_types: SmallVec<[TypeId; 4]> = signatures
                         .iter()
                         .filter_map(|sig| {
                             extract_param_type_at_for_call(
@@ -913,25 +993,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         })
                         .collect();
                     if param_types.len() > 1 && param_types.iter().any(|&ty| ty != TypeId::ANY) {
-                        param_types.retain(|&ty| ty != TypeId::ANY);
+                        param_types.retain(|ty| *ty != TypeId::ANY);
                     }
                     match param_types.len() {
                         0 => None,
                         1 => Some(ParamInfo::unnamed(param_types[0])),
-                        _ => Some(ParamInfo::unnamed(db.union_literal_reduce(param_types))),
+                        _ => Some(ParamInfo::unnamed(
+                            db.union_literal_reduce(param_types.into_vec()),
+                        )),
                     }
                 })
                 .collect();
 
-            let mut return_types: Vec<TypeId> =
+            let mut return_types: SmallVec<[TypeId; 4]> =
                 signatures.iter().map(|sig| sig.return_type).collect();
             if return_types.len() > 1 && return_types.iter().any(|&ty| ty != TypeId::ANY) {
-                return_types.retain(|&ty| ty != TypeId::ANY);
+                return_types.retain(|ty| *ty != TypeId::ANY);
             }
             let return_type = match return_types.len() {
                 0 => first.return_type,
                 1 => return_types[0],
-                _ => db.union_literal_reduce(return_types),
+                _ => db.union_literal_reduce(return_types.into_vec()),
             };
 
             let type_params = if signatures
@@ -949,12 +1031,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             {
                 first.this_type
             } else {
-                let this_types: Vec<_> =
+                let this_types: SmallVec<[TypeId; 4]> =
                     signatures.iter().filter_map(|sig| sig.this_type).collect();
                 match this_types.len() {
                     0 => None,
                     1 => Some(this_types[0]),
-                    _ => Some(db.union_literal_reduce(this_types)),
+                    _ => Some(db.union_literal_reduce(this_types.into_vec())),
                 }
             };
 
@@ -1004,7 +1086,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             let params = (0..effective_arg_count)
                 .filter_map(|index| {
-                    let mut param_types: Vec<TypeId> = shapes
+                    let mut param_types: SmallVec<[TypeId; 4]> = shapes
                         .iter()
                         .filter_map(|shape| {
                             extract_param_type_at_for_call(
@@ -1016,25 +1098,27 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         })
                         .collect();
                     if param_types.len() > 1 && param_types.iter().any(|&ty| ty != TypeId::ANY) {
-                        param_types.retain(|&ty| ty != TypeId::ANY);
+                        param_types.retain(|ty| *ty != TypeId::ANY);
                     }
                     match param_types.len() {
                         0 => None,
                         1 => Some(ParamInfo::unnamed(param_types[0])),
-                        _ => Some(ParamInfo::unnamed(db.union_literal_reduce(param_types))),
+                        _ => Some(ParamInfo::unnamed(
+                            db.union_literal_reduce(param_types.into_vec()),
+                        )),
                     }
                 })
                 .collect();
 
-            let mut return_types: Vec<TypeId> =
+            let mut return_types: SmallVec<[TypeId; 4]> =
                 shapes.iter().map(|shape| shape.return_type).collect();
             if return_types.len() > 1 && return_types.iter().any(|&ty| ty != TypeId::ANY) {
-                return_types.retain(|&ty| ty != TypeId::ANY);
+                return_types.retain(|ty| *ty != TypeId::ANY);
             }
             let return_type = match return_types.len() {
                 0 => first.return_type,
                 1 => return_types[0],
-                _ => db.union_literal_reduce(return_types),
+                _ => db.union_literal_reduce(return_types.into_vec()),
             };
 
             let this_type = if shapes
@@ -1043,12 +1127,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             {
                 first.this_type
             } else {
-                let this_types: Vec<_> =
+                let this_types: SmallVec<[TypeId; 4]> =
                     shapes.iter().filter_map(|shape| shape.this_type).collect();
                 match this_types.len() {
                     0 => None,
                     1 => Some(this_types[0]),
-                    _ => Some(db.union_literal_reduce(this_types)),
+                    _ => Some(db.union_literal_reduce(this_types.into_vec())),
                 }
             };
 

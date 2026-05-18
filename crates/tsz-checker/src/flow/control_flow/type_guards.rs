@@ -208,7 +208,7 @@ impl<'a> FlowAnalyzer<'a> {
             return pos;
         }
 
-        let result = self.compute_last_assignment_pos(reference);
+        let result = self.compute_last_assignment_pos(symbol_id, reference);
 
         // Store in shared cache
         if let Some(cache) = &self.shared_symbol_last_assignment_pos {
@@ -220,7 +220,11 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Internal: walk all flow nodes to find the position of the last reassignment.
     /// Returns 0 if no reassignment found.
-    fn compute_last_assignment_pos(&self, reference: NodeIndex) -> u32 {
+    fn compute_last_assignment_pos(
+        &self,
+        symbol_id: tsz_binder::SymbolId,
+        reference: NodeIndex,
+    ) -> u32 {
         use tsz_binder::flow_flags;
 
         let mut last_pos: u32 = 0;
@@ -251,7 +255,9 @@ impl<'a> FlowAnalyzer<'a> {
                 continue;
             }
 
-            // Check if this assignment targets our reference
+            if self.assignment_is_known_disjoint_from_symbol(flow.node, symbol_id) {
+                continue;
+            }
             if self.assignment_targets_reference(flow.node, reference) {
                 let pos = node.pos;
                 if pos > last_pos {
@@ -276,7 +282,7 @@ impl<'a> FlowAnalyzer<'a> {
     ///    of the reference".
     fn has_assignment_in_nested_closure(
         &self,
-        _symbol_id: tsz_binder::SymbolId,
+        symbol_id: tsz_binder::SymbolId,
         decl_id: NodeIndex,
         reference: NodeIndex,
     ) -> bool {
@@ -309,6 +315,9 @@ impl<'a> FlowAnalyzer<'a> {
                 continue;
             }
 
+            if self.assignment_is_known_disjoint_from_symbol(flow.node, symbol_id) {
+                continue;
+            }
             if self.assignment_targets_reference(flow.node, reference) {
                 let assign_fn = self.find_enclosing_function_node(flow.node);
                 // If the assignment's enclosing function is *different* from the
@@ -321,6 +330,15 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         false
+    }
+
+    fn assignment_is_known_disjoint_from_symbol(
+        &self,
+        assignment_node: NodeIndex,
+        target_symbol: tsz_binder::SymbolId,
+    ) -> bool {
+        self.reference_symbol(assignment_node)
+            .is_some_and(|assignment_symbol| assignment_symbol != target_symbol)
     }
 
     /// Walk the parent chain from `node_idx` to find the nearest enclosing
@@ -369,6 +387,12 @@ impl<'a> FlowAnalyzer<'a> {
 
         let decl_id = symbol.value_declaration;
         if decl_id == NodeIndex::NONE {
+            return false;
+        }
+
+        let decl_fn = self.find_enclosing_function_node(decl_id);
+        let reference_fn = self.find_enclosing_function_node(reference);
+        if decl_fn.is_some() && decl_fn == reference_fn {
             return false;
         }
 
@@ -552,7 +576,11 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Check for literal comparison: x === "foo", x === 42
-        if let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target) {
+        // Loose equality (==) does not narrow non-nullish literals; x == null is already
+        // handled above as NullishEquality.
+        if !is_loose_equality
+            && let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target)
+        {
             return Some((TypeGuard::LiteralEquality(literal_type), target, false));
         }
 
@@ -887,17 +915,13 @@ impl<'a> FlowAnalyzer<'a> {
             && let Some(sym_id) = self.binder.get_global_type("ArrayBufferView")
         {
             let symbol_ref = SymbolRef(sym_id.0);
-            let mut view_type = self
-                .resolve_symbol_to_lazy(symbol_ref)
-                .unwrap_or_else(|| self.interner.reference(symbol_ref));
+            let mut view_type = self.resolve_symbol_to_lazy(symbol_ref)?;
 
             // ArrayBuffer.isView narrows to ArrayBufferView with the default
             // type argument (`ArrayBufferLike`) in TypeScript's lib.
             if let Some(array_buffer_like_sym) = self.binder.get_global_type("ArrayBufferLike") {
                 let array_buffer_like_ref = SymbolRef(array_buffer_like_sym.0);
-                let array_buffer_like = self
-                    .resolve_symbol_to_lazy(array_buffer_like_ref)
-                    .unwrap_or_else(|| self.interner.reference(array_buffer_like_ref));
+                let array_buffer_like = self.resolve_symbol_to_lazy(array_buffer_like_ref)?;
 
                 view_type = self
                     .interner

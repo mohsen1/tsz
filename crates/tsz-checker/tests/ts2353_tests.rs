@@ -492,6 +492,51 @@ b = a;
 }
 
 #[test]
+fn mapped_application_assignment_reports_missing_property_with_renamed_keys() {
+    let source = r#"
+enum Kind { Left, Right }
+
+type Source<T extends Kind> = { tag: T; } & (
+  { tag: Kind.Left, leftOnly: string } |
+  { tag: Kind.Right, rightOnly: string }
+);
+
+type Projected<T extends Kind> = {
+  [Member in keyof Source<T>]: string;
+};
+
+declare let left: Projected<Kind.Left>;
+declare let right: Projected<Kind.Right>;
+left = right;
+right = left;
+"#;
+
+    let diags = get_diagnostics(source);
+    let ts2741: Vec<_> = diags.iter().filter(|(code, _)| *code == 2741).collect();
+    assert_eq!(
+        ts2741.len(),
+        2,
+        "Expected two TS2741 diagnostics for renamed remapped mapped assignments, got: {diags:?}"
+    );
+    assert!(
+        ts2741
+            .iter()
+            .any(|(_, message)| message.contains("Property 'leftOnly' is missing")),
+        "Expected missing-property diagnostic for 'leftOnly', got: {diags:?}"
+    );
+    assert!(
+        ts2741
+            .iter()
+            .any(|(_, message)| message.contains("Property 'rightOnly' is missing")),
+        "Expected missing-property diagnostic for 'rightOnly', got: {diags:?}"
+    );
+    assert!(
+        !diags.iter().any(|(code, _)| *code == 2322 || *code == 2353),
+        "Renamed remapped mapped assignment should classify as missing properties, got: {diags:?}"
+    );
+}
+
+#[test]
 fn mapped_array_as_clause_missing_named_property_beats_symbol_members() {
     let source = r#"
 declare const Symbol: {
@@ -1286,5 +1331,126 @@ const ti: TemplateIndexed = {
         ts2353.len(),
         1,
         "Property 'foo-bar' doesn't match either pattern in type literal; expected TS2353, got: {diags:?}"
+    );
+}
+
+// --- F-bounded interface excess-property tests (regression: stale resolve_cache) ---
+//
+// Rule: When an interface I extends a generic G<I>, object literal assignability
+// to I must see the full merged type (own props + heritage props). A stale
+// resolve_cache entry can make the checker see only own props, producing false
+// TS2353 for inherited properties (`children`, `parent`, etc.).
+
+fn ts2353_diags(source: &str) -> Vec<(u32, String)> {
+    get_diagnostics(source)
+        .into_iter()
+        .filter(|d| d.0 == 2353)
+        .collect()
+}
+
+const TREE_BTREE_DECLS: &str = "
+interface Tree<T extends Tree<T>> {
+    children: T[];
+}
+interface BTree extends Tree<BTree> {
+    value: number;
+}
+";
+
+#[test]
+fn fbounded_object_literal_no_false_ts2353_for_inherited_props_children_only() {
+    // Simplest F-bounded pattern — no parent field.
+    let ts2353 = ts2353_diags(&format!(
+        "{TREE_BTREE_DECLS}const bt: BTree = {{ value: 1, children: [] }};"
+    ));
+    assert!(
+        ts2353.is_empty(),
+        "F-bounded: 'children' is an inherited property of BTree and must not trigger TS2353; got: {ts2353:?}"
+    );
+}
+
+#[test]
+fn fbounded_object_literal_no_false_ts2353_renamed_param() {
+    // Same rule, different type-parameter name (U instead of T).
+    let ts2353 = ts2353_diags(
+        r#"
+interface Hierarchical<U extends Hierarchical<U>> {
+    children: U[];
+}
+interface Section extends Hierarchical<Section> {
+    title: string;
+}
+const s: Section = {
+    title: "intro",
+    children: [],
+};
+"#,
+    );
+    assert!(
+        ts2353.is_empty(),
+        "F-bounded (U param): 'children' is an inherited property and must not trigger TS2353; got: {ts2353:?}"
+    );
+}
+
+#[test]
+fn fbounded_object_literal_no_false_ts2353_with_parent_field() {
+    // Issue #6986 original repro: F-bounded interface with parent + children.
+    let ts2353 = ts2353_diags(
+        r#"
+interface MyNode<T extends MyNode<T>> {
+    parent: T | null;
+    children: T[];
+}
+interface FileNode extends MyNode<FileNode> {
+    name: string;
+}
+const file: FileNode = {
+    name: "root",
+    parent: null,
+    children: [],
+};
+"#,
+    );
+    assert!(
+        ts2353.is_empty(),
+        "F-bounded (parent + children): inherited properties must not trigger TS2353; got: {ts2353:?}"
+    );
+}
+
+#[test]
+fn fbounded_true_excess_property_still_errors() {
+    let ts2353 = ts2353_diags(&format!(
+        "{TREE_BTREE_DECLS}const bt: BTree = {{ value: 1, children: [], extra: true }};"
+    ));
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "F-bounded: 'extra' is a genuine excess property and must produce TS2353; got: {ts2353:?}"
+    );
+    assert!(
+        ts2353[0].1.contains("'extra'"),
+        "TS2353 message should mention 'extra'; got: {ts2353:?}"
+    );
+}
+
+#[test]
+fn fbounded_non_self_referential_generic_no_ts2353() {
+    let ts2353 = ts2353_diags(
+        r#"
+interface Container<T> {
+    items: T[];
+}
+interface StringContainer extends Container<string> {
+    name: string;
+}
+const sc: StringContainer = {
+    name: "test",
+    items: [],
+};
+"#,
+    );
+    assert!(
+        ts2353.is_empty(),
+        "Non-F-bounded: 'items' is an inherited property and must not trigger TS2353; got: {ts2353:?}"
     );
 }

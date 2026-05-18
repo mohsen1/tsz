@@ -24,6 +24,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+# Synthetic fixture generators are shared with the precommit microbench gate.
+# shellcheck source=lib/synthetic-generators.sh
+source "$SCRIPT_DIR/lib/synthetic-generators.sh"
+
 # Lib assets: benchmark tsz with embedded (comment-stripped) lib files by default.
 # Setting TSZ_LIB_DIR forces disk-based loading for explicit local overrides.
 if [ -n "${TSZ_LIB_DIR:-}" ]; then
@@ -58,50 +62,24 @@ TSC_NPM_SPEC="${TSC_NPM_SPEC:-}"
 
 # External benchmark fixtures (not checked into git)
 EXTERNAL_BENCH_DIR="${EXTERNAL_BENCH_DIR:-$BENCH_TARGET_DIR/external}"
-UTILITY_TYPES_REPO="${UTILITY_TYPES_REPO:-https://github.com/piotrwitek/utility-types.git}"
-# pinned to v3.11.0 commit for reproducible benchmarks
-UTILITY_TYPES_REF="${UTILITY_TYPES_REF:-2ee1f6ecb241651ab22390fee7ee5349942efda2}"
+# shellcheck source=scripts/bench/project-fixtures.sh
+source "$SCRIPT_DIR/project-fixtures.sh"
+# Keep benchmark/CI project metadata aligned with a single source of truth.
+tsz_sync_project_row_groups
+if command -v node >/dev/null 2>&1; then
+    tsz_validate_project_row_metadata
+fi
+# Project fixture pins live in project-fixtures.sh for benchmark/CI parity.
 UTILITY_TYPES_DIR="$EXTERNAL_BENCH_DIR/utility-types"
-TS_TOOLBELT_REPO="${TS_TOOLBELT_REPO:-https://github.com/millsp/ts-toolbelt.git}"
-# pinned commit for reproducible benchmarks
-TS_TOOLBELT_REF="${TS_TOOLBELT_REF:-b8a49285e3ed3a7d8bb8e0b433389eac46a5f140}"
 TS_TOOLBELT_DIR="$EXTERNAL_BENCH_DIR/ts-toolbelt"
-TS_ESSENTIALS_REPO="${TS_ESSENTIALS_REPO:-https://github.com/ts-essentials/ts-essentials.git}"
-# pinned commit for reproducible benchmarks
-TS_ESSENTIALS_REF="${TS_ESSENTIALS_REF:-5abe8700b42068048bd3c368e0531b6defe56558}"
 TS_ESSENTIALS_DIR="$EXTERNAL_BENCH_DIR/ts-essentials"
-NEXTJS_REPO="${NEXTJS_REPO:-https://github.com/vercel/next.js.git}"
-# pinned canary commit for reproducible benchmarks
-NEXTJS_REF="${NEXTJS_REF:-09851e208cc62c8b6fe7a953b42c88e843129178}"
 NEXTJS_DIR="$EXTERNAL_BENCH_DIR/next.js"
 NEXT_APP_BENCH_DIR="${NEXT_APP_BENCH_DIR:-$EXTERNAL_BENCH_DIR/next-app-live}"
 VITE_APP_BENCH_DIR="${VITE_APP_BENCH_DIR:-$EXTERNAL_BENCH_DIR/vite-vanilla-ts-live}"
-# Real-world reactive library — Observable / Subject deep generics, ~150 source files.
-# REF empty by default: the fixture clones the default branch tip. Set
-# RXJS_REF=<sha> to pin a specific commit for reproducible benches.
-RXJS_REPO="${RXJS_REPO:-https://github.com/ReactiveX/rxjs.git}"
-# Pinned to 7.8.2 — last release before the v8 monorepo split. The v8 layout
-# uses workspace-relative `@rxjs/observable` imports that require path mapping
-# our flat tsconfig doesn't model. 7.8.2 has the classic `src/internal` layout.
-RXJS_REF="${RXJS_REF:-e5351d02e225e275ac0e497c7b66eaa5f0c88791}"
 RXJS_DIR="$EXTERNAL_BENCH_DIR/rxjs"
-# Pure TypeScript utility types from sindresorhus — bigger surface than ts-toolbelt/ts-essentials.
-TYPE_FEST_REPO="${TYPE_FEST_REPO:-https://github.com/sindresorhus/type-fest.git}"
-# Pinned to v5.6.0 for benchmark reproducibility.
-TYPE_FEST_REF="${TYPE_FEST_REF:-4005f60b65a7bd224154d6da46f45a63b42ce70f}"
 TYPE_FEST_DIR="$EXTERNAL_BENCH_DIR/type-fest"
-# Schema validation library with deep z.infer<typeof> inference.
-ZOD_REPO="${ZOD_REPO:-https://github.com/colinhacks/zod.git}"
-# Pinned to v3.9.8 for benchmark reproducibility (zod v4 has its own monorepo).
-ZOD_REF="${ZOD_REF:-93b0b6892cc0cfee8d0bec4e2e1242c7df771f95}"
 ZOD_DIR="$EXTERNAL_BENCH_DIR/zod"
-# SQL query builder famous for extreme type-level inference (Kysely).
-KYSELY_REPO="${KYSELY_REPO:-https://github.com/kysely-org/kysely.git}"
-# Pinned to v0.28.16 for benchmark reproducibility.
-KYSELY_REF="${KYSELY_REF:-d4911be21cd568d3694dc7f879f72390635226d7}"
 KYSELY_DIR="$EXTERNAL_BENCH_DIR/kysely"
-LARGE_TS_REPO="${LARGE_TS_REPO:-https://github.com/mohsen1/large-ts-repo.git}"
-LARGE_TS_REF="${LARGE_TS_REF:-e1b22bda18664a507ed0da19c155e0365d585b18}"
 LARGE_TS_LOCAL_DIR="${HOME}/code/large-ts-repo"
 # The local fallback was previously implicit, which silently contaminated
 # PR-quality numbers on any developer machine that happened to have a
@@ -128,6 +106,11 @@ FILTER=""
 FORCE_REBUILD=false
 PREPARE_ONLY=false
 NEXTJS_BENCHMARK_ENABLED="${NEXTJS_BENCHMARK_ENABLED:-0}"
+TSZ_BENCH_INCLUDE_COMPILE_CANARIES="${TSZ_BENCH_INCLUDE_COMPILE_CANARIES:-0}"
+BENCH_NPM_INSTALL_TIMEOUT="${BENCH_NPM_INSTALL_TIMEOUT:-900}"
+BENCH_PGO_TSZ_TIMEOUT="${BENCH_PGO_TSZ_TIMEOUT:-900}"
+BENCH_CARGO_BUILD_TIMEOUT="${BENCH_CARGO_BUILD_TIMEOUT:-1200}"
+BENCH_PGO_MARKER="$TSZ_OUTPUT_DIR/.bench-pgo-optimized"
 while [[ $# -gt 0 ]]; do
     case $1 in
         --quick) QUICK_MODE=true; shift ;;
@@ -158,11 +141,23 @@ while [[ $# -gt 0 ]]; do
             echo "  TSC_NPM_SPEC=<spec>    Override pinned typescript npm version"
             echo "  TSZ=<path>             Use a specific tsz binary (skip benchmark build)"
             echo "  TSZ_LIB_DIR=<path>     Override tsz lib assets (default: embedded)"
+            echo "  TSZ_BENCH_INCLUDE_COMPILE_CANARIES=1 Include known-red project rows in local full runs"
             echo "  UTILITY_TYPES_REF=<sha> Override pinned utility-types commit"
             echo "  TS_TOOLBELT_REF=<sha>  Override pinned ts-toolbelt commit"
             echo "  TS_ESSENTIALS_REF=<sha> Override pinned ts-essentials commit"
             echo "  NEXTJS_REF=<sha>       Override pinned next.js commit"
             echo "  VITE_APP_BENCH_DIR=<path> Override generated Vite fixture directory"
+            echo "  BENCH_PGO=0            Skip PGO training (default: 1 when llvm-profdata is available)"
+            echo "  BENCH_REQUIRE_PGO=1    Fail instead of falling back to a non-PGO build (default: 0)"
+            echo "  BENCH_PGO_CACHE=0      Don't reuse the cached profdata across runs (default: 1)"
+            echo "  BENCH_PGO_FETCH_UTILITY_TYPES=0  Don't fetch utility-types for PGO training (default: 1)"
+            echo "  BENCH_PGO_TSZ_TIMEOUT=<seconds>  Timeout for each PGO training compiler invocation (default: 900)"
+            echo "  BENCH_CARGO_BUILD_TIMEOUT=<seconds>  Timeout for each cargo build in check_prerequisites (default: 1200)"
+            echo "  BENCH_PGO_FETCH_CORE_PROJECTS=1  Fetch/train ts-toolbelt/ts-essentials during PGO (default: 0; slower)"
+            echo "  BENCH_PGO_SYNTHETIC=0  Don't train PGO on generated benchmark stress cases (default: 1)"
+            echo "  BENCH_PGO_PANIC_UNWIND=1  Build the trainer with panic=unwind for crashy inputs (default: 0)"
+            echo "  BENCH_PGO_EXTRA_INPUTS=<path[:path]>  Extra .ts or tsconfig files to feed the PGO trainer"
+            echo "  BENCH_PGO_VERBOSE=1    Print per-input wall time during PGO Step 2"
             exit 0
             ;;
         *) shift ;;
@@ -199,6 +194,54 @@ print_header() {
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${BOLD}  $1${NC}"
     echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+}
+
+hash_stdin_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum | awk '{print $1}'
+    else
+        shasum -a 256 | awk '{print $1}'
+    fi
+}
+
+hash_file_sha256() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        shasum -a 256 "$1" | awk '{print $1}'
+    fi
+}
+
+pgo_profile_fingerprint() {
+    {
+        printf 'rustc=%s\n' "$(rustc -vV 2>/dev/null | tr '\n' ';')"
+        printf 'BENCH_PGO_SYNTHETIC=%s\n' "${BENCH_PGO_SYNTHETIC:-1}"
+        printf 'BENCH_PGO_FETCH_UTILITY_TYPES=%s\n' "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}"
+        printf 'BENCH_PGO_FETCH_CORE_PROJECTS=%s\n' "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}"
+        printf 'BENCH_PGO_PANIC_UNWIND=%s\n' "${BENCH_PGO_PANIC_UNWIND:-0}"
+        printf 'BENCH_PGO_EXTRA_INPUTS=%s\n' "${BENCH_PGO_EXTRA_INPUTS:-}"
+        printf 'UTILITY_TYPES_REF=%s\n' "$UTILITY_TYPES_REF"
+        printf 'TS_TOOLBELT_REF=%s\n' "$TS_TOOLBELT_REF"
+        printf 'TS_ESSENTIALS_REF=%s\n' "$TS_ESSENTIALS_REF"
+        printf 'RXJS_REF=%s\n' "$RXJS_REF"
+        printf 'TYPE_FEST_REF=%s\n' "$TYPE_FEST_REF"
+        if git -C "$PROJECT_ROOT/TypeScript" rev-parse HEAD >/dev/null 2>&1; then
+            printf 'TypeScript=%s\n' "$(git -C "$PROJECT_ROOT/TypeScript" rev-parse HEAD)"
+        fi
+        git -C "$PROJECT_ROOT" ls-files \
+            Cargo.lock \
+            Cargo.toml \
+            .cargo/config.toml \
+            'crates/**/Cargo.toml' \
+            'crates/**/*.rs' \
+            scripts/bench/project-fixtures.sh \
+            scripts/bench/bench-vs-tsgo.sh |
+            sort |
+            while IFS= read -r file; do
+                [ -f "$PROJECT_ROOT/$file" ] || continue
+                printf '%s  %s\n' "$(hash_file_sha256 "$PROJECT_ROOT/$file")" "$file"
+            done
+    } | hash_stdin_sha256
 }
 
 print_subheader() {
@@ -311,6 +354,24 @@ run_with_timeout() {
     # SIGKILL exit code is 137 (128+9)
     if [ "$exit_code" -eq 137 ]; then
         return 124
+    fi
+    return "$exit_code"
+}
+
+run_cargo_build() {
+    local description="$1"
+    shift
+
+    (cd "$PROJECT_ROOT" && run_with_timeout "$BENCH_CARGO_BUILD_TIMEOUT" env "$@")
+    local exit_code=$?
+    if [ "$exit_code" -eq 0 ]; then
+        return 0
+    fi
+
+    if [ "$exit_code" -eq 124 ]; then
+        echo -e "${RED}✗ $description timed out after ${BENCH_CARGO_BUILD_TIMEOUT}s${NC}"
+    else
+        echo -e "${RED}✗ $description failed (exit $exit_code)${NC}"
     fi
     return "$exit_code"
 }
@@ -520,12 +581,16 @@ ensure_tsgo() {
 
     if [ ! -x "$TSGO_LOCAL_BIN" ] || [ "$installed_spec" != "$TSGO_NPM_SPEC" ]; then
         echo -e "${CYAN}Installing tsgo locally (${TSGO_NPM_SPEC})...${NC}"
-        npm install \
+        if ! run_with_timeout "$BENCH_NPM_INSTALL_TIMEOUT" npm install \
             --prefix "$TSGO_TOOL_DIR" \
             --no-audit \
             --no-fund \
             --loglevel=error \
-            "$TSGO_NPM_SPEC" >/dev/null
+            "$TSGO_NPM_SPEC" >/dev/null; then
+            echo -e "${RED}✗ tsgo install timed out after ${BENCH_NPM_INSTALL_TIMEOUT}s${NC}"
+            echo -e "${RED}  command: npm install --prefix \"$TSGO_TOOL_DIR\" \"$TSGO_NPM_SPEC\"${NC}"
+            exit 1
+        fi
         printf '%s\n' "$TSGO_NPM_SPEC" > "$spec_file"
     fi
 
@@ -543,12 +608,7 @@ resolve_tsc_npm_spec() {
         sha="$(git -C "$PROJECT_ROOT/TypeScript" rev-parse HEAD 2>/dev/null || echo "")"
     fi
 
-    if [ -z "$sha" ]; then
-        echo ""
-        return
-    fi
-
-    node -e "const v=require('./scripts/conformance/typescript-versions.json'); const sha=process.argv[1]; const m=v.mappings?.[sha]; console.log(m?.npm || v.default?.npm || '');" "$sha"
+    node -e "const v=require('./scripts/conformance/typescript-versions.json'); const sha=process.argv[1]; const current=v.current && v.mappings?.[v.current]?.npm; const m=sha && v.mappings?.[sha]; console.log(m?.npm || (sha ? v.default?.npm : current) || '');" "$sha"
 }
 
 ensure_tsc() {
@@ -572,8 +632,8 @@ ensure_tsc() {
         resolved_spec="$(resolve_tsc_npm_spec)"
     fi
     if [ -z "$resolved_spec" ]; then
-        echo -e "${RED}✗ Unable to resolve tsc npm spec from TypeScript submodule${NC}"
-        echo "  Set TSC_NPM_SPEC or ensure the TypeScript submodule is present."
+        echo -e "${RED}✗ Unable to resolve tsc npm spec${NC}"
+        echo "  Set TSC_NPM_SPEC or update scripts/conformance/typescript-versions.json."
         exit 1
     fi
 
@@ -586,12 +646,16 @@ ensure_tsc() {
 
     if [ ! -x "$TSC_LOCAL_BIN" ] || [ "$installed_spec" != "$resolved_spec" ]; then
         echo -e "${CYAN}Installing tsc locally (${resolved_spec})...${NC}"
-        npm install \
+        if ! run_with_timeout "$BENCH_NPM_INSTALL_TIMEOUT" npm install \
             --prefix "$TSC_TOOL_DIR" \
             --no-audit \
             --no-fund \
             --loglevel=error \
-            "typescript@${resolved_spec}" >/dev/null
+            "typescript@${resolved_spec}" >/dev/null; then
+            echo -e "${RED}✗ tsc install timed out after ${BENCH_NPM_INSTALL_TIMEOUT}s${NC}"
+            echo -e "${RED}  command: npm install --prefix \"$TSC_TOOL_DIR\" \"typescript@${resolved_spec}\"${NC}"
+            exit 1
+        fi
         printf '%s\n' "$resolved_spec" > "$spec_file"
     fi
 
@@ -601,6 +665,171 @@ ensure_tsc() {
     fi
 
     TSC="$TSC_LOCAL_BIN"
+}
+
+# Run the PGO instrumented binary over a workload mix that exercises the same
+# code paths the website plots: lib loading, mapped/conditional types, deep
+# generics, project-mode resolution, best-common-type, inference, and CFA
+# stress. Always trains on generated synthetic inputs first (available even in
+# a clean checkout), then layers on whichever external bench fixtures are
+# present. utility-types/ts-toolbelt/ts-essentials can be opportunistically
+# fetched by the caller; the rest are picked up only when prior bench runs left
+# them in place.
+#
+# Set BENCH_PGO_EXTRA_INPUTS to a colon-separated list of additional
+# tsconfig or .ts paths to include in training. Set BENCH_PGO_VERBOSE=1
+# to surface the per-input wall time.
+collect_pgo_workload() {
+    local pgo_tsz="$1"
+    local env_prefix=()
+    [[ -n "${TSZ_LIB_DIR:-}" ]] && env_prefix=("TSZ_LIB_DIR=$TSZ_LIB_DIR")
+
+_pgo_run() {
+        local label="$1"
+        shift
+        local run_status=0
+        if [[ "${BENCH_PGO_VERBOSE:-0}" == "1" ]]; then
+            local t0 t1
+            t0=$(date +%s)
+            if run_with_timeout "$BENCH_PGO_TSZ_TIMEOUT" env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1; then
+                run_status=0
+            else
+                run_status=$?
+                if [ "$run_status" -eq 124 ]; then
+                    echo -e "${YELLOW}PGO training input \"$label\" timed out after ${BENCH_PGO_TSZ_TIMEOUT}s${NC}"
+                else
+                    echo -e "${YELLOW}PGO training input \"$label\" failed (exit $run_status)${NC}"
+                fi
+            fi
+            t1=$(date +%s)
+            echo -e "  ${CYAN}pgo${NC} $label ($((t1 - t0))s)"
+        else
+            if run_with_timeout "$BENCH_PGO_TSZ_TIMEOUT" env ${env_prefix[@]+"${env_prefix[@]}"} "$@" >/dev/null 2>&1; then
+                run_status=0
+            else
+                run_status=$?
+                if [ "$run_status" -eq 124 ]; then
+                    echo -e "${YELLOW}PGO training input \"$label\" timed out after ${BENCH_PGO_TSZ_TIMEOUT}s${NC}"
+                else
+                    echo -e "${YELLOW}PGO training input \"$label\" failed (exit $run_status)${NC}"
+                fi
+            fi
+        fi
+    }
+
+    # 1. Tiny inline expression — exercises argv parsing, lib-resolver
+    #    bootstrap, scanner/parser/binder warm-up paths.
+    echo "const x: number = 1; type T<U> = U extends string ? U[] : U; const y: T<string> = ['a'];" \
+        | _pgo_run "stdin:scalar" "$pgo_tsz" --noEmit /dev/stdin
+
+    # 2. Generated stress cases mirror the benchmark shards directly, so the
+    #    profile is not dominated by one project fixture or one tiny input.
+    if [[ "${BENCH_PGO_SYNTHETIC:-1}" == "1" ]]; then
+        local pgo_tmp
+        pgo_tmp="$(mktemp -d "$BENCH_TARGET_DIR/pgo-train.XXXXXX")"
+        local -a generated_inputs=()
+
+        generate_complex_file 50 "$pgo_tmp/complex_generics.ts"
+        generated_inputs+=("$pgo_tmp/complex_generics.ts")
+        generate_deeppartial_optional_chain_file 50 "$pgo_tmp/deeppartial_optional_chain.ts"
+        generated_inputs+=("$pgo_tmp/deeppartial_optional_chain.ts")
+        generate_shallow_optional_chain_file 50 "$pgo_tmp/shallow_optional_chain.ts"
+        generated_inputs+=("$pgo_tmp/shallow_optional_chain.ts")
+        generate_union_file 100 "$pgo_tmp/union_members.ts"
+        generated_inputs+=("$pgo_tmp/union_members.ts")
+        generate_recursive_generic_file 25 "$pgo_tmp/recursive_generic.ts"
+        generated_inputs+=("$pgo_tmp/recursive_generic.ts")
+        generate_conditional_distribution_file 50 "$pgo_tmp/conditional_dist.ts"
+        generated_inputs+=("$pgo_tmp/conditional_dist.ts")
+        generate_mapped_type_file 100 "$pgo_tmp/mapped_type.ts"
+        generated_inputs+=("$pgo_tmp/mapped_type.ts")
+        generate_template_literal_file 50 "$pgo_tmp/template_literal.ts"
+        generated_inputs+=("$pgo_tmp/template_literal.ts")
+        generate_deep_subtype_file 30 "$pgo_tmp/deep_subtype.ts"
+        generated_inputs+=("$pgo_tmp/deep_subtype.ts")
+        generate_intersection_file 50 "$pgo_tmp/intersection.ts"
+        generated_inputs+=("$pgo_tmp/intersection.ts")
+        generate_infer_stress_file 15 "$pgo_tmp/infer_stress.ts"
+        generated_inputs+=("$pgo_tmp/infer_stress.ts")
+        generate_cfa_stress_file 50 "$pgo_tmp/cfa_stress.ts"
+        generated_inputs+=("$pgo_tmp/cfa_stress.ts")
+        generate_bct_stress_file 50 "$pgo_tmp/bct_stress.ts"
+        generated_inputs+=("$pgo_tmp/bct_stress.ts")
+        generate_constraint_conflict_file 30 "$pgo_tmp/constraint_conflict.ts"
+        generated_inputs+=("$pgo_tmp/constraint_conflict.ts")
+        generate_mapped_complex_template_file 50 "$pgo_tmp/mapped_complex_template.ts"
+        generated_inputs+=("$pgo_tmp/mapped_complex_template.ts")
+
+        local generated
+        for generated in "${generated_inputs[@]}"; do
+            _pgo_run "synthetic:$(basename "$generated")" \
+                "$pgo_tsz" --noEmit "$generated"
+        done
+        rm -rf "$pgo_tmp"
+    fi
+
+    # 3. utility-types: small (~150 src files) but very heavy on mapped/
+    #    conditional types — the shape that dominates the website plot.
+    if [ -d "$UTILITY_TYPES_DIR" ] && [ -f "$UTILITY_TYPES_DIR/tsconfig.flat.json" ]; then
+        _pgo_run "utility-types" \
+            "$pgo_tsz" --noEmit -p "$UTILITY_TYPES_DIR/tsconfig.flat.json"
+    fi
+
+    # 4. ts-toolbelt + ts-essentials are useful deep-generic training inputs,
+    #    but too slow for the default cold bench-prepare path. Keep them opt-in
+    #    for deliberate local/CI experiments.
+    if [[ "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}" == "1" ]]; then
+        if [ -d "$TS_TOOLBELT_DIR" ] && [ -f "$TS_TOOLBELT_DIR/tsconfig.flat.json" ]; then
+            _pgo_run "ts-toolbelt" \
+                "$pgo_tsz" --noEmit -p "$TS_TOOLBELT_DIR/tsconfig.flat.json"
+        fi
+        if [ -d "$TS_ESSENTIALS_DIR" ] && [ -f "$TS_ESSENTIALS_DIR/tsconfig.flat.json" ]; then
+            _pgo_run "ts-essentials" \
+                "$pgo_tsz" --noEmit -p "$TS_ESSENTIALS_DIR/tsconfig.flat.json"
+        fi
+    fi
+    if [ -d "$RXJS_DIR" ] && [ -f "$RXJS_DIR/tsconfig.flat.json" ]; then
+        _pgo_run "rxjs" "$pgo_tsz" --noEmit -p "$RXJS_DIR/tsconfig.flat.json"
+    fi
+    if [ -d "$TYPE_FEST_DIR" ] && [ -f "$TYPE_FEST_DIR/tsconfig.flat.json" ]; then
+        _pgo_run "type-fest" "$pgo_tsz" --noEmit -p "$TYPE_FEST_DIR/tsconfig.flat.json"
+    fi
+    if [ -d "$VITE_APP_BENCH_DIR" ] && [ -f "$VITE_APP_BENCH_DIR/tsconfig.json" ]; then
+        _pgo_run "vite-vanilla-ts-app" "$pgo_tsz" --noEmit -p "$VITE_APP_BENCH_DIR/tsconfig.json"
+    fi
+    if [ -d "$NEXT_APP_BENCH_DIR" ] && [ -f "$NEXT_APP_BENCH_DIR/tsconfig.json" ]; then
+        _pgo_run "nextjs-fresh-app" "$pgo_tsz" --noEmit -p "$NEXT_APP_BENCH_DIR/tsconfig.json"
+    fi
+
+    # 5. TypeScript compiler test fixture — kept for back-compat with the
+    #    pre-existing training input. Only triggers when the upstream
+    #    TypeScript submodule is checked out locally (rare; tracked in
+    #    `.claude/CLAUDE.md` §19.5).
+    if [ -f "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts" ]; then
+        for _i in 1 2; do
+            _pgo_run "manyConstExports.ts" \
+                "$pgo_tsz" --noEmit \
+                "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts"
+        done
+    fi
+
+    # 6. Caller-provided extras (colon-separated). Useful when adding a new
+    #    benchmark fixture: warm PGO against it before measuring.
+    if [ -n "${BENCH_PGO_EXTRA_INPUTS:-}" ]; then
+        local IFS=":"
+        # shellcheck disable=SC2206
+        local extras=( ${BENCH_PGO_EXTRA_INPUTS} )
+        for input in "${extras[@]}"; do
+            [ -z "$input" ] && continue
+            if [ -f "$input" ] && [[ "$input" == *tsconfig*.json ]]; then
+                _pgo_run "extra:$(basename "$input")" \
+                    "$pgo_tsz" --noEmit -p "$input"
+            elif [ -f "$input" ]; then
+                _pgo_run "extra:$(basename "$input")" \
+                    "$pgo_tsz" --noEmit "$input"
+            fi
+        done
+    fi
 }
 
 check_prerequisites() {
@@ -661,6 +890,9 @@ check_prerequisites() {
         if [ -n "$newest_src" ]; then
             echo -e "${YELLOW}Source changed since last build, rebuilding...${NC}"
             need_rebuild=true
+        elif [[ "${BENCH_REQUIRE_PGO:-0}" == "1" && ! -f "$BENCH_PGO_MARKER" ]]; then
+            echo -e "${YELLOW}Existing tsz binary is not marked PGO optimized, rebuilding...${NC}"
+            need_rebuild=true
         fi
     fi
     
@@ -673,8 +905,15 @@ check_prerequisites() {
         # runs, but quick mode prefers a deterministic fast rebuild.
         local pgo_dir="$BENCH_TARGET_DIR/pgo-data"
         local pgo_merged="$pgo_dir/merged.profdata"
+        # Cross-run profdata cache so iterative bench dev doesn't redo the
+        # instrumented-build + training cycle when the source/toolchain/training
+        # workload fingerprint has not changed since the last bench run.
+        local pgo_cache_dir="$BENCH_TARGET_DIR/pgo-cache"
+        local pgo_cache_profdata="$pgo_cache_dir/merged.profdata"
+        local pgo_cache_marker="$pgo_cache_dir/profile.fingerprint"
         local pgo_target_dir
         local optimized_target_dir
+        local pgo_optimized=false
         mkdir -p "$BENCH_TARGET_DIR"
         pgo_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/pgo-build.XXXXXX")"
         optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
@@ -686,45 +925,132 @@ check_prerequisites() {
         fi
 
         if [ "$use_pgo" = true ] && [ -n "$llvm_profdata" ] && [ -x "$llvm_profdata" ]; then
-            echo -e "${CYAN}PGO Step 1/3: Building instrumented binary...${NC}"
-            rm -rf "$pgo_dir"
-            mkdir -p "$pgo_dir"
-            (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$pgo_target_dir" \
-                CARGO_INCREMENTAL=0 \
-                RUSTFLAGS="-Cprofile-generate=$pgo_dir" \
-                cargo build --profile dist -p tsz-cli --bin tsz)
-
-            echo -e "${CYAN}PGO Step 2/3: Collecting profile data...${NC}"
-            # Run representative workloads
-            local pgo_tsz="$pgo_target_dir/dist/tsz"
-            echo "const x: number = 1;" | ${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} "$pgo_tsz" --noEmit /dev/stdin 2>/dev/null || true
-            for _i in 1 2 3; do
-                if [ -f "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts" ]; then
-                    ${TSZ_LIB_DIR:+TSZ_LIB_DIR="$TSZ_LIB_DIR"} "$pgo_tsz" --noEmit \
-                        "$PROJECT_ROOT/TypeScript/tests/cases/compiler/manyConstExports.ts" 2>/dev/null || true
+            local skip_pgo_collect=false
+            local profdata_ready=false
+            local pgo_fingerprint
+            pgo_fingerprint="$(pgo_profile_fingerprint)"
+            if [[ "${BENCH_PGO_CACHE:-1}" == "1" && -f "$pgo_cache_profdata" && -f "$pgo_cache_marker" ]]; then
+                local cached_fingerprint
+                cached_fingerprint="$(tr -d '[:space:]' < "$pgo_cache_marker" 2>/dev/null || true)"
+                if [[ "$cached_fingerprint" == "$pgo_fingerprint" ]]; then
+                    echo -e "${CYAN}PGO cache hit: reusing $pgo_cache_profdata${NC}"
+                    mkdir -p "$pgo_dir"
+                    cp "$pgo_cache_profdata" "$pgo_merged"
+                    skip_pgo_collect=true
+                    profdata_ready=true
+                else
+                    echo -e "${YELLOW}PGO cache stale (training fingerprint changed); regenerating profile data${NC}"
                 fi
-            done
+            fi
 
-            echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
-            "$llvm_profdata" merge -o "$pgo_merged" "$pgo_dir"/*.profraw
-            if ! (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
-                CARGO_INCREMENTAL=0 \
-                RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
-                cargo build --profile dist -p tsz-cli --bin tsz); then
-                # LLVM PGO can fail when the profile-use link step encounters
-                # incompatible bitcode/ProfileSummary metadata in this toolchain.
-                # Fall back to a clean non-PGO dist build so benchmark runs still
-                # complete successfully.
-                echo -e "${YELLOW}PGO dist build failed; falling back to a clean standard dist build${NC}"
+            if [ "$skip_pgo_collect" = false ]; then
+                echo -e "${CYAN}PGO Step 1/3: Building instrumented binary...${NC}"
+                rm -rf "$pgo_dir"
+                mkdir -p "$pgo_dir"
+                # Keep trainer codegen aligned with the final dist build by
+                # default; otherwise LLVM discards a lot of profile counts as
+                # CFG hash mismatches during profile-use. BENCH_PGO_PANIC_UNWIND=1
+                # is still useful when deliberately training on crashy inputs,
+                # because panic=abort can skip LLVM's profiling atexit flush.
+                local pgo_generate_rustflags="-Cprofile-generate=$pgo_dir -Ctarget-cpu=native"
+                if [[ "${BENCH_PGO_PANIC_UNWIND:-0}" == "1" ]]; then
+                    pgo_generate_rustflags="$pgo_generate_rustflags -Cpanic=unwind"
+                fi
+                run_cargo_build \
+                    "PGO Step 1/3: instrumented binary build" \
+                    CARGO_TARGET_DIR="$pgo_target_dir" \
+                    CARGO_INCREMENTAL=0 \
+                    RUSTFLAGS="$pgo_generate_rustflags" \
+                    cargo build --profile dist -p tsz-cli --bin tsz || true
+
+                # Ensure representative external bench fixtures are present so
+                # PGO trains on workload shapes the website actually measures,
+                # not a single-token const expression. The clones are best-effort:
+                # transient network failures should not abort bench-prepare; PGO
+                # still trains on generated synthetic inputs.
+                if [[ "${BENCH_PGO_FETCH_UTILITY_TYPES:-1}" == "1" ]]; then
+                    if ! ensure_utility_types_fixture; then
+                        echo -e "${YELLOW}Warning: utility-types fetch failed; continuing without it for PGO training${NC}"
+                    fi
+                fi
+                if [[ "${BENCH_PGO_FETCH_CORE_PROJECTS:-0}" == "1" ]]; then
+                    if ! ensure_ts_toolbelt_fixture; then
+                        echo -e "${YELLOW}Warning: ts-toolbelt fetch failed; continuing without it for PGO training${NC}"
+                    fi
+                    if ! ensure_ts_essentials_fixture; then
+                        echo -e "${YELLOW}Warning: ts-essentials fetch failed; continuing without it for PGO training${NC}"
+                    fi
+                fi
+
+                echo -e "${CYAN}PGO Step 2/3: Collecting profile data...${NC}"
+                local pgo_tsz="$pgo_target_dir/dist/tsz"
+                collect_pgo_workload "$pgo_tsz"
+
+                # An empty glob (bash without nullglob) passes a literal "*.profraw"
+                # path to llvm-profdata and fails; array-glob + -e avoids the fork
+                # and the TOCTOU window between a count check and the merge call.
+                local profraw_files=("$pgo_dir"/*.profraw)
+                if [[ -e "${profraw_files[0]}" ]]; then
+                    "$llvm_profdata" merge -o "$pgo_merged" "${profraw_files[@]}"
+                    profdata_ready=true
+                    if [[ "${BENCH_PGO_CACHE:-1}" == "1" ]]; then
+                        mkdir -p "$pgo_cache_dir"
+                        cp "$pgo_merged" "$pgo_cache_profdata"
+                        printf '%s\n' "$pgo_fingerprint" > "$pgo_cache_marker"
+                    fi
+                else
+                    echo -e "${YELLOW}PGO training produced no profraw files; skipping PGO optimization${NC}"
+                fi
+            fi
+
+            if [[ "$profdata_ready" == true ]]; then
+                echo -e "${CYAN}PGO Step 3/3: Building optimized binary with profile data...${NC}"
+                if ! run_cargo_build \
+                    "PGO Step 3/3: optimized binary build" \
+                    CARGO_TARGET_DIR="$optimized_target_dir" \
+                    CARGO_INCREMENTAL=0 \
+                    RUSTFLAGS="-Cprofile-use=$pgo_merged -Ctarget-cpu=native" \
+                    cargo build --profile dist -p tsz-cli --bin tsz; then
+                    if [[ "${BENCH_REQUIRE_PGO:-0}" == "1" ]]; then
+                        echo -e "${RED}✗ PGO dist build failed and BENCH_REQUIRE_PGO=1${NC}"
+                        exit 1
+                    fi
+                    # LLVM PGO can fail when the profile-use link step encounters
+                    # incompatible bitcode/ProfileSummary metadata in this toolchain.
+                    echo -e "${YELLOW}PGO dist build failed; falling back to a clean standard dist build${NC}"
+                    rm -rf "$optimized_target_dir"
+                    optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
+                    run_cargo_build \
+                        "PGO Step 3 fallback: standard dist build" \
+                        CARGO_TARGET_DIR="$optimized_target_dir" \
+                        CARGO_INCREMENTAL=0 \
+                        RUSTFLAGS="-Ctarget-cpu=native" \
+                        cargo build --profile dist -p tsz-cli --bin tsz
+                else
+                    pgo_optimized=true
+                fi
+            else
+                if [[ "${BENCH_REQUIRE_PGO:-0}" == "1" ]]; then
+                    echo -e "${RED}✗ PGO profile data unavailable and BENCH_REQUIRE_PGO=1${NC}"
+                    exit 1
+                fi
+                echo -e "${YELLOW}PGO Step 3/3: no profile data available; using standard dist build${NC}"
                 rm -rf "$optimized_target_dir"
                 optimized_target_dir="$(mktemp -d "$BENCH_TARGET_DIR/build.XXXXXX")"
-                (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
+                run_cargo_build \
+                    "PGO Step 3: standard dist build" \
+                    CARGO_TARGET_DIR="$optimized_target_dir" \
                     CARGO_INCREMENTAL=0 \
                     RUSTFLAGS="-Ctarget-cpu=native" \
-                    cargo build --profile dist -p tsz-cli --bin tsz)
+                    cargo build --profile dist -p tsz-cli --bin tsz
             fi
             mkdir -p "$TSZ_OUTPUT_DIR"
             install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"
+            if [[ "$pgo_optimized" == true ]]; then
+                printf 'profile-use=%s\nbuilt_at=%s\n' "$pgo_merged" "$(date -u +%FT%TZ)" > "$BENCH_PGO_MARKER"
+            else
+                rm -f "$BENCH_PGO_MARKER"
+            fi
             rm -rf "$optimized_target_dir"
             rm -rf "$pgo_target_dir"
         else
@@ -733,12 +1059,19 @@ check_prerequisites() {
             else
                 echo -e "${YELLOW}PGO unavailable (llvm-profdata not found), using standard build${NC}"
             fi
-            (cd "$PROJECT_ROOT" && CARGO_TARGET_DIR="$optimized_target_dir" \
+            if [[ "${BENCH_REQUIRE_PGO:-0}" == "1" ]]; then
+                echo -e "${RED}✗ PGO is required for this benchmark run${NC}"
+                exit 1
+            fi
+            run_cargo_build \
+                "Standard dist build" \
+                CARGO_TARGET_DIR="$optimized_target_dir" \
                 CARGO_INCREMENTAL=0 \
                 RUSTFLAGS="-Ctarget-cpu=native" \
-                cargo build --profile dist -p tsz-cli --bin tsz)
+                cargo build --profile dist -p tsz-cli --bin tsz
             mkdir -p "$TSZ_OUTPUT_DIR"
             install -m 755 "$optimized_target_dir/dist/tsz" "$TSZ"
+            rm -f "$BENCH_PGO_MARKER"
             rm -rf "$optimized_target_dir"
             rm -rf "$pgo_target_dir"
         fi
@@ -776,10 +1109,13 @@ record_project_compatibility() {
     local tsc_exit_codes="${8:-}"
     local tsz_exit_codes="${9:-}"
     local tsgo_exit_codes="${10:-}"
+    local fixture_sources
 
     [ -z "$PROJECT_COMPATIBILITY_JSONL" ] && return
+    fixture_sources="$(tsz_project_fixture_sources "$name")"
 
     COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
+    COMPAT_FIXTURE_ROOT="$EXTERNAL_BENCH_DIR" \
     COMPAT_NAME="$name" \
     COMPAT_EXIT_CLASS="$exit_class" \
     COMPAT_PHASE="$phase" \
@@ -790,155 +1126,8 @@ record_project_compatibility() {
     COMPAT_TSC_EXIT_CODES="$tsc_exit_codes" \
     COMPAT_TSZ_EXIT_CODES="$tsz_exit_codes" \
     COMPAT_TSGO_EXIT_CODES="$tsgo_exit_codes" \
-    node <<'NODE'
-const fs = require("node:fs");
-
-const toNumber = (value) => {
-  if (value === undefined || value === null || value === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-};
-
-const toExitCodes = (value) => {
-  const matches = String(value || "").match(/\b\d+\b/g) || [];
-  const seen = new Set();
-  const codes = [];
-  for (const match of matches) {
-    const parsed = Number(match);
-    if (!Number.isInteger(parsed) || seen.has(parsed)) continue;
-    seen.add(parsed);
-    codes.push(parsed);
-  }
-  return codes;
-};
-
-const delta = process.env.COMPAT_DIAGNOSTIC_DELTA || "";
-const diagnosticDeltas = delta
-  .split(/\r?\n/)
-  .map((line) => line.trim())
-  .filter(Boolean)
-  .slice(0, 20);
-
-const DIAGNOSTIC_SUBSYSTEM_RULES = [
-  ["project-config", new Set(["TS18003", "TS5052", "TS5069", "TS5070", "TS5083", "TS5110", "TS6053", "TS2688"])],
-  ["syntax-parser-jsdoc", new Set(["TS1005", "TS1109", "TS1128", "TS17004", "TS8010", "TS8023", "TS8032"])],
-  ["module-symbol-resolution", new Set(["TS2304", "TS2305", "TS2306", "TS2307", "TS2451", "TS2503", "TS2580", "TS2583", "TS2664", "TS2665", "TS2666", "TS2694"])],
-  ["relations-assignability", new Set(["TS2322", "TS2345", "TS2352", "TS2394", "TS2416", "TS2420", "TS2430", "TS2559", "TS2740", "TS2741", "TS2769"])],
-  ["evaluation-inference-instantiation", new Set(["TS2313", "TS2314", "TS2315", "TS2344", "TS2558", "TS2589", "TS2590", "TS2615", "TS7022"])],
-  ["keyspace-property-indexed", new Set(["TS2339", "TS2353", "TS2536", "TS2537", "TS2538", "TS2540", "TS4111", "TS7053"])],
-  ["flow-narrowing", new Set(["TS2367", "TS2677", "TS2774", "TS18047", "TS18048"])],
-  ["class-this-accessor", new Set(["TS2415", "TS2511", "TS2515", "TS2526", "TS2683", "TS4113", "TS4114"])],
-  ["emit-dts-nameability", new Set(["TS4023", "TS4058", "TS4082", "TS4094", "TS9005", "TS9039"])],
-];
-
-function subsystemForCode(code) {
-  for (const [subsystem, codes] of DIAGNOSTIC_SUBSYSTEM_RULES) {
-    if (codes.has(code)) return subsystem;
-  }
-  return "unclassified diagnostic";
-}
-
-function diagnosticSubsystemsFrom(deltas) {
-  const groups = new Map();
-  for (const line of deltas) {
-    const codes = [...line.matchAll(/\bTS\d{4,5}\b/g)].map((match) => match[0]);
-    const lineCodes = codes.length ? codes : ["uncoded"];
-    for (const code of lineCodes) {
-      const subsystem = code === "uncoded" ? "uncoded diagnostic" : subsystemForCode(code);
-      if (!groups.has(subsystem)) {
-        groups.set(subsystem, { subsystem, codes: [], count: 0, examples: [] });
-      }
-      const group = groups.get(subsystem);
-      group.count += 1;
-      if (code !== "uncoded" && !group.codes.includes(code) && group.codes.length < 8) {
-        group.codes.push(code);
-      }
-      if (group.examples.length < 3) {
-        group.examples.push(line);
-      }
-    }
-  }
-  return [...groups.values()];
-}
-
-function diagnosticCodesFrom(deltas) {
-  const codes = [];
-  const seen = new Set();
-  for (const line of deltas) {
-    for (const match of String(line || "").matchAll(/\bTS\d{4,5}\b/g)) {
-      const code = match[0];
-      if (seen.has(code)) continue;
-      seen.add(code);
-      codes.push(code);
-      if (codes.length >= 8) return codes;
-    }
-  }
-  return codes;
-}
-
-function knownBlockersFrom({ exitClass, phase, diagnosticSubsystems, diagnosticCodes }) {
-  const blockers = [];
-  const add = (blocker) => {
-    if (blocker && !blockers.includes(blocker) && blockers.length < 8) blockers.push(blocker);
-  };
-
-  if (exitClass === "timeout") add("timeout during project check");
-  if (exitClass === "oom") add("OOM or killed during project check");
-  if (exitClass === "crash") add("compiler crash during project check");
-  if (exitClass === "fixture invalid") add("reference fixture invalid");
-  if (exitClass === "runner error") add("benchmark runner error");
-  if (exitClass === "tsz unavailable") add("tsz unavailable in benchmark runner");
-  if (phase && phase !== "check") add(`${phase} phase blocker`);
-
-  for (const group of diagnosticSubsystems) {
-    add(group.subsystem);
-  }
-
-  if (!blockers.length && diagnosticCodes.length) {
-    add("unclassified diagnostic mismatch");
-  }
-
-  return blockers;
-}
-
-function lastSuccessfulPhaseFrom({ exitClass, diagnosticStatus }) {
-  if (exitClass === "exit success" && diagnosticStatus === "none") return "check";
-  return null;
-}
-
-const diagnosticSubsystems = diagnosticSubsystemsFrom(diagnosticDeltas);
-const diagnosticCodes = diagnosticCodesFrom(diagnosticDeltas);
-const exitClass = process.env.COMPAT_EXIT_CLASS || "unknown";
-const diagnosticStatus = process.env.COMPAT_DIAGNOSTIC_STATUS || "unknown";
-const row = {
-  name: process.env.COMPAT_NAME || "",
-  exit_class: exitClass,
-  phase: process.env.COMPAT_PHASE || "unknown",
-  last_successful_phase: lastSuccessfulPhaseFrom({ exitClass, diagnosticStatus }),
-  diagnostic_status: diagnosticStatus,
-  diagnostic_deltas: diagnosticDeltas,
-  diagnostic_subsystems: diagnosticSubsystems,
-  primary_subsystem: diagnosticSubsystems[0]?.subsystem || null,
-  diagnostic_codes: diagnosticCodes,
-  emit_status: "not in scope (noEmit project check)",
-  dts_status: "not in scope (noEmit project check)",
-  known_blockers: knownBlockersFrom({
-    exitClass,
-    phase: process.env.COMPAT_PHASE || "unknown",
-    diagnosticSubsystems,
-    diagnosticCodes,
-  }),
-  exit_codes: {
-    tsc: toExitCodes(process.env.COMPAT_TSC_EXIT_CODES),
-    tsz: toExitCodes(process.env.COMPAT_TSZ_EXIT_CODES),
-    tsgo: toExitCodes(process.env.COMPAT_TSGO_EXIT_CODES),
-  },
-  files_reached: toNumber(process.env.COMPAT_FILES_REACHED),
-  peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
-};
-
-fs.appendFileSync(process.env.COMPAT_JSONL_FILE, `${JSON.stringify(row)}\n`, "utf8");
-NODE
+    COMPAT_FIXTURE_SOURCES="$fixture_sources" \
+    node "$PROJECT_ROOT/scripts/ci/project-compatibility.mjs" record
 }
 
 # run_isolated <label> <command...>
@@ -973,6 +1162,76 @@ record_fixture_failure() {
     RESULTS_CSV="${RESULTS_CSV}${label},0,0,ERR,ERR,N/A,N/A,error,0,fixture failed (rc=${rc})\n"
 }
 
+record_benchmark_source() {
+    local name="$1"
+    local file="$2"
+    [ -z "${BENCHMARK_SOURCES_JSONL:-}" ] && return
+    [ ! -f "$file" ] && return
+
+    SOURCE_NAME="$name" \
+    SOURCE_FILE="$file" \
+    PROJECT_ROOT_VALUE="$PROJECT_ROOT" \
+    UTILITY_TYPES_DIR_VALUE="$UTILITY_TYPES_DIR" \
+    UTILITY_TYPES_REF_VALUE="$UTILITY_TYPES_REF" \
+    TS_TOOLBELT_DIR_VALUE="$TS_TOOLBELT_DIR" \
+    TS_TOOLBELT_REF_VALUE="$TS_TOOLBELT_REF" \
+    TS_ESSENTIALS_DIR_VALUE="$TS_ESSENTIALS_DIR" \
+    TS_ESSENTIALS_REF_VALUE="$TS_ESSENTIALS_REF" \
+    BENCHMARK_SOURCES_JSONL_VALUE="$BENCHMARK_SOURCES_JSONL" \
+    node <<'NODE'
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const name = process.env.SOURCE_NAME || "";
+const file = process.env.SOURCE_FILE || "";
+const root = process.env.PROJECT_ROOT_VALUE || "";
+const out = process.env.BENCHMARK_SOURCES_JSONL_VALUE || "";
+
+function relativeIfInside(base, target) {
+  if (!base) return null;
+  const rel = path.relative(base, target);
+  return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel.split(path.sep).join("/") : null;
+}
+
+function originFor(absPath) {
+  const rootRel = relativeIfInside(root, absPath);
+  if (rootRel?.startsWith("TypeScript/")) {
+    return { origin: "typescript", path: rootRel };
+  }
+
+  const external = [
+    ["utility-types", process.env.UTILITY_TYPES_DIR_VALUE, process.env.UTILITY_TYPES_REF_VALUE],
+    ["ts-toolbelt", process.env.TS_TOOLBELT_DIR_VALUE, process.env.TS_TOOLBELT_REF_VALUE],
+    ["ts-essentials", process.env.TS_ESSENTIALS_DIR_VALUE, process.env.TS_ESSENTIALS_REF_VALUE],
+  ];
+  for (const [origin, dir, ref] of external) {
+    const rel = relativeIfInside(dir || "", absPath);
+    if (rel) return { origin, ref: ref || null, path: `${origin}/${rel}` };
+  }
+
+  if (rootRel) return { origin: "workspace", path: rootRel };
+  return { origin: "generated", path: path.basename(absPath) };
+}
+
+try {
+  const absPath = path.resolve(file);
+  const content = fs.readFileSync(absPath, "utf8").replace(/\s+$/u, "");
+  const source = originFor(absPath);
+  fs.appendFileSync(out, `${JSON.stringify({
+    name,
+    source: {
+      ...source,
+      sha256: crypto.createHash("sha256").update(content).digest("hex"),
+      content,
+    },
+  })}\n`, "utf8");
+} catch {
+  // Source metadata improves website robustness but must never break a bench run.
+}
+NODE
+}
+
 run_benchmark() {
     local name="$1"
     local file="$2"
@@ -1004,6 +1263,8 @@ run_benchmark() {
         fi
         return
     fi
+
+    record_benchmark_source "$name" "$file"
 
     # Pre-validate with timeout: record errors/timeouts in summary table
     local tsz_check=0
@@ -1479,7 +1740,14 @@ export_results_json() {
     mkdir -p "$(dirname "$out_file")"
 
     local expanded_csv
+    local project_readme_candidates_json="{}"
+    local project_owner_families_json
+
     expanded_csv="$(echo -e "$RESULTS_CSV")"
+    project_owner_families_json="$(tsz_project_owner_families_json)"
+    if command -v node >/dev/null 2>&1; then
+      project_readme_candidates_json="$(tsz_project_readme_candidates_json)"
+    fi
 
     RESULTS_CSV_EXPANDED="$expanded_csv" \
     QUICK_MODE_VALUE="$QUICK_MODE" \
@@ -1499,48 +1767,42 @@ export_results_json() {
     TS_ESSENTIALS_DIR_VALUE="$TS_ESSENTIALS_DIR" \
     BENCHMARKS_RUN_VALUE="$BENCHMARKS_RUN" \
     COMPATIBILITY_JSONL_VALUE="$PROJECT_COMPATIBILITY_JSONL" \
+    BENCHMARK_SOURCES_JSONL_VALUE="${BENCHMARK_SOURCES_JSONL:-}" \
+    PROJECT_OWNER_FAMILIES_JSON_VALUE="$project_owner_families_json" \
+    PROJECT_README_CANDIDATES_JSON_VALUE="$project_readme_candidates_json" \
     node - "$out_file" <<'NODE'
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const outFile = process.argv[2];
-
-const PROJECT_OWNER_FAMILIES = {
-  "kysely-project": "contextual generics, guards, indexed/property access",
-  "zod-project": "recursive conditionals, object guards, class/generic identity",
-  "ts-toolbelt-project": "recursive type evaluation pressure",
-  "type-fest-project": "mapped/conditional/key-space utility surface",
-  "ts-essentials-project": "utility types plus recursive JSON shapes",
-  "large-ts-repo": "residency/runtime/project graph stress",
-  nextjs: "module graph plus generated app dependencies",
-  "nextjs-fresh-app": "generated app-router dependency graph",
-  "vite-vanilla-ts-app": "generated Vite dependency graph",
-  "rxjs-project": "reactive library generic project surface",
-  "utility-types-project": "utility type project surface",
-};
+const PROJECT_OWNER_FAMILIES = JSON.parse(process.env.PROJECT_OWNER_FAMILIES_JSON_VALUE || "{}");
+const projectOwnerFamilies = PROJECT_OWNER_FAMILIES;
+const PROJECT_README_CANDIDATES = JSON.parse(process.env.PROJECT_README_CANDIDATES_JSON_VALUE || "{}");
+const projectReadmeCandidates = PROJECT_README_CANDIDATES;
 
 function readProjectReadmes() {
-  const candidates = {
-    "large-ts-repo": [[process.env.LARGE_TS_DIR_VALUE, "README.md"]],
-    nextjs: [[process.env.NEXTJS_DIR_VALUE, "README.md"]],
-    "nextjs-fresh-app": [[process.env.NEXT_APP_BENCH_DIR_VALUE, "README.md"]],
-    "vite-vanilla-ts-app": [[process.env.VITE_APP_BENCH_DIR_VALUE, "README.md"]],
-    "rxjs-project": [[process.env.RXJS_DIR_VALUE, "README.md"]],
-    "type-fest-project": [
-      [process.env.TYPE_FEST_DIR_VALUE, "readme.md"],
-      [process.env.TYPE_FEST_DIR_VALUE, "README.md"],
-    ],
-    "zod-project": [[process.env.ZOD_DIR_VALUE, "README.md"]],
-    "utility-types-project": [[process.env.UTILITY_TYPES_DIR_VALUE, "README.md"]],
-    "ts-toolbelt-project": [[process.env.TS_TOOLBELT_DIR_VALUE, "README.md"]],
-    "ts-essentials-project": [[process.env.TS_ESSENTIALS_DIR_VALUE, "README.md"]],
+  const readmes = new Map();
+
+  const directories = {
+    "large-ts-repo": process.env.LARGE_TS_DIR_VALUE,
+    nextjs: process.env.NEXTJS_DIR_VALUE,
+    "nextjs-fresh-app": process.env.NEXT_APP_BENCH_DIR_VALUE,
+    "vite-vanilla-ts-app": process.env.VITE_APP_BENCH_DIR_VALUE,
+    "rxjs-project": process.env.RXJS_DIR_VALUE,
+    "type-fest-project": process.env.TYPE_FEST_DIR_VALUE,
+    "zod-project": process.env.ZOD_DIR_VALUE,
+    "utility-types-project": process.env.UTILITY_TYPES_DIR_VALUE,
+    "ts-toolbelt-project": process.env.TS_TOOLBELT_DIR_VALUE,
+    "ts-essentials-project": process.env.TS_ESSENTIALS_DIR_VALUE,
   };
 
-  const readmes = new Map();
-  for (const [name, paths] of Object.entries(candidates)) {
-    for (const [dir, file] of paths) {
-      if (!dir) continue;
+  for (const [name, directory] of Object.entries(directories)) {
+    const candidates = Array.isArray(projectReadmeCandidates[name]) ? projectReadmeCandidates[name] : [];
+    for (const candidate of candidates) {
+      if (!candidate) continue;
+      if (!directory) continue;
       try {
-        const text = fs.readFileSync(path.join(dir, file), "utf8").trim();
+        const text = fs.readFileSync(path.join(directory, candidate), "utf8").trim();
         if (text) {
           readmes.set(name, text.length > 18000 ? `${text.slice(0, 18000).trimEnd()}\n\n...` : text);
           break;
@@ -1568,8 +1830,24 @@ function readCompatibilityRows() {
   }
 }
 
+function readSourceRows() {
+  const file = process.env.BENCHMARK_SOURCES_JSONL_VALUE || "";
+  if (!file) return new Map();
+  try {
+    const rows = fs.readFileSync(file, "utf8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+      .filter((row) => row?.name && row?.source?.content);
+    return new Map(rows.map((row) => [row.name, row.source]));
+  } catch {
+    return new Map();
+  }
+}
+
 function fallbackCompatibility(row) {
-  if (!PROJECT_OWNER_FAMILIES[row.name]) return null;
+  if (!projectOwnerFamilies[row.name]) return null;
   const status = String(row.status || "").toLowerCase();
   if (!status) {
     return {
@@ -1760,7 +2038,7 @@ function compatibilityFor(row, compatibilityRows) {
             tsgo: Array.isArray(recorded.exit_codes.tsgo) ? recorded.exit_codes.tsgo : [],
           }
         : { tsc: [], tsz: [], tsgo: [] },
-      semantic_owner_family: PROJECT_OWNER_FAMILIES[row.name] || "not classified",
+      semantic_owner_family: projectOwnerFamilies[row.name] || "not classified",
       files_reached: recorded.files_reached ?? null,
       peak_memory_bytes: recorded.peak_memory_bytes ?? null,
     },
@@ -1770,6 +2048,7 @@ function compatibilityFor(row, compatibilityRows) {
 const csv = process.env.RESULTS_CSV_EXPANDED || "";
 const projectReadmes = readProjectReadmes();
 const compatibilityRows = readCompatibilityRows();
+const sourceRows = readSourceRows();
 const rows = csv
   .split(/\r?\n/)
   .map((line) => line.trim())
@@ -1787,7 +2066,7 @@ const rows = csv
       name,
       lines: toNumber(lines),
       kb: toNumber(kb),
-      ...(PROJECT_OWNER_FAMILIES[name] ? { project_files: compatibilityRows.get(name)?.files_reached ?? null } : {}),
+      ...(projectOwnerFamilies[name] ? { project_files: compatibilityRows.get(name)?.files_reached ?? null } : {}),
       tsz_ms: toNumber(tszMs),
       tsgo_ms: toNumber(tsgoMs),
       tsz_lps: toNumber(tszLps),
@@ -1795,6 +2074,7 @@ const rows = csv
       winner: winner || null,
       factor: toNumber(factor),
       status: status || null,
+      ...(sourceRows.has(name) ? { source: sourceRows.get(name) } : {}),
       ...(projectReadmes.has(name) ? { readme: projectReadmes.get(name) } : {}),
       ...compatibilityFor({ name, lines: toNumber(lines), status: status || null }, compatibilityRows),
     };
@@ -1804,9 +2084,53 @@ const tszWins = rows.filter((row) => row.winner === "tsz").length;
 const tsgoWins = rows.filter((row) => row.winner === "tsgo").length;
 const errorCases = rows.filter((row) => row.status).length;
 
+function runnerEnvironment() {
+  const cpus = os.cpus();
+  const firstCpu = cpus[0] || {};
+  const cpuModels = [...new Set(cpus.map((cpu) => cpu.model).filter(Boolean))];
+  const totalMemoryBytes = os.totalmem();
+  const githubActions = process.env.GITHUB_ACTIONS === "true"
+    ? {
+        run_id: process.env.GITHUB_RUN_ID || null,
+        run_attempt: process.env.GITHUB_RUN_ATTEMPT || null,
+        runner_os: process.env.RUNNER_OS || null,
+        runner_arch: process.env.RUNNER_ARCH || null,
+        workflow: process.env.GITHUB_WORKFLOW || null,
+        job: process.env.GITHUB_JOB || null,
+        ref: process.env.GITHUB_REF || null,
+        sha: process.env.GITHUB_SHA || null,
+      }
+    : null;
+  const cloudBuild = process.env.BUILD_ID ||
+    process.env.PROJECT_ID ||
+    process.env.TSZ_BENCH_MACHINE_TYPE
+    ? {
+        build_id: process.env.BUILD_ID || null,
+        project_id: process.env.PROJECT_ID || null,
+        region: process.env.LOCATION || process.env.CLOUDSDK_COMPUTE_REGION || null,
+        machine_type: process.env.TSZ_BENCH_MACHINE_TYPE || null,
+      }
+    : null;
+
+  return {
+    platform: os.platform(),
+    arch: os.arch(),
+    release: os.release(),
+    cpu_count: cpus.length || null,
+    cpu_model: cpuModels[0] || null,
+    cpu_models: cpuModels.length > 1 ? cpuModels.slice(0, 4) : undefined,
+    cpu_speed_mhz: Number.isFinite(firstCpu.speed) ? firstCpu.speed : null,
+    total_memory_bytes: Number.isFinite(totalMemoryBytes) ? totalMemoryBytes : null,
+    ci: process.env.CI === "true",
+    github_actions: githubActions,
+    cloud_build: cloudBuild,
+  };
+}
+
 const payload = {
   generated_at: new Date().toISOString(),
   benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
+  runner_environment: runnerEnvironment(),
   validation: {
     hyperfine_exit_codes_required: true,
   },
@@ -1841,6 +2165,38 @@ is_benchmark_selected() {
     echo "$name" | grep -qE "$FILTER"
 }
 
+filter_matches_any() {
+    if [ -z "$FILTER" ]; then
+        return 0
+    fi
+
+    local name
+    for name in "$@"; do
+        if echo "$name" | grep -qE "$FILTER"; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
+use_quick_subset_for() {
+    if [ "$QUICK_MODE" != true ]; then
+        return 1
+    fi
+
+    # If an explicit filter does not match the quick representative, keep the
+    # quick run counts but scan the full candidate list so exact filters work.
+    filter_matches_any "$@"
+}
+
+should_run_compile_canary_project() {
+    if [ -n "$FILTER" ]; then
+        return 0
+    fi
+    [ "$TSZ_BENCH_INCLUDE_COMPILE_CANARIES" = "1" ]
+}
+
 ensure_nextjs_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
 
@@ -1853,6 +2209,7 @@ ensure_nextjs_fixture() {
         git -C "$NEXTJS_DIR" sparse-checkout init --no-cone
         git -C "$NEXTJS_DIR" sparse-checkout set \
             '/tsconfig-tsec.json' \
+            '/packages/next/package.json' \
             '/packages/next/tsconfig.json' \
             '/packages/next/src/'
         git -C "$NEXTJS_DIR" fetch --quiet --depth 1 origin "$NEXTJS_REF"
@@ -1866,6 +2223,10 @@ ensure_nextjs_fixture() {
         git -C "$NEXTJS_DIR" fetch --quiet --depth 1 origin "$NEXTJS_REF"
         git -C "$NEXTJS_DIR" checkout --quiet FETCH_HEAD
     fi
+
+    tsz_write_nextjs_bench_globals "$NEXTJS_DIR/packages/next/tsz-bench-globals.d.ts"
+    tsz_write_nextjs_external_module "$NEXTJS_DIR/packages/next/tsz-bench-external-module.d.ts"
+    tsz_write_nextjs_config "$NEXTJS_DIR/packages/next/tsconfig.tsz-bench.json"
 }
 
 ensure_next_app_benchmark_fixture() {
@@ -1894,26 +2255,7 @@ ensure_vite_app_benchmark_fixture() {
 
 ensure_utility_types_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-
-    if [ ! -d "$UTILITY_TYPES_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning utility-types fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_DIR"
-    fi
-
-    # If users modified the local fixture, reclone to keep benchmarks deterministic
-    if [ -n "$(git -C "$UTILITY_TYPES_DIR" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${YELLOW}utility-types fixture is dirty; recloning for reproducibility...${NC}"
-        rm -rf "$UTILITY_TYPES_DIR"
-        git clone --quiet --no-tags --depth 1 "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_DIR"
-    fi
-
-    local current_ref
-    current_ref="$(git -C "$UTILITY_TYPES_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-    if [ "$current_ref" != "$UTILITY_TYPES_REF" ]; then
-        echo -e "${CYAN}Pinning utility-types to ${UTILITY_TYPES_REF:0:12}...${NC}"
-        git -C "$UTILITY_TYPES_DIR" fetch --quiet --depth 1 origin "$UTILITY_TYPES_REF"
-        git -C "$UTILITY_TYPES_DIR" checkout --quiet --detach FETCH_HEAD
-    fi
+    tsz_ensure_git_fixture "utility-types" "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF" "$UTILITY_TYPES_DIR" 1
 
     # Rewrite the generated flat tsconfig every run. External fixture clones
     # are cached across benchmark jobs, and stale generated configs can keep
@@ -1923,44 +2265,12 @@ ensure_utility_types_fixture() {
     # - uses skipLibCheck + types:[] to avoid needing external type deps
     # - uses ES2015 target (ES5 is deprecated in TS 6+)
     local flat_tsconfig="$UTILITY_TYPES_DIR/tsconfig.flat.json"
-    cat > "$flat_tsconfig" << 'FLATEOF'
-{
-  "compilerOptions": {
-    "strict": true,
-    "lib": ["dom", "es2017"],
-    "types": [],
-    "target": "ES2015",
-    "module": "commonjs",
-    "skipLibCheck": true,
-    "noEmit": true
-  },
-  "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.snap.ts", "src/**/*.spec.ts"]
-}
-FLATEOF
+    tsz_write_utility_types_config "$flat_tsconfig"
 }
 
 ensure_ts_toolbelt_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-
-    if [ ! -d "$TS_TOOLBELT_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning ts-toolbelt fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_DIR"
-    fi
-
-    if [ -n "$(git -C "$TS_TOOLBELT_DIR" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${YELLOW}ts-toolbelt fixture is dirty; recloning for reproducibility...${NC}"
-        rm -rf "$TS_TOOLBELT_DIR"
-        git clone --quiet --no-tags --depth 1 "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_DIR"
-    fi
-
-    local current_ref
-    current_ref="$(git -C "$TS_TOOLBELT_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-    if [ "$current_ref" != "$TS_TOOLBELT_REF" ]; then
-        echo -e "${CYAN}Pinning ts-toolbelt to ${TS_TOOLBELT_REF:0:12}...${NC}"
-        git -C "$TS_TOOLBELT_DIR" fetch --quiet --depth 1 origin "$TS_TOOLBELT_REF"
-        git -C "$TS_TOOLBELT_DIR" checkout --quiet --detach FETCH_HEAD
-    fi
+    tsz_ensure_git_fixture "ts-toolbelt" "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF" "$TS_TOOLBELT_DIR" 1
 
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
@@ -1969,53 +2279,12 @@ ensure_ts_toolbelt_fixture() {
     # - removes deprecated/unsupported options (suppressImplicitAnyIndexErrors, watch)
     # - uses skipLibCheck + types:[] to avoid needing external type deps
     local flat_tsconfig="$TS_TOOLBELT_DIR/tsconfig.flat.json"
-    cat > "$flat_tsconfig" << 'FLATEOF'
-{
-  "compilerOptions": {
-    "target": "ES2015",
-    "module": "commonjs",
-    "lib": ["esnext", "dom"],
-    "types": [],
-    "strict": false,
-    "strictNullChecks": true,
-    "strictFunctionTypes": true,
-    "noImplicitAny": true,
-    "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "esModuleInterop": true,
-    "downlevelIteration": true,
-    "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true,
-    "noEmit": true,
-    "ignoreDeprecations": "6.0"
-  },
-  "include": ["sources/**/*.ts"],
-  "exclude": ["tests/**/*", "scripts/**/*", "node_modules/**/*"]
-}
-FLATEOF
+    tsz_write_ts_toolbelt_config "$flat_tsconfig"
 }
 
 ensure_ts_essentials_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-
-    if [ ! -d "$TS_ESSENTIALS_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning ts-essentials fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_DIR"
-    fi
-
-    if [ -n "$(git -C "$TS_ESSENTIALS_DIR" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${YELLOW}ts-essentials fixture is dirty; recloning for reproducibility...${NC}"
-        rm -rf "$TS_ESSENTIALS_DIR"
-        git clone --quiet --no-tags --depth 1 "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_DIR"
-    fi
-
-    local current_ref
-    current_ref="$(git -C "$TS_ESSENTIALS_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-    if [ "$current_ref" != "$TS_ESSENTIALS_REF" ]; then
-        echo -e "${CYAN}Pinning ts-essentials to ${TS_ESSENTIALS_REF:0:12}...${NC}"
-        git -C "$TS_ESSENTIALS_DIR" fetch --quiet --depth 1 origin "$TS_ESSENTIALS_REF"
-        git -C "$TS_ESSENTIALS_DIR" checkout --quiet --detach FETCH_HEAD
-    fi
+    tsz_ensure_git_fixture "ts-essentials" "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF" "$TS_ESSENTIALS_DIR" 1
 
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
@@ -2024,226 +2293,53 @@ ensure_ts_essentials_fixture() {
     # - uses es2018 lib (covers esnext.asynciterable from original config)
     # - uses skipLibCheck to avoid needing external type deps
     local flat_tsconfig="$TS_ESSENTIALS_DIR/tsconfig.flat.json"
-    cat > "$flat_tsconfig" << 'FLATEOF'
-{
-  "compilerOptions": {
-    "target": "es2017",
-    "module": "commonjs",
-    "strict": true,
-    "lib": ["es2018"],
-    "types": [],
-    "skipLibCheck": true,
-    "noEmit": true,
-    "forceConsistentCasingInFileNames": true
-  },
-  "include": ["lib/**/*.ts"],
-  "exclude": ["test/**/*", "node_modules/**/*"]
-}
-FLATEOF
+    tsz_write_ts_essentials_config "$flat_tsconfig"
 }
 
 # ─── Real-world fixture: rxjs ───────────────────────────────────────────────
 ensure_rxjs_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    if [ ! -d "$RXJS_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning rxjs fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$RXJS_REPO" "$RXJS_DIR"
-    fi
-    if [ -n "$(git -C "$RXJS_DIR" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${YELLOW}rxjs fixture is dirty; recloning for reproducibility...${NC}"
-        rm -rf "$RXJS_DIR"
-        git clone --quiet --no-tags --depth 1 "$RXJS_REPO" "$RXJS_DIR"
-    fi
-    if [ -n "$RXJS_REF" ]; then
-        local current_ref
-        current_ref="$(git -C "$RXJS_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-        if [ "$current_ref" != "$RXJS_REF" ]; then
-            echo -e "${CYAN}Pinning rxjs to ${RXJS_REF:0:12}...${NC}"
-            git -C "$RXJS_DIR" fetch --quiet --depth 1 origin "$RXJS_REF"
-            git -C "$RXJS_DIR" checkout --quiet --detach FETCH_HEAD
-        fi
-    fi
+    tsz_ensure_git_fixture "rxjs" "$RXJS_REPO" "$RXJS_REF" "$RXJS_DIR" 1
     # rxjs has been a monorepo since the v8 work — `src/internal` moved to
     # `packages/rxjs/src/internal`. Detect both layouts.
-    local rxjs_src_root="src"
-    if [ -d "$RXJS_DIR/packages/rxjs/src/internal" ]; then
-        rxjs_src_root="packages/rxjs/src"
-    fi
+    local rxjs_src_root
+    rxjs_src_root="$(tsz_rxjs_src_root "$RXJS_DIR")"
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$RXJS_DIR/tsconfig.flat.json"
-    cat > "$flat_tsconfig" << FLATEOF
-{
-  "compilerOptions": {
-    "target": "es2017",
-    "module": "esnext",
-    "strict": true,
-    "lib": ["es2018", "dom"],
-    "types": [],
-    "skipLibCheck": true,
-    "noEmit": true,
-    "noCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "bundler"
-  },
-  "include": ["${rxjs_src_root}/internal/**/*.ts"],
-  "exclude": [
-    "**/*.spec.ts",
-    "**/*.test.ts",
-    "node_modules/**/*",
-    "**/internal/observable/dom/**",
-    "**/internal/umd.ts"
-  ]
-}
-FLATEOF
+    tsz_write_rxjs_config "$flat_tsconfig" "$rxjs_src_root"
 }
 
 # ─── Real-world fixture: type-fest ──────────────────────────────────────────
 ensure_type_fest_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    if [ ! -d "$TYPE_FEST_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning type-fest fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$TYPE_FEST_REPO" "$TYPE_FEST_DIR"
-    fi
-    if [ -n "$(git -C "$TYPE_FEST_DIR" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${YELLOW}type-fest fixture is dirty; recloning for reproducibility...${NC}"
-        rm -rf "$TYPE_FEST_DIR"
-        git clone --quiet --no-tags --depth 1 "$TYPE_FEST_REPO" "$TYPE_FEST_DIR"
-    fi
-    if [ -n "$TYPE_FEST_REF" ]; then
-        local current_ref
-        current_ref="$(git -C "$TYPE_FEST_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-        if [ "$current_ref" != "$TYPE_FEST_REF" ]; then
-            echo -e "${CYAN}Pinning type-fest to ${TYPE_FEST_REF:0:12}...${NC}"
-            git -C "$TYPE_FEST_DIR" fetch --quiet --depth 1 origin "$TYPE_FEST_REF"
-            git -C "$TYPE_FEST_DIR" checkout --quiet --detach FETCH_HEAD
-        fi
-    fi
+    tsz_ensure_git_fixture "type-fest" "$TYPE_FEST_REPO" "$TYPE_FEST_REF" "$TYPE_FEST_DIR" 1
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$TYPE_FEST_DIR/tsconfig.flat.json"
-    cat > "$flat_tsconfig" << 'FLATEOF'
-{
-  "compilerOptions": {
-    "target": "es2017",
-    "module": "esnext",
-    "strict": true,
-    "lib": ["es2022"],
-    "types": [],
-    "skipLibCheck": true,
-    "noEmit": true,
-    "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "bundler"
-  },
-  "include": ["source/**/*.d.ts", "index.d.ts"],
-  "exclude": ["test-d/**/*", "node_modules/**/*"]
-}
-FLATEOF
+    tsz_write_type_fest_config "$flat_tsconfig"
 }
 
 # ─── Real-world fixture: zod ────────────────────────────────────────────────
 ensure_zod_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    if [ ! -d "$ZOD_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning zod fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$ZOD_REPO" "$ZOD_DIR"
-    fi
-    if [ -n "$(git -C "$ZOD_DIR" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${YELLOW}zod fixture is dirty; recloning for reproducibility...${NC}"
-        rm -rf "$ZOD_DIR"
-        git clone --quiet --no-tags --depth 1 "$ZOD_REPO" "$ZOD_DIR"
-    fi
-    if [ -n "$ZOD_REF" ]; then
-        local current_ref
-        current_ref="$(git -C "$ZOD_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-        if [ "$current_ref" != "$ZOD_REF" ]; then
-            echo -e "${CYAN}Pinning zod to ${ZOD_REF:0:12}...${NC}"
-            git -C "$ZOD_DIR" fetch --quiet --depth 1 origin "$ZOD_REF"
-            git -C "$ZOD_DIR" checkout --quiet --detach FETCH_HEAD
-        fi
-    fi
+    tsz_ensure_git_fixture "zod" "$ZOD_REPO" "$ZOD_REF" "$ZOD_DIR" 1
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
     local flat_tsconfig="$ZOD_DIR/tsconfig.flat.json"
-    cat > "$flat_tsconfig" << 'FLATEOF'
-{
-  "compilerOptions": {
-    "target": "es2017",
-    "module": "esnext",
-    "strict": true,
-    "lib": ["es2022", "dom"],
-    "types": [],
-    "skipLibCheck": true,
-    "noEmit": true,
-    "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "bundler"
-  },
-  "include": ["src/**/*.ts", "packages/zod/src/**/*.ts"],
-  "exclude": [
-    "**/*.test.ts",
-    "**/__tests__/**",
-    "**/benchmarks/**",
-    "node_modules/**/*"
-  ]
-}
-FLATEOF
+    tsz_write_zod_config "$flat_tsconfig"
 }
 
 # ─── Real-world fixture: kysely (extreme type-level SQL inference) ─────────
 ensure_kysely_fixture() {
     mkdir -p "$EXTERNAL_BENCH_DIR"
-    if [ ! -d "$KYSELY_DIR/.git" ]; then
-        echo -e "${CYAN}Cloning kysely fixture...${NC}"
-        git clone --quiet --no-tags --depth 1 "$KYSELY_REPO" "$KYSELY_DIR"
-    fi
-    if [ -n "$(git -C "$KYSELY_DIR" status --porcelain 2>/dev/null)" ]; then
-        echo -e "${YELLOW}kysely fixture is dirty; recloning for reproducibility...${NC}"
-        rm -rf "$KYSELY_DIR"
-        git clone --quiet --no-tags --depth 1 "$KYSELY_REPO" "$KYSELY_DIR"
-    fi
-    if [ -n "$KYSELY_REF" ]; then
-        local current_ref
-        current_ref="$(git -C "$KYSELY_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-        if [ "$current_ref" != "$KYSELY_REF" ]; then
-            echo -e "${CYAN}Pinning kysely to ${KYSELY_REF:0:12}...${NC}"
-            git -C "$KYSELY_DIR" fetch --quiet --depth 1 origin "$KYSELY_REF"
-            git -C "$KYSELY_DIR" checkout --quiet --detach FETCH_HEAD
-        fi
-    fi
+    tsz_ensure_git_fixture "kysely" "$KYSELY_REPO" "$KYSELY_REF" "$KYSELY_DIR" 1
     local flat_tsconfig="$KYSELY_DIR/tsconfig.flat.json"
     local bench_globals="$KYSELY_DIR/tsz-bench-globals.d.ts"
-    cat > "$bench_globals" << 'GLOBALSEOF'
-declare const Buffer: {
-  isBuffer(value: unknown): boolean;
-  compare(left: unknown, right: unknown): number;
-};
-GLOBALSEOF
+    tsz_write_kysely_globals "$bench_globals"
     # Rewrite the generated flat tsconfig every run; fixture clones are cached
     # across jobs and must pick up script-owned config changes.
-    cat > "$flat_tsconfig" << 'FLATEOF'
-{
-  "compilerOptions": {
-    "target": "es2017",
-    "module": "esnext",
-    "strict": true,
-    "lib": ["es2022", "dom"],
-    "types": [],
-    "skipLibCheck": true,
-    "noEmit": true,
-    "forceConsistentCasingInFileNames": true,
-    "moduleResolution": "bundler"
-  },
-  "include": ["src/**/*.ts", "tsz-bench-globals.d.ts"],
-  "exclude": [
-    "**/*.test.ts",
-    "test/**/*",
-    "node_modules/**/*",
-    "**/dialect/mssql/**",
-    "**/util/object-utils.ts",
-    "**/util/performance-now.ts"
-  ]
-}
-FLATEOF
+    tsz_write_kysely_config "$flat_tsconfig"
 }
 
 run_utility_types_benchmarks() {
@@ -2276,7 +2372,7 @@ run_utility_types_benchmarks() {
     local lib_args="--lib dom,es2017"
 
     local files
-    if [ "$QUICK_MODE" = true ]; then
+    if use_quick_subset_for "utility-types/index.ts"; then
         files=("src/index.ts")
     else
         files=(
@@ -2327,7 +2423,7 @@ run_ts_toolbelt_benchmarks() {
     local lib_args="--lib esnext,dom"
 
     local files
-    if [ "$QUICK_MODE" = true ]; then
+    if use_quick_subset_for "ts-toolbelt/Iteration/Iteration.ts"; then
         files=("sources/Iteration/Iteration.ts")
     else
         files=(
@@ -2377,7 +2473,7 @@ run_ts_essentials_benchmarks() {
     local lib_args="--lib es2018"
 
     local files
-    if [ "$QUICK_MODE" = true ]; then
+    if use_quick_subset_for "ts-essentials/paths.ts"; then
         files=("lib/paths/index.ts")
     else
         files=(
@@ -2422,6 +2518,10 @@ run_utility_types_project_benchmarks() {
 }
 
 run_ts_toolbelt_project_benchmarks() {
+    if ! should_run_compile_canary_project; then
+        return
+    fi
+
     if ! is_benchmark_selected "ts-toolbelt-project"; then
         return
     fi
@@ -2511,6 +2611,10 @@ run_type_fest_project_benchmarks() {
 }
 
 run_zod_project_benchmarks() {
+    if ! should_run_compile_canary_project; then
+        return
+    fi
+
     if ! is_benchmark_selected "zod-project"; then
         return
     fi
@@ -2539,6 +2643,10 @@ run_zod_project_benchmarks() {
 }
 
 run_kysely_project_benchmarks() {
+    if ! should_run_compile_canary_project; then
+        return
+    fi
+
     if ! is_benchmark_selected "kysely-project"; then
         return
     fi
@@ -2572,7 +2680,7 @@ run_nextjs_benchmarks() {
     ensure_nextjs_fixture
     echo -e "${GREEN}✓${NC} next.js pinned at $(git -C "$NEXTJS_DIR" rev-parse --short HEAD)"
 
-    local tsconfig="$NEXTJS_DIR/packages/next/tsconfig.json"
+    local tsconfig="$NEXTJS_DIR/packages/next/tsconfig.tsz-bench.json"
     local src_dir="$NEXTJS_DIR/packages/next/src"
 
     if [ ! -f "$tsconfig" ]; then
@@ -2723,1060 +2831,6 @@ run_large_ts_repo_benchmarks() {
     echo
 }
 
-generate_synthetic_file() {
-    local class_count="$1"
-    local output="$2"
-    
-    cat > "$output" << 'HEADER'
-// Synthetic TypeScript benchmark file
-// Auto-generated for performance testing
-
-HEADER
-
-    for ((i=0; i<class_count; i++)); do
-        cat >> "$output" << EOF
-export interface Config$i {
-    readonly id: number;
-    name: string;
-    enabled: boolean;
-    options?: Record<string, unknown>;
-}
-
-export class Service$i implements Config$i {
-    readonly id: number = $i;
-    name: string;
-    enabled: boolean = true;
-    private items: string[] = [];
-
-    constructor(name: string) {
-        this.name = name;
-    }
-
-    getId(): number {
-        return this.id;
-    }
-
-    getName(): string {
-        return this.name;
-    }
-
-    setName(value: string): void {
-        this.name = value;
-    }
-
-    isEnabled(): boolean {
-        return this.enabled;
-    }
-
-    addItem(item: string): void {
-        this.items.push(item);
-    }
-
-    getItems(): readonly string[] {
-        return this.items;
-    }
-
-    static create(name: string): Service$i {
-        return new Service$i(name);
-    }
-}
-
-EOF
-    done
-}
-
-generate_complex_file() {
-    local func_count="$1"
-    local output="$2"
-    
-    cat > "$output" << 'HEADER'
-// Complex TypeScript with generics, unions, and conditional types
-/// <reference lib="es2015.promise" />
-
-type DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T;
-
-interface Result<T, E = Error> {
-    ok: boolean;
-    value?: T;
-    error?: E;
-}
-
-HEADER
-
-    for ((i=0; i<func_count; i++)); do
-        cat >> "$output" << EOF
-async function process$i<T extends Record<string, unknown>>(
-    input: T,
-    options?: DeepPartial<{ timeout: number; retries: number }>
-): Promise<Result<T>> {
-    const timeout = options?.timeout ?? 1000;
-    const retries = options?.retries ?? 3;
-    
-    for (let attempt = 0; attempt < retries; attempt++) {
-        try {
-            const result = await Promise.resolve(input);
-            if (timeout < 0) {
-                throw new Error('timeout');
-            }
-            return { ok: true, value: result };
-        } catch (e) {
-            if (attempt === retries - 1) {
-                return { ok: false, error: e as Error };
-            }
-        }
-    }
-    return { ok: false, error: new Error('exhausted') };
-}
-
-EOF
-    done
-}
-
-generate_deeppartial_optional_chain_file() {
-    local func_count="$1"
-    local output="$2"
-
-    cat > "$output" << 'HEADER'
-// DeepPartial + optional-chain hotspot benchmark.
-// This isolates recursive mapped-type expansion on repeated property access.
-
-type DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T;
-type Normalize<T> = T extends object ? { [P in keyof T]: Normalize<T[P]> } : T;
-type DeepInput<T> = DeepPartial<Normalize<T>>;
-
-interface RetryOptions {
-    timeout: number;
-    retries: number;
-    nested: {
-        transport: {
-            backoff: {
-                base: number;
-                max: number;
-                jitter: number;
-            };
-        };
-        flags: {
-            fast: boolean;
-            safe: boolean;
-        };
-    };
-}
-HEADER
-
-    local score_expr='(options?.timeout ?? 1000) + (options?.nested?.transport?.backoff?.base ?? 10) + (options?.nested?.transport?.backoff?.max ?? 100) + (options?.nested?.transport?.backoff?.jitter ?? 1) + (options?.nested?.flags?.safe ? 1 : 0) + (options?.nested?.flags?.fast ? 1 : 0) + (options?.retries ?? 3)'
-
-    for ((i=0; i<func_count; i++)); do
-        cat >> "$output" << EOF
-function deepPartialHotspot$i(
-    options?: DeepInput<RetryOptions>
-): number {
-    let score = 0;
-EOF
-        for ((j=0; j<34; j++)); do
-            printf '    score += %s;\n' "$score_expr" >> "$output"
-        done
-        cat >> "$output" << 'EOF'
-    return score;
-}
-
-EOF
-    done
-}
-
-generate_shallow_optional_chain_file() {
-    local func_count="$1"
-    local output="$2"
-
-    cat > "$output" << 'HEADER'
-// Shallow optional-chain control benchmark.
-// Same structure as DeepPartial hotspot but without recursive mapped types.
-
-interface RetryOptionsShallow {
-    timeout?: number;
-    retries?: number;
-    nested?: {
-        transport?: {
-            backoff?: {
-                base?: number;
-                max?: number;
-                jitter?: number;
-            };
-        };
-        flags?: {
-            fast?: boolean;
-            safe?: boolean;
-        };
-    };
-}
-HEADER
-
-    local score_expr='(options?.timeout ?? 1000) + (options?.nested?.transport?.backoff?.base ?? 10) + (options?.nested?.transport?.backoff?.max ?? 100) + (options?.nested?.transport?.backoff?.jitter ?? 1) + (options?.nested?.flags?.safe ? 1 : 0) + (options?.nested?.flags?.fast ? 1 : 0) + (options?.retries ?? 3)'
-
-    for ((i=0; i<func_count; i++)); do
-        cat >> "$output" << EOF
-function shallowOptionalControl$i(
-    options?: RetryOptionsShallow
-): number {
-    let score = 0;
-EOF
-        for ((j=0; j<34; j++)); do
-            printf '    score += %s;\n' "$score_expr" >> "$output"
-        done
-        cat >> "$output" << 'EOF'
-    return score;
-}
-
-EOF
-    done
-}
-generate_typed_arrays_file() {
-    local output="$1"
-
-    cat > "$output" << 'HEADER'
-// Typed array benchmark fixture used by bench-vs-tsgo.sh.
-// Keep this strict/explicit so all compilers can parse and type-check it.
-
-function createTypedArrayInstancesFromLength(length: number) {
-    const typedArrays = [];
-    typedArrays[0] = new Int8Array(length);
-    typedArrays[1] = new Uint8Array(length);
-    typedArrays[2] = new Int16Array(length);
-    typedArrays[3] = new Uint16Array(length);
-    typedArrays[4] = new Int32Array(length);
-    typedArrays[5] = new Uint32Array(length);
-    typedArrays[6] = new Float32Array(length);
-    typedArrays[7] = new Float64Array(length);
-    typedArrays[8] = new Uint8ClampedArray(length);
-    return typedArrays;
-}
-
-function createTypedArrayInstancesFromArrayLike(obj: ArrayLike<number>) {
-    const typedArrays = [];
-    typedArrays[0] = new Int8Array(obj);
-    typedArrays[1] = new Uint8Array(obj);
-    typedArrays[2] = new Int16Array(obj);
-    typedArrays[3] = new Uint16Array(obj);
-    typedArrays[4] = new Int32Array(obj);
-    typedArrays[5] = new Uint32Array(obj);
-    typedArrays[6] = new Float32Array(obj);
-    typedArrays[7] = new Float64Array(obj);
-    typedArrays[8] = new Uint8ClampedArray(obj);
-    return typedArrays;
-}
-
-function createTypedArraysFromMapFn(
-    obj: ArrayLike<number>,
-    mapFn: (n: number, v: number) => number
-) {
-    const typedArrays = [];
-    typedArrays[0] = Int8Array.from(obj, mapFn);
-    typedArrays[1] = Uint8Array.from(obj, mapFn);
-    typedArrays[2] = Int16Array.from(obj, mapFn);
-    typedArrays[3] = Uint16Array.from(obj, mapFn);
-    typedArrays[4] = Int32Array.from(obj, mapFn);
-    typedArrays[5] = Uint32Array.from(obj, mapFn);
-    typedArrays[6] = Float32Array.from(obj, mapFn);
-    typedArrays[7] = Float64Array.from(obj, mapFn);
-    typedArrays[8] = Uint8ClampedArray.from(obj, mapFn);
-    return typedArrays;
-}
-
-const values: number[] = [1, 2, 3, 4];
-const mapped = createTypedArraysFromMapFn(values, (n, i) => n + i);
-const fromLength = createTypedArrayInstancesFromLength(128);
-const fromArrayLike = createTypedArrayInstancesFromArrayLike(values);
-const sampleCount = mapped.length + fromLength.length + fromArrayLike.length;
-HEADER
-}
-
-generate_union_file() {
-    local member_count="$1"
-    local output="$2"
-    
-    cat > "$output" << 'HEADER'
-// Union type stress test - discriminated unions with many members
-
-HEADER
-
-    # Generate union type
-    echo "type StressEvent =" >> "$output"
-    for ((i=0; i<member_count; i++)); do
-        if [ $i -eq $((member_count - 1)) ]; then
-            echo "    | { type: 'event$i'; payload$i: string; timestamp: number };" >> "$output"
-        else
-            echo "    | { type: 'event$i'; payload$i: string; timestamp: number }" >> "$output"
-        fi
-    done
-    
-    echo "" >> "$output"
-    
-    # Generate handler function with exhaustive switch
-    cat >> "$output" << 'HANDLER_START'
-function handleEvent(event: StressEvent): string {
-    switch (event.type) {
-HANDLER_START
-
-    for ((i=0; i<member_count; i++)); do
-        echo "        case 'event$i': return event.payload$i;" >> "$output"
-    done
-    
-    cat >> "$output" << 'HANDLER_END'
-        default:
-            throw new Error('unreachable');
-    }
-}
-
-HANDLER_END
-
-    # Generate some type narrowing tests
-    for ((i=0; i<member_count; i+=10)); do
-        cat >> "$output" << EOF
-function isEvent$i(e: StressEvent): e is Extract<StressEvent, { type: 'event$i' }> {
-    return e.type === 'event$i';
-}
-
-EOF
-    done
-}
-
-# =============================================================================
-# SOLVER STRESS TEST GENERATORS
-# =============================================================================
-# These generators create files that stress specific solver limits defined in
-# src/limits.rs. They push close to (but under) hard limits to find perf cliffs.
-
-# Stress: MAX_INSTANTIATION_DEPTH (50), MAX_SUBTYPE_DEPTH (100)
-generate_recursive_generic_file() {
-    local depth="$1"
-    local output="$2"
-    
-    cat > "$output" << 'HEADER'
-// Recursive generic type instantiation stress test
-// Pushes MAX_INSTANTIATION_DEPTH and subtype checking limits
-
-type LinkedList<T> = { value: T; next: LinkedList<T> | null };
-type DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T;
-type DeepReadonly<T> = T extends object ? { readonly [P in keyof T]: DeepReadonly<T[P]> } : T;
-
-HEADER
-
-    # Generate recursive wrapper types
-    for ((i=0; i<depth; i++)); do
-        echo "type Wrap$i<T> = { layer$i: T };" >> "$output"
-    done
-    
-    # Generate deeply nested instantiation
-    echo "" >> "$output"
-    echo "// Deep instantiation chain" >> "$output"
-    local chain="string"
-    local max_chain=$((depth < 40 ? depth : 40))
-    for ((i=max_chain-1; i>=0; i--)); do
-        chain="Wrap$i<$chain>"
-    done
-    echo "type DeepWrapped = $chain;" >> "$output"
-    
-    # Force evaluation with assignments
-    echo "" >> "$output"
-    echo "declare const deep: DeepWrapped;" >> "$output"
-    echo "declare function extract<T>(x: Wrap0<T>): T;" >> "$output"
-    echo "const _test = extract(deep);" >> "$output"
-    
-    # Add recursive type checks
-    echo "" >> "$output"
-    echo "// Recursive list operations" >> "$output"
-    echo "declare const list: LinkedList<number>;" >> "$output"
-    echo "declare function mapList<T, U>(l: LinkedList<T>, f: (x: T) => U): LinkedList<U>;" >> "$output"
-    echo "const mapped = mapList(list, x => x.toString());" >> "$output"
-}
-
-# Stress: MAX_DISTRIBUTION_SIZE (100), MAX_EVALUATE_DEPTH (50)
-generate_conditional_distribution_file() {
-    local member_count="$1"
-    local output="$2"
-    
-    cat > "$output" << 'HEADER'
-// Conditional type distribution stress test
-// Tests large union distribution in conditional types
-
-type ExtractString<T> = T extends string ? T : never;
-type ExtractNumber<T> = T extends number ? T : never;
-type ExtractArrayType<T> = T extends (infer U)[] ? U : never;
-type ToArray<T> = T extends any ? T[] : never;
-type Flatten<T> = T extends (infer U)[] ? Flatten<U> : T;
-
-HEADER
-
-    # Generate a large union type
-    echo "type BigUnion =" >> "$output"
-    for ((i=0; i<member_count; i++)); do
-        if [ $i -eq $((member_count - 1)) ]; then
-            echo "    | 'value$i';" >> "$output"
-        else
-            echo "    | 'value$i'" >> "$output"
-        fi
-    done
-    
-    # Apply conditional types that distribute over the union
-    echo "" >> "$output"
-    echo "// Distributive conditional type applications" >> "$output"
-    echo "type Distributed1 = ToArray<BigUnion>;" >> "$output"
-    echo "type Distributed2 = ExtractString<BigUnion | number>;" >> "$output"
-    
-    # Chain multiple conditional transformations
-    cat >> "$output" << 'EOF'
-
-type ChainedConditional<T> =
-    T extends string ? `prefix_${T}` :
-    T extends number ? T :
-    T extends boolean ? (T extends true ? 1 : 0) :
-    never;
-
-type Applied = ChainedConditional<BigUnion>;
-
-// Nested conditional
-type NestedConditional<T> =
-    T extends `value${infer N}` ? N extends `${infer D}${infer Rest}` ? D : never : never;
-
-type Extracted = NestedConditional<BigUnion>;
-
-EOF
-
-    # Force type evaluation with declarations
-    echo "declare const distributed: Distributed1;" >> "$output"
-    echo "declare const applied: Applied;" >> "$output"
-    echo "declare const extracted: Extracted;" >> "$output"
-}
-
-# Stress: MAX_MAPPED_KEYS (500)
-generate_mapped_type_file() {
-    local key_count="$1"
-    local output="$2"
-    
-    cat > "$output" << 'HEADER'
-// Mapped type expansion stress test
-// Tests MAX_MAPPED_KEYS limit and mapped type evaluation
-
-type MyOptional<T> = { [K in keyof T]?: T[K] };
-type MyRequired<T> = { [K in keyof T]-?: T[K] };
-type MyReadonly<T> = { readonly [K in keyof T]: T[K] };
-type MyMutable<T> = { -readonly [K in keyof T]: T[K] };
-
-// Advanced mapped types
-type Getters<T> = { [K in keyof T as `get${Capitalize<string & K>}`]: () => T[K] };
-type Setters<T> = { [K in keyof T as `set${Capitalize<string & K>}`]: (val: T[K]) => void };
-
-HEADER
-
-    # Generate a type with many properties
-    echo "interface BigObject {" >> "$output"
-    for ((i=0; i<key_count; i++)); do
-        echo "    prop$i: string;" >> "$output"
-    done
-    echo "}" >> "$output"
-    
-    # Apply various mapped type transformations
-    echo "" >> "$output"
-    echo "// Mapped type transformations" >> "$output"
-    echo "type Partial1 = MyOptional<BigObject>;" >> "$output"
-    echo "type Readonly1 = MyReadonly<BigObject>;" >> "$output"
-    echo "type Both = MyReadonly<MyOptional<BigObject>>;" >> "$output"
-    echo "" >> "$output"
-    echo "type BigGetters = Getters<BigObject>;" >> "$output"
-    echo "type BigSetters = Setters<BigObject>;" >> "$output"
-    
-    # Nested mapped type
-    cat >> "$output" << 'EOF'
-
-// Nested mapped type
-type DeepOptional<T> = T extends object ? { [K in keyof T]?: DeepOptional<T[K]> } : T;
-type DeepBigObject = DeepOptional<BigObject>;
-
-EOF
-
-    # Force evaluation
-    echo "declare const partial: Partial1;" >> "$output"
-    echo "declare const getters: BigGetters;" >> "$output"
-    echo "declare const deep: DeepBigObject;" >> "$output"
-    echo "const _prop0 = partial.prop0;" >> "$output"
-}
-
-# Stress: TEMPLATE_LITERAL_EXPANSION_LIMIT (100,000)
-generate_template_literal_file() {
-    local variant_count="$1"
-    local output="$2"
-    
-    cat > "$output" << 'HEADER'
-// Template literal type expansion stress test
-// Tests Cartesian product explosion prevention
-
-HEADER
-
-    # Generate multiple union types for Cartesian product
-    local max_variants=$((variant_count < 50 ? variant_count : 50))
-    
-    echo "type Colors =" >> "$output"
-    for ((i=0; i<max_variants; i++)); do
-        if [ $i -eq $((max_variants - 1)) ]; then
-            echo "    | 'color$i';" >> "$output"
-        else
-            echo "    | 'color$i'" >> "$output"
-        fi
-    done
-    
-    echo "" >> "$output"
-    echo "type Sizes =" >> "$output"
-    for ((i=0; i<max_variants; i++)); do
-        if [ $i -eq $((max_variants - 1)) ]; then
-            echo "    | 'size$i';" >> "$output"
-        else
-            echo "    | 'size$i'" >> "$output"
-        fi
-    done
-    
-    echo "" >> "$output"
-    echo "type Variants =" >> "$output"
-    for ((i=0; i<max_variants; i++)); do
-        if [ $i -eq $((max_variants - 1)) ]; then
-            echo "    | 'variant$i';" >> "$output"
-        else
-            echo "    | 'variant$i'" >> "$output"
-        fi
-    done
-    
-    # Template literal combining unions (Cartesian product)
-    cat >> "$output" << 'EOF'
-
-// Template literal Cartesian products
-type ProductSmall = `${Colors}-${Sizes}`;
-type ProductMedium = `${Colors}-${Sizes}-${Variants}`;
-
-// String manipulation types
-type Prefixed = `prefix_${Colors}`;
-type Suffixed = `${Colors}_suffix`;
-type Wrapped = `[${Colors}]`;
-
-// Nested template
-type NestedTemplate = `start_${`mid_${Colors}`}_end`;
-
-EOF
-
-    # Force evaluation
-    echo "declare const product: ProductSmall;" >> "$output"
-    echo "declare const prefixed: Prefixed;" >> "$output"
-}
-
-# Stress: MAX_SUBTYPE_DEPTH (100), coinductive cycle detection
-generate_deep_subtype_file() {
-    local depth="$1"
-    local output="$2"
-    
-    cat > "$output" << 'HEADER'
-// Deep subtype checking stress test
-// Tests recursive type comparison and cycle detection
-
-// Self-referential types
-interface TreeNode<T> {
-    value: T;
-    children: TreeNode<T>[];
-}
-
-interface MutualA<T> {
-    data: T;
-    ref: MutualB<T>;
-}
-
-interface MutualB<T> {
-    info: T;
-    back: MutualA<T>;
-}
-
-// Recursive JSON type
-type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
-
-HEADER
-
-    # Generate deep class hierarchy for variance checking
-    echo "// Deep class hierarchy for subtype checking" >> "$output"
-    echo "class Base0 { x0: string = ''; }" >> "$output"
-    local max_depth=$((depth < 50 ? depth : 50))
-    for ((i=1; i<max_depth; i++)); do
-        local prev=$((i - 1))
-        echo "class Base$i extends Base$prev { x$i: string = ''; }" >> "$output"
-    done
-    
-    # Generate covariant/contravariant positions
-    cat >> "$output" << 'EOF'
-
-// Variance stress with function types
-type CovariantContainer<T> = { get(): T };
-type ContravariantContainer<T> = { set(x: T): void };
-type InvariantContainer<T> = { get(): T; set(x: T): void };
-
-// Bivariant method position
-interface BivariantMethods<T> {
-    method(x: T): T;
-}
-
-EOF
-
-    # Deep nested function type
-    local deepfn="string"
-    local max_fn_depth=$((depth < 30 ? depth : 30))
-    for ((i=0; i<max_fn_depth; i++)); do
-        deepfn="(x: $deepfn) => void"
-    done
-    echo "" >> "$output"
-    echo "type DeepFunction = $deepfn;" >> "$output"
-    
-    # Force subtype checks
-    cat >> "$output" << 'EOF'
-
-// Force subtype checks
-declare const tree1: TreeNode<string>;
-declare const tree2: TreeNode<string | number>;
-const _check: TreeNode<string | number> = tree1;
-
-declare const mutual: MutualA<string>;
-declare function acceptMutual(x: MutualA<string | number>): void;
-acceptMutual(mutual);
-
-// JSON type checks
-declare const json1: Json;
-declare const json2: { nested: Json };
-const _jsonCheck: Json = json2;
-
-EOF
-}
-
-# Stress: Intersection normalization and property merging
-generate_intersection_file() {
-    local count="$1"
-    local output="$2"
-    
-    cat > "$output" << 'HEADER'
-// Intersection type stress test
-// Tests intersection normalization and property merging
-
-HEADER
-
-    # Generate many interfaces to intersect
-    for ((i=0; i<count; i++)); do
-        echo "interface Part$i {" >> "$output"
-        echo "    prop$i: string;" >> "$output"
-        echo "    shared: number;" >> "$output"
-        echo "    method$i(): number;" >> "$output"
-        echo "}" >> "$output"
-        echo "" >> "$output"
-    done
-    
-    # Create large intersections
-    local intersection="Part0"
-    local max_intersect=$((count < 50 ? count : 50))
-    for ((i=1; i<max_intersect; i++)); do
-        intersection="$intersection & Part$i"
-    done
-    echo "type BigIntersection = $intersection;" >> "$output"
-    
-    # Function overload intersection
-    cat >> "$output" << 'EOF'
-
-// Function overload intersection
-type OverloadIntersection = 
-    ((x: string) => string) &
-    ((x: number) => number) &
-    ((x: boolean) => boolean);
-
-// Generic intersection
-type GenericIntersection<T, U> = T & U;
-
-EOF
-
-    # Force evaluation
-    echo "" >> "$output"
-    echo "declare const big: BigIntersection;" >> "$output"
-    echo "const _prop0 = big.prop0;" >> "$output"
-    echo "const _shared = big.shared;" >> "$output"
-    local last=$((count - 1))
-    if [ $last -lt 50 ]; then
-        echo "const _propLast = big.prop$last;" >> "$output"
-    fi
-}
-
-# Stress: Inference variable instantiation in conditional types
-generate_infer_stress_file() {
-    local count="$1"
-    local output="$2"
-    
-    cat > "$output" << 'HEADER'
-// Infer keyword stress test
-// Tests inference variable resolution in conditional types
-
-type UnwrapPromise<T> = T extends Promise<infer U> ? U : T;
-type UnwrapArray<T> = T extends (infer U)[] ? U : T;
-type MyParameters<T> = T extends (...args: infer P) => any ? P : never;
-type MyReturnType<T> = T extends (...args: any[]) => infer R ? R : never;
-
-// Multi-infer conditional
-type FirstAndRest<T> = T extends [infer First, ...infer Rest] ? { first: First; rest: Rest } : never;
-
-// Nested infer
-type DeepUnwrap<T> = 
-    T extends Promise<infer U> ? DeepUnwrap<U> :
-    T extends (infer V)[] ? DeepUnwrap<V>[] :
-    T;
-
-// Infer in template literal
-type ExtractPrefix<T> = T extends `${infer P}_${string}` ? P : never;
-
-// Infer with constraints
-type ExtractIfString<T> = T extends infer U extends string ? U : never;
-
-HEADER
-
-    # Generate functions with many parameters to test Parameters<T>
-    local max_funcs=$((count < 30 ? count : 30))
-    for ((i=0; i<max_funcs; i++)); do
-        echo "declare function func$i(" >> "$output"
-        for ((j=0; j<=i; j++)); do
-            if [ $j -eq $i ]; then
-                echo "    arg$j: string" >> "$output"
-            else
-                echo "    arg$j: string," >> "$output"
-            fi
-        done
-        echo "): number;" >> "$output"
-        echo "" >> "$output"
-        echo "type Params$i = MyParameters<typeof func$i>;" >> "$output"
-        echo "type Return$i = MyReturnType<typeof func$i>;" >> "$output"
-        echo "" >> "$output"
-    done
-    
-    # Force evaluation with complex nested inference
-    cat >> "$output" << 'EOF'
-
-// Complex nested inference
-type ComplexInfer<T> = T extends { 
-    data: infer D; 
-    nested: { value: infer V }[] 
-} ? { data: D; values: V[] } : never;
-
-interface TestData {
-    data: string;
-    nested: { value: number }[];
-}
-
-type Inferred = ComplexInfer<TestData>;
-
-EOF
-
-    echo "declare const params: Params$((max_funcs - 1));" >> "$output"
-    echo "declare const inferred: Inferred;" >> "$output"
-}
-
-# Stress: Control flow analysis with many branches
-generate_cfa_stress_file() {
-    local branch_count="$1"
-    local output="$2"
-    
-    cat > "$output" << 'HEADER'
-// Control flow analysis stress test
-// Tests type narrowing with many branches
-
-type Status = 'pending' | 'active' | 'completed' | 'failed' | 'cancelled';
-
-interface BaseEntity {
-    id: string;
-    status: Status;
-}
-
-HEADER
-
-    # Generate discriminated union
-    echo "type Entity =" >> "$output"
-    for ((i=0; i<branch_count; i++)); do
-        if [ $i -eq $((branch_count - 1)) ]; then
-            echo "    | { kind: 'type$i'; data$i: string; common: number };" >> "$output"
-        else
-            echo "    | { kind: 'type$i'; data$i: string; common: number }" >> "$output"
-        fi
-    done
-    
-    # Generate exhaustive switch
-    cat >> "$output" << 'EOF'
-
-function processEntity(e: Entity): string {
-    switch (e.kind) {
-EOF
-
-    for ((i=0; i<branch_count; i++)); do
-        echo "        case 'type$i': return e.data$i;" >> "$output"
-    done
-    
-    cat >> "$output" << 'EOF'
-        default:
-            throw new Error('unreachable');
-    }
-}
-
-EOF
-
-    # Generate many branch checks without relying on final-else narrowing.
-    echo "function processWithIf(e: Entity): string {" >> "$output"
-    for ((i=0; i<branch_count; i++)); do
-        echo "    if (e.kind === 'type$i') {" >> "$output"
-        echo "        return e.data$i;" >> "$output"
-        echo "    }" >> "$output"
-    done
-    echo "    return processEntity(e);" >> "$output"
-    echo "}" >> "$output"
-    
-    # Type guard functions
-    echo "" >> "$output"
-    for ((i=0; i<branch_count; i+=5)); do
-        cat >> "$output" << EOF
-function isType$i(e: Entity): e is Extract<Entity, { kind: 'type$i' }> {
-    return e.kind === 'type$i';
-}
-
-EOF
-    done
-}
-
-# =============================================================================
-# O(N²) ALGORITHMIC PATTERN BENCHMARKS
-# =============================================================================
-# These generators create files that specifically stress the three known O(N²)
-# algorithmic patterns in the solver that Salsa memoization alone cannot fix.
-# See docs/todo/05_algorithmic_fixes.md for details.
-
-# Stress: Best Common Type — O(N²) in infer.rs:1060
-# N candidates × N subtype checks per candidate.
-# Triggered when many return statements / array elements need a common type.
-generate_bct_stress_file() {
-    local count="$1"
-    local output="$2"
-
-    cat > "$output" << 'HEADER'
-// Best Common Type (BCT) O(N²) stress test
-// Targets: infer.rs best_common_type() — N candidates × N subtype checks
-//
-// Each class in the hierarchy is a distinct type candidate. When the compiler
-// infers the type of an array literal or multi-return function, it must find
-// the "best common type" by checking every candidate against every other.
-
-HEADER
-
-    # Build a class hierarchy so types are related but distinct
-    echo "class Base { base: string = ''; }" >> "$output"
-    for ((i=0; i<count; i++)); do
-        echo "class Derived$i extends Base { prop$i: number = $i; }" >> "$output"
-    done
-    echo "" >> "$output"
-
-    # 1. Array literal with N distinct derived types — triggers BCT
-    echo "// Array literal: BCT must find common type among $count candidates" >> "$output"
-    echo -n "const items = [" >> "$output"
-    for ((i=0; i<count; i++)); do
-        if [ $i -gt 0 ]; then echo -n ", " >> "$output"; fi
-        echo -n "new Derived$i()" >> "$output"
-    done
-    echo "];" >> "$output"
-    echo "" >> "$output"
-
-    # 2. Function with N return statements — triggers BCT on return type
-    echo "// Function with $count return branches — BCT on return type inference" >> "$output"
-    echo "function pickOne(index: number) {" >> "$output"
-    for ((i=0; i<count; i++)); do
-        echo "    if (index === $i) return new Derived$i();" >> "$output"
-    done
-    echo "    return new Base();" >> "$output"
-    echo "}" >> "$output"
-    echo "" >> "$output"
-
-    # 3. Generic function called with N different argument types
-    # This accumulates inference candidates that go through BCT
-    echo "// Generic calls accumulating $count candidates" >> "$output"
-    echo "function identity<T>(x: T): T { return x; }" >> "$output"
-    echo -n "const mixed = [" >> "$output"
-    for ((i=0; i<count; i++)); do
-        if [ $i -gt 0 ]; then echo -n ", " >> "$output"; fi
-        echo -n "identity(new Derived$i())" >> "$output"
-    done
-    echo "];" >> "$output"
-    echo "" >> "$output"
-
-    # 4. Conditional expression chains — each branch is a BCT candidate
-    echo "// Ternary chain: $count candidates for common type" >> "$output"
-    echo -n "declare const flag: number;" >> "$output"
-    echo "" >> "$output"
-    echo -n "const chosen = " >> "$output"
-    for ((i=0; i<count; i++)); do
-        echo -n "flag === $i ? new Derived$i() : " >> "$output"
-    done
-    echo "new Base();" >> "$output"
-
-    # Force type usage
-    echo "" >> "$output"
-    echo "const _base: Base = items[0];" >> "$output"
-    echo "const _picked: Base = pickOne(0);" >> "$output"
-    echo "const _chosen: Base = chosen;" >> "$output"
-}
-
-# Stress: Constraint Conflict Detection — O(N²) in infer.rs:135
-# N² upper bound pairs + M×N lower×upper bound cross-checks.
-# Triggered when a type parameter accumulates many bounds through usage.
-generate_constraint_conflict_file() {
-    local count="$1"
-    local output="$2"
-
-    cat > "$output" << 'HEADER'
-// Constraint Conflict Detection O(N²) stress test
-// Targets: infer.rs detect_conflicts() — N² upper bound pairs + M×N lower×upper
-//
-// When a generic type parameter is used in many positions, the solver collects
-// lower bounds (argument types) and upper bounds (extends constraints, parameter
-// positions). Conflict detection checks all pairs for compatibility.
-
-HEADER
-
-    # Generate many interfaces that will become upper bounds
-    for ((i=0; i<count; i++)); do
-        echo "interface Constraint$i { key$i: string; shared: number; }" >> "$output"
-    done
-    echo "" >> "$output"
-
-    # Function where T is constrained by many extends clauses via overloads/conditionals
-    # Each call site adds bounds to T's constraint set
-    echo "// Function with type parameter accumulating bounds from $count call sites" >> "$output"
-    for ((i=0; i<count; i++)); do
-        echo "declare function constrain$i<T extends Constraint$i>(x: T): T;" >> "$output"
-    done
-    echo "" >> "$output"
-
-    # Create objects satisfying various combinations of constraints
-    echo "// Objects that satisfy multiple constraints" >> "$output"
-    for ((i=0; i<count; i++)); do
-        echo -n "const obj$i = { shared: $i" >> "$output"
-        # Each object satisfies constraints 0..i
-        for ((j=0; j<=i && j<count; j++)); do
-            echo -n ", key$j: 'val'" >> "$output"
-        done
-        echo " };" >> "$output"
-    done
-    echo "" >> "$output"
-
-    # Call constrain functions — each call adds lower + upper bounds
-    echo "// Each call adds lower bounds (arg type) and upper bounds (extends Constraint$i)" >> "$output"
-    for ((i=0; i<count; i++)); do
-        echo "const res$i = constrain$i(obj$i);" >> "$output"
-    done
-    echo "" >> "$output"
-
-    # Generic function that collects many bounds on a single type parameter
-    echo "// Single type param T accumulating $count bounds" >> "$output"
-    echo -n "function multiConstrained<T extends " >> "$output"
-    for ((i=0; i<count; i++)); do
-        if [ $i -gt 0 ]; then echo -n " & " >> "$output"; fi
-        echo -n "Constraint$i" >> "$output"
-    done
-    echo ">(x: T): T { return x; }" >> "$output"
-    echo "" >> "$output"
-
-    # Build an object satisfying all constraints — forces full conflict check
-    echo -n "const allConstraints = { shared: 0" >> "$output"
-    for ((i=0; i<count; i++)); do
-        echo -n ", key$i: 'val'" >> "$output"
-    done
-    echo " };" >> "$output"
-    echo "const _result = multiConstrained(allConstraints);" >> "$output"
-}
-
-# Stress: Mapped Type Expansion with Complex Templates — O(N × template_size)
-# in evaluate_rules/mapped.rs:157
-# N properties × instantiate+evaluate per property, with non-trivial templates.
-# The existing generate_mapped_type_file uses simple templates (T[K]).
-# This version uses complex conditional templates that are expensive to evaluate.
-generate_mapped_complex_template_file() {
-    local key_count="$1"
-    local output="$2"
-
-    cat > "$output" << 'HEADER'
-// Mapped Type Complex Template Expansion O(N²) stress test
-// Targets: evaluate_rules/mapped.rs — N properties × expensive template evaluation
-//
-// Unlike simple homomorphic mapped types ({ [K in keyof T]: T[K] }) where the
-// template is trivial, these use conditional types and nested mapped types in
-// the template position, making each property evaluation expensive.
-
-// Utility types with non-trivial evaluation
-type DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T;
-type Stringify<T> = { [K in keyof T]: T[K] extends number ? string : T[K] extends boolean ? 'true' | 'false' : T[K] extends string ? T[K] : string };
-type Validate<T> = { [K in keyof T]: T[K] extends string ? { valid: true; value: T[K] } : T[K] extends number ? { valid: true; value: T[K] } : { valid: false; value: never } };
-type Nullable<T> = { [K in keyof T]: T[K] | null | undefined };
-type Promisify<T> = { [K in keyof T]: Promise<T[K]> };
-
-// Complex conditional template: each property evaluation triggers conditional
-// type distribution and nested type instantiation
-type FormField<T> =
-    T extends string ? { type: 'text'; value: T; validate: (v: string) => boolean }
-  : T extends number ? { type: 'number'; value: T; validate: (v: number) => boolean }
-  : T extends boolean ? { type: 'checkbox'; value: T; validate: (v: boolean) => boolean }
-  : T extends (infer U)[] ? { type: 'list'; items: FormField<U>[]; validate: (v: U[]) => boolean }
-  : T extends object ? { type: 'group'; fields: FormFields<T>; validate: (v: T) => boolean }
-  : { type: 'unknown'; value: T };
-
-type FormFields<T> = { [K in keyof T]: FormField<T[K]> };
-
-HEADER
-
-    # Generate a large interface with mixed property types
-    echo "interface BigModel {" >> "$output"
-    for ((i=0; i<key_count; i++)); do
-        local mod=$((i % 5))
-        case $mod in
-            0) echo "    field$i: string;" >> "$output" ;;
-            1) echo "    field$i: number;" >> "$output" ;;
-            2) echo "    field$i: boolean;" >> "$output" ;;
-            3) echo "    field$i: string[];" >> "$output" ;;
-            4) echo "    field$i: { nested: string; count: number };" >> "$output" ;;
-        esac
-    done
-    echo "}" >> "$output"
-    echo "" >> "$output"
-
-    # Apply complex mapped types — each triggers per-property conditional evaluation
-    echo "// Each mapped type application evaluates a conditional template for $key_count properties" >> "$output"
-    echo "type BigForm = FormFields<BigModel>;" >> "$output"
-    echo "type BigStringified = Stringify<BigModel>;" >> "$output"
-    echo "type BigValidated = Validate<BigModel>;" >> "$output"
-    echo "type BigNullable = Nullable<BigModel>;" >> "$output"
-    echo "type BigPromises = Promisify<BigModel>;" >> "$output"
-    echo "type BigDeepPartial = DeepPartial<BigModel>;" >> "$output"
-    echo "" >> "$output"
-
-    # Chained mapped types — composition multiplies the per-property cost
-    echo "// Chained: each composition re-evaluates all $key_count properties" >> "$output"
-    echo "type Chained1 = Nullable<Stringify<BigModel>>;" >> "$output"
-    echo "type Chained2 = Validate<Nullable<BigModel>>;" >> "$output"
-    echo "type Chained3 = FormFields<Nullable<BigModel>>;" >> "$output"
-    echo "" >> "$output"
-
-    # Force evaluation with declarations
-    echo "declare const form: BigForm;" >> "$output"
-    echo "declare const stringified: BigStringified;" >> "$output"
-    echo "declare const validated: BigValidated;" >> "$output"
-    echo "declare const chained: Chained3;" >> "$output"
-    echo "" >> "$output"
-
-    # Access properties to force full expansion
-    echo "const _f0 = form.field0;" >> "$output"
-    echo "const _s0 = stringified.field0;" >> "$output"
-    echo "const _v0 = validated.field0;" >> "$output"
-    local last=$((key_count - 1))
-    echo "const _fLast = form.field$last;" >> "$output"
-    echo "const _cLast = chained.field$last;" >> "$output"
-}
-
 main() {
     check_prerequisites
     if [ "$PREPARE_ONLY" = true ]; then
@@ -3787,7 +2841,9 @@ main() {
     # Create temp directory for synthetic files
     TEMP_DIR=$(mktemp -d)
     PROJECT_COMPATIBILITY_JSONL="$TEMP_DIR/project-compatibility.jsonl"
+    BENCHMARK_SOURCES_JSONL="$TEMP_DIR/benchmark-sources.jsonl"
     : > "$PROJECT_COMPATIBILITY_JSONL"
+    : > "$BENCHMARK_SOURCES_JSONL"
     # Always export the partial JSON on exit (including SIGTERM/SIGINT/OOM
     # kills) so a long bench that gets cut off — e.g. by the GitHub Actions
     # job timeout or the runner OOM killer on `large-ts-repo` — still
@@ -3938,6 +2994,31 @@ main() {
         generate_shallow_optional_chain_file 50 "$file"
         run_benchmark "Shallow optional-chain N=50" "$file"
         echo
+
+        file="$TEMP_DIR/indexed_access_hotspot_25.ts"
+        generate_indexed_access_hotspot_file 25 "$file"
+        run_benchmark "Indexed access hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/remapped_accessor_hotspot_25.ts"
+        generate_remapped_accessor_hotspot_file 25 "$file"
+        run_benchmark "Remapped accessor hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/conditional_infer_hotspot_25.ts"
+        generate_conditional_infer_hotspot_file 25 "$file"
+        run_benchmark "Conditional infer hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/object_spread_hotspot_25.ts"
+        generate_object_spread_hotspot_file 25 "$file"
+        run_benchmark "Object spread hotspot N=25" "$file"
+        echo
+
+        file="$TEMP_DIR/contextual_callback_hotspot_25.ts"
+        generate_contextual_callback_hotspot_file 25 "$file"
+        run_benchmark "Contextual callback hotspot N=25" "$file"
+        echo
     else
         # Generate synthetic files of increasing size
         print_subheader "Class-heavy files (interfaces + classes)"
@@ -3969,6 +3050,43 @@ main() {
         generate_shallow_optional_chain_file 400 "$file"
         run_benchmark "Shallow optional-chain N=400" "$file"
         echo
+
+        print_subheader "Project hotspot microbenchmarks"
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/indexed_access_hotspot_${count}.ts"
+            generate_indexed_access_hotspot_file "$count" "$file"
+            run_benchmark "Indexed access hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/remapped_accessor_hotspot_${count}.ts"
+            generate_remapped_accessor_hotspot_file "$count" "$file"
+            run_benchmark "Remapped accessor hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/conditional_infer_hotspot_${count}.ts"
+            generate_conditional_infer_hotspot_file "$count" "$file"
+            run_benchmark "Conditional infer hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/object_spread_hotspot_${count}.ts"
+            generate_object_spread_hotspot_file "$count" "$file"
+            run_benchmark "Object spread hotspot N=$count" "$file"
+            echo
+        done
+
+        for count in 25 50 100 200; do
+            local file="$TEMP_DIR/contextual_callback_hotspot_${count}.ts"
+            generate_contextual_callback_hotspot_file "$count" "$file"
+            run_benchmark "Contextual callback hotspot N=$count" "$file"
+            echo
+        done
         
         print_subheader "Union type stress test"
         

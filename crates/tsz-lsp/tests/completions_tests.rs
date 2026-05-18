@@ -1,5 +1,8 @@
 use super::*;
+use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_binder::lib_loader::LibFile;
+use tsz_checker::context::LibContext;
 use tsz_common::position::LineMap;
 use tsz_parser::ParserState;
 use tsz_solver::TypeInterner;
@@ -3713,5 +3716,981 @@ fn test_completions_suppressed_after_numeric_dot_with_jsdoc_trivia() {
     assert!(
         items.as_ref().is_none_or(|v| v.is_empty()),
         "Completions must be suppressed after `0.<jsdoc>` since the prior token is numeric, got: {items:?}"
+    );
+}
+
+// ── Function / callable member completions ──────────────────────────────────
+
+/// Helper that returns the member-completion names for `<source><suffix>`
+/// where the cursor is right after the suffix (at the end of the file).
+fn member_names_at_end(source: &str) -> Vec<String> {
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let interner = TypeInterner::new();
+    let completions = Completions::new_with_types(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let position = line_map.offset_to_position(source.len() as u32, source);
+    let mut cache = None;
+    completions
+        .get_completions_with_cache(root, position, &mut cache)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| i.label)
+        .collect()
+}
+
+fn member_names_at_end_with_lib(source: &str, lib_source: &str) -> Vec<String> {
+    let lib = Arc::new(LibFile::from_source(
+        "lib.es2015.collection.d.ts".to_string(),
+        lib_source.to_string(),
+    ));
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(arena, root, &[Arc::clone(&lib)]);
+    let line_map = LineMap::build(source);
+    let interner = TypeInterner::new();
+    let lib_contexts = vec![LibContext {
+        arena: Arc::clone(&lib.arena),
+        binder: Arc::clone(&lib.binder),
+    }];
+    let completions = Completions::with_options_and_lib_contexts(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+        crate::provider_macro::FullProviderOptions {
+            strict: true,
+            sound_mode: false,
+            checker_options: None,
+            lib_contexts: &lib_contexts,
+        },
+    );
+    let position = line_map.offset_to_position(source.len() as u32, source);
+    let mut cache = None;
+    completions
+        .get_completions_with_cache(root, position, &mut cache)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| i.label)
+        .collect()
+}
+
+#[test]
+fn test_completions_function_prototype_members_on_named_function() {
+    assert_has_members(
+        "function add(a,b){return a+b;}\nadd.",
+        &[
+            "name",
+            "length",
+            "apply",
+            "call",
+            "bind",
+            "prototype",
+            "arguments",
+            "caller",
+            "toString",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_function_prototype_members_on_arrow_function() {
+    assert_has_members(
+        "const mul = (x: number, y: number) => x * y;\nmul.",
+        &["name", "length", "apply", "call", "bind"],
+    );
+}
+
+#[test]
+fn test_completions_function_prototype_members_on_function_expression() {
+    assert_has_members(
+        "const fn = function compute(x: number) { return x; };\nfn.",
+        &["name", "length", "apply", "call", "bind"],
+    );
+}
+
+// ── Array member completions ─────────────────────────────────────────────────
+
+/// Build member completions using a custom interner that has a mock
+/// `array_base_type` registered as a `TypeData::Callable` (the shape the
+/// real Array interface takes when it carries construct signatures).
+///
+/// The mock exposes `push`, `pop`, `find`, and `filter` as instance methods
+/// but does NOT include any `Function.prototype` members (`apply`, `call`,
+/// `bind`). The test verifies that `collect_array_prototype_props` collects
+/// only the declared instance properties and not the function-prototype ones.
+fn member_names_at_end_with_array_base_callable(source: &str) -> Vec<String> {
+    use tsz_solver::{CallableShape, PropertyInfo, TypeParamInfo};
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let interner = TypeInterner::new();
+
+    // Build a Callable with only Array-instance methods.
+    // Use method names that differ from the standard lib names to prove the
+    // fix is structural, not hardcoded to any specific identifier.
+    let push_atom = interner.intern_string("push");
+    let pop_atom = interner.intern_string("pop");
+    let find_atom = interner.intern_string("find");
+    let filter_atom = interner.intern_string("filter");
+
+    let callable_id = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        // The Array interface has construct signatures: `new Array<T>()`
+        // That is what causes it to be stored as Callable rather than Object.
+        construct_signatures: vec![],
+        properties: vec![
+            PropertyInfo::method(push_atom, TypeId::NUMBER),
+            PropertyInfo::method(pop_atom, TypeId::ANY),
+            PropertyInfo::method(find_atom, TypeId::ANY),
+            PropertyInfo::method(filter_atom, TypeId::ANY),
+        ],
+        ..Default::default()
+    });
+
+    // Register the callable as the array_base_type.
+    // Use a single unconstrained type param named `K` (not `T`) to verify
+    // the fix does not depend on the type-parameter name.
+    let k_atom = interner.intern_string("K");
+    interner.set_array_base_type(callable_id, vec![TypeParamInfo::simple(k_atom)]);
+
+    let completions = Completions::new_with_types(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let position = line_map.offset_to_position(source.len() as u32, source);
+    let mut cache = None;
+    completions
+        .get_completions_with_cache(root, position, &mut cache)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| i.label)
+        .collect()
+}
+
+/// Same as `member_names_at_end_with_array_base_callable` but registers the
+/// `array_base_type` as an `Intersection` of two Callables, mirroring the
+/// merged-declaration shape produced when multiple lib files each declare a
+/// slice of the Array interface.
+fn member_names_at_end_with_array_base_intersection(source: &str) -> Vec<String> {
+    use tsz_solver::{CallableShape, PropertyInfo, TypeParamInfo};
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let interner = TypeInterner::new();
+
+    // First "lib file" declares push/pop.
+    let push_atom = interner.intern_string("push");
+    let pop_atom = interner.intern_string("pop");
+    let part_a = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![],
+        properties: vec![
+            PropertyInfo::method(push_atom, TypeId::NUMBER),
+            PropertyInfo::method(pop_atom, TypeId::ANY),
+        ],
+        ..Default::default()
+    });
+
+    // Second "lib file" declares find/filter.
+    let find_atom = interner.intern_string("find");
+    let filter_atom = interner.intern_string("filter");
+    let part_b = interner.callable(CallableShape {
+        symbol: None,
+        is_abstract: false,
+        call_signatures: vec![],
+        construct_signatures: vec![],
+        properties: vec![
+            PropertyInfo::method(find_atom, TypeId::ANY),
+            PropertyInfo::method(filter_atom, TypeId::ANY),
+        ],
+        ..Default::default()
+    });
+
+    // Merge as intersection.
+    let merged = interner.intersection(vec![part_a, part_b]);
+    let elem_atom = interner.intern_string("X");
+    interner.set_array_base_type(merged, vec![TypeParamInfo::simple(elem_atom)]);
+
+    let completions = Completions::new_with_types(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let position = line_map.offset_to_position(source.len() as u32, source);
+    let mut cache = None;
+    completions
+        .get_completions_with_cache(root, position, &mut cache)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|i| i.label)
+        .collect()
+}
+
+#[test]
+fn test_completions_array_with_lib_callable_base_includes_instance_methods() {
+    let names = member_names_at_end_with_array_base_callable("const arr = [1, 2, 3];\narr.");
+    for expected in ["push", "pop", "find", "filter"] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected array method '{expected}' via lib callable path, got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_array_with_lib_callable_base_excludes_function_prototype() {
+    let names = member_names_at_end_with_array_base_callable("const arr = [1, 2, 3];\narr.");
+    for forbidden in ["apply", "call", "bind"] {
+        assert!(
+            !names.contains(&forbidden.to_string()),
+            "Array completions must not include Function.prototype member '{forbidden}', got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_array_with_lib_intersection_base_includes_all_members() {
+    let names = member_names_at_end_with_array_base_intersection("const arr = [1, 2, 3];\narr.");
+    for expected in ["push", "pop", "find", "filter"] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected array method '{expected}' via intersection lib path, got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_array_with_lib_intersection_base_excludes_function_prototype() {
+    let names = member_names_at_end_with_array_base_intersection("const arr = [1, 2, 3];\narr.");
+    for forbidden in ["apply", "call", "bind"] {
+        assert!(
+            !names.contains(&forbidden.to_string()),
+            "Array completions from intersection lib must not include '{forbidden}', got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_array_prototype_methods_on_array_literal() {
+    assert_has_members(
+        "const arr = [1, 2, 3];\narr.",
+        &[
+            "length",
+            "push",
+            "pop",
+            "shift",
+            "unshift",
+            "slice",
+            "splice",
+            "map",
+            "filter",
+            "forEach",
+            "find",
+            "findIndex",
+            "copyWithin",
+            "entries",
+            "fill",
+            "some",
+            "every",
+            "indexOf",
+            "lastIndexOf",
+            "join",
+            "reverse",
+            "sort",
+            "concat",
+            "reduce",
+            "reduceRight",
+            "toString",
+            "toLocaleString",
+            "keys",
+            "values",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_map_excludes_symbol_iterator_on_dot_access() {
+    let lib_source = r#"
+declare const Symbol: { readonly iterator: unique symbol };
+interface Map<K, V> {
+    get(key: K): V | undefined;
+    set(key: K, value: V): this;
+    [Symbol.iterator](): IterableIterator<[K, V]>;
+}
+interface MapConstructor {
+    new <K, V>(): Map<K, V>;
+}
+declare var Map: MapConstructor;
+declare interface IterableIterator<T> {
+    next(): T;
+}
+"#;
+    let names = member_names_at_end_with_lib(
+        "const cache = new Map<string, number>();\ncache.",
+        lib_source,
+    );
+
+    for expected in ["get", "set"] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "Expected Map member '{expected}' in dot completions, got: {names:?}"
+        );
+    }
+    assert!(
+        !names.contains(&"[Symbol.iterator]".to_string()),
+        "Dot completions must not include computed symbol-key member '[Symbol.iterator]', got: {names:?}"
+    );
+}
+
+#[test]
+fn test_completions_excludes_other_computed_symbol_members_on_dot_access() {
+    let lib_source = r#"
+declare const Symbol: {
+    readonly toStringTag: unique symbol;
+    readonly asyncIterator: unique symbol;
+};
+interface SymbolBacked {
+    visible(): void;
+    [Symbol.toStringTag]: string;
+    [Symbol.asyncIterator](): unknown;
+}
+"#;
+    let names =
+        member_names_at_end_with_lib("declare const holder: SymbolBacked;\nholder.", lib_source);
+
+    assert!(
+        names.contains(&"visible".to_string()),
+        "Expected regular member in dot completions, got: {names:?}"
+    );
+    for forbidden in ["[Symbol.toStringTag]", "[Symbol.asyncIterator]"] {
+        assert!(
+            !names.contains(&forbidden.to_string()),
+            "Dot completions must not include computed symbol-key member '{forbidden}', got: {names:?}"
+        );
+    }
+}
+
+// ── Primitive type completion filtering ─────────────────────────────────────
+//
+// Structural rule: member completions for primitive types (string, number,
+// boolean, bigint, symbol) must expose only members declared in the type's
+// own TypeScript interface at ES2015 baseline. Object.prototype members
+// (constructor, hasOwnProperty, isPrototypeOf, propertyIsEnumerable) and
+// post-ES2015 string methods (padStart/padEnd, matchAll, replaceAll, ...)
+// must not appear in the no-lib fallback.
+
+#[test]
+fn test_completions_string_excludes_object_prototype_members() {
+    // Object.prototype members must not appear on string. Multiple bindings
+    // prove the fix is structural, not a single-name patch.
+    for source in [
+        "const s: string = \"abc\";\ns.",
+        "const t = \"hello\";\nt.",
+        "const u: string = \"x\";\nu.",
+    ] {
+        let names = member_names_at_end(source);
+        for excluded in [
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+            "constructor",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "String completions must not include Object.prototype member '{excluded}'; got: {names:?}"
+            );
+        }
+        for expected in [
+            "length", "charAt", "indexOf", "slice", "toString", "valueOf",
+        ] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "String completions must include own-interface member '{expected}'; got: {names:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_completions_string_excludes_post_es2015_members() {
+    let names = member_names_at_end("const s: string = \"x\";\ns.");
+    for excluded in [
+        "padStart",
+        "padEnd",
+        "matchAll",
+        "replaceAll",
+        "trimStart",
+        "trimEnd",
+        "trimLeft",
+        "trimRight",
+        "isWellFormed",
+        "toWellFormed",
+        "at",
+    ] {
+        assert!(
+            !names.contains(&excluded.to_string()),
+            "String completions must not include post-ES2015 member '{excluded}' in no-lib fallback; got: {names:?}"
+        );
+    }
+    for expected in [
+        "includes",
+        "startsWith",
+        "endsWith",
+        "repeat",
+        "codePointAt",
+    ] {
+        assert!(
+            names.contains(&expected.to_string()),
+            "String completions must include ES2015 member '{expected}'; got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_number_excludes_object_prototype_members() {
+    for source in ["const n: number = 42;\nn.", "const x: number = 0;\nx."] {
+        let names = member_names_at_end(source);
+        for excluded in [
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "Number completions must not include Object.prototype member '{excluded}'; got: {names:?}"
+            );
+        }
+        for expected in [
+            "toFixed",
+            "toExponential",
+            "toPrecision",
+            "toString",
+            "valueOf",
+        ] {
+            assert!(
+                names.contains(&expected.to_string()),
+                "Number completions must include own-interface member '{expected}'; got: {names:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_completions_boolean_exposes_only_valueof() {
+    for source in [
+        "const b: boolean = true;\nb.",
+        "const flag: boolean = false;\nflag.",
+        "const b = true;\nb.",
+        "const flag = false;\nflag.",
+    ] {
+        let names = member_names_at_end(source);
+        for excluded in [
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+            "toLocaleString",
+            "toString",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "Boolean completions must not include '{excluded}' (source: {source:?}); got: {names:?}"
+            );
+        }
+        assert!(
+            names.contains(&"valueOf".to_string()),
+            "Boolean completions must include 'valueOf' (source: {source:?}); got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_bigint_excludes_object_prototype_members() {
+    for source in [
+        "const n: bigint = 1n;\nn.",
+        "const x = 42n;\nx.",
+        "const y = 0n;\ny.",
+    ] {
+        let names = member_names_at_end(source);
+        for excluded in [
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "Bigint completions must not include Object.prototype member '{excluded}' (source: {source:?}); got: {names:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_completions_symbol_excludes_object_prototype_members() {
+    for source in [
+        "const s: symbol = Symbol();\ns.",
+        "declare const sym: symbol;\nsym.",
+    ] {
+        let names = member_names_at_end(source);
+        for excluded in [
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+        ] {
+            assert!(
+                !names.contains(&excluded.to_string()),
+                "Symbol completions must not include Object.prototype member '{excluded}' (source: {source:?}); got: {names:?}"
+            );
+        }
+        assert!(
+            names.contains(&"valueOf".to_string()),
+            "Symbol completions must include 'valueOf' (source: {source:?}); got: {names:?}"
+        );
+    }
+}
+
+// ── Tuple member completions ─────────────────────────────────────────────────
+//
+// Structural rule: a tuple type `[T, U, ...]` exposes ALL Array.prototype members
+// because tuples are array-compatible. The full method set must be available
+// regardless of element arity, element names (named tuples), optionality, or
+// the presence of a rest element.
+
+#[test]
+fn test_completions_tuple_exposes_all_array_prototype_methods() {
+    assert_has_members(
+        "const t: [string, number] = [\"a\", 1];\nt.",
+        &[
+            "length",
+            "push",
+            "pop",
+            "shift",
+            "unshift",
+            "slice",
+            "splice",
+            "concat",
+            "join",
+            "reverse",
+            "sort",
+            "map",
+            "filter",
+            "forEach",
+            "find",
+            "findIndex",
+            "reduce",
+            "reduceRight",
+            "some",
+            "every",
+            "indexOf",
+            "lastIndexOf",
+            "toString",
+            "toLocaleString",
+            "keys",
+            "values",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_tuple_methods_renamed_variable() {
+    // Changing the variable name must not affect the completion set.
+    assert_has_members(
+        "const pair: [boolean, string] = [true, \"x\"];\npair.",
+        &["length", "map", "filter"],
+    );
+}
+
+#[test]
+fn test_completions_named_tuple_exposes_array_methods() {
+    // Named-tuple elements are purely a label; the element types and array
+    // member set are identical to unnamed tuples.
+    assert_has_members(
+        "const coord: [x: number, y: number] = [0, 0];\ncoord.",
+        &["length", "push", "pop", "map", "filter", "reduce", "sort"],
+    );
+}
+
+#[test]
+fn test_completions_named_tuple_different_names_exposes_array_methods() {
+    // Vary the label names to prove the fix is not keyed to any specific spelling.
+    assert_has_members(
+        "const entry: [key: string, value: boolean] = [\"k\", true];\nentry.",
+        &[
+            "length", "push", "pop", "map", "filter", "reduce", "forEach",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_optional_tuple_exposes_array_methods() {
+    // Optional elements add `undefined` to the element union but the full
+    // Array.prototype member set must still be present.
+    assert_has_members(
+        "const opt: [string, number?] = [\"a\"];\nopt.",
+        &[
+            "length", "push", "pop", "map", "filter", "reduce", "some", "indexOf",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_rest_tuple_exposes_array_methods() {
+    // A rest element `...T[]` should contribute `T` (not `T[]`) to the element
+    // union so that the Array application is structurally correct. The member
+    // set must include all Array.prototype methods regardless.
+    assert_has_members(
+        "const rest: [string, ...number[]] = [\"a\", 1, 2];\nrest.",
+        &[
+            "length", "push", "pop", "map", "filter", "reduce", "sort", "forEach",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_single_element_tuple_exposes_array_methods() {
+    // Single-element tuples are still tuples; all array methods should be present.
+    assert_has_members(
+        "const single: [string] = [\"a\"];\nsingle.",
+        &[
+            "length", "push", "pop", "map", "filter", "reduce", "indexOf",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_empty_tuple_exposes_array_methods() {
+    // An empty tuple `[]` has element type `never`; the array method set must
+    // still be offered so the user can see what methods are available.
+    assert_has_members(
+        "const empty: [] = [];\nempty.",
+        &["length", "push", "pop", "map", "filter"],
+    );
+}
+
+// ── Readonly array/tuple member completions ──────────────────────────────────
+
+fn assert_has_members(snippet: &str, expected: &[&str]) {
+    let names = member_names_at_end(snippet);
+    for &m in expected {
+        assert!(
+            names.contains(&m.to_string()),
+            "Expected member '{m}' in completions for snippet, got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_array_prototype_methods_on_readonly_array_annotation() {
+    // `readonly number[]` → ReadonlyType(Array(number)); structural wrapper, same members.
+    assert_has_members(
+        "const xs: readonly number[] = [1, 2, 3];\nxs.",
+        &[
+            "length", "map", "filter", "forEach", "slice", "indexOf", "every", "some",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_array_prototype_methods_on_readonly_string_array() {
+    // Vary the element type and variable name to prove the fix is structural,
+    // not keyed to a specific spelling.
+    assert_has_members(
+        "const words: readonly string[] = [\"a\", \"b\"];\nwords.",
+        &["length", "map", "filter", "join", "reduce", "find"],
+    );
+}
+
+#[test]
+fn test_completions_array_prototype_methods_on_readonly_tuple() {
+    // `readonly [T, U]` → ReadonlyType(Tuple([T, U])); same unwrap path as arrays.
+    assert_has_members(
+        "const pair: readonly [number, string] = [1, \"x\"];\npair.",
+        &["length", "map", "filter", "forEach", "slice", "indexOf"],
+    );
+}
+
+#[test]
+fn test_completions_array_prototype_methods_on_readonly_tuple_different_names() {
+    // Renamed variable to ensure we don't rely on identifier spelling.
+    assert_has_members(
+        "const row: readonly [string, boolean] = [\"y\", true];\nrow.",
+        &["length", "map", "every", "some"],
+    );
+}
+
+// ── Primitive completion filtering ───────────────────────────────────────────
+
+/// Members that must never appear in primitive completions because they are
+/// only inherited from `Object.prototype`. Verifying multiple variable names
+/// proves the filter is structural and not keyed on identifier text.
+const OBJECT_PROTOTYPE_ONLY: &[&str] = &[
+    "constructor",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+];
+
+/// Post-ES2015 string methods that must not appear in the no-lib fallback
+/// because the apparent fallback's baseline is ES2015 and tsc does not list
+/// these in completions when no later lib is loaded.
+const STRING_POST_ES2015_NAMES: &[&str] = &[
+    "padStart",
+    "padEnd",
+    "trimStart",
+    "trimEnd",
+    "trimLeft",
+    "trimRight",
+    "matchAll",
+    "replaceAll",
+    "at",
+    "isWellFormed",
+    "toWellFormed",
+];
+
+fn assert_absent(label: &str, names: &[String], forbidden: &[&str]) {
+    for name in forbidden {
+        assert!(
+            !names.iter().any(|n| n == name),
+            "{label}: completion '{name}' should not appear, got: {names:?}"
+        );
+    }
+}
+
+fn assert_present(label: &str, names: &[String], required: &[&str]) {
+    for name in required {
+        assert!(
+            names.iter().any(|n| n == name),
+            "{label}: expected completion '{name}' to appear, got: {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_completions_string_excludes_object_prototype_only() {
+    // Use two different variable names to prove the filter is structural and
+    // not driven by identifier spelling.
+    for source in [
+        "const s: string = \"\";\ns.",
+        "const value: string = \"abc\";\nvalue.",
+    ] {
+        let names = member_names_at_end(source);
+        assert_absent(source, &names, OBJECT_PROTOTYPE_ONLY);
+        // String's `toLocaleString` is inherited from Object.prototype; lib.es5
+        // does not redeclare it on the `String` interface.
+        assert_absent(source, &names, &["toLocaleString"]);
+    }
+}
+
+#[test]
+fn test_completions_string_excludes_post_es2015_methods() {
+    for source in [
+        "const s: string = \"\";\ns.",
+        "const literal = \"hello\";\nliteral.",
+    ] {
+        let names = member_names_at_end(source);
+        assert_absent(source, &names, STRING_POST_ES2015_NAMES);
+    }
+}
+
+#[test]
+fn test_completions_string_retains_es5_baseline() {
+    let names = member_names_at_end("const s: string = \"\";\ns.");
+    assert_present(
+        "string",
+        &names,
+        &[
+            "length",
+            "charAt",
+            "charCodeAt",
+            "concat",
+            "indexOf",
+            "lastIndexOf",
+            "match",
+            "replace",
+            "search",
+            "slice",
+            "split",
+            "substring",
+            "toLowerCase",
+            "toUpperCase",
+            "trim",
+            "toString",
+            "valueOf",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_number_excludes_object_prototype_only() {
+    for source in [
+        "const n: number = 0;\nn.",
+        "const count: number = 42;\ncount.",
+    ] {
+        let names = member_names_at_end(source);
+        assert_absent(source, &names, OBJECT_PROTOTYPE_ONLY);
+    }
+}
+
+#[test]
+fn test_completions_number_retains_own_interface_members() {
+    let names = member_names_at_end("const n: number = 0;\nn.");
+    // Number's lib.es5 interface redeclares `toLocaleString` and `toString`,
+    // so they must remain. `valueOf`, `toFixed`, etc. are also owned.
+    assert_present(
+        "number",
+        &names,
+        &[
+            "toString",
+            "toLocaleString",
+            "toFixed",
+            "toExponential",
+            "toPrecision",
+            "valueOf",
+        ],
+    );
+}
+
+#[test]
+fn test_completions_boolean_excludes_object_prototype_only() {
+    for source in [
+        "const b: boolean = true;\nb.",
+        "const flag: boolean = false;\nflag.",
+    ] {
+        let names = member_names_at_end(source);
+        assert_absent(source, &names, OBJECT_PROTOTYPE_ONLY);
+        // The lib.es5 `Boolean` interface declares only `valueOf`; `toString`
+        // and `toLocaleString` reach booleans through `Object.prototype`.
+        assert_absent(source, &names, &["toString", "toLocaleString"]);
+    }
+}
+
+#[test]
+fn test_completions_boolean_retains_own_interface_members() {
+    let names = member_names_at_end("const b: boolean = true;\nb.");
+    assert_present("boolean", &names, &["valueOf"]);
+}
+
+#[test]
+fn test_completions_object_intrinsic_keeps_object_prototype_members() {
+    // The `object` (non-primitive) type's apparent members are exactly the
+    // `Object.prototype` set. The primitive-completion filter must not strip
+    // them, or `o.` becomes nearly empty.
+    let names = member_names_at_end("const o: object = {};\no.");
+    assert_present(
+        "object",
+        &names,
+        &[
+            "constructor",
+            "hasOwnProperty",
+            "isPrototypeOf",
+            "propertyIsEnumerable",
+            "toLocaleString",
+            "toString",
+            "valueOf",
+        ],
+    );
+}
+
+// ── ECMAScript private fields (`#field`) ─────────────────────────────────────
+
+/// `this.` inside a class method must include ECMAScript private fields.
+/// tsc shows `#lines` (with the `#` prefix) in `this.` completions when the
+/// cursor is inside the class body.
+#[test]
+fn test_completions_this_includes_ecma_private_field() {
+    // ECMAScript private field -- NOT TypeScript `private` modifier.
+    // The completions for `this.` inside the method must include `#lines`.
+    let names = member_names_at_end(
+        "class MemoryLogger {\n  #lines: string[] = [];\n  write(msg: string) { this.",
+    );
+    assert!(
+        names.contains(&"#lines".to_string()),
+        "Expected `#lines` in `this.` completions; got: {names:?}"
+    );
+    assert!(
+        names.contains(&"write".to_string()),
+        "Expected `write` in `this.` completions; got: {names:?}"
+    );
+}
+
+/// Completions on `this.#lines.` (a private field of type `string[]`) must
+/// expose Array.prototype members exactly as a plain `string[]` variable would.
+#[test]
+fn test_completions_ecma_private_field_member_access_exposes_array_methods() {
+    let names = member_names_at_end(
+        "class MemoryLogger {\n  #lines: string[] = [];\n  write(msg: string) { this.#lines.",
+    );
+    assert!(
+        names.contains(&"push".to_string()),
+        "Expected `push` in `this.#lines.` completions; got: {names:?}"
+    );
+    assert!(
+        names.contains(&"length".to_string()),
+        "Expected `length` in `this.#lines.` completions; got: {names:?}"
+    );
+    assert!(
+        names.contains(&"map".to_string()),
+        "Expected `map` in `this.#lines.` completions; got: {names:?}"
+    );
+}
+
+/// Completions for `this.#field.` work for different field names and types
+/// (proves the fix is structural, not keyed to a specific identifier spelling).
+#[test]
+fn test_completions_ecma_private_field_different_names_and_types() {
+    // Different field name (#items) and element type (number)
+    let names = member_names_at_end(
+        "class Container {\n  #items: number[] = [];\n  add(x: number) { this.#items.",
+    );
+    assert!(
+        names.contains(&"push".to_string()),
+        "Expected `push` in `this.#items.` completions; got: {names:?}"
+    );
+    assert!(
+        names.contains(&"pop".to_string()),
+        "Expected `pop` in `this.#items.` completions; got: {names:?}"
+    );
+    // The field itself must appear in `this.` completions.
+    let this_names = member_names_at_end(
+        "class Container {\n  #items: number[] = [];\n  add(x: number) { this.",
+    );
+    assert!(
+        this_names.contains(&"#items".to_string()),
+        "Expected `#items` in `this.` completions; got: {this_names:?}"
     );
 }

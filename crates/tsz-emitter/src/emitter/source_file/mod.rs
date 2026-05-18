@@ -1,7 +1,15 @@
 mod const_enums;
 mod emit;
 mod recovery;
+#[cfg(test)]
+mod tc39_decorator_tests;
 mod top_level_using;
+mod top_level_using_decorated;
+
+#[cfg(test)]
+mod class_expression_decorator_tests;
+#[cfg(test)]
+mod decorator_metadata_tests;
 
 #[cfg(test)]
 mod tests {
@@ -15,6 +23,10 @@ mod tests {
         let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         (parser, root)
+    }
+
+    fn set_emitter_source<'a>(printer: &mut EmitterPrinter<'a>, source: &'a str) {
+        printer.set_source_text(source);
     }
 
     #[test]
@@ -72,7 +84,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        printer.set_source_text(source);
+        set_emitter_source(&mut printer, source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -99,7 +111,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        printer.set_source_text(source);
+        set_emitter_source(&mut printer, source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -121,13 +133,13 @@ mod tests {
         let (parser, root) = parse_test_source(source);
         let options = PrinterOptions {
             target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
             ..Default::default()
         };
         let ctx = EmitContext::with_options(options.clone());
         let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
         let mut printer =
             EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
-        printer.set_source_text(source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -160,7 +172,6 @@ mod tests {
         let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
         let mut printer =
             EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
-        printer.set_source_text(source);
         printer.emit(root);
         let output = printer.get_output().to_string();
 
@@ -274,6 +285,190 @@ mod tests {
     }
 
     #[test]
+    fn labeled_async_function_and_enum_plan_helpers_and_block_wrapping() {
+        let source = "\"use strict\"\nlabel: async function gen1() { }\nlabel: enum E {}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.starts_with("\"use strict\";\nvar __awaiter = "),
+            "User-authored strict prologues should stay before injected helpers.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var __awaiter = "),
+            "Async functions nested in labeled statements should request the __awaiter helper.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("label: function gen1() {\n    return __awaiter(this, void 0, void 0, function* () { });\n}"),
+            "Labeled async function declarations should still be lowered in place.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("label: {\n    var E;\n    (function (E) {\n    })(E || (E = {}));\n}"),
+            "Labeled enum declarations should be block-wrapped because enum lowering emits multiple statements.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn strict_prologue_leading_comment_moves_before_helpers() {
+        let source = "// issue comment\n\"use strict\";\nclass A {}\nclass B extends A { constructor() { super(); } }\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.starts_with("// issue comment\n\"use strict\";\nvar __extends = "),
+            "Leading comments attached to a source strict prologue should move before helpers with the prologue.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn class_static_block_await_recovery_matches_native_emit() {
+        let source = "class C {\n    static {\n        ({ [await]: 1 });\n        ({ await });\n        await:\n        break await;\n        const ff = (await) => { }\n        const fff = await => { }\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2022,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("({ [await ]: 1 });"),
+            "Bare await in static-block computed names should preserve tsc recovery spacing.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("({ await:  });"),
+            "Bare await shorthand in static blocks should recover as an empty property assignment.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("await ;\n        break ;\n        await ;"),
+            "Bare await labels and break labels in static blocks should recover as separate statements.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "const ff = (await );\n        { }\n        const fff = await ;\n        { }"
+            ),
+            "Arrows with await parameters in static blocks should emit recovered parameter expressions plus body blocks.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn derived_constructor_with_prefix_statements_returns_tail_super_call() {
+        let source = "class A {}\nclass B extends A { constructor() { \"ngInject\"; console.log(\"B\"); super(); } }\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("\"ngInject\";\n        console.log(\"B\");\n        return _super.call(this) || this;"),
+            "Derived constructor with final super() should not materialize _this when no later statement needs it.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("var _this = _super.call(this) || this;"),
+            "Tail super return should avoid the _this temp.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn derived_constructor_with_explicit_branch_returns_omits_tail_this_return() {
+        let source = "declare const flag: boolean;\nclass A {}\nclass B extends A {\n    prop = () => this;\n    constructor() {\n        super();\n        if (flag) {\n            return {\n                prop: () => this,\n                value: 1\n            };\n        }\n        else\n            return null;\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains(
+                "return {\n                prop: function () { return _this; },\n                value: 1\n            };"
+            ),
+            "Returned multiline object literals in lowered constructors should stay multiline.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("else\n            return null;\n    }"),
+            "Non-block else returns should print on the following indented line.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("return null;\n        return _this;"),
+            "A derived constructor whose remaining post-super statements cannot fall through should not append return _this.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn derived_constructor_bare_returns_return_captured_this() {
+        let source = "declare const flag: boolean;\nclass A {}\nclass B extends A {\n    prop = () => this;\n    constructor() {\n        super();\n        if (flag) {\n            return;\n        }\n        return;\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains(
+                "if (flag) {\n            return _this;\n        }\n        return _this;"
+            ),
+            "Bare returns in the derived constructor body should return the captured instance.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("return;\n"),
+            "Derived constructor bare returns should not survive after ES5 `_this` capture.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn es5_async_method_with_multiply_default_stays_async_function() {
         let source = "declare var a: number, b: number;\ndeclare function g(): Promise<void>;\nvar o = { async m(x = a * b) { await g(); } };\n";
 
@@ -335,6 +530,47 @@ mod tests {
         assert!(
             !output.contains("(function () {\n    var C = /** @class */"),
             "Static class expressions should not use the wrapper-IIFE form.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_static_class_expression_schedules_static_blocks_in_comma_initializer() {
+        let source = "function foo() {\n    return class {\n        static foo = 1;\n        static {\n            const c = class {\n                static bar = 2;\n                static {\n                    // do\n                }\n            };\n        }\n    };\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("return _a = /** @class */ (function () {"),
+            "Return-position class expressions should not add an unnecessary comma-wrapper paren.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_a.foo = 1,\n        (function () {"),
+            "Static blocks should be scheduled after static fields in the class-expression comma initializer.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var c = (_b = /** @class */ (function () {")
+                && output.contains("__setFunctionName(_b, \"c\"),")
+                && output.contains("_b.bar = 2,\n                (function () {"),
+            "Nested class expressions inside static blocks should get their own comma alias and schedule their own static block.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("// do"),
+            "Static-block comments should be replayed inside the lowered IIFE.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("__setFunctionName(_a, \"c\")"),
+            "Nested class expression should not reuse the outer class-expression alias.\nOutput:\n{output}"
         );
     }
 
@@ -692,8 +928,123 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn legacy_decorated_es2015_same_name_block_class_uses_distinct_alias() {
+        let source = "function decorator() { return (target: any) => {}; }\n@decorator()\nclass Foo {\n    static func(): Foo {\n        return new Foo();\n    }\n}\ntry {\n    @decorator()\n    class Foo {\n        static func(): Foo {\n            return new Foo();\n        }\n    }\n    Foo.func();\n}\ncatch (e) {}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                emit_decorator_metadata: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output.matches("var Foo_1, Foo_2;").count(),
+            1,
+            "Same-named decorated classes should reserve distinct hoisted aliases.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("let Foo = Foo_1 = class Foo"),
+            "Outer decorated class should use the first alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return new Foo_1();"),
+            "Outer class body should reference the first alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("try {\n    let Foo = Foo_2 = class Foo"),
+            "Block-scoped decorated class should keep one block indent and use the second alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return new Foo_2();"),
+            "Block-scoped class body should reference the second alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("Foo = Foo_2 = __decorate(["),
+            "Block-scoped decorator assignment should update the second alias.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn legacy_decorated_es5_class_self_reference_uses_iife_alias() {
         let source = "function decorator() { return (target: any) => {}; }\n@decorator()\nclass Foo {\n    static func(): Foo {\n        return new Foo();\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            legacy_decorators: true,
+            emit_decorator_metadata: true,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("Foo_1 = Foo;\n    Foo.func = function ()"),
+            "ES5 decorated class should assign the alias before static members.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return new Foo_1();"),
+            "ES5 decorated class method should reference the alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var Foo_1;\n    Foo = Foo_1 = __decorate(["),
+            "ES5 decorated class should declare the alias before decorating and update it from __decorate.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn legacy_decorated_es5_block_class_uses_distinct_binding_and_alias() {
+        let source = "function decorator() { return (target: any) => {}; }\ntry {\n    @decorator()\n    class Foo {\n        static func(): Foo {\n            return new Foo();\n        }\n    }\n    Foo.func();\n}\ncatch (e) {}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            legacy_decorators: true,
+            emit_decorator_metadata: true,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("try {\n    var Foo_1 = /** @class */ (function ()"),
+            "Nested ES5 block class should use a synthetic outer binding.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("Foo_2 = Foo;\n        Foo.func = function ()"),
+            "Nested ES5 block class should reserve a separate decorator-stable alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return new Foo_2();"),
+            "Nested ES5 block class body should reference the decorator-stable alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("    Foo_1.func();"),
+            "References in the same block should use the synthetic outer binding.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn legacy_decorated_es5_same_name_block_class_uses_distinct_binding_and_alias() {
+        let source = "function decorator() { return (target: any) => {}; }\n@decorator()\nclass Foo {\n    static func(): Foo {\n        return new Foo();\n    }\n}\ntry {\n    @decorator()\n    class Foo {\n        static func(): Foo {\n            return new Foo();\n        }\n    }\n    Foo.func();\n}\ncatch (e) {}\n";
 
         let (parser, root) = parse_test_source(source);
         let mut printer = EmitterPrinter::with_options(
@@ -710,16 +1061,24 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         let output = printer.get_output().to_string();
 
         assert!(
-            output.contains("Foo_1 = Foo;\n    Foo.func = function ()"),
-            "ES5 decorated class should assign the alias before static members.\nOutput:\n{output}"
+            output.contains("var Foo = /** @class */ (function ()"),
+            "Outer ES5 class should keep its source binding.\nOutput:\n{output}"
         );
         assert!(
-            output.contains("return new Foo_1();"),
-            "ES5 decorated class method should reference the alias.\nOutput:\n{output}"
+            output.contains("try {\n    var Foo_2 = /** @class */ (function ()"),
+            "Same-name nested block class should use a distinct synthetic binding.\nOutput:\n{output}"
         );
         assert!(
-            output.contains("var Foo_1;\n    Foo = Foo_1 = __decorate(["),
-            "ES5 decorated class should declare the alias before decorating and update it from __decorate.\nOutput:\n{output}"
+            output.contains("Foo_3 = Foo;\n        Foo.func = function ()"),
+            "Same-name nested block class should reserve an alias after the outer alias and synthetic binding.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return new Foo_3();"),
+            "Same-name nested block class body should reference its own alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("    Foo_2.func();"),
+            "References after the nested class should use the nested synthetic binding.\nOutput:\n{output}"
         );
     }
 
@@ -800,36 +1159,6 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
             output
                 .contains("__metadata(\"design:type\", Boolean)\n], C.prototype, \"x\", void 0);"),
             "Conditional metadata with boolean literal branches should emit Boolean.\nOutput:\n{output}"
-        );
-    }
-
-    #[test]
-    fn decorator_metadata_nolib_isolated_global_type_uses_typeof_guard() {
-        let source = "declare var Decorate: PropertyDecorator;\nexport class B {\n    @Decorate\n    member: Map<string, number>;\n}\n";
-
-        let (parser, root) = parse_test_source(source);
-        let mut printer = EmitterPrinter::with_options(
-            &parser.arena,
-            PrinterOptions {
-                legacy_decorators: true,
-                emit_decorator_metadata: true,
-                no_lib: true,
-                isolated_modules: true,
-                target: ScriptTarget::ES2015,
-                ..Default::default()
-            },
-        );
-        printer.set_source_text(source);
-        printer.emit(root);
-        let output = printer.get_output().to_string();
-
-        assert!(
-            output.contains("var _a;"),
-            "Metadata guard should hoist its temp.\nOutput:\n{output}"
-        );
-        assert!(
-            output.contains("__metadata(\"design:type\", typeof (_a = typeof Map !== \"undefined\" && Map) === \"function\" ? _a : Object)"),
-            "No-lib isolated metadata should guard unresolved global constructors.\nOutput:\n{output}"
         );
     }
 
@@ -952,6 +1281,39 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn default_tc39_decorated_named_class_keeps_class_1_binding() {
+        let source = "declare var dec: any;\nexport default @dec class class_1 {};\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            target: ScriptTarget::ES2020,
+            import_helpers: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var class_1 = _classThis = class"),
+            "Named default decorated class should preserve the class_1 runtime binding.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("__setFunctionName(_classThis, \"class_1\")"),
+            "Named default decorated class should use its source name for setFunctionName.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("var default_1 = _classThis = class class_1"),
+            "Default export rewriting must not rename a real source class_1 binding.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn ambient_class_parenthesized_tail_emits_recovered_expression() {
         let source = "declare class foo();\nfunction foo() {}\n";
 
@@ -995,6 +1357,38 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
             output.contains("var ;\nclass {\n}\n;\nvar bar;"),
             "`var class;` should emit tsc's recovered anonymous class tail.\nOutput:\n{output}"
         );
+    }
+
+    #[test]
+    fn reserved_enum_name_emits_anonymous_enum_and_reserved_statement() {
+        for (source, recovered_statement) in [
+            ("enum void {}", "void {};"),
+            ("enum typeof {}", "typeof {};"),
+            ("enum delete {}", "delete {};"),
+            ("enum class {}", "class {\n}"),
+            ("enum true {}", "true;\n{ }"),
+        ] {
+            let (parser, root) = parse_test_source(source);
+            let mut printer = EmitterPrinter::with_options(
+                &parser.arena,
+                PrinterOptions {
+                    always_strict: true,
+                    target: ScriptTarget::ES2015,
+                    ..Default::default()
+                },
+            );
+            printer.set_source_text(source);
+            printer.emit(root);
+            let output = printer.get_output().to_string();
+
+            assert_eq!(
+                output.trim_end(),
+                format!(
+                    "\"use strict\";\nvar ;\n(function () {{\n}})( || ( = {{}}));\n{recovered_statement}"
+                ),
+                "{source}: reserved enum recovery should preserve tsc-compatible emit.\nOutput:\n{output}"
+            );
+        }
     }
 
     #[test]
@@ -1302,6 +1696,309 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         assert!(
             output.contains("(bar = __rest({}, []));"),
             "Object-rest assignment lowering should still call __rest.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn object_rest_assignment_literal_rest_targets_use_temps() {
+        let source = "let a: any;\n({...{}} = {});\n({...({})} = {});\n({...[]} = {});\n({...([])} = {});\n({...{ a }} = { a: 1 });\n({...({ a })} = { a: 1 });\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a, _b;"),
+            "Bare literal rest targets should reserve hoisted assignment temps.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_a = __rest({}, []));"),
+            "Bare object literal rest target should lower to a temp assignment.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(({}) = __rest({}, []));"),
+            "Parenthesized object literal rest target should stay as a destructuring target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_b = __rest({}, []));"),
+            "Bare array literal rest target should lower to a temp assignment.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(([]) = __rest({}, []));"),
+            "Parenthesized array literal rest target should stay as a destructuring target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("({ a } = __rest({ a: 1 }, []));"),
+            "Non-empty object literal rest target should stay as a destructuring target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(({ a }) = __rest({ a: 1 }, []));"),
+            "Parenthesized non-empty object literal rest target should also stay as a destructuring target.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn object_rest_assignment_value_position_returns_rhs_value() {
+        let source = "let bar: any;\nlet value = ({ ...bar } = { x: 1 });\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a;"),
+            "Value-position object-rest assignment should hoist an RHS value temp.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("_a = { x: 1 }, bar = __rest(_a, []), _a"),
+            "Object-rest assignment expressions must evaluate to their RHS value.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("let value = bar = __rest"),
+            "Value-position object-rest assignment must not evaluate to the rest target.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn dynamic_object_rest_keeps_simple_binding_groups() {
+        let source = "let obj = {};\nlet prop: any, other: any, props: any;\nlet { prop = { ...obj }, ['k' + '']: other = { ...obj }, ...props } = {};\n({ prop = { ...obj }, ['k' + '']: other = { ...obj }, ...props } = {});\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2017,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output
+                .matches("{ prop = Object.assign({}, obj) } =")
+                .count(),
+            2,
+            "Simple binding groups should stay as object patterns before dynamic keys.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("other = ") && output.contains("__rest("),
+            "Dynamic computed keys should still lower through temps and feed __rest.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn nested_object_rest_assignment_inlines_single_array_source() {
+        let source = "var x: any;\n[{ ...x }] = [{ abc: 1 }];\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2017,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("[_a] = [{ abc: 1 }], x = __rest(_a, []);"),
+            "Single-element array assignment with nested object-rest should inline the RHS.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("_a = [{ abc: 1 }]"),
+            "The RHS should not be copied to a separate source temp first.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn defaulted_nested_object_rest_assignment_uses_resolved_source() {
+        let source = "let a: any, b: any, c: any = { x: { a: 1, y: 2 } }, d: any;\n({ x: { a, ...b } = d } = c);\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a, _b;"),
+            "Defaulted nested object-rest assignment should hoist both evaluation temps.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "(_a = c.x, _b = _a === void 0 ? d : _a, { a } = _b, b = __rest(_b, [\"a\"]));"
+            ),
+            "Nested object rest must use the resolved default source, not the default expression.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_defaulted_nested_object_rest_assignment_uses_resolved_source() {
+        let source = "let a: any, b: any, c: any = { x: { a: 1, y: 2 } }, d: any;\n({ x: { a, ...b } = d } = c);\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a, _b;"),
+            "ES5 nested object-rest assignment should hoist both evaluation temps.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains(
+                "(_a = c.x, _b = _a === void 0 ? d : _a, a = _b.a, b = __rest(_b, [\"a\"]));"
+            ),
+            "ES5 nested object rest must use the resolved default source, not the default expression.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_block_scoped_destructuring_uses_renamed_binding_targets() {
+        let source = "var z0: any, z1: any, z2: any;\n{\n    let [z0] = [1];\n    use(z0);\n    let { a: z1 } = { a: 1 };\n    use(z1);\n    let [...z2] = [1, 2];\n    use(z2);\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var z0_1 = [1][0];"),
+            "Array binding declaration target should use the block-scoped emitted name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("use(z0_1);"),
+            "Array binding references should match the declaration target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var z1_1 = { a: 1 }.a;"),
+            "Object binding declaration target should use the block-scoped emitted name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("use(z1_1);"),
+            "Object binding references should match the declaration target.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var z2_1 = [1, 2].slice(0);"),
+            "Array rest binding declaration target should use the block-scoped emitted name.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("use(z2_1);"),
+            "Array rest references should match the declaration target.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_single_leaf_nested_destructuring_inlines_access_path() {
+        let source = "var z1: any, z3: any;\n{\n    const [{ a: z1 }] = [{ a: 1 }];\n    use(z1);\n    const { a: { b: z3 } } = { a: { b: 1 } };\n    use(z3);\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            always_strict: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var z1_1 = [{ a: 1 }][0].a;"),
+            "Single-leaf array/object destructuring should inline the access path.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var z3_1 = { a: { b: 1 } }.a.b;"),
+            "Single-leaf nested object destructuring should inline the access path.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("var _a = [{ a: 1 }]") && !output.contains("var _b = _a[0]"),
+            "Single-leaf nested destructuring should not allocate avoidable temps.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn esm_exported_object_rest_keeps_temp_local() {
+        let source = "export const { x, ...rest } = { x: 'x', y: 'y' }, y = 3;\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            module: ModuleKind::ESNext,
+            no_emit_helpers: true,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+        let mut printer = EmitterPrinter::with_emit_plan_and_options(&parser.arena, plan, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _a;\nexport var x = (_a = { x: 'x', y: 'y' }, _a).x, rest = __rest(_a, [\"x\"]), y = 3;"),
+            "Exported object-rest temp should be hoisted outside the export list.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("export var _a"),
+            "The synthesized temp must not become an exported binding.\nOutput:\n{output}"
         );
     }
 

@@ -9,6 +9,7 @@
 //! - Union type patterns
 //! - Template literal patterns
 
+use crate::instantiation::application::ApplicationEvaluator;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     CallableShapeId, FunctionShape, FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShapeId,
@@ -801,9 +802,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
-                    let source_sig = match source_shape.call_signatures.last() {
-                        Some(sig) => sig,
-                        None => return false,
+                    // A Callable like DateConstructor carries both call and construct
+                    // signatures; select by the pattern's kind for the return type.
+                    let Some(source_sig) = source_shape.last_sig_for(pattern_fn.is_constructor)
+                    else {
+                        return false;
                     };
                     let return_type = self.erase_return_type_for_infer(
                         source_sig.return_type,
@@ -829,9 +832,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             }
                             Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
-                                let source_sig = match source_shape.call_signatures.last() {
-                                    Some(sig) => sig,
-                                    None => return false,
+                                let Some(source_sig) =
+                                    source_shape.last_sig_for(pattern_fn.is_constructor)
+                                else {
+                                    return false;
                                 };
                                 let return_type = self.erase_return_type_for_infer(
                                     source_sig.return_type,
@@ -1268,20 +1272,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return match self.interner().lookup(source) {
                 Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
-                    let source_sigs = if is_construct_pattern {
-                        &source_shape.construct_signatures
-                    } else {
-                        &source_shape.call_signatures
-                    };
-                    let other_sigs = if is_construct_pattern {
-                        &source_shape.call_signatures
-                    } else {
-                        &source_shape.construct_signatures
-                    };
-                    if source_sigs.is_empty() || !other_sigs.is_empty() {
-                        return false;
-                    }
-                    let Some(source_sig) = source_sigs.last() else {
+                    let Some(source_sig) = source_shape.last_sig_for(is_construct_pattern) else {
                         return false;
                     };
                     let (params, return_type) = self.instantiate_signature_for_infer(
@@ -1312,20 +1303,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         match self.interner().lookup(member) {
                             Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
-                                let source_sigs = if is_construct_pattern {
-                                    &source_shape.construct_signatures
-                                } else {
-                                    &source_shape.call_signatures
-                                };
-                                let other_sigs = if is_construct_pattern {
-                                    &source_shape.call_signatures
-                                } else {
-                                    &source_shape.construct_signatures
-                                };
-                                if source_sigs.is_empty() || !other_sigs.is_empty() {
-                                    return false;
-                                }
-                                let Some(source_sig) = source_sigs.last() else {
+                                let Some(source_sig) =
+                                    source_shape.last_sig_for(is_construct_pattern)
+                                else {
                                     return false;
                                 };
                                 let (params, return_type) = self.instantiate_signature_for_infer(
@@ -1403,20 +1383,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return match self.interner().lookup(source) {
                 Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
-                    let source_sigs = if is_construct_pattern {
-                        &source_shape.construct_signatures
-                    } else {
-                        &source_shape.call_signatures
-                    };
-                    let other_sigs = if is_construct_pattern {
-                        &source_shape.call_signatures
-                    } else {
-                        &source_shape.construct_signatures
-                    };
-                    if source_sigs.is_empty() || !other_sigs.is_empty() {
-                        return false;
-                    }
-                    let Some(source_sig) = source_sigs.last() else {
+                    let Some(source_sig) = source_shape.last_sig_for(is_construct_pattern) else {
                         return false;
                     };
                     match_params(&source_sig.params, bindings)
@@ -1436,20 +1403,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         match self.interner().lookup(member) {
                             Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
-                                let source_sigs = if is_construct_pattern {
-                                    &source_shape.construct_signatures
-                                } else {
-                                    &source_shape.call_signatures
-                                };
-                                let other_sigs = if is_construct_pattern {
-                                    &source_shape.call_signatures
-                                } else {
-                                    &source_shape.construct_signatures
-                                };
-                                if source_sigs.is_empty() || !other_sigs.is_empty() {
-                                    return false;
-                                }
-                                let Some(source_sig) = source_sigs.last() else {
+                                let Some(source_sig) =
+                                    source_shape.last_sig_for(is_construct_pattern)
+                                else {
                                     return false;
                                 };
                                 if !match_params(&source_sig.params, &mut member_bindings) {
@@ -1506,20 +1462,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return match self.interner().lookup(source) {
                 Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
-                    let source_sigs = if is_construct_pattern {
-                        &source_shape.construct_signatures
-                    } else {
-                        &source_shape.call_signatures
-                    };
-                    let other_sigs = if is_construct_pattern {
-                        &source_shape.call_signatures
-                    } else {
-                        &source_shape.construct_signatures
-                    };
-                    if source_sigs.is_empty() || !other_sigs.is_empty() {
-                        return false;
-                    }
-                    let Some(source_sig) = source_sigs.last() else {
+                    let Some(source_sig) = source_shape.last_sig_for(is_construct_pattern) else {
                         return false;
                     };
                     let erased_return = self.erase_return_type_for_infer(
@@ -1545,20 +1488,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         match self.interner().lookup(member) {
                             Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
-                                let source_sigs = if is_construct_pattern {
-                                    &source_shape.construct_signatures
-                                } else {
-                                    &source_shape.call_signatures
-                                };
-                                let other_sigs = if is_construct_pattern {
-                                    &source_shape.call_signatures
-                                } else {
-                                    &source_shape.construct_signatures
-                                };
-                                if source_sigs.is_empty() || !other_sigs.is_empty() {
-                                    return false;
-                                }
-                                let Some(source_sig) = source_sigs.last() else {
+                                let Some(source_sig) =
+                                    source_shape.last_sig_for(is_construct_pattern)
+                                else {
                                     return false;
                                 };
                                 let erased_return = self.erase_return_type_for_infer(
@@ -1826,6 +1758,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 true
             }
+            Some(TypeData::Application(_)) => {
+                // The pattern Application was already expanded to this Object shape by the caller;
+                // expand the source Application too so property-level infer bindings can match.
+                let evaluator = ApplicationEvaluator::new(self.interner(), self.resolver());
+                let expanded_source = evaluator.evaluate_or_original(source);
+                if expanded_source != source {
+                    self.match_infer_object_pattern(
+                        expanded_source,
+                        pattern_shape_id,
+                        pattern,
+                        bindings,
+                        visited,
+                        checker,
+                    )
+                } else {
+                    false
+                }
+            }
             _ => false,
         }
     }
@@ -1864,12 +1814,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         visited: &mut FxHashSet<(TypeId, TypeId)>,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
+        let pattern_shape = self.interner().object_shape(pattern_shape_id);
+        if let Some(source_elem) =
+            crate::type_queries::get_array_element_type(self.interner(), source)
+            && let Some(pattern_index) = &pattern_shape.number_index
+        {
+            let mut key_visited = FxHashSet::default();
+            if !self.match_infer_pattern(
+                TypeId::NUMBER,
+                pattern_index.key_type,
+                bindings,
+                &mut key_visited,
+                checker,
+            ) {
+                return false;
+            }
+            let mut value_visited = FxHashSet::default();
+            return self.match_infer_pattern(
+                source_elem,
+                pattern_index.value_type,
+                bindings,
+                &mut value_visited,
+                checker,
+            );
+        }
+
         match self.interner().lookup(source) {
             Some(
                 TypeData::Object(source_shape_id) | TypeData::ObjectWithIndex(source_shape_id),
             ) => {
                 let source_shape = self.interner().object_shape(source_shape_id);
-                let pattern_shape = self.interner().object_shape(pattern_shape_id);
                 for pattern_prop in &pattern_shape.properties {
                     let source_prop = source_shape
                         .properties
@@ -2286,6 +2260,139 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             .collect()
     }
 
+    /// Match an intrinsic-typed span at position `pos` in the infer-pattern path.
+    ///
+    /// Returns `Some(true/false)` when the span is a recognized intrinsic kind
+    /// (number, bigint, boolean, null, undefined) and dispatches length-aware
+    /// matching for it.  Returns `None` for wildcard intrinsics (string/any/
+    /// unknown) so the caller falls through to generic handling.
+    fn match_intrinsic_span_from(
+        &self,
+        source: &str,
+        pattern: &[TemplateSpan],
+        pos: usize,
+        index: usize,
+        type_id: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> Option<bool> {
+        use crate::relations::subtype::rules::literals::{
+            find_integer_length, find_number_length, is_valid_number,
+        };
+
+        let remaining = &source[pos..];
+
+        match self.interner().lookup(type_id)? {
+            TypeData::Intrinsic(kind) => match kind {
+                IntrinsicKind::Number => {
+                    let num_len = find_number_length(remaining);
+                    if num_len == 0 {
+                        return Some(false);
+                    }
+                    // Try shortest valid number first — matches tsc's non-greedy
+                    // behaviour for ambiguous infer+number patterns.
+                    for len in 1..=num_len {
+                        if is_valid_number(&remaining[..len])
+                            && self.match_template_literal_string_from(
+                                source,
+                                pattern,
+                                pos + len,
+                                index + 1,
+                                bindings,
+                                checker,
+                            )
+                        {
+                            return Some(true);
+                        }
+                    }
+                    Some(false)
+                }
+                IntrinsicKind::Bigint => {
+                    let int_len = find_integer_length(remaining);
+                    if int_len == 0 {
+                        return Some(false);
+                    }
+                    // Try shortest valid integer first — consistent with tsc.
+                    for len in 1..=int_len {
+                        if self.match_template_literal_string_from(
+                            source,
+                            pattern,
+                            pos + len,
+                            index + 1,
+                            bindings,
+                            checker,
+                        ) {
+                            return Some(true);
+                        }
+                    }
+                    Some(false)
+                }
+                IntrinsicKind::Boolean => {
+                    if remaining.starts_with("true")
+                        && self.match_template_literal_string_from(
+                            source,
+                            pattern,
+                            pos + 4,
+                            index + 1,
+                            bindings,
+                            checker,
+                        )
+                    {
+                        return Some(true);
+                    }
+                    if remaining.starts_with("false")
+                        && self.match_template_literal_string_from(
+                            source,
+                            pattern,
+                            pos + 5,
+                            index + 1,
+                            bindings,
+                            checker,
+                        )
+                    {
+                        return Some(true);
+                    }
+                    Some(false)
+                }
+                IntrinsicKind::Null => {
+                    if remaining.starts_with("null")
+                        && self.match_template_literal_string_from(
+                            source,
+                            pattern,
+                            pos + 4,
+                            index + 1,
+                            bindings,
+                            checker,
+                        )
+                    {
+                        Some(true)
+                    } else {
+                        Some(false)
+                    }
+                }
+                IntrinsicKind::Undefined => {
+                    if remaining.starts_with("undefined")
+                        && self.match_template_literal_string_from(
+                            source,
+                            pattern,
+                            pos + 9,
+                            index + 1,
+                            bindings,
+                            checker,
+                        )
+                    {
+                        Some(true)
+                    } else {
+                        Some(false)
+                    }
+                }
+                // Wildcards and other intrinsics fall through to generic handling.
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn match_template_literal_string_from(
         &self,
         source: &str,
@@ -2354,9 +2461,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     );
                 }
 
+                if let Some(result) = self.match_intrinsic_span_from(
+                    source, pattern, pos, index, type_id, bindings, checker,
+                ) {
+                    return result;
+                }
+
                 for end in self.candidate_template_capture_ends(source, pos, pattern, index) {
-                    let captured_type = self.interner().literal_string(&source[pos..end]);
-                    if checker.is_subtype_of(captured_type, type_id)
+                    let captured = &source[pos..end];
+                    let captured_type = self.interner().literal_string(captured);
+                    if self
+                        .template_capture_for_constraint(captured, captured_type, type_id, checker)
+                        .is_some()
                         && self.match_template_literal_string_from(
                             source,
                             pattern,

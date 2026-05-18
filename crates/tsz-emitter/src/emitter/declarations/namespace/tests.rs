@@ -135,6 +135,31 @@ fn namespace_exported_destructuring_uses_temp_in_esnext_path() {
 }
 
 #[test]
+fn namespace_single_exported_destructuring_reads_initializer_directly() {
+    let source =
+        "namespace M {\n    export let [bar5] = [1];\n    export const { a: bar7 } = { a: 1 };\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("M.bar5 = [1][0];"),
+        "Single array binding export should read by element index without a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("M.bar7 = { a: 1 }.a;"),
+        "Single object binding export should read by property name without a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _a;"),
+        "Single binding exports should not reserve a namespace destructuring temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn namespace_exported_destructuring_temp_hoists_before_class() {
     let source = "namespace m {\n    export class c {}\n    export var [x, y] = [10, new c()];\n}";
     let (parser, root) = parse_test_source(source);
@@ -227,6 +252,69 @@ fn namespace_iife_param_renamed_for_variable_conflict() {
     assert!(
         output.contains("m_1.m = '';"),
         "Exported variable should use renamed parameter m_1.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_iife_param_not_renamed_for_class_member_conflict() {
+    let source = "namespace m {\n  class City {\n    public m = () => 1;\n  }\n  export var v = () => new City();\n}";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("(function (m)"),
+        "Class field names do not bind in the namespace IIFE scope, so the parameter should stay `m`.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(function (m_1)"),
+        "Class field names should not trigger namespace IIFE parameter renaming.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_iife_param_renamed_for_direct_nested_namespace_conflict() {
+    let source = "namespace M {\n  namespace M {\n    export function eF() {}\n  }\n}";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("(function (M_1)"),
+        "Direct same-name nested namespaces emit a local binding, so the outer IIFE parameter should be renamed.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(function (M)"),
+        "The nested namespace should still reuse its own local namespace binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(function (M_2)"),
+        "The nested namespace's own parameter should not be renamed again by the fallback scan.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_iife_param_renamed_for_parameter_property_conflict() {
+    let source = "namespace m {\n  class City {\n    constructor(public m = 1) {}\n  }\n  export var v = () => new City();\n}";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("(function (m_1)"),
+        "Constructor parameter properties bind in function scope, so the namespace parameter should still be renamed.\nOutput:\n{output}"
     );
 }
 
@@ -505,5 +593,36 @@ fn namespace_default_function_recovery_emits_default_assignment() {
     assert!(
         output.contains("default function () {\n        return __awaiter(this, void 0, void 0, function* () { });\n    }\n    ns_async_function.default_2 = default_2;"),
         "Recovered async namespace default function should lower async body and export assignment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_invalid_default_expression_export_is_preserved_verbatim() {
+    let source =
+        "namespace Foo {\n  export default foo;\n}\n\nnamespace Bar {\n  export default bar;\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("export default foo;"),
+        "Invalid namespace default expression export should be printed verbatim.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("export default bar;"),
+        "Invalid namespace default expression export should preserve each recovered statement.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Foo.foo = foo;"),
+        "Invalid default expression export should not become a namespace property assignment.\nOutput:\n{output}"
     );
 }

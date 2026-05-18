@@ -13,10 +13,10 @@ use crate::query_boundaries::common::CallResult;
 use crate::query_boundaries::common::LiteralTypeKind;
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::borrow::Cow;
 use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{FunctionShape, TypeId};
 
@@ -223,26 +223,6 @@ impl<'a> CheckerState<'a> {
                 resolved
             })
             .collect()
-    }
-
-    fn is_builtin_object_entries_call(&self, callee_expr: NodeIndex) -> bool {
-        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
-            return false;
-        };
-        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
-            return false;
-        };
-        let Some(member_name) = self.identifier_name_text(access.name_or_argument) else {
-            return false;
-        };
-        if member_name != "entries" {
-            return false;
-        }
-        matches!(self.identifier_name_text(access.expression), Some("Object"))
-    }
-
-    fn identifier_name_text(&self, idx: NodeIndex) -> Option<&str> {
-        self.ctx.arena.get_identifier_text(idx)
     }
 
     pub(crate) fn widen_round2_contextual_substitution(
@@ -870,6 +850,18 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn array_or_number_index_element_type(&mut self, type_id: TypeId) -> Option<TypeId> {
+        if let Some(elem) = common::array_element_type(self.ctx.types, type_id) {
+            return Some(elem);
+        }
+
+        let resolved = self.resolve_lazy_type(type_id);
+        let resolved = self.evaluate_type_with_env(resolved);
+        let resolved = self.resolve_type_for_property_access(resolved);
+        let resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
+        resolver.resolve_number_index(resolved)
+    }
+
     fn return_context_application_bases_match(&self, left: TypeId, right: TypeId) -> bool {
         use tsz_binder::SymbolId;
 
@@ -1272,7 +1264,7 @@ impl<'a> CheckerState<'a> {
                     // matched against `number[]` infers T = number[] instead of
                     // letting the solver infer T = number.
                     let target_is_array_like =
-                        common::array_element_type(self.ctx.types, target).is_some();
+                        self.array_or_number_index_element_type(target).is_some();
                     let source_is_iterable_like =
                         target_is_array_like && !source_args.is_empty() && {
                             let evaluated = self.evaluate_type_with_env(source);
@@ -1283,7 +1275,8 @@ impl<'a> CheckerState<'a> {
                         // before mapping against the source type args. This prevents the
                         // contextual substitution from using unwidened literal types that
                         // would cause false TS2345 mismatches.
-                        let elem = common::array_element_type(self.ctx.types, target)
+                        let elem = self
+                            .array_or_number_index_element_type(target)
                             .expect("array target should have element type");
                         let widened_elem = tsz_solver::operations::widening::widen_literal_type(
                             self.ctx.types,
@@ -1438,10 +1431,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let (Some(source_elem), Some(target_elem)) = (
-            common::array_element_type(self.ctx.types, source),
-            common::array_element_type(self.ctx.types, target),
-        ) {
+        let source_array_elem = common::array_element_type(self.ctx.types, source);
+        let target_array_elem = common::array_element_type(self.ctx.types, target);
+        if let (Some(source_elem), Some(target_elem)) = (source_array_elem, target_array_elem) {
             self.collect_return_context_substitution(
                 source_elem,
                 target_elem,
@@ -1452,7 +1444,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(source_elem) = common::array_element_type(self.ctx.types, source)
+        if let Some(source_elem) = source_array_elem
             && let Some((_target_base, target_args)) =
                 common::application_info(self.ctx.types, target)
             && target_args.len() == 1
@@ -1467,7 +1459,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if let Some(source_elem) = common::array_element_type(self.ctx.types, source)
+        if let Some(source_elem) = source_array_elem
             && let Some(iterator_info) = common::get_iterator_info(self.ctx.types, target, false)
         {
             self.collect_return_context_substitution(
@@ -1727,14 +1719,12 @@ impl<'a> CheckerState<'a> {
         common::is_type_deeply_any(self.ctx.types, ty)
     }
 
-    pub(crate) fn sanitize_generic_inference_arg_types(
+    pub(crate) fn sanitize_generic_inference_arg_types<'b>(
         &mut self,
-        callee_expr: NodeIndex,
+        _callee_expr: NodeIndex,
         args: &[NodeIndex],
-        arg_types: &[TypeId],
-    ) -> (Vec<TypeId>, bool) {
-        let sanitize_object_entries_any =
-            self.is_builtin_object_entries_call(callee_expr) && arg_types.len() == 1;
+        arg_types: &'b [TypeId],
+    ) -> (Cow<'b, [TypeId]>, bool) {
         let mut changed = false;
         let expanded_args;
         let source_args: &[NodeIndex] = if args.len() == arg_types.len() {
@@ -1743,61 +1733,66 @@ impl<'a> CheckerState<'a> {
             expanded_args = self.build_expanded_args_for_error(args);
             &expanded_args
         };
-        let sanitized = source_args
-            .iter()
-            .zip(arg_types.iter().copied())
-            .enumerate()
-            .map(|(index, (&arg_idx, arg_type))| {
-                // Resolve enum types to their namespace object representation.
-                // When an enum identifier (like `E1`) is used as a call argument,
-                // it resolves to an Enum type with a DefId. For inference against
-                // index-signature targets like `{ [x: string]: T }`, the inference
-                // engine needs to see the namespace Object type with named member
-                // properties. This mirrors tsc's behavior where `typeof E1`
-                // (the enum namespace) has an implicit string index signature.
-                let enum_def = common::enum_def_id(self.ctx.types, arg_type);
-                let arg_type = if let Some(def_id) = enum_def {
-                    let sym_id = self.ctx.def_to_symbol_id(def_id);
-                    let ns_type =
-                        sym_id.and_then(|sid| self.ctx.enum_namespace_types.get(&sid).copied());
-                    if let Some(ns) = ns_type {
-                        changed = true;
-                        ns
-                    } else {
-                        arg_type
-                    }
-                } else {
-                    arg_type
-                };
 
-                let arg_type =
-                    if sanitize_object_entries_any && index == 0 && arg_type == TypeId::ANY {
-                        changed = true;
-                        TypeId::UNKNOWN
-                    } else {
-                        arg_type
-                    };
+        let mut sanitized: Option<Vec<TypeId>> = None;
 
-                let arg_type =
-                    if self.ctx.arena.get(arg_idx).is_some_and(|node| {
-                        node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
-                    }) && self.ctx.enclosing_class.is_some()
-                        && !self.is_this_in_nested_function_without_own_this_binding(arg_idx)
-                    {
-                        changed = true;
-                        self.ctx.types.this_type()
-                    } else {
-                        arg_type
-                    };
-
-                let sanitized = self.sanitize_generic_inference_arg_type(arg_idx, arg_type);
-                if sanitized != arg_type {
+        for (index, (&arg_idx, &original_arg_type)) in
+            source_args.iter().zip(arg_types.iter()).enumerate()
+        {
+            // Resolve enum types to their namespace object representation.
+            // When an enum identifier (like `E1`) is used as a call argument,
+            // it resolves to an Enum type with a DefId. For inference against
+            // index-signature targets like `{ [x: string]: T }`, the inference
+            // engine needs to see the namespace Object type with named member
+            // properties. This mirrors tsc's behavior where `typeof E1`
+            // (the enum namespace) has an implicit string index signature.
+            let enum_def = common::enum_def_id(self.ctx.types, original_arg_type);
+            let mut arg_type = if let Some(def_id) = enum_def {
+                let sym_id = self.ctx.def_to_symbol_id(def_id);
+                let ns_type =
+                    sym_id.and_then(|sid| self.ctx.enum_namespace_types.get(&sid).copied());
+                if let Some(ns) = ns_type {
                     changed = true;
+                    ns
+                } else {
+                    original_arg_type
                 }
-                sanitized
-            })
-            .collect();
-        (sanitized, changed)
+            } else {
+                original_arg_type
+            };
+
+            if self
+                .ctx
+                .arena
+                .get(arg_idx)
+                .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16)
+                && self.ctx.enclosing_class.is_some()
+                && !self.is_this_in_nested_function_without_own_this_binding(arg_idx)
+            {
+                changed = true;
+                arg_type = self.ctx.types.this_type();
+            }
+
+            let sanitized_arg = self.sanitize_generic_inference_arg_type(arg_idx, arg_type);
+            if sanitized_arg != arg_type {
+                changed = true;
+            }
+
+            if sanitized_arg != original_arg_type && sanitized.is_none() {
+                let mut owned = Vec::with_capacity(arg_types.len());
+                owned.extend_from_slice(&arg_types[..index]);
+                sanitized = Some(owned);
+            }
+            if let Some(owned) = sanitized.as_mut() {
+                owned.push(sanitized_arg);
+            }
+        }
+
+        if let Some(owned) = sanitized {
+            (Cow::Owned(owned), changed)
+        } else {
+            (Cow::Borrowed(arg_types), changed)
+        }
     }
 
     /// When the checker's intra-expression Round 2 inferred concrete types for

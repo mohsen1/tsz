@@ -6,6 +6,7 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
+use tsz_solver::type_queries;
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn call_expression_source_return_type_text(
@@ -116,7 +117,10 @@ impl<'a> DeclarationEmitter<'a> {
                         .type_parameters
                         .as_ref()
                         .is_some_and(|params| !params.nodes.is_empty());
-                    let mut type_text = scratch.source_function_return_type_text(func)?;
+                    let mut type_text =
+                        scratch.source_function_return_type_text(func).or_else(|| {
+                            scratch.source_function_cached_generic_return_type_text(decl_idx, func)
+                        })?;
                     let source_return_text = scratch
                         .function_body_returned_parameter_call_return_type_text(source_arena, func);
                     if generic_source_func && let Some(source_return_text) = source_return_text {
@@ -196,6 +200,41 @@ impl<'a> DeclarationEmitter<'a> {
         self.preferred_expression_type_text(func.body)
             .or_else(|| self.infer_fallback_type_text_at(func.body, 0))
             .filter(|text| !text.is_empty() && text != "any")
+    }
+
+    fn source_function_cached_generic_return_type_text(
+        &self,
+        func_idx: NodeIndex,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<String> {
+        let type_params = func
+            .type_parameters
+            .as_ref()
+            .filter(|type_params| !type_params.nodes.is_empty())?;
+        let interner = self.type_interner?;
+        let func_type_id = self
+            .get_node_type_or_names(&[func_idx, func.name])
+            .or_else(|| self.get_type_via_symbol_for_func(func_idx, func.name))?;
+        let return_type_id = type_queries::get_return_type(interner, func_type_id)?;
+        if matches!(
+            return_type_id,
+            tsz_solver::types::TypeId::ANY
+                | tsz_solver::types::TypeId::UNKNOWN
+                | tsz_solver::types::TypeId::ERROR
+        ) {
+            return None;
+        }
+
+        let type_text = self.print_type_id_with_outer_type_params(return_type_id, type_params);
+        if type_text.is_empty() || matches!(type_text.as_str(), "any" | "unknown") {
+            return None;
+        }
+
+        let type_param_names = self.collect_type_param_names(type_params);
+        type_param_names
+            .iter()
+            .any(|name| Self::contains_whole_word_in_text(&type_text, name))
+            .then_some(type_text)
     }
 
     fn single_return_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {

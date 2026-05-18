@@ -171,6 +171,9 @@ mod jsdoc_this_arrow_tests;
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
 #[cfg(test)]
+#[path = "tests/lib_abstract_member_ts2515_tests.rs"]
+mod lib_abstract_member_ts2515_tests;
+#[cfg(test)]
 #[path = "../tests/literal_application_alias_display_tests.rs"]
 mod literal_application_alias_display_tests;
 #[cfg(test)]
@@ -432,6 +435,9 @@ mod cross_file_class_merge_tests;
 #[path = "../tests/cross_file_type_params_cache_tests.rs"]
 mod cross_file_type_params_cache_tests;
 #[cfg(test)]
+#[path = "tests/direct_generic_return_tests.rs"]
+mod direct_generic_return_tests;
+#[cfg(test)]
 #[path = "tests/dispatch_tests.rs"]
 mod dispatch_tests;
 #[cfg(test)]
@@ -479,6 +485,9 @@ mod in_narrow_bare_type_param_chained_tests;
 #[cfg(test)]
 #[path = "../tests/interface_extends_array_json_tests.rs"]
 mod interface_extends_array_json_tests;
+#[cfg(test)]
+#[path = "tests/intersection_callable_constraint_ts2344_tests.rs"]
+mod intersection_callable_constraint_ts2344_tests;
 #[cfg(test)]
 #[path = "../tests/intersection_signatures.rs"]
 mod intersection_signatures;
@@ -579,6 +588,9 @@ mod object_shorthand_literal_preservation_tests;
 #[path = "tests/object_spread_optional_merge_tests.rs"]
 mod object_spread_optional_merge_tests;
 #[cfg(test)]
+#[path = "tests/optional_key_extraction_tests.rs"]
+mod optional_key_extraction_tests;
+#[cfg(test)]
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
 #[cfg(test)]
@@ -593,6 +605,9 @@ mod property_alias_display_tests;
 #[cfg(test)]
 #[path = "../tests/recursive_alias_application_target_display_tests.rs"]
 mod recursive_alias_application_target_display_tests;
+#[cfg(test)]
+#[path = "tests/recursive_path_default_type_param_tests.rs"]
+mod recursive_path_default_type_param_tests;
 #[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;

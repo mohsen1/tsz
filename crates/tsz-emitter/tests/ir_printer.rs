@@ -116,6 +116,7 @@ fn test_emit_function_expr() {
 fn test_emit_es5_class_iife() {
     let class = IRNode::ES5ClassIIFE {
         name: "Point".into(),
+        binding_name: None,
         base_class: None,
         super_param: None,
         body: vec![
@@ -149,6 +150,7 @@ fn test_emit_es5_class_iife() {
 fn test_emit_es5_class_with_extends() {
     let class = IRNode::ES5ClassIIFE {
         name: "Child".into(),
+        binding_name: None,
         base_class: Some(Box::new(IRNode::id("Parent"))),
         super_param: Some("_super".into()),
         body: vec![
@@ -197,8 +199,10 @@ fn test_emit_generator_body_simple() {
 fn test_emit_awaiter_call() {
     let awaiter = IRNode::AwaiterCall {
         this_arg: Box::new(IRNode::this()),
+        needs_lexical_this_capture: false,
         hoisted_var_groups: vec![],
         promise_constructor: None,
+        multiline_callback: false,
         generator_body: Box::new(IRNode::GeneratorBody {
             has_await: false,
             cases: vec![IRGeneratorCase {
@@ -258,6 +262,8 @@ fn test_nested_sequence_respects_namespace_skip_indent() {
             body: vec![],
             is_exported: false,
             attach_to_exports: false,
+            commonjs_export_name: None,
+            system_export_names: Vec::new(),
             should_declare_var: false,
             default_export_merge: false,
             parent_name: None,
@@ -299,6 +305,8 @@ fn test_namespace_iife_generated_object_literal_is_multiline() {
         ))],
         is_exported: false,
         attach_to_exports: false,
+        commonjs_export_name: None,
+        system_export_names: Vec::new(),
         should_declare_var: false,
         default_export_merge: false,
         parent_name: None,

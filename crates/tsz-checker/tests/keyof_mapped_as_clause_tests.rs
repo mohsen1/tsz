@@ -457,3 +457,110 @@ const a: any = ix["arbitrary"];
         "Expected identity mapped to keep value types, got: {codes:?}"
     );
 }
+
+/// Regression test for issue #7650: when a typed variable initializer is an
+/// object literal whose contextual type is a remapped mapped type (key
+/// remapping via `as` clause) and properties have type mismatches *and*
+/// required properties are missing from the source, tsc emits only the inner
+/// per-property TS2322 diagnostic(s) and suppresses the outer "missing
+/// property" (TS2741) diagnostic. The inner per-property recheck during
+/// object-literal type computation effectively elaborates the assignment;
+/// the outer relation check must not double-report.
+///
+/// Structural rule: for a typed variable initializer with an object literal
+/// source whose contextual remapped-mapped target has missing required
+/// properties **and** the source literal already has property-level
+/// diagnostics emitted within its property spans, the outer relation
+/// elaboration treats the assignment as already elaborated and skips the
+/// duplicate whole-object diagnostic.
+#[test]
+fn remapped_mapped_var_init_missing_and_mismatched_suppresses_outer() {
+    // Direct repro from `genericMappedTypeAsClause.ts`.
+    let code = r#"
+type Model = { a: string; b: number };
+type MappedModel<Suffix extends string> = {
+    [K in keyof Model as `${K}${Suffix}`]: Model[K];
+};
+const foo2: MappedModel<'Foo'> = { bFoo: 'bar' };
+"#;
+    let diagnostics = check_source_diagnostics(code);
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
+    let ts2741_count = diagnostic_count(&diagnostics, 2741);
+    assert_eq!(
+        ts2322_count, 1,
+        "Expected exactly one TS2322 for the inner `bFoo: 'bar'` mismatch, got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2741_count, 0,
+        "Expected no outer TS2741 (the inner TS2322 should suppress it), got: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2322
+            && d.message_text
+                .contains("Type 'string' is not assignable to type 'number'")),
+        "Expected the inner property mismatch text, got: {diagnostics:#?}"
+    );
+}
+
+/// Variation: renamed iteration variable and type parameter must not change
+/// the behavior. The fix must apply structurally, independent of the bound
+/// variable names chosen by the user.
+#[test]
+fn remapped_mapped_var_init_missing_and_mismatched_suppresses_outer_renamed_binders() {
+    let code = r#"
+type Model = { a: string; b: number };
+type Mapped<P extends string> = {
+    [Key in keyof Model as `${Key}${P}`]: Model[Key];
+};
+const v: Mapped<'X'> = { bX: 'wrong' };
+"#;
+    let diagnostics = check_source_diagnostics(code);
+    let ts2322_count = diagnostic_count(&diagnostics, 2322);
+    let ts2741_count = diagnostic_count(&diagnostics, 2741);
+    assert_eq!(
+        ts2322_count, 1,
+        "Expected exactly one TS2322 for the inner mismatch (renamed binders), got: {diagnostics:#?}"
+    );
+    assert_eq!(
+        ts2741_count, 0,
+        "Expected no outer TS2741 (renamed binders), got: {diagnostics:#?}"
+    );
+}
+
+/// When the object literal is entirely empty against a remapped-mapped target,
+/// no inner property diagnostics exist, so the outer whole-object error
+/// (TS2739/TS2741) must still fire to inform the user. The fix must NOT
+/// over-suppress this case.
+#[test]
+fn remapped_mapped_var_init_empty_literal_still_reports_missing() {
+    let code = r#"
+type Model = { a: string; b: number };
+type MappedModel<S extends string> = {
+    [K in keyof Model as `${K}${S}`]: Model[K];
+};
+const empty: MappedModel<'X'> = {};
+"#;
+    let diagnostics = check_source_diagnostics(code);
+    let has_missing_diag = diagnostics.iter().any(|d| d.code == 2739 || d.code == 2741);
+    assert!(
+        has_missing_diag,
+        "Expected an outer missing-property diagnostic for `{{}}` against a non-empty target, got: {diagnostics:#?}"
+    );
+}
+
+/// When the contextual target is a normal (non-mapped) object type, no inner
+/// recheck fires, so the var-init elaboration path is unchanged. The outer
+/// TS2741 should still be reported.
+#[test]
+fn normal_object_target_var_init_unchanged_by_fix() {
+    let code = r#"
+type T = { a: string; b: number };
+const x: T = { b: 5 };
+"#;
+    let diagnostics = check_source_diagnostics(code);
+    let ts2741_count = diagnostic_count(&diagnostics, 2741);
+    assert_eq!(
+        ts2741_count, 1,
+        "Expected TS2741 for missing 'a' against a normal object target, got: {diagnostics:#?}"
+    );
+}

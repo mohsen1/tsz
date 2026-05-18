@@ -4,6 +4,11 @@ use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
+struct NumericLiteralUnionDisplayOrder {
+    members: Vec<String>,
+    canonical: String,
+}
+
 impl<'a> CheckerState<'a> {
     pub(in crate::error_reporter) fn canonicalize_assignment_numeric_literal_union_display(
         &mut self,
@@ -44,10 +49,7 @@ impl<'a> CheckerState<'a> {
             );
         }
         if replacements.is_empty() {
-            if display.contains(" & (0 | 1 | 2)") {
-                return display.replace(" & (0 | 1 | 2)", " & (0 | 2 | 1)");
-            }
-            return display;
+            return self.canonicalize_displayed_numeric_literal_union_segments(type_id, display);
         }
         replacements.sort_by_key(|(source_order, _)| std::cmp::Reverse(source_order.len()));
         replacements
@@ -55,6 +57,114 @@ impl<'a> CheckerState<'a> {
             .fold(display, |current, (source_order, canonical_order)| {
                 current.replace(&source_order, &canonical_order)
             })
+    }
+
+    fn canonicalize_displayed_numeric_literal_union_segments(
+        &self,
+        type_id: TypeId,
+        display: String,
+    ) -> String {
+        let mut orders = Vec::new();
+        let mut seen = Vec::new();
+        self.collect_numeric_literal_union_display_orders(type_id, &mut seen, &mut orders);
+        orders.into_iter().fold(display, |current, order| {
+            replace_matching_numeric_union_segments(&current, &order.members, &order.canonical)
+        })
+    }
+
+    fn collect_numeric_literal_union_display_orders(
+        &self,
+        type_id: TypeId,
+        seen: &mut Vec<TypeId>,
+        orders: &mut Vec<NumericLiteralUnionDisplayOrder>,
+    ) {
+        if seen.contains(&type_id) {
+            return;
+        }
+        seen.push(type_id);
+
+        if self.is_number_literal_union_for_display_order(type_id)
+            && let Some(members) =
+                crate::query_boundaries::common::union_members(self.ctx.types, type_id)
+        {
+            let member_displays = members
+                .iter()
+                .map(|&member| {
+                    self.format_type_for_assignability_message_with_union_origin_policy(
+                        member, true,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let canonical =
+                self.format_type_for_assignability_message_with_union_origin_policy(type_id, true);
+            if member_displays.len() > 1
+                && member_displays.iter().all(|member| !member.contains(" | "))
+                && !orders
+                    .iter()
+                    .any(|order| same_numeric_union_members(&order.members, &member_displays))
+            {
+                orders.push(NumericLiteralUnionDisplayOrder {
+                    members: member_displays,
+                    canonical,
+                });
+            }
+        }
+
+        match diagnostic_query::assignment_numeric_display_children(self.ctx.types, type_id) {
+            diagnostic_query::AssignmentNumericDisplayChildren::Application { args, .. } => {
+                for arg in args {
+                    self.collect_numeric_literal_union_display_orders(arg, seen, orders);
+                }
+            }
+            diagnostic_query::AssignmentNumericDisplayChildren::Members(members) => {
+                for member in members {
+                    self.collect_numeric_literal_union_display_orders(member, seen, orders);
+                }
+            }
+            diagnostic_query::AssignmentNumericDisplayChildren::Array(element) => {
+                self.collect_numeric_literal_union_display_orders(element, seen, orders);
+            }
+            diagnostic_query::AssignmentNumericDisplayChildren::Tuple(elements) => {
+                for element in elements {
+                    self.collect_numeric_literal_union_display_orders(
+                        element.type_id,
+                        seen,
+                        orders,
+                    );
+                }
+            }
+            diagnostic_query::AssignmentNumericDisplayChildren::Object(shape) => {
+                for property in &shape.properties {
+                    self.collect_numeric_literal_union_display_orders(
+                        property.type_id,
+                        seen,
+                        orders,
+                    );
+                    if property.write_type != TypeId::NONE {
+                        self.collect_numeric_literal_union_display_orders(
+                            property.write_type,
+                            seen,
+                            orders,
+                        );
+                    }
+                }
+                if let Some(index) = &shape.string_index {
+                    self.collect_numeric_literal_union_display_orders(
+                        index.value_type,
+                        seen,
+                        orders,
+                    );
+                }
+                if let Some(index) = &shape.number_index {
+                    self.collect_numeric_literal_union_display_orders(
+                        index.value_type,
+                        seen,
+                        orders,
+                    );
+                }
+            }
+            diagnostic_query::AssignmentNumericDisplayChildren::None => {}
+        }
     }
 
     fn collect_numeric_literal_union_display_replacements(
@@ -388,4 +498,76 @@ impl<'a> CheckerState<'a> {
             type_id,
         )
     }
+}
+
+fn replace_matching_numeric_union_segments(
+    display: &str,
+    members: &[String],
+    canonical: &str,
+) -> String {
+    let mut output = String::with_capacity(display.len());
+    let mut cursor = 0;
+    while cursor < display.len() {
+        let Some(open_offset) = display[cursor..].find('(') else {
+            output.push_str(&display[cursor..]);
+            break;
+        };
+        let open = cursor + open_offset;
+        output.push_str(&display[cursor..open]);
+        let Some(close_offset) = display[open + 1..].find(')') else {
+            output.push_str(&display[open..]);
+            break;
+        };
+        let close = open + 1 + close_offset;
+        let inner = &display[open + 1..close];
+        if numeric_union_segment_matches(inner, members) {
+            output.push('(');
+            output.push_str(canonical);
+            output.push(')');
+        } else {
+            output.push_str(&display[open..=close]);
+        }
+        cursor = close + 1;
+    }
+
+    if numeric_union_segment_matches(output.as_str(), members) {
+        canonical.to_string()
+    } else {
+        output
+    }
+}
+
+fn numeric_union_segment_matches(segment: &str, members: &[String]) -> bool {
+    let parts = segment.split(" | ").map(str::trim).collect::<Vec<_>>();
+    if parts.len() != members.len() || parts.len() < 2 {
+        return false;
+    }
+    let mut matched = vec![false; members.len()];
+    'parts: for part in parts {
+        for (index, member) in members.iter().enumerate() {
+            if !matched[index] && part == member {
+                matched[index] = true;
+                continue 'parts;
+            }
+        }
+        return false;
+    }
+    true
+}
+
+fn same_numeric_union_members(left: &[String], right: &[String]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut matched = vec![false; right.len()];
+    'left: for member in left {
+        for (index, candidate) in right.iter().enumerate() {
+            if !matched[index] && member == candidate {
+                matched[index] = true;
+                continue 'left;
+            }
+        }
+        return false;
+    }
+    true
 }

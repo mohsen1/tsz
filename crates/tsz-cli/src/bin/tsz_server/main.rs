@@ -370,92 +370,57 @@ enum LegacyRequest {
 
 /// Full compiler options for a check request (expanded for tsc compatibility)
 #[derive(Clone, Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 struct CheckOptions {
-    #[serde(default)]
     strict: bool,
-    #[serde(default)]
     strict_null_checks: Option<bool>,
-    #[serde(default)]
     strict_function_types: Option<bool>,
-    #[serde(default)]
     strict_bind_call_apply: Option<bool>,
-    #[serde(default)]
     strict_property_initialization: Option<bool>,
-    #[serde(default)]
     no_implicit_any: Option<bool>,
-    #[serde(default)]
     no_implicit_this: Option<bool>,
-    #[serde(default)]
     no_implicit_returns: bool,
-    #[serde(default)]
     use_unknown_in_catch_variables: Option<bool>,
-    #[serde(default)]
     always_strict: Option<bool>,
-    #[serde(default)]
     no_unused_locals: bool,
-    #[serde(default)]
     no_unused_parameters: bool,
-    #[serde(default)]
     exact_optional_property_types: bool,
-    #[serde(default)]
     no_unchecked_indexed_access: bool,
-    #[serde(default)]
     allow_unreachable_code: Option<bool>,
-    #[serde(default)]
     allow_unused_labels: Option<bool>,
-    #[serde(default)]
     no_property_access_from_index_signature: bool,
-    #[serde(default)]
     es_module_interop: bool,
-    #[serde(default)]
     allow_synthetic_default_imports: Option<bool>,
-    #[serde(default)]
     isolated_modules: bool,
-    #[serde(default)]
     no_lib: bool,
-    #[serde(default)]
     lib: Option<Vec<String>>,
-    #[serde(default, deserialize_with = "deserialize_target_option")]
+    #[serde(deserialize_with = "deserialize_target_option")]
     target: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_module_option")]
+    #[serde(deserialize_with = "deserialize_module_option")]
     module: Option<String>,
-    #[serde(default)]
     experimental_decorators: bool,
-    #[serde(default)]
     no_resolve: bool,
-    #[serde(default)]
     allow_js: bool,
-    #[serde(default)]
     check_js: bool,
-    #[serde(default)]
     resolve_json_module: bool,
-    #[serde(default)]
     no_unchecked_side_effect_imports: bool,
-    #[serde(default)]
     no_implicit_override: bool,
-    #[serde(default)]
     downlevel_iteration: bool,
-    #[serde(default)]
     no_fallthrough_cases_in_switch: bool,
-    #[serde(default)]
     strict_builtin_iterator_return: Option<bool>,
-    #[serde(default)]
     declaration: bool,
     // Server-protocol checker options that were previously hardcoded to false
     // when constructing `CheckerOptions`. Wiring them through fixes #3579.
-    #[serde(default)]
     verbatim_module_syntax: bool,
-    #[serde(default)]
     erasable_syntax_only: bool,
-    #[serde(default)]
     allow_importing_ts_extensions: bool,
-    #[serde(default)]
     rewrite_relative_import_extensions: bool,
-    #[serde(default)]
     allow_umd_global_access: bool,
-    #[serde(default)]
     preserve_const_enums: bool,
+    isolated_declarations: bool,
+    jsx: Option<String>,
+    jsx_import_source: Option<String>,
+    module_resolution: Option<String>,
 }
 
 /// Legacy response to client

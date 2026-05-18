@@ -238,8 +238,10 @@ pub(crate) struct ParamTransformPlan {
 pub(crate) struct TempScopeState {
     pub(crate) temp_var_counter: u32,
     pub(crate) generated_temp_names: FxHashSet<String>,
+    pub(crate) reserved_nested_temp_names: FxHashSet<String>,
     pub(crate) first_for_of_emitted: bool,
     pub(crate) preallocated_temp_names: VecDeque<String>,
+    pub(crate) preallocated_hoisted_temp_names: VecDeque<String>,
     pub(crate) preallocated_assignment_temps: VecDeque<String>,
     pub(crate) preallocated_logical_assignment_value_temps: VecDeque<String>,
     pub(crate) hoisted_assignment_value_temps: Vec<String>,
@@ -308,8 +310,17 @@ pub struct Printer<'a> {
     /// Emit `void 0` for missing initializers during recovery.
     pub(crate) emit_missing_initializer_as_void_0: bool,
 
+    /// Function depth whose loop body should reset initializerless lexical bindings.
+    pub(crate) loop_body_missing_initializer_function_depth: Option<u32>,
+
+    /// Current declaration list is being printed in a `for` header.
+    pub(crate) in_for_initializer: bool,
+
     /// Source text for detecting single-line constructs
     pub(crate) source_text: Option<&'a str>,
+
+    /// Cached JSX pragmas extracted from the current source file.
+    pub(crate) jsx_pragmas: crate::jsx_pragmas::JsxPragmaFacts,
 
     /// Source text for source map generation (kept separate from comment emission).
     pub(crate) source_map_text: Option<&'a str>,
@@ -420,6 +431,10 @@ pub struct Printer<'a> {
     /// Counter used for disposable resource environment names (`env_1`, `env_2`, ...).
     pub(crate) next_disposable_env_id: u32,
 
+    /// Counter used for AMD/UMD dynamic import promise callback names
+    /// (`resolve_1`, `reject_1`, ...).
+    pub(crate) next_dynamic_import_promise_id: u32,
+
     /// Per-file counters for lowered async-generator inner function names.
     pub(crate) async_generator_inner_name_counts: FxHashMap<String, u32>,
 
@@ -444,6 +459,14 @@ pub struct Printer<'a> {
     /// When true, the next namespace IIFE tail should fold `exports.Name` into
     /// the closing: `(N || (exports.N = N = {}))` instead of `(N || (N = {}))`.
     pub(crate) pending_cjs_namespace_export_fold: bool,
+
+    /// Export property name to use with `pending_cjs_namespace_export_fold`.
+    /// This differs from the namespace's local name for `export { N as Alias }`.
+    pub(crate) pending_cjs_namespace_export_name: Option<String>,
+
+    /// `SystemJS` export names for the next namespace IIFE tail:
+    /// `(N || (exports_1("alias", exports_1("name", N = {}))))`.
+    pub(crate) pending_system_namespace_export_fold: Option<Vec<String>>,
 
     /// When true, the next namespace IIFE should use the plain `N || (N = {})`
     /// closing even if the name is in `default_exported_func_names`. This is set
@@ -514,6 +537,11 @@ pub struct Printer<'a> {
     /// statements can append the right export binding after initialization.
     pub(crate) deferred_local_export_bindings: Option<FxHashMap<String, String>>,
 
+    /// All deferred local export aliases active for the current wrapped region.
+    /// Assignment targets use this to preserve CommonJS live binding chains such
+    /// as `exports.y = exports.x = x = value`.
+    pub(crate) deferred_local_export_bindings_all: Option<FxHashMap<String, Vec<String>>>,
+
     /// When true, an inline block comment (`/* ... */`) was just emitted without a trailing
     /// newline. The next `write()` call should insert a space before non-whitespace text.
     /// This avoids double-spacing with expression emitters that handle their own comment spacing.
@@ -572,6 +600,14 @@ pub struct Printer<'a> {
     /// collection and consumed when emitting execute-body initializers.
     pub(crate) system_empty_binding_temps: FxHashMap<u32, (String, Option<String>)>,
 
+    /// `SystemJS` object-rest export temps reserved during outer-scope hoist
+    /// collection and consumed when emitting execute-body export initializers.
+    pub(crate) system_object_rest_export_temps: FxHashMap<u32, String>,
+
+    /// Legacy-decorated class self-reference aliases planned while collecting
+    /// `SystemJS` wrapper hoists and consumed when emitting the matching class.
+    pub(crate) preplanned_legacy_decorated_class_aliases: FxHashMap<NodeIndex, String>,
+
     /// Byte offset where CJS destructuring export temps should be inserted.
     pub(crate) cjs_destr_hoist_byte_offset: usize,
     /// Line number where CJS destructuring export temps should be inserted.
@@ -579,6 +615,22 @@ pub struct Printer<'a> {
 
     /// Temp names reserved ahead-of-time and consumed before generating new names.
     pub(crate) preallocated_temp_names: VecDeque<String>,
+
+    /// Hoisted temp names reserved ahead-of-time and consumed only by
+    /// `make_unique_name_hoisted`.
+    pub(crate) preallocated_hoisted_temp_names: VecDeque<String>,
+
+    /// Temp names that must not be reused by nested temp scopes.
+    pub(crate) reserved_nested_temp_names: FxHashSet<String>,
+
+    /// Source-file class static temp reservations, in top-level statement order.
+    pub(crate) file_level_class_temp_reservation_plan: Vec<(NodeIndex, usize)>,
+
+    /// Pre-generated class static temp names consumed when their class is emitted.
+    pub(crate) file_level_class_temp_reservations: FxHashMap<NodeIndex, VecDeque<String>>,
+
+    /// Top-level classes whose class static temp allocation has already been planned.
+    pub(crate) completed_file_level_class_temp_reservations: FxHashSet<NodeIndex>,
 
     /// Temp names for ES5 iterator-based for-of lowering that must be emitted
     /// as top-level `var` declarations (e.g., `e_1, _a, e_2, _b`).
@@ -601,6 +653,7 @@ pub struct Printer<'a> {
     /// When a function parameter has `{ a, ...rest }`, the parameter is replaced with a temp
     /// and this stores `(temp_name, pattern_idx)` for body preamble emission.
     pub(crate) pending_object_rest_params: Vec<(String, NodeIndex)>,
+    pub(crate) pending_object_rest_param_defaults: Vec<(String, NodeIndex)>,
 
     /// Source span of a parser-recovery expression statement already folded into
     /// the previous variable statement's emitted initializer.
@@ -638,6 +691,7 @@ pub struct Printer<'a> {
     pub(crate) in_system_execute_body: bool,
 
     pub(crate) system_reexported_names: FxHashMap<String, String>,
+    pub(crate) system_reexported_name_lists: FxHashMap<String, Vec<String>>,
     pub(crate) system_folded_export_names: FxHashSet<String>,
 
     /// When true, the current parenthesized expression is being emitted as the
@@ -653,6 +707,14 @@ pub struct Printer<'a> {
 
     /// Depth counter for members emitted from class syntax.
     pub(crate) class_member_emit_depth: u32,
+
+    /// Function-scope depth of the class member currently providing ES5 `super`
+    /// home-object semantics. Nested non-arrow functions have a greater depth
+    /// and intentionally fall back to tsc's invalid-super recovery path.
+    pub(crate) es5_super_home_function_depth: Option<u32>,
+
+    /// Whether the active ES5 `super` home is a static class member.
+    pub(crate) es5_super_home_is_static: bool,
 
     /// Whether the current root source file has a JavaScript-like extension.
     pub(crate) is_current_root_js_source: bool,
@@ -774,6 +836,11 @@ pub struct Printer<'a> {
     /// expression, e.g. `(_a = class Foo { m() { return _a; } }, _a.x = 1, _a)`.
     pub(crate) scoped_class_expression_self_alias: Option<(Arc<str>, Arc<str>)>,
 
+    /// Named-evaluation context for the next TC39-decorated anonymous class
+    /// expression. The boolean is true when the name is a runtime expression
+    /// such as a computed property temp, not a string literal.
+    pub(crate) pending_tc39_class_expression_name: Option<(String, bool)>,
+
     pub(crate) tagged_template_var_map: FxHashMap<NodeIndex, String>,
 }
 
@@ -871,6 +938,74 @@ impl<'a> Printer<'a> {
         true
     }
 
+    fn recovered_jsdoc_type_arguments_text(&self, type_arg_nodes: &[NodeIndex]) -> Option<String> {
+        if type_arg_nodes.is_empty() {
+            return None;
+        }
+
+        let source = self.source_text?;
+        let mut saw_recovered_jsdoc = false;
+        let mut parts = Vec::with_capacity(type_arg_nodes.len());
+
+        for type_arg in type_arg_nodes {
+            let node = self.arena.get(*type_arg)?;
+            let raw = source.get(node.pos as usize..node.end as usize)?.trim();
+            if raw.is_empty() {
+                return None;
+            }
+
+            if let Some(recovered) = self.recovered_jsdoc_type_argument_text(node, raw) {
+                saw_recovered_jsdoc = true;
+                parts.push(recovered);
+            } else {
+                parts.push(raw.to_string());
+            }
+        }
+
+        saw_recovered_jsdoc.then(|| format!("<{}>", parts.join(", ")))
+    }
+
+    fn recovered_jsdoc_type_argument_text(&self, node: &Node, raw: &str) -> Option<String> {
+        if raw == "?" {
+            return Some("?".to_string());
+        }
+
+        let has_prefix = raw.starts_with('?');
+        let has_postfix = self.is_jsdoc_postfix_nullable_type(node, raw);
+        if !has_prefix && !has_postfix {
+            return None;
+        }
+
+        let mut question_count = 0;
+        let mut body = raw;
+        if has_prefix {
+            question_count += 1;
+            body = body.strip_prefix('?')?.trim_start();
+        }
+        if has_postfix {
+            question_count += 1;
+            body = body.strip_suffix('?')?.trim_end();
+        }
+
+        if body.is_empty() {
+            return Some("?".repeat(question_count.max(1)));
+        }
+
+        Some(format!("{}{}", "?".repeat(question_count), body))
+    }
+
+    fn is_jsdoc_postfix_nullable_type(&self, node: &Node, raw: &str) -> bool {
+        if !raw.ends_with('?') || node.kind != syntax_kind_ext::UNION_TYPE {
+            return false;
+        }
+
+        self.arena
+            .get_composite_type(node)
+            .and_then(|composite| composite.types.nodes.last())
+            .and_then(|last| self.arena.get(*last))
+            .is_some_and(|last| last.kind == SyntaxKind::NullKeyword as u16)
+    }
+
     fn emit_recovered_let_array_assignment(&mut self, node: &Node) -> bool {
         let Some(text) = self.source_text else {
             return false;
@@ -949,7 +1084,10 @@ impl<'a> Printer<'a> {
             transforms: TransformContext::new(), // Empty by default, can be set later
             emit_plan,
             emit_missing_initializer_as_void_0: false,
+            loop_body_missing_initializer_function_depth: None,
+            in_for_initializer: false,
             source_text: None,
+            jsx_pragmas: crate::jsx_pragmas::JsxPragmaFacts::default(),
             source_map_text: None,
             line_map: None,
             pending_source_pos: None,
@@ -964,6 +1102,7 @@ impl<'a> Printer<'a> {
             generated_temp_names: FxHashSet::default(),
             temp_scope_stack: Vec::new(),
             pending_object_rest_params: Vec::new(),
+            pending_object_rest_param_defaults: Vec::new(),
             consumed_recovered_expression_statement_span: None,
             pending_lowered_async_arrow_super_capture: None,
             function_scope_depth: 0,
@@ -982,6 +1121,7 @@ impl<'a> Printer<'a> {
             anonymous_default_export_name: None,
             next_anonymous_default_index: 0,
             next_disposable_env_id: 1,
+            next_dynamic_import_promise_id: 1,
             async_generator_inner_name_counts: FxHashMap::default(),
             reserved_disposable_env_names: FxHashMap::default(),
             block_using_env: None,
@@ -989,6 +1129,8 @@ impl<'a> Printer<'a> {
             metadata_class_type_params: None,
             pending_block_comment_space: false,
             pending_cjs_namespace_export_fold: false,
+            pending_cjs_namespace_export_name: None,
+            pending_system_namespace_export_fold: None,
             suppress_default_export_merge_iife: false,
             pending_commonjs_class_export_name: None,
             declared_namespace_names: FxHashSet::default(),
@@ -1003,6 +1145,7 @@ impl<'a> Printer<'a> {
             commonjs_exported_var_names: FxHashSet::default(),
             commonjs_exported_var_shadow_stack: Vec::new(),
             deferred_local_export_bindings: None,
+            deferred_local_export_bindings_all: None,
             suppress_ns_qualification: false,
             suppress_commonjs_named_import_substitution: false,
             pending_class_field_inits: Vec::new(),
@@ -1015,9 +1158,16 @@ impl<'a> Printer<'a> {
             block_scoped_private_temps: Vec::new(),
             cjs_destructuring_export_temps: Vec::new(),
             system_empty_binding_temps: FxHashMap::default(),
+            system_object_rest_export_temps: FxHashMap::default(),
+            preplanned_legacy_decorated_class_aliases: FxHashMap::default(),
             cjs_destr_hoist_byte_offset: 0,
             cjs_destr_hoist_line: 0_u32,
             preallocated_temp_names: VecDeque::new(),
+            preallocated_hoisted_temp_names: VecDeque::new(),
+            reserved_nested_temp_names: FxHashSet::default(),
+            file_level_class_temp_reservation_plan: Vec::new(),
+            file_level_class_temp_reservations: FxHashMap::default(),
+            completed_file_level_class_temp_reservations: FxHashSet::default(),
             hoisted_for_of_temps: Vec::new(),
             commonjs_named_import_substitutions: FxHashMap::default(),
             wrapped_export_module_substitutions: FxHashMap::default(),
@@ -1027,11 +1177,14 @@ impl<'a> Printer<'a> {
             paren_in_access_position: false,
             in_system_execute_body: false,
             system_reexported_names: FxHashMap::default(),
+            system_reexported_name_lists: FxHashMap::default(),
             system_folded_export_names: FxHashSet::default(),
             paren_in_new_callee: false,
             paren_is_direct_call_callee: false,
             object_literal_accessor_depth: 0,
             class_member_emit_depth: 0,
+            es5_super_home_function_depth: None,
+            es5_super_home_is_static: false,
             is_current_root_js_source: false,
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),
@@ -1061,6 +1214,7 @@ impl<'a> Printer<'a> {
             scoped_static_super_index_alias: None,
             scoped_static_super_index_value_access: false,
             scoped_class_expression_self_alias: None,
+            pending_tc39_class_expression_name: None,
             tagged_template_var_map: FxHashMap::default(),
         }
     }
@@ -1207,6 +1361,7 @@ impl<'a> Printer<'a> {
     /// Set the source text (for detecting single-line constructs).
     pub fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
+        self.jsx_pragmas = crate::jsx_pragmas::JsxPragmaFacts::from_source(text);
         self.source_comment_ranges = if self.ctx.options.remove_comments {
             Vec::new()
         } else {
@@ -1730,9 +1885,12 @@ impl<'a> Printer<'a> {
             k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
                 self.write("static ");
                 let prev = self.emitting_function_body_block;
+                let prev_in_static_block = self.ctx.flags.in_class_static_block;
                 self.emitting_function_body_block = true;
+                self.ctx.flags.in_class_static_block = true;
                 self.emit_block(node, idx);
                 self.emitting_function_body_block = prev;
+                self.ctx.flags.in_class_static_block = prev_in_static_block;
             }
 
             // If statement
@@ -2106,6 +2264,9 @@ impl<'a> Printer<'a> {
                         self.write(&temp_name.clone());
                     } else {
                         self.emit(computed.expression);
+                        if self.is_static_block_await_identifier(computed.expression) {
+                            self.write(" ");
+                        }
                     }
                     // Map closing `]` to its source position.
                     // The expression's end points past the expression, so `]`
@@ -2257,13 +2418,21 @@ impl<'a> Printer<'a> {
                         .type_arguments
                         .as_ref()
                         .map_or_else(Vec::new, |ta| ta.nodes.clone());
+                    if let Some(recovered_type_args) =
+                        self.recovered_jsdoc_type_arguments_text(&type_arg_nodes)
+                    {
+                        self.emit(expression);
+                        self.write(&recovered_type_args);
+                        return;
+                    }
+
                     let needs_parens = !type_arg_nodes.is_empty();
                     if needs_parens {
-                        self.write("(");
+                        self.open_paren();
                     }
                     self.emit(expression);
                     if needs_parens {
-                        self.write(")");
+                        self.close_paren();
                     }
                     // Skip comments inside the erased type arguments so they
                     // don't leak into subsequent output.

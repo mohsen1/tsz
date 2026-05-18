@@ -258,7 +258,7 @@ impl<'a> CheckerState<'a> {
                     body_type,
                 );
             if !type_params.is_empty() || can_register_non_generic_conditional {
-                self.ctx.get_or_create_def_id(alias_sid);
+                let alias_def_id = self.ctx.get_or_create_def_id(alias_sid);
                 let registered_type = if can_register_non_generic_conditional {
                     self.evaluate_type_with_env_uncached(body_type)
                 } else {
@@ -267,7 +267,7 @@ impl<'a> CheckerState<'a> {
                 self.ctx.symbol_types.insert(alias_sid, registered_type);
                 self.ctx
                     .register_resolved_type(alias_sid, registered_type, type_params);
-                self.ctx.clear_env_eval_cache();
+                self.ctx.clear_type_evaluation_caches_for_def(alias_def_id);
             }
         }
         if self.type_node_produces_too_large_tuple(alias.type_node) {
@@ -933,21 +933,28 @@ impl<'a> CheckerState<'a> {
     /// Walk `extends_type` collecting every `infer X` binding and push each as a
     /// provisional type parameter into `type_parameter_scope`. Returns save-state
     /// for `pop_infer_bindings`.
-    fn push_infer_bindings_from_extends(
+    pub(crate) fn push_infer_bindings_from_extends(
         &mut self,
         extends_type: NodeIndex,
     ) -> Vec<(String, Option<TypeId>)> {
         if extends_type.is_none() {
             return Vec::new();
         }
-        let factory = self.ctx.types.factory();
-        let mut pushes: Vec<(String, Option<TypeId>)> = Vec::new();
+        // Phase 1: collect the names (immutable AST walk).
+        let mut infer_names: Vec<String> = Vec::new();
         let mut stack = vec![extends_type];
         while let Some(idx) = stack.pop() {
             let Some(node) = self.ctx.arena.get(idx) else {
                 continue;
             };
-            if node.kind == syntax_kind_ext::INFER_TYPE {
+            if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE_SPAN {
+                // get_children does not handle TEMPLATE_LITERAL_TYPE_SPAN (kind=205),
+                // so explicitly push the expression child (which may be INFER_TYPE).
+                if let Some(span) = self.ctx.arena.get_template_span(node) {
+                    stack.push(span.expression);
+                }
+                continue;
+            } else if node.kind == syntax_kind_ext::INFER_TYPE {
                 if let Some(infer_data) = self.ctx.arena.get_infer_type(node) {
                     if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
                         && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
@@ -955,30 +962,54 @@ impl<'a> CheckerState<'a> {
                         && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                     {
                         let name = ident.escaped_text.clone();
-                        let atom = self.ctx.types.intern_string(&name);
-                        let provisional = factory.type_param(tsz_solver::TypeParamInfo {
-                            name: atom,
-                            constraint: None,
-                            default: None,
-                            is_const: false,
-                        });
-                        let previous = self
-                            .ctx
-                            .type_parameter_scope
-                            .insert(name.clone(), provisional);
-                        pushes.push((name, previous));
+                        if !infer_names.contains(&name) {
+                            infer_names.push(name);
+                        }
                     }
-                    // The constraint of `infer X extends Constraint` may itself
-                    // contain `infer Y extends C2`; tsc binds those nested names
-                    // in the true branch too. Descend into the type-parameter
-                    // subtree to pick them up.
+                    // `infer X extends Constraint` may nest further `infer Y`; descend.
                     stack.push(infer_data.type_parameter);
+                }
+                continue;
+            } else if node.kind == syntax_kind_ext::TYPE_PARAMETER {
+                if let Some(type_param) = self.ctx.arena.get_type_parameter(node) {
+                    if type_param.constraint != NodeIndex::NONE {
+                        stack.push(type_param.constraint);
+                    }
+                    if type_param.default != NodeIndex::NONE {
+                        stack.push(type_param.default);
+                    }
                 }
                 continue;
             }
             for child in self.ctx.arena.get_children(idx) {
                 stack.push(child);
             }
+        }
+
+        // Phase 2: compute each name's implicit constraint from the surrounding
+        // pattern (template literal → string, explicit extends → that type, etc.).
+        // Must run before borrowing the factory, since it takes &mut self.
+        let infer_constraints: Vec<Option<TypeId>> = infer_names
+            .iter()
+            .map(|name| self.effective_infer_constraint_from_extends_type(extends_type, name))
+            .collect();
+
+        // Phase 3: intern provisional `TypeParameter`s and install them in scope.
+        let factory = self.ctx.types.factory();
+        let mut pushes: Vec<(String, Option<TypeId>)> = Vec::new();
+        for (name, &constraint) in infer_names.iter().zip(infer_constraints.iter()) {
+            let atom = self.ctx.types.intern_string(name);
+            let provisional = factory.type_param(tsz_solver::TypeParamInfo {
+                name: atom,
+                constraint,
+                default: None,
+                is_const: false,
+            });
+            let previous = self
+                .ctx
+                .type_parameter_scope
+                .insert(name.clone(), provisional);
+            pushes.push((name.clone(), previous));
         }
         pushes
     }
@@ -1351,37 +1382,8 @@ impl<'a> CheckerState<'a> {
                 // in `{ [K in keyof T]: { src: K } }` resolve correctly and don't
                 // produce false TS2304 errors.
                 if let Some(mapped) = self.ctx.arena.get_mapped_type(node) {
-                    let mut pushed_name: Option<(String, Option<TypeId>)> = None;
-                    if let Some(tp_node) = self.ctx.arena.get(mapped.type_parameter)
-                        && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
-                        && let Some(name_node) = self.ctx.arena.get(tp_data.name)
-                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    {
-                        let name = ident.escaped_text.clone();
-                        let atom = self.ctx.types.intern_string(&name);
-                        let mut constraint_type = TypeId::UNKNOWN;
-                        if tp_data.constraint != tsz_parser::parser::NodeIndex::NONE {
-                            let resolved = self.get_type_from_type_node(tp_data.constraint);
-                            if resolved != TypeId::ERROR {
-                                constraint_type = resolved;
-                            }
-                        }
-                        let provisional =
-                            self.ctx
-                                .types
-                                .factory()
-                                .type_param(tsz_solver::TypeParamInfo {
-                                    name: atom,
-                                    constraint: Some(constraint_type),
-                                    default: None,
-                                    is_const: false,
-                                });
-                        let previous = self
-                            .ctx
-                            .type_parameter_scope
-                            .insert(name.clone(), provisional);
-                        pushed_name = Some((name, previous));
-                    }
+                    let pushed_name =
+                        self.push_mapped_type_param_provisional(mapped.type_parameter);
                     if mapped.type_node != NodeIndex::NONE {
                         self.check_type_node(mapped.type_node);
                     }
@@ -1390,13 +1392,7 @@ impl<'a> CheckerState<'a> {
                     if mapped.name_type != NodeIndex::NONE {
                         self.check_type_node(mapped.name_type);
                     }
-                    if let Some((name, previous)) = pushed_name {
-                        if let Some(prev_type) = previous {
-                            self.ctx.type_parameter_scope.insert(name, prev_type);
-                        } else {
-                            self.ctx.type_parameter_scope.remove(&name);
-                        }
-                    }
+                    self.pop_mapped_type_param_provisional(pushed_name);
                 }
             }
             k if k == syntax_kind_ext::TUPLE_TYPE => {
@@ -1417,20 +1413,33 @@ impl<'a> CheckerState<'a> {
                 // initializers in type position, including binding element defaults).
                 let _ = self.get_type_from_type_node(node_idx);
 
-                // TS2370: Check that rest parameters have array types.
-                // This is needed because function/constructor types in type aliases
-                // don't go through the normal function declaration checking path.
-                //
-                // Push the function type's own type parameters into scope so that
-                // rest parameter annotations referencing them (e.g. `<L>(...args: L)`)
-                // resolve correctly instead of emitting a spurious TS2304.
-                // `get_type_from_function_type` pushes/pops these internally, so by
-                // the time we reach this sibling check the scope no longer contains
-                // the inner signature's type parameters.
+                // Check all nested type nodes (parameter types and return type) in the
+                // scope of the function/constructor's own type parameters. Without this,
+                // constraint errors (TS2536, TS2344, etc.) inside return type annotations
+                // and parameter type annotations are silently missed because
+                // `get_type_from_function_type` pushes/pops its own type parameter scope
+                // internally without triggering the recursive check_type_node walk.
                 if let Some(func_type) = self.ctx.arena.get_function_type(node) {
-                    let tp_updates =
-                        self.push_missing_name_type_parameters(&func_type.type_parameters);
-                    self.check_rest_parameter_types(&func_type.parameters.nodes);
+                    let param_nodes = func_type.parameters.nodes.clone();
+                    let return_type = func_type.type_annotation;
+                    // Use push_type_parameters (constraint-preserving, two-pass) so that
+                    // inner generic function type parameters like `<K extends keyof T>` have
+                    // their constraints visible during the recursive check_type_node walk.
+                    // push_missing_name_type_parameters would lose constraints and produce
+                    // false-positive TS2536 for valid `<K extends keyof T>() => T[K]`.
+                    let (_, tp_updates) = self.push_type_parameters(&func_type.type_parameters);
+                    self.check_rest_parameter_types(&param_nodes);
+                    for &param_idx in &param_nodes {
+                        if let Some(param_node) = self.ctx.arena.get(param_idx)
+                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                            && param.type_annotation != NodeIndex::NONE
+                        {
+                            self.check_type_node(param.type_annotation);
+                        }
+                    }
+                    if return_type != NodeIndex::NONE {
+                        self.check_type_node(return_type);
+                    }
                     self.pop_type_parameters(tp_updates);
                 }
             }

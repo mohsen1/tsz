@@ -571,6 +571,36 @@ pub fn contains_application_in_structure(db: &dyn TypeDatabase, type_id: TypeId)
     }
 }
 
+/// Return true when `type_id` (or any union/intersection member reachable from it)
+/// is a `ConditionalType` whose `extends_type` is still an unevaluated
+/// `Application` type.
+pub fn contains_conditional_with_application_extends(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    fn walk(db: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> bool {
+        if depth > 32 {
+            return false;
+        }
+        if let Some(TypeData::Conditional(cond_id)) = db.lookup(type_id) {
+            let cond = db.get_conditional(cond_id);
+            if matches!(db.lookup(cond.extends_type), Some(TypeData::Application(_))) {
+                return true;
+            }
+        }
+        if let Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) = db.lookup(type_id)
+        {
+            let members = db.type_list(list_id);
+            if members.iter().any(|&member| walk(db, member, depth + 1)) {
+                return true;
+            }
+        }
+        false
+    }
+
+    walk(db, type_id, 0)
+}
+
 // =============================================================================
 // Type Extraction Helpers
 // =============================================================================

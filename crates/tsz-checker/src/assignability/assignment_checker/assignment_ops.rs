@@ -57,18 +57,20 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(node) else {
             return false;
         };
-        let Some(member_name) = self
+        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
+            return false;
+        };
+        if self
             .ctx
             .arena
             .get_identifier_at(access.name_or_argument)
-            .map(|ident| ident.escaped_text.as_str())
-        else {
+            .is_none()
+        {
             return false;
         };
-        let prefix = format!("Member '{member_name}' implicitly has an '");
         self.ctx.diagnostics.iter().any(|diag| {
             diag.code == diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE
-                && diag.message_text.starts_with(&prefix)
+                && diag.start == name_node.pos
         })
     }
 
@@ -952,11 +954,9 @@ impl<'a> CheckerState<'a> {
             false
         };
         // Only suppress assignability for named property readonly (TS2540).
-        // For element access (index signatures, TS2542), tsc still checks type compatibility.
-        let left_node = self.ctx.arena.get(left_idx);
-        let is_element_access =
-            left_node.is_some_and(|n| n.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION);
-        let suppress_for_readonly = is_readonly_target && !is_element_access;
+        // For readonly index signatures (TS2542), tsc still checks type compatibility.
+        let suppress_for_readonly =
+            is_readonly_target && self.readonly_assignment_suppresses_type_mismatch(left_idx);
 
         if !is_const && self.error_top_level_js_this_computed_element_assignment(left_idx) {
             return right_type;

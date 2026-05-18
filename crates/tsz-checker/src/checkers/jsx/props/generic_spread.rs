@@ -86,39 +86,19 @@ impl<'a> CheckerState<'a> {
             !self.is_assignable_to(*actual_type, expected_type)
         });
 
-        let target_display = self.format_type(props_type);
-        let has_displayed_string_prop_mismatch =
-            provided_attrs.iter().any(|(name, actual_type)| {
-                *actual_type == TypeId::NUMBER
-                    && target_display.contains(&format!("{name}: string"))
-            });
-        let evaluated_props_display = {
-            let evaluated = self.evaluate_type_with_env(props_type);
-            self.format_type(evaluated)
-        };
         let has_alias_string_prop_mismatch = provided_attrs.iter().any(|(name, actual_type)| {
-            *actual_type == TypeId::NUMBER
-                && evaluated_props_display.contains(&format!("{name}: string"))
+            *actual_type == TypeId::NUMBER && self.jsx_alias_declares_string_prop(props_type, name)
         });
-        let has_alias_source_string_prop_mismatch =
-            provided_attrs.iter().any(|(name, actual_type)| {
-                *actual_type == TypeId::NUMBER
-                    && self.jsx_alias_source_has_prop_text(props_type, name, "string")
-            });
 
         if has_excess_property_error
             && !has_explicit_prop_mismatch
-            && !has_displayed_string_prop_mismatch
             && !has_alias_string_prop_mismatch
-            && !has_alias_source_string_prop_mismatch
         {
             return false;
         }
 
         if !has_explicit_prop_mismatch
-            && !has_displayed_string_prop_mismatch
             && !has_alias_string_prop_mismatch
-            && !has_alias_source_string_prop_mismatch
             && self.is_assignable_to(attrs_type, props_type)
         {
             return false;

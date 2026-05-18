@@ -1,0 +1,634 @@
+#!/usr/bin/env bash
+#
+# Shared project fixture metadata and config writers for benchmark and CI
+# project-compile guards. Keep fixture pins and generated tsconfig shapes here
+# so benchmark rows and compile guards cannot silently drift.
+
+if [ -z "${TSZ_PROJECT_FIXTURES_ROOT:-}" ] && [ -n "${BASH_SOURCE[0]:-}" ]; then
+  TSZ_PROJECT_FIXTURES_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+elif [ -z "${TSZ_PROJECT_FIXTURES_ROOT:-}" ] && [ -n "${SCRIPT_DIR:-}" ]; then
+  TSZ_PROJECT_FIXTURES_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+elif [ -z "${TSZ_PROJECT_FIXTURES_ROOT:-}" ] && [ -n "${ROOT_DIR:-}" ]; then
+  TSZ_PROJECT_FIXTURES_ROOT="$(cd "$ROOT_DIR" && pwd)"
+elif [ -z "${TSZ_PROJECT_FIXTURES_ROOT:-}" ]; then
+  TSZ_PROJECT_FIXTURES_ROOT="$(cd "$(pwd)" && pwd)"
+fi
+
+TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_FIXTURES_ROOT/scripts/bench/project-rows.mjs"
+
+# Canonical project row groups for runners that share fixture handling.
+# Keep row names here aligned with the project-corpus workflows.
+TSZ_COMPILE_GUARD_REQUIRED_ROWS=(
+  "utility-types-project"
+  "ts-essentials-project"
+  "rxjs-project"
+  "type-fest-project"
+)
+
+TSZ_COMPILE_GUARD_CANARY_ROWS=(
+  "ts-toolbelt-project"
+  "zod-project"
+  "kysely-project"
+  "type-challenges-project"
+  "type-challenges-solutions-project"
+)
+
+tsz_sync_project_row_groups() {
+  if ! command -v node >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local required_rows
+  local canary_rows
+
+  required_rows="$(TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
+import { pathToFileURL } from "node:url";
+const rowModule = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS || process.cwd() + "/scripts/bench/project-rows.mjs"));
+console.log(rowModule.COMPILE_GUARD_REQUIRED_ROWS.join("\n"));
+NODE
+  )"
+  canary_rows="$(TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
+import { pathToFileURL } from "node:url";
+const rowModule = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS || process.cwd() + "/scripts/bench/project-rows.mjs"));
+console.log(rowModule.COMPILE_CANARY_PROJECT_ROWS.join("\n"));
+NODE
+  )"
+
+  TSZ_COMPILE_GUARD_REQUIRED_ROWS=()
+  if [ -n "$required_rows" ]; then
+    while IFS= read -r row_name; do
+      [ -n "$row_name" ] && TSZ_COMPILE_GUARD_REQUIRED_ROWS+=("$row_name")
+    done <<< "$required_rows"
+  fi
+
+  TSZ_COMPILE_GUARD_CANARY_ROWS=()
+  if [ -n "$canary_rows" ]; then
+    while IFS= read -r row_name; do
+      [ -n "$row_name" ] && TSZ_COMPILE_GUARD_CANARY_ROWS+=("$row_name")
+    done <<< "$canary_rows"
+  fi
+}
+
+tsz_project_owner_families_json() {
+  TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
+import { pathToFileURL } from "node:url";
+const rowModule = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS || process.cwd() + "/scripts/bench/project-rows.mjs"));
+const { COMPATIBILITY_CORPUS_ROWS } = rowModule;
+
+const entries = [];
+for (const row of COMPATIBILITY_CORPUS_ROWS) {
+  entries.push([row.name, row.family]);
+}
+console.log(JSON.stringify(Object.fromEntries(entries)));
+NODE
+}
+
+tsz_validate_project_row_metadata() {
+  TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
+import { pathToFileURL } from "node:url";
+const rowModule = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS || process.cwd() + "/scripts/bench/project-rows.mjs"));
+const { PROJECT_ROW_DEFINITIONS } = rowModule;
+
+const requiredFields = [
+  "name",
+  "label",
+  "owner",
+  "family",
+  "readme_candidates",
+  "fixture_dir",
+  "source_dir",
+  "guard_set",
+  "benchmark_set",
+  "category",
+];
+
+const failures = [];
+
+for (const row of PROJECT_ROW_DEFINITIONS) {
+  for (const field of requiredFields) {
+    if (!(field in row) || typeof row[field] === "undefined") {
+      failures.push(row.name + ": missing field " + field);
+    }
+  }
+
+  if (typeof row.name !== "string" || !row.name) {
+    failures.push("project row: invalid name");
+  }
+
+  if (typeof row.benchmark_set !== "string") {
+    failures.push(row.name + ": benchmark_set must be a string");
+  }
+}
+
+if (failures.length > 0) {
+  for (const failure of failures) {
+    console.error(failure);
+  }
+  process.exit(1);
+}
+NODE
+}
+
+tsz_project_readme_candidates_json() {
+  TSZ_PROJECT_ROWS_MJS="$TSZ_PROJECT_ROWS_MJS" node --input-type=module <<'NODE'
+import { pathToFileURL } from "node:url";
+const rowModule = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS || process.cwd() + "/scripts/bench/project-rows.mjs"));
+const { COMPATIBILITY_CORPUS_ROWS } = rowModule;
+
+const entries = [];
+for (const row of COMPATIBILITY_CORPUS_ROWS) {
+  const candidates = row.readme_candidates || ["README.md"];
+  entries.push([row.name, candidates]);
+}
+console.log(JSON.stringify(Object.fromEntries(entries)));
+NODE
+}
+
+# External project fixture repositories and pinned refs.
+: "${UTILITY_TYPES_REPO:=https://github.com/piotrwitek/utility-types.git}"
+: "${UTILITY_TYPES_REF:=2ee1f6ecb241651ab22390fee7ee5349942efda2}"
+: "${TS_TOOLBELT_REPO:=https://github.com/millsp/ts-toolbelt.git}"
+: "${TS_TOOLBELT_REF:=b8a49285e3ed3a7d8bb8e0b433389eac46a5f140}"
+: "${TS_ESSENTIALS_REPO:=https://github.com/ts-essentials/ts-essentials.git}"
+: "${TS_ESSENTIALS_REF:=5abe8700b42068048bd3c368e0531b6defe56558}"
+: "${NEXTJS_REPO:=https://github.com/vercel/next.js.git}"
+: "${NEXTJS_REF:=09851e208cc62c8b6fe7a953b42c88e843129178}"
+: "${RXJS_REPO:=https://github.com/ReactiveX/rxjs.git}"
+: "${RXJS_REF:=e5351d02e225e275ac0e497c7b66eaa5f0c88791}"
+: "${TYPE_FEST_REPO:=https://github.com/sindresorhus/type-fest.git}"
+: "${TYPE_FEST_REF:=4005f60b65a7bd224154d6da46f45a63b42ce70f}"
+: "${ZOD_REPO:=https://github.com/colinhacks/zod.git}"
+: "${ZOD_REF:=93b0b6892cc0cfee8d0bec4e2e1242c7df771f95}"
+: "${KYSELY_REPO:=https://github.com/kysely-org/kysely.git}"
+: "${KYSELY_REF:=d4911be21cd568d3694dc7f879f72390635226d7}"
+: "${LARGE_TS_REPO:=https://github.com/mohsen1/large-ts-repo.git}"
+: "${LARGE_TS_REF:=e1b22bda18664a507ed0da19c155e0365d585b18}"
+: "${TYPE_CHALLENGES_REPO:=https://github.com/type-challenges/type-challenges.git}"
+: "${TYPE_CHALLENGES_REF:=0b0b0b18bcb7ac42dc22ce26ffb438231d4754b1}"
+: "${TYPE_CHALLENGES_EXPECTED_GENERATED:=190}"
+: "${TYPE_CHALLENGES_EXPECTED_TEST_CASES:=190}"
+: "${TYPE_CHALLENGES_SOLUTIONS_REPO:=https://github.com/ghaiklor/type-challenges-solutions.git}"
+: "${TYPE_CHALLENGES_SOLUTIONS_REF:=91a6d2986650475f29eeb3bd18ebd025128aa07e}"
+: "${TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED:=78}"
+
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|%s|%s\n' "$UTILITY_TYPES_REPO" "$UTILITY_TYPES_REF"
+      ;;
+    ts-toolbelt-project)
+      printf 'ts-toolbelt|%s|%s\n' "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_REF"
+      ;;
+    ts-essentials-project)
+      printf 'ts-essentials|%s|%s\n' "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_REF"
+      ;;
+    rxjs-project)
+      printf 'rxjs|%s|%s\n' "$RXJS_REPO" "$RXJS_REF"
+      ;;
+    type-fest-project)
+      printf 'type-fest|%s|%s\n' "$TYPE_FEST_REPO" "$TYPE_FEST_REF"
+      ;;
+    zod-project)
+      printf 'zod|%s|%s\n' "$ZOD_REPO" "$ZOD_REF"
+      ;;
+    kysely-project)
+      printf 'kysely|%s|%s\n' "$KYSELY_REPO" "$KYSELY_REF"
+      ;;
+    nextjs)
+      printf 'nextjs|%s|%s\n' "$NEXTJS_REPO" "$NEXTJS_REF"
+      ;;
+    large-ts-repo)
+      printf 'large-ts-repo|%s|%s\n' "$LARGE_TS_REPO" "$LARGE_TS_REF"
+      ;;
+    type-challenges-project)
+      printf 'type-challenges|%s|%s\n' "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF"
+      ;;
+    type-challenges-solutions-project)
+      printf 'type-challenges-solutions|%s|%s\n' "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF"
+      ;;
+    type-challenges-assertion-candidates|type-challenges-assertions-tsc-clean)
+      printf 'type-challenges|%s|%s\n' "$TYPE_CHALLENGES_REPO" "$TYPE_CHALLENGES_REF"
+      printf 'type-challenges-solutions|%s|%s\n' "$TYPE_CHALLENGES_SOLUTIONS_REPO" "$TYPE_CHALLENGES_SOLUTIONS_REF"
+      ;;
+  esac
+}
+
+tsz_ensure_git_fixture() {
+  local name="$1"
+  local repo="$2"
+  local ref="$3"
+  local dir="$4"
+  local reclone_dirty="${5:-0}"
+
+  mkdir -p "$(dirname "$dir")"
+  if [[ ! -d "$dir/.git" ]]; then
+    echo "Cloning ${name} fixture..."
+    rm -rf "$dir"
+    git clone --quiet --no-tags --depth 1 "$repo" "$dir"
+  fi
+
+  if [[ "$reclone_dirty" == "1" ]] \
+    && [[ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]]; then
+    echo "${name} fixture is dirty; recloning for reproducibility..."
+    rm -rf "$dir"
+    git clone --quiet --no-tags --depth 1 "$repo" "$dir"
+  fi
+
+  if [[ -n "$ref" ]]; then
+    local current_ref
+    current_ref="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
+    if [[ "$current_ref" != "$ref" ]]; then
+      echo "Pinning ${name} to ${ref:0:12}..."
+      git -C "$dir" fetch --quiet --depth 1 origin "$ref"
+      git -C "$dir" checkout --quiet --detach FETCH_HEAD
+    fi
+  fi
+}
+
+tsz_rxjs_src_root() {
+  local fixture_dir="$1"
+  if [[ -d "$fixture_dir/packages/rxjs/src/internal" ]]; then
+    printf '%s\n' "packages/rxjs/src"
+  else
+    printf '%s\n' "src"
+  fi
+}
+
+tsz_write_utility_types_config() {
+  local output="$1"
+  cat > "$output" <<'JSON'
+{
+  "compilerOptions": {
+    "strict": true,
+    "lib": ["dom", "es2017"],
+    "types": [],
+    "target": "ES2015",
+    "module": "commonjs",
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["src/**/*.snap.ts", "src/**/*.spec.ts"]
+}
+JSON
+}
+
+tsz_write_ts_toolbelt_config() {
+  local output="$1"
+  cat > "$output" <<'JSON'
+{
+  "compilerOptions": {
+    "target": "ES2015",
+    "module": "commonjs",
+    "lib": ["esnext", "dom"],
+    "types": [],
+    "strict": false,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "downlevelIteration": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "ignoreDeprecations": "6.0"
+  },
+  "include": ["sources/**/*.ts"],
+  "exclude": ["tests/**/*", "scripts/**/*", "node_modules/**/*"]
+}
+JSON
+}
+
+tsz_write_ts_essentials_config() {
+  local output="$1"
+  cat > "$output" <<'JSON'
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "module": "commonjs",
+    "strict": true,
+    "lib": ["es2018"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["lib/**/*.ts"],
+  "exclude": ["test/**/*", "node_modules/**/*"]
+}
+JSON
+}
+
+tsz_write_rxjs_config() {
+  local output="$1"
+  local rxjs_src_root="$2"
+  cat > "$output" <<JSON
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "module": "esnext",
+    "strict": true,
+    "lib": ["es2018", "dom"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "noCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "bundler"
+  },
+  "include": ["${rxjs_src_root}/internal/**/*.ts"],
+  "exclude": [
+    "**/*.spec.ts",
+    "**/*.test.ts",
+    "node_modules/**/*",
+    "**/internal/observable/dom/**",
+    "**/internal/umd.ts"
+  ]
+}
+JSON
+}
+
+tsz_write_type_fest_config() {
+  local output="$1"
+  cat > "$output" <<'JSON'
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "module": "esnext",
+    "strict": true,
+    "lib": ["es2022"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "bundler"
+  },
+  "include": ["source/**/*.d.ts", "index.d.ts"],
+  "exclude": ["test-d/**/*", "node_modules/**/*"]
+}
+JSON
+}
+
+tsz_write_zod_config() {
+  local output="$1"
+  cat > "$output" <<'JSON'
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "module": "esnext",
+    "strict": true,
+    "lib": ["es2022", "dom"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "bundler"
+  },
+  "include": ["src/**/*.ts", "packages/zod/src/**/*.ts"],
+  "exclude": [
+    "**/*.test.ts",
+    "**/__tests__/**",
+    "**/benchmarks/**",
+    "node_modules/**/*"
+  ]
+}
+JSON
+}
+
+tsz_write_kysely_globals() {
+  local output="$1"
+  cat > "$output" <<'GLOBALSEOF'
+declare const Buffer: {
+  isBuffer(value: unknown): boolean;
+  compare(left: unknown, right: unknown): number;
+};
+GLOBALSEOF
+}
+
+tsz_write_kysely_config() {
+  local output="$1"
+  cat > "$output" <<'JSON'
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "module": "esnext",
+    "strict": true,
+    "lib": ["es2022", "dom"],
+    "types": [],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "moduleResolution": "bundler"
+  },
+  "include": ["src/**/*.ts", "tsz-bench-globals.d.ts"],
+  "exclude": [
+    "**/*.test.ts",
+    "test/**/*",
+    "node_modules/**/*",
+    "**/dialect/mssql/**",
+    "**/util/object-utils.ts",
+    "**/util/performance-now.ts"
+  ]
+}
+JSON
+}
+
+# The full Next.js row uses a sparse source checkout, not an installed Next.js
+# monorepo. Keep a bench-owned config so tsc/tsgo can validate the source graph
+# without requiring vendored compiled packages, React, Jest, or Node typings.
+tsz_write_nextjs_bench_globals() {
+  local output="$1"
+  cat > "$output" <<'TYPES'
+declare const process: any;
+declare const require: any;
+declare const __dirname: string;
+declare const __filename: string;
+declare const global: any;
+
+declare module '*' {
+  const defaultExport: any;
+  export default defaultExport;
+}
+
+declare module '*.json' {
+  const value: any;
+  export default value;
+}
+TYPES
+}
+
+tsz_write_nextjs_config() {
+  local output="$1"
+  cat > "$output" <<'JSON'
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "noCheck": true,
+    "skipLibCheck": true,
+    "ignoreDeprecations": "6.0",
+    "target": "ES2020",
+    "lib": ["DOM", "DOM.Iterable", "ES2020"],
+    "types": [],
+    "paths": {
+      "next/dist/compiled/*": ["./tsz-bench-external-module.d.ts"],
+      "next/dist/*": ["./src/*"],
+      "*": ["./tsz-bench-external-module.d.ts"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tsz-bench-globals.d.ts",
+    "tsz-bench-external-module.d.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.stories.ts",
+    "src/**/*.stories.tsx",
+    "src/**/__tests__/**",
+    "src/**/__mocks__/**"
+  ]
+}
+JSON
+}
+
+tsz_write_nextjs_external_module() {
+  local output="$1"
+  cat > "$output" <<'TYPES'
+declare const value: any;
+export default value;
+TYPES
+}
+
+tsz_write_type_challenges_solutions_config() {
+  local source_dir="$1"
+  local compile_dir="$2"
+
+  rm -rf "$compile_dir"
+  mkdir -p "$compile_dir/solutions"
+
+  local generated=0
+  local manifest_tsv="$compile_dir/type-challenges-solutions-manifest.tsv"
+  local manifest_json="$compile_dir/type-challenges-solutions-manifest.json"
+  printf 'output\tsource\tid\tlevel\ttitle\n' > "$manifest_tsv"
+
+  local markdown
+  while IFS= read -r markdown; do
+    local id title level base output tmp
+    id="$(awk -F': ' '/^id: / { print $2; exit }' "$markdown")"
+    title="$(awk -F': ' '/^title: / { print $2; exit }' "$markdown")"
+    level="$(awk -F': ' '/^level: / { print $2; exit }' "$markdown")"
+    base="$(basename "$markdown" .md)"
+    output="$compile_dir/solutions/${base}.ts"
+    tmp="$compile_dir/solutions/.${base}.tmp"
+
+    perl -0ne '
+      my ($solution) = /## Solution\n(.*?)(?:\n## References|\z)/s;
+      next unless defined $solution;
+
+      my @order;
+      my %block_by_name;
+      while ($solution =~ /```(?:ts|typescript)\n(.*?)```/sg) {
+        my $block = $1;
+        my @names;
+        while ($block =~ /^\s*(?:export\s+)?(?:declare\s+)?(?:type|interface|namespace)\s+([A-Za-z_\$][A-Za-z0-9_\$]*)/mg) {
+          push @names, $1;
+        }
+        while ($block =~ /^\s*declare\s+(?:function|const)\s+([A-Za-z_\$][A-Za-z0-9_\$]*)/mg) {
+          push @names, $1;
+        }
+        next unless @names;
+
+        for my $name (@names) {
+          push @order, $name unless exists $block_by_name{$name};
+          $block_by_name{$name} = $block;
+        }
+      }
+
+      my %emitted;
+      for my $name (@order) {
+        next if $emitted{$block_by_name{$name}}++;
+        print $block_by_name{$name};
+        print "\n" unless $block_by_name{$name} =~ /\n\z/;
+      }
+    ' "$markdown" > "$tmp"
+
+    if [[ ! -s "$tmp" ]]; then
+      rm -f "$tmp"
+      continue
+    fi
+
+    {
+      printf '// Generated from ghaiklor/type-challenges-solutions %s\n' "$TYPE_CHALLENGES_SOLUTIONS_REF"
+      printf '// Source: en/%s.md\n' "$base"
+      printf '// Challenge id: %s; level: %s; title: %s\n\n' "$id" "$level" "$title"
+      cat "$tmp"
+      printf '\nexport {};\n'
+    } > "$output"
+    rm -f "$tmp"
+    generated=$((generated + 1))
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+      "solutions/${base}.ts" \
+      "en/${base}.md" \
+      "$id" \
+      "$level" \
+      "${title//$'\t'/ }" \
+      >> "$manifest_tsv"
+  done < <(find "$source_dir/en" -maxdepth 1 -name '*.md' ! -name 'index.md' | sort)
+
+  if [[ "$generated" -eq 0 ]]; then
+    echo "error: no Type Challenges solution sources were generated from $source_dir/en" >&2
+    return 1
+  fi
+  if [[ "$generated" -ne "$TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED" ]]; then
+    echo "error: generated ${generated} Type Challenges solution sources; expected ${TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED} for ${TYPE_CHALLENGES_SOLUTIONS_REF}" >&2
+    return 1
+  fi
+
+  TYPE_CHALLENGES_SOLUTIONS_REPO="$TYPE_CHALLENGES_SOLUTIONS_REPO" \
+  TYPE_CHALLENGES_SOLUTIONS_REF="$TYPE_CHALLENGES_SOLUTIONS_REF" \
+  TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED="$TYPE_CHALLENGES_SOLUTIONS_EXPECTED_GENERATED" \
+  node "$TSZ_PROJECT_FIXTURES_ROOT/scripts/ci/type-challenges-solutions-manifest.mjs" \
+    "$manifest_tsv" \
+    "$manifest_json"
+  rm -f "$manifest_tsv"
+
+  cat > "$compile_dir/type-challenges-globals.d.ts" <<'TYPES'
+type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2)
+    ? true
+    : false;
+
+interface TreeNode {
+  val: number;
+  left: TreeNode | null;
+  right: TreeNode | null;
+}
+TYPES
+
+  cat > "$compile_dir/tsconfig.tsz-guard.json" <<'JSON'
+{
+  "compilerOptions": {
+    "target": "es2017",
+    "lib": ["ESNext"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "noEmit": true,
+    "types": [],
+    "noImplicitReturns": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "ignoreDeprecations": "6.0"
+  },
+  "include": ["solutions/**/*.ts", "type-challenges-globals.d.ts"]
+}
+JSON
+}

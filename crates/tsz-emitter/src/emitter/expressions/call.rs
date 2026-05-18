@@ -1,5 +1,6 @@
 use super::super::Printer;
 use crate::transforms::private_fields_es5::get_private_field_name;
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::{NodeIndex, node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -224,7 +225,8 @@ impl<'a> Printer<'a> {
                 && let Some(base) = self.arena.get(access.expression)
                 && base.kind == SyntaxKind::SuperKeyword as u16
             {
-                self.write("_super.prototype.");
+                self.emit_es5_super_property_base();
+                self.write(".");
                 self.emit(access.name_or_argument);
                 self.write(".call(");
                 if self.ctx.arrow_state.this_capture_depth > 0 {
@@ -246,7 +248,8 @@ impl<'a> Printer<'a> {
                 && let Some(base) = self.arena.get(access.expression)
                 && base.kind == SyntaxKind::SuperKeyword as u16
             {
-                self.write("_super.prototype[");
+                self.emit_es5_super_property_base();
+                self.write("[");
                 self.emit(access.name_or_argument);
                 self.write("].call(");
                 if self.ctx.arrow_state.this_capture_depth > 0 {
@@ -301,6 +304,22 @@ impl<'a> Printer<'a> {
             self.write(")");
             self.emit_call_arguments(node, call.arguments.as_ref());
             return;
+        }
+
+        if let Some(expr_node) = self.arena.get(call.expression)
+            && expr_node.kind == SyntaxKind::ImportKeyword as u16
+        {
+            match self.ctx.original_module_kind {
+                Some(ModuleKind::System) => {
+                    self.emit_system_dynamic_import_call(node, call.arguments.as_ref());
+                    return;
+                }
+                Some(ModuleKind::AMD | ModuleKind::UMD) => {
+                    self.emit_amd_or_umd_dynamic_import_call(call.arguments.as_ref());
+                    return;
+                }
+                _ => {}
+            }
         }
 
         // CJS dynamic import: `import("mod")` → `Promise.resolve().then(() => __importStar(require("mod")))`
@@ -467,10 +486,10 @@ impl<'a> Printer<'a> {
             if let Some(first_arg) = valid_args.first()
                 && let Some(arg_node) = self.arena.get(*first_arg)
             {
-                // Use node.end of the call expression to approximate '(' position
-                // Actually, we need to find the '(' position more carefully
-                let paren_pos = self.find_open_paren_position(node.pos, arg_node.pos);
-                self.emit_call_leading_argument_comments(paren_pos, arg_node.pos);
+                let open_paren_pos = self
+                    .find_call_open_paren_position(node, Some(args))
+                    .unwrap_or(node.pos);
+                self.emit_call_leading_argument_comments(open_paren_pos, arg_node.pos);
             }
             self.emit_comma_separated(&valid_args);
             if let Some(last_arg) = valid_args.last()
@@ -488,6 +507,122 @@ impl<'a> Printer<'a> {
         // Map the closing `)` to its source position
         self.map_closing_paren(node);
         self.write(")");
+    }
+
+    fn emit_system_dynamic_import_call(
+        &mut self,
+        node: &Node,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) {
+        self.write("context_1.import");
+        self.emit_call_arguments(node, args);
+    }
+
+    fn emit_amd_or_umd_dynamic_import_call(&mut self, args: Option<&tsz_parser::parser::NodeList>) {
+        let first_arg = self.first_dynamic_import_argument(args);
+        let needs_temp = first_arg.is_some_and(|arg| !self.dynamic_import_arg_is_string_like(arg));
+        let temp = needs_temp.then(|| self.make_unique_name_hoisted());
+
+        if let Some(temp_name) = temp.as_deref() {
+            self.write(temp_name);
+            self.write(" = ");
+            if self.ctx.options.rewrite_relative_import_extensions {
+                if let Some(first) = first_arg {
+                    self.emit_rewrite_helper_call(first);
+                }
+            } else if let Some(first) = first_arg {
+                self.emit(first);
+            }
+            self.write(", ");
+        }
+
+        if matches!(self.ctx.original_module_kind, Some(ModuleKind::UMD)) {
+            self.write("__syncRequire ? ");
+            self.emit_dynamic_import_commonjs_branch(first_arg, temp.as_deref());
+            self.write(" : ");
+        }
+        self.emit_dynamic_import_amd_branch(first_arg, temp.as_deref());
+    }
+
+    fn first_dynamic_import_argument(
+        &self,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) -> Option<NodeIndex> {
+        args.and_then(|args| {
+            args.nodes
+                .iter()
+                .copied()
+                .find(|&idx| self.call_argument_should_emit(idx))
+        })
+    }
+
+    fn dynamic_import_arg_is_string_like(&self, arg: NodeIndex) -> bool {
+        self.arena.get(arg).is_some_and(|node| {
+            node.kind == SyntaxKind::StringLiteral as u16
+                || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || node.end <= node.pos
+        })
+    }
+
+    fn emit_dynamic_import_commonjs_branch(
+        &mut self,
+        first_arg: Option<NodeIndex>,
+        temp: Option<&str>,
+    ) {
+        if self.ctx.target_es5 {
+            self.write("Promise.resolve().then(function () { return ");
+            self.write_helper("__importStar");
+            self.write("(require(");
+            self.emit_dynamic_import_require_specifier(first_arg, temp);
+            self.write(")); })");
+        } else {
+            self.write("Promise.resolve().then(() => ");
+            self.write_helper("__importStar");
+            self.write("(require(");
+            self.emit_dynamic_import_require_specifier(first_arg, temp);
+            self.write(")))");
+        }
+    }
+
+    fn emit_dynamic_import_amd_branch(&mut self, first_arg: Option<NodeIndex>, temp: Option<&str>) {
+        let id = self.next_dynamic_import_promise_id;
+        self.next_dynamic_import_promise_id += 1;
+        let resolve = format!("resolve_{id}");
+        let reject = format!("reject_{id}");
+
+        if self.ctx.target_es5 {
+            self.write("new Promise(function (");
+        } else {
+            self.write("new Promise((");
+        }
+        self.write(&resolve);
+        self.write(", ");
+        self.write(&reject);
+        if self.ctx.target_es5 {
+            self.write(") { require([");
+        } else {
+            self.write(") => { require([");
+        }
+        self.emit_dynamic_import_require_specifier(first_arg, temp);
+        self.write("], ");
+        self.write(&resolve);
+        self.write(", ");
+        self.write(&reject);
+        self.write("); }).then(");
+        self.write_helper("__importStar");
+        self.write(")");
+    }
+
+    fn emit_dynamic_import_require_specifier(
+        &mut self,
+        first_arg: Option<NodeIndex>,
+        temp: Option<&str>,
+    ) {
+        if let Some(temp) = temp {
+            self.write(temp);
+        } else if let Some(first) = first_arg {
+            self.emit_maybe_rewritten_module_specifier_arg(first);
+        }
     }
 
     fn emit_erased_object_literal_access_call(
@@ -573,8 +708,10 @@ impl<'a> Printer<'a> {
             if let Some(first_arg) = valid_args.first()
                 && let Some(arg_node) = self.arena.get(*first_arg)
             {
-                let paren_pos = self.find_open_paren_position(node.pos, arg_node.pos);
-                self.emit_call_leading_argument_comments(paren_pos, arg_node.pos);
+                let open_paren_pos = self
+                    .find_call_open_paren_position(node, Some(args))
+                    .unwrap_or(node.pos);
+                self.emit_call_leading_argument_comments(open_paren_pos, arg_node.pos);
             }
             self.emit_comma_separated(&valid_args);
             if let Some(last_arg) = valid_args.last()
@@ -950,7 +1087,12 @@ impl<'a> Printer<'a> {
         call_node: &Node,
         args: Option<&tsz_parser::parser::NodeList>,
     ) -> Option<u32> {
-        self.find_call_open_paren_position_after(call_node, args, call_node.pos)
+        let start_after = self
+            .arena
+            .get_call_expr(call_node)
+            .and_then(|call| self.arena.get(call.expression))
+            .map_or(call_node.pos, |callee| callee.end);
+        self.find_call_open_paren_position_after(call_node, args, start_after)
     }
 
     /// Variant of `find_call_open_paren_position` that begins the search
@@ -1277,22 +1419,6 @@ impl<'a> Printer<'a> {
         }
 
         self.emit(expr);
-    }
-
-    /// Find the position of the opening parenthesis in a call expression.
-    /// Scans forward from `start_pos` looking for '(' before `arg_pos`.
-    fn find_open_paren_position(&self, start_pos: u32, arg_pos: u32) -> u32 {
-        let Some(text) = self.source_text else {
-            return start_pos;
-        };
-        let bytes = text.as_bytes();
-        let start = start_pos as usize;
-        let end = std::cmp::min(arg_pos as usize, bytes.len());
-
-        if let Some(offset) = (start..end).position(|i| bytes[i] == b'(') {
-            return (start + offset) as u32;
-        }
-        start_pos
     }
 
     /// Unwrap parenthesized expressions and type assertions/satisfies to find

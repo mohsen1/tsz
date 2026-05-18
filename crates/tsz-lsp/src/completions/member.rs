@@ -136,6 +136,9 @@ impl<'a> Completions<'a> {
             }
 
             for (name, info) in props {
+                if !dot_access_member_label_is_completion_eligible(&name) {
+                    continue;
+                }
                 let kind = if info.is_method {
                     CompletionItemKind::Method
                 } else {
@@ -217,6 +220,9 @@ impl<'a> Completions<'a> {
                 }
             }
             for (name, info) in props {
+                if !dot_access_member_label_is_completion_eligible(&name) {
+                    continue;
+                }
                 let kind = if info.is_method {
                     CompletionItemKind::Method
                 } else {
@@ -310,10 +316,23 @@ impl<'a> Completions<'a> {
         }
 
         let resolved = checker.resolve_lazy_type(type_id);
-        let evaluated = tsz_solver::evaluate_type(interner, resolved);
+        let evaluated = tsz_solver::computation::evaluate_type(interner, resolved);
         if evaluated != type_id {
             self.collect_properties_for_type_inner(
                 evaluated,
+                interner,
+                checker,
+                visited,
+                props,
+                include_private,
+            );
+            return;
+        }
+
+        // `ReadonlyType` and `NoInfer` are transparent wrappers for member access; strip and recurse.
+        if let Some(inner) = visitor::unwrap_readonly_or_noinfer(interner, evaluated) {
+            self.collect_properties_for_type_inner(
+                inner,
                 interner,
                 checker,
                 visited,
@@ -327,25 +346,54 @@ impl<'a> Completions<'a> {
             .or_else(|| visitor::object_with_index_shape_id(interner, evaluated))
         {
             let shape = interner.object_shape(shape_id);
-            for prop in &shape.properties {
-                if !include_private && prop.visibility != Visibility::Public {
-                    continue;
-                }
-                let name = interner.resolve_atom(prop.name);
-                // Skip synthetic brand properties used for nominal class typing.
-                // These are internal type system markers (e.g. `__private_brand_42`)
-                // and must never appear in user-facing completions.
-                if name.starts_with("__private_brand_") {
-                    continue;
-                }
-                self.add_property_completion_ex(
-                    props,
+            self.collect_shape_props(props, interner, &shape.properties, include_private);
+            return;
+        }
+
+        // TypeData::Function (function declarations/expressions) and TypeData::Callable
+        // (interface-style callables, class constructors) both expose Function.prototype
+        // members (name, length, apply, call, bind, …).
+        // Check Function first: it covers the common case (named functions, arrows, expressions).
+        let is_function = visitor::function_shape_id(interner, evaluated).is_some();
+        let callable_id = if is_function {
+            None
+        } else {
+            visitor::callable_shape_id(interner, evaluated)
+        };
+        if is_function || callable_id.is_some() {
+            // Callable shapes may also carry explicitly declared properties (e.g. class statics).
+            if let Some(id) = callable_id {
+                let shape = interner.callable_shape(id);
+                self.collect_shape_props(props, interner, &shape.properties, include_private);
+            }
+            // Prefer the lib-defined Function interface; fall back to apparent members.
+            self.collect_intrinsic_members_or_boxed(
+                IntrinsicKind::Function,
+                interner,
+                checker,
+                visited,
+                props,
+            );
+            return;
+        }
+
+        // Array and tuple types expose Array.prototype members (push, pop, map, …).
+        // Use the lib-defined Array<T> interface when available, substituting the
+        // element type so that method return types are as precise as possible.
+        let array_elem = visitor::array_element_type(interner, evaluated).or_else(|| {
+            tsz_solver::type_queries::get_tuple_element_type_union(interner, evaluated)
+        });
+        if let Some(_elem) = array_elem {
+            if let Some(array_base) = interner.get_array_base_type() {
+                self.collect_array_prototype_props(
+                    array_base,
                     interner,
-                    name,
-                    prop.type_id,
-                    prop.is_method,
-                    prop.optional,
+                    visited,
+                    props,
+                    include_private,
                 );
+            } else {
+                self.collect_array_member_fallback(interner, props);
             }
             return;
         }
@@ -429,31 +477,40 @@ impl<'a> Completions<'a> {
 
         if let Some(app) = visitor::application_id(interner, evaluated) {
             let app = interner.type_application(app);
-            self.collect_properties_for_type_inner(
-                app.base,
-                interner,
-                checker,
-                visited,
-                props,
-                include_private,
-            );
-            return;
-        }
-
-        if let Some(literal) = visitor::literal_value(interner, evaluated) {
-            if let Some(kind) = self.literal_intrinsic_kind(&literal) {
-                self.collect_intrinsic_members(kind, interner, props);
+            if interner.get_array_base_type() == Some(app.base) {
+                self.collect_array_prototype_props(
+                    app.base,
+                    interner,
+                    visited,
+                    props,
+                    include_private,
+                );
+            } else {
+                self.collect_properties_for_type_inner(
+                    app.base,
+                    interner,
+                    checker,
+                    visited,
+                    props,
+                    include_private,
+                );
             }
             return;
         }
 
         if visitor::template_literal_id(interner, evaluated).is_some() {
-            self.collect_intrinsic_members(IntrinsicKind::String, interner, props);
+            self.collect_intrinsic_members_or_boxed(
+                IntrinsicKind::String,
+                interner,
+                checker,
+                visited,
+                props,
+            );
             return;
         }
 
-        if let Some(kind) = visitor::intrinsic_kind(interner, evaluated) {
-            self.collect_intrinsic_members(kind, interner, props);
+        if let Some(kind) = tsz_solver::apparent_intrinsic_kind(interner, evaluated) {
+            self.collect_intrinsic_members_or_boxed(kind, interner, checker, visited, props);
         }
     }
 
@@ -798,7 +855,7 @@ impl<'a> Completions<'a> {
                         let Some(name) = self.arena.get_identifier_text(signature.name) else {
                             continue;
                         };
-                        if name != property_name || !signature.type_annotation.is_some() {
+                        if name != property_name || signature.type_annotation.is_none() {
                             continue;
                         }
                         self.append_members_from_type_node(
@@ -827,7 +884,7 @@ impl<'a> Completions<'a> {
                         let Some(name) = self.arena.get_identifier_text(prop.name) else {
                             continue;
                         };
-                        if name != property_name || !prop.type_annotation.is_some() {
+                        if name != property_name || prop.type_annotation.is_none() {
                             continue;
                         }
                         self.append_members_from_type_node(prop.type_annotation, seen_names, items);
@@ -1242,6 +1299,90 @@ impl<'a> Completions<'a> {
         }
     }
 
+    /// Collect Array.prototype members directly from the registered `array_base_type`,
+    /// without adding Function.prototype members.
+    ///
+    /// When the Array interface has construct signatures it is lowered to
+    /// `TypeData::Callable`. The generic callable path in
+    /// `collect_properties_for_type_inner` also appends Function.prototype
+    /// members (apply, call, bind) to every Callable — correct for function
+    /// types, wrong for array types. This helper skips that step.
+    ///
+    /// Handles all structural shapes the `array_base_type` can take:
+    ///   - Callable (Array interface with construct signatures)
+    ///   - Object / `ObjectWithIndex` (plain interface without call signatures)
+    ///   - Intersection (multiple lib-file declarations merged per file)
+    fn collect_array_prototype_props(
+        &self,
+        type_id: TypeId,
+        interner: &TypeInterner,
+        visited: &mut FxHashSet<TypeId>,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+        include_private: bool,
+    ) {
+        if !visited.insert(type_id) {
+            return;
+        }
+        if let Some(id) = visitor::callable_shape_id(interner, type_id) {
+            let shape = interner.callable_shape(id);
+            self.collect_shape_props(props, interner, &shape.properties, include_private);
+            return;
+        }
+        if let Some(id) = visitor::object_shape_id(interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(interner, type_id))
+        {
+            let shape = interner.object_shape(id);
+            self.collect_shape_props(props, interner, &shape.properties, include_private);
+            return;
+        }
+        if let Some(members_id) = visitor::intersection_list_id(interner, type_id) {
+            let members = interner.type_list(members_id);
+            for &member in members.iter() {
+                self.collect_array_prototype_props(
+                    member,
+                    interner,
+                    visited,
+                    props,
+                    include_private,
+                );
+            }
+        }
+    }
+
+    fn collect_shape_props(
+        &self,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+        interner: &TypeInterner,
+        properties: &[tsz_solver::PropertyInfo],
+        include_private: bool,
+    ) {
+        for prop in properties {
+            if !include_private && prop.visibility != Visibility::Public {
+                continue;
+            }
+            // Symbol-keyed computed properties (e.g. `[Symbol.iterator]`,
+            // `unique symbol` keys) require bracket-notation access and are
+            // excluded from dot-access member completions, matching tsc behavior.
+            if prop.is_symbol_named {
+                continue;
+            }
+            let name = interner.resolve_atom(prop.name);
+            // Synthetic brand properties (e.g. `__private_brand_42`) are nominal
+            // class typing markers and must not appear in user-facing completions.
+            if name.starts_with("__private_brand_") {
+                continue;
+            }
+            self.add_property_completion_ex(
+                props,
+                interner,
+                name,
+                prop.type_id,
+                prop.is_method,
+                prop.optional,
+            );
+        }
+    }
+
     fn collect_intrinsic_members(
         &self,
         kind: IntrinsicKind,
@@ -1250,6 +1391,9 @@ impl<'a> Completions<'a> {
     ) {
         let members = apparent_primitive_members(interner, kind);
         for member in members {
+            if !primitive_member_is_completion_eligible(kind, member.name) {
+                continue;
+            }
             let type_id = match member.kind {
                 ApparentMemberKind::Value(type_id) | ApparentMemberKind::Method(type_id) => type_id,
             };
@@ -1264,15 +1408,72 @@ impl<'a> Completions<'a> {
         }
     }
 
-    pub(super) const fn literal_intrinsic_kind(
+    /// Prefers the lib-defined boxed interface for a primitive intrinsic type when available,
+    /// falling back to the apparent-members table otherwise.
+    fn collect_intrinsic_members_or_boxed(
         &self,
-        literal: &tsz_solver::LiteralValue,
-    ) -> Option<IntrinsicKind> {
-        match literal {
-            tsz_solver::LiteralValue::String(_) => Some(IntrinsicKind::String),
-            tsz_solver::LiteralValue::Number(_) => Some(IntrinsicKind::Number),
-            tsz_solver::LiteralValue::Boolean(_) => Some(IntrinsicKind::Boolean),
-            tsz_solver::LiteralValue::BigInt(_) => Some(IntrinsicKind::Bigint),
+        kind: IntrinsicKind,
+        interner: &TypeInterner,
+        checker: &mut CheckerState,
+        visited: &mut FxHashSet<TypeId>,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+    ) {
+        if let Some(boxed_type) = interner.get_boxed_type(kind) {
+            self.collect_properties_for_type_inner(
+                boxed_type, interner, checker, visited, props, false,
+            );
+        } else {
+            self.collect_intrinsic_members(kind, interner, props);
+        }
+    }
+
+    /// No-lib fallback: emits `Array.prototype` member names with approximate return types.
+    /// Only reached when `get_array_base_type()` returns `None` (no lib loaded).
+    fn collect_array_member_fallback(
+        &self,
+        interner: &TypeInterner,
+        props: &mut FxHashMap<String, PropertyCompletion>,
+    ) {
+        self.add_property_completion(props, interner, "length".to_string(), TypeId::NUMBER, false);
+        for name in ["indexOf", "lastIndexOf", "push", "unshift", "findIndex"] {
+            self.add_property_completion(props, interner, name.to_string(), TypeId::NUMBER, true);
+        }
+        for name in ["every", "some", "includes"] {
+            self.add_property_completion(props, interner, name.to_string(), TypeId::BOOLEAN, true);
+        }
+        for name in ["join", "toString", "toLocaleString"] {
+            self.add_property_completion(props, interner, name.to_string(), TypeId::STRING, true);
+        }
+        for name in [
+            "concat",
+            "copyWithin",
+            "entries",
+            "fill",
+            "filter",
+            "find",
+            "flat",
+            "flatMap",
+            "forEach",
+            "keys",
+            "map",
+            "pop",
+            "reduce",
+            "reduceRight",
+            "reverse",
+            "shift",
+            "slice",
+            "sort",
+            "splice",
+            "values",
+            "at",
+            "findLast",
+            "findLastIndex",
+            "toReversed",
+            "toSorted",
+            "toSpliced",
+            "with",
+        ] {
+            self.add_property_completion(props, interner, name.to_string(), TypeId::ANY, true);
         }
     }
 
@@ -1916,4 +2117,87 @@ impl<'a> Completions<'a> {
         }
         None
     }
+}
+
+/// Members inherited from `Object.prototype`. They appear on every object via
+/// the prototype chain but TypeScript only lists them in member completions
+/// for types that explicitly redeclare them on their own interface.
+const OBJECT_PROTOTYPE_ONLY_MEMBERS: &[&str] = &[
+    "constructor",
+    "hasOwnProperty",
+    "isPrototypeOf",
+    "propertyIsEnumerable",
+];
+
+/// String methods that are not part of the ES2015 baseline that our no-lib
+/// apparent fallback covers. When the user has not loaded a TypeScript lib
+/// (e.g. the playground default), tsc would not surface these names because
+/// the user's effective target predates their introduction. The apparent
+/// fallback still answers property lookups for them so that real code
+/// targeting modern runtimes keeps type-checking; this filter just hides them
+/// from the completion list, matching tsc's behavior.
+const STRING_POST_ES2015_MEMBERS: &[&str] = &[
+    // es2017
+    "padStart",
+    "padEnd",
+    // es2019
+    "trimStart",
+    "trimEnd",
+    "trimLeft",
+    "trimRight",
+    // es2020
+    "matchAll",
+    // es2021
+    "replaceAll",
+    // es2022
+    "at",
+    // esnext
+    "isWellFormed",
+    "toWellFormed",
+];
+
+/// Whether `name` is owned by the primitive's own lib interface (and
+/// therefore should appear in completions) versus being inherited from
+/// `Object.prototype` (and therefore hidden, matching tsc).
+///
+/// Only the actual primitive kinds — `String`, `Number`, `Boolean`, `Bigint`,
+/// `Symbol` — are filtered. `Object` (the non-primitive `object` type) and
+/// `Function` keep their full apparent-member set so completions on
+/// `o: object` continue to surface every `Object.prototype` method.
+fn primitive_member_is_completion_eligible(kind: IntrinsicKind, name: &str) -> bool {
+    if !matches!(
+        kind,
+        IntrinsicKind::String
+            | IntrinsicKind::Number
+            | IntrinsicKind::Boolean
+            | IntrinsicKind::Bigint
+            | IntrinsicKind::Symbol,
+    ) {
+        return true;
+    }
+    if OBJECT_PROTOTYPE_ONLY_MEMBERS.contains(&name) {
+        return false;
+    }
+    // `Boolean`'s lib.es5 interface declares only `valueOf`; every other
+    // primitive interface redeclares `toString`. So `toString` is only
+    // inherited (and therefore filtered) for booleans.
+    if name == "toString" && matches!(kind, IntrinsicKind::Boolean) {
+        return false;
+    }
+    // `Number` and `Bigint` redeclare `toLocaleString` on their lib.es5
+    // interfaces; all other primitives inherit it from `Object.prototype`.
+    if name == "toLocaleString" && !matches!(kind, IntrinsicKind::Number | IntrinsicKind::Bigint) {
+        return false;
+    }
+    if matches!(kind, IntrinsicKind::String) && STRING_POST_ES2015_MEMBERS.contains(&name) {
+        return false;
+    }
+    true
+}
+
+/// Dot-access completions can only commit names that are directly usable after
+/// `receiver.`. Computed members are stored with bracketed display labels such
+/// as `[Symbol.iterator]`, which belong to element-access completions instead.
+fn dot_access_member_label_is_completion_eligible(name: &str) -> bool {
+    !(name.starts_with('[') && name.ends_with(']'))
 }

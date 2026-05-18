@@ -7,10 +7,9 @@ use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::ir::{IRMethodName, IRNode, IRParam, IRPropertyDescriptor};
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::syntax::transform_utils::{
-    contains_async_arrow_function, contains_this_reference, is_private_identifier,
-};
+use tsz_parser::syntax::transform_utils::{contains_async_arrow_function, is_private_identifier};
 use tsz_scanner::SyntaxKind;
 
 use super::{
@@ -83,17 +82,20 @@ impl<'a> ES5ClassTransformer<'a> {
         let move_params_to_generator = self.async_generator_params_need_forwarding(params);
         let method_name =
             crate::transforms::emit_utils::identifier_text_or_empty(self.arena, method_name_idx);
-        let inner_name = (!method_name.is_empty()).then(|| format!("{method_name}_1"));
+        let inner_name =
+            (!method_name.is_empty()).then(|| self.next_async_generator_inner_name(&method_name));
         let mut transformer = AsyncES5Transformer::new(self.arena);
         if let Some(source_text) = self.source_text {
             transformer.set_source_text(source_text);
         }
+        self.configure_async_disposable_context(&mut transformer);
         let inner = transformer.transform_async_generator_inner_function(
             inner_name,
             params,
             body,
             move_params_to_generator,
         );
+        self.sync_async_disposable_context(&mut transformer);
         vec![IRNode::ReturnStatement(Some(Box::new(IRNode::CallExpr {
             callee: Box::new(IRNode::RuntimeHelper("__asyncGenerator".into())),
             arguments: vec![
@@ -124,21 +126,24 @@ impl<'a> ES5ClassTransformer<'a> {
         let params = self.extract_parameters(&accessor_data.parameters);
 
         let body_source_range = self.arena.pos_end_at(accessor_data.body);
-
         let body = if accessor_data.body.is_none() {
             vec![]
         } else {
+            let this_capture_alias = self.this_capture_alias_for_body(accessor_data.body, None);
             let mut body = if is_static {
-                self.convert_block_body_static(accessor_data.body)
+                self.convert_block_body_static_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
             } else {
-                self.convert_block_body(accessor_data.body)
+                self.convert_block_body_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
             };
 
-            // Check if getter needs `var _this = this;` capture
-            let needs_this_capture = self.constructor_needs_this_capture(accessor_data.body);
-            if needs_this_capture {
-                // Insert `var _this = this;` at the start of getter body
-                body.insert(0, IRNode::var_decl("_this", Some(IRNode::this())));
+            if let Some(alias) = this_capture_alias {
+                body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
             }
 
             body
@@ -181,20 +186,25 @@ impl<'a> ES5ClassTransformer<'a> {
         } else {
             None // Force multi-line when destructuring prologue exists
         };
-
         let mut body = if accessor_data.body.is_none() {
             vec![]
         } else {
+            let this_capture_alias = self
+                .this_capture_alias_for_body(accessor_data.body, Some(&accessor_data.parameters));
             let mut body = if is_static {
-                self.convert_block_body_static(accessor_data.body)
+                self.convert_block_body_static_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
             } else {
-                self.convert_block_body(accessor_data.body)
+                self.convert_block_body_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
             };
 
-            // Check if setter needs `var _this = this;` capture
-            let needs_this_capture = self.constructor_needs_this_capture(accessor_data.body);
-            if needs_this_capture {
-                body.insert(0, IRNode::var_decl("_this", Some(IRNode::this())));
+            if let Some(alias) = this_capture_alias {
+                body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
             }
 
             // Prepend destructuring prologue
@@ -419,19 +429,24 @@ impl<'a> ES5ClassTransformer<'a> {
                         if let Some(source_text) = self.source_text {
                             async_transformer.set_source_text(source_text);
                         }
+                        self.configure_async_disposable_context(&mut async_transformer);
                         let has_await = async_transformer.body_contains_await(method_data.body);
                         let mut generator_body =
                             async_transformer.transform_generator_body(method_data.body, has_await);
+                        self.sync_async_disposable_context(&mut async_transformer);
                         let hoisted_var_groups =
                             AsyncES5Transformer::extract_and_remove_var_decl_groups(
                                 &mut generator_body,
                             );
                         vec![IRNode::AwaiterCall {
                             this_arg: Box::new(IRNode::this()),
+                            needs_lexical_this_capture: generator_body
+                                .contains_captured_this_reference(),
                             generator_body: Box::new(generator_body),
                             hoisted_var_groups,
                             promise_constructor: self
                                 .async_method_promise_constructor(method_data.type_annotation),
+                            multiline_callback: false,
                         }]
                     } else if is_async_generator {
                         self.async_generator_method_body(
@@ -546,19 +561,24 @@ impl<'a> ES5ClassTransformer<'a> {
                         if let Some(source_text) = self.source_text {
                             async_transformer.set_source_text(source_text);
                         }
+                        self.configure_async_disposable_context(&mut async_transformer);
                         let has_await = async_transformer.body_contains_await(method_data.body);
                         let mut generator_body =
                             async_transformer.transform_generator_body(method_data.body, has_await);
+                        self.sync_async_disposable_context(&mut async_transformer);
                         let hoisted_var_groups =
                             AsyncES5Transformer::extract_and_remove_var_decl_groups(
                                 &mut generator_body,
                             );
                         vec![IRNode::AwaiterCall {
                             this_arg: Box::new(IRNode::this()),
+                            needs_lexical_this_capture: generator_body
+                                .contains_captured_this_reference(),
                             generator_body: Box::new(generator_body),
                             hoisted_var_groups,
                             promise_constructor: self
                                 .async_method_promise_constructor(method_data.type_annotation),
+                            multiline_callback: false,
                         }]
                     } else if is_async_generator {
                         self.async_generator_method_body(
@@ -567,16 +587,21 @@ impl<'a> ES5ClassTransformer<'a> {
                             method_data.body,
                         )
                     } else {
-                        let mut method_body = self.convert_block_body(method_data.body);
+                        let this_capture_alias = self.this_capture_alias_for_body(
+                            method_data.body,
+                            Some(&method_data.parameters),
+                        );
+                        let mut method_body = self.convert_block_body_with_this_capture_alias(
+                            method_data.body,
+                            this_capture_alias.clone(),
+                        );
                         if !destructuring_prologue.is_empty() {
                             let mut full_body = destructuring_prologue;
                             full_body.append(&mut method_body);
                             method_body = full_body;
                         }
-                        let needs_this_capture =
-                            self.constructor_needs_this_capture(method_data.body);
-                        if needs_this_capture {
-                            method_body.insert(0, IRNode::var_decl("_this", Some(IRNode::this())));
+                        if let Some(alias) = this_capture_alias {
+                            method_body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
                         }
                         method_body
                     };
@@ -1011,6 +1036,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
             } else if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
                 // --- Static block ---
+                if self.skip_static_field_initializers {
+                    continue;
+                }
                 if let Some(block_data) = self.arena.get_block(member_node) {
                     let statements: Vec<IRNode> = block_data
                         .statements
@@ -1115,10 +1143,16 @@ impl<'a> ES5ClassTransformer<'a> {
             return self.expression_contains_static_class_expression(paren.expression);
         }
         if (node.kind == syntax_kind_ext::AS_EXPRESSION
-            || node.kind == syntax_kind_ext::TYPE_ASSERTION)
+            || node.kind == syntax_kind_ext::TYPE_ASSERTION
+            || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
             && let Some(assertion) = self.arena.get_type_assertion(node)
         {
             return self.expression_contains_static_class_expression(assertion.expression);
+        }
+        if node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+            && let Some(expr_type_args) = self.arena.get_expr_type_args(node)
+        {
+            return self.expression_contains_static_class_expression(expr_type_args.expression);
         }
         if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
             && let Some(unary) = self.arena.get_unary_expr_ex(node)
@@ -1173,7 +1207,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
                 // Async arrows in static initializers also need the class alias:
                 // tsc passes it to the downlevel `__generator` call as lexical `this`.
-                if contains_this_reference(self.arena, prop_data.initializer)
+                if self.contains_static_value_this_reference(prop_data.initializer)
                     || contains_async_arrow_function(self.arena, prop_data.initializer)
                 {
                     return true;
@@ -1182,7 +1216,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 // Check if the static block body contains `this`
                 if let Some(block_data) = self.arena.get_block(member_node) {
                     for &stmt_idx in &block_data.statements.nodes {
-                        if contains_this_reference(self.arena, stmt_idx)
+                        if self.contains_static_value_this_reference(stmt_idx)
                             || contains_async_arrow_function(self.arena, stmt_idx)
                         {
                             return true;
@@ -1194,7 +1228,54 @@ impl<'a> ES5ClassTransformer<'a> {
         false
     }
 
-    fn async_method_promise_constructor(&self, type_annotation: NodeIndex) -> Option<String> {
+    fn contains_static_value_this_reference(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::ThisKeyword as u16 {
+            return true;
+        }
+
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+        {
+            return false;
+        }
+
+        if node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            || node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+        {
+            let Some(var_data) = self.arena.get_variable(node) else {
+                return false;
+            };
+            return var_data
+                .declarations
+                .nodes
+                .iter()
+                .any(|&decl_idx| self.contains_static_value_this_reference(decl_idx));
+        }
+
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let Some(decl) = self.arena.get_variable_declaration(node) else {
+                return false;
+            };
+            return decl.initializer.is_some()
+                && self.contains_static_value_this_reference(decl.initializer);
+        }
+
+        self.arena
+            .get_children(idx)
+            .into_iter()
+            .any(|child_idx| self.contains_static_value_this_reference(child_idx))
+    }
+
+    pub(super) fn async_method_promise_constructor(
+        &self,
+        type_annotation: NodeIndex,
+    ) -> Option<String> {
         let type_node = self.arena.get(type_annotation)?;
         if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
             return None;

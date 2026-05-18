@@ -1,5 +1,5 @@
 use super::super::Printer;
-use crate::emitter::declarations::class::{class_has_self_references, replace_identifier};
+use crate::emitter::declarations::class::class_has_self_references;
 use crate::output::source_writer::SourceWriter;
 use tsz_parser::parser::NodeIndex;
 
@@ -39,7 +39,7 @@ impl<'a> Printer<'a> {
         std::mem::swap(&mut self.writer, &mut temp_writer);
 
         self.emit_legacy_class_decorator_assignment(
-            class_name, decorators, false, false, false, members,
+            class_name, decorators, false, false, false, alias_name, members,
         );
 
         std::mem::swap(&mut self.writer, &mut temp_writer);
@@ -48,27 +48,32 @@ impl<'a> Printer<'a> {
             return String::new();
         }
 
-        let assignment = emitted
+        emitted
             .trim_start()
             .trim_end()
             .trim_end_matches(';')
-            .to_string();
-        if let Some(alias) = alias_name {
-            let pattern = format!("{class_name} = __decorate");
-            let replacement = format!("{class_name} = {alias} = __decorate");
-            assignment.replacen(&pattern, &replacement, 1)
-        } else {
-            assignment
-        }
+            .to_string()
     }
 
     pub(in crate::emitter::module_wrapper) fn system_legacy_decorated_class_alias(
-        &self,
+        &mut self,
+        class_idx: NodeIndex,
         class_name: &str,
         members: &[NodeIndex],
     ) -> Option<String> {
-        class_has_self_references(self.arena, self.source_text_for_map(), class_name, members)
-            .then(|| format!("{class_name}_1"))
+        if !class_has_self_references(self.arena, self.source_text_for_map(), class_name, members) {
+            return None;
+        }
+        if let Some(alias) = self
+            .preplanned_legacy_decorated_class_aliases
+            .get(&class_idx)
+        {
+            return Some(alias.clone());
+        }
+        let alias = self.make_unique_name_from_base(class_name);
+        self.preplanned_legacy_decorated_class_aliases
+            .insert(class_idx, alias.clone());
+        Some(alias)
     }
 
     pub(in crate::emitter::module_wrapper) fn capture_system_class_assignment(
@@ -86,21 +91,13 @@ impl<'a> Printer<'a> {
             self.write(" = ");
         }
         self.anonymous_default_export_name = None;
-        self.emit_class_es6_with_options(class_node, class_idx, true, None, alias_name);
+        self.emit_class_es6_with_options(
+            class_node, class_idx, true, None, alias_name, alias_name, false,
+        );
         let after_len = self.writer.len();
         let full_output = self.writer.get_output().to_string();
-        let mut emitted = full_output[before_len..after_len].to_string();
+        let emitted = full_output[before_len..after_len].to_string();
         self.writer.truncate(before_len);
-
-        if let Some(alias) = alias_name
-            && !class_name.is_empty()
-            && class_name != alias
-            && let Some((before_body, class_body, after_body)) =
-                split_system_class_body_parts(&emitted)
-        {
-            let replaced_body = replace_identifier(class_body, class_name, alias);
-            emitted = format!("{before_body}{replaced_body}{after_body}");
-        }
 
         emitted
     }
@@ -114,16 +111,6 @@ pub(in crate::emitter::module_wrapper) fn split_system_class_static_tail(
     } else {
         (text, "")
     }
-}
-
-fn split_system_class_body_parts(text: &str) -> Option<(&str, &str, &str)> {
-    let open_idx = text.find('{')?;
-    let close_idx = find_matching_class_body_close(text)?;
-    let body_start = open_idx + 1;
-    let (before_body, rest) = text.split_at(body_start);
-    let body_len = close_idx.saturating_sub(body_start);
-    let (class_body, after_body) = rest.split_at(body_len);
-    Some((before_body, class_body, after_body))
 }
 
 fn find_matching_class_body_close(text: &str) -> Option<usize> {

@@ -1,6 +1,6 @@
 # TSZ Roadmap
 
-Date: 2026-05-15
+Date: 2026-05-17
 
 Status: single living roadmap. Keep durable architecture contracts in
 `docs/architecture/`, behavior specs in `docs/specs/`, product docs in
@@ -25,11 +25,12 @@ as campaigns instead of isolated conformance picks.
 
 ## Current Public Metrics
 
-Sources: `README.md` and local snapshots on 2026-05-15.
+Sources: `README.md`, local snapshots on 2026-05-15, and current conformance
+artifacts on 2026-05-17.
 
 | Surface | Current |
 | --- | ---: |
-| Diagnostic conformance | `100.0%` rounded (`12,581 / 12,582`) |
+| Diagnostic conformance | `100.0%` exact (`12,582 / 12,582`) |
 | JavaScript emit | `94.8%` (`12,820 / 13,530` in `README.md`; `12,828 / 13,530` in local snapshot) |
 | Declaration emit | `91.7%` (`1,531 / 1,669` in `README.md`; `1,527 / 1,669` in local snapshot) |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
@@ -39,6 +40,12 @@ signal. The primary readiness signal for this phase is whether tsz can
 successfully check real projects that `tsc` accepts. Rounded percentages are
 communication aids only; release planning uses exact numerators, denominators,
 and failure-family counts.
+
+The exact conformance snapshot does not by itself mean the conformance runway
+is fully retired. `scripts/conformance/conformance-accepted-regressions.txt`
+remains a separate gate-strictness artifact and must be kept empty or
+explicitly justified by current CI evidence before agents treat conformance
+cleanup as complete.
 
 ## Evidence From Current Audit
 
@@ -83,9 +90,9 @@ changes the picture.
    discovery during printing toward a precomputed declaration/public-API
    summary.
 8. Conformance is no longer the dominant progress signal but it remains a hard
-   regression gate. The current diagnostic gap is one test; broad checker/solver
-   changes must preserve that floor while moving project rows from red/yellow to
-   green.
+   regression gate. The current diagnostic gap is zero tests; broad
+   checker/solver changes must preserve that floor while moving project rows
+   from red/yellow to green.
 9. The design response is **not** an architecture-first pause. Purpose-specific
    normalization, inference sessions, key-space algebra, diagnostic-capable
    relation results, solver-owned flow predicates, identity/provenance queries,
@@ -284,7 +291,7 @@ faster or move a red runtime/residency row toward green.
 Track these as counters or periodic audit bullets. They are more useful than
 subjective "cleanup" language.
 
-1. `CheckerContext` field count, currently pinned at `234`, plus the number of
+1. `CheckerContext` field count, currently pinned at `235`, plus the number of
    checker `source_text.contains` / file-name / rendered-message
    diagnostic decisions.
 2. Number of post-check `rewrite_*_fingerprints` passes still active.
@@ -296,7 +303,10 @@ subjective "cleanup" language.
 6. Actual-lib alias admissions and allowlists that should become stable lib
    identity queries.
 7. Emitter/DTS direct solver imports, direct type evaluation during printing,
-   and `TypeData`/`lookup()` guardrail exceptions.
+   and `TypeData`/`lookup()` guardrail exceptions. The current direct
+   `tsz_solver` import guard outside solver/checker is pinned at `36`; reduce
+   it through focused compiler-service/front-door PRs instead of broad cleanup,
+   or justify any cap bump in the same PR.
 8. `Printer` and `DeclarationEmitter` ambient state fields, especially fields
    added for one transform or one baseline family.
 9. Emitter/DTS tests that assert fragments instead of exact output or structured

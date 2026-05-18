@@ -552,6 +552,57 @@ impl DirectActualLibAliasBodyOutcome {
     }
 }
 
+/// Outcome of the direct source-file type-alias lowering shortcut attempted
+/// before a `DelegateCrossArenaSymbol` miss constructs a child checker.
+///
+/// This classifies the regular source-file alias lane separately from
+/// declaration-file and actual-lib shortcuts. The buckets identify which
+/// structural proof failed, so performance work can decide whether to widen a
+/// guard, cache a result, or leave the alias on the exact child-checker path.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[repr(usize)]
+pub enum DirectSourceFileTypeAliasLoweringOutcome {
+    Success = 0,
+    MissingTargetFile = 1,
+    MissingArenaOrBinder = 2,
+    SourceFileArenaNotAllowed = 3,
+    MissingSymbol = 4,
+    NotTypeAlias = 5,
+    DisallowedMergeFlags = 6,
+    MultipleDeclarations = 7,
+    NameMismatch = 8,
+    MissingTypeAliasNode = 9,
+    BodyNotDirectLowerable = 10,
+    TypeQueryOrSelfReference = 11,
+    UnknownOrError = 12,
+}
+
+pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_COUNT: usize = 13;
+
+pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_NAMES: [&str;
+    DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_COUNT] = [
+    "success",
+    "missing_target_file",
+    "missing_arena_or_binder",
+    "source_file_arena_not_allowed",
+    "missing_symbol",
+    "not_type_alias",
+    "disallowed_merge_flags",
+    "multiple_declarations",
+    "name_mismatch",
+    "missing_type_alias_node",
+    "body_not_direct_lowerable",
+    "type_query_or_self_reference",
+    "unknown_or_error",
+];
+
+impl DirectSourceFileTypeAliasLoweringOutcome {
+    #[inline(always)]
+    pub const fn as_index(self) -> usize {
+        self as usize
+    }
+}
+
 /// Outcome buckets for direct actual-lib Intl interface attempts in
 /// `direct_actual_lib_symbol_type`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -806,9 +857,10 @@ pub enum SourceFileSymbolArenaCacheEligibilityOutcome {
     MultipleDeclarations = 10,
     DeclarationArenaMismatch = 11,
     MissingFileIndex = 12,
+    CacheableDeclarationFile = 13,
 }
 
-pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT: usize = 13;
+pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT: usize = 14;
 
 pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_NAMES: [&str;
     SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT] = [
@@ -825,6 +877,7 @@ pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_NAMES: [&str;
     "multiple_declarations",
     "declaration_arena_mismatch",
     "missing_file_index",
+    "cacheable_declaration_file",
 ];
 
 impl SourceFileSymbolArenaCacheEligibilityOutcome {
@@ -967,9 +1020,16 @@ pub struct PerfCounters {
     /// Outcome buckets for direct actual-lib alias-body attempts.
     pub direct_actual_lib_alias_body_outcome:
         [AtomicU64; DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT],
+    /// Outcome buckets for direct source-file type-alias lowering attempts.
+    pub direct_source_file_type_alias_lowering_outcome:
+        [AtomicU64; DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_COUNT],
     /// Outcome buckets for direct actual-lib Intl interface attempts.
     pub direct_actual_lib_intl_interface_outcome:
         [AtomicU64; DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT],
+    /// Track 7 stable-identity migration counter: times
+    /// `TypeEnvironment::resolve_lazy` had to treat a `DefId` value as a raw
+    /// `SymbolId` and redirect it to the real `DefId`.
+    pub type_environment_raw_symbol_lazy_fallbacks: AtomicU64,
     /// Why each `cached_cross_file_*` reader returned `None`. See
     /// [`CrossFileCacheMissCause`] for the bucket semantics. Sum of
     /// all buckets equals the flat miss count for the four reader
@@ -1101,8 +1161,11 @@ impl PerfCounters {
                 DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT],
             direct_actual_lib_alias_body_outcome: [const { AtomicU64::new(0) };
                 DIRECT_ACTUAL_LIB_ALIAS_BODY_OUTCOME_COUNT],
+            direct_source_file_type_alias_lowering_outcome: [const { AtomicU64::new(0) };
+                DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_COUNT],
             direct_actual_lib_intl_interface_outcome: [const { AtomicU64::new(0) };
                 DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT],
+            type_environment_raw_symbol_lazy_fallbacks: AtomicU64::new(0),
             cross_file_cache_miss_cause: [const { AtomicU64::new(0) };
                 CROSS_FILE_CACHE_MISS_CAUSE_COUNT],
             source_file_symbol_arena_cache_eligibility_outcome: [const { AtomicU64::new(0) };
@@ -2210,6 +2273,18 @@ pub fn record_direct_actual_lib_alias_body_outcome(outcome: DirectActualLibAlias
 }
 
 #[inline]
+pub fn record_direct_source_file_type_alias_lowering_outcome(
+    outcome: DirectSourceFileTypeAliasLoweringOutcome,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.direct_source_file_type_alias_lowering_outcome[outcome.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
 pub fn record_direct_actual_lib_intl_interface_outcome(
     outcome: DirectActualLibIntlInterfaceOutcome,
 ) {
@@ -2218,6 +2293,17 @@ pub fn record_direct_actual_lib_intl_interface_outcome(
     }
     let c = counters();
     c.direct_actual_lib_intl_interface_outcome[outcome.as_index()].fetch_add(1, Ordering::Relaxed);
+}
+
+/// Record a raw `SymbolId`-shaped `DefId` redirect inside
+/// `TypeEnvironment::resolve_lazy`.
+///
+/// This is Track 7 instrumentation for removing legacy
+/// `interner.reference(SymbolRef)` producers. It is intentionally a flat
+/// counter: the call site also emits structured tracing fields with the raw
+/// and redirected IDs when trace logging is enabled.
+pub fn record_type_environment_raw_symbol_lazy_fallback() {
+    inc(&counters().type_environment_raw_symbol_lazy_fallbacks);
 }
 
 impl PerfCounters {
@@ -2290,7 +2376,9 @@ impl PerfCounters {
              is_dir calls               {:>12}\n  \
              read_dir calls             {:>12}\n  \
              read_package_json calls    {:>12}\n  \
-             candidate paths total      {:>12}\n",
+             candidate paths total      {:>12}\n\
+             Stable identity:\n  \
+             raw SymbolRef lazy fallback{:>12}\n",
             snap.delegate.calls,
             snap.delegate.cache_hits_lib,
             snap.delegate.cache_hits_cross_file,
@@ -2334,6 +2422,7 @@ impl PerfCounters {
             snap.resolver.read_dir_calls.unwrap_or(0),
             snap.resolver.package_json_reads,
             snap.resolver.candidate_paths_total,
+            snap.identity.type_environment_raw_symbol_lazy_fallbacks,
         ) + &Self::dump_compute_type_of_symbol_outcomes()
             + &Self::dump_compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues(
                 &snap.compute_type_of_symbol_interface_simple_object_non_primitive_annotation_residues,
@@ -2348,6 +2437,7 @@ impl PerfCounters {
             + &Self::dump_cross_arena_alias_shortcut_outcomes()
             + &Self::dump_direct_cross_file_interface_lowering_outcomes()
             + &Self::dump_direct_actual_lib_alias_body_outcomes()
+            + &Self::dump_direct_source_file_type_alias_lowering_outcomes()
             + &Self::dump_direct_actual_lib_intl_interface_outcomes()
             + &Self::dump_delegate_declaration_file_miss_residues(
                 &snap.delegate_declaration_file_miss_residues,
@@ -2710,6 +2800,31 @@ impl PerfCounters {
         out
     }
 
+    fn dump_direct_source_file_type_alias_lowering_outcomes() -> String {
+        let c = counters();
+        let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let total: u64 = c
+            .direct_source_file_type_alias_lowering_outcome
+            .iter()
+            .map(load)
+            .sum();
+        if total == 0 {
+            return String::new();
+        }
+
+        let mut out = String::from("\nDirect source-file type-alias lowering outcomes:\n");
+        for (idx, name) in DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_NAMES
+            .iter()
+            .enumerate()
+        {
+            let count = load(&c.direct_source_file_type_alias_lowering_outcome[idx]);
+            if count > 0 {
+                out.push_str(&format!("  {name:<36} {count:>12}\n"));
+            }
+        }
+        out
+    }
+
     fn dump_direct_actual_lib_intl_interface_outcomes() -> String {
         let c = counters();
         let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
@@ -2833,6 +2948,7 @@ pub struct PerfCounterSnapshot {
     pub wired: WiredCounters,
     pub delegate: DelegateCounters,
     pub checker: CheckerCounters,
+    pub identity: IdentityCounters,
     pub overlay: OverlayCounters,
     pub resolver: ResolverCounters,
     pub interner: InternerCounters,
@@ -2976,6 +3092,13 @@ pub struct PerfCounterSnapshot {
     /// helper, rejected by the current conservative name gate, or rejected
     /// because the resolver/definition-store proof was incomplete.
     pub direct_actual_lib_alias_body_outcomes: Vec<NamedCount>,
+    /// Outcome buckets for direct source-file type-alias lowering attempts.
+    ///
+    /// Always `DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_COUNT` long, in
+    /// `DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_NAMES` order. These
+    /// buckets split regular source-file aliases by the structural proof that
+    /// made the direct path succeed or fall back to child-checker delegation.
+    pub direct_source_file_type_alias_lowering_outcomes: Vec<NamedCount>,
     /// Outcome buckets for direct actual-lib Intl interface attempts.
     ///
     /// Always `DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT` long, in
@@ -3020,6 +3143,7 @@ pub struct WiredCounters {
     pub resolver_lookup: bool,
     pub resolver_fs_probes: bool,
     pub compute_type_of_symbol: bool,
+    pub stable_identity: bool,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -3051,6 +3175,13 @@ pub struct CheckerCounters {
     pub property_classification_string_fallback_source_lookups: u64,
     pub property_classification_string_fallback_target_names: u64,
     pub property_classification_string_fallback_target_types: u64,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct IdentityCounters {
+    /// Raw `SymbolId`-shaped `DefId` redirects inside
+    /// `TypeEnvironment::resolve_lazy`.
+    pub type_environment_raw_symbol_lazy_fallbacks: u64,
 }
 
 /// One `(name, count)` row in a named-counter JSON array.
@@ -3202,6 +3333,7 @@ impl PerfCounters {
                 resolver_lookup: true,
                 resolver_fs_probes: true,
                 compute_type_of_symbol: true,
+                stable_identity: true,
             },
             delegate: DelegateCounters {
                 calls: load(&c.delegate_cross_arena_calls),
@@ -3230,6 +3362,11 @@ impl PerfCounters {
                 ),
                 property_classification_string_fallback_target_types: load(
                     &c.property_classification_string_fallback_target_types,
+                ),
+            },
+            identity: IdentityCounters {
+                type_environment_raw_symbol_lazy_fallbacks: load(
+                    &c.type_environment_raw_symbol_lazy_fallbacks,
                 ),
             },
             overlay: OverlayCounters {
@@ -3381,6 +3518,13 @@ impl PerfCounters {
                     count: load(&c.direct_actual_lib_alias_body_outcome[i]),
                 })
                 .collect(),
+            direct_source_file_type_alias_lowering_outcomes: (0
+                ..DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_COUNT)
+                .map(|i| NamedCount {
+                    name: DIRECT_SOURCE_FILE_TYPE_ALIAS_LOWERING_OUTCOME_NAMES[i],
+                    count: load(&c.direct_source_file_type_alias_lowering_outcome[i]),
+                })
+                .collect(),
             direct_actual_lib_intl_interface_outcomes: (0
                 ..DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT)
                 .map(|i| NamedCount {
@@ -3525,12 +3669,14 @@ mod json_tests {
             "wired",
             "delegate",
             "checker",
+            "identity",
             "overlay",
             "resolver",
             "interner",
             "by_reason",
             "delegate_miss_classification",
             "delegate_declaration_file_miss_residues",
+            "delegate_source_file_miss_residues",
             "alias_shortcut_outcomes",
             "compute_type_of_symbol_source_outcomes",
             "compute_type_of_symbol_kind_outcomes",
@@ -3696,6 +3842,7 @@ mod json_tests {
             "resolver_lookup",
             "resolver_fs_probes",
             "compute_type_of_symbol",
+            "stable_identity",
         ]
         .into_iter()
         .collect();
@@ -3762,6 +3909,18 @@ mod json_tests {
                 "property_classification_string_fallback_target_types",
             ],
         );
+    }
+
+    #[test]
+    fn identity_section_field_shape() {
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        assert_section_keys(
+            &json,
+            "identity",
+            &["type_environment_raw_symbol_lazy_fallbacks"],
+        );
+        assert_eq!(json["wired"]["stable_identity"], true);
     }
 
     #[test]
@@ -4573,6 +4732,58 @@ mod json_tests {
             read(mismatch_idx) >= before_mismatch.saturating_add(3),
             "declaration_arena_mismatch bump not visible (before={before_mismatch}, after={})",
             read(mismatch_idx),
+        );
+    }
+
+    #[test]
+    fn direct_source_file_type_alias_lowering_atomic_propagates_into_snapshot() {
+        // The public recorder is gated on `TSZ_PERF_COUNTERS`; drive the
+        // atomics directly so this unit test is independent of process env.
+        let c = counters();
+
+        let success_idx = DirectSourceFileTypeAliasLoweringOutcome::Success.as_index();
+        let body_idx = DirectSourceFileTypeAliasLoweringOutcome::BodyNotDirectLowerable.as_index();
+        let query_idx =
+            DirectSourceFileTypeAliasLoweringOutcome::TypeQueryOrSelfReference.as_index();
+
+        let before_success =
+            c.direct_source_file_type_alias_lowering_outcome[success_idx].load(Ordering::Relaxed);
+        let before_body =
+            c.direct_source_file_type_alias_lowering_outcome[body_idx].load(Ordering::Relaxed);
+        let before_query =
+            c.direct_source_file_type_alias_lowering_outcome[query_idx].load(Ordering::Relaxed);
+
+        c.direct_source_file_type_alias_lowering_outcome[success_idx]
+            .fetch_add(1, Ordering::Relaxed);
+        c.direct_source_file_type_alias_lowering_outcome[body_idx].fetch_add(2, Ordering::Relaxed);
+        c.direct_source_file_type_alias_lowering_outcome[query_idx].fetch_add(3, Ordering::Relaxed);
+
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["direct_source_file_type_alias_lowering_outcomes"]
+            .as_array()
+            .expect("direct_source_file_type_alias_lowering_outcomes is array");
+        let read = |idx: usize| rows[idx]["count"].as_u64().unwrap_or(0);
+
+        assert_eq!(rows[success_idx]["name"], "success");
+        assert!(
+            read(success_idx) > before_success,
+            "success bump not visible (before={before_success}, after={})",
+            read(success_idx),
+        );
+
+        assert_eq!(rows[body_idx]["name"], "body_not_direct_lowerable");
+        assert!(
+            read(body_idx) >= before_body.saturating_add(2),
+            "body_not_direct_lowerable bump not visible (before={before_body}, after={})",
+            read(body_idx),
+        );
+
+        assert_eq!(rows[query_idx]["name"], "type_query_or_self_reference");
+        assert!(
+            read(query_idx) >= before_query.saturating_add(3),
+            "type_query_or_self_reference bump not visible (before={before_query}, after={})",
+            read(query_idx),
         );
     }
 

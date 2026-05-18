@@ -2,11 +2,63 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { marked } from "marked";
+import {
+  COMPILE_CANARY_PROJECT_ROWS,
+  COMPATIBILITY_CORPUS_ROWS,
+  REQUIRED_PROJECT_ROWS,
+} from "../../../../scripts/bench/project-rows.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 
 function fmt(n) {
   return Number(n).toLocaleString("en-US");
+}
+
+function formatUtcTimestamp(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function formatMemory(bytes) {
+  const value = Number(bytes);
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return `${(value / (1024 ** 3)).toFixed(1)} GiB RAM`;
+}
+
+function runnerEnvironmentSummary(data) {
+  const parts = [];
+  const generatedAt = formatUtcTimestamp(data?.generated_at);
+  if (generatedAt) parts.push(`Generated ${generatedAt}`);
+
+  const env = data?.runner_environment;
+  if (!env || typeof env !== "object") {
+    parts.push("runner hardware metadata unavailable for this artifact");
+    return parts.join(" · ");
+  }
+
+  const platform = [env.platform, env.arch].filter(Boolean).join("/");
+  if (platform) parts.push(platform);
+  if (env.cpu_count) {
+    const cpuModel = env.cpu_model ? ` ${env.cpu_model}` : "";
+    parts.push(`${env.cpu_count} CPU${env.cpu_count === 1 ? "" : "s"}${cpuModel}`);
+  }
+  const memory = formatMemory(env.total_memory_bytes);
+  if (memory) parts.push(memory);
+  if (env.github_actions?.runner_os || env.github_actions?.runner_arch) {
+    const runner = [
+      env.github_actions.runner_os,
+      env.github_actions.runner_arch,
+    ].filter(Boolean).join("/");
+    parts.push(`GitHub Actions ${runner}`);
+  } else if (env.ci) {
+    parts.push("CI runner");
+  }
+  if (env.cloud_build?.machine_type) {
+    parts.push(`Cloud Build ${env.cloud_build.machine_type}`);
+  }
+
+  return parts.join(" · ");
 }
 
 function formatDurationMs(value, fractionDigits = 0) {
@@ -227,13 +279,18 @@ function normalizedLastSuccessfulPhase(compatibility) {
 }
 
 const COMPATIBILITY_METADATA_FIELDS = [
+  ["state", "state"],
   ["exit_class", "exit class"],
+  ["first_failure_class", "first failure class"],
+  ["owner_track", "owner track"],
   ["phase", "phase"],
   ["last_successful_phase", "last successful phase"],
   ["diagnostic_status", "diagnostic status"],
   ["diagnostic_deltas", "diagnostic deltas"],
   ["diagnostic_subsystems", "diagnostic subsystems"],
   ["known_blockers", "known blockers"],
+  ["reduced_repro_path", "reduced repro path"],
+  ["repro", "repro metadata"],
   ["exit_codes", "exit codes"],
   ["files_reached", "files reached"],
   ["peak_memory_bytes", "peak memory"],
@@ -251,70 +308,11 @@ function missingCompatibilityMetadata(row) {
 
 const TINY_BENCHMARK_MAX_LINES = 200;
 
-const EXPECTED_PROJECT_BENCHMARKS = [
-  "large-ts-repo",
-  "utility-types-project",
-  "ts-toolbelt-project",
-  "ts-essentials-project",
-  "nextjs",
-  "nextjs-fresh-app",
-  "vite-vanilla-ts-app",
-  "rxjs-project",
-  "type-fest-project",
-  "zod-project",
-  "kysely-project",
-];
-
-const COMPATIBILITY_CORPUS_ROWS = [
-  {
-    name: "kysely-project",
-    label: "Kysely",
-    owner: "Tracks 2, 3, 5, 6",
-    family: "contextual generics, guards, indexed/property access",
-  },
-  {
-    name: "zod-project",
-    label: "Zod",
-    owner: "Tracks 2, 3, 4, 7",
-    family: "recursive conditionals, object guards, class/generic identity",
-  },
-  {
-    name: "ts-toolbelt-project",
-    label: "ts-toolbelt",
-    owner: "Tracks 2, 3",
-    family: "recursive type evaluation pressure",
-  },
-  {
-    name: "type-fest-project",
-    label: "type-fest",
-    owner: "Tracks 2, 3, 5",
-    family: "mapped/conditional/key-space utility surface",
-  },
-  {
-    name: "ts-essentials-project",
-    label: "ts-essentials",
-    owner: "Tracks 2, 3, 5",
-    family: "utility types plus recursive JSON shapes",
-  },
-  {
-    name: "large-ts-repo",
-    label: "large-ts-repo",
-    owner: "Tracks 1, 7, 10",
-    family: "residency/runtime/project graph stress",
-  },
-  {
-    name: "nextjs",
-    label: "Next.js full project",
-    owner: "Tracks 1, 7, 9",
-    family: "module graph plus generated app dependencies",
-  },
-];
-
 function withExpectedProjectRows(results) {
   const rows = Array.isArray(results) ? results.slice() : [];
   const existingNames = new Set(rows.map((row) => row?.name).filter(Boolean));
 
-  for (const name of EXPECTED_PROJECT_BENCHMARKS) {
+  for (const name of REQUIRED_PROJECT_ROWS) {
     if (existingNames.has(name)) continue;
     rows.push({
       name,
@@ -327,6 +325,22 @@ function withExpectedProjectRows(results) {
       winner: "error",
       ratio: 0,
       status: "not recorded in latest benchmark artifact",
+    });
+  }
+
+  for (const name of COMPILE_CANARY_PROJECT_ROWS) {
+    if (existingNames.has(name)) continue;
+    rows.push({
+      name,
+      lines: 0,
+      kb: 0,
+      tsz_ms: null,
+      tsgo_ms: null,
+      tsz_lps: null,
+      tsgo_lps: null,
+      winner: "error",
+      ratio: 0,
+      status: "compile canary tracked in CI; not timed by vs-tsgo benchmarks",
     });
   }
 
@@ -401,6 +415,9 @@ function compatibilityRowFor(definition, allResults) {
     row,
     lines: row?.lines || 0,
     filesReached: compatibility.files_reached ?? null,
+    firstFailureClass: compatibility.first_failure_class || null,
+    ownerTrack: compatibility.owner_track || null,
+    reducedReproPath: compatibility.reduced_repro_path || null,
     lastSuccessfulPhase: normalizedLastSuccessfulPhase(compatibility),
     peakMemoryBytes: compatibility.peak_memory_bytes ?? null,
     emitStatus: compatibility.emit_status || "not in scope (noEmit project check)",
@@ -416,6 +433,12 @@ function compatibilityRowFor(definition, allResults) {
     diagnosticCodes: Array.isArray(compatibility.diagnostic_codes) ? compatibility.diagnostic_codes.slice(0, 8) : [],
     diagnosticSubsystems,
     primarySubsystem: compatibility.primary_subsystem || diagnosticSubsystems[0]?.subsystem || null,
+    assertionCandidates: compatibility.assertion_candidates && typeof compatibility.assertion_candidates === "object"
+      ? compatibility.assertion_candidates
+      : null,
+    assertionCleanSubset: compatibility.assertion_clean_subset && typeof compatibility.assertion_clean_subset === "object"
+      ? compatibility.assertion_clean_subset
+      : null,
     reductionCandidates: Array.isArray(compatibility.reduction_candidates)
       ? compatibility.reduction_candidates.slice(0, 5)
       : [],
@@ -437,6 +460,8 @@ const PROJECT_README_PATHS = {
   "utility-types-project": [".target-bench/external/utility-types/README.md"],
   "ts-toolbelt-project": [".target-bench/external/ts-toolbelt/README.md"],
   "ts-essentials-project": [".target-bench/external/ts-essentials/README.md"],
+  "type-challenges-project": [".target/project-compile-guard/type-challenges/README.md"],
+  "type-challenges-solutions-project": [".target/project-compile-guard/type-challenges-solutions/README.md"],
 };
 
 const PROJECT_README_URLS = {
@@ -446,6 +471,8 @@ const PROJECT_README_URLS = {
   "utility-types-project": "https://raw.githubusercontent.com/piotrwitek/utility-types/2ee1f6ecb241651ab22390fee7ee5349942efda2/README.md",
   "ts-toolbelt-project": "https://raw.githubusercontent.com/millsp/ts-toolbelt/b8a49285e3ed3a7d8bb8e0b433389eac46a5f140/README.md",
   "ts-essentials-project": "https://raw.githubusercontent.com/ts-essentials/ts-essentials/5abe8700b42068048bd3c368e0531b6defe56558/README.md",
+  "type-challenges-project": "https://raw.githubusercontent.com/type-challenges/type-challenges/0b0b0b18bcb7ac42dc22ce26ffb438231d4754b1/README.md",
+  "type-challenges-solutions-project": "https://raw.githubusercontent.com/ghaiklor/type-challenges-solutions/91a6d2986650475f29eeb3bd18ebd025128aa07e/README.md",
 };
 
 const NEXTJS_FRESH_APP_README = `# Fresh Next.js app benchmark
@@ -479,6 +506,18 @@ const REMOTE_FIXTURE_REFS = {
   "ts-toolbelt": "b8a49285e3ed3a7d8bb8e0b433389eac46a5f140",
   "ts-essentials": "5abe8700b42068048bd3c368e0531b6defe56558",
 };
+
+const TYPESCRIPT_VERSIONS_PATH = path.join(ROOT, "scripts/conformance/typescript-versions.json");
+
+function currentTypeScriptRef() {
+  const versions = readJsonIfExists(TYPESCRIPT_VERSIONS_PATH);
+  return versions?.current || "050880ce59e30b356b686bd3144efe24f875ebc8";
+}
+
+const TYPESCRIPT_FIXTURE_DIRS = [
+  "tests/cases/compiler",
+  "tests/cases/conformance",
+];
 
 const remoteSourceCache = new Map();
 
@@ -516,16 +555,23 @@ function sanitizeLegacyBenchmarkData(data) {
 }
 
 function loadBenchmarks() {
+  const overrideArtifact = process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT;
+  if (overrideArtifact) {
+    const data = readJsonIfExists(overrideArtifact);
+    if (data?.results) return sanitizeLegacyBenchmarkData(data);
+  }
+
   const artifactsDir = path.join(ROOT, "artifacts");
   const ciLatest = [
     "bench-vs-tsgo-github-latest.json",
     "bench-vs-tsgo-gcs-latest.json",
+    "bench-results.json",
   ].map((file) => path.join(artifactsDir, file));
   const artifactFiles = (() => {
     try {
       const localArtifacts = fs.readdirSync(artifactsDir)
         .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
-        .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json"].includes(file))
+        .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json", "bench-results.json"].includes(file))
         .sort()
         .reverse()
         .map((file) => path.join(artifactsDir, file));
@@ -552,17 +598,23 @@ function isTinyBenchmark(lines) {
 }
 
 function categoryFor(name, lines) {
-  if (name === "large-ts-repo") return "Projects: large-ts-repo";
-  if (name === "nextjs") return "Projects: next.js";
-  if (name === "nextjs-fresh-app") return "Projects: fresh Next.js app";
-  if (name === "vite-vanilla-ts-app") return "Projects: fresh Vite app";
-  if (name === "rxjs-project") return "Projects: rxjs";
-  if (name === "type-fest-project") return "Projects: type-fest";
-  if (name === "zod-project") return "Projects: zod";
-  if (name === "kysely-project") return "Projects: kysely";
-  if (name === "utility-types-project") return "Projects: utility-types";
-  if (name === "ts-toolbelt-project") return "Projects: ts-toolbelt";
-  if (name === "ts-essentials-project") return "Projects: ts-essentials";
+  if (name === "large-ts-repo" || name === "nextjs") return "Projects: large repositories";
+  if (name === "nextjs-fresh-app" || name === "vite-vanilla-ts-app") return "Projects: generated apps";
+  if (
+    name === "rxjs-project" ||
+    name === "type-fest-project" ||
+    name === "utility-types-project" ||
+    name === "ts-essentials-project" ||
+    name === "ts-toolbelt-project" ||
+    name === "zod-project" ||
+    name === "kysely-project" ||
+    name === "type-challenges-project" ||
+    name === "type-challenges-solutions-project" ||
+    name === "type-challenges-assertion-candidates" ||
+    name === "type-challenges-assertions-tsc-clean"
+  ) {
+    return "Projects: external libraries";
+  }
   if (name.startsWith("utility-types/")) return "Single file: utility-types";
   if (name.startsWith("ts-toolbelt/")) return "Single file: ts-toolbelt";
   if (name.startsWith("ts-essentials/")) return "Single file: ts-essentials";
@@ -605,58 +657,17 @@ function libraryNameForCategory(category) {
 
 function categoryMeta(category) {
   return {
-    "Projects: large-ts-repo": {
-      title: "large-ts-repo",
-      repo: "https://github.com/mohsen1/large-ts-repo",
-      repoLabel: "mohsen1/large-ts-repo",
+    "Projects: large repositories": {
+      title: "Large repositories",
+      description: "Full repository type-checks that stress project graph setup, residency, and cross-file analysis.",
     },
-    "Projects: next.js": {
-      title: "next.js",
-      repo: "https://github.com/vercel/next.js",
-      repoLabel: "vercel/next.js",
+    "Projects: generated apps": {
+      title: "Generated apps",
+      description: "Generated application fixtures with modern framework dependencies and generated configs.",
     },
-    "Projects: fresh Next.js app": {
-      title: "Fresh Next.js app",
-    },
-    "Projects: fresh Vite app": {
-      title: "Fresh Vite app",
-      repo: "https://github.com/vitejs/vite",
-      repoLabel: "vitejs/vite",
-    },
-    "Projects: rxjs": {
-      title: "RxJS",
-      repo: "https://github.com/ReactiveX/rxjs",
-      repoLabel: "ReactiveX/rxjs",
-    },
-    "Projects: type-fest": {
-      title: "type-fest",
-      repo: "https://github.com/sindresorhus/type-fest",
-      repoLabel: "sindresorhus/type-fest",
-    },
-    "Projects: zod": {
-      title: "Zod",
-      repo: "https://github.com/colinhacks/zod",
-      repoLabel: "colinhacks/zod",
-    },
-    "Projects: kysely": {
-      title: "Kysely",
-      repo: "https://github.com/kysely-org/kysely",
-      repoLabel: "kysely-org/kysely",
-    },
-    "Projects: utility-types": {
-      title: "utility-types",
-      repo: "https://github.com/piotrwitek/utility-types",
-      repoLabel: "piotrwitek/utility-types",
-    },
-    "Projects: ts-toolbelt": {
-      title: "ts-toolbelt",
-      repo: "https://github.com/millsp/ts-toolbelt",
-      repoLabel: "millsp/ts-toolbelt",
-    },
-    "Projects: ts-essentials": {
-      title: "ts-essentials",
-      repo: "https://github.com/ts-essentials/ts-essentials",
-      repoLabel: "ts-essentials/ts-essentials",
+    "Projects: external libraries": {
+      title: "External libraries",
+      description: "Pinned real-world libraries and type-heavy repositories checked as project-mode fixtures.",
     },
     "Single file: utility-types": {
       title: "utility-types files",
@@ -705,6 +716,10 @@ function displayName(name) {
   if (name === "nextjs-fresh-app") return "Fresh Next.js app";
   if (name === "vite-vanilla-ts-app") return "Fresh Vite app";
   if (name === "kysely-project") return "Kysely project";
+  if (name === "type-challenges-project") return "type-challenges project";
+  if (name === "type-challenges-solutions-project") return "type-challenges solutions project";
+  if (name === "type-challenges-assertion-candidates") return "type-challenges assertion candidates";
+  if (name === "type-challenges-assertions-tsc-clean") return "type-challenges tsc-clean assertions";
 
   const cleaned = String(name || "")
     .replace(/^utility-types\//, "")
@@ -720,6 +735,25 @@ function displayName(name) {
     .replace(/_/g, " ")
     .replace(/-/g, " ");
   return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
+
+function isTypeScriptFixtureName(name) {
+  return String(name || "").endsWith(".ts") && !String(name || "").includes("/");
+}
+
+function displayBaseName(name) {
+  return displayName(name)
+    .replace(/\s+Speed Reasonable$/i, "")
+    .replace(/\s+Not Too Large$/i, "")
+    .trim();
+}
+
+function benchmarkTitle(row, category) {
+  const name = String(row?.name || "");
+  if (isProjectCategory(category)) return displayName(name);
+  if (isExternalLibraryCategory(category)) return `${libraryNameForCategory(category)} file: ${displayBaseName(name)}`;
+  if (isTypeScriptFixtureName(name)) return displayBaseName(name);
+  return displayName(name);
 }
 
 function benchmarkSlug(name) {
@@ -744,6 +778,30 @@ function benchmarkKind(category) {
 
 function benchmarkFocus(row, category) {
   const name = String(row.name || "");
+  if (name === "conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts") {
+    return "Official TypeScript compiler fixture that stresses conditional type discrimination across a large union without falling off a performance cliff.";
+  }
+  if (name === "manyConstExports.ts") {
+    return "Official TypeScript compiler fixture that stresses binder/export-table setup for many constant exports.";
+  }
+  if (name === "binderBinaryExpressionStress.ts" || name === "binderBinaryExpressionStressJs.ts") {
+    return "Official TypeScript compiler fixture that stresses binder traversal over a very large binary-expression tree.";
+  }
+  if (name === "binaryArithmeticControlFlowGraphNotTooLarge.ts") {
+    return "Official TypeScript compiler fixture that keeps arithmetic control-flow graph construction bounded.";
+  }
+  if (name === "enumLiteralsSubtypeReduction.ts") {
+    return "Official TypeScript compiler fixture that exercises enum literal subtype reduction and related assignability checks.";
+  }
+  if (name === "controlFlowArrays.ts") {
+    return "Official TypeScript compiler fixture for array-sensitive control-flow analysis.";
+  }
+  if (/privacy/i.test(name)) {
+    return "Official TypeScript compiler fixture for declaration privacy checks on public APIs.";
+  }
+  if (name === "typedArrays.ts") {
+    return "Generated fixture that type-checks typed-array constructor and from() overload surfaces.";
+  }
   if (isProjectCategory(category)) {
     return "Full project type-check throughput, including module graph setup and cross-file type analysis.";
   }
@@ -1126,7 +1184,116 @@ function generatedMappedComplexSource(count) {
   return lines.join("\n").trimEnd();
 }
 
+function generatedTypedArraysSource() {
+  return `// Typed array benchmark fixture used by bench-vs-tsgo.sh.
+// Keep this strict/explicit so all compilers can parse and type-check it.
+
+function createTypedArrayInstancesFromLength(length: number) {
+    const typedArrays = [];
+    typedArrays[0] = new Int8Array(length);
+    typedArrays[1] = new Uint8Array(length);
+    typedArrays[2] = new Int16Array(length);
+    typedArrays[3] = new Uint16Array(length);
+    typedArrays[4] = new Int32Array(length);
+    typedArrays[5] = new Uint32Array(length);
+    typedArrays[6] = new Float32Array(length);
+    typedArrays[7] = new Float64Array(length);
+    typedArrays[8] = new Uint8ClampedArray(length);
+    return typedArrays;
+}
+
+function createTypedArrayInstancesFromArrayLike(obj: ArrayLike<number>) {
+    const typedArrays = [];
+    typedArrays[0] = new Int8Array(obj);
+    typedArrays[1] = new Uint8Array(obj);
+    typedArrays[2] = new Int16Array(obj);
+    typedArrays[3] = new Uint16Array(obj);
+    typedArrays[4] = new Int32Array(obj);
+    typedArrays[5] = new Uint32Array(obj);
+    typedArrays[6] = new Float32Array(obj);
+    typedArrays[7] = new Float64Array(obj);
+    typedArrays[8] = new Uint8ClampedArray(obj);
+    return typedArrays;
+}
+
+function createTypedArraysFromMapFn(
+    obj: ArrayLike<number>,
+    mapFn: (n: number, v: number) => number
+) {
+    const typedArrays = [];
+    typedArrays[0] = Int8Array.from(obj, mapFn);
+    typedArrays[1] = Uint8Array.from(obj, mapFn);
+    typedArrays[2] = Int16Array.from(obj, mapFn);
+    typedArrays[3] = Uint16Array.from(obj, mapFn);
+    typedArrays[4] = Int32Array.from(obj, mapFn);
+    typedArrays[5] = Uint32Array.from(obj, mapFn);
+    typedArrays[6] = Float32Array.from(obj, mapFn);
+    typedArrays[7] = Float64Array.from(obj, mapFn);
+    typedArrays[8] = Uint8ClampedArray.from(obj, mapFn);
+    return typedArrays;
+}
+
+const values: number[] = [1, 2, 3, 4];
+const mapped = createTypedArraysFromMapFn(values, (n, i) => n + i);
+const fromLength = createTypedArrayInstancesFromLength(128);
+const fromArrayLike = createTypedArrayInstancesFromArrayLike(values);
+const sampleCount = mapped.length + fromLength.length + fromArrayLike.length;`;
+}
+
+function generatedInferStressSource(count) {
+  const maxFunctions = Math.min(count, 30);
+  const lines = [
+    "// Infer keyword stress test",
+    "// Tests inference variable resolution in conditional types",
+    "",
+    "type UnwrapPromise<T> = T extends Promise<infer U> ? U : T;",
+    "type UnwrapArray<T> = T extends (infer U)[] ? U : T;",
+    "type MyParameters<T> = T extends (...args: infer P) => any ? P : never;",
+    "type MyReturnType<T> = T extends (...args: any[]) => infer R ? R : never;",
+    "",
+    "type FirstAndRest<T> = T extends [infer First, ...infer Rest] ? { first: First; rest: Rest } : never;",
+    "",
+    "type DeepUnwrap<T> =",
+    "    T extends Promise<infer U> ? DeepUnwrap<U> :",
+    "    T extends (infer V)[] ? DeepUnwrap<V>[] :",
+    "    T;",
+    "",
+    "type ExtractPrefix<T> = T extends `${infer P}_${string}` ? P : never;",
+    "type ExtractIfString<T> = T extends infer U extends string ? U : never;",
+    "",
+  ];
+
+  for (let i = 0; i < maxFunctions; i += 1) {
+    lines.push(`declare function func${i}(`);
+    for (let j = 0; j <= i; j += 1) {
+      lines.push(`    arg${j}: string${j === i ? "" : ","}`);
+    }
+    lines.push("): number;", "", `type Params${i} = MyParameters<typeof func${i}>;`, `type Return${i} = MyReturnType<typeof func${i}>;`, "");
+  }
+
+  lines.push(
+    "type ComplexInfer<T> = T extends {",
+    "    data: infer D;",
+    "    nested: { value: infer V }[]",
+    "} ? { data: D; values: V[] } : never;",
+    "",
+    "interface TestData {",
+    "    data: string;",
+    "    nested: { value: number }[];",
+    "}",
+    "",
+    "type Inferred = ComplexInfer<TestData>;",
+    "",
+    `declare const params: Params${maxFunctions - 1};`,
+    "declare const inferred: Inferred;",
+  );
+
+  return lines.join("\n").trimEnd();
+}
+
 function generatedBenchmarkSource(name) {
+  if (String(name || "") === "typedArrays.ts") return generatedTypedArraysSource();
+
   const unionCount = countFromName(name, /^(\d+)\s+union members$/i);
   if (unionCount) return generatedUnionSource(unionCount);
 
@@ -1171,6 +1338,9 @@ function generatedBenchmarkSource(name) {
 
   const mappedComplexCount = countFromName(name, /^Mapped complex template keys=(\d+)$/i);
   if (mappedComplexCount) return generatedMappedComplexSource(mappedComplexCount);
+
+  const inferStressCount = countFromName(name, /^Infer stress N=(\d+)$/i);
+  if (inferStressCount) return generatedInferStressSource(inferStressCount);
 
   return null;
 }
@@ -1248,10 +1418,7 @@ function readFixtureSource(name) {
   const fixtureName = String(name || "");
   if (!fixtureName.endsWith(".ts") || fixtureName.includes("/")) return null;
 
-  const candidates = [
-    path.join(ROOT, "TypeScript/tests/cases/compiler", fixtureName),
-    path.join(ROOT, "TypeScript/tests/cases/conformance", fixtureName),
-  ];
+  const candidates = TYPESCRIPT_FIXTURE_DIRS.map((dir) => path.join(ROOT, "TypeScript", dir, fixtureName));
 
   for (const candidate of candidates) {
     try {
@@ -1259,6 +1426,12 @@ function readFixtureSource(name) {
     } catch {
       // Keep looking in the next known TypeScript fixture location.
     }
+  }
+
+  const ref = currentTypeScriptRef();
+  for (const dir of TYPESCRIPT_FIXTURE_DIRS) {
+    const remote = readRemoteText(`https://raw.githubusercontent.com/microsoft/TypeScript/${ref}/${dir}/${fixtureName}`);
+    if (remote) return remote;
   }
 
   return null;
@@ -1333,6 +1506,17 @@ function sourceFilesForBenchmark(row, category) {
 
   const name = String(row.name || "fixture.ts");
   const fixtureName = name.endsWith(".ts") ? name : `${name}.ts`;
+  const artifactSource = typeof row?.source?.content === "string" && row.source.content
+    ? row.source.content.trimEnd()
+    : null;
+  if (artifactSource) {
+    return [{
+      name: row.source.path || fixtureName,
+      language: "typescript",
+      source: artifactSource,
+    }];
+  }
+
   const externalSource = isExternalLibraryCategory(category)
     ? readExternalFixtureSource(fixtureName)
     : null;
@@ -1426,12 +1610,12 @@ function decorateRow(row, category, options = {}) {
     ...row,
     category,
     category_slug: categorySlug(category),
-    display_name: displayName(row.name || ""),
+    display_name: benchmarkTitle(row, category),
     slug: benchmarkSlug(row.name),
     url: benchmarkUrl(row),
     kind: benchmarkKind(category),
     focus,
-    detail_focus: isExternalLibraryCategory(category) ? "" : focus,
+    detail_focus: focus,
     snippet: sourceFiles[0]?.source || snippetForBenchmark(row, category),
     source_files: sourceFiles,
     readme,
@@ -1471,17 +1655,9 @@ function buildGroupedBenchmarks(data) {
   const failedResults = allResults.filter((row) => isFailedBenchmark(row) && !successfulNames.has(row.name));
 
   const order = [
-    "Projects: large-ts-repo",
-    "Projects: utility-types",
-    "Projects: ts-toolbelt",
-    "Projects: ts-essentials",
-    "Projects: next.js",
-    "Projects: fresh Next.js app",
-    "Projects: fresh Vite app",
-    "Projects: rxjs",
-    "Projects: type-fest",
-    "Projects: zod",
-    "Projects: kysely",
+    "Projects: external libraries",
+    "Projects: generated apps",
+    "Projects: large repositories",
     "Single file: utility-types",
     "Single file: ts-toolbelt",
     "Single file: ts-essentials",
@@ -1592,6 +1768,10 @@ function generateCharts(data, mode = "projects") {
   );
 
   let html = "";
+  if (mode === "projects" && visibleCategories.length === 0) {
+    html += `<div class="bench-placeholder">No successful project benchmark timing pairs are available in this artifact yet. Project rows below are still tracked for compile readiness.</div>\n`;
+  }
+
   for (const category of visibleCategories) {
     const entries = entriesForCategory(category);
     const slug = categorySlug(category);
@@ -1656,42 +1836,23 @@ function generateCharts(data, mode = "projects") {
   }
 
   if (visibleFailedResults.length > 0) {
-    const failedTitle = mode === "projects" ? "Projects without complete timing" : "Incomplete timings";
+    const failedTitle = mode === "projects" ? "Compile canaries and incomplete project timings" : "Incomplete timings";
     const failedDescription = mode === "projects"
-      ? "Project runs recorded by CI without a full tsz and tsgo timing pair."
+      ? "Rows that are tracked for compile readiness but are not part of the timed vs-tsgo chart yet."
       : "Rows recorded by CI without a full tsz and tsgo timing pair.";
     html += `<section class="bench-category bench-failures">
   <h3 class="bench-category-title" id="failures">${escapeHtml(failedTitle)}</h3>
   <p class="bench-category-desc">${escapeHtml(failedDescription)}</p>
-  <div class="bench-chart">\n`;
+  <ul class="bench-failure-list">\n`;
     for (const r of visibleFailedResults) {
       const category = categoryFor(r.name || "", r.lines);
       const decorated = decorateRow(r, category);
-      const tszWidth = hasTiming(r.tsz_ms) ? (r.tsz_ms / chartMaxMs) * barMaxWidth : 0;
-      const tsgoWidth = hasTiming(r.tsgo_ms) ? (r.tsgo_ms / chartMaxMs) * barMaxWidth : 0;
-      const metaParts = [decorated.kind, `${fmt(r.lines || 0)} lines`, `${fmt(r.kb || 0)} KB`];
-      html += `  <div class="bench-row bench-row-error">
-    <div class="bench-name"><a href="${decorated.url}">${escapeHtml(displayName(r.name))}</a></div>
-    <div class="bench-meta">${escapeHtml(metaParts.join(" · "))}</div>
-    <p class="bench-focus bench-failure-status">${escapeHtml(statusLabel(r))}</p>
-    <div class="bench-bars">
-      <div class="bench-bar-row">
-        <span class="bench-bar-label">tsz</span>
-        ${hasTiming(r.tsz_ms)
-          ? renderBenchmarkBar("tsz", tszWidth, formatDurationMs(r.tsz_ms))
-          : `<span class="bench-bar-status">failed</span>`}
-      </div>
-      <div class="bench-bar-row">
-        <span class="bench-bar-label">tsgo</span>
-        ${hasTiming(r.tsgo_ms)
-          ? renderBenchmarkBar("tsgo", tsgoWidth, formatDurationMs(r.tsgo_ms))
-          : `<span class="bench-bar-status">n/a</span>`}
-      </div>
-    </div>
-    <a class="bench-detail-link" href="${decorated.url}">View details</a>
-  </div>\n`;
+      html += `  <li>
+    <a href="${decorated.url}">${escapeHtml(displayName(r.name))}</a>
+    <span>${escapeHtml(statusLabel(r))}</span>
+  </li>\n`;
     }
-    html += `  </div>
+    html += `  </ul>
  </section>\n`;
   }
 
@@ -1704,6 +1865,12 @@ export function getBenchmarkCharts() {
 
 export function getBenchmarkMicroCharts() {
   return generateCharts(loadBenchmarks(), "micro");
+}
+
+export function getBenchmarkEnvironmentSummary() {
+  const summary = runnerEnvironmentSummary(loadBenchmarks());
+  if (!summary) return "";
+  return `<p class="bench-runner-meta">${escapeHtml(summary)}</p>`;
 }
 
 export function getProjectCompatibilityDashboard() {
@@ -1748,6 +1915,90 @@ export function getProjectCompatibilityDashboard() {
     return parts;
   };
 
+  const assertionCandidateParts = (row) => {
+    const parts = [];
+    const addCount = (label, value) => {
+      if (Number.isFinite(Number(value))) {
+        parts.push(`${label}: ${fmt(Number(value))}`);
+      }
+    };
+    const addPath = (label, value) => {
+      if (value) {
+        parts.push(`${label}: ${value}`);
+      }
+    };
+    const candidates = row.assertionCandidates;
+    if (candidates && typeof candidates === "object") {
+      addCount("paired solutions", candidates.paired_solutions);
+      addCount("assertions generated", candidates.generated_assertions);
+      addCount(
+        "assertions referencing solutions",
+        candidates.assertions_referencing_solution_declaration,
+      );
+      addCount(
+        "assertions missing solution references",
+        candidates.assertions_missing_solution_declaration_reference,
+      );
+      addCount("tsc clean", candidates.tsc_diagnostic_free);
+      addCount("tsz clean", candidates.tsz_diagnostic_free);
+      const sources = candidates.sources && typeof candidates.sources === "object"
+        ? candidates.sources
+        : {};
+      const addRef = (label, source) => {
+        if (source?.ref) {
+          parts.push(`${label} ref: ${source.ref}`);
+        }
+      };
+      addRef("templates", sources.templates);
+      addRef("test cases", sources.testCases);
+      addRef("solutions", sources.solutions);
+    }
+
+    const cleanSubset = candidates?.tsc_clean_subset && typeof candidates.tsc_clean_subset === "object"
+      ? candidates.tsc_clean_subset
+      : row.assertionCleanSubset;
+    if (cleanSubset) {
+      addPath("tsc-clean manifest", cleanSubset.manifest_path);
+      addPath("tsc-clean classification", cleanSubset.classification_path);
+      addPath("tsc-clean tsconfig", cleanSubset.tsconfig_path);
+      addCount("tsc-clean total candidates", cleanSubset.total_candidates);
+      addCount("tsc-clean subset", cleanSubset.generated_assertions);
+      addCount(
+        "tsc-clean references solutions",
+        cleanSubset.assertions_referencing_solution_declaration,
+      );
+      addCount(
+        "tsc-clean missing solution references",
+        cleanSubset.assertions_missing_solution_declaration_reference,
+      );
+      addCount("tsc-clean rejected", cleanSubset.rejected_from_full_corpus);
+      if (cleanSubset.tsc_status) {
+        parts.push(`tsc-clean tsc: ${cleanSubset.tsc_status}`);
+      }
+      if (cleanSubset.tsz_status) {
+        parts.push(`tsc-clean tsz: ${cleanSubset.tsz_status}`);
+      }
+      if (cleanSubset.comparison_status) {
+        parts.push(`tsc-clean comparison: ${cleanSubset.comparison_status}`);
+      }
+      addCount("tsc-clean tsc diagnostic-free", cleanSubset.tsc_diagnostic_free);
+      addCount("tsc-clean tsz diagnostic-free", cleanSubset.tsz_diagnostic_free);
+    }
+
+    const counts = candidates?.file_comparison?.counts;
+    addCount("both accepted", candidates?.both_accepted ?? counts?.bothAccepted);
+    addCount("both rejected", candidates?.both_rejected ?? counts?.bothRejected);
+    addCount(
+      "tsc accepted/tsz rejected",
+      candidates?.tsc_accepted_tsz_rejected ?? counts?.tscAcceptedTszRejected,
+    );
+    addCount(
+      "tsc rejected/tsz accepted",
+      candidates?.tsc_rejected_tsz_accepted ?? counts?.tscRejectedTszAccepted,
+    );
+    return parts;
+  };
+
   const exitCodeParts = (row) => {
     const codes = row.exitCodes || {};
     return ["tsc", "tsz", "tsgo"]
@@ -1770,6 +2021,9 @@ export function getProjectCompatibilityDashboard() {
     const knownBlockers = Array.isArray(row.knownBlockers)
       ? row.knownBlockers.filter(Boolean).slice(0, 8)
       : [];
+    const diagnosticCandidateExamples = Array.isArray(row.assertionCandidates?.diagnostic_candidate_examples)
+      ? row.assertionCandidates.diagnostic_candidate_examples.filter(Boolean).slice(0, 5)
+      : [];
     const parts = [
       `phase: ${row.phase || "unknown"}`,
       row.lastSuccessfulPhase ? `last successful: ${row.lastSuccessfulPhase}` : "",
@@ -1778,11 +2032,15 @@ export function getProjectCompatibilityDashboard() {
             row.missingMetadata.slice(0, 4).join(", ")
           }${row.missingMetadata.length > 4 ? "..." : ""}`
         : "artifact: complete",
+      row.firstFailureClass ? `failure: ${row.firstFailureClass}` : "",
+      row.ownerTrack ? `owner track: ${row.ownerTrack}` : "",
+      row.reducedReproPath ? `repro: ${row.reducedReproPath}` : "",
       `owner: ${row.family || "not classified"}`,
       row.primarySubsystem ? `subsystem: ${row.primarySubsystem}` : "",
       row.emitStatus ? `emit: ${row.emitStatus}` : "",
       row.dtsStatus ? `dts: ${row.dtsStatus}` : "",
       ...measurementParts(row),
+      ...assertionCandidateParts(row),
       ...exitCodeParts(row),
     ].filter(Boolean);
     const blockerHtml = row.className === "green" || !knownBlockers.length
@@ -1795,6 +2053,17 @@ export function getProjectCompatibilityDashboard() {
       : `<div class="compat-queue">
           <span>${escapeHtml(`queue: ${diagnosticCodes.length ? diagnosticCodes.join(", ") : "unclassified diagnostic"}`)}</span>
           ${reductionCandidates.map((candidate) => `<code>${escapeHtml(candidate)}</code>`).join("")}
+        </div>`;
+    const candidateExampleHtml = row.className === "green" || !diagnosticCandidateExamples.length
+      ? ""
+      : `<div class="compat-queue">
+          ${diagnosticCandidateExamples.map((example) => {
+            const codes = Array.isArray(example.codes) && example.codes.length
+              ? ` ${example.codes.slice(0, 3).join(",")}`
+              : "";
+            const file = example.file || example.candidate_id || "unknown candidate";
+            return `<code>${escapeHtml(`${example.compiler || "compiler"}:${codes} ${file}`)}</code>`;
+          }).join("")}
         </div>`;
     const subsystemHtml = row.className === "green" || !diagnosticSubsystems.length
       ? ""
@@ -1811,7 +2080,7 @@ export function getProjectCompatibilityDashboard() {
           ? deltas.map((delta) => `<code>${escapeHtml(delta)}</code>`).join("")
           : `<span>${escapeHtml("diagnostic delta not captured")}</span>`}
         </div>`;
-    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${blockerHtml}${subsystemHtml}${queueHtml}${deltaHtml}`;
+    return `<div class="compat-meta">${parts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>${blockerHtml}${subsystemHtml}${queueHtml}${candidateExampleHtml}${deltaHtml}`;
   };
 
   return `<section class="compat-dashboard">

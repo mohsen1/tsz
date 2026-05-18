@@ -648,8 +648,8 @@ impl TypeInterner {
     const fn type_data_rank(data: &TypeData) -> u8 {
         match data {
             TypeData::Intrinsic(_) => 0,
-            TypeData::Literal(LiteralValue::String(_)) => 1,
-            TypeData::Literal(LiteralValue::Number(_)) => 2,
+            TypeData::Literal(LiteralValue::Number(_)) => 1,
+            TypeData::Literal(LiteralValue::String(_)) => 2,
             TypeData::Literal(LiteralValue::BigInt(_)) => 3,
             TypeData::Literal(LiteralValue::Boolean(_)) => 4,
             TypeData::Object(_) => 5,
@@ -806,6 +806,9 @@ impl TypeInterner {
         // e.g., 1 | 2 | number => number
         // e.g., true | boolean => boolean
         self.absorb_literals_into_primitives(&mut flat);
+        // Merge Enum(D, X) | Enum(D, Y) → Enum(D, X | Y) so that split-then-
+        // rejoined enum members (e.g., E1.a | E1.b) display as E1, not E1 | E1.
+        self.merge_same_enum_parts(&mut flat);
         self.absorb_intersections_with_union_constituents(&mut flat);
 
         if flat.is_empty() {
@@ -1414,6 +1417,11 @@ impl TypeInterner {
     /// Intern a type parameter.
     pub fn type_param(&self, info: TypeParamInfo) -> TypeId {
         self.intern(TypeData::TypeParameter(info))
+    }
+
+    /// Allocate a fresh declaration-scoped type parameter.
+    pub fn fresh_type_param(&self, info: TypeParamInfo) -> TypeId {
+        self.intern_fresh(TypeData::TypeParameter(info))
     }
 
     /// Intern an unresolved type name that should behave like an error type

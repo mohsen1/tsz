@@ -9,6 +9,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::ContextualTypeContext;
 
 impl<'a> CheckerState<'a> {
     fn present_callable_property_target_display_type(&self, target_type: TypeId) -> TypeId {
@@ -57,10 +58,10 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    let same_key_space = (self.is_assignable_to(param_type, candidate_keyof)
-                        && self.is_assignable_to(candidate_keyof, param_type))
-                        || self.format_type_for_assignability_message(param_type)
-                            == self.format_type_for_assignability_message(candidate_keyof);
+                    let same_key_space = self.contextual_keyof_parameter_types_share_key_space(
+                        param_type,
+                        candidate_keyof,
+                    );
                     if same_key_space
                         && query_common::type_has_displayable_name(
                             self.ctx.types.as_type_database(),
@@ -82,6 +83,25 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn contextual_keyof_parameter_types_share_key_space(
+        &mut self,
+        param_type: TypeId,
+        candidate_keyof: TypeId,
+    ) -> bool {
+        if self.types_are_mutually_assignable(param_type, candidate_keyof) {
+            return true;
+        }
+
+        self.ctx
+            .types
+            .get_display_alias(param_type)
+            .is_some_and(|alias| alias == candidate_keyof)
+    }
+
+    fn types_are_mutually_assignable(&mut self, left: TypeId, right: TypeId) -> bool {
+        self.is_assignable_to(left, right) && self.is_assignable_to(right, left)
     }
 
     pub(in crate::error_reporter::call_errors) fn contextual_constraint_parameter_display(
@@ -649,6 +669,102 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
     ) -> bool {
         self.try_elaborate_object_literal_arg_error_with_source(arg_idx, param_type, None)
+    }
+
+    pub(crate) fn try_emit_polymorphic_this_object_literal_arg_errors(
+        &mut self,
+        arg_idx: NodeIndex,
+        param_type: TypeId,
+    ) -> bool {
+        let arg_idx = self.ctx.arena.skip_parenthesized_and_assertions(arg_idx);
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return false;
+        };
+        if arg_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(obj) = self.ctx.arena.get_literal_expr(arg_node).cloned() else {
+            return false;
+        };
+
+        let candidates = [
+            param_type,
+            self.evaluate_contextual_type(param_type),
+            self.evaluate_type_with_env(param_type),
+            self.resolve_type_for_property_access(param_type),
+            self.evaluate_type_for_assignability(param_type),
+        ];
+
+        let mut emitted = false;
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+            let (prop_name_idx, prop_value_idx) = match elem_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    match self.ctx.arena.get_property_assignment(elem_node) {
+                        Some(prop) => (prop.name, prop.initializer),
+                        None => continue,
+                    }
+                }
+                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                    match self.ctx.arena.get_shorthand_property(elem_node) {
+                        Some(prop) => (prop.name, prop.name),
+                        None => continue,
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    match self.ctx.arena.get_method_decl(elem_node) {
+                        Some(method) => (method.name, elem_idx),
+                        None => continue,
+                    }
+                }
+                _ => continue,
+            };
+
+            let is_computed_property = self
+                .ctx
+                .arena
+                .get(prop_name_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            let Some(prop_name) = self
+                .object_literal_property_name_text(prop_name_idx)
+                .or_else(|| {
+                    is_computed_property
+                        .then(|| self.get_property_name_resolved(prop_name_idx))
+                        .flatten()
+                })
+            else {
+                continue;
+            };
+
+            let source_prop_type = self.get_type_of_node(prop_value_idx);
+            if source_prop_type == TypeId::ERROR || source_prop_type == TypeId::ANY {
+                continue;
+            }
+
+            for candidate in candidates {
+                let Some((target_prop_type, _)) =
+                    self.object_literal_target_property_type(candidate, prop_name_idx, &prop_name)
+                else {
+                    continue;
+                };
+                if target_prop_type == TypeId::ERROR || target_prop_type == TypeId::ANY {
+                    continue;
+                }
+                if self.is_assignable_to(source_prop_type, target_prop_type)
+                    && self.emit_polymorphic_this_property_assignment_error(
+                        source_prop_type,
+                        target_prop_type,
+                        prop_name_idx,
+                    )
+                {
+                    emitted = true;
+                    break;
+                }
+            }
+        }
+        emitted
     }
 
     /// Like `try_elaborate_object_literal_arg_error`, but accepts an optional
@@ -2302,7 +2418,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let ctx_helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+        let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             effective_param_type,
             self.ctx.compiler_options.no_implicit_any,
@@ -2754,6 +2870,10 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                // Inner per-property diagnostics suppress the outer whole-object error (tsc parity).
+                if self.object_literal_has_inner_property_diagnostics(current) {
+                    return true;
+                }
                 return self.try_elaborate_object_literal_properties(current, declared_type);
             }
             if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
@@ -2770,6 +2890,34 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             return false;
+        }
+        false
+    }
+
+    /// True if a TS2322/TS2353/TS1360 diagnostic is anchored inside any of this object literal's property spans.
+    fn object_literal_has_inner_property_diagnostics(&self, obj_idx: NodeIndex) -> bool {
+        let Some(obj_node) = self.ctx.arena.get(obj_idx) else {
+            return false;
+        };
+        let Some(obj) = self.ctx.arena.get_literal_expr(obj_node) else {
+            return false;
+        };
+        for &elem_idx in &obj.elements.nodes {
+            let Some((start, end)) = self.ctx.get_node_span(elem_idx) else {
+                continue;
+            };
+            if self.ctx.diagnostics.iter().any(|diag| {
+                matches!(
+                    diag.code,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                        | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+                        | diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID
+                        | diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE
+                ) && diag.start >= start
+                    && diag.start < end
+            }) {
+                return true;
+            }
         }
         false
     }

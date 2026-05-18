@@ -159,7 +159,6 @@ export {};
 }
 
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn module_augmentation_enum_merges_value_side_of_reexported_namespace() {
     let diagnostics = compile_named_files_get_diagnostics_with_options(
         &[

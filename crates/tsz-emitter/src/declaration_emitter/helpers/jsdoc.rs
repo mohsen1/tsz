@@ -103,7 +103,9 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(in crate::declaration_emitter) fn jsdoc_attaches_through_var_prefix(between: &str) -> bool {
-        let trimmed = between.trim();
+        let Some(trimmed) = Self::trim_jsdoc_attach_trivia(between) else {
+            return false;
+        };
         if trimmed.is_empty() {
             return true;
         }
@@ -129,6 +131,25 @@ impl<'a> DeclarationEmitter<'a> {
                     | "async"
             )
         })
+    }
+
+    fn trim_jsdoc_attach_trivia(mut text: &str) -> Option<&str> {
+        loop {
+            let trimmed = text.trim_start_matches(char::is_whitespace);
+            if let Some(rest) = trimmed.strip_prefix("//") {
+                let Some(line_end) = rest.find('\n') else {
+                    return Some("");
+                };
+                text = &rest[line_end + 1..];
+                continue;
+            }
+            if let Some(rest) = trimmed.strip_prefix("/*") {
+                let comment_end = rest.find("*/")?;
+                text = &rest[comment_end + 2..];
+                continue;
+            }
+            return Some(trimmed.trim_end());
+        }
     }
 
     pub(in crate::declaration_emitter) fn extract_jsdoc_type_expression(
@@ -571,6 +592,9 @@ impl<'a> DeclarationEmitter<'a> {
         if trimmed.is_empty() {
             return "any".to_string();
         }
+        if Self::jsdoc_module_reference_type_falls_back_to_any(trimmed) {
+            return "any".to_string();
+        }
         if let Some(index_signature) = Self::normalize_jsdoc_object_index_type(trimmed) {
             return index_signature;
         }
@@ -769,6 +793,9 @@ impl<'a> DeclarationEmitter<'a> {
     /// Normalize a single JSDoc type atom: `*` -> `any`, otherwise pass through.
     fn normalize_jsdoc_type_atom(s: &str) -> String {
         let s = s.trim();
+        if Self::jsdoc_module_reference_type_falls_back_to_any(s) {
+            return "any".to_string();
+        }
         if let Some((base, args)) = Self::split_jsdoc_generic_atom(s) {
             if args.trim().is_empty() {
                 return match base {
@@ -795,6 +822,13 @@ impl<'a> DeclarationEmitter<'a> {
             "Promise" | "Promise.<>" | "Promise<>" => "Promise<any>".to_string(),
             _ => s.to_string(),
         }
+    }
+
+    fn jsdoc_module_reference_type_falls_back_to_any(type_text: &str) -> bool {
+        type_text
+            .trim()
+            .strip_prefix("module:")
+            .is_some_and(|rest| !rest.trim().is_empty())
     }
 
     fn split_jsdoc_generic_atom(s: &str) -> Option<(&str, &str)> {
@@ -1003,9 +1037,11 @@ impl<'a> DeclarationEmitter<'a> {
                     .get(idx + 1)
                     .copied()
                     .unwrap_or(lines.len());
+                let overload_rest = Self::jsdoc_tag_rest(&lines[start], "overload").unwrap_or("");
                 Self::parse_jsdoc_overload_signature_segment(
                     jsdoc,
                     &global_type_params,
+                    overload_rest,
                     &lines[start + 1..end],
                 )
             })
@@ -1015,6 +1051,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn parse_jsdoc_overload_signature_segment(
         jsdoc: &str,
         global_type_params: &[String],
+        overload_rest: &str,
         lines: &[String],
     ) -> Option<JsdocOverloadSignature> {
         let mut type_params = global_type_params.to_vec();
@@ -1047,7 +1084,12 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if params.is_empty() && return_type.is_none() {
-            return None;
+            return Self::parse_legacy_jsdoc_overload_signature(
+                jsdoc,
+                global_type_params,
+                overload_rest,
+                lines,
+            );
         }
 
         Some(JsdocOverloadSignature {
@@ -1055,6 +1097,82 @@ impl<'a> DeclarationEmitter<'a> {
             type_params,
             params,
             return_type: return_type.unwrap_or_else(|| "any".to_string()),
+        })
+    }
+
+    fn parse_legacy_jsdoc_overload_signature(
+        jsdoc: &str,
+        global_type_params: &[String],
+        overload_rest: &str,
+        lines: &[String],
+    ) -> Option<JsdocOverloadSignature> {
+        if overload_rest.is_empty() {
+            return None;
+        }
+
+        let simple_call = Self::jsdoc_overload_rest_has_simple_call_params(overload_rest);
+        let params = if simple_call {
+            lines
+                .iter()
+                .filter_map(|line| Self::parse_legacy_jsdoc_param_decl(line))
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        Some(JsdocOverloadSignature {
+            comment: jsdoc.to_string(),
+            type_params: global_type_params.to_vec(),
+            params,
+            return_type: "any".to_string(),
+        })
+    }
+
+    fn jsdoc_overload_rest_has_simple_call_params(rest: &str) -> bool {
+        let Some(open_idx) = rest.find('(') else {
+            return false;
+        };
+        let after_open = &rest[open_idx + 1..];
+        let Some(close_idx) = Self::find_matching_paren(after_open) else {
+            return false;
+        };
+        if !after_open[close_idx + 1..].trim().is_empty() {
+            return false;
+        }
+
+        Self::split_jsdoc_params(&after_open[..close_idx])
+            .into_iter()
+            .all(|param| {
+                let param = param.trim();
+                param.is_empty()
+                    || param.chars().enumerate().all(|(idx, ch)| {
+                        ch == '_'
+                            || ch == '$'
+                            || (idx > 0 && ch.is_ascii_digit())
+                            || ch.is_ascii_alphabetic()
+                    })
+            })
+    }
+
+    fn parse_legacy_jsdoc_param_decl(line: &str) -> Option<JsdocParamDecl> {
+        let rest = Self::jsdoc_tag_rest(line, "param")?;
+        if rest.trim_start().starts_with('{') {
+            return None;
+        }
+        let raw_name = rest
+            .split_whitespace()
+            .next()
+            .filter(|name| !name.is_empty())?;
+        let (name, optional) = Self::normalize_jsdoc_param_name(raw_name);
+        if name.is_empty() || name.contains('.') {
+            return None;
+        }
+
+        Some(JsdocParamDecl {
+            name,
+            type_text: "any".to_string(),
+            optional,
+            rest: false,
         })
     }
 
@@ -1754,6 +1872,147 @@ impl<'a> DeclarationEmitter<'a> {
     fn emit_jsdoc_overload_signature(&mut self, signature: &JsdocOverloadSignature) {
         self.emit_jsdoc_template_parameters(&signature.type_params);
         self.write("(");
+        self.emit_jsdoc_overload_parameters(signature);
+        self.write("): ");
+        self.write(&signature.return_type);
+    }
+
+    pub(in crate::declaration_emitter) fn emit_jsdoc_overload_method_signatures(
+        &mut self,
+        method_idx: NodeIndex,
+        signatures: &[JsdocOverloadSignature],
+    ) -> bool {
+        if signatures.is_empty() {
+            return false;
+        }
+
+        let Some(method_node) = self.arena.get(method_idx) else {
+            return false;
+        };
+        let Some(method) = self.arena.get_method_decl(method_node) else {
+            return false;
+        };
+
+        for signature in signatures {
+            self.emit_jsdoc_comment_chain(std::slice::from_ref(&signature.comment));
+            self.write_indent();
+            self.emit_member_modifiers(&method.modifiers);
+            self.emit_node(method.name);
+            if method.question_token {
+                self.write("?");
+            }
+            self.emit_jsdoc_overload_signature(signature);
+            self.write(";");
+            self.write_line();
+        }
+
+        self.skip_comments_in_node(method_node.pos, method_node.end);
+        true
+    }
+
+    pub(in crate::declaration_emitter) fn emit_jsdoc_overload_constructor_signatures(
+        &mut self,
+        ctor_idx: NodeIndex,
+        signatures: &[JsdocOverloadSignature],
+    ) -> bool {
+        if signatures.is_empty() {
+            return false;
+        }
+
+        let Some(ctor_node) = self.arena.get(ctor_idx) else {
+            return false;
+        };
+        let Some(ctor) = self.arena.get_constructor(ctor_node) else {
+            return false;
+        };
+
+        for signature in signatures {
+            self.emit_jsdoc_comment_chain(std::slice::from_ref(&signature.comment));
+            self.write_indent();
+            if let Some(ref mods) = ctor.modifiers {
+                for &mod_idx in &mods.nodes {
+                    if let Some(mod_node) = self.arena.get(mod_idx) {
+                        match mod_node.kind {
+                            k if k == SyntaxKind::PrivateKeyword as u16 => self.write("private "),
+                            k if k == SyntaxKind::ProtectedKeyword as u16 => {
+                                self.write("protected ");
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            self.write("constructor(");
+            self.emit_jsdoc_overload_parameters(signature);
+            self.write(");");
+            self.write_line();
+        }
+
+        self.skip_comments_in_node(ctor_node.pos, ctor_node.end);
+        true
+    }
+
+    pub(in crate::declaration_emitter) fn emit_jsdoc_overload_namespace_function_signatures(
+        &mut self,
+        name_idx: NodeIndex,
+        overload_source_idx: NodeIndex,
+        signatures: &[JsdocOverloadSignature],
+    ) -> bool {
+        if signatures.is_empty() {
+            return false;
+        }
+
+        let Some(export_name) = self.get_identifier_text(name_idx) else {
+            return false;
+        };
+        let export_alias = if export_name == "constructor" && signatures.len() > 1 {
+            let local_name = self.generate_unique_name(&export_name);
+            self.reserved_names.insert(local_name.clone());
+            Some((export_name.clone(), local_name))
+        } else {
+            None
+        };
+        let emitted_name = export_alias
+            .as_ref()
+            .map_or(export_name.as_str(), |(_, local_name)| local_name.as_str());
+
+        let overload_source_pos = self
+            .arena
+            .get(overload_source_idx)
+            .map_or(0, |node| node.pos);
+
+        for signature in signatures {
+            if !self.emit_jsdoc_comment_verbatim_for_pos(overload_source_pos, &signature.comment) {
+                self.emit_jsdoc_comment_chain(std::slice::from_ref(&signature.comment));
+            }
+            self.write_indent();
+            if export_alias.is_some() {
+                self.write("export ");
+            }
+            self.write("function ");
+            self.write(emitted_name);
+            self.emit_jsdoc_overload_signature(signature);
+            self.write(";");
+            self.write_line();
+        }
+
+        if let Some((export_name, local_name)) = export_alias {
+            self.write_indent();
+            self.write("export { ");
+            self.write(&local_name);
+            self.write(" as ");
+            self.write(&export_name);
+            self.write(" };");
+            self.write_line();
+        }
+
+        if let Some(node) = self.arena.get(overload_source_idx) {
+            self.skip_comments_in_node(node.pos, node.end);
+        }
+        true
+    }
+
+    fn emit_jsdoc_overload_parameters(&mut self, signature: &JsdocOverloadSignature) {
         for (idx, param) in signature.params.iter().enumerate() {
             if idx > 0 {
                 self.write(", ");
@@ -1768,8 +2027,6 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(": ");
             self.write(&param.type_text);
         }
-        self.write("): ");
-        self.write(&signature.return_type);
     }
 
     pub(crate) fn jsdoc_template_params_for_node(&self, idx: NodeIndex) -> Vec<String> {
@@ -1916,7 +2173,7 @@ impl<'a> DeclarationEmitter<'a> {
             .as_deref()
             .is_some_and(Self::jsdoc_has_function_signature_tags);
         let has_any_jsdoc = jsdoc.is_some();
-        if !has_jsdoc_tags && !is_export_equals_root && !has_any_jsdoc {
+        if !has_jsdoc_tags && !is_export_equals_root && !has_any_jsdoc && !is_exported {
             return false;
         }
 
@@ -2019,6 +2276,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        self.emit_js_function_computed_binding_key_declarations(&func.parameters);
         self.emit_js_function_like_class_if_needed(
             decl_name,
             &func.parameters,
@@ -2033,25 +2291,46 @@ impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn parse_jsdoc_callback_alias(
         jsdoc: &str,
     ) -> Option<(String, String)> {
+        let (name, type_text, _) = Self::parse_jsdoc_callback_alias_parts(jsdoc)?;
+        Some((name, type_text))
+    }
+
+    fn parse_jsdoc_callback_alias_parts(jsdoc: &str) -> Option<(String, String, Vec<String>)> {
         let mut name = None;
         let mut params = Vec::new();
         let mut return_type = None;
+        let mut description_lines = Self::jsdoc_description_lines(jsdoc);
+        let mut collecting_callback_description = false;
+        let mut seen_callback = false;
 
         for raw_line in jsdoc.lines() {
             let line = raw_line.trim_start_matches('*').trim();
             if line.is_empty() {
+                collecting_callback_description = false;
                 continue;
             }
 
             if let Some(rest) = line.strip_prefix("@callback") {
-                let callback_name = rest.trim();
-                if !callback_name.is_empty() {
+                let rest = rest.trim();
+                if let Some(callback_name) = rest.split_whitespace().next()
+                    && !callback_name.is_empty()
+                {
                     name = Some(callback_name.to_string());
+                    let tail = rest[callback_name.len()..].trim();
+                    if !tail.is_empty() {
+                        description_lines.push(tail.to_string());
+                    }
                 }
+                seen_callback = true;
+                collecting_callback_description = true;
                 continue;
             }
 
             if let Some(rest) = line.strip_prefix("@param") {
+                collecting_callback_description = false;
+                if !seen_callback {
+                    continue;
+                }
                 let rest = rest.trim();
                 if rest.starts_with('{')
                     && let Some(end) = rest[1..].find('}')
@@ -2080,6 +2359,8 @@ impl<'a> DeclarationEmitter<'a> {
                     } else {
                         params.push(format!("{param_name}: {ts_type}"));
                     }
+                } else if let Some(param) = Self::parse_legacy_jsdoc_param_decl(line) {
+                    params.push(format!("{}: any", param.name));
                 }
                 continue;
             }
@@ -2088,6 +2369,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .strip_prefix("@returns")
                 .or_else(|| line.strip_prefix("@return"))
             {
+                collecting_callback_description = false;
                 let rest = rest.trim();
                 if rest.starts_with('{')
                     && let Some(end) = rest[1..].find('}')
@@ -2099,12 +2381,26 @@ impl<'a> DeclarationEmitter<'a> {
                         type_expr.to_string()
                     });
                 }
+                continue;
+            }
+
+            if line.starts_with('@') {
+                collecting_callback_description = false;
+                continue;
+            }
+
+            if collecting_callback_description {
+                description_lines.push(format!("    {line}"));
             }
         }
 
         let name = name?;
         let return_type = return_type.unwrap_or_else(|| "any".to_string());
-        Some((name, format!("({}) => {return_type}", params.join(", "))))
+        Some((
+            name,
+            format!("({}) => {return_type}", params.join(", ")),
+            description_lines,
+        ))
     }
 
     pub(crate) fn parse_jsdoc_template_params(jsdoc: &str) -> Vec<String> {
@@ -2117,23 +2413,22 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
 
-            let mut rest = Self::trim_jsdoc_same_line_following_tags(rest.trim());
+            let mut rest = Self::trim_jsdoc_template_description(
+                Self::trim_jsdoc_same_line_following_tags(rest.trim()),
+            );
             if let Some((constraint, name_rest)) = Self::parse_jsdoc_braced_type_and_name(rest)
                 && let Some((name, remaining)) = Self::take_jsdoc_template_name(name_rest)
             {
                 let constraint = Self::normalize_jsdoc_type_text(constraint, false);
-                let name_key = name.to_string();
+                let name_str = Self::format_constrained_jsdoc_template_param(name, &constraint);
+                let name_key = Self::jsdoc_template_param_name_key(&name_str).to_string();
                 if seen.insert(name_key) {
-                    params.push(format!("{name} extends {constraint}"));
+                    params.push(name_str);
                 }
-                rest = remaining;
+                rest = Self::trim_jsdoc_template_description(remaining);
             }
 
-            for name in rest
-                .split([',', ' ', '\t'])
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-            {
+            for name in Self::split_jsdoc_template_param_segments(rest) {
                 // Bracket-default form `@template [T=string]` declares type
                 // parameter `T` with default `string`. Without unwrapping the
                 // brackets, the verbatim segment `[T=string]` would be
@@ -2151,10 +2446,68 @@ impl<'a> DeclarationEmitter<'a> {
         params
     }
 
+    fn split_jsdoc_template_param_segments(text: &str) -> Vec<&str> {
+        let mut segments = Vec::new();
+        let mut start = None;
+        let mut bracket_depth = 0usize;
+
+        for (idx, ch) in text.char_indices() {
+            if start.is_none() {
+                if matches!(ch, ',' | ' ' | '\t') {
+                    continue;
+                }
+                start = Some(idx);
+            }
+
+            match ch {
+                '[' => bracket_depth += 1,
+                ']' if bracket_depth > 0 => bracket_depth -= 1,
+                ',' | ' ' | '\t' if bracket_depth == 0 => {
+                    if let Some(seg_start) = start.take() {
+                        let segment = text[seg_start..idx].trim();
+                        if !segment.is_empty() {
+                            segments.push(segment);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(seg_start) = start {
+            let segment = text[seg_start..].trim();
+            if !segment.is_empty() {
+                segments.push(segment);
+            }
+        }
+
+        segments
+    }
+
     fn trim_jsdoc_same_line_following_tags(text: &str) -> &str {
         text.find(" @")
             .map(|idx| text[..idx].trim_end())
             .unwrap_or(text)
+    }
+
+    fn trim_jsdoc_template_description(text: &str) -> &str {
+        for (idx, ch) in text.char_indices() {
+            if ch != '-' {
+                continue;
+            }
+            let before_is_boundary = text[..idx]
+                .chars()
+                .next_back()
+                .is_none_or(char::is_whitespace);
+            let after_is_boundary = text[idx + ch.len_utf8()..]
+                .chars()
+                .next()
+                .is_none_or(char::is_whitespace);
+            if before_is_boundary && after_is_boundary {
+                return text[..idx].trim_end();
+            }
+        }
+        text
     }
 
     /// Strip `[…]` from a `@template` segment and rewrite `T=default` as
@@ -2173,6 +2526,25 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    fn format_constrained_jsdoc_template_param(name: &str, constraint: &str) -> String {
+        let trimmed = name.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            let inner = &trimmed[1..trimmed.len() - 1];
+            let (name, default) = inner
+                .split_once('=')
+                .map(|(name, default)| {
+                    let default = default.trim();
+                    (
+                        name.trim(),
+                        if default.is_empty() { "any" } else { default },
+                    )
+                })
+                .unwrap_or_else(|| (inner.trim(), "any"));
+            return format!("{name} extends {constraint} = {default}");
+        }
+        format!("{trimmed} extends {constraint}")
+    }
+
     fn jsdoc_template_param_name_key(text: &str) -> &str {
         let trimmed = text.trim();
         let end = trimmed
@@ -2187,7 +2559,13 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let end = text.find([',', ' ', '\t']).unwrap_or(text.len());
+        let end = if text.starts_with('[') {
+            text.find(']')
+                .map(|idx| idx + 1)
+                .unwrap_or_else(|| text.find([',', ' ', '\t']).unwrap_or(text.len()))
+        } else {
+            text.find([',', ' ', '\t']).unwrap_or(text.len())
+        };
         let name = text[..end].trim();
         if name.is_empty() {
             return None;
@@ -2256,6 +2634,35 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         lines
+    }
+
+    fn jsdoc_typedef_trailing_description_lines(jsdoc: &str) -> Vec<String> {
+        let normalized = Self::normalize_jsdoc_block(jsdoc);
+        let Some(tag_pos) = normalized.find("@typedef") else {
+            return Vec::new();
+        };
+        let rest = normalized[tag_pos + "@typedef".len()..]
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim();
+        let Some((_, name_rest)) = Self::parse_jsdoc_braced_type_and_name(rest) else {
+            return Vec::new();
+        };
+        let name_rest = name_rest.trim();
+        if name_rest.is_empty() {
+            return Vec::new();
+        }
+
+        let name_end = name_rest
+            .find(char::is_whitespace)
+            .unwrap_or(name_rest.len());
+        let description = name_rest[name_end..].trim();
+        if description.is_empty() || description.starts_with('@') {
+            Vec::new()
+        } else {
+            vec![description.to_string()]
+        }
     }
 
     pub(in crate::declaration_emitter) fn jsdoc_has_property_tags(jsdoc: &str) -> bool {
@@ -2444,7 +2851,8 @@ impl<'a> DeclarationEmitter<'a> {
         jsdoc: &str,
     ) -> Option<JsdocTypeAliasDecl> {
         let type_params = Self::parse_jsdoc_template_params(jsdoc);
-        let description_lines = Self::jsdoc_description_lines(jsdoc);
+        let mut description_lines = Self::jsdoc_description_lines(jsdoc);
+        description_lines.extend(Self::jsdoc_typedef_trailing_description_lines(jsdoc));
 
         if Self::jsdoc_has_property_tags(jsdoc) {
             let (name, type_text) = Self::parse_jsdoc_property_type_alias(jsdoc)?;
@@ -2473,7 +2881,9 @@ impl<'a> DeclarationEmitter<'a> {
             });
         }
 
-        if let Some((name, type_text)) = Self::parse_jsdoc_callback_alias(jsdoc) {
+        if let Some((name, type_text, description_lines)) =
+            Self::parse_jsdoc_callback_alias_parts(jsdoc)
+        {
             return Some(JsdocTypeAliasDecl {
                 name,
                 type_params,
@@ -2594,6 +3004,9 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn format_jsdoc_type_text_for_declaration(type_text: &str) -> String {
+        if Self::jsdoc_module_reference_type_falls_back_to_any(type_text) {
+            return "any".to_string();
+        }
         let Some(open) = type_text.find("<{") else {
             return type_text.to_string();
         };
@@ -2673,15 +3086,53 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(crate) fn emit_leading_jsdoc_type_aliases_for_pos(&mut self, pos: u32) {
+    pub(crate) fn emit_leading_jsdoc_type_aliases_for_pos(&mut self, pos: u32, exported: bool) {
         if !self.source_is_js_file {
             return;
         }
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(pos) {
             if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
-                self.emit_rendered_jsdoc_type_alias(decl, true);
+                self.emit_rendered_jsdoc_type_alias(decl, exported);
             }
         }
+    }
+
+    pub(crate) fn emit_js_export_equals_type_alias_namespace_for_name(
+        &mut self,
+        name_idx: NodeIndex,
+        pos: u32,
+    ) {
+        if !self.is_js_export_equals_name(name_idx) {
+            return;
+        }
+        let aliases = self.jsdoc_type_alias_decls_before_pos(pos);
+        if aliases.is_empty() {
+            return;
+        }
+
+        self.write_indent();
+        if self.should_emit_declare_keyword(false) {
+            self.write("declare ");
+        }
+        self.write("namespace ");
+        self.emit_node(name_idx);
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+        self.write_indent();
+        self.write("export { ");
+        for (idx, alias) in aliases.iter().enumerate() {
+            if idx > 0 {
+                self.write(", ");
+            }
+            self.write(&alias.name);
+        }
+        self.write(" };");
+        self.write_line();
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        self.write_line();
     }
 
     pub(in crate::declaration_emitter) fn jsdoc_type_alias_decls_before_pos(
@@ -2799,6 +3250,45 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(crate) fn emit_jsdoc_callback_type_aliases_for_object_literal_namespace(
+        &mut self,
+        initializer: NodeIndex,
+        exported: bool,
+    ) {
+        if !self.source_is_js_file {
+            return;
+        }
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return;
+        }
+        let Some(object) = self.arena.get_literal_expr(init_node) else {
+            return;
+        };
+
+        for &member_idx in &object.elements.nodes {
+            for jsdoc in self.leading_jsdoc_comment_chain_for_node_or_ancestors(member_idx) {
+                let Some((name, type_text, description_lines)) =
+                    Self::parse_jsdoc_callback_alias_parts(&jsdoc)
+                else {
+                    continue;
+                };
+                self.emit_rendered_jsdoc_type_alias(
+                    JsdocTypeAliasDecl {
+                        name,
+                        type_params: Vec::new(),
+                        type_text,
+                        description_lines,
+                        render_verbatim: true,
+                    },
+                    exported,
+                );
+            }
+        }
+    }
+
     pub(crate) fn emit_pending_jsdoc_callback_type_aliases(
         &mut self,
         source_file: &tsz_parser::parser::node::SourceFileData,
@@ -2895,7 +3385,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(crate) fn emit_jsdoc_default_typedef_aliases_for_hoisted_default_exports(
+    pub(crate) fn emit_jsdoc_default_typedef_aliases_for_js_default_export(
         &mut self,
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) {
@@ -2936,6 +3426,20 @@ impl<'a> DeclarationEmitter<'a> {
                 exported,
                 alias_can_share_declaration_name,
             );
+        }
+    }
+
+    pub(crate) fn emit_jsdoc_default_typedef_aliases_for_js_default_export_in_current_file(
+        &mut self,
+    ) {
+        let source_file = self
+            .current_source_file_idx
+            .and_then(|root_idx| self.arena.get(root_idx))
+            .and_then(|root_node| self.arena.get_source_file(root_node))
+            .cloned();
+
+        if let Some(source_file) = source_file {
+            self.emit_jsdoc_default_typedef_aliases_for_js_default_export(&source_file);
         }
     }
 
@@ -2982,3 +3486,7 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 }
+
+#[cfg(test)]
+#[path = "jsdoc_tests.rs"]
+mod jsdoc_tests;

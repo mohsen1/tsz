@@ -1004,23 +1004,61 @@ impl<'a> CheckerState<'a> {
         if evaluated == resolved || self.is_assignable_to(evaluated, target) {
             return false;
         }
-        let before = self.ctx.diagnostics.len();
-        let original = self.format_type_for_assignability_message(resolved);
-        let replacement_type = self.format_type_for_assignability_message(evaluated);
-        self.error_type_not_assignable_with_reason_at(evaluated, target, diag_idx);
-        if let Some(diag) = self.ctx.diagnostics.get_mut(before)
-            && diag.code
-                == crate::diagnostics::diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-        {
-            let replacement = format!("in type '{replacement_type}' but required");
-            if diag.message_text.contains(&original) {
-                diag.message_text = diag.message_text.replace(&original, &replacement_type);
-            } else if let Some((prefix, rest)) = diag.message_text.split_once("in type '")
-                && let Some((_, suffix)) = rest.split_once("' but required")
-            {
-                diag.message_text = format!("{prefix}{replacement}{suffix}");
+        let analysis = self.analyze_assignability_failure(evaluated, target);
+        if let Some(reason) = analysis.failure_reason {
+            match reason {
+                tsz_solver::SubtypeFailureReason::MissingProperty { property_name, .. } => {
+                    self.report_concrete_remapped_mapped_missing_property(
+                        evaluated,
+                        target,
+                        property_name,
+                        diag_idx,
+                    );
+                }
+                other => {
+                    self.error_type_not_assignable_with_reason_and_display(
+                        evaluated, target, &other, diag_idx,
+                    );
+                }
             }
+        } else {
+            self.error_type_not_assignable_with_reason_at(evaluated, target, diag_idx);
         }
         true
+    }
+
+    fn report_concrete_remapped_mapped_missing_property(
+        &mut self,
+        evaluated_source: TypeId,
+        target: TypeId,
+        property_name: tsz_common::interner::Atom,
+        diag_idx: NodeIndex,
+    ) {
+        let Some(anchor) = self.resolve_diagnostic_anchor(diag_idx, DiagnosticAnchorKind::Exact)
+        else {
+            self.error_type_not_assignable_with_reason_at(evaluated_source, target, diag_idx);
+            return;
+        };
+        let prop_name = self.ctx.types.resolve_atom_ref(property_name).to_string();
+        let source_str = self.format_type_for_assignability_message(evaluated_source);
+        let target_str = self.format_type_for_diagnostic_role(
+            target,
+            DiagnosticTypeDisplayRole::AssignmentTarget {
+                source: evaluated_source,
+                anchor_idx: diag_idx,
+            },
+        );
+        let message = format_message(
+            diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+            &[&prop_name, &source_str, &target_str],
+        );
+        self.ctx
+            .push_diagnostic(crate::diagnostics::Diagnostic::error(
+                self.ctx.file_name.clone(),
+                anchor.start,
+                anchor.length,
+                message,
+                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+            ));
     }
 }

@@ -5,9 +5,11 @@ use crate::query_boundaries::common::{
     get_type_query_symbol_ref, lazy_def_id,
 };
 use crate::query_boundaries::state::type_environment as query;
+use crate::query_boundaries::type_predicates::contains_conditional_with_application_extends;
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
 use crate::query_boundaries::state::type_environment::for_each_direct_referenced_type;
 
@@ -273,7 +275,15 @@ impl<'a> CheckerState<'a> {
                 || crate::query_boundaries::spread::contains_unresolved_application(
                     self.ctx.types,
                     result,
-                ));
+                )
+                // `result != type_id` guards against re-running the second pass
+                // when the first pass deferred a generic conditional unchanged
+                // (type params present); we only retry when the first pass
+                // actually produced a different type containing deferred
+                // conditionals whose extends-type is still an Application
+                // (e.g. Pick/Readonly not yet expandable by TypeEnvironment).
+                || (result != type_id
+                    && contains_conditional_with_application_extends(self.ctx.types, result)));
         let final_result = if needs_resolver_pass {
             let seed_iter = if use_cache {
                 self.ctx.env_eval_cache_seed_entries()
@@ -336,6 +346,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Evaluate a type with symbol resolution (Lazy types resolved to their concrete types).
+    ///
+    /// Wrapped with `stacker::maybe_grow()` to prevent stack overflow when resolving
+    /// long Lazy alias chains (e.g., a chain of re-exported type aliases across modules).
     pub(crate) fn evaluate_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
         // Cycle guard: evaluate_type_with_resolution → prune_impossible_object_union_members_with_env
         // → object_member_has_impossible_required_property_with_env → evaluate_type_with_resolution
@@ -345,7 +358,9 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.type_resolution_visiting.insert(type_id) {
             return type_id;
         }
-        let result = self.evaluate_type_with_resolution_inner(type_id);
+        let result = stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.evaluate_type_with_resolution_inner(type_id)
+        });
         self.ctx.type_resolution_visiting.remove(&type_id);
         result
     }
@@ -778,7 +793,7 @@ impl<'a> CheckerState<'a> {
                 // alias references commonly register their structural body there
                 // even when the current binder cannot re-compute the symbol.
                 let env_resolved = if let Ok(env) = self.ctx.type_env.try_borrow() {
-                    tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                    TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
                 } else {
                     None
                 };
@@ -1039,8 +1054,7 @@ impl<'a> CheckerState<'a> {
             // resolve to the instance type, we must check type_env first.
             {
                 let env = self.ctx.type_env.borrow();
-                if let Some(resolved) =
-                    tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                if let Some(resolved) = TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
                     && resolved != type_id
                 {
                     drop(env);
@@ -1130,7 +1144,7 @@ impl<'a> CheckerState<'a> {
                     // the type_env as a side effect.
                     let env = self.ctx.type_env.borrow();
                     if let Some(resolved) =
-                        tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                        TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
                         && resolved != type_id
                     {
                         drop(env);

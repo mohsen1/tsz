@@ -80,6 +80,7 @@ mod members;
 use helpers::*;
 
 use crate::context::transform::TransformContext;
+use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::ir::{
     IRCatchClause, IRMethodName, IRNode, IRParam, IRProperty, IRPropertyDescriptor, IRPropertyKey,
     IRPropertyKind, IRSwitchCase,
@@ -89,9 +90,10 @@ use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, collect_enclosing_source_binding_names,
     collect_private_accessors_with_reserved, collect_private_fields_with_reserved,
 };
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
-use tsz_parser::parser::node::{Node, NodeArena};
+use tsz_common::common::ModuleKind;
+use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::contains_this_reference;
@@ -144,6 +146,12 @@ pub struct ES5ClassTransformer<'a> {
     skip_static_field_initializers: bool,
     use_define_for_class_fields: bool,
     commonjs_import_substitutions: FxHashMap<String, String>,
+    module_kind: ModuleKind,
+    downlevel_iteration: bool,
+    async_generator_inner_name_counts: RefCell<FxHashMap<String, u32>>,
+    disposable_env_counter: Cell<u32>,
+    blocked_disposable_env_names: RefCell<FxHashSet<String>>,
+    generated_disposable_env_names: RefCell<Vec<String>>,
     /// Additional hoisted temp variable names collected from expression conversions
     /// (e.g., from computed property lowering inside object literals)
     extra_hoisted_temps: RefCell<Vec<String>>,
@@ -175,6 +183,12 @@ impl<'a> ES5ClassTransformer<'a> {
             skip_static_field_initializers: false,
             use_define_for_class_fields: false,
             commonjs_import_substitutions: FxHashMap::default(),
+            module_kind: ModuleKind::None,
+            downlevel_iteration: false,
+            async_generator_inner_name_counts: RefCell::new(FxHashMap::default()),
+            disposable_env_counter: Cell::new(1),
+            blocked_disposable_env_names: RefCell::new(FxHashSet::default()),
+            generated_disposable_env_names: RefCell::new(Vec::new()),
             extra_hoisted_temps: RefCell::new(Vec::new()),
         }
     }
@@ -199,12 +213,85 @@ impl<'a> ES5ClassTransformer<'a> {
         self.commonjs_import_substitutions = subs;
     }
 
+    pub const fn set_module_kind(&mut self, module_kind: ModuleKind) {
+        self.module_kind = module_kind;
+    }
+
+    pub const fn set_downlevel_iteration(&mut self, downlevel_iteration: bool) {
+        self.downlevel_iteration = downlevel_iteration;
+    }
+
+    pub fn set_async_generator_inner_name_counts(&mut self, counts: FxHashMap<String, u32>) {
+        *self.async_generator_inner_name_counts.borrow_mut() = counts;
+    }
+
+    pub fn take_async_generator_inner_name_counts(&self) -> FxHashMap<String, u32> {
+        std::mem::take(&mut *self.async_generator_inner_name_counts.borrow_mut())
+    }
+
+    fn next_async_generator_inner_name(&self, base: &str) -> String {
+        loop {
+            let candidate = {
+                let mut counts = self.async_generator_inner_name_counts.borrow_mut();
+                let count = counts
+                    .entry(base.to_string())
+                    .and_modify(|count| *count += 1)
+                    .or_insert(1);
+                format!("{base}_{count}")
+            };
+            if !self
+                .arena
+                .identifiers
+                .iter()
+                .any(|identifier| identifier.escaped_text == candidate)
+            {
+                return candidate;
+            }
+        }
+    }
+
     pub fn set_temp_var_counter(&mut self, counter: u32) {
         self.temp_var_counter.set(counter);
     }
 
     pub const fn temp_var_counter(&self) -> u32 {
         self.temp_var_counter.get()
+    }
+
+    pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
+    where
+        I: IntoIterator<Item = String>,
+    {
+        self.disposable_env_counter.set(next_id);
+        *self.blocked_disposable_env_names.borrow_mut() = blocked_names.into_iter().collect();
+        self.generated_disposable_env_names.borrow_mut().clear();
+    }
+
+    pub const fn disposable_env_counter(&self) -> u32 {
+        self.disposable_env_counter.get()
+    }
+
+    pub fn take_generated_disposable_env_names(&self) -> Vec<String> {
+        std::mem::take(&mut *self.generated_disposable_env_names.borrow_mut())
+    }
+
+    fn configure_async_disposable_context(&self, transformer: &mut AsyncES5Transformer<'a>) {
+        transformer.set_disposable_env_context(
+            self.disposable_env_counter.get(),
+            self.blocked_disposable_env_names.borrow().iter().cloned(),
+        );
+    }
+
+    fn sync_async_disposable_context(&self, transformer: &mut AsyncES5Transformer<'a>) {
+        self.disposable_env_counter
+            .set(transformer.disposable_env_counter());
+        let generated = transformer.take_generated_disposable_env_names();
+        let mut blocked = self.blocked_disposable_env_names.borrow_mut();
+        let mut all_generated = self.generated_disposable_env_names.borrow_mut();
+        for name in generated {
+            blocked.insert(name.clone());
+            all_generated.push(name);
+        }
     }
 
     fn fresh_super_name(&self) -> String {
@@ -510,6 +597,14 @@ impl<'a> ES5ClassTransformer<'a> {
     /// closing brace comment instead of the method's own comment.
     fn extract_trailing_comment_for_method(&self, body_idx: NodeIndex) -> Option<String> {
         let source_text = self.source_text?;
+        let close_brace = self.body_closing_brace_pos(body_idx)?;
+        crate::emitter::get_trailing_comment_ranges(source_text, close_brace + 1)
+            .first()
+            .map(|c| source_text[c.pos as usize..c.end as usize].to_string())
+    }
+
+    fn body_closing_brace_pos(&self, body_idx: NodeIndex) -> Option<usize> {
+        let source_text = self.source_text?;
         let body_node = self.arena.get(body_idx)?;
         let bytes = source_text.as_bytes();
         let start = body_node.pos as usize;
@@ -539,11 +634,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     }
                     b'}' => {
                         if depth == 0 {
-                            // This is the closing brace of the block
-                            let after = i + 1;
-                            return crate::emitter::get_trailing_comment_ranges(source_text, after)
-                                .first()
-                                .map(|c| source_text[c.pos as usize..c.end as usize].to_string());
+                            return Some(i);
                         }
                         depth -= 1;
                     }
@@ -585,7 +676,11 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut converter = AstToIr::new(self.arena)
             .with_super(self.has_extends)
             .with_super_name(self.super_name.clone())
-            .with_temp_var_counter(self.temp_var_counter.get());
+            .with_temp_var_counter(self.temp_var_counter.get())
+            .with_module_kind(self.module_kind);
+        if let Some(source_text) = self.source_text {
+            converter = converter.with_source_text(source_text);
+        }
         if let Some(ref transforms) = self.transforms {
             converter = converter.with_transforms(transforms.clone());
         }
@@ -597,13 +692,20 @@ impl<'a> ES5ClassTransformer<'a> {
         idx: NodeIndex,
         is_static: bool,
         class_alias: Option<&str>,
+        lexical_this_capture_alias: Option<&str>,
+        trailing_comment_limit: Option<u32>,
     ) -> IRNode {
-        let mut converter = self.make_converter();
+        let mut converter = self
+            .make_converter()
+            .with_trailing_comment_limit(trailing_comment_limit);
         if is_static {
             converter = converter.with_static(true);
         }
         if let Some(alias) = class_alias {
             converter = converter.with_class_alias(Some(alias.to_string()));
+        }
+        if let Some(alias) = lexical_this_capture_alias {
+            converter = converter.with_lexical_this_capture_alias(Some(alias.to_string()));
         }
         if let Some(alias) = self.class_self_reference_alias.as_ref() {
             converter =
@@ -634,9 +736,78 @@ impl<'a> ES5ClassTransformer<'a> {
     /// Used in derived constructors after `super()` where `this` → `_this`.
     fn convert_statement_this_captured(&self, idx: NodeIndex) -> IRNode {
         let converter = self.make_converter().with_this_captured(true);
-        let result = converter.convert_statement(idx);
+        let mut result = converter.convert_statement(idx);
+        Self::rewrite_bare_constructor_returns_to_this(&mut result);
         self.collect_from_converter(&converter);
         result
+    }
+
+    fn rewrite_bare_constructor_returns_to_this(node: &mut IRNode) {
+        if matches!(
+            node,
+            IRNode::FunctionExpr { .. }
+                | IRNode::FunctionDecl { .. }
+                | IRNode::ES5ClassIIFE { .. }
+                | IRNode::ES5ClassAssignment { .. }
+                | IRNode::StaticBlockIIFE { .. }
+                | IRNode::AwaiterCall { .. }
+                | IRNode::GeneratorBody { .. }
+        ) {
+            return;
+        }
+
+        match node {
+            IRNode::ReturnStatement(expr @ None) => {
+                *expr = Some(Box::new(IRNode::id("_this")));
+            }
+            IRNode::IfStatement {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::rewrite_bare_constructor_returns_to_this(then_branch);
+                if let Some(else_branch) = else_branch {
+                    Self::rewrite_bare_constructor_returns_to_this(else_branch);
+                }
+            }
+            IRNode::Block(statements) | IRNode::Sequence(statements) => {
+                for statement in statements {
+                    Self::rewrite_bare_constructor_returns_to_this(statement);
+                }
+            }
+            IRNode::SwitchStatement { cases, .. } => {
+                for case in cases {
+                    for statement in &mut case.statements {
+                        Self::rewrite_bare_constructor_returns_to_this(statement);
+                    }
+                }
+            }
+            IRNode::ForStatement { body, .. }
+            | IRNode::ForInOfStatement { body, .. }
+            | IRNode::WhileStatement { body, .. }
+            | IRNode::DoWhileStatement { body, .. }
+            | IRNode::LabeledStatement {
+                statement: body, ..
+            } => {
+                Self::rewrite_bare_constructor_returns_to_this(body);
+            }
+            IRNode::TryStatement {
+                try_block,
+                catch_clause,
+                finally_block,
+            } => {
+                Self::rewrite_bare_constructor_returns_to_this(try_block);
+                if let Some(catch_clause) = catch_clause {
+                    for statement in &mut catch_clause.body {
+                        Self::rewrite_bare_constructor_returns_to_this(statement);
+                    }
+                }
+                if let Some(finally_block) = finally_block {
+                    Self::rewrite_bare_constructor_returns_to_this(finally_block);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Convert an AST expression to IR (avoids `ASTRef` when possible)
@@ -649,7 +820,10 @@ impl<'a> ES5ClassTransformer<'a> {
 
     /// Convert an AST statement to IR in static context (super uses `_super.X` not `_super.prototype.X`)
     fn convert_statement_static(&self, idx: NodeIndex) -> IRNode {
-        let converter = self.make_converter().with_static(true);
+        let converter = self
+            .make_converter()
+            .with_static(true)
+            .with_await_as_yield(true);
         let result = converter.convert_statement(idx);
         self.collect_from_converter(&converter);
         result
@@ -664,6 +838,7 @@ impl<'a> ES5ClassTransformer<'a> {
         let converter = self
             .make_converter()
             .with_static(true)
+            .with_await_as_yield(true)
             .with_class_alias(Some(class_alias.to_string()));
         let result = converter.convert_statement(idx);
         self.collect_from_converter(&converter);
@@ -1219,6 +1394,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 Method {
                     parameters: NodeList,
                     return_type: NodeIndex,
+                    async_returns_promise: bool,
                 },
                 Accessor {
                     name: NodeIndex,
@@ -1236,9 +1412,21 @@ impl<'a> ES5ClassTransformer<'a> {
                     if !method.body.is_some() {
                         continue;
                     }
+                    let has_async_modifier = self
+                        .arena
+                        .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
+                    let has_generator_asterisk = method.asterisk_token
+                        || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                            self.source_text,
+                            member_node.pos,
+                            self.arena
+                                .get(method.body)
+                                .map_or(member_node.end, |body| body.pos),
+                        );
                     let meta = MemberMeta::Method {
                         parameters: method.parameters.clone(),
                         return_type: method.type_annotation,
+                        async_returns_promise: has_async_modifier && !has_generator_asterisk,
                     };
                     (&method.modifiers, method.name, false, false, meta)
                 }
@@ -1330,10 +1518,13 @@ impl<'a> ES5ClassTransformer<'a> {
                     MemberMeta::Method {
                         parameters,
                         return_type,
+                        async_returns_promise,
                     } => {
                         let param_types = serialize_param_types(self.arena, parameters);
                         let ret_type = if return_type.is_some() {
                             serialize_type_for_metadata(self.arena, *return_type)
+                        } else if *async_returns_promise {
+                            "Promise".to_string()
                         } else {
                             "void 0".to_string()
                         };
@@ -1588,11 +1779,6 @@ impl<'a> ES5ClassTransformer<'a> {
         self.convert_block_body_with_alias(block_idx, None)
     }
 
-    /// Convert a block body to IR statements in static context
-    fn convert_block_body_static(&self, block_idx: NodeIndex) -> Vec<IRNode> {
-        self.convert_block_body_with_alias_static(block_idx, None)
-    }
-
     /// Convert a block body to IR statements, optionally prepending a class alias declaration
     fn convert_block_body_with_alias(
         &self,
@@ -1617,6 +1803,47 @@ impl<'a> ES5ClassTransformer<'a> {
         class_alias: Option<String>,
         is_static: bool,
     ) -> Vec<IRNode> {
+        self.convert_block_body_with_alias_and_this_capture_impl(
+            block_idx,
+            class_alias,
+            None,
+            is_static,
+        )
+    }
+
+    fn convert_block_body_with_this_capture_alias(
+        &self,
+        block_idx: NodeIndex,
+        lexical_this_capture_alias: Option<String>,
+    ) -> Vec<IRNode> {
+        self.convert_block_body_with_alias_and_this_capture_impl(
+            block_idx,
+            None,
+            lexical_this_capture_alias,
+            false,
+        )
+    }
+
+    fn convert_block_body_static_with_this_capture_alias(
+        &self,
+        block_idx: NodeIndex,
+        lexical_this_capture_alias: Option<String>,
+    ) -> Vec<IRNode> {
+        self.convert_block_body_with_alias_and_this_capture_impl(
+            block_idx,
+            None,
+            lexical_this_capture_alias,
+            true,
+        )
+    }
+
+    fn convert_block_body_with_alias_and_this_capture_impl(
+        &self,
+        block_idx: NodeIndex,
+        class_alias: Option<String>,
+        lexical_this_capture_alias: Option<String>,
+        is_static: bool,
+    ) -> Vec<IRNode> {
         // Snapshot hoisted temps before converting statements
         let hoisted_before = self.extra_hoisted_temps.borrow().len();
         let saved_temp_counter = self.temp_var_counter.get();
@@ -1625,6 +1852,8 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut stmts = if let Some(block_node) = self.arena.get(block_idx)
             && let Some(block) = self.arena.get_block(block_node)
         {
+            let trailing_comment_limit =
+                self.body_closing_brace_pos(block_idx).map(|pos| pos as u32);
             let mut converted = Vec::new();
             for &stmt_idx in &block.statements.nodes {
                 if let Some(stmt_node) = self.arena.get(stmt_idx)
@@ -1636,6 +1865,8 @@ impl<'a> ES5ClassTransformer<'a> {
                     stmt_idx,
                     is_static,
                     class_alias.as_deref(),
+                    lexical_this_capture_alias.as_deref(),
+                    trailing_comment_limit,
                 ));
             }
             converted
@@ -1675,6 +1906,96 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         stmts
+    }
+
+    fn this_capture_alias_for_body(
+        &self,
+        body_idx: NodeIndex,
+        params: Option<&NodeList>,
+    ) -> Option<String> {
+        if !self.constructor_needs_this_capture(body_idx) {
+            return None;
+        }
+
+        let mut suffix = 0usize;
+        loop {
+            let candidate = if suffix == 0 {
+                "_this".to_string()
+            } else {
+                format!("_this_{suffix}")
+            };
+            if !self.body_or_params_has_binding_name(body_idx, params, &candidate) {
+                return Some(candidate);
+            }
+            suffix += 1;
+        }
+    }
+
+    fn body_or_params_has_binding_name(
+        &self,
+        body_idx: NodeIndex,
+        params: Option<&NodeList>,
+        name: &str,
+    ) -> bool {
+        params.is_some_and(|params| self.node_list_has_binding_name(params, name))
+            || self.node_has_binding_name(body_idx, name)
+    }
+
+    fn node_list_has_binding_name(&self, nodes: &NodeList, name: &str) -> bool {
+        nodes
+            .nodes
+            .iter()
+            .any(|&idx| self.node_has_binding_name(idx, name))
+    }
+
+    fn node_has_binding_name(&self, idx: NodeIndex, name: &str) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::Identifier as u16
+            && self.arena.get_identifier_text(idx) == Some(name)
+        {
+            return true;
+        }
+
+        if let Some(param) = self.arena.get_parameter(node)
+            && self.node_has_binding_name(param.name, name)
+        {
+            return true;
+        }
+        if let Some(decl) = self.arena.get_variable_declaration(node)
+            && self.node_has_binding_name(decl.name, name)
+        {
+            return true;
+        }
+        if let Some(function) = self.arena.get_function(node)
+            && self.node_has_binding_name(function.name, name)
+        {
+            return true;
+        }
+        if let Some(class) = self.arena.get_class(node)
+            && self.node_has_binding_name(class.name, name)
+        {
+            return true;
+        }
+        if let Some(pattern) = self.arena.get_binding_pattern(node) {
+            for &element_idx in &pattern.elements.nodes {
+                let Some(element_node) = self.arena.get(element_idx) else {
+                    continue;
+                };
+                if let Some(element) = self.arena.get_binding_element(element_node)
+                    && self.node_has_binding_name(element.name, name)
+                {
+                    return true;
+                }
+            }
+        }
+
+        self.arena
+            .get_children(idx)
+            .into_iter()
+            .any(|child| self.node_has_binding_name(child, name))
     }
 
     /// Transform a class declaration to IR
@@ -1752,7 +2073,7 @@ impl<'a> ES5ClassTransformer<'a> {
         self.computed_prop_temp_map.clear();
         self.current_static_class_alias =
             if self.static_members_need_class_alias(&class_data.members) {
-                Some(self.generate_temp_name())
+                Some(generated_auto_accessor_name(0))
             } else if self
                 .auto_accessors
                 .iter()
@@ -2032,18 +2353,23 @@ impl<'a> ES5ClassTransformer<'a> {
         } else {
             None
         };
-        // The deferred static block IIFEs (rendered after the class IIFE) may
-        // reference the class self-reference alias when their `this` was
-        // rewritten by `convert_statement_static_with_class_alias`. In that
-        // case the alias must be declared/assigned outside the class IIFE so
-        // the post-IIFE blocks can resolve it (issue #3967).
-        let deferred_block_class_alias = if !deferred_static_blocks.is_empty() {
-            self.current_static_class_alias.clone()
-        } else {
-            None
-        };
+        // The deferred static block IIFEs (rendered after the class IIFE) only
+        // need an outside class-value alias when lowering actually referenced
+        // that alias. Recovered `super()` calls in invalid static blocks, for
+        // example, still lower through `_super.call(this)` and should not create
+        // a dead class alias.
+        let deferred_block_class_alias = self
+            .current_static_class_alias
+            .as_ref()
+            .filter(|alias| {
+                deferred_static_blocks
+                    .iter()
+                    .any(|block| block.contains_identifier(alias))
+            })
+            .cloned();
         Some(IRNode::ES5ClassIIFE {
             name: self.class_name.clone().into(),
+            binding_name: None,
             base_class: base_class.map(Box::new),
             super_param: self.has_extends.then(|| self.super_name.clone().into()),
             body,
@@ -2296,28 +2622,53 @@ impl<'a> ES5ClassTransformer<'a> {
                 .map(|param| has_parameter_property_modifier(self.arena, &param.modifiers))
                 .unwrap_or(false)
         });
+        let has_destructuring_params = params.nodes.iter().any(|&p| {
+            self.arena
+                .get(p)
+                .and_then(|n| self.arena.get_parameter(n))
+                .and_then(|param| self.arena.get(param.name))
+                .is_some_and(|name| {
+                    name.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || name.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                })
+        });
         let has_private_fields = self.private_fields.iter().any(|f| !f.is_static);
         let has_auto_accessors = self.auto_accessors.iter().any(|a| !a.is_static);
         let has_private_accessors = self.private_accessors.iter().any(|a| !a.is_static);
-        let stmts_before_super = super_stmt_idx.map(|_| super_stmt_position).unwrap_or(0);
         let stmts_after_super = super_stmt_idx
             .map(|_| block.statements.nodes.len() - super_stmt_position - 1)
             .unwrap_or(0);
         let needs_this_capture = self.constructor_needs_this_capture(body_idx);
 
-        let can_use_simple_return = super_stmt_idx.is_some()
-            && stmts_before_super == 0
+        let can_use_tail_super_return = super_stmt_idx.is_some()
             && stmts_after_super == 0
             && instance_props.is_empty()
             && !has_param_props
+            && !has_destructuring_params
             && !has_private_fields
             && !has_auto_accessors
             && !has_private_accessors
             && !needs_this_capture;
 
-        if can_use_simple_return {
-            // Simple form: return _super.call(this, args) || this;
+        if can_use_tail_super_return {
+            let mut prev_stmt_end = body_node.pos;
+            for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
+                if i >= super_stmt_position {
+                    break;
+                }
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.emit_leading_statement_comments(body, prev_stmt_end, stmt_node.pos);
+                    prev_stmt_end = stmt_node.end;
+                }
+                body.push(self.convert_statement(stmt_idx));
+            }
+
             if let Some(super_idx) = super_stmt_idx {
+                if let Some(super_node) = self.arena.get(super_idx) {
+                    self.emit_leading_statement_comments(body, prev_stmt_end, super_node.pos);
+                }
+                // Tail form: earlier statements remain intact, then the final
+                // `super()` can return directly without materializing `_this`.
                 let super_return = self.emit_super_call_return_ir(super_idx);
                 body.push(super_return);
             }
@@ -2404,9 +2755,55 @@ impl<'a> ES5ClassTransformer<'a> {
             body.insert(0, IRNode::VarDeclList(var_decls));
         }
 
+        let remaining_can_complete_normally = if super_stmt_idx.is_some() {
+            self.statements_can_complete_normally(
+                &block.statements.nodes[(super_stmt_position + 1)..],
+            )
+        } else {
+            true
+        };
+
         // return _this;
-        if super_stmt_idx.is_some() {
+        if super_stmt_idx.is_some() && remaining_can_complete_normally {
             body.push(IRNode::ret(Some(IRNode::id("_this"))));
+        }
+    }
+
+    fn statements_can_complete_normally(&self, statements: &[NodeIndex]) -> bool {
+        for &stmt_idx in statements {
+            if !self.statement_can_complete_normally(stmt_idx) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn statement_can_complete_normally(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(stmt_idx) else {
+            return true;
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::RETURN_STATEMENT
+                || k == syntax_kind_ext::THROW_STATEMENT =>
+            {
+                false
+            }
+            k if k == syntax_kind_ext::BLOCK => self
+                .arena
+                .get_block(node)
+                .is_none_or(|block| self.statements_can_complete_normally(&block.statements.nodes)),
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                let Some(if_stmt) = self.arena.get_if_statement(node) else {
+                    return true;
+                };
+                if if_stmt.else_statement.is_none() {
+                    return true;
+                }
+                self.statement_can_complete_normally(if_stmt.then_statement)
+                    || self.statement_can_complete_normally(if_stmt.else_statement)
+            }
+            _ => true,
         }
     }
 
@@ -3004,7 +3401,9 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let prop_name = self.get_property_name_ir(prop_data.name)?;
 
-        let value = self.convert_expression(prop_data.initializer);
+        let value = self
+            .convert_async_arrow_property_initializer(prop_data.initializer)
+            .unwrap_or_else(|| self.convert_expression(prop_data.initializer));
 
         if self.use_define_for_class_fields {
             Some(IRNode::DefineProperty {
@@ -3049,6 +3448,43 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
             }
         }
+    }
+
+    fn convert_async_arrow_property_initializer(&self, initializer: NodeIndex) -> Option<IRNode> {
+        let node = self.arena.get(initializer)?;
+        if node.kind != syntax_kind_ext::ARROW_FUNCTION {
+            return None;
+        }
+        let arrow = self.arena.get_function(node)?;
+        if !arrow.is_async {
+            return None;
+        }
+
+        let mut async_transformer = AsyncES5Transformer::new(self.arena);
+        if let Some(source_text) = self.source_text {
+            async_transformer.set_source_text(source_text);
+        }
+        self.configure_async_disposable_context(&mut async_transformer);
+        let has_await = async_transformer.body_contains_await(arrow.body);
+        let mut generator_body = async_transformer.transform_generator_body(arrow.body, has_await);
+        self.sync_async_disposable_context(&mut async_transformer);
+        let hoisted_var_groups =
+            AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
+
+        Some(IRNode::FunctionExpr {
+            name: None,
+            parameters: self.extract_parameters(&arrow.parameters),
+            body: vec![IRNode::AwaiterCall {
+                this_arg: Box::new(IRNode::id("_this")),
+                needs_lexical_this_capture: generator_body.contains_captured_this_reference(),
+                generator_body: Box::new(generator_body),
+                hoisted_var_groups,
+                promise_constructor: self.async_method_promise_constructor(arrow.type_annotation),
+                multiline_callback: false,
+            }],
+            is_expression_body: true,
+            body_source_range: None,
+        })
     }
 
     /// Get property name as IR-friendly representation
@@ -3146,9 +3582,12 @@ impl<'a> ES5ClassTransformer<'a> {
         ast_params: &tsz_parser::parser::NodeList,
         ir_params: &[IRParam],
     ) -> Vec<IRNode> {
-        use std::borrow::Cow;
         let mut prologue = Vec::new();
         let mut ir_idx = 0;
+        let mut reserved_temp_names: FxHashSet<String> = ir_params
+            .iter()
+            .map(|param| param.name.to_string())
+            .collect();
 
         for &param_idx in &ast_params.nodes {
             let Some(param_node) = self.arena.get(param_idx) else {
@@ -3188,12 +3627,12 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             };
 
-            // Generate destructuring: `var a = _a.a, b = _a.b;`
             if let Some(name_n) = name_node
                 && name_n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 && let Some(pattern) = self.arena.get_binding_pattern(name_n)
             {
-                let mut parts = Vec::new();
+                let mut declarations = Vec::new();
+                let mut rest_excluded = Vec::new();
                 for &elem_idx in &pattern.elements.nodes {
                     if let Some(elem_node) = self.arena.get(elem_idx)
                         && let Some(elem) = self.arena.get_binding_element(elem_node)
@@ -3201,25 +3640,128 @@ impl<'a> ES5ClassTransformer<'a> {
                         let elem_name =
                             get_identifier_text(self.arena, elem.name).unwrap_or_default();
                         if !elem_name.is_empty() {
+                            if elem.dot_dot_dot_token {
+                                let excluded =
+                                    rest_excluded.iter().cloned().map(IRNode::string).collect();
+                                declarations.push(IRNode::var_decl(
+                                    elem_name,
+                                    Some(IRNode::call(
+                                        IRNode::RuntimeHelper("__rest".into()),
+                                        vec![
+                                            IRNode::id(temp_name.clone()),
+                                            IRNode::ArrayLiteral(excluded),
+                                        ],
+                                    )),
+                                ));
+                                continue;
+                            }
+
                             let prop_name = if elem.property_name.is_some() {
                                 get_identifier_text(self.arena, elem.property_name)
                                     .unwrap_or_else(|| elem_name.clone())
                             } else {
                                 elem_name.clone()
                             };
-                            parts.push(format!("{elem_name} = {temp_name}.{prop_name}"));
+                            rest_excluded.push(prop_name.clone());
+                            declarations.push(IRNode::var_decl(
+                                elem_name,
+                                Some(IRNode::prop(IRNode::id(temp_name.clone()), prop_name)),
+                            ));
                         }
                     }
                 }
-                if !parts.is_empty() {
-                    prologue.push(IRNode::ExpressionStatement(Box::new(IRNode::Raw(
-                        Cow::Owned(format!("var {}", parts.join(", "))),
-                    ))));
+                if !declarations.is_empty() {
+                    prologue.push(IRNode::VarDeclList(declarations));
+                }
+            } else if let Some(name_n) = name_node
+                && name_n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                && let Some(pattern) = self.arena.get_binding_pattern(name_n)
+            {
+                let mut declarations = Vec::new();
+                let source_name = if self.downlevel_iteration && !pattern.elements.nodes.is_empty()
+                {
+                    let read_name = Self::fresh_destructuring_temp(&mut reserved_temp_names);
+                    let mut read_args = vec![IRNode::id(temp_name.clone())];
+                    if let Some(limit) = self.array_binding_read_limit(pattern) {
+                        read_args.push(IRNode::number(limit.to_string()));
+                    }
+                    declarations.push(IRNode::var_decl(
+                        read_name.clone(),
+                        Some(IRNode::call(
+                            IRNode::RuntimeHelper("__read".into()),
+                            read_args,
+                        )),
+                    ));
+                    read_name
+                } else {
+                    temp_name.clone()
+                };
+
+                for (element_index, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
+                    let Some(elem_node) = self.arena.get(elem_idx) else {
+                        continue;
+                    };
+                    let Some(elem) = self.arena.get_binding_element(elem_node) else {
+                        continue;
+                    };
+                    let elem_name = get_identifier_text(self.arena, elem.name).unwrap_or_default();
+                    if elem_name.is_empty() {
+                        continue;
+                    }
+
+                    let initializer = if elem.dot_dot_dot_token {
+                        IRNode::call(
+                            IRNode::prop(IRNode::id(source_name.clone()), "slice"),
+                            vec![IRNode::number(element_index.to_string())],
+                        )
+                    } else {
+                        IRNode::elem(
+                            IRNode::id(source_name.clone()),
+                            IRNode::number(element_index.to_string()),
+                        )
+                    };
+                    declarations.push(IRNode::var_decl(elem_name, Some(initializer)));
+                }
+
+                if !declarations.is_empty() {
+                    prologue.push(IRNode::VarDeclList(declarations));
                 }
             }
             ir_idx += 1;
         }
         prologue
+    }
+
+    fn fresh_destructuring_temp(reserved: &mut FxHashSet<String>) -> String {
+        let mut idx = 0usize;
+        loop {
+            let candidate = if idx < 26 {
+                format!("_{}", (b'a' + idx as u8) as char)
+            } else {
+                format!("_{idx}")
+            };
+            if reserved.insert(candidate.clone()) {
+                return candidate;
+            }
+            idx += 1;
+        }
+    }
+
+    fn array_binding_read_limit(
+        &self,
+        pattern: &tsz_parser::parser::node::BindingPatternData,
+    ) -> Option<usize> {
+        for &elem_idx in &pattern.elements.nodes {
+            if self
+                .arena
+                .get(elem_idx)
+                .and_then(|node| self.arena.get_binding_element(node))
+                .is_some_and(|elem| elem.dot_dot_dot_token)
+            {
+                return None;
+            }
+        }
+        Some(pattern.elements.nodes.len())
     }
 
     /// Check if any parameters are destructured binding patterns.
@@ -3327,6 +3869,14 @@ impl<'a> ES5ClassTransformer<'a> {
             let mut arrows = Vec::new();
             self.collect_arrow_functions_in_node(prop_data.initializer, &mut arrows);
             for &arrow_idx in &arrows {
+                if self
+                    .arena
+                    .get(arrow_idx)
+                    .and_then(|arrow_node| self.arena.get_function(arrow_node))
+                    .is_some_and(|arrow| arrow.is_async)
+                {
+                    return true;
+                }
                 if let Some(ref transforms) = self.transforms {
                     if let Some(crate::context::transform::TransformDirective::ES5ArrowFunction {
                         captures_this,
@@ -3374,72 +3924,17 @@ impl<'a> ES5ClassTransformer<'a> {
 
     /// Recursively collect arrow function indices starting from a node
     fn collect_arrow_functions_in_node(&self, idx: NodeIndex, arrows: &mut Vec<NodeIndex>) {
-        use tsz_parser::parser::syntax_kind_ext;
-
         let Some(node) = self.arena.get(idx) else {
             return;
         };
 
-        // Check if this node itself is an arrow function
         if node.kind == syntax_kind_ext::ARROW_FUNCTION {
             arrows.push(idx);
         }
 
-        // Recursively check children based on node type
-        // For blocks, check each statement
-        if let Some(block) = self.arena.get_block(node) {
-            for &stmt_idx in &block.statements.nodes {
-                self.collect_arrow_functions_in_node(stmt_idx, arrows);
-            }
+        for child_idx in self.arena.get_children(idx) {
+            self.collect_arrow_functions_in_node(child_idx, arrows);
         }
-        // For expressions with sub-expressions, check those
-        else if let Some(func) = self.arena.get_function(node) {
-            // Check parameters
-            for &param_idx in &func.parameters.nodes {
-                self.collect_arrow_functions_in_node(param_idx, arrows);
-            }
-            // Check body
-            if func.body.is_some() {
-                self.collect_arrow_functions_in_node(func.body, arrows);
-            }
-        }
-        // For variable declarations, check initializer
-        else if let Some(var_decl) = self.arena.get_variable_declaration(node) {
-            if var_decl.initializer.is_some() {
-                self.collect_arrow_functions_in_node(var_decl.initializer, arrows);
-            }
-        }
-        // For variable statements, check declarations
-        else if let Some(var_stmt) = self.arena.get_variable(node) {
-            for &decl_idx in &var_stmt.declarations.nodes {
-                self.collect_arrow_functions_in_node(decl_idx, arrows);
-            }
-        }
-        // For return statements, check expression
-        else if let Some(ret_stmt) = self.arena.get_return_statement(node) {
-            if ret_stmt.expression.is_some() {
-                self.collect_arrow_functions_in_node(ret_stmt.expression, arrows);
-            }
-        }
-        // For expression statements, check expression
-        else if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
-            self.collect_arrow_functions_in_node(expr_stmt.expression, arrows);
-        }
-        // For call expressions, check callee and arguments
-        else if let Some(call) = self.arena.get_call_expr(node) {
-            self.collect_arrow_functions_in_node(call.expression, arrows);
-            if let Some(ref args) = call.arguments {
-                for &arg_idx in &args.nodes {
-                    self.collect_arrow_functions_in_node(arg_idx, arrows);
-                }
-            }
-        }
-        // For binary expressions, check left and right
-        else if let Some(binary) = self.arena.get_binary_expr(node) {
-            self.collect_arrow_functions_in_node(binary.left, arrows);
-            self.collect_arrow_functions_in_node(binary.right, arrows);
-        }
-        // Note: This is a simplified traversal - may miss some edge cases
     }
 }
 

@@ -754,7 +754,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let sig = self.ctx.arena.get_signature(member_node)?;
-            let name_text = self.node_text(sig.name)?.trim().to_string();
+            let name_text = self.get_property_name(sig.name)?;
             if name_text != prop_name || sig.type_annotation.is_none() {
                 continue;
             }
@@ -781,7 +781,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let sig = self.ctx.arena.get_signature(member_node)?;
-            let name_text = self.node_text(sig.name)?.trim().to_string();
+            let name_text = self.get_property_name(sig.name)?;
             if name_text == prop_name {
                 return Some(sig.name);
             }
@@ -962,7 +962,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
                 let prop_sig = self.ctx.arena.get_signature(instance_member_node)?;
-                let prop_name_text = self.node_text(prop_sig.name)?.trim().to_string();
+                let prop_name_text = self.get_property_name(prop_sig.name)?;
                 if prop_name_text != props_name || prop_sig.type_annotation.is_none() {
                     continue;
                 }
@@ -1084,9 +1084,7 @@ impl<'a> CheckerState<'a> {
 
         // Get component name for the diagnostic message.
         let component_name = self.get_jsx_tag_name_text(tag_name_idx);
-        let children_type_str = self
-            .get_jsx_component_prop_annotation_text(tag_name_idx, &children_prop_name)
-            .unwrap_or_else(|| self.jsx_children_type_display(props_type, children_type));
+        let children_type_str = self.jsx_children_type_display(props_type, children_type);
 
         use crate::diagnostics::diagnostic_codes;
         for &text_idx in text_child_indices {

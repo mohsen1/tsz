@@ -43,6 +43,12 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let emit_invalid_namespace_static =
+            self.should_emit_invalid_namespace_static_modifier(node, &func.modifiers);
+        if emit_invalid_namespace_static {
+            self.write("static ");
+        }
+
         if func.is_async && self.ctx.needs_async_lowering && !func.asterisk_token {
             let func_name = if func.name.is_some() {
                 self.get_identifier_text_idx(func.name)
@@ -390,8 +396,12 @@ impl<'a> Printer<'a> {
         self.write(" = ");
         // Emit inline comments between = and the initializer value.
         if let Some(init_node) = self.arena.get(decl.initializer) {
+            let initializer_comment_line_break =
+                self.last_pending_comment_before_pos_has_trailing_newline(init_node.pos);
             self.emit_comments_before_pos(init_node.pos);
-            if self.pending_block_comment_space {
+            if initializer_comment_line_break && self.writer.is_at_line_start() {
+                self.write_space();
+            } else if self.pending_block_comment_space {
                 self.write_space();
                 self.pending_block_comment_space = false;
             }
@@ -526,6 +536,25 @@ impl<'a> Printer<'a> {
             if let Some(source_text) = self.source_text {
                 transformer.set_source_text(source_text);
             }
+            let enum_name = if enum_decl.name.is_some() {
+                self.get_identifier_text_idx(enum_decl.name)
+            } else {
+                String::new()
+            };
+            let mut folded_export_name = None;
+            if !enum_name.is_empty() {
+                if self.declared_namespace_names.contains(&enum_name) {
+                    transformer.set_emit_var_declaration(false);
+                }
+                if let Some(export_name) = self
+                    .deferred_local_export_bindings
+                    .as_ref()
+                    .and_then(|bindings| bindings.get(&enum_name))
+                {
+                    transformer.set_commonjs_export_fold(export_name);
+                    folded_export_name = Some(export_name.clone());
+                }
+            }
             // Pass previously-evaluated enum member values for cross-enum
             // reference resolution (e.g., `enum Bar { B = Foo.A }`)
             transformer.set_prior_enum_values(&self.prior_enum_member_values);
@@ -567,11 +596,6 @@ impl<'a> Printer<'a> {
                 if let Some(source_text) = self.source_text_for_map() {
                     printer.set_source_text(source_text);
                 }
-                let enum_name = if enum_decl.name.is_some() {
-                    self.get_identifier_text_idx(enum_decl.name)
-                } else {
-                    String::new()
-                };
 
                 // Fold namespace export into IIFE closing when emitting exported enums
                 // in a namespace: `(Color = A.Color || (A.Color = {}))` instead of
@@ -592,17 +616,10 @@ impl<'a> Printer<'a> {
                         output = format!("{accessor_var_prefix}{}", &output[var_prefix.len()..]);
                     }
                 }
-                if !enum_name.is_empty() && self.declared_namespace_names.contains(&enum_name) {
-                    let var_prefix = format!("var {enum_name};\n");
-                    if output.starts_with(&var_prefix) {
-                        // Strip the var declaration and any leading indentation
-                        // from the remaining IIFE text, since the main writer's
-                        // ensure_indent() will re-add indentation.
-                        output = output[var_prefix.len()..]
-                            .trim_start_matches(' ')
-                            .to_string();
-                    }
-                } else if !enum_name.is_empty() && self.should_use_let_for_enum(idx) {
+                if !enum_name.is_empty()
+                    && !self.declared_namespace_names.contains(&enum_name)
+                    && self.should_use_let_for_enum(idx)
+                {
                     // Inside a block scope (namespace IIFE or function body) at ES2015+,
                     // use `let` instead of `var` to preserve block scoping semantics.
                     let var_prefix = format!("var {enum_name};");
@@ -629,6 +646,16 @@ impl<'a> Printer<'a> {
 
                 // Track enum name for subsequent namespace/enum merges.
                 if !enum_name.is_empty() {
+                    if let Some(export_name) = folded_export_name {
+                        self.ctx
+                            .module_state
+                            .iife_exported_names
+                            .insert(enum_name.clone());
+                        self.ctx
+                            .module_state
+                            .inline_exported_names
+                            .insert(export_name);
+                    }
                     self.declared_namespace_names.insert(enum_name);
                 }
             }
@@ -724,6 +751,10 @@ impl<'a> Printer<'a> {
     }
 
     fn recovered_interface_body_statements(&self, node: &Node) -> Vec<String> {
+        if let Some(statement) = self.recovered_predefined_interface_name_statement(node) {
+            return vec![statement];
+        }
+
         let Some(text) = self.source_text else {
             return Vec::new();
         };
@@ -753,6 +784,23 @@ impl<'a> Printer<'a> {
                 })
             })
             .collect()
+    }
+
+    fn recovered_predefined_interface_name_statement(&self, node: &Node) -> Option<String> {
+        let interface = self.arena.get_interface(node)?;
+        if !interface.members.nodes.is_empty()
+            || interface.type_parameters.is_some()
+            || interface.heritage_clauses.is_some()
+        {
+            return None;
+        }
+
+        let name = self.get_identifier_text_idx(interface.name);
+        match name.as_str() {
+            "any" => Some("interface;".to_string()),
+            "void" => Some("void {};".to_string()),
+            _ => None,
+        }
     }
 
     fn recover_interface_var_statement(&self, line: &str) -> Option<String> {

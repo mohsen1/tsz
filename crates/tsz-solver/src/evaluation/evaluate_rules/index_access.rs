@@ -3,7 +3,9 @@
 //! Handles TypeScript's index access types: `T[K]`
 //! Including property access, array indexing, and tuple indexing.
 
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{
+    TypeSubstitution, instantiate_type, instantiate_type_preserving_meta_cached,
+};
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
@@ -24,7 +26,7 @@ use super::super::evaluate::{
 };
 use super::apparent::make_apparent_method_type;
 use super::string_index_helpers::string_index_signature_applies;
-use crate::objects::apparent::is_member;
+use crate::objects::apparent::{is_member, literal_value_intrinsic_kind};
 
 const MAX_UNION_INDEX_SIZE: usize = 500;
 /// Lazily compute and cache array member types (length + apparent methods).
@@ -436,9 +438,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
     }
 
     fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
-        self.evaluator
-            .apparent_literal_kind(value)
-            .and_then(|kind| self.evaluate_apparent_primitive(kind))
+        self.evaluate_apparent_primitive(literal_value_intrinsic_kind(value))
     }
 
     fn visit_object(&mut self, shape_id: u32) -> Self::Output {
@@ -882,14 +882,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
                 .constraints_semantically_match(self.index_type, mapped.constraint);
 
         if can_substitute {
-            // `{ [K in Keys]: F<K> }[Keys]` is a union over each key, not `F<Keys>`.
-            // When the index is the whole symbolic key space (typically `keyof T`),
-            // substituting `K := Keys` collapses per-key conditionals like
-            // `{ [K in keyof T]: T[K] extends U ? K : never }[keyof T]` into
-            // `T[keyof T] extends U ? keyof T : never`, which is unsound.
-            // Preserve the per-key relationship by evaluating the template against a
-            // constrained iteration variable instead of the whole key-space type.
+            // `{ [K in Keys]: F<K> }[Keys]` is a per-key union, not `F<Keys>`.
+            // Preserve that relationship for symbolic key-space indexes.
             if self.index_is_symbolic_key_space(mapped.constraint) {
+                if let Some(per_key_result) =
+                    super::mapped_template_index::try_evaluate_mapped_template_per_concrete_key(
+                        self.evaluator,
+                        &mapped,
+                    )
+                {
+                    return Some(per_key_result);
+                }
                 return Some(self.instantiate_mapped_template_with_constraint_param(&mapped));
             }
 
@@ -1507,6 +1510,80 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         ))
     }
 
+    fn try_mapped_application_type_param_substitution(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> Option<TypeId> {
+        if object_type.is_intrinsic() {
+            return None;
+        }
+
+        let application_type = if matches!(
+            self.interner().lookup(object_type),
+            Some(TypeData::Application(_))
+        ) {
+            object_type
+        } else {
+            self.interner()
+                .get_display_alias(object_type)
+                .filter(|&alias| {
+                    matches!(
+                        self.interner().lookup(alias),
+                        Some(TypeData::Application(_))
+                    )
+                })?
+        };
+
+        let instantiated = self.instantiate_mapped_application_preserving_meta(application_type)?;
+        if instantiated == application_type {
+            return None;
+        }
+
+        if !matches!(
+            self.interner().lookup(instantiated),
+            Some(TypeData::Mapped(_))
+        ) {
+            return None;
+        }
+
+        self.try_mapped_type_param_substitution(instantiated, index_type)
+    }
+
+    fn instantiate_mapped_application_preserving_meta(
+        &mut self,
+        application_type: TypeId,
+    ) -> Option<TypeId> {
+        let app_id = match self.interner().lookup(application_type)? {
+            TypeData::Application(app_id) => app_id,
+            _ => return None,
+        };
+        let app = self.interner().type_application(app_id);
+        let def_id = match self.interner().lookup(app.base)? {
+            TypeData::Lazy(def_id) => def_id,
+            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref)?,
+            _ => return None,
+        };
+        let type_params = self.resolver().get_lazy_type_params(def_id)?;
+        let resolved = self.resolver().resolve_lazy(def_id, self.interner())?;
+        if !matches!(self.interner().lookup(resolved), Some(TypeData::Mapped(_))) {
+            return None;
+        }
+
+        let expanded_args = self.expand_type_args(&app.args);
+        let mut substitution = TypeSubstitution::new();
+        for (param, &arg) in type_params.iter().zip(expanded_args.iter()) {
+            substitution.insert(param.name, arg);
+        }
+
+        Some(instantiate_type_preserving_meta_cached(
+            self.interner(),
+            self.query_db(),
+            resolved,
+            &substitution,
+        ))
+    }
+
     /// Helper to recursively evaluate an index access while respecting depth limits.
     /// Creates an `IndexAccess` type and evaluates it through the main `evaluate()` method.
     pub(crate) fn recurse_index_access(
@@ -1533,6 +1610,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // should produce `(option: T & {kind:K}) => string`, not a union of functions.
         if let Some(mapped_result) =
             self.try_mapped_type_param_substitution(object_type, index_type)
+        {
+            return mapped_result;
+        }
+        if let Some(mapped_result) =
+            self.try_mapped_application_type_param_substitution(object_type, index_type)
         {
             return mapped_result;
         }

@@ -178,6 +178,35 @@ impl<'a> CheckerState<'a> {
             }
             let mut return_type =
                 self.get_type_of_node_with_request(return_data.expression, &request);
+            if let Some(contextual_type) = request.contextual_type
+                && self
+                    .ctx
+                    .arena
+                    .get(return_data.expression)
+                    .is_some_and(|expr_node| expr_node.kind == syntax_kind_ext::NEW_EXPRESSION)
+                && (self
+                    .contextual_application_recovers_unknown_result(return_type, contextual_type)
+                    || self.contextual_application_recovers_type_param_result(
+                        return_type,
+                        contextual_type,
+                    )
+                    || (crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        return_type,
+                    ) && self
+                        .ctx
+                        .arena
+                        .get_call_expr_at(return_data.expression)
+                        .is_some_and(|new_expr| {
+                            self.contextual_application_matches_new_target(
+                                new_expr.expression,
+                                contextual_type,
+                            )
+                        })))
+                && self.is_assignable_to(contextual_type, expected_type)
+            {
+                return_type = contextual_type;
+            }
             self.ctx.preserve_literal_types = prev_preserve_literals;
             if self.ctx.in_async_context() {
                 // Use unwrap_async_return_type_for_body which handles unions
@@ -202,7 +231,7 @@ impl<'a> CheckerState<'a> {
                 let mut raw_return_type = self
                     .get_type_of_node_with_request(return_data.expression, &TypingRequest::NONE);
                 raw_return_type = self.unwrap_async_return_type_for_body(raw_return_type);
-                return_expr_diag_snap.rollback(&mut self.ctx);
+                return_expr_diag_snap.rollback(&mut self.ctx.diagnostic_state());
                 let source_str = self
                     .object_literal_source_type_display(return_data.expression, Some(expected_type))
                     .unwrap_or_else(|| self.format_type_diagnostic_widened(raw_return_type));
@@ -317,21 +346,18 @@ impl<'a> CheckerState<'a> {
                     );
                 }
                 false
-            } else if self.return_annotation_is_enumerate_length(stmt_idx) {
-                self.error_type_not_assignable_generic_at(
-                    TypeId::NUMBER,
-                    expected_type,
-                    fallback_error_node,
-                );
-                false
             } else if self.should_report_primitive_to_generic_indexed_conditional_return(
                 return_type,
                 expected_type,
             ) {
+                // tsc anchors this diagnostic at the `return` statement, not
+                // the expression: there is no source-side shape to elaborate
+                // into when the return value is a primitive, so the failure
+                // belongs on the statement keyword.
                 self.error_type_not_assignable_generic_at(
                     return_type,
                     expected_type,
-                    source_error_node,
+                    fallback_error_node,
                 );
                 false
             } else {
@@ -408,23 +434,6 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn return_annotation_is_enumerate_length(&self, stmt_idx: NodeIndex) -> bool {
-        let Some(fn_idx) = self.find_enclosing_function(stmt_idx) else {
-            return false;
-        };
-        let Some(fn_node) = self.ctx.arena.get(fn_idx) else {
-            return false;
-        };
-        let Some(func) = self.ctx.arena.get_function(fn_node) else {
-            return false;
-        };
-        if func.type_annotation.is_none() {
-            return false;
-        }
-        self.node_text(func.type_annotation)
-            .is_some_and(|text| text.contains("Enumerate<") && text.contains("length"))
-    }
-
     fn should_report_primitive_to_generic_indexed_conditional_return(
         &self,
         source: TypeId,
@@ -435,10 +444,6 @@ impl<'a> CheckerState<'a> {
             TypeId::NUMBER | TypeId::STRING | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
         ) {
             return false;
-        }
-        let target_display = self.format_type_diagnostic(target);
-        if target_display.starts_with("Enumerate<") && target_display.contains("[\"length\"]") {
-            return true;
         }
         let Some((base, args)) =
             crate::query_boundaries::common::application_info(self.ctx.types, target)

@@ -831,3 +831,81 @@ fn test_ts_program_emit_json_threads_declaration_and_source_map_flags() {
         assert_eq!(file["sourceMap"], Value::Bool(false));
     }
 }
+
+fn completion_labels_at(source: &str, line: u32, character: u32) -> Vec<String> {
+    let service = TsLanguageService::new("mod.ts".to_string(), source.to_string());
+    let json = service.get_completions_at_position(line, character);
+    let items: Vec<Value> = serde_json::from_str(&json).unwrap();
+    items
+        .into_iter()
+        .filter_map(|item| item["label"].as_str().map(str::to_string))
+        .collect()
+}
+
+#[test]
+fn test_wasm_language_service_function_member_completions() {
+    let cases: &[(&str, u32, u32, &str)] = &[
+        (
+            "function add(a, b) { return a + b; }\nadd.",
+            1,
+            4,
+            "named-function",
+        ),
+        (
+            "const fn = (x: number) => x * 2;\nfn.",
+            1,
+            3,
+            "arrow-function",
+        ),
+        (
+            "const mul = function(a: number, b: number) { return a * b; };\nmul.",
+            1,
+            4,
+            "function-expression",
+        ),
+    ];
+    for (source, line, character, desc) in cases {
+        let labels = completion_labels_at(source, *line, *character);
+        for expected in ["apply", "bind", "call", "length", "name"] {
+            assert!(
+                labels.iter().any(|l| l == expected),
+                "expected `{expected}` in {desc} completions but got {labels:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_wasm_language_service_array_member_completions() {
+    let cases: &[(&str, u32, u32, &str)] = &[
+        ("const arr = [1, 2, 3];\narr.", 1, 4, "array-literal"),
+        ("const arr: number[] = [];\narr.", 1, 4, "typed-array"),
+        ("const t: [string, number] = [\"a\", 1];\nt.", 1, 2, "tuple"),
+    ];
+    for (source, line, character, desc) in cases {
+        let labels = completion_labels_at(source, *line, *character);
+        for expected in ["length", "push", "pop", "map", "filter", "forEach", "slice"] {
+            assert!(
+                labels.iter().any(|l| l == expected),
+                "expected `{expected}` in {desc} completions but got {labels:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_wasm_language_service_primitive_excludes_constructor() {
+    let cases: &[(&str, u32, u32, &str)] = &[
+        ("const b = true;\nb.", 1, 2, "boolean-literal"),
+        ("const b: boolean = false;\nb.", 1, 2, "typed-boolean"),
+        ("const n = 42;\nn.", 1, 2, "number-literal"),
+        ("const s: string = \"\";\ns.", 1, 2, "typed-string"),
+    ];
+    for (source, line, character, desc) in cases {
+        let labels = completion_labels_at(source, *line, *character);
+        assert!(
+            !labels.iter().any(|l| l == "constructor"),
+            "`constructor` must not appear in {desc} completions, got {labels:?}"
+        );
+    }
+}

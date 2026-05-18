@@ -1,4 +1,8 @@
 use super::*;
+use crate::context::emit::EmitContext;
+use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+use crate::lowering::LoweringPass;
+use tsz_common::ScriptTarget;
 
 // =============================================================================
 // TC39 Decorator Emitter - Basic Smoke Tests
@@ -28,7 +32,110 @@ fn emit_decorator_with(
     emitter.set_source_text(source);
     emitter.set_use_static_blocks(use_static_blocks);
     emitter.set_use_define_for_class_fields(use_define_for_class_fields);
+    seed_decorator_body_texts(
+        &mut emitter,
+        &parser.arena,
+        source,
+        class_idx,
+        use_static_blocks,
+        use_define_for_class_fields,
+    );
     emitter.emit_class(class_idx)
+}
+
+fn seed_decorator_body_texts(
+    emitter: &mut TC39DecoratorEmitter<'_>,
+    arena: &NodeArena,
+    source: &str,
+    class_idx: NodeIndex,
+    use_static_blocks: bool,
+    use_define_for_class_fields: bool,
+) {
+    let Some(class_node) = arena.get(class_idx) else {
+        return;
+    };
+    let Some(class_data) = arena.get_class(class_node) else {
+        return;
+    };
+    for &member_idx in &class_data.members.nodes {
+        let Some(member_node) = arena.get(member_idx) else {
+            continue;
+        };
+        if let Some(method) = arena.get_method_decl(member_node) {
+            seed_decorator_body_text(
+                emitter,
+                arena,
+                source,
+                method.body,
+                use_static_blocks,
+                use_define_for_class_fields,
+            );
+            continue;
+        }
+        if let Some(accessor) = arena.get_accessor(member_node) {
+            seed_decorator_body_text(
+                emitter,
+                arena,
+                source,
+                accessor.body,
+                use_static_blocks,
+                use_define_for_class_fields,
+            );
+        }
+    }
+}
+
+fn seed_decorator_body_text(
+    emitter: &mut TC39DecoratorEmitter<'_>,
+    arena: &NodeArena,
+    source: &str,
+    body_idx: NodeIndex,
+    use_static_blocks: bool,
+    use_define_for_class_fields: bool,
+) {
+    if body_idx == NodeIndex::NONE {
+        return;
+    }
+    emitter.set_function_body_text(
+        body_idx,
+        render_decorator_body(
+            arena,
+            source,
+            body_idx,
+            use_static_blocks,
+            use_define_for_class_fields,
+        ),
+    );
+}
+
+fn render_decorator_body(
+    arena: &NodeArena,
+    source: &str,
+    body_idx: NodeIndex,
+    use_static_blocks: bool,
+    use_define_for_class_fields: bool,
+) -> String {
+    let options = PrinterOptions {
+        target: if use_static_blocks {
+            ScriptTarget::ES2022
+        } else {
+            ScriptTarget::ES2015
+        },
+        use_define_for_class_fields,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(arena, &ctx).run(body_idx);
+    let mut printer = EmitterPrinter::with_transforms_and_options(arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emitting_function_body_block = true;
+    printer.emit(body_idx);
+    let output = printer.get_output().to_string();
+    if output.trim().is_empty() {
+        "{ }".to_string()
+    } else {
+        output
+    }
 }
 
 #[test]
@@ -117,6 +224,242 @@ fn test_class_decorator_has_class_extra_initializers() {
     );
 }
 
+#[test]
+fn test_static_blocks_private_method_decorator_uses_descriptor_wrapper() {
+    let source = "class C { @dec #foo() {} }";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("let _private_foo_descriptor;"),
+        "Expected descriptor temp for decorated private method.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "__esDecorate(this, _private_foo_descriptor = { value: __setFunctionName(function () { }, \"#foo\") }"
+        ),
+        "Expected descriptor-valued private method decorator application.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("get #foo() { return _private_foo_descriptor.value; }"),
+        "Expected wrapper getter for decorated private method.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\n        #foo()"),
+        "Original private method must not remain in the class body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_static_blocks_private_method_descriptor_body_uses_js_emitter() {
+    let source = "\
+class C {
+    @dec
+    #foo(value: number) {
+        const label: string = String(value);
+        return label;
+    }
+}";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("__setFunctionName(function (value)"),
+        "Expected private method descriptor to use the emitted parameter list.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const label = String(value);"),
+        "Expected private method descriptor body to erase local type annotations.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("value: number") && !output.contains("label: string"),
+        "Descriptor function must not copy TypeScript-only syntax from source text.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_static_blocks_private_method_descriptor_body_is_not_brace_scanned() {
+    let source = r#"
+class C {
+    @dec
+    #foo() {
+        // brace } in a comment
+        const r = /}/;
+        return r.test("}");
+    }
+}
+"#;
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("const r = /}/;"),
+        "Descriptor function should include statements after a comment containing a brace.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return r.test(\"}\");"),
+        "Descriptor function should include statements after a regex/string containing a brace.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_static_blocks_private_accessor_decorators_use_getter_setter_descriptors() {
+    let source = "class C { @dec get #foo() { return 1; } @dec set #foo(value: number) {} }";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("let _private_get_foo_descriptor;"),
+        "Expected getter descriptor temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("let _private_set_foo_descriptor;"),
+        "Expected setter descriptor temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_private_get_foo_descriptor = { get: __setFunctionName(function () { return 1; }, \"#foo\", \"get\") }"
+        ),
+        "Expected descriptor-valued private getter decorator application.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_private_set_foo_descriptor = { set: __setFunctionName(function (value) { }, \"#foo\", \"set\") }"
+        ),
+        "Expected descriptor-valued private setter decorator application.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("get #foo() { return _private_get_foo_descriptor.get.call(this); }"),
+        "Expected wrapper getter for decorated private getter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "set #foo(value) { return _private_set_foo_descriptor.set.call(this, value); }"
+        ),
+        "Expected wrapper setter for decorated private setter.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_class_decorator_static_private_method_is_externalized() {
+    let source = "@dec class C { static #foo() {} }";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("var _C_foo;"),
+        "Expected temp for class-decorated static private method.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static { __setFunctionName(this, \"C\"); }"),
+        "Expected class name helper before static private method temp initialization.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static { _C_foo = function _C_foo() { }; }"),
+        "Expected static private method body to be externalized into a temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("static #foo()"),
+        "Original static private method must not remain in the class body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("static get #foo()"),
+        "Unreferenced static private method should not need a wrapper.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_class_decorator_static_private_method_reference_keeps_wrapper() {
+    let source = "\
+@dec
+class C {
+    static #foo() { return 1; }
+    static bar() { return this.#foo(); }
+}";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("static { _C_foo = function _C_foo() { return 1; }; }"),
+        "Expected static private method implementation to be externalized.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static get #foo() { return _C_foo; }"),
+        "Expected wrapper getter so this.#foo() still resolves.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static bar() { return this.#foo(); }"),
+        "Expected caller to keep its private-name access against the wrapper.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_class_decorator_static_private_method_self_reference_keeps_wrapper() {
+    let source = "\
+@dec
+class C {
+    static #foo() { return this.#foo(); }
+}";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("static { _C_foo = function _C_foo() { return this.#foo(); }; }"),
+        "Expected self-referential implementation to stay externalized.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static get #foo() { return _C_foo; }"),
+        "Expected wrapper getter for the self-reference target.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_class_decorator_static_private_method_temp_renamed_when_user_binding_collides() {
+    let source = "\
+@dec
+class C {
+    static value = _C_foo;
+    static #foo() {}
+}";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("var _C_foo_1;"),
+        "Expected static private method temp to be renamed around user references.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _C_foo;"),
+        "Generated temp must not keep the colliding name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static { _C_foo_1 = function _C_foo_1() { }; }"),
+        "Expected externalized implementation to use the hygienic temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static value = _C_foo;"),
+        "User reference must stay unchanged.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_class_decorator_static_private_method_body_uses_js_emitter() {
+    let source = "\
+@dec
+class C {
+    static #foo(value: number) {
+        const label: string = String(value);
+        return label;
+    }
+}";
+    let output = emit_decorator_with(source, true, true);
+
+    assert!(
+        output.contains("static { _C_foo = function _C_foo(value)"),
+        "Expected externalized static private method to use the emitted parameter list.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const label = String(value);"),
+        "Expected externalized static private method body to erase local type annotations.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("value: number") && !output.contains("label: string"),
+        "Externalized function must not copy TypeScript-only syntax from source text.\nOutput:\n{output}"
+    );
+}
+
 // =============================================================================
 // Decorator Temp Hygiene (#3091)
 // =============================================================================
@@ -155,9 +498,10 @@ class C {
         !output.contains("let _classDescriptor;"),
         "Generated temp must not keep the colliding name. Output:\n{output}"
     );
-    // The user reference inside the class body must be preserved verbatim.
+    // ES2015 class-decorator lowering moves static fields after the decorator
+    // IIFE; the user reference must still point at the original binding.
     assert!(
-        output.contains("static value = _classDescriptor;"),
+        output.contains("_classThis.value = _classDescriptor;"),
         "User binding reference must be preserved unchanged. Output:\n{output}"
     );
 }
@@ -197,7 +541,7 @@ class C {
         "Generated temp must not keep the colliding name. Output:\n{output}"
     );
     assert!(
-        output.contains("static value = _classExtraInitializers;"),
+        output.contains("_classThis.value = _classExtraInitializers;"),
         "User binding reference must be preserved unchanged. Output:\n{output}"
     );
 }
@@ -216,7 +560,7 @@ class C {
         "Expected _classThis temp to be renamed. Output:\n{output}"
     );
     assert!(
-        output.contains("static value = _classThis;"),
+        output.contains("_classThis_1.value = _classThis;"),
         "User binding reference must be preserved unchanged. Output:\n{output}"
     );
 }

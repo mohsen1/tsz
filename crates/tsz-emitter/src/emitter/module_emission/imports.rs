@@ -149,6 +149,40 @@ impl<'a> Printer<'a> {
             .contains(lit.text.as_str())
     }
 
+    pub(in crate::emitter) fn import_decl_should_schedule_wrapped_dependency(
+        &self,
+        node: &Node,
+        import_decl: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        if !self.import_decl_has_runtime_value(import_decl) {
+            return false;
+        }
+
+        let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
+            return true;
+        };
+
+        if clause_node.kind != syntax_kind_ext::IMPORT_CLAUSE {
+            if self.ctx.options.verbatim_module_syntax || self.source_is_js_file {
+                return true;
+            }
+            return self.import_equals_has_value_usage_after_node(node, import_decl);
+        }
+
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return true;
+        };
+        if clause.is_type_only {
+            return false;
+        }
+
+        if self.ctx.options.verbatim_module_syntax || self.source_is_js_file {
+            return true;
+        }
+
+        self.import_has_value_usage_after_node(node, clause)
+    }
+
     fn async_return_type_uses_imported_promise_constructor_after_node(
         &self,
         import_node: &Node,
@@ -262,26 +296,22 @@ impl<'a> Printer<'a> {
     }
 
     fn classic_jsx_factory_roots(&self) -> Vec<String> {
-        if !matches!(
-            self.ctx.options.jsx,
-            JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
-        ) {
+        let uses_classic_factory = match self.jsx_pragmas.runtime {
+            Some(crate::jsx_pragmas::JsxRuntimePragma::Classic) => true,
+            Some(crate::jsx_pragmas::JsxRuntimePragma::Automatic) => false,
+            _ => matches!(
+                self.ctx.options.jsx,
+                JsxEmit::Preserve | JsxEmit::React | JsxEmit::ReactNative
+            ),
+        };
+        if !uses_classic_factory {
             return Vec::new();
         }
 
-        let mut roots = Vec::new();
-        for factory in [self.get_jsx_factory(), self.get_jsx_fragment_factory()] {
-            let Some(root) = factory.split('.').next() else {
-                continue;
-            };
-            if root.is_empty() || !super::super::is_valid_identifier_name(root) {
-                continue;
-            }
-            if !roots.iter().any(|existing| existing == root) {
-                roots.push(root.to_string());
-            }
-        }
-        roots
+        self.jsx_pragmas.classic_factory_roots(
+            self.ctx.options.jsx_factory.as_deref(),
+            self.ctx.options.jsx_fragment_factory.as_deref(),
+        )
     }
 
     pub(in crate::emitter) fn is_classic_jsx_factory_root(&self, name: &str) -> bool {
@@ -1405,7 +1435,16 @@ impl<'a> Printer<'a> {
         is_external: bool,
         is_exported_var: bool,
     ) {
-        if is_exported_var {
+        let is_es_module_output = matches!(
+            self.ctx.options.module,
+            ModuleKind::ES2015 | ModuleKind::ES2020 | ModuleKind::ES2022 | ModuleKind::ESNext
+        );
+
+        if is_exported_var && !is_external && is_es_module_output {
+            self.write("export var ");
+            self.emit_decl_name(import_clause);
+            self.write(" = ");
+        } else if is_exported_var {
             // Emit directly as `exports.b = ...;` — the identifier substitution
             // in emit() will produce `exports.b`.
             self.emit(import_clause);

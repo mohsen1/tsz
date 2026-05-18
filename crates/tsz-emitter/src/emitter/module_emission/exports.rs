@@ -1,7 +1,51 @@
 use super::super::{ModuleKind, Printer};
+use super::core::{CjsExportAssignmentValue, CjsExportVariableSchedule};
+use crate::emitter::declarations::class::class_has_self_references;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::NodeList;
+use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
+
+#[derive(Clone)]
+pub(in crate::emitter) struct ObjectRestExportParts {
+    non_rest_elements: Vec<NodeIndex>,
+    bindings: Vec<ObjectRestExportBinding>,
+    rest_name: String,
+    excluded_props: Vec<String>,
+}
+
+impl ObjectRestExportParts {
+    pub(in crate::emitter) const fn needs_source_temp(&self, has_reusable_source: bool) -> bool {
+        !self.bindings.is_empty() && !has_reusable_source
+    }
+}
+
+#[derive(Clone)]
+struct ObjectRestExportBinding {
+    local_name: String,
+    property_name: String,
+}
+
+struct DestructuringExportBinding {
+    export_name: String,
+    access: DestructuringExportAccess,
+    leading_comment_pos: u32,
+}
+
+enum DestructuringExportAccess {
+    Property(String),
+    Element(usize),
+}
+
+enum EsmObjectRestExportDecl {
+    ObjectRest {
+        initializer: NodeIndex,
+        parts: ObjectRestExportParts,
+    },
+    Plain(NodeIndex),
+}
 
 impl<'a> Printer<'a> {
     /// Write `exports.name` or `exports["name"]` depending on whether the name
@@ -14,6 +58,119 @@ impl<'a> Printer<'a> {
             self.write("exports[\"");
             self.write(export_name);
             self.write("\"]");
+        }
+    }
+
+    /// Emit the assignment target for a CommonJS-exported local when the target
+    /// must update live named exports. Returns `true` when it handled the target.
+    pub(in crate::emitter) fn emit_commonjs_live_export_assignment_target(
+        &mut self,
+        target_idx: NodeIndex,
+    ) -> bool {
+        let Some(target_node) = self.arena.get(target_idx) else {
+            return false;
+        };
+        if target_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(ident) = self.arena.get_identifier(target_node) else {
+            return false;
+        };
+        let local_name = ident.escaped_text.clone();
+        self.emit_commonjs_live_export_assignment_target_name(&local_name)
+    }
+
+    pub(in crate::emitter) fn emit_commonjs_live_export_assignment_target_name(
+        &mut self,
+        local_name: &str,
+    ) -> bool {
+        if local_name.is_empty() || !self.ctx.is_commonjs() {
+            return false;
+        }
+
+        let is_shadowed = self
+            .commonjs_exported_var_shadow_stack
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(local_name));
+        let inline_export = !is_shadowed && self.commonjs_exported_var_names.contains(local_name);
+
+        let mut export_names = self
+            .deferred_local_export_bindings_all
+            .as_ref()
+            .and_then(|bindings| bindings.get(local_name))
+            .cloned()
+            .unwrap_or_default();
+        if export_names.is_empty()
+            && let Some(export_name) = self
+                .deferred_local_export_bindings
+                .as_ref()
+                .and_then(|bindings| bindings.get(local_name))
+        {
+            export_names.push(export_name.clone());
+        }
+
+        if !inline_export && export_names.is_empty() {
+            return false;
+        }
+
+        let mut written_exports: Vec<String> = Vec::new();
+        for export_name in export_names.into_iter().rev() {
+            if inline_export && export_name == local_name {
+                continue;
+            }
+            if written_exports.contains(&export_name) {
+                continue;
+            }
+            self.write_export_property_access(&export_name);
+            self.write(" = ");
+            written_exports.push(export_name);
+        }
+
+        if inline_export {
+            self.write_export_property_access(local_name);
+        } else {
+            self.write_identifier(local_name);
+        }
+        true
+    }
+
+    pub(in crate::emitter) fn commonjs_live_export_assignment_target_name_needs_chain(
+        &self,
+        local_name: &str,
+    ) -> bool {
+        if local_name.is_empty() || !self.ctx.is_commonjs() {
+            return false;
+        }
+        let is_shadowed = self
+            .commonjs_exported_var_shadow_stack
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(local_name));
+        if !is_shadowed && self.commonjs_exported_var_names.contains(local_name) {
+            return true;
+        }
+        self.deferred_local_export_bindings_all
+            .as_ref()
+            .and_then(|bindings| bindings.get(local_name))
+            .is_some_and(|names| !names.is_empty())
+            || self
+                .deferred_local_export_bindings
+                .as_ref()
+                .is_some_and(|bindings| bindings.contains_key(local_name))
+    }
+
+    fn emit_destructuring_export_access(&mut self, access: &DestructuringExportAccess) {
+        match access {
+            DestructuringExportAccess::Property(prop_name) => {
+                self.write(".");
+                self.write(prop_name);
+            }
+            DestructuringExportAccess::Element(index) => {
+                self.write("[");
+                self.write(&index.to_string());
+                self.write("]");
+            }
         }
     }
 
@@ -44,6 +201,397 @@ impl<'a> Printer<'a> {
         } else {
             self.write(";");
         }
+    }
+
+    pub(in crate::emitter) fn reusable_object_rest_export_source(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind == SyntaxKind::Identifier as u16 {
+            let name = self.get_identifier_text(initializer);
+            if !name.is_empty() {
+                return Some(name);
+            }
+        }
+        None
+    }
+
+    pub(in crate::emitter) fn collect_object_rest_export_parts(
+        &self,
+        pattern_idx: NodeIndex,
+    ) -> Option<ObjectRestExportParts> {
+        let pattern_node = self.arena.get(pattern_idx)?;
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return None;
+        }
+        let pattern = self.arena.get_binding_pattern(pattern_node)?;
+        let mut non_rest_elements = Vec::new();
+        let mut bindings = Vec::new();
+        let mut rest_name = None;
+        let mut excluded_props = Vec::new();
+
+        for &elem_idx in &pattern.elements.nodes {
+            let elem_node = self.arena.get(elem_idx)?;
+            let elem = self.arena.get_binding_element(elem_node)?;
+            if elem.dot_dot_dot_token {
+                let name = self.get_identifier_text(elem.name);
+                if name.is_empty() {
+                    return None;
+                }
+                rest_name = Some(name);
+                continue;
+            }
+
+            if elem.initializer.is_some() || self.pattern_has_object_rest(elem.name) {
+                return None;
+            }
+
+            let local_name = self.get_identifier_text(elem.name);
+            if local_name.is_empty() {
+                return None;
+            }
+
+            let property_name = if elem.property_name.is_some() {
+                let prop = self.get_identifier_text_idx(elem.property_name);
+                if prop.is_empty() {
+                    return None;
+                }
+                prop
+            } else {
+                local_name.clone()
+            };
+
+            if !super::super::is_valid_identifier_name(&property_name) {
+                return None;
+            }
+
+            non_rest_elements.push(elem_idx);
+            excluded_props.push(property_name.clone());
+            bindings.push(ObjectRestExportBinding {
+                local_name,
+                property_name,
+            });
+        }
+
+        Some(ObjectRestExportParts {
+            non_rest_elements,
+            bindings,
+            rest_name: rest_name?,
+            excluded_props,
+        })
+    }
+
+    pub(in crate::emitter) fn emit_esm_object_rest_export_statement(
+        &mut self,
+        node: &Node,
+    ) -> bool {
+        if !self.is_esm_object_rest_export_statement(node) {
+            return false;
+        }
+
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        let Some((keyword, decls)) =
+            self.collect_esm_object_rest_export_decls(&var_stmt.declarations)
+        else {
+            return false;
+        };
+
+        self.write("export ");
+        self.write(if self.ctx.target_es5 { "var" } else { keyword });
+        self.write(" ");
+        for (index, decl) in decls.iter().enumerate() {
+            if index > 0 {
+                self.write(", ");
+            }
+            match decl {
+                EsmObjectRestExportDecl::ObjectRest { initializer, parts } => {
+                    if self.ctx.target_es5 {
+                        self.emit_esm_object_rest_export_decl_es5(*initializer, parts);
+                    } else {
+                        self.emit_esm_object_rest_export_decl_es2015(*initializer, parts);
+                    }
+                }
+                EsmObjectRestExportDecl::Plain(decl_idx) => self.emit(*decl_idx),
+            }
+        }
+        self.write_semicolon();
+        true
+    }
+
+    pub(in crate::emitter) fn is_esm_object_rest_export_statement(&self, node: &Node) -> bool {
+        if !self.ctx.needs_es2018_lowering
+            || !matches!(
+                self.ctx.options.module,
+                ModuleKind::ES2015 | ModuleKind::ESNext
+            )
+        {
+            return false;
+        }
+
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        if !self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+        {
+            return false;
+        }
+
+        self.collect_esm_object_rest_export_decls(&var_stmt.declarations)
+            .is_some()
+    }
+
+    fn collect_esm_object_rest_export_decls(
+        &self,
+        declarations: &NodeList,
+    ) -> Option<(&'static str, Vec<EsmObjectRestExportDecl>)> {
+        let mut keyword = None;
+        let mut decls = Vec::new();
+        let mut has_object_rest = false;
+
+        for &decl_list_idx in &declarations.nodes {
+            let decl_list_node = self.arena.get(decl_list_idx)?;
+            let flags = decl_list_node.flags as u32;
+            let current_keyword = if flags & tsz_parser::parser::node_flags::CONST != 0 {
+                "const"
+            } else if flags & tsz_parser::parser::node_flags::LET != 0 {
+                "let"
+            } else {
+                "var"
+            };
+            if let Some(previous) = keyword {
+                if previous != current_keyword {
+                    return None;
+                }
+            } else {
+                keyword = Some(current_keyword);
+            }
+
+            let decl_list = self.arena.get_variable(decl_list_node)?;
+            for &decl_idx in &decl_list.declarations.nodes {
+                let decl_node = self.arena.get(decl_idx)?;
+                let decl = self.arena.get_variable_declaration(decl_node)?;
+                if decl.initializer.is_some()
+                    && let Some(parts) = self.collect_object_rest_export_parts(decl.name)
+                {
+                    has_object_rest = true;
+                    decls.push(EsmObjectRestExportDecl::ObjectRest {
+                        initializer: decl.initializer,
+                        parts,
+                    });
+                    continue;
+                }
+
+                let name_node = self.arena.get(decl.name)?;
+                if name_node.kind != SyntaxKind::Identifier as u16 {
+                    return None;
+                }
+                decls.push(EsmObjectRestExportDecl::Plain(decl_idx));
+            }
+        }
+
+        (has_object_rest && !decls.is_empty()).then_some((keyword?, decls))
+    }
+
+    fn emit_esm_object_rest_export_decl_es5(
+        &mut self,
+        initializer: NodeIndex,
+        parts: &ObjectRestExportParts,
+    ) {
+        let reusable_source = self.reusable_object_rest_export_source(initializer);
+        let source_temp = if parts.needs_source_temp(reusable_source.is_some()) {
+            Some(self.make_unique_name_hoisted())
+        } else {
+            None
+        };
+        let source_name = source_temp.as_deref().or(reusable_source.as_deref());
+
+        let mut first = true;
+        for (binding_index, binding) in parts.bindings.iter().enumerate() {
+            if !first {
+                self.write(", ");
+            }
+            self.write(&binding.local_name);
+            self.write(" = ");
+            if binding_index == 0 && source_temp.is_some() {
+                self.write("(");
+                self.write(source_temp.as_deref().unwrap_or_default());
+                self.write(" = ");
+                self.emit(initializer);
+                self.write(", ");
+                self.write(source_temp.as_deref().unwrap_or_default());
+                self.write(")");
+            } else if let Some(source_name) = source_name {
+                self.write(source_name);
+            }
+            self.write(".");
+            self.write(&binding.property_name);
+            first = false;
+        }
+
+        if !first {
+            self.write(", ");
+        }
+        self.write(&parts.rest_name);
+        self.write(" = ");
+        self.write_helper("__rest");
+        self.write("(");
+        if let Some(source_name) = source_name {
+            self.write(source_name);
+        } else {
+            self.emit(initializer);
+        }
+        self.write(", [");
+        self.emit_object_rest_export_excluded_props(&parts.excluded_props);
+        self.write("])");
+    }
+
+    fn emit_esm_object_rest_export_decl_es2015(
+        &mut self,
+        initializer: NodeIndex,
+        parts: &ObjectRestExportParts,
+    ) {
+        let reusable_source = self.reusable_object_rest_export_source(initializer);
+        let source_temp = if parts.needs_source_temp(reusable_source.is_some()) {
+            Some(self.make_unique_name_hoisted())
+        } else {
+            None
+        };
+        let source_name = source_temp.as_deref().or(reusable_source.as_deref());
+
+        if parts.bindings.is_empty() {
+            self.write(&parts.rest_name);
+            self.write(" = ");
+            self.write_helper("__rest");
+            self.write("(");
+            self.emit(initializer);
+            self.write(", [");
+            self.emit_object_rest_export_excluded_props(&parts.excluded_props);
+            self.write("])");
+            return;
+        }
+
+        self.emit_object_pattern_without_rest(&parts.non_rest_elements);
+        self.write(" = ");
+        if let Some(source_temp) = source_temp.as_deref() {
+            self.write("(");
+            self.write(source_temp);
+            self.write(" = ");
+            self.emit(initializer);
+            self.write(", ");
+            self.write(source_temp);
+            self.write(")");
+        } else if let Some(source_name) = source_name {
+            self.write(source_name);
+        }
+        self.write(", ");
+        self.write(&parts.rest_name);
+        self.write(" = ");
+        self.write_helper("__rest");
+        self.write("(");
+        if let Some(source_name) = source_name {
+            self.write(source_name);
+        } else {
+            self.emit(initializer);
+        }
+        self.write(", [");
+        self.emit_object_rest_export_excluded_props(&parts.excluded_props);
+        self.write("])");
+    }
+
+    fn emit_object_rest_export_excluded_props(&mut self, props: &[String]) {
+        for (index, prop) in props.iter().enumerate() {
+            if index > 0 {
+                self.write(", ");
+            }
+            self.write("\"");
+            self.write(prop);
+            self.write("\"");
+        }
+    }
+
+    pub(in crate::emitter) fn emit_system_object_rest_export_initializer(
+        &mut self,
+        decl: &tsz_parser::parser::node::VariableDeclarationData,
+    ) -> bool {
+        if decl.initializer.is_none() {
+            return false;
+        }
+        let Some(parts) = self.collect_object_rest_export_parts(decl.name) else {
+            return false;
+        };
+
+        let reusable_source = self.reusable_object_rest_export_source(decl.initializer);
+        let source_temp = if parts.needs_source_temp(reusable_source.is_some()) {
+            self.arena
+                .get(decl.name)
+                .and_then(|name| self.system_object_rest_export_temps.get(&name.pos).cloned())
+                .or_else(|| Some(self.make_unique_name()))
+        } else {
+            None
+        };
+        let source_name = source_temp.as_deref().or(reusable_source.as_deref());
+
+        let mut first_piece = true;
+        if let Some(source_temp) = source_temp.as_deref()
+            && !self.ctx.needs_es2018_lowering
+        {
+            self.write(source_temp);
+            self.write(" = ");
+            self.emit(decl.initializer);
+            first_piece = false;
+        }
+
+        for (binding_index, binding) in parts.bindings.iter().enumerate() {
+            if !first_piece {
+                self.write(", ");
+            }
+            self.write("exports_1(\"");
+            self.write(&binding.local_name);
+            self.write("\", ");
+            self.write(&binding.local_name);
+            self.write(" = ");
+            if binding_index == 0 && source_temp.is_some() && self.ctx.needs_es2018_lowering {
+                self.write("(");
+                self.write(source_temp.as_deref().unwrap_or_default());
+                self.write(" = ");
+                self.emit(decl.initializer);
+                self.write(", ");
+                self.write(source_temp.as_deref().unwrap_or_default());
+                self.write(")");
+            } else if let Some(source_name) = source_name {
+                self.write(source_name);
+            }
+            self.write(".");
+            self.write(&binding.property_name);
+            self.write(")");
+            first_piece = false;
+        }
+
+        if !first_piece {
+            self.write(", ");
+        }
+        self.write("exports_1(\"");
+        self.write(&parts.rest_name);
+        self.write("\", ");
+        self.write(&parts.rest_name);
+        self.write(" = ");
+        self.write_helper("__rest");
+        self.write("(");
+        if let Some(source_name) = source_name {
+            self.write(source_name);
+        } else {
+            self.emit(decl.initializer);
+        }
+        self.write(", [");
+        self.emit_object_rest_export_excluded_props(&parts.excluded_props);
+        self.write("]))");
+        self.write_semicolon();
+        true
     }
 
     pub(in crate::emitter) fn emit_export_declaration_commonjs(
@@ -330,6 +878,14 @@ impl<'a> Printer<'a> {
                 return;
             }
 
+            if self.in_system_execute_body
+                && clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                && let Some(var_stmt) = self.arena.get_variable(clause_node)
+                && self.all_declarations_lack_initializer(&var_stmt.declarations)
+            {
+                return;
+            }
+
             let clause_kind = clause_node.kind;
             let is_decl = clause_kind == syntax_kind_ext::VARIABLE_STATEMENT
                 || clause_kind == syntax_kind_ext::FUNCTION_DECLARATION
@@ -359,40 +915,22 @@ impl<'a> Printer<'a> {
             match clause_node.kind {
                 // export const/let/var x = ...
                 k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    if self.in_system_execute_body {
+                        self.emit_system_variable_initializers(clause_node);
+                        return;
+                    }
                     if !self.ctx.module_state.has_export_assignment {
-                        // Try inline form: exports.x = initializer;
-                        // TSC emits this for simple single-binding declarations.
-                        if let Some(inline_decls) =
-                            self.try_collect_inline_cjs_exports(export.export_clause, clause_node)
+                        if let Some(schedule) = self
+                            .collect_cjs_export_variable_schedule(export.export_clause, clause_node)
                         {
-                            let decl_count = inline_decls.len();
-                            for (i, (decoded_name, emit_name, init_idx)) in
-                                inline_decls.iter().enumerate()
-                            {
-                                // Track that this variable was inlined (no local declaration).
-                                // Use decoded name for set tracking (matching uses decoded text).
-                                self.ctx
-                                    .module_state
-                                    .inlined_var_exports
-                                    .insert(decoded_name.clone());
-                                self.write("exports.");
-                                // Use emit_name to preserve unicode escapes in output.
-                                self.write(emit_name);
-                                self.write(" = ");
-                                // emit_identifier handles `x → exports.x` substitution
-                                // for inline-exported variable names automatically.
-                                self.emit(*init_idx);
-                                self.write(";");
-                                // Skip write_line() on the last declaration so the
-                                // caller can emit trailing comments before the newline.
-                                if i < decl_count - 1 {
-                                    self.write_line();
-                                }
-                            }
-                        } else {
-                            // Complex case (destructuring): transform into comma
-                            // expression that directly assigns to exports, matching tsc.
+                            self.emit_cjs_export_variable_schedule(&schedule);
+                        } else if self.variable_stmt_has_binding_pattern(clause_node) {
+                            // Destructuring exports lower into assignments that write
+                            // directly to exports.
                             self.emit_cjs_destructuring_export(clause_node);
+                        } else {
+                            self.emit_variable_statement(clause_node);
+                            self.write_line();
                         }
                     } else {
                         self.emit_variable_statement(clause_node);
@@ -467,11 +1005,10 @@ impl<'a> Printer<'a> {
                         if !legacy_decorators.is_empty()
                             && let Some(name) = self.get_identifier_text_opt(class.name)
                         {
-                            // Clear pending_commonjs_class_export_name to avoid duplicate
-                            // exports.X = X; — the decorator assignment path handles the
-                            // pre-assignment itself via emit_commonjs_pre_assignment=true.
-                            self.pending_commonjs_class_export_name = None;
                             if self.ctx.target_es5 {
+                                // ES5 class export lowering is handled by the ES5 class emitter,
+                                // so keep this pending hook from leaking into later nodes.
+                                self.pending_commonjs_class_export_name = None;
                                 // Check for member decorators too
                                 let has_member_decorators =
                                     class.members.nodes.iter().any(|&m_idx| {
@@ -509,9 +1046,21 @@ impl<'a> Printer<'a> {
                                 es5_emitter.set_temp_var_counter(
                                     self.ctx.destructuring_state.temp_var_counter,
                                 );
+                                es5_emitter.set_async_generator_inner_name_counts(
+                                    self.async_generator_inner_name_counts.clone(),
+                                );
+                                self.configure_es5_class_emitter_disposable_context(
+                                    &mut es5_emitter,
+                                );
                                 es5_emitter.set_indent_level(self.writer.indent_level());
                                 es5_emitter.set_transforms(self.transforms.clone());
                                 es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+                                es5_emitter.set_printer_options(self.ctx.options.clone());
+                                es5_emitter.set_module_kind(
+                                    self.ctx
+                                        .original_module_kind
+                                        .unwrap_or(self.ctx.options.module),
+                                );
                                 if let Some(text) = self.source_text_for_map() {
                                     if self.writer.has_source_map() {
                                         es5_emitter.set_source_map_context(
@@ -543,8 +1092,7 @@ impl<'a> Printer<'a> {
                                         .emit_decorator_metadata,
                                 });
                                 let output = es5_emitter.emit_class(export.export_clause);
-                                self.ctx.destructuring_state.temp_var_counter =
-                                    es5_emitter.temp_var_counter();
+                                self.sync_es5_class_emitter_state(&mut es5_emitter);
                                 let mappings = es5_emitter.take_mappings();
                                 if !mappings.is_empty() && self.writer.has_source_map() {
                                     self.writer.write("");
@@ -576,21 +1124,35 @@ impl<'a> Printer<'a> {
                                 self.write(";");
                                 self.write_line();
                             } else {
+                                let needs_alias = class_has_self_references(
+                                    self.arena,
+                                    self.source_text_for_map(),
+                                    &name,
+                                    &class.members.nodes,
+                                );
+                                let alias_name = if needs_alias {
+                                    let alias = self.make_unique_name_from_base(&name);
+                                    if !self.hoisted_assignment_temps.contains(&alias) {
+                                        self.hoisted_assignment_temps.push(alias.clone());
+                                    }
+                                    Some(alias)
+                                } else {
+                                    None
+                                };
+                                self.pending_commonjs_class_export_name =
+                                    Some((export.export_clause, name.clone()));
                                 self.emit_class_es6_with_options(
                                     clause_node,
                                     export.export_clause,
                                     true,
                                     Some(("let", name.clone())),
-                                    None,
+                                    alias_name.as_deref(),
+                                    alias_name.as_deref(),
+                                    true,
                                 );
-                                self.write_line();
-                                // CommonJS export assignment
-                                self.write("exports.");
-                                self.write(&name);
-                                self.write(" = ");
-                                self.write(&name);
-                                self.write(";");
-                                self.write_line();
+                                if !self.writer.is_at_line_start() {
+                                    self.write_line();
+                                }
                                 // Emit __decorate call for ES2015+
                                 let members = class.members.nodes.clone();
                                 self.emit_legacy_class_decorator_assignment(
@@ -599,6 +1161,7 @@ impl<'a> Printer<'a> {
                                     true,  // commonjs_exported
                                     false, // commonjs_default
                                     false, // emit_commonjs_pre_assignment (already emitted above)
+                                    alias_name.as_deref(),
                                     &members,
                                 );
                             }
@@ -664,10 +1227,8 @@ impl<'a> Printer<'a> {
                         if let Some(text) = self.source_text {
                             enum_emitter.set_source_text(text);
                         }
-                        let mut output = enum_emitter.emit_enum(export.export_clause);
-                        let from = format!("({name} || ({name} = {{}}))");
-                        let to = format!("({name} || (exports.{name} = {name} = {{}}))");
-                        output = output.replacen(&from, &to, 1);
+                        enum_emitter.set_commonjs_export_fold(&name);
+                        let output = enum_emitter.emit_enum(export.export_clause);
                         let mut emit_text = output.trim_end_matches('\n');
                         while let Some((first, rest)) = emit_text.split_once('\n') {
                             if first.trim().is_empty() {
@@ -694,10 +1255,8 @@ impl<'a> Printer<'a> {
                         if let Some(text) = self.source_text {
                             enum_emitter.set_source_text(text);
                         }
-                        let mut output = enum_emitter.emit_enum(export.export_clause);
-                        let from = format!("({name} || ({name} = {{}}))");
-                        let to = format!("({name} || (exports.{name} = {name} = {{}}))");
-                        output = output.replacen(&from, &to, 1);
+                        enum_emitter.set_commonjs_export_fold(&name);
+                        let output = enum_emitter.emit_enum(export.export_clause);
                         let emit_text = output.trim_end_matches('\n');
                         self.write(emit_text);
                     } else {
@@ -745,12 +1304,14 @@ impl<'a> Printer<'a> {
                             // `export = X` sets module.exports but named exports like
                             // `export enum E` still get their own exports.E binding.
                             self.pending_cjs_namespace_export_fold = true;
+                            self.pending_cjs_namespace_export_name = None;
                         }
                         self.emit_module_declaration(clause_node, export.export_clause);
                         // If the flag was consumed (instantiated namespace),
                         // no separate export needed. If still set, the namespace
                         // was non-instantiated/skipped, clear it.
                         self.pending_cjs_namespace_export_fold = false;
+                        self.pending_cjs_namespace_export_name = None;
                     } else {
                         self.emit_module_declaration(clause_node, export.export_clause);
                     }
@@ -798,8 +1359,15 @@ impl<'a> Printer<'a> {
                                 if self
                                     .ctx
                                     .module_state
-                                    .iife_exported_names
-                                    .contains(&local_name)
+                                    .iife_exported_bindings
+                                    .get(&local_name)
+                                    .is_some_and(|exports| exports.contains(&export_name))
+                                    || (export_name == local_name
+                                        && self
+                                            .ctx
+                                            .module_state
+                                            .iife_exported_names
+                                            .contains(&local_name))
                                 {
                                     continue;
                                 }
@@ -904,28 +1472,48 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Emit an exported variable statement with destructuring binding patterns
-    /// as a CJS/AMD comma expression that directly assigns to `exports.*`.
-    ///
-    /// For `export const { x, ...rest } = expr;` with esnext target:
-    /// ```js
-    /// _a = expr, exports.x = _a.x, exports.rest = __rest(_a, ["x"]);
-    /// ```
-    ///
-    /// For `export const { x, ...rest } = expr;` with es5 target:
-    /// ```js
-    /// exports.x = (_a = expr, _a).x, exports.rest = __rest(_a, ["x"]);
-    /// ```
-    ///
-    /// For empty patterns like `export const {} = {};` with esnext target:
-    /// ```js
-    /// _a = {};
-    /// ```
-    ///
-    /// For empty patterns with es5 target:
-    /// ```js
-    /// exports._b = _a = {};
-    /// ```
+    /// Emit local declarations and the ordered `CommonJS` assignment statement
+    /// for a structurally planned exported variable declaration.
+    pub(in crate::emitter) fn emit_cjs_export_variable_schedule(
+        &mut self,
+        schedule: &CjsExportVariableSchedule,
+    ) {
+        for group in &schedule.local_groups {
+            self.write(group.keyword);
+            self.write(" ");
+            self.emit_comma_separated(&group.declarations);
+            self.write(";");
+            self.write_line();
+        }
+
+        for assignment in &schedule.assignments {
+            if matches!(&assignment.value, CjsExportAssignmentValue::Initializer(_)) {
+                self.ctx
+                    .module_state
+                    .inlined_var_exports
+                    .insert(assignment.decoded_name.clone());
+            }
+        }
+
+        for (idx, assignment) in schedule.assignments.iter().enumerate() {
+            if idx > 0 {
+                self.write(", ");
+            }
+            self.write("exports.");
+            self.write(&assignment.emit_name);
+            self.write(" = ");
+            match &assignment.value {
+                CjsExportAssignmentValue::Initializer(init_idx) => {
+                    self.emit(*init_idx);
+                }
+                CjsExportAssignmentValue::LocalName(local_name) => {
+                    self.write(local_name);
+                }
+            }
+        }
+        self.write(";");
+    }
+
     /// Check if a `VARIABLE_STATEMENT` has any destructuring binding patterns.
     pub(in crate::emitter) fn variable_stmt_has_binding_pattern(
         &self,
@@ -959,6 +1547,8 @@ impl<'a> Printer<'a> {
         false
     }
 
+    /// Emit an exported variable statement with destructuring binding patterns
+    /// as a `CJS`/`AMD` comma expression that directly assigns to `exports.*`.
     pub(in crate::emitter) fn emit_cjs_destructuring_export(
         &mut self,
         clause_node: &tsz_parser::parser::node::Node,
@@ -966,6 +1556,7 @@ impl<'a> Printer<'a> {
         let Some(var_stmt) = self.arena.get_variable(clause_node) else {
             return;
         };
+        self.emit_comments_before_pos(clause_node.pos);
 
         // Walk through declaration lists to find the variable declaration
         for &decl_list_idx in &var_stmt.declarations.nodes {
@@ -1020,15 +1611,18 @@ impl<'a> Printer<'a> {
                 };
 
                 // Collect non-rest elements and rest element
-                // (export_name, prop_name, leading_comment_pos)
-                let mut non_rest_elems: Vec<(String, String, u32)> = Vec::new();
+                let pattern_is_array = name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
+                let mut non_rest_elems: Vec<DestructuringExportBinding> = Vec::new();
                 let mut rest_elem: Option<String> = None;
                 let mut excluded_props: Vec<String> = Vec::new();
 
-                for &elem_idx in &pattern.elements.nodes {
+                for (element_index, &elem_idx) in pattern.elements.nodes.iter().enumerate() {
                     let Some(elem_node) = self.arena.get(elem_idx) else {
                         continue;
                     };
+                    if elem_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                        continue;
+                    }
                     let Some(elem) = self.arena.get_binding_element(elem_node) else {
                         continue;
                     };
@@ -1043,12 +1637,18 @@ impl<'a> Printer<'a> {
                     // Get the variable (export) name
                     let var_name = self.get_identifier_text(elem.name);
 
-                    // Get the property name to access on the source object
-                    let prop_name = if elem.property_name.is_some() {
-                        let pn = self.get_identifier_text_idx(elem.property_name);
-                        if pn.is_empty() { var_name.clone() } else { pn }
+                    let access = if pattern_is_array {
+                        DestructuringExportAccess::Element(element_index)
                     } else {
-                        var_name.clone()
+                        // Get the property name to access on the source object.
+                        let prop_name = if elem.property_name.is_some() {
+                            let pn = self.get_identifier_text_idx(elem.property_name);
+                            if pn.is_empty() { var_name.clone() } else { pn }
+                        } else {
+                            var_name.clone()
+                        };
+                        excluded_props.push(prop_name.clone());
+                        DestructuringExportAccess::Property(prop_name)
                     };
 
                     let leading_comment_pos = if elem.property_name.is_some() {
@@ -1059,8 +1659,11 @@ impl<'a> Printer<'a> {
                         elem_node.pos
                     };
 
-                    excluded_props.push(prop_name.clone());
-                    non_rest_elems.push((var_name, prop_name, leading_comment_pos));
+                    non_rest_elems.push(DestructuringExportBinding {
+                        export_name: var_name,
+                        access,
+                        leading_comment_pos,
+                    });
                 }
 
                 let is_empty = non_rest_elems.is_empty() && rest_elem.is_none();
@@ -1068,7 +1671,7 @@ impl<'a> Printer<'a> {
                 // Optimization: when there's exactly one binding (no rest), skip the
                 // temp variable and emit `exports.x = (rhs).x` directly. tsc does this.
                 if non_rest_elems.len() == 1 && rest_elem.is_none() {
-                    let (export_name, prop_name, leading_comment_pos) = &non_rest_elems[0];
+                    let binding = &non_rest_elems[0];
                     // Check if RHS is a numeric literal — needs special formatting
                     // because `1.toString` is a JS parse error (`.` is decimal point).
                     // tsc emits `1..toString` (trailing dot on number, then prop access).
@@ -1076,18 +1679,18 @@ impl<'a> Printer<'a> {
                         && self
                             .arena
                             .get(decl.initializer)
-                            .is_some_and(|n| n.is_numeric_literal());
-                    self.emit_comments_before_pos(*leading_comment_pos);
+                            .is_some_and(|n| n.is_numeric_literal())
+                        && matches!(binding.access, DestructuringExportAccess::Property(_));
+                    self.emit_comments_before_pos(binding.leading_comment_pos);
                     self.write("exports.");
-                    self.write(export_name);
+                    self.write(&binding.export_name);
                     self.write(" = ");
                     self.emit(decl.initializer);
                     if init_is_numeric {
                         // Emit extra dot for numeric literal property access: 1..toString
                         self.write(".");
                     }
-                    self.write(".");
-                    self.write(prop_name);
+                    self.emit_destructuring_export_access(&binding.access);
                     self.write(";");
                     continue;
                 }
@@ -1119,12 +1722,12 @@ impl<'a> Printer<'a> {
                 } else if self.ctx.target_es5 {
                     // es5 non-empty: exports.x = (_a = expr, _a).x, exports.rest = __rest(_a, ["x"]);
                     let mut first = true;
-                    for (export_name, prop_name, _) in &non_rest_elems {
+                    for binding in &non_rest_elems {
                         if !first {
                             self.write(", ");
                         }
                         self.write("exports.");
-                        self.write(export_name);
+                        self.write(&binding.export_name);
                         self.write(" = (");
                         if first {
                             self.write(&temp_name);
@@ -1135,8 +1738,8 @@ impl<'a> Printer<'a> {
                         } else {
                             self.write(&temp_name);
                         }
-                        self.write(").");
-                        self.write(prop_name);
+                        self.write(")");
+                        self.emit_destructuring_export_access(&binding.access);
                         first = false;
                     }
                     if let Some(rest_name) = &rest_elem {
@@ -1176,14 +1779,13 @@ impl<'a> Printer<'a> {
                     self.write(" = ");
                     self.emit(decl.initializer);
 
-                    for (export_name, prop_name, _) in &non_rest_elems {
+                    for binding in &non_rest_elems {
                         self.write(", ");
                         self.write("exports.");
-                        self.write(export_name);
+                        self.write(&binding.export_name);
                         self.write(" = ");
                         self.write(&temp_name);
-                        self.write(".");
-                        self.write(prop_name);
+                        self.emit_destructuring_export_access(&binding.access);
                     }
 
                     if let Some(rest_name) = &rest_elem {

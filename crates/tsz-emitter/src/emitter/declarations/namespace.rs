@@ -52,9 +52,17 @@ impl<'a> Printer<'a> {
             if use_cjs {
                 self.pending_cjs_namespace_export_fold = false;
             }
+            let system_export_fold = self.pending_system_namespace_export_fold.take();
             let mut es5_emitter = NamespaceES5Emitter::with_commonjs(self.arena, use_cjs);
             es5_emitter.set_target_es5(self.ctx.target_es5);
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+            es5_emitter.set_const_enum_facts(
+                self.const_enum_values.clone(),
+                self.const_enum_import_aliases.clone(),
+            );
+            if let Some(export_names) = system_export_fold.as_deref() {
+                es5_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
+            }
             if !self.ctx.module_state.default_exported_func_names.is_empty() {
                 es5_emitter.set_default_exported_func_names(
                     self.ctx
@@ -362,6 +370,16 @@ impl<'a> Printer<'a> {
         } else {
             false
         };
+        let cjs_export_name = if parent_name.is_none() {
+            self.pending_cjs_namespace_export_name.take()
+        } else {
+            None
+        };
+        let system_export_fold = if parent_name.is_none() {
+            self.pending_system_namespace_export_fold.take()
+        } else {
+            None
+        };
 
         // Capture and consume: when an exported namespace merges with a
         // default-exported function, the IIFE closing uses the plain pattern.
@@ -482,24 +500,22 @@ impl<'a> Printer<'a> {
             self.write(".");
             self.write(&name);
             self.write(" = {}));");
+        } else if let Some(export_names) = system_export_fold.as_deref()
+            && !export_names.is_empty()
+        {
+            self.write(&name);
+            self.write(" || (");
+            self.emit_system_export_folded_namespace_assignment(export_names, &name);
+            self.write("));");
         } else if cjs_export_fold {
-            if self.in_system_execute_body {
-                // System module: (N || (exports_1("N", N = {})))
-                self.write(&name);
-                self.write(" || (exports_1(\"");
-                self.write(&name);
-                self.write("\", ");
-                self.write(&name);
-                self.write(" = {})));");
-            } else {
-                // CJS export fold: (N || (exports.N = N = {}))
-                self.write(&name);
-                self.write(" || (exports.");
-                self.write(&name);
-                self.write(" = ");
-                self.write(&name);
-                self.write(" = {}));");
-            }
+            // CJS export fold: (N || (exports.N = N = {}))
+            let export_name = cjs_export_name.as_deref().unwrap_or(&name);
+            self.write(&name);
+            self.write(" || (exports.");
+            self.write(export_name);
+            self.write(" = ");
+            self.write(&name);
+            self.write(" = {}));");
         } else if !suppress_default_merge
             && self.ctx.is_commonjs()
             && self
@@ -525,6 +541,24 @@ impl<'a> Printer<'a> {
         // loop handles them with proper next-sibling bounds, preventing
         // us from stealing comments that belong to subsequent statements.
         self.write_line();
+    }
+
+    fn emit_system_export_folded_namespace_assignment(
+        &mut self,
+        export_names: &[String],
+        name: &str,
+    ) {
+        let Some((export_name, inner_names)) = export_names.split_last() else {
+            self.write(name);
+            self.write(" = {}");
+            return;
+        };
+
+        self.write("exports_1(\"");
+        self.emit_escaped_string(export_name, '"');
+        self.write("\", ");
+        self.emit_system_export_folded_namespace_assignment(inner_names, name);
+        self.write(")");
     }
 
     /// Check if any declaration at any depth in the namespace body has the same
@@ -576,10 +610,9 @@ impl<'a> Printer<'a> {
         false
     }
 
-    /// Like `text_has_binding_named` but skips `namespace`/`module`
-    /// declarations. Used for dotted-namespace conflict detection where
-    /// a nested sub-namespace shouldn't be treated as shadowing the
-    /// enclosing namespace's IIFE param.
+    /// Scan for runtime bindings while skipping `namespace`/`module` declarations.
+    /// Nested sub-namespaces have their own IIFE scope and should not force the
+    /// enclosing namespace's IIFE parameter to be renamed.
     fn text_has_non_namespace_binding_named(text: &str, name: &str) -> bool {
         let stripped = Self::strip_comments(text);
         let text = &stripped;
@@ -612,20 +645,9 @@ impl<'a> Printer<'a> {
                             return true;
                         }
                         let preceding = &text[..p];
-                        let keywords: &[&str] = &[
-                            "var",
-                            "let",
-                            "const",
-                            "function",
-                            "class",
-                            "import",
-                            "private",
-                            "public",
-                            "protected",
-                            "readonly",
-                            "override",
-                        ];
-                        for &kw in keywords {
+                        let binding_keywords: &[&str] =
+                            &["var", "let", "const", "function", "class", "import"];
+                        for &kw in binding_keywords {
                             if preceding.ends_with(kw) {
                                 let kw_start = p - kw.len();
                                 let kw_before_ok = kw_start == 0
@@ -633,6 +655,22 @@ impl<'a> Printer<'a> {
                                         && text_bytes[kw_start - 1] != b'_'
                                         && text_bytes[kw_start - 1] != b'$');
                                 if kw_before_ok {
+                                    return true;
+                                }
+                            }
+                        }
+                        let parameter_modifier_keywords: &[&str] =
+                            &["private", "public", "protected", "readonly", "override"];
+                        for &kw in parameter_modifier_keywords {
+                            if preceding.ends_with(kw) {
+                                let kw_start = p - kw.len();
+                                let kw_before_ok = kw_start == 0
+                                    || (!text_bytes[kw_start - 1].is_ascii_alphanumeric()
+                                        && text_bytes[kw_start - 1] != b'_'
+                                        && text_bytes[kw_start - 1] != b'$');
+                                if kw_before_ok
+                                    && Self::keyword_is_in_parameter_context(text_bytes, kw_start)
+                                {
                                     return true;
                                 }
                             }
@@ -645,6 +683,45 @@ impl<'a> Printer<'a> {
             }
         }
         false
+    }
+
+    fn keyword_is_in_parameter_context(text_bytes: &[u8], kw_start: usize) -> bool {
+        let mut p = kw_start;
+        loop {
+            while p > 0 && text_bytes[p - 1].is_ascii_whitespace() {
+                p -= 1;
+            }
+            if p == 0 {
+                return false;
+            }
+            let prev_char = text_bytes[p - 1];
+            if prev_char == b'(' || prev_char == b',' {
+                return true;
+            }
+            if !prev_char.is_ascii_alphanumeric() && prev_char != b'_' && prev_char != b'$' {
+                return false;
+            }
+
+            let ident_end = p;
+            let mut ident_start = ident_end - 1;
+            while ident_start > 0
+                && (text_bytes[ident_start - 1].is_ascii_alphanumeric()
+                    || text_bytes[ident_start - 1] == b'_'
+                    || text_bytes[ident_start - 1] == b'$')
+            {
+                ident_start -= 1;
+            }
+            let Ok(ident) = std::str::from_utf8(&text_bytes[ident_start..ident_end]) else {
+                return false;
+            };
+            if !matches!(
+                ident,
+                "private" | "public" | "protected" | "readonly" | "override"
+            ) {
+                return false;
+            }
+            p = ident_start;
+        }
     }
 
     fn namespace_body_has_name_conflict(
@@ -687,8 +764,9 @@ impl<'a> Printer<'a> {
         {
             return true;
         }
-        // Use source text scan: search for the identifier as a binding in the body.
-        // This catches parameters, local vars, nested functions/classes at any depth.
+        // Use source text scan for bindings in nested functions/classes at any depth.
+        // Nested namespace/module declarations have their own IIFE scope and do not
+        // shadow this IIFE parameter at call sites, so exclude those keywords here.
         if let Some(text) = self.source_text {
             // safe_slice: C → migrated. A bad span here would silently report
             // "no binding found", which can change namespace shadowing
@@ -704,7 +782,7 @@ impl<'a> Printer<'a> {
                 Ok(body_text) => {
                     let body_pos = body_node.pos as usize;
                     let masked = Self::mask_ranges_static(body_text, body_pos, &declare_ranges);
-                    Self::text_has_binding_named(&masked, ns_name)
+                    Self::text_has_non_namespace_binding_named(&masked, ns_name)
                 }
                 Err(_) => false,
             };
@@ -866,96 +944,14 @@ impl<'a> Printer<'a> {
                 .arena
                 .get_enum(node)
                 .is_some_and(|enum_decl| self.get_identifier_text_idx(enum_decl.name) == ns_name),
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                self.arena.get_module(node).is_some_and(|module| {
+                    self.get_identifier_text_idx(module.name) == ns_name
+                        && self.is_instantiated_module(module.body)
+                })
+            }
             _ => false,
         }
-    }
-
-    /// Check if source text contains a binding (variable, function, class, parameter,
-    /// catch clause, etc.) with the given name. Uses a simple text scan that looks
-    /// for the identifier in declaration contexts.
-    fn text_has_binding_named(text: &str, name: &str) -> bool {
-        // Strip comments and string literals to avoid false positives from
-        // commented-out code like `//import m6 = require('')`
-        let stripped = Self::strip_comments(text);
-        let text = &stripped;
-        let name_bytes = name.as_bytes();
-        let text_bytes = text.as_bytes();
-        let name_len = name_bytes.len();
-
-        // Scan for occurrences of the identifier that could be bindings
-        let mut i = 0;
-        while i + name_len <= text_bytes.len() {
-            // Find next occurrence of the name
-            if let Some(pos) = text[i..].find(name) {
-                let abs = i + pos;
-                // Check word boundaries
-                let before_ok = abs == 0
-                    || !text_bytes[abs - 1].is_ascii_alphanumeric()
-                        && text_bytes[abs - 1] != b'_'
-                        && text_bytes[abs - 1] != b'$';
-                let after_end = abs + name_len;
-                let after_ok = after_end >= text_bytes.len()
-                    || !text_bytes[after_end].is_ascii_alphanumeric()
-                        && text_bytes[after_end] != b'_'
-                        && text_bytes[after_end] != b'$';
-
-                if before_ok && after_ok {
-                    // Check if this is a binding context by looking at what precedes it.
-                    // Skip whitespace backwards to find the preceding token.
-                    let mut p = abs;
-                    while p > 0 && text_bytes[p - 1].is_ascii_whitespace() {
-                        p -= 1;
-                    }
-                    // Check for binding keywords/contexts:
-                    // - `var/let/const NAME`
-                    // - `function NAME`
-                    // - `class NAME`
-                    // - `(NAME` or `, NAME` (function parameters)
-                    // - `catch (NAME`
-                    if p > 0 {
-                        let prev_char = text_bytes[p - 1];
-                        // Parameter context: `(NAME` or `, NAME`
-                        if prev_char == b'(' || prev_char == b',' {
-                            return true;
-                        }
-                        // Check for keywords ending at position p
-                        let preceding = &text[..p];
-                        let keywords: &[&str] = &[
-                            "var",
-                            "let",
-                            "const",
-                            "function",
-                            "class",
-                            "import",
-                            "module",
-                            "namespace",
-                            // TS parameter modifiers
-                            "private",
-                            "public",
-                            "protected",
-                            "readonly",
-                            "override",
-                        ];
-                        for &kw in keywords {
-                            if preceding.ends_with(kw) {
-                                let kw_start = p - kw.len();
-                                let kw_before_ok = kw_start == 0
-                                    || !text_bytes[kw_start - 1].is_ascii_alphanumeric()
-                                        && text_bytes[kw_start - 1] != b'_'
-                                        && text_bytes[kw_start - 1] != b'$';
-                                if kw_before_ok {
-                                    return true;
-                                }
-                            }
-                        }
-                    }
-                }
-                i = abs + 1;
-            } else {
-                break;
-            }
-        }
-        false
     }
 
     /// Replace bytes inside `ranges` (absolute source positions) with spaces in
@@ -1877,6 +1873,23 @@ impl<'a> Printer<'a> {
                             if !self.writer.is_at_line_start() {
                                 self.write_line();
                             }
+                        } else if export.is_default_export
+                            && !matches!(
+                                inner_kind,
+                                k if k == syntax_kind_ext::CLASS_DECLARATION
+                                    || k == syntax_kind_ext::FUNCTION_DECLARATION
+                                    || k == syntax_kind_ext::ENUM_DECLARATION
+                                    || k == syntax_kind_ext::MODULE_DECLARATION
+                            )
+                        {
+                            // Invalid namespace-scope `export default expr`
+                            // recovers as an export declaration. Tsc preserves
+                            // that syntax verbatim instead of treating it as a
+                            // namespace property export.
+                            self.write("export default ");
+                            self.emit_expression(inner_idx);
+                            self.write_semicolon();
+                            self.write_line();
                         } else {
                             // class/function/enum: emit without export, then add assignment
                             let recovered_anonymous_default_class_name =
@@ -2300,6 +2313,15 @@ impl<'a> Printer<'a> {
                         ns_name,
                         temp,
                         decl.name,
+                        &mut wrote_any,
+                    );
+                } else if let Some(binding) = self.simple_namespace_binding_export(decl.name)
+                    && self.can_inline_simple_namespace_binding_initializer(decl.initializer)
+                {
+                    self.emit_simple_namespace_binding_export(
+                        ns_name,
+                        decl.initializer,
+                        &binding,
                         &mut wrote_any,
                     );
                 } else {

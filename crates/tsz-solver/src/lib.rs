@@ -180,28 +180,29 @@ pub use intern::clear_thread_local_cache;
 pub use operations::infer_generic_function;
 pub use operations::widening;
 pub use visitors::visitor::{
-    application_id, array_element_type, bound_parameter_index, callable_shape_id,
-    collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids, collect_referenced_types,
-    collect_type_queries, conditional_type_id, constraint_references_type_param_in_resolution_path,
-    contains_concrete_application_with_def, contains_error_type, contains_free_infer_types,
-    contains_infer_types, contains_this_type, contains_type_by_id, contains_type_matching,
-    contains_type_parameter_named, contains_type_parameter_named_shallow, contains_type_parameters,
-    enum_components, for_each_child, for_each_child_by_id, function_shape_id,
-    has_deferred_conditional_member, index_access_parts, intersection_list_id, intrinsic_kind,
-    is_array_type, is_conditional_type, is_empty_object_type,
-    is_empty_object_type_through_type_constraints, is_enum_type, is_error_type, is_function_type,
-    is_function_type_through_type_constraints, is_generic_application, is_identity_comparable_type,
-    is_index_access_type, is_intersection_type, is_lazy_type, is_literal_type,
-    is_literal_type_through_type_constraints, is_mapped_type, is_module_namespace_type,
-    is_object_like_type, is_object_like_type_through_type_constraints, is_primitive_type,
-    is_structurally_deferred_type, is_template_literal_type, is_this_type, is_tuple_type,
-    is_type_parameter, is_type_query_type, is_type_reference, is_union_type, keyof_inner_type,
-    lazy_def_id, literal_number, literal_string, literal_value, mapped_type_id,
-    module_namespace_symbol_ref, no_infer_inner_type, object_shape_id, object_with_index_shape_id,
-    readonly_inner_type, recursive_index, references_any_type_param_named,
-    resolve_default_type_args, string_intrinsic_components, template_literal_id, tuple_list_id,
-    type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
-    unwrap_readonly_or_noinfer, walk_referenced_types,
+    apparent_intrinsic_kind, application_id, array_element_type, bound_parameter_index,
+    callable_shape_id, collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids,
+    collect_referenced_types, collect_type_queries, conditional_type_id,
+    constraint_references_type_param_in_resolution_path, contains_concrete_application_with_def,
+    contains_error_type, contains_free_infer_types, contains_infer_types, contains_this_type,
+    contains_type_by_id, contains_type_matching, contains_type_parameter_named,
+    contains_type_parameter_named_shallow, contains_type_parameters, enum_components,
+    for_each_child, for_each_child_by_id, function_shape_id, has_deferred_conditional_member,
+    index_access_parts, intersection_list_id, intrinsic_kind, is_array_type, is_conditional_type,
+    is_empty_object_type, is_empty_object_type_through_type_constraints, is_enum_type,
+    is_error_type, is_function_type, is_function_type_through_type_constraints,
+    is_generic_application, is_identity_comparable_type, is_index_access_type,
+    is_intersection_type, is_lazy_type, is_literal_type, is_literal_type_through_type_constraints,
+    is_mapped_type, is_module_namespace_type, is_object_like_type,
+    is_object_like_type_through_type_constraints, is_primitive_type, is_structurally_deferred_type,
+    is_template_literal_type, is_this_type, is_tuple_type, is_type_parameter, is_type_query_type,
+    is_type_reference, is_union_type, keyof_inner_type, lazy_def_id, literal_number,
+    literal_string, literal_value, mapped_type_id, module_namespace_symbol_ref,
+    no_infer_inner_type, object_shape_id, object_with_index_shape_id, readonly_inner_type,
+    recursive_index, references_any_type_param_named, resolve_default_type_args,
+    string_intrinsic_components, template_literal_id, tuple_list_id, type_param_info,
+    type_query_symbol, union_list_id, unique_symbol_ref, unwrap_readonly_or_noinfer,
+    walk_referenced_types,
 };
 
 pub use caches::db::{QueryDatabase, TypeDatabase};
@@ -238,7 +239,10 @@ pub use intern::type_factory::*;
 pub use narrowing::*;
 pub use objects::*;
 pub use operations::compound_assignment;
-pub use operations::compound_assignment::*;
+pub use operations::compound_assignment::{
+    fallback_compound_assignment_result, is_assignment_operator, is_compound_assignment_operator,
+    is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
+};
 pub use operations::expression_ops;
 pub use operations::expression_ops::*;
 pub use operations::{
@@ -270,7 +274,11 @@ pub use types::{
     TypeListId, Visibility, is_compiler_managed_type, normalize_display_property_order,
 };
 // unsoundness_audit: accessed via tsz_solver::unsoundness_audit module path
-pub use widening::*;
+pub use widening::{
+    apply_const_assertion, display_widen_for_redeclaration, get_base_type_for_comparison,
+    widen_argument_type_for_display, widen_literal_type, widen_type, widen_type_deep,
+    widen_type_for_display, widen_type_for_inference,
+};
 
 // Test modules: Most are loaded by their source files via #[path = "tests/..."] declarations.
 // Only include modules here that aren't loaded elsewhere to avoid duplicate_mod warnings.
@@ -406,6 +414,9 @@ mod numeric_keyof_tests;
 #[cfg(test)]
 #[path = "../tests/property_helpers_tests.rs"]
 mod property_helpers_tests;
+#[cfg(test)]
+#[path = "caches/query_cache_statistics_test.rs"]
+mod query_cache_statistics_tests;
 #[cfg(test)]
 #[path = "../tests/relation_cache_config_tests.rs"]
 mod relation_cache_config_tests;

@@ -14,7 +14,7 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     pub(in super::super) fn emit_jsx_element(&mut self, node: &Node) {
-        match self.ctx.options.jsx {
+        match self.effective_jsx_emit() {
             JsxEmit::React => self.emit_jsx_element_classic(node),
             JsxEmit::ReactJsx | JsxEmit::ReactJsxDev => self.emit_jsx_element_automatic(node),
             _ => self.emit_jsx_element_preserve(node),
@@ -22,7 +22,7 @@ impl<'a> Printer<'a> {
     }
 
     pub(in super::super) fn emit_jsx_self_closing_element(&mut self, node: &Node) {
-        match self.ctx.options.jsx {
+        match self.effective_jsx_emit() {
             JsxEmit::React => self.emit_jsx_self_closing_classic(node),
             JsxEmit::ReactJsx | JsxEmit::ReactJsxDev => {
                 self.emit_jsx_self_closing_automatic(node);
@@ -32,7 +32,7 @@ impl<'a> Printer<'a> {
     }
 
     pub(in super::super) fn emit_jsx_fragment(&mut self, node: &Node) {
-        match self.ctx.options.jsx {
+        match self.effective_jsx_emit() {
             JsxEmit::React => self.emit_jsx_fragment_classic(node),
             JsxEmit::ReactJsx | JsxEmit::ReactJsxDev => self.emit_jsx_fragment_automatic(node),
             _ => self.emit_jsx_fragment_preserve(node),
@@ -166,6 +166,13 @@ impl<'a> Printer<'a> {
         let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
 
         self.emit_create_element_call(tag_name, attributes, &children);
+        let trailing_start = self
+            .arena
+            .get(jsx.closing_element)
+            .map_or(node.end, |closing| {
+                self.find_token_end_before_trivia(closing.pos, closing.end)
+            });
+        self.emit_jsx_transformed_trailing_comments(trailing_start);
     }
 
     fn emit_jsx_self_closing_classic(&mut self, node: &Node) {
@@ -177,6 +184,8 @@ impl<'a> Printer<'a> {
         let attributes = jsx.attributes;
 
         self.emit_create_element_call(tag_name, attributes, &[]);
+        let trailing_start = self.find_token_end_before_trivia(node.pos, node.end);
+        self.emit_jsx_transformed_trailing_comments(trailing_start);
     }
 
     fn emit_jsx_fragment_classic(&mut self, node: &Node) {
@@ -217,6 +226,96 @@ impl<'a> Printer<'a> {
         if multiline {
             self.decrease_indent();
         }
+        let trailing_start = self
+            .arena
+            .get(jsx.closing_fragment)
+            .map_or(node.end, |closing| {
+                self.find_token_end_before_trivia(closing.pos, closing.end)
+            });
+        self.emit_jsx_transformed_trailing_comments(trailing_start);
+    }
+
+    fn emit_jsx_transformed_trailing_comments(&mut self, end_pos: u32) {
+        if self.ctx.options.remove_comments {
+            return;
+        }
+
+        if self.emit_jsx_trailing_comments_from_cursor(end_pos) {
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+
+        for comment in crate::emitter::get_trailing_comment_ranges(text, end_pos as usize) {
+            self.write_space();
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment.pos as usize, comment.end as usize)
+                && !comment_text.is_empty()
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment.pos));
+            }
+            while self.comment_emit_idx < self.all_comments.len()
+                && self.all_comments[self.comment_emit_idx].pos <= comment.pos
+            {
+                self.comment_emit_idx += 1;
+            }
+            if comment.has_trailing_newline {
+                self.write_line();
+            }
+        }
+    }
+
+    fn emit_jsx_trailing_comments_from_cursor(&mut self, end_pos: u32) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+
+        let mut emitted = false;
+        let bytes = text.as_bytes();
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            let comment_pos = comment.pos;
+            let comment_end = comment.end;
+            let has_trailing_new_line = comment.has_trailing_new_line;
+
+            if comment_pos < end_pos {
+                let gap_end = std::cmp::min(end_pos as usize, bytes.len());
+                if bytes[comment_pos as usize..gap_end]
+                    .iter()
+                    .any(|&b| b == b'\n' || b == b'\r')
+                {
+                    break;
+                }
+                self.comment_emit_idx += 1;
+                continue;
+            }
+
+            let gap_start = std::cmp::min(end_pos as usize, bytes.len());
+            let gap_end = std::cmp::min(comment_pos as usize, bytes.len());
+            if bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| b == b'\n' || b == b'\r')
+            {
+                break;
+            }
+
+            self.write_space();
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+                && !comment_text.is_empty()
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment_pos));
+            }
+            self.comment_emit_idx += 1;
+            emitted = true;
+            if has_trailing_new_line {
+                self.write_line();
+            }
+        }
+
+        emitted
     }
 
     /// Emit `factory(tag, props, ...children)`
@@ -323,7 +422,7 @@ impl<'a> Printer<'a> {
         let is_jsxs = filtered_children.len() > 1;
         let is_cjs = self.ctx.is_effectively_commonjs()
             && !matches!(self.ctx.original_module_kind, Some(ModuleKind::System));
-        let is_dev = matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev);
+        let is_dev = matches!(self.effective_jsx_emit(), JsxEmit::ReactJsxDev);
         let func_name = if is_dev {
             "jsxDEV"
         } else if is_jsxs {
@@ -418,7 +517,7 @@ impl<'a> Printer<'a> {
 
         let is_cjs = self.ctx.is_effectively_commonjs()
             && !matches!(self.ctx.original_module_kind, Some(ModuleKind::System));
-        let is_dev = matches!(self.ctx.options.jsx, JsxEmit::ReactJsxDev);
+        let is_dev = matches!(self.effective_jsx_emit(), JsxEmit::ReactJsxDev);
         let func_name = if is_dev {
             "jsxDEV"
         } else if is_jsxs {
@@ -644,7 +743,7 @@ impl<'a> Printer<'a> {
                     self.write(text);
                     self.write("\"");
                 } else {
-                    self.write(text);
+                    self.emit(tag_name);
                 }
                 return;
             }

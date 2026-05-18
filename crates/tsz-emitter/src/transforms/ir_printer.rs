@@ -40,6 +40,8 @@ use tsz_parser::syntax_kind_ext;
 struct NamespaceIifeContext<'a> {
     is_exported: bool,
     attach_to_exports: bool,
+    commonjs_export_name: Option<&'a str>,
+    system_export_names: &'a [Cow<'static, str>],
     should_declare_var: bool,
     default_export_merge: bool,
     parent_name: Option<&'a str>,
@@ -78,6 +80,7 @@ pub struct IRPrinter<'a> {
     tslib_prefix: bool,
     tslib_import_binding: String,
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
+    system_import_meta: bool,
     pub(crate) base_printer_options: Option<PrinterOptions>,
     generator_state_name: &'static str,
     namespace_ast_name: Option<String>,
@@ -106,12 +109,21 @@ impl<'a> IRPrinter<'a> {
         (export_name == name && identifier_name == name).then_some((&**name, members, &**namespace))
     }
 
-    /// Check if a node is a `return [opcode ...];` generator op return statement.
-    /// Used to decide whether to inline `case N: return [opcode];` on one line.
-    fn is_generator_return(node: &IRNode) -> bool {
+    /// Check if a generator switch case should stay on the `case N:` line.
+    fn is_generator_inline_case_statement(node: &IRNode) -> bool {
+        match node {
+            IRNode::ThrowStatement(expr) => Self::is_generator_inline_throw_expression(expr),
+            IRNode::ReturnStatement(Some(expr)) => {
+                matches!(expr.as_ref(), IRNode::GeneratorOp { .. })
+            }
+            _ => false,
+        }
+    }
+
+    const fn is_generator_inline_throw_expression(expr: &IRNode) -> bool {
         matches!(
-            node,
-            IRNode::ReturnStatement(Some(expr)) if matches!(expr.as_ref(), IRNode::GeneratorOp { .. })
+            expr,
+            IRNode::Identifier(_) | IRNode::CallExpr { .. } | IRNode::GeneratorSent
         )
     }
 
@@ -157,6 +169,41 @@ impl<'a> IRPrinter<'a> {
         self.write(".");
         self.write(enum_name);
         self.write(" = {}));");
+    }
+
+    fn emit_es5_class_expression(
+        &mut self,
+        name: &str,
+        base_class: Option<&IRNode>,
+        super_param: Option<&str>,
+        body: &[IRNode],
+    ) {
+        if !self.remove_comments {
+            self.write("/** @class */ ");
+        }
+        self.write("(function (");
+        if base_class.is_some() {
+            self.write(super_param.unwrap_or("_super"));
+        }
+        self.write(") {");
+        self.write_line();
+        self.increase_indent();
+
+        let prev_iife_name = self.current_class_iife_name.replace(name.to_string());
+        for stmt in body {
+            self.write_indent();
+            self.emit_node(stmt);
+            self.write_line();
+        }
+        self.current_class_iife_name = prev_iife_name;
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}(");
+        if let Some(base) = base_class {
+            self.emit_node(base);
+        }
+        self.write("))");
     }
 
     fn extract_trailing_comment_from_function(&self, function: &IRNode) -> Option<String> {
@@ -219,6 +266,33 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
+    fn generator_state_name_for_function_body(body: &[IRNode]) -> Option<&'static str> {
+        if !body
+            .iter()
+            .any(|node| matches!(node, IRNode::GeneratorBody { .. }))
+        {
+            return None;
+        }
+
+        let mut hoisted_vars = Vec::new();
+        for stmt in body {
+            match stmt {
+                IRNode::VarDeclList(decls) => {
+                    for decl in decls {
+                        if let IRNode::VarDecl { name, .. } = decl {
+                            hoisted_vars.push(name.as_ref());
+                        }
+                    }
+                }
+                IRNode::VarDecl { name, .. } => hoisted_vars.push(name.as_ref()),
+                IRNode::GeneratorBody { .. } => break,
+                _ => {}
+            }
+        }
+
+        (!hoisted_vars.is_empty()).then(|| Self::generator_state_name_for_hoisted(&hoisted_vars))
+    }
+
     fn is_noop_statement(node: &IRNode) -> bool {
         match node {
             IRNode::Sequence(nodes) if nodes.is_empty() => true,
@@ -261,6 +335,7 @@ impl<'a> IRPrinter<'a> {
             tslib_prefix: false,
             tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
+            system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
             namespace_ast_name: None,
@@ -287,6 +362,7 @@ impl<'a> IRPrinter<'a> {
             tslib_prefix: false,
             tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
+            system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
             namespace_ast_name: None,
@@ -313,6 +389,7 @@ impl<'a> IRPrinter<'a> {
             tslib_prefix: false,
             tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
+            system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
             namespace_ast_name: None,
@@ -339,6 +416,10 @@ impl<'a> IRPrinter<'a> {
         subs: rustc_hash::FxHashMap<String, String>,
     ) {
         self.commonjs_import_substitutions = subs;
+    }
+
+    pub const fn set_system_import_meta(&mut self, enabled: bool) {
+        self.system_import_meta = enabled;
     }
 
     pub fn set_namespace_ast_qualification(
@@ -536,6 +617,13 @@ impl<'a> IRPrinter<'a> {
                 self.write(if *captured { "_this" } else { "this" });
             }
             IRNode::Super => self.write("super"),
+            IRNode::ImportMeta => {
+                self.write(if self.system_import_meta {
+                    "context_1.meta"
+                } else {
+                    "import.meta"
+                });
+            }
 
             // Expressions
             IRNode::BinaryExpr {
@@ -787,6 +875,12 @@ impl<'a> IRPrinter<'a> {
                             self.write("; }");
                             true
                         }
+                        IRNode::AwaiterCall { .. } => {
+                            self.write("{ ");
+                            self.emit_node(&body[0]);
+                            self.write(" }");
+                            true
+                        }
                         _ => false,
                     }
                 {
@@ -811,12 +905,19 @@ impl<'a> IRPrinter<'a> {
                 }
                 let force_multiline_empty = self.force_iife_multiline_empty
                     || matches!(name, Some(n) if self.current_class_iife_name.as_deref() == Some(&**n));
+                let previous_generator_state_name = self.generator_state_name;
+                if let Some(generator_state_name) =
+                    Self::generator_state_name_for_function_body(body)
+                {
+                    self.generator_state_name = generator_state_name;
+                }
                 self.emit_function_body_with_defaults(
                     parameters,
                     body,
                     *body_source_range,
                     force_multiline_empty,
                 );
+                self.generator_state_name = previous_generator_state_name;
             }
             IRNode::LogicalOr { left, right } => {
                 self.emit_node(left);
@@ -910,12 +1011,34 @@ impl<'a> IRPrinter<'a> {
                 self.write("if (");
                 self.emit_node(condition);
                 self.write(") ");
-                self.emit_node(then_branch);
+                if let IRNode::Block(stmts) = then_branch.as_ref()
+                    && stmts.is_empty()
+                {
+                    self.emit_empty_block_multiline();
+                } else {
+                    self.emit_node(then_branch);
+                }
                 if let Some(else_br) = else_branch {
                     self.write_line();
                     self.write_indent();
-                    self.write("else ");
-                    self.emit_node(else_br);
+                    self.write("else");
+                    match else_br.as_ref() {
+                        IRNode::Block(stmts) if stmts.is_empty() => {
+                            self.write(" ");
+                            self.emit_empty_block_multiline();
+                        }
+                        IRNode::Block(_) | IRNode::IfStatement { .. } => {
+                            self.write(" ");
+                            self.emit_node(else_br);
+                        }
+                        _ => {
+                            self.write_line();
+                            self.increase_indent();
+                            self.write_indent();
+                            self.emit_node(else_br);
+                            self.decrease_indent();
+                        }
+                    }
                 }
             }
             IRNode::Block(stmts) => {
@@ -947,22 +1070,31 @@ impl<'a> IRPrinter<'a> {
                 if let Some(init) = initializer {
                     self.emit_node(init);
                 }
-                self.write("; ");
+                self.write(";");
                 if let Some(cond) = condition {
+                    self.write(" ");
                     self.emit_node(cond);
                 }
-                self.write("; ");
+                self.write(";");
                 if let Some(incr) = incrementor {
+                    self.write(" ");
                     self.emit_node(incr);
                 }
                 self.write(") ");
-                self.emit_node(body);
+                if let IRNode::Block(stmts) = body.as_ref()
+                    && stmts.is_empty()
+                {
+                    self.emit_empty_block_multiline();
+                } else {
+                    self.emit_node(body);
+                }
             }
             IRNode::ForInOfStatement {
                 kind,
                 initializer,
                 expression,
                 body,
+                multiline_body,
             } => {
                 self.write("for (");
                 self.emit_node(initializer);
@@ -971,7 +1103,15 @@ impl<'a> IRPrinter<'a> {
                 self.write(" ");
                 self.emit_node(expression);
                 self.write(") ");
-                self.emit_node(body);
+                if *multiline_body && !matches!(&**body, IRNode::Block(_)) {
+                    self.write_line();
+                    self.increase_indent();
+                    self.write_indent();
+                    self.emit_node(body);
+                    self.decrease_indent();
+                } else {
+                    self.emit_node(body);
+                }
             }
             IRNode::WhileStatement { condition, body } => {
                 self.write("while (");
@@ -1058,12 +1198,19 @@ impl<'a> IRPrinter<'a> {
                 self.write(") ");
                 let force_multiline_empty =
                     self.current_class_iife_name.as_deref() == Some(&**name);
+                let previous_generator_state_name = self.generator_state_name;
+                if let Some(generator_state_name) =
+                    Self::generator_state_name_for_function_body(body)
+                {
+                    self.generator_state_name = generator_state_name;
+                }
                 self.emit_function_body_with_defaults(
                     parameters,
                     body,
                     *body_source_range,
                     force_multiline_empty,
                 );
+                self.generator_state_name = previous_generator_state_name;
                 if !self.remove_comments
                     && !self.suppress_function_trailing_extraction
                     && let Some(comment) = self.extract_trailing_comment_from_function(node)
@@ -1076,6 +1223,7 @@ impl<'a> IRPrinter<'a> {
             // ES5 Class Transform Specific
             IRNode::ES5ClassIIFE {
                 name,
+                binding_name,
                 base_class,
                 super_param,
                 body,
@@ -1117,37 +1265,17 @@ impl<'a> IRPrinter<'a> {
                 }
 
                 // var ClassName = /** @class */ (function (_super) { ... }(BaseClass));
+                let class_binding_name = binding_name.as_ref().unwrap_or(name);
                 self.write("var ");
-                self.write(name);
-                if self.remove_comments {
-                    self.write(" = (function (");
-                } else {
-                    self.write(" = /** @class */ (function (");
-                }
-                if base_class.is_some() {
-                    self.write(super_param.as_deref().unwrap_or("_super"));
-                }
-                self.write(") {");
-                self.write_line();
-                self.increase_indent();
-
-                let prev_iife_name = self.current_class_iife_name.replace(name.to_string());
-
-                // Emit body
-                for stmt in body {
-                    self.write_indent();
-                    self.emit_node(stmt);
-                    self.write_line();
-                }
-                self.current_class_iife_name = prev_iife_name;
-
-                self.decrease_indent();
-                self.write_indent();
-                self.write("}(");
-                if let Some(base) = base_class {
-                    self.emit_node(base);
-                }
-                self.write("));");
+                self.write(class_binding_name);
+                self.write(" = ");
+                self.emit_es5_class_expression(
+                    name,
+                    base_class.as_deref(),
+                    super_param.as_deref(),
+                    body,
+                );
+                self.write(";");
 
                 for init in computed_prop_temp_inits {
                     self.write_line();
@@ -1169,10 +1297,66 @@ impl<'a> IRPrinter<'a> {
                     self.write_indent();
                     self.write(alias);
                     self.write(" = ");
-                    self.write(name);
+                    self.write(class_binding_name);
                     self.write(";");
                 }
                 // Emit deferred static block IIFEs after the class IIFE
+                for deferred in deferred_static_blocks {
+                    self.write_line();
+                    self.write_indent();
+                    self.emit_node(deferred);
+                }
+            }
+            IRNode::ES5ClassAssignment {
+                name,
+                base_class,
+                super_param,
+                body,
+                computed_prop_temp_inits,
+                weakmap_inits,
+                leading_comment,
+                deferred_static_blocks,
+                deferred_block_class_alias,
+            } => {
+                if !self.remove_comments
+                    && let Some(comment) = leading_comment
+                {
+                    self.write(comment);
+                    self.write_line();
+                    self.write_indent();
+                }
+
+                self.write(name);
+                self.write(" = ");
+                self.emit_es5_class_expression(
+                    name,
+                    base_class.as_deref(),
+                    super_param.as_deref(),
+                    body,
+                );
+                self.write(";");
+
+                for init in computed_prop_temp_inits {
+                    self.write_line();
+                    self.write_indent();
+                    self.emit_node(init);
+                }
+
+                if !weakmap_inits.is_empty() {
+                    self.write_line();
+                    self.write(&weakmap_inits.join(", "));
+                    self.write(";");
+                }
+
+                if let Some(alias) = deferred_block_class_alias {
+                    self.write_line();
+                    self.write_indent();
+                    self.write(alias);
+                    self.write(" = ");
+                    self.write(name);
+                    self.write(";");
+                }
+
                 for deferred in deferred_static_blocks {
                     self.write_line();
                     self.write_indent();
@@ -1418,8 +1602,10 @@ impl<'a> IRPrinter<'a> {
             IRNode::AwaiterCall {
                 this_arg,
                 generator_body,
+                needs_lexical_this_capture,
                 hoisted_var_groups,
                 promise_constructor,
+                multiline_callback,
             } => {
                 let previous_generator_state_name = self.generator_state_name;
                 let hoisted_vars: Vec<&str> = hoisted_var_groups
@@ -1436,7 +1622,10 @@ impl<'a> IRPrinter<'a> {
                 } else {
                     self.write(", void 0, void 0, function () {");
                 }
-                if hoisted_var_groups.is_empty() {
+                if hoisted_var_groups.is_empty()
+                    && !multiline_callback
+                    && !*needs_lexical_this_capture
+                {
                     // TSC keeps the generator call on the awaiter callback's
                     // opening line when no hoisted variables are needed.
                     self.write(" ");
@@ -1447,10 +1636,25 @@ impl<'a> IRPrinter<'a> {
                     self.write_line();
                     self.increase_indent();
                     for group in hoisted_var_groups {
+                        if *needs_lexical_this_capture {
+                            for name in group {
+                                self.write_indent();
+                                self.write("var ");
+                                self.write(name);
+                                self.write(";");
+                                self.write_line();
+                            }
+                        } else {
+                            self.write_indent();
+                            self.write("var ");
+                            self.write(&group.join(", "));
+                            self.write(";");
+                            self.write_line();
+                        }
+                    }
+                    if *needs_lexical_this_capture {
                         self.write_indent();
-                        self.write("var ");
-                        self.write(&group.join(", "));
-                        self.write(";");
+                        self.write("var _this = this;");
                         self.write_line();
                     }
                     self.write_indent();
@@ -1507,10 +1711,11 @@ impl<'a> IRPrinter<'a> {
                         self.write("case ");
                         self.write(&case_item.label.to_string());
                         self.write(":");
-                        // tsc puts single-return-generator-op cases on one line:
+                        // tsc puts simple single-statement cases on one line:
                         //   case 0: return [4 /*yield*/, x];
+                        //   case 1: throw err;
                         if case_item.statements.len() == 1
-                            && Self::is_generator_return(&case_item.statements[0])
+                            && Self::is_generator_inline_case_statement(&case_item.statements[0])
                         {
                             self.write(" ");
                             self.emit_node(&case_item.statements[0]);
@@ -1563,6 +1768,37 @@ impl<'a> IRPrinter<'a> {
             IRNode::GeneratorLabel => {
                 self.write(self.generator_state_name);
                 self.write(".label");
+            }
+            IRNode::GeneratorTryPush {
+                start_label,
+                catch_label,
+                finally_label,
+                end_label,
+            } => {
+                self.write(self.generator_state_name);
+                self.write(".trys.push([");
+                self.write(&start_label.to_string());
+                self.write(", ");
+                self.write(&catch_label.to_string());
+                self.write(", ");
+                self.write(&finally_label.to_string());
+                self.write(", ");
+                self.write(&end_label.to_string());
+                self.write("]);");
+            }
+            IRNode::GeneratorTryPushFinally {
+                start_label,
+                finally_label,
+                end_label,
+            } => {
+                self.write(self.generator_state_name);
+                self.write(".trys.push([");
+                self.write(&start_label.to_string());
+                self.write(", , ");
+                self.write(&finally_label.to_string());
+                self.write(", ");
+                self.write(&end_label.to_string());
+                self.write("]);");
             }
 
             IRNode::IfBreak {
@@ -1900,6 +2136,24 @@ impl<'a> IRPrinter<'a> {
                             return;
                         }
 
+                        if matches!(
+                            directive,
+                            crate::context::transform::TransformDirective::ES5ForOf { .. }
+                        ) && node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                            && let Some(ref transforms) = self.transforms
+                        {
+                            let mut printer = AstPrinter::with_transforms_and_options(
+                                arena,
+                                transforms.clone(),
+                                self.make_ast_printer_options(),
+                            );
+                            self.configure_ast_printer_namespace(&mut printer);
+                            printer.emit(*idx);
+                            let output = printer.get_output().trim_end();
+                            self.write_embedded_output(output);
+                            return;
+                        }
+
                         // Note: For other directive types, fall through to source text copy
                         // This is intentional - we only handle directives that are ready
                     }
@@ -2132,6 +2386,8 @@ impl<'a> IRPrinter<'a> {
                 body,
                 is_exported,
                 attach_to_exports,
+                commonjs_export_name,
+                system_export_names,
                 should_declare_var,
                 parent_name,
                 param_name,
@@ -2146,6 +2402,8 @@ impl<'a> IRPrinter<'a> {
                     NamespaceIifeContext {
                         is_exported: *is_exported,
                         attach_to_exports: *attach_to_exports,
+                        commonjs_export_name: commonjs_export_name.as_deref(),
+                        system_export_names,
                         should_declare_var: *should_declare_var,
                         default_export_merge: *default_export_merge,
                         parent_name: parent_name.as_deref(),
@@ -2211,6 +2469,24 @@ impl<'a> IRPrinter<'a> {
                 self.write("\";");
             }
         }
+    }
+
+    fn emit_system_export_folded_namespace_assignment(
+        &mut self,
+        export_names: &[Cow<'static, str>],
+        current_name: &str,
+    ) {
+        let Some((export_name, inner_names)) = export_names.split_last() else {
+            self.write(current_name);
+            self.write(" = {}");
+            return;
+        };
+
+        self.write("exports_1(\"");
+        self.write_escaped(export_name.as_ref());
+        self.write("\", ");
+        self.emit_system_export_folded_namespace_assignment(inner_names, current_name);
+        self.write(")");
     }
 
     fn emit_namespace_iife(
@@ -2331,6 +2607,8 @@ impl<'a> IRPrinter<'a> {
                 NamespaceIifeContext {
                     is_exported: context.is_exported,
                     attach_to_exports: context.attach_to_exports,
+                    commonjs_export_name: context.commonjs_export_name,
+                    system_export_names: &[],
                     should_declare_var: true,
                     default_export_merge: false,
                     parent_name: None,
@@ -2359,12 +2637,21 @@ impl<'a> IRPrinter<'a> {
                 self.write(current_name);
                 self.write(" = {})");
             } else if context.is_exported && context.attach_to_exports {
+                let export_name = context.commonjs_export_name.unwrap_or(current_name);
                 self.write(current_name);
                 self.write(" || (exports.");
-                self.write(current_name);
+                self.write(export_name);
                 self.write(" = ");
                 self.write(current_name);
                 self.write(" = {})");
+            } else if !context.system_export_names.is_empty() {
+                self.write(current_name);
+                self.write(" || (");
+                self.emit_system_export_folded_namespace_assignment(
+                    context.system_export_names,
+                    current_name,
+                );
+                self.write(")");
             } else if context.default_export_merge {
                 self.write("exports.");
                 self.write(current_name);
@@ -2412,6 +2699,13 @@ impl<'a> IRPrinter<'a> {
         }
 
         self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+    }
+
+    fn emit_empty_block_multiline(&mut self) {
+        self.write("{");
+        self.write_line();
         self.write_indent();
         self.write("}");
     }

@@ -9,6 +9,78 @@ fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::pars
     (parser, root)
 }
 
+#[test]
+fn esmodule_es5_default_class_exports_after_iife() {
+    let source = r#"export default class A {
+    method() { return 1; }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ES2015,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var A = /** @class */ (function ()"),
+        "ES5 default class should be lowered to a local IIFE binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("export default A;"),
+        "Native ESM default export should be scheduled after the ES5 class binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export default var"),
+        "Default export must not prefix the lowered `var` declaration.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn esmodule_es5_anonymous_default_class_gets_synthetic_binding() {
+    let source = r#"export default class {
+    method() { return 1; }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ES2015,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var default_1 = /** @class */ (function ()"),
+        "Anonymous ES5 default class should receive the tsc-style synthetic binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("export default default_1;"),
+        "Native ESM anonymous default class export should use the synthetic binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export default \n"),
+        "Default export must not be left without an emitted expression.\nOutput:\n{output}"
+    );
+}
+
 /// When moduleDetection=force, a file without any import/export syntax
 /// should still be treated as a module and get the CJS __esModule preamble.
 #[test]
@@ -126,6 +198,42 @@ fn commonjs_type_only_reexport_skips_void_zero_preamble() {
     assert!(
         !output.contains("exports.I") && !output.contains("exports.II"),
         "Type-only re-exports should not be preinitialized.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_export_star_does_not_emit_commonjs_reexport_helpers() {
+    let source = r#"class Aaa {
+}
+namespace Aaa {
+export class SomeType {
+}
+}
+namespace Bbb {
+export class SomeType {
+}
+export * from Aaa;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        !output.contains("__exportStar") && !output.contains("__createBinding"),
+        "Namespace-scoped export star should be erased in JS and should not request CommonJS re-export helpers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Bbb.SomeType = SomeType;"),
+        "Namespace value members should still emit normally.\nOutput:\n{output}"
     );
 }
 
@@ -804,6 +912,47 @@ export const x = <span {...o} />;
 }
 
 #[test]
+fn commonjs_exported_destructuring_uses_binding_access_paths() {
+    let source = r#"'use strict'
+// exported destructuring should read from the pattern source
+export let [bar1] = [1];
+export const { a: bar2 } = { a: 2 };
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("// exported destructuring should read from the pattern source"),
+        "Leading comments before folded CommonJS exports should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.bar1 = [1][0];"),
+        "Array binding exports should read by element index.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("[1].bar1"),
+        "Array binding exports must not use the binding name as a property.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.bar2 = { a: 2 }.a;"),
+        "Object binding exports should read by property name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn async_arguments_capture_skips_parameter_and_pattern_bindings() {
     let source = r#"export async function f({ arguments_1 }: { arguments_1: string }) {
   const [arguments_2] = ["user binding"];
@@ -1388,6 +1537,77 @@ fn inline_cjs_export_skips_initializerless_vars() {
 }
 
 #[test]
+fn plain_class_expression_var_export_uses_split_assignment() {
+    let source = "export var simpleExample = class {\n    static getTags() { }\n    tags() { }\n};\nexport var circularReference = class C {\n    static getTags(c) { return c; }\n    tags(c) { return c; }\n};\n";
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var simpleExample = class {"),
+        "Plain exported class expressions should keep a local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.simpleExample = simpleExample;"),
+        "Plain exported class expressions should assign the local binding to exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var circularReference = class C {"),
+        "Named class expressions should also keep the exported local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.circularReference = circularReference;"),
+        "Named class expression exports should assign after the declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.simpleExample = class"),
+        "Plain class expressions should not be emitted as direct exports assignments.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn mixed_cjs_export_var_class_expression_keeps_ordered_assignment_schedule() {
+    let source = r#"declare function side(label: string): string;
+export var a = side("a"), C = class {}, b = side("b");
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    let local_class = output
+        .find("var C = class {")
+        .expect("Plain class expression should be emitted as a local binding");
+    let export_assignments = output
+        .find(r#"exports.a = side("a"), exports.C = C, exports.b = side("b");"#)
+        .expect("Mixed export var declarators should share an ordered export assignment statement");
+
+    assert!(
+        local_class < export_assignments,
+        "Local class binding should be scheduled before the export assignment list.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(r#"var a = side("a"), C = class"#),
+        "Inlineable declarators should not be forced into a full local declaration fallback.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn transformed_class_expression_var_export_emits_inline_assignment() {
     let source = "export var noPrivates = class {\n    static getTags() { }\n    tags() { }\n    private static ps = -1;\n    private p = 12;\n};\n";
     let (parser, root) = parse_test_source(source);
@@ -1481,10 +1701,79 @@ export var x = 1;
     );
 }
 
+#[test]
+fn es5_esm_class_namespace_merge_uses_bare_iife_after_export_clause() {
+    let source = r#"export class C {
+}
+export namespace C {
+export const x = 1;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("export { C };"),
+        "ES5 class ESM export should use a separate export clause.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(function (C) {"),
+        "Merged namespace should still emit its IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export (function"),
+        "Merged namespace IIFE should not be prefixed with `export`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_esm_erased_namespace_does_not_consume_runtime_export_var() {
+    let source = r#"export namespace N {
+}
+export namespace N {
+export const x = 1;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("export var N;"),
+        "First runtime namespace block should declare the ESM binding even after an erased namespace.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export (function"),
+        "Namespace IIFE should stay bare after the exported var declaration.\nOutput:\n{output}"
+    );
+}
+
 /// When a class has legacy decorators and is exported in CJS, the
-/// `exports.X = X;` pre-assignment should appear exactly once — from
-/// `emit_legacy_class_decorator_assignment`, NOT also from the
-/// `pending_commonjs_class_export_name` path.
+/// `exports.X = X;` pre-assignment should appear exactly once at the class
+/// boundary before the decorator assignment.
 #[test]
 fn decorated_class_export_no_duplicate_exports() {
     let source = "declare var dec: any;\n@dec export class A {}\n";
@@ -1512,6 +1801,55 @@ fn decorated_class_export_no_duplicate_exports() {
     assert!(
         output.contains("exports.A = A = __decorate("),
         "Should contain the decorator assignment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn decorated_commonjs_exported_class_static_self_reference_uses_alias() {
+    let source = "declare var Something: any;\n@Something({ v: () => Testing123 })\nexport class Testing123 {\n    static prop0: string;\n    static prop1 = Testing123.prop0;\n}\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        legacy_decorators: true,
+        emit_decorator_metadata: true,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var Testing123_1;"),
+        "CommonJS decorated class exports should hoist a self-reference alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("let Testing123 = Testing123_1 = class Testing123"),
+        "The exported decorated class should initialize the alias with the class value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Testing123.prop1 = Testing123_1.prop0;"),
+        "Lowered static self-references should use the hoisted alias.\nOutput:\n{output}"
+    );
+    let export_idx = output
+        .find("exports.Testing123 = Testing123;")
+        .expect("early CommonJS export assignment should be emitted");
+    let static_idx = output
+        .find("Testing123.prop1 = Testing123_1.prop0;")
+        .expect("static self-reference initializer should be emitted");
+    let decorator_idx = output
+        .find("exports.Testing123 = Testing123 = Testing123_1 = __decorate([")
+        .expect("decorator reassignment should be emitted");
+    assert!(
+        export_idx < static_idx && static_idx < decorator_idx,
+        "The early export assignment must stay between the class value and lowered static initializers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.Testing123 = Testing123 = Testing123_1 = __decorate(["),
+        "The decorator reassignment should preserve the alias in the CommonJS export chain.\nOutput:\n{output}"
     );
 }
 
@@ -1864,6 +2202,31 @@ fn node_esm_exported_import_equals_require_uses_export_list() {
     );
 }
 
+#[test]
+fn es_module_declare_export_import_equals_recovers_export_var() {
+    let source = r#"namespace x {
+    interface c {}
+}
+declare export import a = x.c;
+var b: a;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ES2015,
+        target: ScriptTarget::ES2015,
+        always_strict: true,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert_eq!(output.trim_end(), "export var a = x.c;\nvar b;");
+}
+
 /// A file without any module syntax or import.meta should NOT get __esModule.
 #[test]
 fn no_import_meta_no_esmodule_marker() {
@@ -2181,5 +2544,116 @@ export {};
     assert!(
         output.contains("import Foo, { bar } from \"./dep\""),
         "verbatimModuleSyntax must preserve the original import clause.\nOutput:\n{output}"
+    );
+}
+
+fn emit_commonjs_with_target(source: &str, target: ScriptTarget) -> String {
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+#[test]
+fn commonjs_export_clause_namespace_alias_folds_iife_alias() {
+    let source = r#"namespace m {
+    export var x = 10;
+}
+
+export { m as instantiatedModule };
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("})(m || (exports.instantiatedModule = m = {}));"),
+        "Namespace export aliases should fold the exported name into the IIFE tail.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.m ="),
+        "The folded export should use the alias, not the local namespace name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.instantiatedModule = m;"),
+        "The later export clause should not emit a duplicate assignment after IIFE folding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_es5_export_clause_namespace_alias_folds_iife_alias() {
+    let source = r#"namespace m {
+    export var x = 10;
+}
+
+export { m as instantiatedModule };
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES5);
+
+    assert!(
+        output.contains("})(m || (exports.instantiatedModule = m = {}));"),
+        "ES5 namespace transform should carry the export-clause alias into the IIFE tail.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.m ="),
+        "ES5 namespace transform should not fold through the local namespace name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.instantiatedModule = m;"),
+        "ES5 namespace transform should mark the IIFE fold as handling the later export clause.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_export_clause_empty_namespace_is_type_only() {
+    let source = r#"namespace m {
+    export var x = 10;
+}
+
+namespace uninstantiated {}
+
+export { m as instantiatedModule };
+export { uninstantiated };
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("exports.instantiatedModule"),
+        "The instantiated namespace alias should remain a runtime export.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.uninstantiated"),
+        "Empty non-instantiated namespaces should not produce CommonJS runtime exports.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_export_clause_namespace_alias_fold_keeps_other_aliases() {
+    let source = r#"namespace m {
+    export var x = 10;
+}
+
+export { m as firstAlias };
+export { m as secondAlias };
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("})(m || (exports.firstAlias = m = {}));"),
+        "The first namespace alias should be folded into the IIFE tail.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.secondAlias = m;"),
+        "Aliases not folded into the IIFE tail still need a later live export assignment.\nOutput:\n{output}"
     );
 }

@@ -283,7 +283,7 @@ impl<'a> Printer<'a> {
     /// Helper: recurse into a module/namespace body for const enum collection.
     /// Handles both `Block` and `ModuleBlock` body nodes.
     fn build_ns_prefix(&self, current_prefix: &str, name_idx: NodeIndex) -> String {
-        let name = self.get_identifier_text_idx(name_idx);
+        let name = self.qualified_name_to_string(name_idx);
         if name.is_empty() {
             return current_prefix.to_string();
         }
@@ -307,6 +307,17 @@ impl<'a> Printer<'a> {
         };
         let local_scope_start = body_node.pos;
         let local_scope_end = body_node.end;
+        if let Some(module_data) = self.arena.get_module(body_node) {
+            let child_prefix = self.build_ns_prefix(ns_prefix, module_data.name);
+            self.recurse_into_module_body(
+                evaluator,
+                module_data.body,
+                local_scope_start,
+                local_scope_end,
+                &child_prefix,
+            );
+            return;
+        }
         // Try regular Block first
         if let Some(block) = self.arena.get_block(body_node) {
             self.collect_const_enums_recursive(
@@ -333,10 +344,14 @@ impl<'a> Printer<'a> {
     }
 
     fn collect_const_enum_import_aliases(&mut self, statements: &NodeList) {
-        self.collect_const_enum_import_aliases_recursive(statements);
+        self.collect_const_enum_import_aliases_recursive(statements, "");
     }
 
-    fn collect_const_enum_import_aliases_recursive(&mut self, statements: &NodeList) {
+    fn collect_const_enum_import_aliases_recursive(
+        &mut self,
+        statements: &NodeList,
+        ns_prefix: &str,
+    ) {
         for &stmt_idx in &statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -346,45 +361,114 @@ impl<'a> Printer<'a> {
                 && let Some(import_data) = self.arena.get_import_decl(stmt_node)
                 && !import_data.is_type_only
             {
-                let alias_name = self.get_identifier_text_idx(import_data.import_clause);
-                let target = self.qualified_name_to_string(import_data.module_specifier);
-                if !alias_name.is_empty() && !target.is_empty() {
-                    self.const_enum_import_aliases.insert(alias_name, target);
-                }
+                self.register_const_enum_import_alias(import_data, ns_prefix);
                 continue;
             }
 
             if let Some(module_data) = self.arena.get_module(stmt_node) {
-                self.collect_const_enum_import_aliases_from_module_body(module_data.body);
+                let child_prefix = self.build_ns_prefix(ns_prefix, module_data.name);
+                self.collect_const_enum_import_aliases_from_module_body(
+                    module_data.body,
+                    &child_prefix,
+                );
                 continue;
             }
 
             if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
                 && let Some(export_data) = self.arena.get_export_decl(stmt_node)
                 && let Some(clause_node) = self.arena.get(export_data.export_clause)
-                && let Some(module_data) = self.arena.get_module(clause_node)
             {
-                self.collect_const_enum_import_aliases_from_module_body(module_data.body);
+                if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    && let Some(import_data) = self.arena.get_import_decl(clause_node)
+                    && !import_data.is_type_only
+                {
+                    self.register_const_enum_import_alias(import_data, ns_prefix);
+                    continue;
+                }
+
+                if let Some(module_data) = self.arena.get_module(clause_node) {
+                    let child_prefix = self.build_ns_prefix(ns_prefix, module_data.name);
+                    self.collect_const_enum_import_aliases_from_module_body(
+                        module_data.body,
+                        &child_prefix,
+                    );
+                }
             }
         }
     }
 
-    fn collect_const_enum_import_aliases_from_module_body(&mut self, body_idx: NodeIndex) {
+    fn collect_const_enum_import_aliases_from_module_body(
+        &mut self,
+        body_idx: NodeIndex,
+        ns_prefix: &str,
+    ) {
         let Some(body_node) = self.arena.get(body_idx) else {
             return;
         };
+        if let Some(module_data) = self.arena.get_module(body_node) {
+            let child_prefix = self.build_ns_prefix(ns_prefix, module_data.name);
+            self.collect_const_enum_import_aliases_from_module_body(
+                module_data.body,
+                &child_prefix,
+            );
+            return;
+        }
         if let Some(block) = self.arena.get_block(body_node) {
-            self.collect_const_enum_import_aliases_recursive(&block.statements);
+            self.collect_const_enum_import_aliases_recursive(&block.statements, ns_prefix);
             return;
         }
         if let Some(module_block) = self.arena.get_module_block(body_node)
             && let Some(statements) = &module_block.statements
         {
-            self.collect_const_enum_import_aliases_recursive(statements);
+            self.collect_const_enum_import_aliases_recursive(statements, ns_prefix);
         }
     }
 
-    fn qualified_name_to_string(&self, idx: NodeIndex) -> String {
+    fn register_const_enum_import_alias(
+        &mut self,
+        import_data: &tsz_parser::parser::node::ImportDeclData,
+        ns_prefix: &str,
+    ) {
+        let alias_name = self.get_identifier_text_idx(import_data.import_clause);
+        let target = self.qualified_name_to_string(import_data.module_specifier);
+        if alias_name.is_empty() || target.is_empty() {
+            return;
+        }
+
+        let resolved_target = self
+            .resolve_const_enum_alias_target(&target, ns_prefix)
+            .unwrap_or(target);
+        let alias_key = if ns_prefix.is_empty() {
+            alias_name
+        } else {
+            format!("{ns_prefix}.{alias_name}")
+        };
+        self.const_enum_import_aliases
+            .insert(alias_key, resolved_target);
+    }
+
+    fn resolve_const_enum_alias_target(&self, target: &str, ns_prefix: &str) -> Option<String> {
+        if !ns_prefix.is_empty() {
+            let qualified = format!("{ns_prefix}.{target}");
+            if self.const_enum_values.contains_key(&qualified) {
+                return Some(qualified);
+            }
+            if let Some(alias_target) = self.const_enum_import_aliases.get(&qualified) {
+                return Some(alias_target.clone());
+            }
+        }
+
+        if self.const_enum_values.contains_key(target) {
+            return Some(target.to_string());
+        }
+        if let Some(alias_target) = self.const_enum_import_aliases.get(target) {
+            return Some(alias_target.clone());
+        }
+
+        None
+    }
+
+    pub(in crate::emitter) fn qualified_name_to_string(&self, idx: NodeIndex) -> String {
         let Some(node) = self.arena.get(idx) else {
             return String::new();
         };
@@ -640,13 +724,49 @@ impl<'a> Printer<'a> {
                     .get_class(decl_node)
                     .and_then(|class| self.get_identifier_text_opt(class.name))
                     .is_some_and(|name| name == local_name),
-                k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
-                    .get_declaration_export_names(decl_node)
-                    .iter()
-                    .any(|name| name == local_name),
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    self.variable_statement_declares_name(decl_node, local_name)
+                }
                 _ => false,
             }
         })
+    }
+
+    fn variable_statement_declares_name(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+        local_name: &str,
+    ) -> bool {
+        let Some(var_stmt) = self.arena.get_variable(node) else {
+            return false;
+        };
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                continue;
+            };
+            if let Some(var_decl_list) = self.arena.get_variable(decl_list_node) {
+                for &decl_idx in &var_decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    let mut names = Vec::new();
+                    self.collect_binding_names(decl.name, &mut names);
+                    if names.iter().any(|name| name == local_name) {
+                        return true;
+                    }
+                }
+            } else if let Some(decl) = self.arena.get_variable_declaration(decl_list_node) {
+                let mut names = Vec::new();
+                self.collect_binding_names(decl.name, &mut names);
+                if names.iter().any(|name| name == local_name) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Get names declared by a statement for inline CJS export.

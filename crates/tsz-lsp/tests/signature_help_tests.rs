@@ -3054,3 +3054,244 @@ fn test_signature_help_ternary_expression_in_arg() {
         );
     }
 }
+
+// ── Intrinsic primitive method signature tests ──────────────────────────────
+//
+// Structural rule: when the callee is a method access on a primitive intrinsic
+// type (string, number, boolean, …) and the type system produced the no-lib
+// fallback `(...args: any[]) => ReturnType` shape, the LSP must replace the
+// synthetic parameter list with the real parameter names and optionality so
+// that tools display e.g. `toLowerCase(): string` instead of
+// `toLowerCase(...args: any[]): string`.
+
+fn sig_help_at(source: &str, line: u32, col: u32) -> Option<crate::SignatureHelp> {
+    let (parser, binder, interner, line_map, root) = setup_provider(source);
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let mut cache = None;
+    provider.get_signature_help(root, Position::new(line, col), &mut cache)
+}
+
+// Helper: first signature in the help result.
+fn first_sig(help: &crate::SignatureHelp) -> &crate::SignatureInformation {
+    &help.signatures[help.active_signature as usize]
+}
+
+// ── No-param string methods ──────────────────────────────────────────────────
+
+#[test]
+fn test_intrinsic_sig_string_to_lower_case_no_params() {
+    // `const s: string` and `const t = "literal"` both exercise the path.
+    for (src, line, col) in [
+        ("const s: string = \"abc\";\ns.toLowerCase(", 1u32, 14u32),
+        ("const t = \"abc\";\nt.toLowerCase(", 1u32, 14u32),
+    ] {
+        let help = sig_help_at(src, line, col);
+        let Some(help) = help else { continue };
+        let sig = first_sig(&help);
+        assert!(
+            sig.label.contains("toLowerCase(): string"),
+            "Expected no-param label, got: {}",
+            sig.label
+        );
+        assert!(
+            sig.parameters.is_empty(),
+            "toLowerCase has no parameters, got: {:?}",
+            sig.parameters.iter().map(|p| &p.label).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn test_intrinsic_sig_string_to_upper_case_no_params() {
+    let help = sig_help_at("const s: string = \"\";\ns.toUpperCase(", 1, 14);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert!(
+        sig.parameters.is_empty(),
+        "toUpperCase has no parameters, got: {:?}",
+        sig.parameters.iter().map(|p| &p.label).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_intrinsic_sig_string_trim_no_params() {
+    let help = sig_help_at("const s: string = \"\";\ns.trim(", 1, 7);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert!(
+        sig.parameters.is_empty(),
+        "trim has no parameters, got: {:?}",
+        sig.parameters.iter().map(|p| &p.label).collect::<Vec<_>>()
+    );
+}
+
+// ── String methods with parameters ──────────────────────────────────────────
+
+#[test]
+fn test_intrinsic_sig_string_index_of_two_params() {
+    let help = sig_help_at("const s: string = \"abc\";\ns.indexOf(", 1, 10);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(
+        sig.parameters.len(),
+        2,
+        "indexOf should have 2 parameters, label: {}",
+        sig.label
+    );
+    assert_eq!(sig.parameters[0].name, "searchString");
+    assert!(!sig.parameters[0].is_optional, "searchString is required");
+    assert_eq!(sig.parameters[1].name, "position");
+    assert!(sig.parameters[1].is_optional, "position is optional");
+}
+
+#[test]
+fn test_intrinsic_sig_string_starts_with_two_params() {
+    let help = sig_help_at("const s: string = \"\";\ns.startsWith(", 1, 13);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(
+        sig.parameters.len(),
+        2,
+        "startsWith should have 2 parameters"
+    );
+    assert_eq!(sig.parameters[0].name, "searchString");
+    assert_eq!(sig.parameters[1].name, "position");
+    assert!(sig.parameters[1].is_optional);
+}
+
+#[test]
+fn test_intrinsic_sig_string_ends_with_end_position_param() {
+    let help = sig_help_at("const s: string = \"\";\ns.endsWith(", 1, 11);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(sig.parameters.len(), 2, "endsWith should have 2 parameters");
+    assert_eq!(sig.parameters[0].name, "searchString");
+    assert_eq!(sig.parameters[1].name, "endPosition");
+    assert!(sig.parameters[1].is_optional);
+}
+
+#[test]
+fn test_intrinsic_sig_string_char_at_single_pos_param() {
+    let help = sig_help_at("const s: string = \"\";\ns.charAt(", 1, 9);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(sig.parameters.len(), 1, "charAt should have 1 parameter");
+    assert_eq!(sig.parameters[0].name, "pos");
+    assert!(!sig.parameters[0].is_optional);
+}
+
+#[test]
+fn test_intrinsic_sig_string_slice_two_optional_params() {
+    let help = sig_help_at("const s: string = \"\";\ns.slice(", 1, 8);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(sig.parameters.len(), 2, "slice should have 2 parameters");
+    assert_eq!(sig.parameters[0].name, "start");
+    assert!(sig.parameters[0].is_optional, "start is optional for slice");
+    assert_eq!(sig.parameters[1].name, "end");
+    assert!(sig.parameters[1].is_optional, "end is optional for slice");
+}
+
+#[test]
+fn test_intrinsic_sig_string_pad_start_two_params() {
+    let help = sig_help_at("const s: string = \"\";\ns.padStart(", 1, 11);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(sig.parameters.len(), 2, "padStart should have 2 parameters");
+    assert_eq!(sig.parameters[0].name, "maxLength");
+    assert!(!sig.parameters[0].is_optional);
+    assert_eq!(sig.parameters[1].name, "fillString");
+    assert!(sig.parameters[1].is_optional);
+}
+
+// ── Number methods ───────────────────────────────────────────────────────────
+
+#[test]
+fn test_intrinsic_sig_number_to_fixed_optional_param() {
+    let help = sig_help_at("const n: number = 3.14;\nn.toFixed(", 1, 10);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(sig.parameters.len(), 1, "toFixed should have 1 parameter");
+    assert_eq!(sig.parameters[0].name, "digits");
+    assert!(sig.parameters[0].is_optional, "digits is optional");
+}
+
+#[test]
+fn test_intrinsic_sig_number_to_string_optional_radix() {
+    let help = sig_help_at("const n: number = 42;\nn.toString(", 1, 11);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert_eq!(
+        sig.parameters.len(),
+        1,
+        "number.toString should have 1 parameter"
+    );
+    assert_eq!(sig.parameters[0].name, "radix");
+    assert!(sig.parameters[0].is_optional);
+}
+
+#[test]
+fn test_intrinsic_sig_number_value_of_no_params() {
+    let help = sig_help_at("const n: number = 1;\nn.valueOf(", 1, 10);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert!(
+        sig.parameters.is_empty(),
+        "valueOf has no parameters, got: {:?}",
+        sig.parameters.iter().map(|p| &p.label).collect::<Vec<_>>()
+    );
+}
+
+// ── Boolean methods ──────────────────────────────────────────────────────────
+
+#[test]
+fn test_intrinsic_sig_boolean_to_string_no_params() {
+    let help = sig_help_at("const b: boolean = true;\nb.toString(", 1, 11);
+    let Some(help) = help else { return };
+    let sig = first_sig(&help);
+    assert!(
+        sig.parameters.is_empty(),
+        "boolean.toString has no parameters, got: {:?}",
+        sig.parameters.iter().map(|p| &p.label).collect::<Vec<_>>()
+    );
+}
+
+// ── Active-parameter tracking ────────────────────────────────────────────────
+
+#[test]
+fn test_intrinsic_sig_active_param_advances_for_index_of() {
+    // Cursor after the comma should put active_parameter on the second arg.
+    let help = sig_help_at("const s: string = \"\";\ns.indexOf(\"x\", ", 1, 15);
+    let Some(help) = help else { return };
+    assert_eq!(
+        help.active_parameter, 1,
+        "active_parameter should be 1 when cursor is past the comma"
+    );
+}
+
+// ── Structural coverage: different identifier names don't affect the fix ─────
+
+#[test]
+fn test_intrinsic_sig_works_for_any_variable_name() {
+    // The fix must be structural (keyed by intrinsic kind + method name), not
+    // by identifier spelling.
+    for var in ["s", "myStr", "x", "foo"] {
+        let src = format!("const {var}: string = \"\";\n{var}.toLowerCase(");
+        let help = sig_help_at(&src, 1, 14 + var.len() as u32 - 1);
+        let Some(help) = help else { continue };
+        let sig = first_sig(&help);
+        assert!(
+            sig.parameters.is_empty(),
+            "toLowerCase params should be empty for variable '{}', label: {}",
+            var,
+            sig.label
+        );
+    }
+}

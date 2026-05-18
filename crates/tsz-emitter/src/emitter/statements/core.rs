@@ -37,6 +37,7 @@ impl<'a> Printer<'a> {
             && !needs_this_capture
             && is_function_body_block
             && !self.pending_object_rest_params.is_empty()
+            && self.pending_object_rest_param_defaults.is_empty()
             && self.is_single_line(node)
         {
             self.ctx.block_scope_state.enter_function_scope();
@@ -54,6 +55,7 @@ impl<'a> Printer<'a> {
         if block.statements.nodes.is_empty()
             && !needs_this_capture
             && self.pending_object_rest_params.is_empty()
+            && self.pending_object_rest_param_defaults.is_empty()
         {
             // Find the actual closing `}` position (not node.end which includes trailing trivia)
             let closing_brace_end = self.find_block_closing_brace_end(node);
@@ -167,7 +169,8 @@ impl<'a> Printer<'a> {
             && self.pending_lowered_async_arrow_super_capture.is_none()
             && self.hoisted_assignment_value_temps.is_empty()
             && self.hoisted_for_of_temps.is_empty()
-            && self.pending_object_rest_params.is_empty();
+            && self.pending_object_rest_params.is_empty()
+            && self.pending_object_rest_param_defaults.is_empty();
 
         if should_emit_single_line {
             if is_function_body_block {
@@ -262,6 +265,9 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
+        let directive_prologue_count = self
+            .emit_leading_directive_prologue_statements(&block.statements.nodes, block_close_pos);
+
         // Inject `var _this = this;` at the start of the block for arrow function _this capture
         if let Some(ref capture_name) = this_capture_name {
             self.write("var ");
@@ -274,6 +280,8 @@ impl<'a> Printer<'a> {
         // e.g., `function f(_a, b) { var { a } = _a, rest = __rest(_a, ["a"]); ... }`
         if is_function_body_block && !self.pending_object_rest_params.is_empty() {
             self.emit_pending_object_rest_param_preamble(false);
+        } else if is_function_body_block && !self.pending_object_rest_param_defaults.is_empty() {
+            self.emit_pending_object_rest_param_defaults(false);
         }
 
         let static_super_scope =
@@ -326,7 +334,7 @@ impl<'a> Printer<'a> {
         let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
         let prev_recovered_module_syntax_block_depth = self.recovered_module_syntax_block_depth;
         self.recovered_module_syntax_block_depth += 1;
-        for (stmt_i, &stmt_idx) in stmts.iter().enumerate() {
+        for (stmt_i, &stmt_idx) in stmts.iter().enumerate().skip(directive_prologue_count) {
             // Save state before leading comments so we can undo them if the
             // statement produces no output (e.g., namespace alias import or
             // CJS export var with no initializer).
@@ -495,24 +503,7 @@ impl<'a> Printer<'a> {
         self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
 
         if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {
-            let indent = " ".repeat(self.writer.indent_width() as usize);
-            let mut ref_vars = Vec::new();
-            ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
-            ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
-
-            if !ref_vars.is_empty() {
-                let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
-                self.writer.insert_line_at(byte_offset, line_no, &var_decl);
-            }
-
-            if !self.hoisted_assignment_value_temps.is_empty() {
-                let var_decl = format!(
-                    "{}var {};",
-                    indent,
-                    self.hoisted_assignment_value_temps.join(", ")
-                );
-                self.writer.insert_line_at(byte_offset, line_no, &var_decl);
-            }
+            self.insert_function_body_hoisted_temps_at(byte_offset, line_no);
         }
 
         if let Some((byte_offset, line_no)) = block_scoped_private_byte_offset
@@ -637,9 +628,37 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn insert_function_body_hoisted_temps_at(
+        &mut self,
+        byte_offset: usize,
+        line_no: u32,
+    ) {
+        let indent = " ".repeat(self.writer.indent_width() as usize);
+        let mut ref_vars = Vec::new();
+        ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
+        ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
+
+        if !ref_vars.is_empty() {
+            let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
+            self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+        }
+
+        if !self.hoisted_assignment_value_temps.is_empty() {
+            let var_decl = format!(
+                "{}var {};",
+                indent,
+                self.hoisted_assignment_value_temps.join(", ")
+            );
+            self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+        }
+    }
+
     pub(in crate::emitter) fn emit_pending_object_rest_param_preamble(&mut self, inline: bool) {
         let rest_params: Vec<(String, NodeIndex)> =
             std::mem::take(&mut self.pending_object_rest_params);
+        for (temp_name, _) in &rest_params {
+            self.generated_temp_names.insert(temp_name.clone());
+        }
         for (i, (temp_name, pattern_idx)) in rest_params.iter().enumerate() {
             if inline && i > 0 {
                 self.write(" ");
@@ -647,6 +666,27 @@ impl<'a> Printer<'a> {
             self.write("var ");
             self.emit_object_rest_var_decl(*pattern_idx, NodeIndex::NONE, Some(temp_name));
             self.write(";");
+            if !inline {
+                self.write_line();
+            }
+        }
+        self.emit_pending_object_rest_param_defaults(inline);
+    }
+
+    pub(in crate::emitter) fn emit_pending_object_rest_param_defaults(&mut self, inline: bool) {
+        let defaults: Vec<(String, NodeIndex)> =
+            std::mem::take(&mut self.pending_object_rest_param_defaults);
+        for (i, (name, initializer)) in defaults.iter().enumerate() {
+            if inline && i > 0 {
+                self.write(" ");
+            }
+            self.write("if (");
+            self.write(name);
+            self.write(" === void 0) { ");
+            self.write(name);
+            self.write(" = ");
+            self.emit_expression(*initializer);
+            self.write("; }");
             if !inline {
                 self.write_line();
             }
@@ -715,6 +755,10 @@ impl<'a> Printer<'a> {
             Vec::new()
         };
 
+        if self.emit_esm_object_rest_export_statement(node) {
+            return;
+        }
+
         if self.is_es5_empty_binding_pattern_export_statement(node)
             && self.emit_es5_empty_binding_pattern_export(&var_stmt.declarations)
         {
@@ -758,6 +802,21 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
+            return;
+        }
+
+        let is_var_declaration = var_stmt.declarations.nodes.iter().any(|decl_list_idx| {
+            self.arena.get(*decl_list_idx).is_some_and(|decl_list| {
+                let flags = decl_list.flags as u32;
+                flags & (node_flags::LET | node_flags::CONST | node_flags::USING) == 0
+            })
+        });
+        if self.in_system_execute_body
+            && self.function_scope_depth == 0
+            && !self.in_namespace_iife
+            && is_var_declaration
+        {
+            self.emit_system_variable_initializers(node);
             return;
         }
 
@@ -836,6 +895,9 @@ impl<'a> Printer<'a> {
         if self.emit_async_generator_shadow_variable_statement(node) {
             return;
         }
+        if self.should_emit_invalid_namespace_static_modifier(node, &var_stmt.modifiers) {
+            self.write("static ");
+        }
         let is_accessor = self
             .arena
             .has_modifier(&var_stmt.modifiers, SyntaxKind::AccessorKeyword)
@@ -892,6 +954,9 @@ impl<'a> Printer<'a> {
         // not find semicolons inside the erased type annotation.
         let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
         self.emit_trailing_comment_after_semicolon_in_range(node.pos, effective_end);
+        self.emit_static_block_await_arrow_recovery_blocks_after_variable_statement(
+            &var_stmt.declarations,
+        );
         self.emit_recovered_malformed_arrow_block_after_variable_statement(
             node,
             recovered_async_arrow_return.is_some(),
@@ -993,6 +1058,29 @@ impl<'a> Printer<'a> {
         let masked_line = Self::source_text_with_quoted_spans_masked(line);
         let line_for_scan = masked_line.as_str();
 
+        if self.ctx.flags.in_class_static_block
+            && Self::line_has_static_block_await_arrow_recovery(line_for_scan)
+        {
+            let Some(arrow_rel) = line_for_scan.find("=>") else {
+                return;
+            };
+            let after_arrow = start + arrow_rel + 2;
+            let Some(open_rel) = bytes[after_arrow..line_end].iter().position(|&b| b == b'{')
+            else {
+                return;
+            };
+            let open = after_arrow + open_rel;
+            let mut pos = open + 1;
+            while pos < bytes.len() && bytes[pos].is_ascii_whitespace() {
+                pos += 1;
+            }
+            if bytes.get(pos) == Some(&b'}') {
+                self.write_line();
+                self.write("{ }");
+            }
+            return;
+        }
+
         if line_for_scan.contains("= @") && line_for_scan.contains("=>") {
             let Some(arrow_rel) = line_for_scan.find("=>") else {
                 return;
@@ -1056,7 +1144,6 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.write_semicolon();
     }
-
     fn emit_recovered_typeof_member_call_after_variable_statement(&mut self, node: &Node) {
         // Only recover when every declaration in the statement lacks an initializer.
         // If any declaration has an initializer, .typeof( is a valid property call
@@ -1853,6 +1940,73 @@ impl<'a> Printer<'a> {
                 || k == syntax_kind_ext::CLASS_EXPRESSION
         );
         !can_strip
+    }
+
+    pub(in crate::emitter) fn emit_leading_directive_prologue_statements(
+        &mut self,
+        statements: &[NodeIndex],
+        block_close_pos: u32,
+    ) -> usize {
+        let mut emitted_count = 0;
+        for (stmt_i, &stmt_idx) in statements.iter().enumerate() {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                break;
+            };
+            if !self.is_directive_prologue_statement(stmt_node) {
+                break;
+            }
+
+            let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+            if let Some(text) = self.source_text {
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c_end = self.all_comments[self.comment_emit_idx].end;
+                    if c_end > actual_start {
+                        break;
+                    }
+                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                    let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+                    if let Ok(comment_text) =
+                        safe_slice::slice(text, c_pos as usize, c_end as usize)
+                    {
+                        self.write_comment_with_reindent(comment_text, Some(c_pos));
+                        if c_trailing {
+                            self.write_line();
+                        } else if comment_text.starts_with("/*") {
+                            self.pending_block_comment_space = true;
+                        }
+                    }
+                    self.comment_emit_idx += 1;
+                }
+            }
+
+            let before_emit_len = self.writer.len();
+            self.emit(stmt_idx);
+            if self.writer.len() > before_emit_len && !self.writer.is_at_line_start() {
+                let upper_bound = statements
+                    .get(stmt_i + 1)
+                    .and_then(|&next_idx| self.arena.get(next_idx))
+                    .map_or(block_close_pos, |next_node| next_node.pos);
+                let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
+                let max_pos = if stmt_i + 1 >= statements.len() {
+                    block_close_pos
+                } else {
+                    upper_bound
+                };
+                self.emit_trailing_comments_before(token_end, max_pos);
+                self.write_line();
+            }
+            emitted_count += 1;
+        }
+        emitted_count
+    }
+
+    fn is_directive_prologue_statement(&self, node: &Node) -> bool {
+        node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+            && self
+                .arena
+                .get_expression_statement(node)
+                .and_then(|stmt| self.arena.get(stmt.expression))
+                .is_some_and(|expr| expr.is_string_literal())
     }
 
     /// Emit trailing comments after a semicolon. Scans backward through the

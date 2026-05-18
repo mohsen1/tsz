@@ -248,8 +248,19 @@ do not add ad-hoc print debugging.
 
 ## 20) Repo-Local Skills
 
-No repo-local `SKILL.md` files are currently checked in. Do not list or rely on
-TSZ-specific skills here unless their implementation is committed in the repo.
+Repo-local TSZ skills live under `.agents/skills/`. Use them when the task
+matches their description:
+
+- `tsz-architecture`: checker/solver/binder/emitter/LSP/WASM boundary work and
+  architecture guard failures.
+- `tsz-ci-pr`: GitHub PR status, CI triage, ready/merge handling, and landing.
+- `tsz-conformance`: conformance regressions, accepted-regression drift,
+  fingerprint-only triage, and conformance issue creation.
+- `tsz-emit`: JavaScript/declaration emit and emit parity work.
+- `tsz-project-bench`: benchmark/project-corpus rows, fixture metadata, PGO, and
+  benchmark dashboard work.
+- `tsz-tracing`: tracing-driven debugging of checker/solver/binder behavior.
+
 Runtime-provided global skills may exist outside this checkout; do not document
 them as TSZ repo skills.
 
@@ -260,6 +271,19 @@ them as TSZ repo skills.
   stable across the session.
 - **Sign your work.** Every PR body and GitHub issue you create or comment on
   must include your AgentName so humans (and other agents) can tell who did it.
+- **Fill the Project Corpus Impact section on every PR.** The PR template
+  requires it. Do not delete or leave it blank. If the PR cannot affect project
+  corpus behavior, write `Row: n/a`, `Bug family: n/a`, and one concrete
+  evidence line such as `docs-only`, `agent-skill-only`, or `test-harness-only`.
+  For compiler, benchmark, emit, checker, solver, parser, binder, LSP, WASM, or
+  CI changes, name the affected project row when known, name the bug family, and
+  cite the local command, CI job, issue, or artifact used as evidence.
+- **Acknowledge code reviews.** When your PR receives a substantive code review,
+  especially from `CodeReviewer`, react to the review comment/thread after
+  reading it and leave a brief PR comment acknowledging the review with your
+  AgentName. If the review requests changes, state whether you will fix it,
+  have fixed it, or disagree with reasons; do not treat a reaction as a
+  substitute for a response or for doing the requested work.
 - **Shared GitHub identity.** All agents push as the same GitHub user
   (`mohsen1`). Assume sibling agents are operating concurrently under the same
   account — check draft PRs, open PRs, recent merged PRs, and relevant issues
@@ -283,6 +307,20 @@ them as TSZ repo skills.
   blast radius fits inside your current PR**. Otherwise file an issue.
 - Don't bundle a sprawling refactor into a narrow bug-fix PR — that defeats
   reviewability and breaks the stacked-PR model.
+
+## 20.21) Upstream TypeScript Bugs
+
+- If an investigation proves the observed behavior is definitely a `tsc` bug,
+  do not patch tsz away from `tsc` parity. File the bug in the tsz repository
+  as a GitHub issue documenting the minimized repro, actual `tsc` behavior,
+  expected behavior, and the evidence that this is upstream rather than a tsz
+  divergence.
+- Apply the `TypeScript bug` label to that issue and include your AgentName in
+  the body. If there is an existing upstream TypeScript issue, link it from the
+  tsz issue. Do not open issues or comments in TypeScript or any other upstream
+  repository unless the user explicitly asks you to do that.
+- If there is already a tsz issue for the same upstream bug, comment on that
+  tsz issue instead of opening a duplicate.
 
 ## 20.25) Conformance Maintenance
 

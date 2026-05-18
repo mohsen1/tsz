@@ -11,11 +11,31 @@ fn transform_and_print(source: &str) -> String {
         && let Some(&func_idx) = source_file.statements.nodes.first()
     {
         let mut transformer = AsyncES5Transformer::new(&parser.arena);
+        transformer.set_source_text(source);
         let ir = transformer.transform_async_function(func_idx);
         IRPrinter::emit_to_string(&ir)
     } else {
         String::new()
     }
+}
+
+#[test]
+fn test_class_declaration_in_async_body_uses_structured_es5_assignment() {
+    let output =
+        transform_and_print("async function foo() { class C extends B { static { await; } } }");
+
+    assert!(
+        output.contains("var C;\n        return __generator"),
+        "Class declarations inside async bodies should hoist the class binding to the awaiter scope.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("C = /** @class */ (function (_super)"),
+        "Class declarations inside async bodies should lower to an assignment, not raw class syntax.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("class C extends B"),
+        "Async generator cases must not fall back to raw class source.\nOutput:\n{output}"
+    );
 }
 
 fn transform_generator_and_print(source: &str) -> String {
@@ -27,6 +47,7 @@ fn transform_generator_and_print(source: &str) -> String {
         && let Some(&func_idx) = source_file.statements.nodes.first()
     {
         let mut transformer = AsyncES5Transformer::new(&parser.arena);
+        transformer.set_source_text(source);
         let ir = transformer.transform_generator_function(func_idx);
         IRPrinter::emit_to_string(&ir)
     } else {
@@ -77,6 +98,28 @@ fn test_async_with_await() {
 }
 
 #[test]
+fn test_async_if_then_await_else_uses_resume_before_else_label() {
+    let output = transform_and_print(
+        "async function test(skip: boolean) { if (!skip) { await 1 } else { throw Error('test') } }",
+    );
+
+    assert!(
+        output.contains("if (!!skip) return [3 /*break*/, 2];"),
+        "The initial branch should jump over the then-resume case into the else case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 1:")
+            && output.contains("_a.sent();")
+            && output.contains("return [3 /*break*/, 3];"),
+        "The then branch should resume at case 1 before jumping to the final case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2: throw Error('test');"),
+        "The else branch should start after the then resume case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_async_while_with_await_lowers_to_generator_cases() {
     let output =
         transform_and_print("async function f(xs) { while (xs.length) { await g(xs.pop()); } }");
@@ -122,7 +165,6 @@ fn test_return_await() {
 }
 
 #[test]
-#[ignore = "regression from remote: async ES5 IR variable await assignment changed"]
 fn test_variable_with_await() {
     let output = transform_and_print("async function foo() { let x = await bar(); return x; }");
     assert!(output.contains("[4 /*yield*/"), "Should have yield");
@@ -145,6 +187,73 @@ fn test_variable_declaration_order() {
             && var_pos.expect("var_pos is Some, checked above")
                 < yield_pos.expect("yield_pos is Some, checked above"),
         "Variable declaration must come before yield: {output}"
+    );
+}
+
+#[test]
+fn test_await_using_in_async_body_lowers_to_generator_disposable_region() {
+    let output = transform_and_print(
+        "async function foo() { await using d = { async [Symbol.asyncDispose]() {} }; await done(); }",
+    );
+
+    assert!(
+        output.contains("var env_1, d, e_1, result_1;"),
+        "Disposable region names should be hoisted before the generator body: {output}"
+    );
+    assert!(
+        output.contains("_b.trys.push([1, 3, 4, 7]);"),
+        "The async state machine should plan a try/finally region around `await using`: {output}"
+    );
+    assert!(
+        output.contains("d = __addDisposableResource(env_1"),
+        "`await using` declarations should register with __addDisposableResource: {output}"
+    );
+    assert!(
+        output.contains("result_1 = __disposeResources(env_1);"),
+        "The finally region should dispose the resource stack: {output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, result_1];"),
+        "Async disposal must suspend on the dispose promise: {output}"
+    );
+    assert!(
+        !output.contains("await using"),
+        "Raw `await using` syntax must not leak into ES5 output: {output}"
+    );
+}
+
+#[test]
+fn test_async_for_in_parenthesized_await_object_lowers_without_raw_fallback() {
+    let output = transform_and_print(
+        "async function f() { for (var k in (await getObj())) { await h(k); } }",
+    );
+
+    assert!(
+        output.contains("return [4 /*yield*/, getObj()];"),
+        "Parenthesized direct await in for-in object should be lowered before key snapshotting.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await getObj") && !output.contains("for (var k in (await"),
+        "Raw suspended for-in syntax must not remain in async ES5 output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_for_in_awaited_element_target_lowers_object_and_index() {
+    let output = transform_and_print(
+        "async function f(obj) { for ((await getBox())[await getKey()] in obj) { await h(); } }",
+    );
+
+    assert!(
+        output.contains("return [4 /*yield*/, getBox()];")
+            && output.contains("return [4 /*yield*/, getKey()];"),
+        "Awaited for-in element target should suspend for object and index in order.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await getBox")
+            && !output.contains("await getKey")
+            && !output.contains("for ((await"),
+        "Raw awaited element target must not remain in async ES5 output.\nOutput:\n{output}"
     );
 }
 

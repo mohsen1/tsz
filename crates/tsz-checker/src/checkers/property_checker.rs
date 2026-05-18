@@ -190,19 +190,6 @@ impl<'a> CheckerState<'a> {
         }
 
         let in_static_context = self.is_in_static_class_member_context(error_node);
-        if self.super_non_method_access_requires_es5_diagnostic(
-            object_expr,
-            class_idx,
-            property_name,
-            is_static,
-        ) {
-            self.error_at_node(
-                error_node,
-                diagnostic_messages::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
-                diagnostic_codes::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
-            );
-            return false;
-        }
 
         // TS2855 fires when `super.<field>` accesses a parent class **instance**
         // field. From within a static member/initializer, `super` is the parent

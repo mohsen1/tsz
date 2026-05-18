@@ -4,6 +4,7 @@
 
 use crate::TypeDatabase;
 use crate::instantiation::instantiate::instantiate_generic;
+use crate::objects::apparent::literal_value_intrinsic_kind;
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants;
@@ -12,6 +13,7 @@ use crate::types::{
     TupleElement, TypeData, TypeId, TypeListId,
 };
 use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::{
@@ -125,7 +127,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.interner().literal_string_atom(key.name)
     }
 
-    fn push_remapped_key_type(&mut self, key_types: &mut Vec<TypeId>, remapped_key: TypeId) {
+    fn push_remapped_key_type(
+        &mut self,
+        key_types: &mut SmallVec<[TypeId; 8]>,
+        remapped_key: TypeId,
+    ) {
         if remapped_key == TypeId::STRING {
             key_types.push(TypeId::STRING);
             key_types.push(TypeId::NUMBER);
@@ -140,7 +146,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         mapped: &MappedType,
     ) -> Option<TypeId> {
         let name_type = mapped.name_type?;
-        let mut key_types = Vec::new();
+        let mut key_types: SmallVec<[TypeId; 8]> = SmallVec::new();
 
         let constraint_source = crate::keyof_inner_type(self.interner(), mapped.constraint)
             .or_else(|| {
@@ -224,7 +230,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         } else if key_types.len() == 1 {
             Some(key_types[0])
         } else {
-            Some(self.interner().union(key_types))
+            Some(self.interner().union(key_types.into_vec()))
         }
     }
 
@@ -264,7 +270,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let member_list = self.interner().type_list(members);
 
                 // Recursively compute keyof for each member (this resolves Lazy/Ref/etc.)
-                let mut key_types: Vec<TypeId> = Vec::with_capacity(member_list.len());
+                let mut key_types: SmallVec<[TypeId; 4]> =
+                    SmallVec::with_capacity(member_list.len());
                 for &member in member_list.iter() {
                     key_types.push(self.recurse_keyof(member));
                 }
@@ -275,7 +282,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     intersection
                 } else {
                     // Fallback: use general intersection
-                    self.interner().intersection(key_types)
+                    self.interner().intersection(key_types.into_vec())
                 };
             }
             _ => {}
@@ -306,14 +313,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.recurse_keyof(narrowed_operand);
                     };
                     let member_list = self.interner().type_list(members);
-                    let mut key_types: Vec<TypeId> = Vec::with_capacity(member_list.len());
+                    let mut key_types: SmallVec<[TypeId; 4]> =
+                        SmallVec::with_capacity(member_list.len());
                     for &member in member_list.iter() {
                         key_types.push(self.recurse_keyof(member));
                     }
                     if let Some(intersection) = self.intersect_keyof_sets(&key_types) {
                         intersection
                     } else {
-                        self.interner().intersection(key_types)
+                        self.interner().intersection(key_types.into_vec())
                     }
                 }
                 TypeData::Mapped(mapped_id) => {
@@ -517,11 +525,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     | IntrinsicKind::Symbol => self.apparent_primitive_keyof(kind),
                 },
                 TypeData::Literal(literal) => {
-                    if let Some(kind) = self.apparent_literal_kind(&literal) {
-                        self.apparent_primitive_keyof(kind)
-                    } else {
-                        self.interner().keyof(operand)
-                    }
+                    self.apparent_primitive_keyof(literal_value_intrinsic_kind(&literal))
                 }
                 TypeData::TemplateLiteral(_) => {
                     self.apparent_primitive_keyof(IntrinsicKind::String)
@@ -570,6 +574,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().keyof(operand)
                     }
                 }
+                // Conditional types: if the check type is a type parameter and every
+                // branch shares its key space (identity, or a non-remapped mapped type
+                // whose constraint is `keyof <check_param>`), keyof of the conditional
+                // reduces to keyof of the check parameter.  This catches expanded
+                // utility-type aliases like `DeepRequired<T>` whose application has
+                // already been substituted to its body before reaching `evaluate_keyof`.
+                TypeData::Conditional(_) => self
+                    .try_keyof_from_conditional_branches(evaluated_operand)
+                    .unwrap_or_else(|| self.interner().keyof(operand)),
                 // For other types (type parameters, etc.), keep as KeyOf (deferred)
                 _ => self.interner().keyof(operand),
             }
@@ -591,11 +604,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             _ => None,
         }?;
         let resolved = self.resolver().resolve_lazy(def_id, self.interner())?;
-        let TypeData::Mapped(mapped_id) = self.interner().lookup(resolved)? else {
-            return None;
-        };
-        let mapped = self.interner().get_mapped(mapped_id);
-        if mapped.name_type.is_some() {
+
+        // Inspect the body kind first so non-Mapped, non-Conditional aliases
+        // (e.g. `Array<T>`, plain interface aliases) skip the cost of
+        // resolving/extracting type parameters.
+        let body = self.interner().lookup(resolved)?;
+        if !matches!(body, TypeData::Mapped(_) | TypeData::Conditional(_)) {
             return None;
         }
 
@@ -608,14 +622,140 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         }
 
-        let instantiated =
-            instantiate_generic(self.interner(), mapped.constraint, &type_params, &app.args);
-        let evaluated = self.evaluate(instantiated);
-        Some(if evaluated == TypeId::ERROR {
-            instantiated
+        match body {
+            TypeData::Mapped(mapped_id) => {
+                let mapped = self.interner().get_mapped(mapped_id);
+                if mapped.name_type.is_some() {
+                    return None;
+                }
+                let instantiated = instantiate_generic(
+                    self.interner(),
+                    mapped.constraint,
+                    &type_params,
+                    &app.args,
+                );
+                Some(self.evaluate_or_keep(instantiated))
+            }
+            TypeData::Conditional(_) => {
+                // Recursive utility types like `DeepRequired<T>` whose body is a
+                // conditional (`T extends C ? A : B`) need keyof reduction when
+                // every branch shares the source argument's key space; otherwise
+                // `DeepRequired<T>[K]` with `K in keyof T` would misfire TS2536.
+                self.try_keyof_from_conditional_application_body(resolved, &type_params, &app.args)
+            }
+            _ => None,
+        }
+    }
+
+    /// Evaluate `ty`; if evaluation returns `ERROR`, keep the original.  Used to
+    /// avoid surfacing solver errors when a usable deferred form already exists.
+    fn evaluate_or_keep(&mut self, ty: TypeId) -> TypeId {
+        let evaluated = self.evaluate(ty);
+        if evaluated == TypeId::ERROR {
+            ty
         } else {
             evaluated
-        })
+        }
+    }
+
+    /// Structural rule: every branch of the conditional must be either the
+    /// source type parameter itself (identity) or a non-remapped mapped type
+    /// whose constraint is `keyof <source param>`. When so, `keyof F<T>` =
+    /// `keyof T` (returned as the instantiated keyof of the source arg).
+    fn try_keyof_from_conditional_application_body(
+        &mut self,
+        conditional_type_id: TypeId,
+        type_params: &[crate::types::TypeParamInfo],
+        args: &[TypeId],
+    ) -> Option<TypeId> {
+        let cond_id =
+            crate::type_queries::get_conditional_type_id(self.interner(), conditional_type_id)?;
+        let cond = self.interner().conditional_type(cond_id);
+
+        let source_param_idx = type_params
+            .iter()
+            .position(|p| self.is_type_param_named(cond.check_type, p.name))?;
+        let source_arg = args[source_param_idx];
+        let source_name = type_params[source_param_idx].name;
+
+        // Pre-instantiation screen against the alias's own param name; bail
+        // before the (expensive) `instantiate_generic` when either branch
+        // clearly isn't in the source's key space.
+        let matches_by_name = |ty: TypeId| self.is_type_param_named(ty, source_name);
+        if !self.branch_matches_keyof_source(cond.true_type, &matches_by_name)
+            || !self.branch_matches_keyof_source(cond.false_type, &matches_by_name)
+        {
+            return None;
+        }
+
+        // Post-instantiation check uses the source ARG identity: same TypeId,
+        // or — defensively, in case substitution produced a distinct TypeParameter
+        // node with the same name — same param name as the arg.
+        let source_arg_name =
+            crate::type_param_info(self.interner(), source_arg).map(|info| info.name);
+        let matches_by_arg = |ty: TypeId| {
+            ty == source_arg || source_arg_name.is_some_and(|n| self.is_type_param_named(ty, n))
+        };
+        let inst_true = instantiate_generic(self.interner(), cond.true_type, type_params, args);
+        if !self.branch_matches_keyof_source(inst_true, &matches_by_arg) {
+            return None;
+        }
+        let inst_false = instantiate_generic(self.interner(), cond.false_type, type_params, args);
+        if !self.branch_matches_keyof_source(inst_false, &matches_by_arg) {
+            return None;
+        }
+
+        let keyof_source = self.interner().keyof(source_arg);
+        Some(self.evaluate_or_keep(keyof_source))
+    }
+
+    /// Direct-conditional form of the branch-keyof reduction, for cases where
+    /// `evaluate_keyof` reaches a Conditional that's already been substituted
+    /// (e.g. `T extends C ? { [P in keyof T]?: ... } : T` arrived here without
+    /// the surrounding Application).  Treats the conditional's check type as
+    /// the "source": every branch must either *be* the check type or be a
+    /// non-remapped mapped type whose constraint is `keyof <check>`.
+    fn try_keyof_from_conditional_branches(&mut self, conditional: TypeId) -> Option<TypeId> {
+        let cond_id = crate::type_queries::get_conditional_type_id(self.interner(), conditional)?;
+        let cond = self.interner().conditional_type(cond_id);
+        // Check type must already be a type parameter for the rule to apply.
+        let source_info = crate::type_param_info(self.interner(), cond.check_type)?;
+        let source = cond.check_type;
+        let source_name = source_info.name;
+        let is_source = |ty: TypeId| ty == source || self.is_type_param_named(ty, source_name);
+        if !self.branch_matches_keyof_source(cond.true_type, &is_source)
+            || !self.branch_matches_keyof_source(cond.false_type, &is_source)
+        {
+            return None;
+        }
+        let keyof_source = self.interner().keyof(source);
+        Some(self.evaluate_or_keep(keyof_source))
+    }
+
+    fn is_type_param_named(&self, ty: TypeId, name: tsz_common::interner::Atom) -> bool {
+        crate::type_param_info(self.interner(), ty).is_some_and(|info| info.name == name)
+    }
+
+    /// Does `branch_type` have the same key space as the source, where
+    /// "the source" is identified by `is_source`?  True when:
+    /// - `is_source(branch_type)` (identity / name match), or
+    /// - `branch_type` is a non-remapped mapped type whose constraint is
+    ///   `keyof X` and `is_source(X)`.
+    fn branch_matches_keyof_source<F>(&self, branch_type: TypeId, is_source: &F) -> bool
+    where
+        F: Fn(TypeId) -> bool,
+    {
+        if is_source(branch_type) {
+            return true;
+        }
+        let Some(TypeData::Mapped(mapped_id)) = self.interner().lookup(branch_type) else {
+            return false;
+        };
+        let mapped = self.interner().get_mapped(mapped_id);
+        if mapped.name_type.is_some() {
+            return false;
+        }
+        crate::keyof_inner_type(self.interner(), mapped.constraint).is_some_and(is_source)
     }
 
     /// Compute keyof for an intersection type: keyof (A & B) = keyof A | keyof B
@@ -623,7 +763,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let members = self.interner().type_list(members).to_vec();
         // Use recurse_keyof to respect depth limits
         // Use loop instead of closure to allow mutable self access
-        let mut key_sets: Vec<TypeId> = Vec::with_capacity(members.len());
+        let mut key_sets: SmallVec<[TypeId; 4]> = SmallVec::with_capacity(members.len());
         for (member_idx, &member) in members.iter().enumerate() {
             let narrowed_member = narrow_keyof_intersection_member_by_literal_discriminants(
                 self.interner(),
@@ -633,7 +773,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             );
             key_sets.push(self.recurse_keyof(narrowed_member));
         }
-        self.interner().union(key_sets)
+        self.interner().union(key_sets.into_vec())
     }
 
     /// Get the keyof keys for an array type (includes all array methods and number index).

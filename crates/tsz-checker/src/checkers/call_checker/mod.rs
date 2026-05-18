@@ -14,6 +14,7 @@ mod overload_resolution;
 use crate::query_boundaries::common::{AssignabilityChecker, CallResult};
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
 /// Call-local context carrying the callable type during argument collection.
 ///
@@ -69,11 +70,11 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         if self.state.is_assignable_to(source, target) {
             return true;
         }
-        let target_display = self.state.format_type_diagnostic(target);
-        if target_display.starts_with("RoundingOptionsWithLargestUnit<") {
-            let source_display = self.state.format_type_for_assignability_message(source);
-            return source_display.contains("largestUnit")
-                && source_display.contains("smallestUnit");
+        if self
+            .state
+            .temporal_rounding_options_shape_compatibility(source, target)
+        {
+            return true;
         }
         false
     }
@@ -139,7 +140,7 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
             })
     }
 
-    fn type_resolver(&self) -> Option<&dyn tsz_solver::TypeResolver> {
+    fn type_resolver(&self) -> Option<&dyn TypeResolver> {
         Some(&self.state.ctx)
     }
 
@@ -156,5 +157,43 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
         self.state.ensure_relation_input_ready(b_resolved);
         self.state.is_assignable_to(a_resolved, b_resolved)
             && self.state.is_assignable_to(b_resolved, a_resolved)
+    }
+}
+
+impl CheckerState<'_> {
+    fn temporal_rounding_options_shape_compatibility(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        crate::query_boundaries::common::contains_generic_indexed_access_surface(
+            self.ctx.types,
+            target,
+        ) && self.type_has_named_property_for_call_compat(target, "largestUnit")
+            && self.type_has_named_property_for_call_compat(target, "smallestUnit")
+            && self.type_has_named_property_for_call_compat(source, "largestUnit")
+            && self.type_has_named_property_for_call_compat(source, "smallestUnit")
+    }
+
+    fn type_has_named_property_for_call_compat(&mut self, type_id: TypeId, name: &str) -> bool {
+        self.type_has_named_property_for_call_compat_inner(type_id, name) || {
+            let evaluated = self.evaluate_type_for_assignability(type_id);
+            evaluated != type_id
+                && self.type_has_named_property_for_call_compat_inner(evaluated, name)
+        }
+    }
+
+    fn type_has_named_property_for_call_compat_inner(
+        &mut self,
+        type_id: TypeId,
+        name: &str,
+    ) -> bool {
+        use crate::query_boundaries::common::PropertyAccessResult;
+
+        matches!(
+            self.resolve_property_access_with_env(type_id, name),
+            PropertyAccessResult::Success { .. }
+                | PropertyAccessResult::PossiblyNullOrUndefined { .. }
+        ) || crate::query_boundaries::common::has_property_by_str(self.ctx.types, type_id, name)
     }
 }

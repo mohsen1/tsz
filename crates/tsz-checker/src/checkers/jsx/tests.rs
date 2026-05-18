@@ -1079,6 +1079,71 @@ fn jsx_react_type_union_with_string_does_not_emit_ts2786() {
 }
 
 #[test]
+fn jsx_class_construct_readonly_mapped_props_uses_shape_not_alias_name() {
+    let sources = [
+        (
+            "renamed readonly mapped alias",
+            r#"
+        declare namespace JSX {
+            interface Element extends React.ReactElement<any> {}
+            interface ElementClass extends React.Component<any> {
+                render(): React.ReactNode;
+            }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements {}
+        }
+        declare namespace React {
+            type ReactNode = ReactElement<any> | string | number | null;
+            interface ReactElement<P> { props: P; }
+            type Frozen<T> = { readonly [Q in keyof T]: T[Q]; };
+            class Component<P = {}> {
+                props: Frozen<P>;
+                render(): ReactNode;
+            }
+        }
+        interface Props { x?: number; }
+        class Widget extends React.Component<Props> {}
+        <Widget />;
+        "#,
+        ),
+        (
+            "readonly mapped intersection",
+            r#"
+        declare namespace JSX {
+            interface Element extends React.ReactElement<any> {}
+            interface ElementClass extends React.Component<any> {
+                render(): React.ReactNode;
+            }
+            interface ElementAttributesProperty { props: {}; }
+            interface ElementChildrenAttribute { children: {}; }
+            interface IntrinsicElements { div: {}; }
+        }
+        declare namespace React {
+            type ReactNode = ReactElement<any> | string | number | null | undefined;
+            interface ReactElement<P> { props: P; }
+            type Locked<X> = { readonly [Name in keyof X]: X[Name]; };
+            class Component<P = {}> {
+                props: Locked<P> & Locked<{ children?: ReactNode }>;
+                render(): ReactNode;
+            }
+        }
+        interface Props { label?: string; }
+        class Panel extends React.Component<Props> {}
+        <Panel><div /></Panel>;
+        "#,
+        ),
+    ];
+
+    for (case_name, source) in sources {
+        let diagnostics = check_jsx_codes(source);
+        assert!(
+            !diagnostics.contains(&2786),
+            "{case_name}: readonly mapped class props should suppress TS2786 without relying on alias spelling, got: {diagnostics:?}"
+        );
+    }
+}
+
+#[test]
 fn jsx_overload_mismatch_reports_ts2769_before_ts2786() {
     let diagnostics = check_jsx_codes(
         r#"
@@ -1985,7 +2050,6 @@ fn jsx_construct_sig_with_outer_type_params_no_false_ts2786() {
 /// whole-object assignability check determines the final result. Our solver
 /// currently accepts this (consistent with tsc's JSX attribute checking).
 #[test]
-#[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
 fn jsx_discriminated_union_props_full_concrete_union_no_ts2322() {
     let diagnostics = check_jsx_codes(
         r#"
@@ -2133,6 +2197,31 @@ fn jsx_multiple_children_no_ts2746_when_children_type_accepts_array() {
     assert!(
         !diagnostics.contains(&2746),
         "Multiple children should be allowed when children type includes array-like union member, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_multiple_children_readonly_mapped_wrapper_uses_shape_not_alias_name() {
+    let diagnostics = check_jsx_codes(
+        r#"
+        type Frozen<T> = { readonly [Slot in keyof T]: T[Slot] };
+        type Renderable = string | number | Element;
+        declare namespace JSX {
+            interface Element {}
+            interface ElementChildrenAttribute { children: {}; }
+            interface IntrinsicElements { span: {}; }
+        }
+        declare class ComponentBase<P = {}> {
+            props: P & Frozen<{ children: Renderable[] }>;
+            render(): Renderable;
+        }
+        class Panel extends ComponentBase {}
+        <Panel><span /><span /></Panel>;
+        "#,
+    );
+    assert!(
+        !diagnostics.contains(&2746),
+        "Multiple children should use the structurally readonly mapped wrapper member, got: {diagnostics:?}"
     );
 }
 
@@ -2877,5 +2966,318 @@ let v = <Comp x={3} />;
     assert!(
         diagnostics.iter().any(|d| d.code == 2322),
         "Without any-spread, mismatched explicit attr must produce TS2322; got: {diagnostics:?}"
+    );
+}
+
+// --- children union (Element | Element[]) no spurious TS2322 ---
+
+const JSX_CHILDREN_UNION_PRELUDE: &str = r#"
+namespace JSX {
+    export interface Element {}
+    export interface ElementAttributesProperty { props: {}; }
+    export interface ElementChildrenAttribute { children: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements { div: {}; h1: {}; }
+}
+"#;
+
+fn make_children_union_source(children_type: &str, jsx_body: &str) -> String {
+    format!(
+        r#"{JSX_CHILDREN_UNION_PRELUDE}
+interface Props {{ children: {children_type}; }}
+declare function Comp(p: Props): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+{jsx_body}
+"#,
+    )
+}
+
+#[test]
+fn jsx_children_union_element_or_array_two_direct_children_no_ts2322() {
+    let src = make_children_union_source(
+        "JSX.Element | JSX.Element[]",
+        "let k = <Comp><A /><B /></Comp>;",
+    );
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Two direct element children for Element|Element[] must not produce TS2322; got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_children_union_single_child_no_ts2322() {
+    let src =
+        make_children_union_source("JSX.Element | JSX.Element[]", "let k = <Comp><A /></Comp>;");
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Single element child for Element|Element[] must not produce TS2322; got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_children_union_three_direct_children_no_ts2322() {
+    let src = make_children_union_source(
+        "JSX.Element | JSX.Element[]",
+        "declare function C(): JSX.Element; let k = <Comp><A /><B /><C /></Comp>;",
+    );
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Three direct element children for Element|Element[] must not produce TS2322; got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_children_union_node_name_variant_no_ts2322() {
+    // Verify fix is not tied to the name "Element": use a user-defined Node type.
+    let src = format!(
+        r#"{JSX_CHILDREN_UNION_PRELUDE}
+interface MyNode {{}}
+interface NodeProps {{ children: MyNode | MyNode[]; }}
+declare function Widget(p: NodeProps): JSX.Element;
+declare function Child(): JSX.Element;
+let k = <Widget><Child /><Child /></Widget>;
+"#,
+    );
+    let codes: Vec<u32> = check_jsx(&src).iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2322),
+        "Two children for MyNode|MyNode[] must not produce TS2322; got: {codes:?}"
+    );
+}
+
+// --- TS2746 / TS2747 display: namespace-qualified children type must show
+//     resolved symbol name (no `JSX.` qualifier, no trailing AST punctuation) ---
+
+/// Brand on `Element` blocks `Array<Element>` ⊑ `Element`, so multi-child
+/// against a single-child prop actually triggers TS2746 (open `Element {}`
+/// silently accepts arrays via structural fallback).
+const JSX_CHILDREN_BRANDED_PRELUDE: &str = r#"
+namespace JSX {
+    export interface Element { __brand_element: void; }
+    export interface ElementAttributesProperty { props: {}; }
+    export interface ElementChildrenAttribute { children: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements { div: {}; h1: {}; }
+}
+"#;
+
+/// TS2746 display: when the children type is a namespace-qualified reference like
+/// `JSX.Element`, the diagnostic must show the resolved symbol name (`Element`),
+/// not the raw AST annotation text (`JSX.Element`). tsc routes `typeToString`
+/// over the resolved type rather than printing the user's surface annotation.
+#[test]
+fn jsx_children_ts2746_strips_namespace_prefix_for_qualified_alias() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface SingleChildProp {{ children: JSX.Element; }}
+declare function SingleChildComp(p: SingleChildProp): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+declare function C(): JSX.Element;
+let k = <SingleChildComp><A /><B /><C /></SingleChildComp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2746 for multi-child against single JSX.Element; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        ts2746.message_text.contains("'Element'"),
+        "TS2746 message must use 'Element' (resolved symbol name), not 'JSX.Element' or other forms; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("'JSX.Element'"),
+        "TS2746 message must NOT include the 'JSX.' namespace prefix; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("Element;"),
+        "TS2746 message must NOT include a trailing semicolon from AST source text; got: {}",
+        ts2746.message_text
+    );
+}
+
+/// TS2746 display: a top-level user-defined alias must be preserved verbatim
+/// — `Cb` stays `Cb`, never the structural body it resolves to.
+#[test]
+fn jsx_children_ts2746_preserves_user_defined_alias_name() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface Brand {{ __brand_cb: void; }}
+type Cb = Brand;
+interface Prop {{ children: Cb; }}
+declare function Comp(p: Prop): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+declare function C(): JSX.Element;
+let k = <Comp><A /><B /><C /></Comp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2746 for multi-child against single alias-typed children; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        ts2746.message_text.contains("'Cb'"),
+        "TS2746 message must use the alias name 'Cb' (matching the AST annotation), not its structural body; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("__brand_cb"),
+        "TS2746 message must NOT expand the alias to its structural body; got: {}",
+        ts2746.message_text
+    );
+}
+
+/// TS2746 display: when the children type is renamed to a non-`Element` name
+/// inside the JSX namespace, the resolved symbol name (not the qualifier) is
+/// what shows up. Proves the fix is not name-keyed to `Element`.
+#[test]
+fn jsx_children_ts2746_strips_namespace_prefix_for_arbitrary_member_name() {
+    let src = r#"
+namespace JSX {
+    export interface Element { __brand_element: void; }
+    export interface MyNode { __brand_my_node: void; }
+    export interface ElementAttributesProperty { props: {}; }
+    export interface ElementChildrenAttribute { children: {}; }
+    export interface IntrinsicAttributes {}
+    export interface IntrinsicElements { div: {}; }
+}
+interface SingleChildProp { children: JSX.MyNode; }
+declare function SingleChildComp(p: SingleChildProp): JSX.Element;
+declare function A(): JSX.MyNode;
+declare function B(): JSX.MyNode;
+declare function C(): JSX.MyNode;
+let k = <SingleChildComp><A /><B /><C /></SingleChildComp>;
+"#;
+    let diagnostics = check_jsx(src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!("Expected TS2746 for multi-child against JSX.MyNode; got: {diagnostics:?}")
+        });
+    assert!(
+        ts2746.message_text.contains("'MyNode'"),
+        "TS2746 must use 'MyNode' (resolved name), not 'JSX.MyNode'; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("'JSX.MyNode'"),
+        "TS2746 must NOT include 'JSX.' namespace prefix; got: {}",
+        ts2746.message_text
+    );
+}
+
+#[test]
+fn jsx_children_ts2746_preserves_dotted_string_literal_type_text() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface Prop {{ children: "foo.bar"; }}
+declare function Comp(p: Prop): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+let k = <Comp><A /><B /></Comp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2746 for multi-child against string-literal children; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        ts2746.message_text.contains("'\"foo.bar\"'"),
+        "TS2746 must preserve dotted string literal text; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("'\"bar\"'"),
+        "TS2746 must not strip dotted prefixes inside string literals; got: {}",
+        ts2746.message_text
+    );
+}
+
+#[test]
+fn jsx_children_ts2746_preserves_dotted_template_literal_type_text() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface Prop {{ children: `foo.bar`; }}
+declare function Comp(p: Prop): JSX.Element;
+declare function A(): JSX.Element;
+declare function B(): JSX.Element;
+let k = <Comp><A /><B /></Comp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2746 = diagnostics
+        .iter()
+        .find(|d| d.code == 2746)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2746 for multi-child against template-literal children; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        ts2746.message_text.contains("'`foo.bar`'"),
+        "TS2746 must preserve dotted template literal text; got: {}",
+        ts2746.message_text
+    );
+    assert!(
+        !ts2746.message_text.contains("'`bar`'"),
+        "TS2746 must not strip dotted prefixes inside template literals; got: {}",
+        ts2746.message_text
+    );
+}
+
+/// TS2747 display: same structural rule applies to text-children rejection
+/// messages. Both TS2746 and TS2747 flow through the same children-type-display
+/// helper and must produce the same namespace-stripped output.
+#[test]
+fn jsx_children_ts2747_strips_namespace_prefix() {
+    let src = format!(
+        r#"{JSX_CHILDREN_BRANDED_PRELUDE}
+interface Prop {{ children: JSX.Element | JSX.Element[]; }}
+declare function Comp(p: Prop): JSX.Element;
+declare function A(): JSX.Element;
+let k = <Comp>hello<A /></Comp>;
+"#,
+    );
+    let diagnostics = check_jsx(&src);
+    let ts2747 = diagnostics
+        .iter()
+        .find(|d| d.code == 2747)
+        .unwrap_or_else(|| {
+            panic!(
+                "Expected TS2747 for text children against JSX.Element-union prop; got: {diagnostics:?}"
+            )
+        });
+    assert!(
+        !ts2747.message_text.contains("'JSX.Element"),
+        "TS2747 message must NOT include the 'JSX.' namespace prefix; got: {}",
+        ts2747.message_text
+    );
+    assert!(
+        !ts2747.message_text.contains("Element;"),
+        "TS2747 message must NOT include a trailing semicolon; got: {}",
+        ts2747.message_text
     );
 }

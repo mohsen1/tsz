@@ -12,6 +12,9 @@ Checks for:
 - Forbidden imports of solver internals (`TypeKey`, raw interner) from checker code
 - Direct `CompatChecker` access from TS2322-family paths (should route through `query_boundaries`)
 - Cross-layer imports that violate the pipeline architecture
+- Track 10 ratchet metrics for post-check fingerprint rewrites, checker and
+  emitter `source_text.contains` decisions, file-name/path substring
+  decisions, and rendered-type string decisions
 
 ```bash
 # Run manually
@@ -73,9 +76,16 @@ Miri is useful for undefined-behavior checks in pure Rust library tests. Keep it
 focused; do not run conformance, emit, fourslash, CLI process harnesses, or the
 whole workspace under Miri.
 
+The default target set covers a small substrate slice plus the `tsz-core`
+snapshot cache round trip, which exercises the unsafe environment mutation used
+by that cache test. The script runs with strict provenance and disables Miri's
+host isolation by default so that the snapshot target can create a temporary
+directory. Keep `TSZ_MIRI_TARGETS` pinned to known-safe unit tests when adding
+new cases.
+
 ```bash
 rustup toolchain install nightly --component miri
-cargo +nightly miri setup
+rustup run nightly cargo miri setup
 scripts/quality/run-miri.sh
 ```
 
@@ -98,17 +108,6 @@ cargo install cargo-llvm-cov --version 0.8.7 --locked
 scripts/quality/run-coverage.sh
 ```
 
-### Fuzzing
-
-The `fuzz/` crate contains a parser fuzz target. The CI workflow runs only a
-short smoke test; longer corpus growth should be local or scheduled work.
-
-```bash
-cargo install cargo-fuzz --version 0.13.1 --locked
-scripts/quality/run-fuzz-smoke.sh
-cargo +nightly fuzz run parser
-```
-
 ### Mutation Testing
 
 `cargo-mutants` is intentionally scoped by default. Use it to audit whether
@@ -125,6 +124,22 @@ TSZ_MUTANTS_PACKAGE=tsz-scanner TSZ_MUTANTS_FILE='crates/tsz-scanner/src/**/*.rs
 The smoke script lists mutants only. Run a real mutation campaign deliberately
 with a tight file glob and `--test-tool nextest` once the baseline command is
 known to be fast enough.
+
+### SemVer Checks
+
+`cargo-semver-checks` audits public Rust API compatibility for the publishable
+workspace crates. It is manual-only in the `Quality Tools` workflow because
+TSZ is pre-1.0 and internal public APIs still move often; use it before
+releases or when a PR changes a public crate boundary. It is not a substitute
+for TypeScript conformance.
+
+```bash
+cargo install cargo-semver-checks --version 0.47.0 --locked
+scripts/quality/run-semver-checks.sh
+TSZ_SEMVER_BASELINE_REV=origin/main scripts/quality/run-semver-checks.sh
+TSZ_SEMVER_BASELINE_REV=v0.1.9 scripts/quality/run-semver-checks.sh
+TSZ_SEMVER_PACKAGES="tsz-core tsz-checker" scripts/quality/run-semver-checks.sh
+```
 
 ### Sanitizers
 
@@ -153,6 +168,13 @@ For CPU investigations, prefer the existing flame profile:
 cargo build --profile flame --bin tsz
 samply record --save-only -o /tmp/tsz-profile.json -- .target/flame/tsz check benches/
 ```
+
+Lower-priority overlaps are deliberately kept out of the default quality
+workflow: `cargo-audit` is covered by `cargo-deny` advisories, broad formal
+verification is too expensive without a specific proof target, `cargo-fuzz` and
+Loom need dedicated parser/checker or concurrency harnesses before they are
+useful, and extra binary-size/profiling tools should stay tied to a measured
+performance question.
 
 ## Conformance Testing
 

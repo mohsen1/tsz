@@ -32,6 +32,10 @@ impl<'a> Printer<'a> {
         source: &tsz_parser::parser::node::SourceFileData,
         source_idx: NodeIndex,
     ) {
+        if !self.ctx.options.no_const_enum_inlining {
+            self.collect_const_enum_values(&source.statements);
+        }
+
         match format {
             crate::context::transform::ModuleFormat::AMD => {
                 self.emit_amd_wrapper(dependencies, source_node, source_idx);
@@ -385,6 +389,12 @@ impl<'a> Printer<'a> {
         {
             self.write("\"use strict\";");
             self.write_line();
+            if self.source_has_dynamic_import_call(&source.statements) {
+                self.write(
+                    "var __syncRequire = typeof module === \"object\" && typeof module.exports === \"object\";",
+                );
+                self.write_line();
+            }
             self.ctx.options.suppress_use_strict = true;
         }
 
@@ -408,6 +418,11 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        let mut system_plan = self.collect_system_dependency_plan(dependencies, source);
+        self.add_system_jsx_runtime_dependency(dependencies, &mut system_plan);
+        let system_dependencies =
+            self.collect_active_system_dependencies(dependencies, source, &system_plan);
+
         self.write("System.register(");
         if let Some(name) = self.ctx.options.bundled_module_name.clone() {
             self.write("\"");
@@ -415,7 +430,7 @@ impl<'a> Printer<'a> {
             self.write("\", ");
         }
         self.write("[");
-        for (i, dep) in dependencies.iter().enumerate() {
+        for (i, dep) in system_dependencies.iter().enumerate() {
             if i > 0 {
                 self.write(", ");
             }
@@ -428,11 +443,8 @@ impl<'a> Printer<'a> {
         self.increase_indent();
         self.write("\"use strict\";");
         self.write_line();
-        self.emit_system_decorate_helper_if_needed(source);
-        let system_plan = self.collect_system_dependency_plan(dependencies, source);
-        let mut system_plan = system_plan;
-        self.add_system_jsx_runtime_dependency(dependencies, &mut system_plan);
-        let mut dep_vars = self.collect_system_dependency_vars(dependencies, source);
+        self.emit_system_helpers_if_needed(source);
+        let mut dep_vars = self.collect_system_dependency_vars(&system_dependencies, source);
         for (dep, actions) in &system_plan.actions {
             if let Some(SystemDependencyAction::Assign(dep_var)) = actions
                 .iter()
@@ -464,7 +476,7 @@ impl<'a> Printer<'a> {
         self.write("return {");
         self.write_line();
         self.increase_indent();
-        self.emit_system_setters(dependencies, &dep_vars, &system_plan);
+        self.emit_system_setters(&system_dependencies, &dep_vars, &system_plan);
         self.write_line();
         let execute_is_async = source.statements.nodes.iter().any(|&stmt_idx| {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -545,6 +557,75 @@ impl<'a> Printer<'a> {
             }
         }
         names
+    }
+
+    fn collect_active_system_dependencies(
+        &self,
+        dependencies: &[String],
+        source: &tsz_parser::parser::node::SourceFileData,
+        system_plan: &SystemDependencyPlan,
+    ) -> Vec<String> {
+        dependencies
+            .iter()
+            .filter(|dep| {
+                system_plan
+                    .actions
+                    .get(dep.as_str())
+                    .is_some_and(|actions| !actions.is_empty())
+                    || self.system_dependency_needs_empty_setter(dep, source)
+            })
+            .cloned()
+            .collect()
+    }
+
+    fn system_dependency_needs_empty_setter(
+        &self,
+        dep: &str,
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        source.statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
+                    return false;
+                };
+                if self
+                    .system_module_specifier_text(import_decl.module_specifier)
+                    .as_deref()
+                    != Some(dep)
+                {
+                    return false;
+                }
+                if !self.import_decl_should_schedule_wrapped_dependency(stmt_node, import_decl) {
+                    return false;
+                }
+                return import_decl.import_clause.is_none()
+                    || self
+                        .arena
+                        .get(import_decl.import_clause)
+                        .and_then(|clause_node| self.arena.get_import_clause(clause_node))
+                        .is_some_and(|clause| self.import_clause_is_empty_named_import(clause));
+            }
+
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                    return false;
+                };
+                if self
+                    .system_module_specifier_text(export_decl.module_specifier)
+                    .as_deref()
+                    != Some(dep)
+                {
+                    return false;
+                }
+                return export_decl.export_clause.is_none()
+                    && self.export_decl_has_runtime_value(export_decl);
+            }
+
+            false
+        })
     }
 
     /// Hoist exported function declarations out of `execute` into the outer
@@ -737,7 +818,7 @@ impl<'a> Printer<'a> {
                 let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
                     continue;
                 };
-                if !self.import_decl_has_runtime_value(import_decl) {
+                if !self.import_decl_should_schedule_wrapped_dependency(stmt_node, import_decl) {
                     continue;
                 }
                 let Some(module_spec) =
@@ -765,7 +846,7 @@ impl<'a> Printer<'a> {
                 let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
                     continue;
                 };
-                if !self.import_decl_has_runtime_value(import_decl) {
+                if !self.import_decl_should_schedule_wrapped_dependency(stmt_node, import_decl) {
                     continue;
                 }
                 let Some(module_spec) =

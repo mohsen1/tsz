@@ -669,8 +669,7 @@ impl<'a> CheckerState<'a> {
                 && !is_ambiguous_conditional_alias
                 && !display.starts_with("keyof ")
                 && !display.starts_with("typeof ")
-                && !display.contains("[P in ")
-                && !display.contains("[K in ")
+                && !Self::display_contains_mapped_clause(&display)
                 // Don't use annotation text for union types — the TypeFormatter
                 // reorders null/undefined to the end to match tsc's display.
                 // Annotation text preserves the user's original order which
@@ -855,9 +854,7 @@ impl<'a> CheckerState<'a> {
             return self.format_annotation_like_type(&display);
         }
         if let Some(display) = self.declared_type_annotation_text_for_expression(target_expr)
-            && (display.starts_with("keyof ")
-                || display.contains("[P in ")
-                || display.contains("[K in "))
+            && (display.starts_with("keyof ") || Self::display_contains_mapped_clause(&display))
         {
             // For `typeof EnumName.Member`, tsc evaluates to the enum member type
             // and displays as `EnumName.Member` (without `typeof` prefix). Skip the

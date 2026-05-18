@@ -368,6 +368,111 @@ const matched: true = null as any as ExtractPropsMatch;
     );
 }
 
+/// Conditional source is a wrapper Application (e.g. `Exclude<X<T> | undefined,
+/// undefined>`) whose base does not match the pattern's base, but whose
+/// evaluated form does. The evaluator must reduce through the wrapper so the
+/// Application-vs-Application infer match can bind type arguments.
+///
+/// Without the wrapper-base reduction, `match_infer_pattern` falls through to
+/// structural pattern expansion that cannot bind infer arguments through a
+/// `Callable` pattern that also carries properties — the common shape for
+/// validator-style interfaces (call signature + tagged property).
+#[test]
+fn exclude_wrapped_source_application_binds_infer_arg() {
+    fn check(label: &str, source: &str) {
+        let diagnostics = check_source_strict_with_default_libs(source);
+        assert!(
+            diagnostics.iter().all(|d| d.code != 2322),
+            "[{label}] expected infer to bind through Exclude wrapper; all diagnostics: {:?}",
+            diagnostics
+                .iter()
+                .map(|d| (d.code, d.message_text.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    // 1) Callable+property interface — the original PropTypes-style shape.
+    check(
+        "callable+property",
+        r#"
+declare const tag: unique symbol;
+interface Validator<T> {
+    (props: object): Error | null;
+    [tag]?: T;
+}
+type R = Exclude<Validator<number> | undefined, undefined> extends Validator<infer X> ? X : "no";
+const r: number = (null as any as R);
+"#,
+    );
+
+    // 2) Plain property interface — same rule, different shape.
+    check(
+        "property-only",
+        r#"
+interface Box<T> {
+    value: T;
+}
+type R = Exclude<Box<number> | undefined, undefined> extends Box<infer X> ? X : "no";
+const r: number = (null as any as R);
+"#,
+    );
+
+    // 3) Renamed type parameter — rule is structural, not name-based.
+    check(
+        "renamed-param",
+        r#"
+interface Wrap<Value> {
+    payload: Value;
+}
+type R = Exclude<Wrap<string> | undefined, undefined> extends Wrap<infer Y> ? Y : "no";
+const r: string = (null as any as R);
+"#,
+    );
+
+    // 4) Builtin NonNullable wrapper — same shape as Exclude<T, null | undefined>.
+    check(
+        "nonnullable-wrapper",
+        r#"
+interface Box<T> {
+    value: T;
+}
+type R = NonNullable<Box<number> | null | undefined> extends Box<infer X> ? X : "no";
+const r: number = (null as any as R);
+"#,
+    );
+
+    // 5) Generic conditional consumes the wrapped Application correctly.
+    check(
+        "generic-context",
+        r#"
+interface Box<T> { value: T; }
+type Unbox<X> = Exclude<X, undefined> extends Box<infer U> ? U : never;
+type R = Unbox<Box<number> | undefined>;
+const r: number = (null as any as R);
+"#,
+    );
+}
+
+#[test]
+fn exclude_wrapped_source_application_does_not_bind_unrelated_base() {
+    let diagnostics = check_source_strict_with_default_libs(
+        r#"
+interface Box<T> { value: T; }
+interface Other<T> { other: T; }
+type R = Exclude<Box<number> | undefined, undefined> extends Other<infer X> ? X : "no";
+const r: "no" = (null as any as R);
+"#,
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 2322),
+        "unrelated application bases must not bind through wrapper recovery; diagnostics: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Test that conditional types with constrained type parameters don't emit false TS2322.
 ///
 /// `UnrollOnHover<S>` is `S extends object ? { [K in keyof S]: S[K] } : never`.
@@ -544,6 +649,64 @@ const bad3: F3 = [[42]];
     assert_eq!(
         ts2322_count, 4,
         "recursive Array<infer U> flatten should reject nested arrays after resolving to number. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// Issue #6307 anti-hardcoding gate. The recursive `Array<infer ?>` flatten
+/// rule is *structural* — it must not depend on the user choosing the name
+/// `U` for the inferred element type, nor on a specific recursion depth that
+/// happens to match a fixture. Vary both: rename the infer variable, vary
+/// the element type, vary the depth, and exercise a negative case where the
+/// leaf is not an array so the conditional terminates without firing the
+/// recursive branch.
+#[test]
+fn recursive_array_application_infer_flatten_rule_is_structural() {
+    let source = r#"
+// Rename the infer variable: U -> X. The rule is "T extends Array<infer ?>",
+// the name must not matter.
+type FlattenX<T> = T extends Array<infer X> ? FlattenX<X> : T;
+
+// String element, deeper recursion than the reported repro.
+type FS5 = FlattenX<string[][][][][]>;
+const fs5: FS5 = "leaf";
+
+// Object element terminates the recursion at depth 1.
+type FO1 = FlattenX<{ tag: number }[]>;
+const fo1: FO1 = { tag: 1 };
+
+// Non-array input: the conditional's false branch returns T unchanged.
+type FN0 = FlattenX<number>;
+const fn0: FN0 = 42;
+
+// Different infer name choice on a sibling alias still resolves.
+type FlattenE<S> = S extends Array<infer E> ? FlattenE<E> : S;
+type FE2 = FlattenE<boolean[][][]>;
+const fe2: FE2 = true;
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_strict(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2322),
+        "recursive Array<infer ?> flatten rule must be name- and depth-independent. Actual diagnostics: {diagnostics:#?}"
+    );
+
+    let rejection_source = r#"
+type FlattenX<T> = T extends Array<infer X> ? FlattenX<X> : T;
+
+type FS5 = FlattenX<string[][][][][]>;
+type FE2 = FlattenX<boolean[][][]>;
+type FN0 = FlattenX<number>;
+
+const bad_fs5: FS5 = ["still", "an", "array"];
+const bad_fe2: FE2 = [true, false];
+const bad_fn0: FN0 = [1];
+"#;
+
+    let diagnostics = check_source_strict_with_default_libs(rejection_source);
+    let ts2322_count = diagnostics.iter().filter(|diag| diag.code == 2322).count();
+    assert_eq!(
+        ts2322_count, 3,
+        "renamed/deeper Array<infer ?> flatten must still reject array assignments to the resolved leaf. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -781,6 +944,108 @@ function foo2<T extends unknown[]>(value: T): Enumerate<T['length']> {
                     .contains("Type 'number' is not assignable to type 'Enumerate<T[\"length\"]>'")
         }),
         "generic tuple length return should preserve Enumerate<T[\"length\"]> in TS2322. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn type_challenges_json_parser_alias_result_satisfies_array_constraint() {
+    let source = r#"
+type Token = any;
+type ParseResult<Value, Rest extends Token[]> = [Value, Rest];
+type Tokenize<Input extends string, State extends Token[] = []> = Token[];
+type ParseLiteral<Rest extends Token[]> = ParseResult<any, Rest>;
+
+type Parse<Input extends string> = ParseLiteral<Tokenize<Input>>[0];
+"#;
+
+    let diagnostics = check_source_strict_with_default_libs(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2344),
+        "alias result with a declared array constraint should not emit TS2344. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn type_challenges_json_parser_mapped_wrapper_preserves_alias_array_constraint() {
+    let source = r#"
+type Pure<T> = {
+    [Key in keyof T]: T[Key] extends object ? Pure<T[Key]> : T[Key]
+};
+
+type SetProperty<T, Key extends PropertyKey, Value> = {
+    [Prop in (keyof T) | Key]: Prop extends Key ? Value : Prop extends keyof T ? T[Prop] : never
+};
+
+type Token = any;
+type ParseResult<T, K extends Token[]> = [T, K];
+type Tokenize<T extends string, S extends Token[] = []> = Token[];
+type ParseLiteral<T extends Token[]> = ParseResult<any, T>;
+
+type Parse<T extends string> = Pure<ParseLiteral<Tokenize<T>>[0]>;
+"#;
+
+    let diagnostics = check_source_strict_with_default_libs(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2344),
+        "mapped wrapper around alias result should preserve the declared array constraint. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn renamed_alias_type_parameter_constraint_satisfies_array_argument_slot() {
+    let source = r#"
+type Item = any;
+type Pair<Head, Tail extends Item[]> = [Head, Tail];
+type Produce<Name extends string> = Item[];
+type Consume<Queue extends Item[]> = Pair<unknown, Queue>;
+
+type Result<Name extends string> = Consume<Produce<Name>>;
+"#;
+
+    let diagnostics = check_source_strict_with_default_libs(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2344),
+        "renamed alias result with a declared array constraint should not emit TS2344. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn renamed_generic_tuple_length_return_uses_structural_conditional_indexed_shape() {
+    let source = r#"
+interface Array<T> {
+    length: number;
+}
+
+type _PrependNextNum<A extends unknown[]> = A['length'] extends infer T
+    ? [T, ...A] extends [...infer X]
+        ? X
+        : never
+    : never;
+
+type _Range<A extends unknown[], N extends number> = N extends A['length']
+    ? A
+    : _Range<_PrependNextNum<A>, N> & number;
+
+type CountFromLength<N extends number> = number extends N
+    ? number
+    : _Range<[], N> extends (infer E)[]
+    ? E
+    : never;
+
+function foo2<T extends unknown[]>(value: T): CountFromLength<T['length']> {
+    return value.length;
+}
+"#;
+
+    let diagnostics = tsz_checker::test_utils::check_source_diagnostics(source);
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2322
+                && diag.message_text.contains(
+                    "Type 'number' is not assignable to type 'CountFromLength<T[\"length\"]>'",
+                )
+        }),
+        "generic tuple length return should be reported from conditional/indexed-access shape, not an alias spelling. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -2302,4 +2567,246 @@ const bad: R1 = "nope";
                 .collect::<Vec<_>>()
         );
     }
+}
+
+// =============================================================================
+// IsUnion<T> supplement — cases not covered by distributive_conditional_default_tests.rs
+// =============================================================================
+
+const IS_UNION_PRELUDE: &str = r#"
+type IsUnion<T, U = T> = T extends U
+  ? [U] extends [T]
+    ? false
+    : true
+  : never;
+"#;
+
+#[test]
+fn is_union_of_primitives_evaluates_to_true() {
+    assert_no_ts2322(
+        &format!(
+            "{IS_UNION_PRELUDE}\n\
+            type R = IsUnion<string | number>;\n\
+            const r: R = true;\n"
+        ),
+        "IsUnion<string | number> = true",
+    );
+}
+
+#[test]
+fn is_union_diagnostic_shows_evaluated_literal_not_alias() {
+    let source = format!(
+        "{IS_UNION_PRELUDE}\n\
+        type R = IsUnion<\"a\" | \"b\">;\n\
+        const r: R = false;\n"
+    );
+    let diags = tsz_checker::test_utils::check_source_strict(&source);
+    let msgs = tsz_checker::test_utils::diagnostic_messages_with_code(&diags, 2322);
+    assert_eq!(
+        msgs.len(),
+        1,
+        "Expected exactly one TS2322; got: {diags:#?}"
+    );
+    let msg = msgs[0];
+    assert!(
+        msg.contains("'false'") && msg.contains("'true'"),
+        "Expected evaluated literal types in message; got: {msg:?}"
+    );
+    assert!(
+        !msg.contains("IsUnion"),
+        "Diagnostic must not show unevaluated alias 'IsUnion'; got: {msg:?}"
+    );
+}
+
+// =============================================================================
+// Constructor return type infer — typeof Class patterns (issue #6157)
+// Rule: when a constructor pattern `new (...) => infer I` checks a `typeof C`
+// expression, the check type must be fully evaluated from the TypeQuery before
+// pattern matching, and construct signatures must be selected (not call signatures)
+// when the source Callable carries both.
+// =============================================================================
+
+fn assert_no_ts2322_with_libs(source: &str, label: &str) {
+    let diags = check_source_strict_with_default_libs(source);
+    let errors: Vec<&Diagnostic> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        errors.is_empty(),
+        "[{label}] expected no TS2322, got:\n{:#?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.start, d.message_text.as_str()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn constructor_infer_typeof_date_returns_date_not_never() {
+    // `typeof Date` has both call (returns string) and construct (returns Date) sigs.
+    // The constructor pattern must use construct signatures → I = Date.
+    let source = r#"
+type InstanceOf<T> = T extends new (...args: any[]) => infer I ? I : never;
+type IO = InstanceOf<typeof Date>;
+const io: IO = new Date();
+export {};
+"#;
+    assert_no_ts2322_with_libs(source, "InstanceOf<typeof Date> = Date");
+}
+
+#[test]
+fn constructor_infer_user_class_without_libs() {
+    // User-defined class `typeof Cls` must also resolve correctly.
+    // Tests that visit_type_query deep-evaluates Lazy types.
+    assert_no_ts2322(
+        r#"
+class Cls { x: number = 1; }
+type InstanceOf<T> = T extends new (...args: any[]) => infer I ? I : never;
+type R = InstanceOf<typeof Cls>;
+const r: R = new Cls();
+export {};
+"#,
+        "InstanceOf<typeof Cls> = Cls",
+    );
+}
+
+#[test]
+fn constructor_infer_renamed_type_param_k_user_class() {
+    // Renamed outer and infer params must not change the result — the fix must be structural.
+    assert_no_ts2322(
+        r#"
+class Widget { name: string = ""; }
+type ConstructedBy<K> = K extends new (...args: any[]) => infer Result ? Result : never;
+type W = ConstructedBy<typeof Widget>;
+const w: W = new Widget();
+export {};
+"#,
+        "ConstructedBy<typeof Widget> = Widget",
+    );
+}
+
+#[test]
+fn constructor_infer_typeof_map_returns_map_not_never() {
+    // Map also has both call and construct sigs — confirms construct-sig selection is general.
+    let source = r#"
+type InstanceOf<T> = T extends new (...args: any[]) => infer I ? I : never;
+type M = InstanceOf<typeof Map>;
+const m: M = new Map();
+export {};
+"#;
+    assert_no_ts2322_with_libs(source, "InstanceOf<typeof Map> = Map");
+}
+
+#[test]
+fn constructor_infer_non_constructable_yields_never() {
+    // A plain call-only function type must not match a construct pattern → `never`.
+    assert_no_ts2322(
+        r#"
+type InstanceOf<T> = T extends new (...args: any[]) => infer I ? I : never;
+type R = InstanceOf<() => string>;
+type IsNever = [R] extends [never] ? true : false;
+const check: IsNever = true;
+export {};
+"#,
+        "InstanceOf<() => string> = never",
+    );
+}
+
+const EQUAL_PRELUDE: &str = r#"type Equal<X, Y> =
+  (<T>() => T extends X ? 1 : 2) extends
+  (<T>() => T extends Y ? 1 : 2) ? true : false;
+"#;
+
+#[test]
+fn equal_any_then_is_union_no_cross_contamination() {
+    // Equal<any, X> evaluations must not corrupt subsequent IsUnion evaluations.
+    assert_no_ts2322(
+        &format!(
+            "{EQUAL_PRELUDE}\n\
+            {IS_UNION_PRELUDE}\n\
+            type E1 = Equal<any, string>;  const e1: E1 = false;\n\
+            type E2 = Equal<any, number>;  const e2: E2 = false;\n\
+            type E3 = Equal<string, any>;  const e3: E3 = false;\n\
+            type U1 = IsUnion<\"a\" | \"b\">; const u1: U1 = true;\n\
+            type F1 = IsUnion<string>;     const f1: F1 = false;\n\
+            type U2 = IsUnion<1 | 2>;      const u2: U2 = true;\n\
+            type F2 = IsUnion<number>;     const f2: F2 = false;\n\
+            type E4 = Equal<string, string>; const e4: E4 = true;\n\
+            type E5 = Equal<{{a: 1}}, {{a: 1}}>; const e5: E5 = true;\n\
+            export {{}};\n"
+        ),
+        "Equal<any,X> then IsUnion cross-contamination",
+    );
+}
+
+// =============================================================================
+// Issue #6374: Application-source infer matching via structural expansion
+//
+// Rule: When `source` is `Application(A, args)` and the pattern is
+// `Application(B, infers)` where A structurally extends B (but A != B),
+// the infer variables in B's pattern should be bound by expanding both
+// sides to their structural forms and matching property-by-property.
+//
+// Concrete case: Promise<X> extends PromiseLike<infer U> → U = X.
+// =============================================================================
+
+#[test]
+fn promiselike_infer_unwraps_promise_application() {
+    // type Awaited2<T> = T extends PromiseLike<infer U> ? Awaited2<U> : T;
+    // type A = Awaited2<Promise<string>>;  // should be string
+    let source = r#"
+type Awaited2<T> = T extends PromiseLike<infer U> ? Awaited2<U> : T;
+type A = Awaited2<Promise<string>>;
+const _a: A = "hello";
+export {};
+"#;
+    assert_no_ts2322(source, "Awaited2<Promise<string>> = string");
+}
+
+#[test]
+fn promiselike_infer_unwraps_nested_promise_application() {
+    // tsc: Awaited2<Promise<Promise<string>>> = string
+    let source = r#"
+type Awaited2<T> = T extends PromiseLike<infer U> ? Awaited2<U> : T;
+type A = Awaited2<Promise<Promise<string>>>;
+const _a: A = "nested";
+export {};
+"#;
+    assert_no_ts2322(source, "Awaited2<Promise<Promise<string>>> = string");
+}
+
+#[test]
+fn promiselike_infer_terminates_on_non_promise() {
+    // When T does not extend PromiseLike, the result is T itself.
+    let source = r#"
+type Awaited2<T> = T extends PromiseLike<infer U> ? Awaited2<U> : T;
+type N = Awaited2<number>;
+const _n: N = 42;
+type S = Awaited2<string>;
+const _s: S = "hello";
+export {};
+"#;
+    assert_no_ts2322(source, "Awaited2<non-promise> = identity");
+}
+
+#[test]
+fn promiselike_infer_with_renamed_type_param() {
+    // Verifies the fix is not tied to the name 'U' or 'T'.
+    let source = r#"
+type Unwrap<X> = X extends PromiseLike<infer Inner> ? Unwrap<Inner> : X;
+type A = Unwrap<Promise<number>>;
+const _a: A = 42;
+export {};
+"#;
+    assert_no_ts2322(source, "Unwrap with renamed params unwraps Promise<number>");
+}
+
+#[test]
+fn promiselike_infer_bound_to_complex_type() {
+    // The infer variable should bind to any type arg, including objects and unions.
+    let source = r#"
+type Extract<T> = T extends PromiseLike<infer U> ? U : never;
+type A = Extract<Promise<{ x: number; y: string }>>;
+const _a: A = { x: 1, y: "hello" };
+export {};
+"#;
+    assert_no_ts2322(source, "Extract PromiseLike<infer U> from Promise<object>");
 }

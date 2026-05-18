@@ -853,9 +853,23 @@ impl<'a> CheckerState<'a> {
                 // Use the raw FunctionShape parameter types (which preserve type parameters)
                 // rather than ctx_helper.get_parameter_type_for_call (which may resolve
                 // through Lazy/Application types and lose type parameter information).
-                let excess_skip: Vec<bool> = {
+                let needs_generic_skip_state = args.iter().copied().any(|arg_idx| {
+                    self.ctx
+                        .arena
+                        .get(self.ctx.arena.skip_parenthesized_and_assertions(arg_idx))
+                        .is_some_and(|node| {
+                            node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || node.kind == SyntaxKind::StringLiteral as u16
+                                || node.kind == SyntaxKind::NumericLiteral as u16
+                                || node.kind == SyntaxKind::BigIntLiteral as u16
+                                || node.kind == SyntaxKind::TrueKeyword as u16
+                                || node.kind == SyntaxKind::FalseKeyword as u16
+                                || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                        })
+                });
+                if needs_generic_skip_state {
                     let arg_count = args.len();
-                    (0..arg_count)
+                    let excess_skip: Vec<bool> = (0..arg_count)
                         .map(|i| {
                             // Check if the parameter type IS a bare type parameter (T),
                             // not just a complex type that contains type parameters
@@ -877,11 +891,11 @@ impl<'a> CheckerState<'a> {
                                 });
                             from_shape || from_ctx
                         })
-                        .collect()
-                };
-                let has_any_excess_skip = excess_skip.iter().any(|&s| s);
-                if has_any_excess_skip {
-                    self.ctx.generic_excess_skip = Some(excess_skip);
+                        .collect();
+                    let has_any_excess_skip = excess_skip.iter().any(|&s| s);
+                    if has_any_excess_skip {
+                        self.ctx.generic_excess_skip = Some(excess_skip);
+                    }
                 }
 
                 // Pre-compute which arguments are contextually sensitive to avoid borrowing self in closures.
@@ -889,15 +903,16 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|&arg| is_contextually_sensitive(self, arg))
                     .collect();
-                let suppress_generic_return_context = args
-                    .iter()
-                    .copied()
-                    .any(|arg| self.suppress_generic_return_context_for_arg(arg))
-                    || self.suppress_generic_return_context_for_direct_arg_overlap(
-                        &shape,
-                        args,
-                        contextual_type,
-                    );
+                let suppress_generic_return_context = contextual_type.is_some()
+                    && (args
+                        .iter()
+                        .copied()
+                        .any(|arg| self.suppress_generic_return_context_for_arg(arg))
+                        || self.suppress_generic_return_context_for_direct_arg_overlap(
+                            &shape,
+                            args,
+                            contextual_type,
+                        ));
                 let generic_inference_contextual_type = if suppress_generic_return_context {
                     None
                 } else {
@@ -2450,7 +2465,7 @@ impl<'a> CheckerState<'a> {
         let (generic_inference_arg_types, sanitized_generic_inference) = if is_generic_call {
             self.sanitize_generic_inference_arg_types(call.expression, args, &arg_types)
         } else {
-            (arg_types.clone(), false)
+            (std::borrow::Cow::Borrowed(arg_types.as_slice()), false)
         };
         let generic_inference_arg_source_markers = if is_generic_call {
             self.call_arg_source_type_annotation_markers(args, generic_inference_arg_types.len())
@@ -2632,6 +2647,7 @@ impl<'a> CheckerState<'a> {
             false
         };
 
+        let mut retried_arg_types = None;
         if is_generic_call
             && should_retry_generic_call
             && let Some(instantiated_params) = generic_instantiated_params.as_ref()
@@ -2663,7 +2679,7 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect::<Vec<_>>();
             let retry_arg_diag_snap = self.ctx.snapshot_diagnostics();
-            arg_types = self.collect_call_argument_types_with_context(
+            let refreshed_arg_types = self.collect_call_argument_types_with_context(
                 args,
                 |i, _arg_count| {
                     refreshed_contextual_types
@@ -2683,8 +2699,8 @@ impl<'a> CheckerState<'a> {
                 .copied()
                 .any(|arg_idx| self.is_callback_like_argument(arg_idx));
 
-            let (retry_generic_arg_types, retry_sanitized) =
-                self.sanitize_generic_inference_arg_types(call.expression, args, &arg_types);
+            let (retry_generic_arg_types, retry_sanitized) = self
+                .sanitize_generic_inference_arg_types(call.expression, args, &refreshed_arg_types);
             let retry_arg_source_markers =
                 self.call_arg_source_type_annotation_markers(args, retry_generic_arg_types.len());
             let mut retry = if is_super_call {
@@ -2748,7 +2764,7 @@ impl<'a> CheckerState<'a> {
                         retry.0.clone(),
                         instantiated_params,
                         args,
-                        &arg_types,
+                        &refreshed_arg_types,
                     )
                 } else {
                     retry.0
@@ -2758,6 +2774,7 @@ impl<'a> CheckerState<'a> {
             };
             instantiated_predicate = retry.1;
             generic_instantiated_params = retry.2;
+            retried_arg_types = Some(refreshed_arg_types);
         }
 
         if is_generic_call
@@ -2836,6 +2853,11 @@ impl<'a> CheckerState<'a> {
                         let actual = generic_inference_arg_types
                             .get(i)
                             .copied()
+                            .or_else(|| {
+                                retried_arg_types
+                                    .as_ref()
+                                    .and_then(|types| types.get(i).copied())
+                            })
                             .or_else(|| arg_types.get(i).copied())
                             .unwrap_or(TypeId::UNKNOWN);
                         if matches!(actual, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
@@ -2884,6 +2906,10 @@ impl<'a> CheckerState<'a> {
                     }
                 }
             }
+        }
+        drop(generic_inference_arg_types);
+        if let Some(refreshed_arg_types) = retried_arg_types {
+            arg_types = refreshed_arg_types;
         }
 
         // Store instantiated type predicate from generic call resolution

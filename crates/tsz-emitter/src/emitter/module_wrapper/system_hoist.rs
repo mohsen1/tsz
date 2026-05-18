@@ -1,6 +1,5 @@
 use super::super::{JsxEmit, Printer};
 use super::{SystemDependencyAction, SystemDependencyPlan};
-use crate::emitter::declarations::class::class_has_self_references;
 use std::collections::HashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -13,6 +12,7 @@ impl<'a> Printer<'a> {
         system_plan: &SystemDependencyPlan,
     ) -> Vec<String> {
         self.system_empty_binding_temps.clear();
+        self.system_object_rest_export_temps.clear();
         let mut names = Vec::new();
         let mut deferred_named_export_names = Vec::new();
         let mut seen_deferred_named_export_names = HashSet::new();
@@ -170,12 +170,14 @@ impl<'a> Printer<'a> {
                                 class_name
                             };
                             if let Some(alias) = self.system_hoist_legacy_decorated_class_alias(
+                                export_decl.export_clause,
                                 &name,
                                 &class_decl.members.nodes,
                                 &class_decl.modifiers,
-                            ) && seen.insert(alias.clone())
-                            {
-                                names.push(alias);
+                            ) {
+                                Self::push_system_legacy_class_alias_hoist(
+                                    &mut names, &mut seen, &name, alias,
+                                );
                             }
                             if seen.insert(name.clone()) {
                                 names.push(name);
@@ -290,12 +292,14 @@ impl<'a> Printer<'a> {
                     {
                         let name = self.get_identifier_text_idx(class_decl.name);
                         if let Some(alias) = self.system_hoist_legacy_decorated_class_alias(
+                            export_decl.export_clause,
                             &name,
                             &class_decl.members.nodes,
                             &class_decl.modifiers,
-                        ) && seen.insert(alias.clone())
-                        {
-                            names.push(alias);
+                        ) {
+                            Self::push_system_legacy_class_alias_hoist(
+                                &mut names, &mut seen, &name, alias,
+                            );
                         }
                         if !name.is_empty() && seen.insert(name.clone()) {
                             names.push(name);
@@ -452,6 +456,26 @@ impl<'a> Printer<'a> {
                         continue;
                     }
 
+                    if is_exported_variable
+                        && self
+                            .collect_object_rest_export_parts(decl.name)
+                            .is_some_and(|parts| {
+                                parts.needs_source_temp(
+                                    self.reusable_object_rest_export_source(decl.initializer)
+                                        .is_some(),
+                                )
+                            })
+                    {
+                        let source_temp = self.make_unique_name();
+                        if seen.insert(source_temp.clone()) {
+                            names.push(source_temp.clone());
+                        }
+                        if let Some(name_node) = self.arena.get(decl.name) {
+                            self.system_object_rest_export_temps
+                                .insert(name_node.pos, source_temp);
+                        }
+                    }
+
                     let mut binding_names = Vec::new();
                     self.collect_binding_names(decl.name, &mut binding_names);
                     for name in binding_names {
@@ -487,7 +511,8 @@ impl<'a> Printer<'a> {
     }
 
     fn system_hoist_legacy_decorated_class_alias(
-        &self,
+        &mut self,
+        class_idx: NodeIndex,
         class_name: &str,
         members: &[NodeIndex],
         modifiers: &Option<tsz_parser::parser::NodeList>,
@@ -503,8 +528,23 @@ impl<'a> Printer<'a> {
         if !has_class_or_ctor_param_decorators {
             return None;
         }
-        class_has_self_references(self.arena, self.source_text_for_map(), class_name, members)
-            .then(|| format!("{class_name}_1"))
+        self.system_legacy_decorated_class_alias(class_idx, class_name, members)
+    }
+
+    fn push_system_legacy_class_alias_hoist(
+        names: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+        class_name: &str,
+        alias: String,
+    ) {
+        if !seen.insert(alias.clone()) {
+            return;
+        }
+        if let Some(class_name_pos) = names.iter().position(|name| name == class_name) {
+            names.insert(class_name_pos, alias);
+        } else {
+            names.push(alias);
+        }
     }
 
     pub(super) fn add_system_jsx_runtime_dependency(
@@ -559,6 +599,26 @@ impl<'a> Printer<'a> {
                     continue;
                 };
                 if decl.initializer.is_none() || !self.binding_pattern_is_empty(decl.name) {
+                    if is_exported
+                        && decl.initializer.is_some()
+                        && self
+                            .collect_object_rest_export_parts(decl.name)
+                            .is_some_and(|parts| {
+                                parts.needs_source_temp(
+                                    self.reusable_object_rest_export_source(decl.initializer)
+                                        .is_some(),
+                                )
+                            })
+                    {
+                        let source_temp = self.make_unique_name();
+                        if seen.insert(source_temp.clone()) {
+                            names.push(source_temp.clone());
+                        }
+                        if let Some(name_node) = self.arena.get(decl.name) {
+                            self.system_object_rest_export_temps
+                                .insert(name_node.pos, source_temp);
+                        }
+                    }
                     continue;
                 }
                 let source_temp = self.make_unique_name();
@@ -596,9 +656,43 @@ impl<'a> Printer<'a> {
         };
 
         match node.kind {
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class_decl) = self.arena.get_class(node) {
+                    let class_name = self.get_identifier_text_idx(class_decl.name);
+                    if let Some(alias) = self.system_hoist_legacy_decorated_class_alias(
+                        idx,
+                        &class_name,
+                        &class_decl.members.nodes,
+                        &class_decl.modifiers,
+                    ) {
+                        Self::push_system_legacy_class_alias_hoist(names, seen, &class_name, alias);
+                    }
+                }
+            }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if self.top_level_hoisted_var_statement_is_var(node) {
                     self.collect_system_variable_hoisted_names(node, names, seen);
+                }
+            }
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export_decl) = self.arena.get_export_decl(node)
+                    && export_decl.module_specifier.is_none()
+                    && !export_decl.is_default_export
+                    && let Some(clause_node) = self.arena.get(export_decl.export_clause)
+                    && clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                    && !self
+                        .arena
+                        .get_variable(clause_node)
+                        .is_some_and(|var_stmt| {
+                            self.arena
+                                .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+                        })
+                {
+                    for name in self.collect_variable_names_from_node(clause_node) {
+                        if !name.is_empty() && seen.insert(name.clone()) {
+                            names.push(name);
+                        }
+                    }
                 }
             }
             k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
@@ -611,16 +705,28 @@ impl<'a> Printer<'a> {
             }
             k if k == syntax_kind_ext::IF_STATEMENT => {
                 if let Some(if_stmt) = self.arena.get_if_statement(node) {
-                    self.collect_system_nested_top_level_var_hoisted_names(
+                    if !self.collect_system_recovered_exported_variable_names(
                         if_stmt.then_statement,
                         names,
                         seen,
-                    );
-                    self.collect_system_nested_top_level_var_hoisted_names(
+                    ) {
+                        self.collect_system_nested_top_level_var_hoisted_names(
+                            if_stmt.then_statement,
+                            names,
+                            seen,
+                        );
+                    }
+                    if !self.collect_system_recovered_exported_variable_names(
                         if_stmt.else_statement,
                         names,
                         seen,
-                    );
+                    ) {
+                        self.collect_system_nested_top_level_var_hoisted_names(
+                            if_stmt.else_statement,
+                            names,
+                            seen,
+                        );
+                    }
                 }
             }
             k if k == syntax_kind_ext::FOR_STATEMENT
@@ -747,6 +853,58 @@ impl<'a> Printer<'a> {
             return false;
         };
 
+        for name in self.collect_variable_names_from_node(variable_node) {
+            if !name.is_empty() && seen.insert(name.clone()) {
+                names.push(name);
+            }
+        }
+        true
+    }
+
+    fn collect_system_recovered_exported_variable_names(
+        &mut self,
+        stmt_idx: NodeIndex,
+        names: &mut Vec<String>,
+        seen: &mut HashSet<String>,
+    ) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        let variable_node = if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                return false;
+            };
+            if !self
+                .arena
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            {
+                return false;
+            }
+            stmt_node
+        } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                return false;
+            };
+            if export_decl.module_specifier.is_some() || export_decl.is_default_export {
+                return false;
+            }
+            let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                return false;
+            };
+            if clause_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                return false;
+            }
+            clause_node
+        } else {
+            return false;
+        };
+
+        self.collect_system_empty_binding_temps_from_variable_statement(
+            variable_node,
+            true,
+            names,
+            seen,
+        );
         for name in self.collect_variable_names_from_node(variable_node) {
             if !name.is_empty() && seen.insert(name.clone()) {
                 names.push(name);

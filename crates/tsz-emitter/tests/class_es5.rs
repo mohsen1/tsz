@@ -33,6 +33,81 @@ fn emit_class_with(
 }
 
 #[test]
+fn test_async_resource_methods_use_disposable_context() {
+    let source = r#"
+class C {
+    a = async () => {
+        await using d = { async [Symbol.asyncDispose]() {} };
+    };
+
+    async am() {
+        await using d = { async [Symbol.asyncDispose]() {} };
+        await null;
+    }
+
+    async *ag() {
+        await using d = { async [Symbol.asyncDispose]() {} };
+        yield;
+        await null;
+    }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let source_file = parser
+        .arena
+        .get_source_file(parser.arena.get(root).expect("root node"))
+        .expect("source file");
+    let class_idx = source_file.statements.nodes[0];
+
+    let mut emitter = ClassES5Emitter::new(&parser.arena);
+    emitter.set_source_text(source);
+    emitter.set_disposable_env_context(21, Vec::<String>::new());
+    let mut inner_name_counts = rustc_hash::FxHashMap::default();
+    inner_name_counts.insert("ag".to_string(), 1);
+    emitter.set_async_generator_inner_name_counts(inner_name_counts);
+    let output = emitter.emit_class(class_idx);
+
+    assert!(
+        output.contains("var env_21, d, e_21, result_21;"),
+        "Async resource field initializer should consume env_21.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _this = this;"),
+        "Async arrow field initializers should capture lexical `this` once in the constructor.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__awaiter(_this, void 0, void 0"),
+        "Async arrow field initializers should pass the captured class instance to __awaiter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var env_22, d, e_22, result_22;"),
+        "First async resource method should consume env_22.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var env_23, d, e_23, result_23;"),
+        "Second async resource method should consume env_23.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function ag_2()"),
+        "Class async generator inner names should continue the outer printer's suffix sequence.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        emitter.disposable_env_counter(),
+        24,
+        "Class emitter should publish the next disposable env id"
+    );
+    assert_eq!(
+        emitter
+            .take_async_generator_inner_name_counts()
+            .get("ag")
+            .copied(),
+        Some(2),
+        "Class emitter should publish async generator inner-name counters"
+    );
+}
+
+#[test]
 fn test_simple_class() {
     let output = emit_class("class Point { }");
     assert!(
@@ -153,6 +228,50 @@ fn test_legacy_accessor_decorator_metadata_uses_setter_parameter_type() {
     assert!(
         output.contains("__metadata(\"design:paramtypes\", [Number])"),
         "Expected accessor metadata paramtypes to include the setter parameter type.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_legacy_async_method_decorator_metadata_without_annotation_uses_promise() {
+    let source = r#"class A {
+        @dec async inferred() {}
+        @dec async explicitAny(): any { return 1; }
+        @dec async *stream() { yield 1; }
+    }"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut output = String::new();
+
+    if let Some(root_node) = parser.arena.get(root)
+        && let Some(source_file) = parser.arena.get_source_file(root_node)
+    {
+        for &stmt_idx in &source_file.statements.nodes {
+            if let Some(node) = parser.arena.get(stmt_idx)
+                && node.kind == syntax_kind_ext::CLASS_DECLARATION
+            {
+                let mut emitter = ClassES5Emitter::new(&parser.arena);
+                emitter.set_decorator_info(ClassDecoratorInfo {
+                    class_decorators: Vec::new(),
+                    has_member_decorators: true,
+                    emit_decorator_metadata: true,
+                });
+                output = emitter.emit_class(stmt_idx);
+                break;
+            }
+        }
+    }
+
+    assert!(
+        output.contains("__metadata(\"design:returntype\", Promise)"),
+        "Inferred async ES5 method metadata should use Promise.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__metadata(\"design:returntype\", Object)"),
+        "Explicit async `any` ES5 method metadata should serialize normally.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__metadata(\"design:returntype\", void 0)"),
+        "Unannotated async generator ES5 method metadata should stay void 0.\nOutput:\n{output}"
     );
 }
 

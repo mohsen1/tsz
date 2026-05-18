@@ -93,6 +93,16 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        if self.source_is_js_file && !is_private {
+            let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(method_idx);
+            if self.emit_jsdoc_overload_method_signatures(method_idx, &jsdoc_overload_signatures) {
+                if let Some(ref name) = method_name {
+                    self.method_names_with_overloads.insert(name.clone());
+                }
+                return;
+            }
+        }
+
         self.write_indent();
 
         // Modifiers
@@ -724,6 +734,15 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        if self.source_is_js_file {
+            let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(ctor_idx);
+            if self.emit_jsdoc_overload_constructor_signatures(ctor_idx, &jsdoc_overload_signatures)
+            {
+                self.class_has_constructor_overloads = true;
+                return;
+            }
+        }
+
         let has_visibility_modifier = ctor.modifiers.as_ref().is_some_and(|mods| {
             mods.nodes.iter().any(|&mod_idx| {
                 self.arena.get(mod_idx).is_some_and(|mod_node| {
@@ -883,7 +902,9 @@ impl<'a> DeclarationEmitter<'a> {
                                 self.write("?");
                             }
                             if !is_private {
-                                self.emit_flattened_binding_type_annotation(ident_idx, type_id);
+                                self.emit_flattened_binding_type_annotation(
+                                    ident_idx, type_id, None,
+                                );
                             }
                             self.write(";");
                             self.write_line();
@@ -2276,6 +2297,17 @@ impl<'a> DeclarationEmitter<'a> {
                         });
 
                         if is_destructuring {
+                            if self.js_local_bare_require_alias_without_export_surface(
+                                decl.initializer,
+                            ) {
+                                self.record_js_elided_bare_require_binding_names(decl.name);
+                                let skip_end = self
+                                    .arena
+                                    .get(decl.initializer)
+                                    .map_or(decl_node.end, |n| n.end);
+                                self.skip_comments_in_node(decl_node.pos, skip_end);
+                                continue;
+                            }
                             // Emit destructuring as individual declarations
                             let is_exported =
                                 has_export_modifier || self.is_js_named_exported_name(decl.name);
@@ -2369,6 +2401,9 @@ impl<'a> DeclarationEmitter<'a> {
                                 decl.type_annotation,
                             )
                             && !self.js_local_bare_require_alias_without_export_surface(
+                                decl.initializer,
+                            )
+                            && !self.initializer_references_js_elided_bare_require_binding(
                                 decl.initializer,
                             )
                     });
@@ -2510,6 +2545,14 @@ impl<'a> DeclarationEmitter<'a> {
 
                     self.write(";");
                     self.write_line();
+                    for (_, decl_idx, decl_node, decl) in &regular_decls[group_start..group_end] {
+                        self.emit_js_export_equals_type_alias_namespace_for_name(
+                            decl.name,
+                            self.arena
+                                .get(*decl_idx)
+                                .map_or(decl_node.pos, |node| node.pos),
+                        );
+                    }
                     group_start = group_end;
                 }
             }

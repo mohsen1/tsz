@@ -410,9 +410,7 @@ impl<'a> CheckerState<'a> {
                 {
                     let display_type =
                         self.operator_surface_type_for_expression(unary.operand, operand_type);
-                    let type_str = self
-                        .operator_type_parameter_annotation_text_for_expression(unary.operand)
-                        .unwrap_or_else(|| self.format_type_for_operator_display(display_type));
+                    let type_str = self.format_type_for_operator_display(display_type);
                     let message = format_message(
                         diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
                         &["+", &type_str],
@@ -1848,7 +1846,6 @@ mod tests {
     use crate::test_utils::check_source_codes;
 
     #[test]
-    #[ignore = "current main CI restore: pre-existing red assertion exposed by Rust 1.95 build fix"]
     fn template_expr_contextual_type_no_false_positive() {
         // Template expression `\`${scope}:${event}\`` passed to a parameter expecting
         // a template literal type should NOT produce TS2345

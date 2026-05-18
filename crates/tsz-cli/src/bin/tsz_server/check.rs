@@ -880,7 +880,7 @@ impl Server {
             check_js: options.check_js,
             allow_js: options.allow_js,
             no_resolve: options.no_resolve,
-            isolated_declarations: false,
+            isolated_declarations: options.isolated_declarations,
             emit_declarations: options.declaration,
             no_unchecked_side_effect_imports: options.no_unchecked_side_effect_imports,
             no_implicit_override: options.no_implicit_override,
@@ -889,7 +889,11 @@ impl Server {
             jsx_factory_from_config: false,
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_fragment_factory_from_config: false,
-            jsx_mode: tsz_common::checker_options::JsxMode::None,
+            jsx_mode: options
+                .jsx
+                .as_deref()
+                .and_then(tsz::config::jsx_string_to_mode)
+                .unwrap_or_default(),
             module_explicitly_set: options.module.is_some(),
             suppress_excess_property_errors: false,
             suppress_implicit_any_index_errors: false,
@@ -899,8 +903,16 @@ impl Server {
             // CLI/checker behavior for the same options.
             allow_importing_ts_extensions: options.allow_importing_ts_extensions,
             rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
-            implied_classic_resolution: false,
-            jsx_import_source: String::new(),
+            implied_classic_resolution: options
+                .module_resolution
+                .as_deref()
+                .and_then(tsz::config::ModuleResolutionKind::from_ts_str)
+                .is_some_and(|r| r == tsz::config::ModuleResolutionKind::Classic),
+            jsx_import_source: options
+                .jsx_import_source
+                .as_deref()
+                .unwrap_or_default()
+                .to_owned(),
             verbatim_module_syntax: options.verbatim_module_syntax,
             ignore_deprecations: false,
             allow_umd_global_access: options.allow_umd_global_access,

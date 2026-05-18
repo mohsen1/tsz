@@ -375,6 +375,40 @@ e as ErrAlias<string>;
 }
 
 #[test]
+fn ts2352_typeof_instantiation_wrapper_alias_preserves_outer_alias() {
+    let diags = check_source_diagnostics(
+        r#"
+declare class Boxed<T> {
+    value!: T;
+}
+
+declare function make<T>(): T;
+
+type BoxedCtor<T> = typeof Boxed<T>;
+type Maker<T> = typeof make<T>;
+type Combined<T> = BoxedCtor<T> & Maker<T>;
+
+declare const combined: Combined<number>;
+combined as Combined<string>;
+"#,
+    );
+
+    let relevant: Vec<_> = diags.iter().filter(|d| d.code != 2318).collect();
+    let matching = diagnostic_refs_with_code(&relevant, 2352);
+    assert_eq!(matching.len(), 1, "Expected one TS2352, got: {relevant:?}");
+
+    let message = &matching[0].message_text;
+    assert!(
+        message.contains("Conversion of type 'Combined<number>' to type 'Combined<string>'"),
+        "Expected TS2352 to preserve the outer alias application, got: {message:?}"
+    );
+    assert!(
+        !message.contains("{ new (): Boxed"),
+        "Wrapper aliases should not expand to the constructor/call intersection in TS2352. Got: {message:?}"
+    );
+}
+
+#[test]
 fn ts2344_failed_typeof_instantiation_emits_constraint_diagnostic() {
     // `typeof fn<TArgs>` is an instantiation expression. When TArgs do not
     // match any signature's type-parameter arity, tsc emits TS2635 at the

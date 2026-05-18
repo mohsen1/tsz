@@ -318,7 +318,9 @@ impl<'a> CheckerState<'a> {
             self.check_await_expression(prop.initializer);
         }
 
-        let effective_declared_type = self.effective_class_property_declared_type(member_idx, prop);
+        // Use the relation-shape declared type here so a fresh-symbol
+        // initializer can flow into a `static readonly: unique symbol`.
+        let effective_declared_type = self.class_property_relation_declared_type(member_idx, prop);
         let contextual_member_type =
             self.contextual_class_member_type_from_request(request, prop.name);
         let mut inferred_initializer_type = None;
@@ -681,7 +683,12 @@ impl<'a> CheckerState<'a> {
             );
             ctx_helper.get_this_type()
         });
-        let implicit_this_type = prototype_owner_this_type.or(contextual_this_type);
+        let explicit_this_type = self
+            .get_explicit_this_type_annotation(&method.parameters.nodes)
+            .map(|ann_idx| self.get_type_from_type_node(ann_idx));
+        let implicit_this_type = explicit_this_type
+            .or(prototype_owner_this_type)
+            .or(contextual_this_type);
         let mut pushed_this_type = false;
         if let Some(this_type) = implicit_this_type {
             self.ctx.this_type_stack.push(this_type);
@@ -1266,8 +1273,10 @@ impl<'a> CheckerState<'a> {
         for &param_idx in &ctor.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                && let Some(name_text) = self.node_text(param.name)
-                && name_text == "static"
+                && let Some(name_node) = self.ctx.arena.get(param.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && ident.escaped_text == "static"
+                && ident.original_text.is_none()
             {
                 self.ctx.error(
                             param_node.pos,

@@ -11,24 +11,8 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::TypeResolver;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
-
-fn extra_this_parameter_is_compatible_method_shape(actual: &str, expected: &str) -> bool {
-    fn return_head(signature: &str) -> Option<&str> {
-        let (_, return_type) = signature.rsplit_once("=>")?;
-        return_type
-            .trim()
-            .split_once('<')
-            .map(|(head, _)| head.trim())
-    }
-
-    actual.starts_with('<')
-        && expected.starts_with('<')
-        && actual.contains("this:")
-        && !expected.contains("this:")
-        && return_head(actual).is_some()
-        && return_head(actual) == return_head(expected)
-}
 
 impl<'a> CheckerState<'a> {
     fn class_index_signatures_satisfy_interface(
@@ -123,7 +107,7 @@ impl<'a> CheckerState<'a> {
         if use_global_array_members {
             let display_name = array_display_name(self);
 
-            if let Some(array_base) = tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types)
+            if let Some(array_base) = TypeResolver::get_array_base_type(&self.ctx.types)
                 && let Some(shape) = crate::query_boundaries::common::object_shape_for_type(
                     self.ctx.types,
                     array_base,
@@ -131,7 +115,7 @@ impl<'a> CheckerState<'a> {
             {
                 let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
                     self.ctx.types,
-                    tsz_solver::TypeResolver::get_array_base_type_params(&self.ctx.types),
+                    TypeResolver::get_array_base_type_params(&self.ctx.types),
                     type_args,
                 );
                 let properties = shape
@@ -1658,9 +1642,6 @@ impl<'a> CheckerState<'a> {
                                     class_member_idx
                                 };
                             let display_name = format_property_name_for_diagnostic(&member_name);
-                            if extra_this_parameter_is_compatible_method_shape(&actual, &expected) {
-                                continue;
-                            }
                             self.error_at_node(
                                 error_node_idx,
                                 &format!(

@@ -2,11 +2,23 @@ use super::super::Printer;
 use super::system_legacy_class_decorators::split_system_class_static_tail;
 use super::{SystemDependencyAction, SystemDependencyPlan};
 use crate::emitter::{JsxEmit, ModuleKind};
+use crate::transforms::ClassES5Emitter;
 use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+
+fn push_system_reexport_name(
+    reexported_name_lists: &mut FxHashMap<String, Vec<String>>,
+    local_name: String,
+    export_name: String,
+) {
+    let names = reexported_name_lists.entry(local_name).or_default();
+    if !names.contains(&export_name) {
+        names.push(export_name);
+    }
+}
 
 impl<'a> Printer<'a> {
     pub(super) fn emit_system_setters(
@@ -218,6 +230,7 @@ impl<'a> Printer<'a> {
         self.register_system_import_substitutions(source, dep_vars, system_plan);
 
         let mut reexported_names: FxHashMap<String, String> = FxHashMap::default();
+        let mut reexported_name_lists: FxHashMap<String, Vec<String>> = FxHashMap::default();
         for &stmt_idx in &source.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -230,7 +243,10 @@ impl<'a> Printer<'a> {
             {
                 for name in self.collect_variable_names(&var_stmt.declarations) {
                     if !name.is_empty() {
-                        reexported_names.entry(name.clone()).or_insert(name);
+                        reexported_names
+                            .entry(name.clone())
+                            .or_insert_with(|| name.clone());
+                        push_system_reexport_name(&mut reexported_name_lists, name.clone(), name);
                     }
                 }
                 continue;
@@ -252,7 +268,10 @@ impl<'a> Printer<'a> {
             {
                 for name in self.collect_variable_names(&var_stmt.declarations) {
                     if !name.is_empty() {
-                        reexported_names.entry(name.clone()).or_insert(name);
+                        reexported_names
+                            .entry(name.clone())
+                            .or_insert_with(|| name.clone());
+                        push_system_reexport_name(&mut reexported_name_lists, name.clone(), name);
                     }
                 }
                 continue;
@@ -273,12 +292,18 @@ impl<'a> Printer<'a> {
                     .unwrap_or_default();
                     let export_name = self.get_specifier_name_text(spec.name).unwrap_or_default();
                     if !local_name.is_empty() && !export_name.is_empty() {
-                        reexported_names.insert(local_name, export_name);
+                        reexported_names.insert(local_name.clone(), export_name.clone());
+                        push_system_reexport_name(
+                            &mut reexported_name_lists,
+                            local_name,
+                            export_name,
+                        );
                     }
                 }
             }
         }
         self.system_reexported_names = reexported_names;
+        self.system_reexported_name_lists = reexported_name_lists;
         self.system_folded_export_names.clear();
 
         if let Some(first_using_idx) = source.statements.nodes.iter().position(|&stmt_idx| {
@@ -398,13 +423,12 @@ impl<'a> Printer<'a> {
                     let module_name = self.get_identifier_text_idx(module_decl.name);
                     if !module_name.is_empty() {
                         self.declared_namespace_names.insert(module_name.clone());
-                        if let Some(export_name) =
-                            self.system_reexported_names.get(&module_name).cloned()
-                        {
+                        let export_names = self.system_export_names_for_local(&module_name);
+                        if !export_names.is_empty() {
                             self.emit_system_namespace_with_export_fold(
                                 stmt_idx,
                                 &module_name,
-                                &export_name,
+                                export_names,
                             );
                             self.system_folded_export_names.insert(module_name);
                             continue;
@@ -417,13 +441,12 @@ impl<'a> Printer<'a> {
                     let enum_name = self.get_identifier_text_idx(enum_decl.name);
                     if !enum_name.is_empty() {
                         self.declared_namespace_names.insert(enum_name.clone());
-                        if let Some(export_name) =
-                            self.system_reexported_names.get(&enum_name).cloned()
-                        {
+                        let export_names = self.system_export_names_for_local(&enum_name);
+                        if !export_names.is_empty() {
                             self.emit_system_enum_with_export_fold(
                                 stmt_idx,
                                 &enum_name,
-                                &export_name,
+                                export_names,
                             );
                             self.write_line();
                             self.system_folded_export_names.insert(enum_name);
@@ -902,7 +925,11 @@ impl<'a> Printer<'a> {
                     self.write(&env_name);
                     self.write(", ");
                     if decl.initializer.is_some() {
-                        self.emit(decl.initializer);
+                        if !self.try_emit_object_literal_es5_inline_computed_expression(
+                            decl.initializer,
+                        ) {
+                            self.emit(decl.initializer);
+                        }
                     } else {
                         self.write("void 0");
                     }
@@ -1162,8 +1189,11 @@ impl<'a> Printer<'a> {
                         .collect_constructor_param_decorators(&class_decl.members.nodes)
                         .is_empty())
             {
-                let alias_name =
-                    self.system_legacy_decorated_class_alias(&gen_name, &class_decl.members.nodes);
+                let alias_name = self.system_legacy_decorated_class_alias(
+                    export_decl.export_clause,
+                    &gen_name,
+                    &class_decl.members.nodes,
+                );
                 let emitted = self.capture_system_class_assignment(
                     clause_node,
                     export_decl.export_clause,
@@ -1199,18 +1229,23 @@ impl<'a> Printer<'a> {
                 self.write(");");
                 return true;
             }
-            self.write(&gen_name);
-            self.write(" = ");
-            // Emit class as anonymous class expression
-            self.anonymous_default_export_name = None;
-            self.defer_class_static_blocks = true;
-            self.deferred_class_static_blocks.clear();
-            self.emit_class_es6(clause_node, export_decl.export_clause);
-            self.defer_class_static_blocks = false;
-            let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
-            if !self.output_ends_with_semicolon() {
-                self.write(";");
-            }
+            let deferred = if self.ctx.target_es5 {
+                self.emit_system_es5_class_assignment(export_decl.export_clause, &gen_name);
+                Vec::new()
+            } else {
+                self.write(&gen_name);
+                self.write(" = ");
+                self.anonymous_default_export_name = None;
+                let deferred = self.emit_system_class_expression_value(
+                    clause_node,
+                    export_decl.export_clause,
+                    false,
+                );
+                if !self.output_ends_with_semicolon() {
+                    self.write(";");
+                }
+                deferred
+            };
             self.write_line();
             self.write("exports_1(\"default\", ");
             self.write(&gen_name);
@@ -1249,7 +1284,11 @@ impl<'a> Printer<'a> {
                         .is_empty());
             let alias_name = needs_legacy_class_decorate
                 .then(|| {
-                    self.system_legacy_decorated_class_alias(&class_name, &class_decl.members.nodes)
+                    self.system_legacy_decorated_class_alias(
+                        export_decl.export_clause,
+                        &class_name,
+                        &class_decl.members.nodes,
+                    )
                 })
                 .flatten();
             if needs_legacy_class_decorate {
@@ -1296,17 +1335,22 @@ impl<'a> Printer<'a> {
                 return true;
             }
 
-            self.write(&class_name);
-            self.write(" = ");
-            // Defer static block IIFEs so we can emit exports_1 before them
-            self.defer_class_static_blocks = true;
-            self.deferred_class_static_blocks.clear();
-            self.emit_class_es6(clause_node, export_decl.export_clause);
-            self.defer_class_static_blocks = false;
-            let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
-            if !self.output_ends_with_semicolon() {
-                self.write(";");
-            }
+            let deferred = if self.ctx.target_es5 {
+                self.emit_system_es5_class_assignment(export_decl.export_clause, &class_name);
+                Vec::new()
+            } else {
+                self.write(&class_name);
+                self.write(" = ");
+                let deferred = self.emit_system_class_expression_value(
+                    clause_node,
+                    export_decl.export_clause,
+                    true,
+                );
+                if !self.output_ends_with_semicolon() {
+                    self.write(";");
+                }
+                deferred
+            };
             self.write_line();
             self.write("exports_1(\"");
             self.write(&class_name);
@@ -1327,7 +1371,7 @@ impl<'a> Printer<'a> {
                 self.emit_system_enum_with_export_fold(
                     export_decl.export_clause,
                     &enum_name,
-                    &enum_name,
+                    vec![enum_name.clone()],
                 );
                 return true;
             }
@@ -1407,8 +1451,8 @@ impl<'a> Printer<'a> {
     fn emit_system_enum_with_export_fold(
         &mut self,
         enum_idx: NodeIndex,
-        enum_name: &str,
-        export_name: &str,
+        _enum_name: &str,
+        export_names: Vec<String>,
     ) {
         let mut enum_emitter = crate::transforms::EnumES5Emitter::new(self.arena);
         enum_emitter.set_indent_level(self.writer.indent_level());
@@ -1416,32 +1460,40 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text {
             enum_emitter.set_source_text(text);
         }
-        let mut output = enum_emitter.emit_enum(enum_idx);
-        let var_prefix = format!("var {enum_name};\n");
-        if output.starts_with(&var_prefix) {
-            output = output[var_prefix.len()..].to_string();
-        }
-        let from = format!("({enum_name} || ({enum_name} = {{}}))");
-        let to = format!("({enum_name} || (exports_1(\"{export_name}\", {enum_name} = {{}})))");
-        output = output.replacen(&from, &to, 1);
+        enum_emitter.set_emit_var_declaration(false);
+        enum_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
+        let output = enum_emitter.emit_enum(enum_idx);
         self.write(output.trim_end_matches('\n').trim_start());
     }
 
     fn emit_system_namespace_with_export_fold(
         &mut self,
         stmt_idx: NodeIndex,
-        ns_name: &str,
-        export_name: &str,
+        _ns_name: &str,
+        export_names: Vec<String>,
     ) {
-        let start_pos = self.writer.len();
+        let before_len = self.writer.len();
+        let prev_system_fold = self
+            .pending_system_namespace_export_fold
+            .replace(export_names);
         self.emit(stmt_idx);
-        let output = self.writer.get_output()[start_pos..].to_string();
-        self.writer.truncate(start_pos);
-        let from = format!("({ns_name} || ({ns_name} = {{}}))");
-        let to = format!("({ns_name} || (exports_1(\"{export_name}\", {ns_name} = {{}})))");
-        let replaced = output.replacen(&from, &to, 1);
-        self.write(replaced.trim_end_matches('\n'));
-        self.write_line();
+        self.pending_system_namespace_export_fold = prev_system_fold;
+        if self.writer.len() > before_len && !self.writer.is_at_line_start() {
+            self.write_line();
+        }
+    }
+
+    fn system_export_names_for_local(&self, local_name: &str) -> Vec<String> {
+        if let Some(export_names) = self.system_reexported_name_lists.get(local_name)
+            && !export_names.is_empty()
+        {
+            return export_names.clone();
+        }
+        self.system_reexported_names
+            .get(local_name)
+            .cloned()
+            .map(|export_name| vec![export_name])
+            .unwrap_or_default()
     }
 
     pub(super) fn system_module_specifier_text(&self, specifier: NodeIndex) -> Option<String> {
@@ -1469,16 +1521,18 @@ impl<'a> Printer<'a> {
             self.emit(idx);
             return;
         }
-        self.write(&class_name);
-        self.write(" = ");
-        self.defer_class_static_blocks = true;
-        self.deferred_class_static_blocks.clear();
-        self.emit_class_es6(node, idx);
-        self.defer_class_static_blocks = false;
-        let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
-        if !self.output_ends_with_semicolon() {
-            self.write(";");
-        }
+        let deferred = if self.ctx.target_es5 {
+            self.emit_system_es5_class_assignment(idx, &class_name);
+            Vec::new()
+        } else {
+            self.write(&class_name);
+            self.write(" = ");
+            let deferred = self.emit_system_class_expression_value(node, idx, false);
+            if !self.output_ends_with_semicolon() {
+                self.write(";");
+            }
+            deferred
+        };
         let legacy_class_decorators = self.collect_class_decorators(&class_decl.modifiers);
         if self.ctx.options.legacy_decorators
             && (!legacy_class_decorators.is_empty()
@@ -1493,6 +1547,7 @@ impl<'a> Printer<'a> {
                 false,
                 false,
                 false,
+                None,
                 &class_decl.members.nodes,
             );
         }
@@ -1501,7 +1556,64 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn emit_system_variable_initializers(&mut self, node: &tsz_parser::parser::node::Node) {
+    fn emit_system_es5_class_assignment(&mut self, class_idx: NodeIndex, class_name: &str) {
+        let mut es5_emitter = ClassES5Emitter::new(self.arena);
+        es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+        es5_emitter
+            .set_async_generator_inner_name_counts(self.async_generator_inner_name_counts.clone());
+        self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
+        es5_emitter.set_indent_level(self.writer.indent_level());
+        es5_emitter.set_transforms(self.transforms.clone());
+        es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+        es5_emitter.set_printer_options(self.ctx.options.clone());
+        es5_emitter.set_module_kind(
+            self.ctx
+                .original_module_kind
+                .unwrap_or(self.ctx.options.module),
+        );
+        if let Some(text) = self.source_text_for_map() {
+            if self.writer.has_source_map() {
+                es5_emitter.set_source_map_context(text, self.writer.current_source_index());
+            } else {
+                es5_emitter.set_source_text(text);
+            }
+        }
+        es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        let output = es5_emitter.emit_class_assignment_with_name(class_idx, class_name);
+        self.sync_es5_class_emitter_state(&mut es5_emitter);
+        self.write(&output);
+    }
+
+    fn emit_system_class_expression_value(
+        &mut self,
+        node: &tsz_parser::parser::node::Node,
+        idx: NodeIndex,
+        defer_es5_static_block_tail: bool,
+    ) -> Vec<(NodeIndex, usize)> {
+        if self.ctx.target_es5 {
+            if defer_es5_static_block_tail {
+                self.defer_class_static_blocks = true;
+                self.deferred_class_static_blocks.clear();
+            }
+            self.emit_class_expression_es5(idx);
+            if defer_es5_static_block_tail {
+                self.defer_class_static_blocks = false;
+                return std::mem::take(&mut self.deferred_class_static_blocks);
+            }
+            return Vec::new();
+        }
+
+        self.defer_class_static_blocks = true;
+        self.deferred_class_static_blocks.clear();
+        self.emit_class_es6(node, idx);
+        self.defer_class_static_blocks = false;
+        std::mem::take(&mut self.deferred_class_static_blocks)
+    }
+
+    pub(in crate::emitter) fn emit_system_variable_initializers(
+        &mut self,
+        node: &tsz_parser::parser::node::Node,
+    ) {
         let Some(var_stmt) = self.arena.get_variable(node) else {
             return;
         };
@@ -1595,6 +1707,9 @@ impl<'a> Printer<'a> {
         }
         if name_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
             return false;
+        }
+        if is_exported && self.emit_system_object_rest_export_initializer(decl) {
+            return true;
         }
         let Some(pattern) = self.arena.get_binding_pattern(name_node) else {
             return false;

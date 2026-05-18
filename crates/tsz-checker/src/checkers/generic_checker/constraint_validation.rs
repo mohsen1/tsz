@@ -1,16 +1,10 @@
-//! Generic type argument constraint validation (TS2344).
-
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Returns `true` when an arity diagnostic (TS2314 generic type requires
-    /// N args, TS2315 type is not generic, or TS2707 generic type requires
-    /// between M and N args) was emitted at any byte offset inside the AST
-    /// range of `type_arg_idx`. Used to suppress cascading TS2344 on an
-    /// outer type reference whose argument carries an inner arity error.
+    /// Returns true when an arity diagnostic was emitted inside `type_arg_idx`.
     fn type_arg_subtree_has_arity_error(&self, type_arg_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(type_arg_idx) else {
             return false;
@@ -243,6 +237,58 @@ impl<'a> CheckerState<'a> {
                 ) {
                     continue;
                 }
+                let concrete_application_args = crate::query_boundaries::common::type_application(
+                    self.ctx.types.as_type_database(),
+                    type_arg,
+                )
+                .is_some_and(|app| {
+                    app.args
+                        .iter()
+                        .all(|&arg| !query::contains_type_parameters(self.ctx.types, arg))
+                });
+                if concrete_application_args {
+                    let constraint_resolved = self.resolve_lazy_type(constraint);
+                    let mut subst = crate::query_boundaries::common::TypeSubstitution::new();
+                    for (j, p) in type_params.iter().enumerate() {
+                        if let Some(&arg) = type_args.get(j) {
+                            subst.insert(p.name, arg);
+                        }
+                    }
+                    let inst_constraint = if subst.is_empty() {
+                        constraint_resolved
+                    } else {
+                        crate::query_boundaries::common::instantiate_type(
+                            self.ctx.types,
+                            constraint_resolved,
+                            &subst,
+                        )
+                    };
+                    if !query::contains_type_parameters(self.ctx.types, inst_constraint) {
+                        self.ensure_relation_input_ready(type_arg);
+                        self.ensure_relation_input_ready(inst_constraint);
+                        let evaluated_arg = self.evaluate_type_for_assignability(type_arg);
+                        let evaluated_constraint =
+                            self.evaluate_type_for_assignability(inst_constraint);
+                        if evaluated_arg != type_arg
+                            && !matches!(
+                                evaluated_arg,
+                                TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
+                            )
+                            && (self.is_assignable_to_no_weak_checks(
+                                evaluated_arg,
+                                evaluated_constraint,
+                            ) || self.satisfies_array_like_constraint(
+                                evaluated_arg,
+                                evaluated_constraint,
+                            ) || self.conditional_result_branches_satisfy_constraint(
+                                evaluated_arg,
+                                evaluated_constraint,
+                            ))
+                        {
+                            continue;
+                        }
+                    }
+                }
                 // When the type argument contains type parameters, we generally skip
                 // constraint checking (deferred to instantiation time). However, when
                 // the type arg IS a bare type parameter, check its base constraint
@@ -251,6 +297,36 @@ impl<'a> CheckerState<'a> {
                 // assignable to `string`.
                 let type_arg_contains_type_parameters =
                     query::contains_type_parameters(self.ctx.types, type_arg);
+                if type_arg_contains_type_parameters
+                    && !query::is_bare_type_parameter(self.ctx.types.as_type_database(), type_arg)
+                    && query::is_application_type(self.ctx.types.as_type_database(), type_arg)
+                {
+                    // Application type arguments that still contain type parameters
+                    // are generally deferred to instantiation time. Check the cheap
+                    // callable/indexed-access exception before computing a base
+                    // constraint, since base-constraint evaluation can expand the
+                    // alias body recursively for helper-heavy libraries.
+                    let constraint_resolved = self.resolve_lazy_type(constraint);
+                    let constraint_is_callable = query::is_callable_type(
+                        self.ctx.types.as_type_database(),
+                        constraint_resolved,
+                    ) || self
+                        .is_function_constraint(param.constraint.unwrap_or(TypeId::NEVER));
+                    let generic_indexed_type_arg = self.generic_indexed_access_subject(type_arg);
+                    let keep_eager_check = constraint_is_callable
+                        && generic_indexed_type_arg.is_some()
+                        && !self.indexed_access_resolves_to_callable(
+                            generic_indexed_type_arg.unwrap_or(type_arg),
+                        );
+                    let is_infer_result_conditional_application = self
+                        .type_arg_evaluates_to_infer_result_conditional(type_arg)
+                        || self
+                            .type_alias_application_infer_result_conditional_components(type_arg)
+                            .is_some();
+                    if !keep_eager_check && !is_infer_result_conditional_application {
+                        continue;
+                    }
+                }
                 let mut base_constraint_from_indexed_access_ast = false;
                 let mut base_constraint_type = type_arg_contains_type_parameters
                     .then(|| self.constraint_check_base_type(type_arg))
@@ -312,6 +388,19 @@ impl<'a> CheckerState<'a> {
                 {
                     base_constraint_type = Some(ast_base);
                     base_constraint_from_indexed_access_ast = true;
+                }
+                if type_arg_contains_type_parameters {
+                    let constraint_resolved = self.resolve_lazy_type(constraint);
+                    let inst_constraint = self.instantiate_constraint_with_type_args(
+                        constraint_resolved,
+                        type_params,
+                        &type_args,
+                    );
+                    if self
+                        .conditional_result_branches_satisfy_constraint(type_arg, inst_constraint)
+                    {
+                        continue;
+                    }
                 }
                 if type_arg_contains_type_parameters {
                     let is_bare_type_param =
@@ -456,6 +545,15 @@ impl<'a> CheckerState<'a> {
                                                 || inst_constraint == TypeId::ANY
                                                 || self
                                                     .is_assignable_to(infer_base, inst_constraint)
+                                                || {
+                                                    let evaluated =
+                                                        self.evaluate_type_for_assignability(type_arg);
+                                                    evaluated != type_arg
+                                                        && self.is_assignable_to(
+                                                            evaluated,
+                                                            inst_constraint,
+                                                        )
+                                                }
                                                 || self
                                                     .infer_result_satisfies_via_check_constraint(
                                                         base,
@@ -475,6 +573,11 @@ impl<'a> CheckerState<'a> {
                                                     )
                                                 || self
                                                     .infer_result_satisfies_via_application_arg_constraints(
+                                                        type_arg,
+                                                        inst_constraint,
+                                                    )
+                                                || self
+                                                    .array_element_infer_alias_satisfies_constraint(
                                                         type_arg,
                                                         inst_constraint,
                                                     )
@@ -897,14 +1000,18 @@ impl<'a> CheckerState<'a> {
                                     )
                                 });
                             if let Some((cond_check, cond_extends, cond_true, cond_false)) =
-                                query::full_conditional_type_components(db, type_arg).or_else(
-                                    || {
+                                query::full_conditional_type_components(db, type_arg)
+                                    .or_else(|| {
                                         query::full_conditional_type_components(
                                             self.ctx.types.as_type_database(),
                                             type_arg_evaluated,
                                         )
-                                    },
-                                )
+                                    })
+                                    .or_else(|| {
+                                        self.type_alias_application_infer_result_conditional_components(
+                                            type_arg,
+                                        )
+                                    })
                                 && cond_false == TypeId::NEVER
                                 && query::is_infer_type(db, cond_true)
                             {
@@ -950,6 +1057,10 @@ impl<'a> CheckerState<'a> {
                                             inst_constraint,
                                         )
                                     || self.infer_result_satisfies_via_application_arg_constraints(
+                                        type_arg,
+                                        inst_constraint,
+                                    )
+                                    || self.array_element_infer_alias_satisfies_constraint(
                                         type_arg,
                                         inst_constraint,
                                     )
@@ -1043,6 +1154,26 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         }
+                        continue;
+                    }
+                    if is_bare_type_param
+                        && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                        && self.explicit_alias_type_parameter_constraint_satisfies_arg_constraint(
+                            arg_idx,
+                            type_arg,
+                            constraint,
+                            type_params,
+                            &type_args,
+                        )
+                    {
+                        continue;
+                    }
+                    if is_bare_type_param
+                        && let Some(&arg_idx) = type_args_list.nodes.get(i)
+                        && self.merged_interface_sibling_constraint_satisfies_type_arg_constraint(
+                            arg_idx, constraint,
+                        )
+                    {
                         continue;
                     }
                     if is_bare_type_param && base_constraint_type.is_none() {
@@ -1289,7 +1420,7 @@ impl<'a> CheckerState<'a> {
                         // a Lazy(DefId) from a lib file) remain unevaluated because the
                         // evaluator's `ensure_relation_input_ready` may be skipped due
                         // to depth guards during nested evaluation.
-                        self.ensure_refs_resolved(inst_constraint);
+                        self.ensure_relation_input_ready(inst_constraint);
                         let inst_constraint = self.evaluate_type_for_assignability(inst_constraint);
                         if query::keyof_operand(
                             self.ctx.types.as_type_database(),
@@ -1354,6 +1485,10 @@ impl<'a> CheckerState<'a> {
                             || self
                                 .satisfies_array_like_constraint(base_for_check, inst_constraint)
                             || self.infer_result_satisfies_via_referenced_constraints(
+                                type_arg,
+                                inst_constraint,
+                            )
+                            || self.array_element_infer_alias_satisfies_constraint(
                                 type_arg,
                                 inst_constraint,
                             );
@@ -1451,10 +1586,14 @@ impl<'a> CheckerState<'a> {
                 // non-primitive types that share no common properties should fail
                 // with TS2559 ("Type has no properties in common").
                 let constraint_is_all_optional = {
+                    let constraint_for_weak_check =
+                        self.evaluate_type_for_assignability(instantiated_constraint);
+                    let constraint_for_weak_check =
+                        self.resolve_lazy_type(constraint_for_weak_check);
                     let db = self.ctx.types.as_type_database();
                     if let Some(shape_id) = crate::query_boundaries::common::object_shape_id(
                         db,
-                        instantiated_constraint,
+                        constraint_for_weak_check,
                     ) {
                         let shape = db.object_shape(shape_id);
                         !shape.properties.is_empty()
@@ -1506,7 +1645,6 @@ impl<'a> CheckerState<'a> {
                         } else {
                             self.is_assignable_to_no_weak_checks(type_arg, instantiated_constraint)
                         });
-
                 // When the constraint is all-optional and the structural check
                 // passed (because all-optional types have no required properties),
                 // separately check for weak type violation (TS2559).
@@ -1564,7 +1702,31 @@ impl<'a> CheckerState<'a> {
                         || self.type_arg_evaluates_to_array_like_infer_result_conditional(
                             type_arg,
                             instantiated_constraint,
+                        )
+                        || self.array_element_infer_alias_satisfies_constraint(
+                            type_arg,
+                            instantiated_constraint,
                         );
+                }
+                if !is_satisfied && !constraint_is_all_optional {
+                    let evaluated_arg = self.evaluate_type_for_assignability(type_arg);
+                    if evaluated_arg != type_arg
+                        && !matches!(
+                            evaluated_arg,
+                            TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
+                        )
+                    {
+                        is_satisfied = self.is_assignable_to_no_weak_checks(
+                            evaluated_arg,
+                            instantiated_constraint,
+                        ) || self.satisfies_array_like_constraint(
+                            evaluated_arg,
+                            instantiated_constraint,
+                        ) || self.conditional_result_branches_satisfy_constraint(
+                            evaluated_arg,
+                            instantiated_constraint,
+                        );
+                    }
                 }
                 if !is_satisfied
                     && let Some(base) = base_constraint_type
@@ -1777,87 +1939,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn resolve_record_alias_type_for_indexed_access_value(
-        &mut self,
-        object_type: TypeId,
-    ) -> Option<TypeId> {
-        let app = crate::query_boundaries::common::type_application(self.ctx.types, object_type)?;
-        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)?;
-        let def = self.ctx.definition_store.get(def_id)?;
-        if def.kind != tsz_solver::def::DefKind::TypeAlias {
-            return None;
-        }
-        if self.ctx.types.resolve_atom(def.name) != "Record" {
-            return None;
-        }
-        if def.type_params.len() != app.args.len() || def.type_params.is_empty() {
-            return None;
-        }
-        let body = def.body?;
-        let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
-            self.ctx.types,
-            &def.type_params,
-            &app.args,
-        );
-        let instantiated =
-            crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &subst);
-        let evaluated = self.evaluate_type_for_assignability(instantiated);
-        Some(self.resolve_lazy_type(evaluated))
-    }
-
-    fn type_alias_application_filters_to_constraint(
-        &mut self,
-        mut type_arg: TypeId,
-        constraint: TypeId,
-    ) -> bool {
-        for _ in 0..8 {
-            if let Some((check, extends_type, true_type, false_type)) =
-                query::full_conditional_type_components(self.ctx.types.as_type_database(), type_arg)
-            {
-                if false_type != TypeId::NEVER || true_type != check {
-                    return false;
-                }
-                let extends_resolved = self.resolve_lazy_type(extends_type);
-                let extends_evaluated = self.evaluate_type_for_assignability(extends_resolved);
-                let constraint_evaluated = self.evaluate_type_for_assignability(constraint);
-                return self.is_assignable_to(extends_evaluated, constraint_evaluated)
-                    || self.is_assignable_to(extends_resolved, constraint);
-            }
-
-            let Some(app) =
-                crate::query_boundaries::common::type_application(self.ctx.types, type_arg)
-            else {
-                return false;
-            };
-            let Some(def_id) =
-                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
-            else {
-                return false;
-            };
-            let Some(def) = self.ctx.definition_store.get(def_id) else {
-                return false;
-            };
-            if def.kind != tsz_solver::def::DefKind::TypeAlias {
-                return false;
-            }
-            let Some(body) = def.body else {
-                return false;
-            };
-            if def.type_params.len() != app.args.len() {
-                return false;
-            }
-            let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
-                self.ctx.types,
-                &def.type_params,
-                &app.args,
-            );
-            type_arg =
-                crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &subst);
-            type_arg = self.resolve_lazy_type(type_arg);
-        }
-        false
-    }
-
     fn concrete_indexed_access_property_union(&mut self, type_id: TypeId) -> Option<TypeId> {
         let evaluated = self.evaluate_type_for_assignability(type_id);
         let evaluated = self.resolve_lazy_type(evaluated);
@@ -1868,58 +1949,5 @@ impl<'a> CheckerState<'a> {
         let value_type = self.evaluate_type_for_assignability(value_type);
         let value_type = self.resolve_lazy_type(value_type);
         (!query::contains_free_type_parameters(self.ctx.types, value_type)).then_some(value_type)
-    }
-
-    pub(super) fn base_union_members_satisfy_constraint(
-        &mut self,
-        base: TypeId,
-        constraint: TypeId,
-    ) -> bool {
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, base)
-        else {
-            return false;
-        };
-        let original_constraint = constraint;
-        let constraint = self.resolve_lazy_type(constraint);
-        let constraint = self.evaluate_type_for_assignability(constraint);
-        !members.is_empty()
-            && members.iter().all(|&member| {
-                if self.member_extends_constraint_heritage(member, original_constraint) {
-                    return true;
-                }
-                let member = self.resolve_lazy_type(member);
-                let member = self.evaluate_type_for_assignability(member);
-                self.is_assignable_to(member, constraint)
-                    || self.satisfies_array_like_constraint(member, constraint)
-            })
-    }
-
-    pub(crate) fn member_extends_constraint_heritage(
-        &mut self,
-        member: TypeId,
-        constraint: TypeId,
-    ) -> bool {
-        let db = self.ctx.types.as_type_database();
-        let member_sym = self
-            .ctx
-            .resolve_type_to_symbol_id(member)
-            .or_else(|| {
-                query::lazy_def_id(db, member)
-                    .and_then(|def| self.ctx.def_to_symbol_id_with_fallback(def))
-            })
-            .or_else(|| self.symbol_id_for_heritage_type_name(member));
-        let constraint_sym = self
-            .ctx
-            .resolve_type_to_symbol_id(constraint)
-            .or_else(|| {
-                query::lazy_def_id(db, constraint)
-                    .and_then(|def| self.ctx.def_to_symbol_id_with_fallback(def))
-            })
-            .or_else(|| self.symbol_id_for_heritage_type_name(constraint));
-        let (Some(member_sym), Some(constraint_sym)) = (member_sym, constraint_sym) else {
-            return false;
-        };
-        self.interface_extends_symbol(member_sym, constraint_sym)
-            && !self.member_has_conflicting_constraint_property(member, constraint)
     }
 }

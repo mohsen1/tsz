@@ -192,6 +192,14 @@ function snapshotWeightFile() {
     return path.join(__dirname, "fourslash-snapshot.json");
 }
 
+// When a test timed out at its CI cap (TSZ_CI_FOURSLASH_TIMEOUT_MS,
+// typically 60s), the recorded `elapsed` is truncated to the cap.
+// The real cost is at least the cap and probably more — without this
+// adjustment the LPT balancer underestimates these tests and may
+// schedule two timeouts in adjacent shards. Bias by 1.5x cap to keep
+// scheduling pessimistic without overweighting recoverable slowness.
+const TIMEOUT_WEIGHT_BIAS_MS = 60_000 * 1.5;
+
 function loadHistoricalWeights() {
     const weightFile = snapshotWeightFile();
     if (!fs.existsSync(weightFile)) return new Map();
@@ -202,9 +210,16 @@ function loadHistoricalWeights() {
         for (const result of parsed.results || []) {
             if (!result || typeof result.file !== "string") continue;
             const elapsed = Number(result.elapsed || 0);
-            if (Number.isFinite(elapsed) && elapsed > 0) {
-                weights.set(result.file.replace(/\\/g, "/"), elapsed);
-            }
+            if (!Number.isFinite(elapsed) || elapsed <= 0) continue;
+
+            // Tests that timed out report `elapsed` at-or-near the cap, but
+            // their true cost is unbounded. Bias to TIMEOUT_WEIGHT_BIAS_MS
+            // so the LPT balancer doesn't schedule two timeouts adjacently.
+            const isTimeout = result.timedOut === true || result.status === "timeout";
+            const weight = isTimeout
+                ? Math.max(elapsed, TIMEOUT_WEIGHT_BIAS_MS)
+                : elapsed;
+            weights.set(result.file.replace(/\\/g, "/"), weight);
         }
         return weights;
     } catch (err) {
@@ -213,19 +228,31 @@ function loadHistoricalWeights() {
     }
 }
 
+// Median of known weights — used as the default for tests not in the
+// snapshot (e.g. newly added tests). Hardcoded fallback was 100ms,
+// but median fourslash test is ~422ms (snapshot 2026-05-12), so 100ms
+// systematically under-weights new tests and clusters them onto early
+// shards in the LPT pass.
+function defaultUnknownWeight(weights) {
+    if (weights.size === 0) return 100;
+    const sorted = [...weights.values()].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)];
+}
+
 function weightedShardTests(testFiles, shardId, shardTotal) {
     const weights = loadHistoricalWeights();
     if (weights.size === 0) {
         return testFiles.filter(file => stableShardForPath(file, shardTotal) === shardId);
     }
 
+    const unknownWeight = defaultUnknownWeight(weights);
     const shards = Array.from({ length: shardTotal }, () => ({ totalWeight: 0, tests: [] }));
     const weightedTests = testFiles.map(file => {
         const relPath = file.replace(/\\/g, "/");
         return {
             file,
             relPath,
-            weight: weights.get(relPath) || 100,
+            weight: weights.get(relPath) || unknownWeight,
         };
     });
 

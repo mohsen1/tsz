@@ -621,6 +621,23 @@ impl CodeFixRegistry {
         }
     }
 
+    /// Returns `true` for diagnostic codes that `fixMissingImport` can address
+    /// by adding an import statement. Used to gate the expensive O(project)
+    /// full-symbol scan in import-candidate collection.
+    pub const fn is_import_fix_code(code: u32) -> bool {
+        matches!(
+            code,
+            2304 // Cannot find name
+            | 2503 // Cannot find namespace
+            | 2583 // Cannot find name (target library variant)
+            | 2693 // Only refers to a type, but is being used as a value
+            // 7016 (Could not find a declaration file for module) has no registered
+            // fix action here, but including it lets import-candidate collection
+            // consider untyped JS modules as candidates for a future @types install.
+            | 7016
+        )
+    }
+
     /// Get all error codes that have registered code fixes.
     pub fn supported_error_codes() -> Vec<u32> {
         vec![

@@ -68,8 +68,14 @@ impl TsLanguageService {
     pub fn get_completions_at_position(&self, line: u32, character: u32) -> String {
         let position = Position { line, character };
 
-        let completions =
-            Completions::new(&self.arena, &self.binder, &self.line_map, &self.source_text);
+        let completions = Completions::new_with_types(
+            &self.arena,
+            &self.binder,
+            &self.line_map,
+            &self.interner,
+            &self.source_text,
+            self.file_name.clone(),
+        );
 
         let items = match completions.get_completions(self.root_idx, position) {
             Some(items) => items,

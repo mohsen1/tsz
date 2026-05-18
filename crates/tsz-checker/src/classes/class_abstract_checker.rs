@@ -379,7 +379,7 @@ impl<'a> CheckerState<'a> {
         if name.is_empty() || name == "__type" {
             return None;
         }
-        if name == "Iterator"
+        if self.class_symbol_is_actual_lib_iterator(sym_id)
             && let Some(formatted) =
                 self.format_builtin_iterator_reference_with_type_arguments(type_arguments)
         {
@@ -680,6 +680,13 @@ impl<'a> CheckerState<'a> {
         let Some(member_sym) = self.get_symbol_globally(member_sym_id) else {
             return false;
         };
+
+        // Check symbol flags first: the binder sets ABSTRACT on methods declared with
+        // the `abstract` keyword. This correctly handles lib-defined abstract members
+        // whose declaration nodes live in a different arena (e.g. esnext.iterator.d.ts).
+        if member_sym.has_any_flags(tsz_binder::symbol_flags::ABSTRACT) {
+            return true;
+        }
 
         member_sym
             .declarations

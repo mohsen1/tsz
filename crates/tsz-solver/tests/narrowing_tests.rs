@@ -237,6 +237,161 @@ fn test_narrow_type_cache_keys_predicate_payload_flags_and_resolver_generation()
     assert_eq!(cache.narrow_type_cache.borrow().len(), 5);
 }
 
+#[test]
+fn test_in_property_narrowing_reuses_property_cache() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let kind_name = interner.intern_string("kind");
+
+    let obj = interner.object(vec![PropertyInfo::new(kind_name, TypeId::STRING)]);
+    let union = interner.union(vec![obj, TypeId::NUMBER]);
+    let guard = TypeGuard::InProperty(kind_name);
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+    assert_eq!(narrowed, obj);
+    assert_eq!(cache.property_cache.borrow().len(), 2);
+
+    let narrow_again = ctx.narrow_type(union, &guard, GuardSense::Positive);
+    assert_eq!(narrow_again, obj);
+    assert_eq!(cache.property_cache.borrow().len(), 2);
+
+    let resolver_generation = ctx.resolver_generation();
+
+    let ctx_false = NarrowingContext::with_cache(&interner, &cache);
+    let narrowed_false = ctx_false.narrow_type(union, &guard, GuardSense::Negative);
+    let expected = TypeId::NUMBER;
+    assert_eq!(narrowed_false, expected);
+    assert_eq!(cache.property_cache.borrow().len(), 2);
+
+    // Ensure the property cache includes the resolved object-shape lookup path
+    // and can be reused across guard sense changes.
+    let kind_key = (obj, resolver_generation, kind_name);
+    let cached_kind = cache
+        .property_cache
+        .borrow()
+        .get(&kind_key)
+        .and_then(|entry| *entry)
+        .expect("expected cached explicit property lookup");
+    assert_eq!(cached_kind.type_id, TypeId::STRING);
+    assert!(!cached_kind.from_index_signature);
+}
+
+#[test]
+fn test_in_property_narrowing_preserves_index_signature_cache_origin() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let key_name = interner.intern_string("dynamic");
+
+    let record_type = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol: None,
+    });
+    let union = interner.union(vec![record_type, TypeId::NUMBER]);
+    let guard = TypeGuard::InProperty(key_name);
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Positive);
+    assert_eq!(narrowed, record_type);
+
+    let key = (record_type, ctx.resolver_generation(), key_name);
+    let cached_entry = cache
+        .property_cache
+        .borrow()
+        .get(&key)
+        .and_then(|entry| *entry)
+        .expect("expected cached index-signature property lookup");
+    assert_eq!(cached_entry.type_id, TypeId::STRING);
+    assert!(cached_entry.from_index_signature);
+}
+
+#[test]
+fn test_negative_in_property_narrowing_reuses_required_property_cache() {
+    let interner = TypeInterner::new();
+    let cache = NarrowingCache::new();
+    let kind_name = interner.intern_string("kind");
+
+    let required_prop = PropertyInfo {
+        name: kind_name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+    let optional_prop = PropertyInfo {
+        name: kind_name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: true,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+
+    let required_obj = interner.object(vec![required_prop]);
+    let optional_obj = interner.object(vec![optional_prop]);
+    let union = interner.union(vec![required_obj, optional_obj, TypeId::NUMBER]);
+    let guard = TypeGuard::InProperty(kind_name);
+
+    let ctx = NarrowingContext::with_cache(&interner, &cache);
+    let required_direct = ctx.is_property_required(required_obj, kind_name);
+    let optional_direct = ctx.is_property_required(optional_obj, kind_name);
+    let number_direct = ctx.is_property_required(TypeId::NUMBER, kind_name);
+    assert!(required_direct);
+    assert!(!optional_direct);
+    assert!(!number_direct);
+    assert_eq!(cache.required_property_cache.borrow().len(), 3);
+
+    let narrowed = ctx.narrow_type(union, &guard, GuardSense::Negative);
+    let expected = interner.union(vec![optional_obj, TypeId::NUMBER]);
+    assert_eq!(narrowed, expected);
+
+    assert_eq!(cache.required_property_cache.borrow().len(), 3);
+    let required_cached =
+        cache
+            .required_property_cache
+            .borrow()
+            .iter()
+            .any(|((type_id, _, prop), is_required)| {
+                *type_id == required_obj && *prop == kind_name && *is_required
+            });
+    assert!(required_cached);
+
+    let optional_cached = cache
+        .required_property_cache
+        .borrow()
+        .iter()
+        .filter(|((type_id, _, prop), _)| *type_id == optional_obj && *prop == kind_name)
+        .all(|(_, is_required)| !*is_required);
+    assert!(optional_cached);
+
+    let narrowed_again = ctx.narrow_type(union, &guard, GuardSense::Negative);
+    assert_eq!(narrowed_again, expected);
+    assert_eq!(cache.required_property_cache.borrow().len(), 3);
+}
+
 // =============================================================================
 // Narrowing by Discriminant Tests
 // =============================================================================
@@ -1598,4 +1753,134 @@ fn test_narrow_type_instanceof_any_target_returns_source_unchanged() {
         narrowed, union,
         "TypeGuard::Instanceof(any) on the true branch should not filter union members"
     );
+}
+
+// =============================================================================
+// Enum narrowing tests (narrow_to_type for enum sources)
+// =============================================================================
+
+#[test]
+fn test_narrow_to_type_enum_preserves_nominal_wrapper() {
+    // When v: E1 (enum) and we narrow to literal 1, the result should be Enum(E1_def, 1)
+    // not raw literal 1. This preserves the nominal identity of the enum.
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let enum_def = crate::def::DefId(100);
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let inner_union = interner.union(vec![lit1, lit2]);
+
+    // E1 = Enum(E1_def, 1 | 2)
+    let e1 = interner.intern(crate::types::TypeData::Enum(enum_def, inner_union));
+
+    // narrow_to_type(E1, 1) should yield Enum(E1_def, 1), not raw literal 1
+    let narrowed = ctx.narrow_to_type(e1, lit1);
+    let expected = interner.intern(crate::types::TypeData::Enum(enum_def, lit1));
+    assert_eq!(
+        narrowed, expected,
+        "narrow_to_type(Enum(D,1|2), 1) should produce Enum(D,1), not raw 1"
+    );
+
+    // Verify that the result is NOT the raw literal (the regression we fixed)
+    assert_ne!(
+        narrowed, lit1,
+        "narrow_to_type on an enum source must not drop the nominal wrapper"
+    );
+}
+
+#[test]
+fn test_narrow_to_type_enum_value_not_in_enum_returns_never() {
+    // When v: E1 = {a=1,b=2} and we narrow to 3, result is NEVER (3 not in E1)
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let enum_def = crate::def::DefId(100);
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let lit3 = interner.literal_number(3.0);
+    let inner_union = interner.union(vec![lit1, lit2]);
+    let e1 = interner.intern(crate::types::TypeData::Enum(enum_def, inner_union));
+
+    let narrowed = ctx.narrow_to_type(e1, lit3);
+    assert_eq!(
+        narrowed,
+        TypeId::NEVER,
+        "narrow_to_type(E1, 3) where 3 is not in E1 should be NEVER"
+    );
+}
+
+#[test]
+fn test_enum_union_parts_merge_on_join() {
+    // When control flow produces Enum(D,2) | Enum(D,1), the union should
+    // merge to Enum(D, 1|2) rather than staying as two separate enum types.
+    // This verifies the merge_same_enum_parts step in normalize_union.
+    let interner = TypeInterner::new();
+
+    let enum_def = crate::def::DefId(100);
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+
+    let part_a = interner.intern(crate::types::TypeData::Enum(enum_def, lit2));
+    let part_b = interner.intern(crate::types::TypeData::Enum(enum_def, lit1));
+
+    // Building Enum(D,2) | Enum(D,1) should give Enum(D, 1|2) = E1
+    let joined = interner.union(vec![part_a, part_b]);
+
+    let inner_12 = interner.union(vec![lit1, lit2]);
+    let e1 = interner.intern(crate::types::TypeData::Enum(enum_def, inner_12));
+
+    assert_eq!(
+        joined, e1,
+        "Enum(D,2) | Enum(D,1) should merge to Enum(D, 1|2)"
+    );
+}
+
+#[test]
+fn test_enum_narrowing_join_roundtrip() {
+    // Full roundtrip: E1 excluding 1 | narrow_to(E1, 1) should recover E1.
+    // This is the join after `if (v: E1) { v !== 1 } {}`.
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let enum_def = crate::def::DefId(200);
+    let lit1 = interner.literal_number(1.0);
+    let lit2 = interner.literal_number(2.0);
+    let inner_union = interner.union(vec![lit1, lit2]);
+    let e1 = interner.intern(crate::types::TypeData::Enum(enum_def, inner_union));
+
+    // True branch: v !== 1 → exclude 1 → Enum(D, 2)
+    let true_branch = ctx.narrow_excluding_type(e1, lit1);
+    // False branch: v === 1 → narrow to 1 → Enum(D, 1)
+    let false_branch = ctx.narrow_to_type(e1, lit1);
+
+    // Join: Enum(D,2) | Enum(D,1) → should merge to E1
+    let joined = interner.union(vec![true_branch, false_branch]);
+    assert_eq!(
+        joined, e1,
+        "join(E1 excl 1, narrow_to(E1, 1)) should recover E1"
+    );
+}
+
+#[test]
+fn test_enum_narrowing_two_names_same_fix() {
+    // Regression coverage: the fix must not depend on any specific variable
+    // name, enum name, or type parameter name. Verify with different DefIds.
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    for def_raw in [77u32, 888, 12345] {
+        let enum_def = crate::def::DefId(def_raw);
+        let inner_a = interner.literal_number(10.0);
+        let inner_b = interner.literal_number(20.0);
+        let inner = interner.union(vec![inner_a, inner_b]);
+        let e = interner.intern(crate::types::TypeData::Enum(enum_def, inner));
+
+        let narrowed_to_a = ctx.narrow_to_type(e, inner_a);
+        let expected = interner.intern(crate::types::TypeData::Enum(enum_def, inner_a));
+        assert_eq!(
+            narrowed_to_a, expected,
+            "narrow_to_type with DefId={def_raw} should produce Enum(D,10)"
+        );
+    }
 }

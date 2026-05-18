@@ -4176,6 +4176,13 @@ fn parse_jsx_emit(value: &str) -> Result<JsxEmit> {
     Ok(jsx)
 }
 
+/// Parse a raw `jsx` compiler-option string (e.g. `"react-jsx"`, `"4"`) into
+/// the corresponding [`JsxMode`][tsz_common::checker_options::JsxMode].
+/// Returns `None` when the string is unrecognised.
+pub fn jsx_string_to_mode(value: &str) -> Option<tsz_common::checker_options::JsxMode> {
+    parse_jsx_emit(value).ok().map(jsx_emit_to_mode)
+}
+
 const fn jsx_emit_to_mode(emit: JsxEmit) -> tsz_common::checker_options::JsxMode {
     use tsz_common::checker_options::JsxMode;
     match emit {

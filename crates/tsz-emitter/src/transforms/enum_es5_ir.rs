@@ -52,9 +52,6 @@ pub fn transform_enum_to_ir(arena: &NodeArena, enum_idx: NodeIndex) -> Option<IR
     }
 
     let name = get_identifier_text(arena, enum_data.name)?;
-    if name.is_empty() {
-        return None;
-    }
 
     // Transform members
     let members = transform_enum_members(arena, &enum_data.members, &name);

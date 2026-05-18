@@ -28,28 +28,44 @@ switch ($arch) {
     default { Die "unsupported Windows arch: $arch" }
 }
 
-if ($Version -eq "latest") {
+function Resolve-GitHubLatestTag {
     try {
         $rel = Invoke-RestMethod "https://api.github.com/repos/$Owner/$Repo/releases/latest"
-        $Version = $rel.tag_name
+        return $rel.tag_name
     } catch {
         Die "failed to fetch latest release tag from GitHub"
     }
 }
 
+function Download-Asset($Tag, $Asset, $Destination) {
+    $downloadUrl = "https://github.com/$Owner/$Repo/releases/download/$Tag/$Asset"
+    Say "url:         $downloadUrl"
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $Destination -UseBasicParsing
+}
+
 $asset = "tsz-$Version-$target.zip"
-$url = "https://github.com/$Owner/$Repo/releases/download/$Version/$asset"
 
 Say "version:     $Version"
 Say "target:      $target"
 Say "asset:       $asset"
 Say "install dir: $InstallDir"
-Say "url:         $url"
 
 $tmp = New-Item -ItemType Directory -Force -Path (Join-Path $env:TEMP "tsz-install-$([guid]::NewGuid().Guid)")
 try {
     $zipPath = Join-Path $tmp $asset
-    Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+    if ($Version -eq "latest") {
+        try {
+            Download-Asset "latest" $asset $zipPath
+        } catch {
+            Warn "latest channel asset is not available for $target; falling back to the latest versioned release"
+            $Version = Resolve-GitHubLatestTag
+            $asset = "tsz-$Version-$target.zip"
+            $zipPath = Join-Path $tmp $asset
+            Download-Asset $Version $asset $zipPath
+        }
+    } else {
+        Download-Asset $Version $asset $zipPath
+    }
 
     Say "extracting"
     Expand-Archive -Path $zipPath -DestinationPath $tmp -Force

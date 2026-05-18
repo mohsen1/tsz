@@ -1,4 +1,5 @@
 pub(crate) mod cache_invalidation;
+pub(crate) mod request_cache;
 pub mod state;
 pub mod state_checking;
 pub(crate) mod state_checking_members;

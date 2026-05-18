@@ -57,6 +57,9 @@ pub(crate) enum RelationKind {
     Destructuring,
     /// Satisfies expression: `expr satisfies T`
     Satisfies,
+    /// Bivariant callback assignment: method-override or bivariant-callback
+    /// scenarios where function parameter types are checked bivariantly.
+    BivariantCallbacks,
 }
 
 /// How excess properties (properties in source not in target) are handled.
@@ -150,6 +153,10 @@ impl RelationRequest {
         Self::new(source, target, RelationKind::Destructuring)
     }
 
+    pub(crate) fn bivariant_callbacks(source: TypeId, target: TypeId) -> Self {
+        Self::new(source, target, RelationKind::BivariantCallbacks)
+    }
+
     /// Mark the source as a fresh object literal, enabling EPC.
     pub(crate) fn with_fresh_source(mut self) -> Self {
         self.source_is_fresh = true;
@@ -220,31 +227,27 @@ pub(crate) use tsz_solver::RelationCacheKey;
 /// this helper funnels it through the solver's typed `RelationCacheConfig`,
 /// so no call site needs to hand-roll the key's internal representation.
 ///
-/// The resulting config sets the same default bits that a freshly-built
-/// `CompatChecker::new().apply_flags(flags)` would have, so that this write
-/// path lands in the same cache slot as the solver's internal write path.
+/// The resulting config is produced by the solver's typed `RelationPolicy`
+/// bridge, so this write path lands in the same cache slot as the solver's
+/// internal write path.
 pub(crate) fn assignability_cache_key(
     source: TypeId,
     target: TypeId,
     flags: u16,
 ) -> RelationCacheKey {
-    let mut bits = tsz_solver::RelationFlags::from_bits_truncate(flags as u32);
-    bits |= tsz_solver::RelationFlags::ASSUME_RELATED_ON_CYCLE;
     RelationCacheKey::for_assignability(
         source,
         target,
-        tsz_solver::RelationCacheConfig::from_flags(bits),
+        tsz_solver::RelationPolicy::from_flags(flags).cache_config(),
     )
 }
 
 /// Build a cache key for a subtype lookup. See [`assignability_cache_key`].
 pub(crate) fn subtype_cache_key(source: TypeId, target: TypeId, flags: u16) -> RelationCacheKey {
-    let mut bits = tsz_solver::RelationFlags::from_bits_truncate(flags as u32);
-    bits |= tsz_solver::RelationFlags::ASSUME_RELATED_ON_CYCLE;
     RelationCacheKey::for_subtype(
         source,
         target,
-        tsz_solver::RelationCacheConfig::from_flags(bits),
+        tsz_solver::RelationPolicy::from_flags(flags).cache_config(),
     )
 }
 pub(crate) use tsz_solver::type_queries::{
@@ -290,6 +293,45 @@ pub(crate) fn has_recursive_type_parameter_constraint(
         info.constraint.is_some_and(|constraint| {
             tsz_solver::visitor::contains_type_parameter_named_shallow(db, constraint, info.name)
         })
+    })
+}
+
+/// Detect the `S[T1]` vs `S[T2]` mismatch pattern where T1/T2 are
+/// distinct type parameters and the object halves share a TypeId.
+/// Returns the failure reason that elaborates the TS2322 + TS5075
+/// chain, or `None` for any other pair.
+///
+/// Operates on the unevaluated pair so callers can short-circuit
+/// before `prepare_assignability_inputs` collapses both halves to
+/// the same evaluated shape. The same-object check is intentionally
+/// strict (TypeId equality) here; deeper unification is owned by the
+/// solver-side recognizer to keep this boundary helper free of a fresh
+/// subtype context.
+pub(crate) fn index_access_pair_distinct_type_param_keys_failure_reason(
+    db: &dyn TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    source: TypeId,
+    target: TypeId,
+) -> Option<SubtypeFailureReason> {
+    let (s_obj, s_idx) = tsz_solver::index_access_parts(db, source)?;
+    let (t_obj, t_idx) = tsz_solver::index_access_parts(db, target)?;
+    if s_obj != t_obj {
+        return None;
+    }
+    tsz_solver::type_param_info(db, s_idx)?;
+    let t_param = tsz_solver::type_param_info(db, t_idx)?;
+    let same_identity = s_idx == t_idx
+        || def_store
+            .find_def_for_type(s_idx)
+            .zip(def_store.find_def_for_type(t_idx))
+            .is_some_and(|(source_def, target_def)| source_def == target_def);
+    if same_identity {
+        return None;
+    }
+    Some(SubtypeFailureReason::IndexAccessTypeParameterMismatch {
+        source_param: s_idx,
+        target_param: t_idx,
+        target_constraint: t_param.constraint,
     })
 }
 
@@ -649,19 +691,33 @@ pub(crate) fn execute_relation<R: tsz_solver::TypeResolver>(
         relation_flags |= RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY;
     }
 
-    let inputs = AssignabilityQueryInputs {
-        db,
-        resolver,
-        source: request.source,
-        target: request.target,
-        flags: relation_flags,
-        inheritance_graph,
-        sound_mode,
+    // BivariantCallbacks uses a different solver entry point that treats
+    // callback parameter types bivariantly (strips strict-function-types).
+    let (related, depth_exceeded) = if request.kind == RelationKind::BivariantCallbacks {
+        let bivariant_flags = relation_flags & !RelationFlags::STRICT_FUNCTION_TYPES;
+        let r = is_assignable_bivariant_with_resolver(
+            db,
+            resolver,
+            request.source,
+            request.target,
+            bivariant_flags,
+            inheritance_graph,
+            sound_mode,
+        );
+        (r, false)
+    } else {
+        let inputs = AssignabilityQueryInputs {
+            db,
+            resolver,
+            source: request.source,
+            target: request.target,
+            flags: relation_flags,
+            inheritance_graph,
+            sound_mode,
+        };
+        let relation_result = is_assignable_with_overrides(&inputs, overrides);
+        (relation_result.is_related(), relation_result.depth_exceeded)
     };
-
-    let relation_result = is_assignable_with_overrides(&inputs, overrides);
-    let related = relation_result.is_related();
-    let depth_exceeded = relation_result.depth_exceeded;
 
     if related {
         return RelationOutcome {

@@ -29,6 +29,7 @@
 
 mod arrow_concise;
 mod binding_patterns;
+mod class_temp_reservations;
 mod comments;
 mod core;
 mod declarations;
@@ -43,6 +44,7 @@ mod jsx;
 mod literals;
 mod module_emission;
 mod module_wrapper;
+mod recovery_helpers;
 mod source_file;
 mod special_expressions;
 mod statements;
@@ -54,7 +56,8 @@ pub(crate) use self::core::get_operator_text;
 pub(crate) use self::core::is_valid_identifier_name;
 pub use self::core::{JsxEmit, Printer, PrinterOptions};
 pub(crate) use self::core::{
-    ParamTransform, ParamTransformPlan, RestParamTransform, TempScopeState, TemplateParts,
+    ParamTransform, ParamTransformPlan, RestParamTransform, ScopedConstEnum, TempScopeState,
+    TemplateParts,
 };
 pub use comments::{
     CommentKind, CommentRange, get_leading_comment_ranges, get_trailing_comment_ranges,

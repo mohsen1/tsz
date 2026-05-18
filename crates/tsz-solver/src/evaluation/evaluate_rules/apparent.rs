@@ -6,7 +6,7 @@
 use crate::TypeDatabase;
 use crate::objects::apparent::{apparent_primitive_members, apparent_primitive_shape};
 use crate::relations::subtype::TypeResolver;
-use crate::types::{FunctionShape, IntrinsicKind, LiteralValue, ObjectShape, ParamInfo, TypeId};
+use crate::types::{FunctionShape, IntrinsicKind, ObjectShape, ParamInfo, TypeId};
 
 use super::super::evaluate::TypeEvaluator;
 
@@ -32,19 +32,6 @@ pub(crate) fn make_apparent_method_type(db: &dyn TypeDatabase, return_type: Type
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
-    /// Get the apparent type kind for a literal value.
-    pub(crate) const fn apparent_literal_kind(
-        &self,
-        literal: &LiteralValue,
-    ) -> Option<IntrinsicKind> {
-        match literal {
-            LiteralValue::String(_) => Some(IntrinsicKind::String),
-            LiteralValue::Number(_) => Some(IntrinsicKind::Number),
-            LiteralValue::BigInt(_) => Some(IntrinsicKind::Bigint),
-            LiteralValue::Boolean(_) => Some(IntrinsicKind::Boolean),
-        }
-    }
-
     /// Build an object shape for a primitive type's apparent members.
     pub(crate) fn apparent_primitive_shape(&self, kind: IntrinsicKind) -> ObjectShape {
         apparent_primitive_shape(self.interner(), kind, make_apparent_method_type)
