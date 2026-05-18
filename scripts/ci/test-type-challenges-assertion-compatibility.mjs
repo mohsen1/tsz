@@ -40,6 +40,21 @@ function readRows(file) {
     .map((line) => JSON.parse(line));
 }
 
+function withComparisonCompilerStatuses(report) {
+  if (!report?.comparison || typeof report.comparison !== "object") {
+    return report;
+  }
+
+  return {
+    ...report,
+    comparison: {
+      tscStatus: report.compilers?.tsc?.status,
+      tszStatus: report.compilers?.tsz?.status,
+      ...report.comparison,
+    },
+  };
+}
+
 function assertRequiredCompatibilityFields(row) {
   for (const field of REQUIRED_COMPATIBILITY_FIELDS) {
     assert.ok(
@@ -100,12 +115,15 @@ function runCompatibility({ dir, classification, cleanSubsetManifest = null, cle
   const cleanSubsetManifestPath = path.join(cleanSubsetDir, "manifest.json");
   const cleanSubsetClassificationPath = path.join(cleanSubsetDir, "classification.json");
   const outFile = path.join(dir, "project-compatibility.jsonl");
-  writeJson(classificationPath, classification);
+  writeJson(classificationPath, withComparisonCompilerStatuses(classification));
   if (cleanSubsetManifest) {
     writeJson(cleanSubsetManifestPath, cleanSubsetManifest);
   }
   if (cleanSubsetClassification) {
-    writeJson(cleanSubsetClassificationPath, cleanSubsetClassification);
+    writeJson(
+      cleanSubsetClassificationPath,
+      withComparisonCompilerStatuses(cleanSubsetClassification),
+    );
   }
 
   const result = spawnSync(
@@ -141,12 +159,15 @@ function runCompatibilityRaw({
   const cleanSubsetManifestPath = path.join(cleanSubsetDir, "manifest.json");
   const cleanSubsetClassificationPath = path.join(cleanSubsetDir, "classification.json");
   const outFile = path.join(dir, "project-compatibility.jsonl");
-  writeJson(classificationPath, classification);
+  writeJson(classificationPath, withComparisonCompilerStatuses(classification));
   if (cleanSubsetManifest) {
     writeJson(cleanSubsetManifestPath, cleanSubsetManifest);
   }
   if (cleanSubsetClassification) {
-    writeJson(cleanSubsetClassificationPath, cleanSubsetClassification);
+    writeJson(
+      cleanSubsetClassificationPath,
+      withComparisonCompilerStatuses(cleanSubsetClassification),
+    );
   }
 
   return {
@@ -300,7 +321,7 @@ withTempDir((dir) => {
           },
         },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -357,7 +378,7 @@ withTempDir((dir) => {
       rejected_from_full_corpus: 1,
       tsc_status: "pass",
       tsz_status: "pass",
-      comparison_status: "match",
+      comparison_status: "both-pass",
       tsc_diagnostic_free: 1,
       tsz_diagnostic_free: 1,
     },
@@ -474,7 +495,7 @@ withTempDir((dir) => {
         },
       },
       comparison: {
-        status: "match",
+        status: "both-pass",
         diagnosticFreeCandidateDelta: 0,
         bySemanticFamilyDelta: [],
       },
@@ -525,6 +546,276 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "both-pass" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      counts: {
+        totalCandidates: 0,
+        tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
+        tscRejectedAssertions: -1,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc-clean assertion manifest counts\.tscRejectedAssertions must be non-negative/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: {
+        sources: candidateSources(),
+        counts: {
+          pairedSolutions: 1,
+          generatedAssertions: 1,
+          assertionsReferencingSolutionDeclaration: -1,
+          assertionsMissingSolutionDeclarationReference: 2,
+        },
+      },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /counts\.assertionsReferencingSolutionDeclaration must be non-negative/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "both-pass" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
+      counts: {
+        totalCandidates: 2,
+        tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
+        tscRejectedAssertions: 1,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+    cleanSubsetClassification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: cleanCandidateManifest({
+        totalCandidates: 2,
+        rejected: 1,
+      }),
+      compilers: {
+        tsc: {
+          status: "fail",
+          candidateDiagnostics: {
+            totalCandidates: 1,
+            candidatesWithoutDiagnostics: 0,
+          },
+        },
+        tsz: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 1,
+            candidatesWithoutDiagnostics: 1,
+          },
+        },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc-clean assertion classification comparison\.status \(both-pass\) does not match compiler statuses \(tsz-accepts-tsc-rejected\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "fail" } },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /assertion classification comparison\.status \(both-pass\) does not match compiler statuses \(tsz-rejects-tsc-accepted\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "both-pass" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
+      counts: {
+        totalCandidates: 2,
+        tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
+        tscRejectedAssertions: 1,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+    cleanSubsetClassification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: cleanCandidateManifest({
+        totalCandidates: 2,
+        rejected: 1,
+      }),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 1,
+            candidatesWithoutDiagnostics: 1,
+          },
+        },
+        tsz: {
+          status: "fail",
+          candidateDiagnostics: {
+            totalCandidates: 1,
+            candidatesWithoutDiagnostics: 0,
+          },
+        },
+      },
+      comparison: {
+        status: "tsz-rejects-tsc-accepted",
+        tszStatus: "pass",
+      },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc-clean assertion classification comparison\.tszStatus \(pass\) does not match compilers\.tsz\.status \(fail\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "both-pass" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
+      counts: {
+        totalCandidates: 2,
+        tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
+        tscRejectedAssertions: 1,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+    cleanSubsetClassification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: cleanCandidateManifest(),
+      compilers: {
+        tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 1, candidatesWithoutDiagnostics: 1 } },
+        tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 1, candidatesWithoutDiagnostics: 1 } },
+      },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc-clean assertion classification comparison\.status must be one of .*: match/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /assertion classification comparison\.status must be one of .*: match/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: {
+        status: "both-pass",
+        tscStatus: "fail",
+      },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /assertion classification comparison\.tscStatus \(fail\) does not match compilers\.tsc\.status \(pass\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
   const sources = candidateSources();
   sources.solutions = { repository: "solutions", ref: 123 };
   const { result, outFile } = runCompatibilityRaw({
@@ -536,7 +827,7 @@ withTempDir((dir) => {
         counts: candidateCounts(1),
       },
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -544,6 +835,63 @@ withTempDir((dir) => {
   assert.match(
     result.stderr,
     /candidateManifest\.sources\.solutions is missing source metadata/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "both-pass" },
+    },
+    cleanSubsetManifest: {
+      fixture: "type-challenges-assertions-tsc-clean",
+      sources: candidateSources(),
+      counts: {
+        totalCandidates: 2,
+        tscAcceptedAssertions: 1,
+        tscAcceptedAssertionsReferencingSolutionDeclaration: 1,
+        tscAcceptedAssertionsMissingSolutionDeclarationReference: 0,
+        tscRejectedAssertions: 1,
+      },
+      entries: [{ output: "assertions/00001-easy-pick.ts" }],
+    },
+    cleanSubsetClassification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: cleanCandidateManifest({
+        totalCandidates: 2,
+        rejected: 1,
+      }),
+      compilers: {
+        tsc: {
+          status: "pass",
+          exitCode: "0",
+          candidateDiagnostics: {
+            totalCandidates: 1,
+            candidatesWithoutDiagnostics: 1,
+          },
+        },
+        tsz: {
+          status: "pass",
+          exitCode: 0,
+          candidateDiagnostics: {
+            totalCandidates: 1,
+            candidatesWithoutDiagnostics: 1,
+          },
+        },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc-clean assertion classification tsc exitCode must be an integer when present/,
   );
   assert.equal(fs.existsSync(outFile), false);
 });
@@ -570,7 +918,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -592,7 +940,7 @@ withTempDir((dir) => {
         tsc: { status: "pass", exitCode: "0" },
         tsz: { status: "pass", exitCode: 0 },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -611,7 +959,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "passing" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -630,7 +978,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -657,7 +1005,7 @@ withTempDir((dir) => {
           candidateDiagnostics: { totalCandidates: 1, candidatesWithoutDiagnostics: 1 },
         },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -687,7 +1035,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -723,7 +1071,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -754,7 +1102,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -785,7 +1133,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -816,7 +1164,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -852,7 +1200,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -884,7 +1232,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -916,7 +1264,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -935,7 +1283,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -981,7 +1329,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1006,7 +1354,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1031,7 +1379,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1051,7 +1399,7 @@ withTempDir((dir) => {
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
       comparison: {
-        status: "match",
+        status: "both-pass",
         bySemanticFamilyDelta: [{ key: "", delta: 1 }],
       },
     },
@@ -1073,7 +1421,7 @@ withTempDir((dir) => {
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
       comparison: {
-        status: "match",
+        status: "both-pass",
         bySemanticFamilyDelta: [{ key: "mapped/key-remapped types", delta: "1" }],
       },
     },
@@ -1105,7 +1453,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1136,7 +1484,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1211,7 +1559,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1231,7 +1579,7 @@ withTempDir((dir) => {
       candidateManifest: candidateManifest(2),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
       comparison: {
-        status: "match",
+        status: "both-pass",
         candidateFileComparison: {
           totalCandidates: 2,
           counts: {
@@ -1296,7 +1644,7 @@ withTempDir((dir) => {
       candidateManifest: candidateManifest(2),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
       comparison: {
-        status: "match",
+        status: "both-pass",
         candidateFileComparison: {
           totalCandidates: 2,
           counts: {
@@ -1330,7 +1678,7 @@ withTempDir((dir) => {
       candidateManifest: candidateManifest(2),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
       comparison: {
-        status: "match",
+        status: "both-pass",
         candidateFileComparison: {
           totalCandidates: 2,
           counts: {
@@ -1374,7 +1722,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1404,7 +1752,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1443,7 +1791,7 @@ withTempDir((dir) => {
         },
       },
       comparison: {
-        status: "match",
+        status: "both-pass",
         diagnosticFreeCandidateDelta: 2,
       },
     },
@@ -1465,7 +1813,7 @@ withTempDir((dir) => {
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
       comparison: {
-        status: "match",
+        status: "both-pass",
         candidateFileComparison: {
           totalCandidates: 1,
           counts: {
@@ -1508,7 +1856,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1537,7 +1885,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass" },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1557,7 +1905,7 @@ withTempDir((dir) => {
       candidateManifest: candidateManifest(2),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
       comparison: {
-        status: "match",
+        status: "both-pass",
         candidateFileComparison: {
           totalCandidates: 1,
           counts: {
@@ -1587,7 +1935,7 @@ withTempDir((dir) => {
       candidateManifest: candidateManifest(2),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
       comparison: {
-        status: "match",
+        status: "both-pass",
         candidateFileComparison: {
           totalCandidates: 2,
           counts: {
@@ -1621,7 +1969,7 @@ withTempDir((dir) => {
       candidateManifest: candidateManifest(2),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
       comparison: {
-        status: "match",
+        status: "both-pass",
         candidateFileComparison: {
           totalCandidates: 2,
           counts: {
@@ -1660,7 +2008,7 @@ withTempDir((dir) => {
         },
       },
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1687,7 +2035,7 @@ withTempDir((dir) => {
         },
       },
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1706,7 +2054,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -1735,7 +2083,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -1764,7 +2112,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -1794,7 +2142,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -1827,7 +2175,7 @@ withTempDir((dir) => {
           },
         },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1846,7 +2194,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -1882,7 +2230,7 @@ withTempDir((dir) => {
           },
         },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1901,7 +2249,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -1931,7 +2279,7 @@ withTempDir((dir) => {
         },
         tsz: { candidateDiagnostics: { totalCandidates: 1 } },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1966,7 +2314,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: {}, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -1985,7 +2333,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -2004,7 +2352,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2033,7 +2381,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: { counts: candidateCounts(1) },
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -2052,7 +2400,7 @@ withTempDir((dir) => {
         counts: { generatedAssertions: 1 },
       },
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -2074,7 +2422,7 @@ withTempDir((dir) => {
         },
       },
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -2093,7 +2441,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "stale-clean-subset",
@@ -2113,7 +2461,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2130,7 +2478,7 @@ withTempDir((dir) => {
       fixture: "stale-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -2146,7 +2494,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2169,7 +2517,7 @@ withTempDir((dir) => {
         tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 1, candidatesWithoutDiagnostics: 1 } },
         tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 1, candidatesWithoutDiagnostics: 1 } },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -2190,7 +2538,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2214,7 +2562,7 @@ withTempDir((dir) => {
         tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 1, candidatesWithoutDiagnostics: 1 } },
         tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 1, candidatesWithoutDiagnostics: 1 } },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -2233,7 +2581,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2257,7 +2605,7 @@ withTempDir((dir) => {
         tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 1, candidatesWithoutDiagnostics: 1 } },
         tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 1, candidatesWithoutDiagnostics: 1 } },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -2276,7 +2624,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2300,7 +2648,7 @@ withTempDir((dir) => {
         tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 1, candidatesWithoutDiagnostics: 1 } },
         tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 1, candidatesWithoutDiagnostics: 1 } },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -2319,7 +2667,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2346,7 +2694,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2379,7 +2727,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2406,7 +2754,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2434,7 +2782,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2469,7 +2817,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2508,7 +2856,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2532,7 +2880,7 @@ withTempDir((dir) => {
         tsc: { status: "pass", candidateDiagnostics: {} },
         tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 1, candidatesWithoutDiagnostics: 1 } },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -2551,7 +2899,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2578,7 +2926,7 @@ withTempDir((dir) => {
         tsc: { status: "pass", candidateDiagnostics: { totalCandidates: 2, candidatesWithoutDiagnostics: 2 } },
         tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 2, candidatesWithoutDiagnostics: 2 } },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -2597,7 +2945,7 @@ withTempDir((dir) => {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
     cleanSubsetManifest: {
       fixture: "type-challenges-assertions-tsc-clean",
@@ -2630,7 +2978,7 @@ withTempDir((dir) => {
         },
         tsz: { status: "pass", candidateDiagnostics: { totalCandidates: 2, candidatesWithoutDiagnostics: 2 } },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
@@ -2708,7 +3056,7 @@ withTempDir((dir) => {
           candidateDiagnostics: { totalCandidates: 2 },
         },
       },
-      comparison: { status: "match" },
+      comparison: { status: "both-pass" },
     },
   });
 
