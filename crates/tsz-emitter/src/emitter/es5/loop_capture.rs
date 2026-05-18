@@ -548,7 +548,12 @@ impl<'a> Printer<'a> {
         let block_scoped_temp_line = self.writer.current_line();
 
         // Emit the body statements inside the IIFE
+        let prev_loop_body_missing_initializer_function_depth =
+            self.loop_body_missing_initializer_function_depth;
+        self.loop_body_missing_initializer_function_depth = Some(self.function_scope_depth);
         self.emit_loop_body_for_iife(body_idx, body_info, captured_vars, _init_vars);
+        self.loop_body_missing_initializer_function_depth =
+            prev_loop_body_missing_initializer_function_depth;
 
         if !self.block_scoped_private_temps.is_empty() {
             let indent = " ".repeat(self.writer.indent_width() as usize);
@@ -1077,6 +1082,33 @@ for (; ;) {\n\
         assert!(
             output.contains("var x_2 = void 0;\n    use(x_2);"),
             "Initializerless block-scoped body declarations downlevel to `void 0`.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn initializerless_lexical_declarations_only_reset_in_loop_bodies() {
+        let source = "function plain() {\n\
+    let x;\n\
+    { let y; }\n\
+}\n\
+while (true) {\n\
+    let z;\n\
+    function nested() { let w; }\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains("function plain() {\n    var x;\n    {\n        var y;\n    }\n}"),
+            "Initializerless lexical declarations outside loop bodies should stay bare declarations.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("while (true) {\n    var z = void 0;"),
+            "Initializerless lexical declarations in loop bodies should reset each iteration.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("function nested() { var w; }"),
+            "Nested function bodies should not inherit the outer loop reset policy.\nOutput:\n{output}"
         );
     }
 

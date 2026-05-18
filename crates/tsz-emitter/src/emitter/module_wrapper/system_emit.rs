@@ -1229,29 +1229,30 @@ impl<'a> Printer<'a> {
                 self.write(");");
                 return true;
             }
-            if self.ctx.target_es5 {
+            let deferred = if self.ctx.target_es5 {
                 self.emit_system_es5_class_assignment(export_decl.export_clause, &gen_name);
+                Vec::new()
             } else {
                 self.write(&gen_name);
                 self.write(" = ");
-                // Emit class as anonymous class expression
                 self.anonymous_default_export_name = None;
-                self.defer_class_static_blocks = true;
-                self.deferred_class_static_blocks.clear();
-                self.emit_class_es6(clause_node, export_decl.export_clause);
-                self.defer_class_static_blocks = false;
-                let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
+                let deferred = self.emit_system_class_expression_value(
+                    clause_node,
+                    export_decl.export_clause,
+                    false,
+                );
                 if !self.output_ends_with_semicolon() {
                     self.write(";");
                 }
-                if !deferred.is_empty() {
-                    self.emit_static_block_iifes(deferred);
-                }
-            }
+                deferred
+            };
             self.write_line();
             self.write("exports_1(\"default\", ");
             self.write(&gen_name);
             self.write(");");
+            if !deferred.is_empty() {
+                self.emit_static_block_iifes(deferred);
+            }
             return true;
         }
 
@@ -1334,30 +1335,31 @@ impl<'a> Printer<'a> {
                 return true;
             }
 
-            if self.ctx.target_es5 {
+            let deferred = if self.ctx.target_es5 {
                 self.emit_system_es5_class_assignment(export_decl.export_clause, &class_name);
+                Vec::new()
             } else {
                 self.write(&class_name);
                 self.write(" = ");
-                // Defer static block IIFEs so we can emit exports_1 before them
-                self.defer_class_static_blocks = true;
-                self.deferred_class_static_blocks.clear();
-                self.emit_class_es6(clause_node, export_decl.export_clause);
-                self.defer_class_static_blocks = false;
-                let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
+                let deferred = self.emit_system_class_expression_value(
+                    clause_node,
+                    export_decl.export_clause,
+                    true,
+                );
                 if !self.output_ends_with_semicolon() {
                     self.write(";");
                 }
-                if !deferred.is_empty() {
-                    self.emit_static_block_iifes(deferred);
-                }
-            }
+                deferred
+            };
             self.write_line();
             self.write("exports_1(\"");
             self.write(&class_name);
             self.write("\", ");
             self.write(&class_name);
             self.write(");");
+            if !deferred.is_empty() {
+                self.emit_static_block_iifes(deferred);
+            }
             return true;
         }
 
@@ -1525,19 +1527,12 @@ impl<'a> Printer<'a> {
         } else {
             self.write(&class_name);
             self.write(" = ");
-            self.defer_class_static_blocks = true;
-            self.deferred_class_static_blocks.clear();
-            self.emit_class_es6(node, idx);
-            self.defer_class_static_blocks = false;
-            let deferred = std::mem::take(&mut self.deferred_class_static_blocks);
+            let deferred = self.emit_system_class_expression_value(node, idx, false);
             if !self.output_ends_with_semicolon() {
                 self.write(";");
             }
             deferred
         };
-        if !deferred.is_empty() {
-            self.emit_static_block_iifes(deferred);
-        }
         let legacy_class_decorators = self.collect_class_decorators(&class_decl.modifiers);
         if self.ctx.options.legacy_decorators
             && (!legacy_class_decorators.is_empty()
@@ -1555,6 +1550,9 @@ impl<'a> Printer<'a> {
                 None,
                 &class_decl.members.nodes,
             );
+        }
+        if !deferred.is_empty() {
+            self.emit_static_block_iifes(deferred);
         }
     }
 
@@ -1584,6 +1582,32 @@ impl<'a> Printer<'a> {
         let output = es5_emitter.emit_class_assignment_with_name(class_idx, class_name);
         self.sync_es5_class_emitter_state(&mut es5_emitter);
         self.write(&output);
+    }
+
+    fn emit_system_class_expression_value(
+        &mut self,
+        node: &tsz_parser::parser::node::Node,
+        idx: NodeIndex,
+        defer_es5_static_block_tail: bool,
+    ) -> Vec<(NodeIndex, usize)> {
+        if self.ctx.target_es5 {
+            if defer_es5_static_block_tail {
+                self.defer_class_static_blocks = true;
+                self.deferred_class_static_blocks.clear();
+            }
+            self.emit_class_expression_es5(idx);
+            if defer_es5_static_block_tail {
+                self.defer_class_static_blocks = false;
+                return std::mem::take(&mut self.deferred_class_static_blocks);
+            }
+            return Vec::new();
+        }
+
+        self.defer_class_static_blocks = true;
+        self.deferred_class_static_blocks.clear();
+        self.emit_class_es6(node, idx);
+        self.defer_class_static_blocks = false;
+        std::mem::take(&mut self.deferred_class_static_blocks)
     }
 
     pub(in crate::emitter) fn emit_system_variable_initializers(
