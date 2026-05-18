@@ -120,6 +120,49 @@ tgt2 = src2;
     );
 }
 
+#[test]
+fn generic_mapped_alias_indexed_access_diagnostic_keeps_alias_surface() {
+    let diagnostics = diagnostics_for(
+        r#"
+type Mapped<K extends string> = { [P in K as `get${P}`]: { a: P } };
+
+function f<K extends string>(obj: Mapped<K>, key: `get${K}`) {
+    const x: { a: K } = obj[key];
+}
+
+type Remapped<T extends string> = { [X in T as `make${X}`]: { value: X } };
+
+function g<T extends string>(obj: Remapped<T>, key: `make${T}`) {
+    const y: { value: T } = obj[key];
+}
+"#,
+    );
+
+    let messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .map(|diag| diag.message_text.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Mapped<K>[`get${K}`]")),
+        "TS2322 should preserve the generic mapped alias surface, got: {diagnostics:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Remapped<T>[`make${T}`]")),
+        "TS2322 should preserve the renamed generic mapped alias surface, got: {diagnostics:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("{ [P in K as") && !message.contains("{ [X in T as")),
+        "TS2322 should not print the anonymous mapped body when a unique generic alias owns it, got: {diagnostics:?}"
+    );
+}
+
 fn strict_diagnostics_for(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     check_source(
         source,

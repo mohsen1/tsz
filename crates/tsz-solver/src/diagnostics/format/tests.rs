@@ -2550,6 +2550,62 @@ fn homomorphic_mapped_index_access_skips_non_identity_template() {
 }
 
 #[test]
+fn generic_mapped_alias_body_index_access_uses_alias_application_display() {
+    let db = TypeInterner::new();
+    let def_store = crate::def::DefinitionStore::new();
+    let k_name = db.intern_string("K");
+    let p_name = db.intern_string("P");
+    let k = db.type_param(TypeParamInfo {
+        name: k_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+    let p = db.type_param(TypeParamInfo {
+        name: p_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let mapped = db.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name: p_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint: k,
+        template: db.object(vec![PropertyInfo::new(db.intern_string("a"), p)]),
+        name_type: Some(db.template_literal(vec![
+            TemplateSpan::Text(db.intern_string("get")),
+            TemplateSpan::Type(p),
+        ])),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    def_store.register(crate::def::DefinitionInfo::type_alias(
+        db.intern_string("Mapped"),
+        vec![TypeParamInfo {
+            name: k_name,
+            constraint: Some(TypeId::STRING),
+            default: None,
+            is_const: false,
+        }],
+        mapped,
+    ));
+    let access = db.index_access(
+        mapped,
+        db.template_literal(vec![
+            TemplateSpan::Text(db.intern_string("get")),
+            TemplateSpan::Type(k),
+        ]),
+    );
+
+    let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    assert_eq!(fmt.format(access), "Mapped<K>[`get${K}`]");
+}
+
+#[test]
 fn format_this_type() {
     let db = TypeInterner::new();
     let mut fmt = TypeFormatter::new(&db);

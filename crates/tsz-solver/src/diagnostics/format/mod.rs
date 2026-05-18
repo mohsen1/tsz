@@ -247,6 +247,225 @@ impl<'a> TypeFormatter<'a> {
             .then_some(evaluated)
     }
 
+    fn generic_mapped_alias_application_for_body(&self, body: TypeId) -> Option<TypeId> {
+        if !matches!(self.interner.lookup(body), Some(TypeData::Mapped(_))) {
+            return None;
+        }
+
+        let def_store = self.def_store?;
+        let mut found = None;
+        for def_id in def_store.all_type_alias_defs() {
+            let Some(def) = def_store.get(def_id) else {
+                continue;
+            };
+            let Some(def_body) = def.body else {
+                continue;
+            };
+            if def.type_params.is_empty() {
+                continue;
+            }
+
+            if def_body == body {
+                let args = def
+                    .type_params
+                    .iter()
+                    .map(|param| self.interner.type_param(*param))
+                    .collect();
+                let application = self.interner.application(self.interner.lazy(def_id), args);
+                if found.replace(application).is_some() {
+                    return None;
+                }
+                continue;
+            }
+
+            let param_names: FxHashSet<Atom> = def.type_params.iter().map(|p| p.name).collect();
+            let mut substitution = crate::TypeSubstitution::new();
+            if !self.collect_alias_param_substitutions(
+                def_body,
+                body,
+                &param_names,
+                &mut substitution,
+                0,
+            ) {
+                continue;
+            }
+            let Some(args) = def
+                .type_params
+                .iter()
+                .map(|param| substitution.get(param.name))
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            let application = self.interner.application(self.interner.lazy(def_id), args);
+
+            if found.replace(application).is_some() {
+                return None;
+            }
+        }
+        found
+    }
+
+    fn collect_alias_param_substitutions(
+        &self,
+        pattern: TypeId,
+        actual: TypeId,
+        param_names: &FxHashSet<Atom>,
+        substitution: &mut crate::TypeSubstitution,
+        depth: u8,
+    ) -> bool {
+        const MAX_ALIAS_MATCH_DEPTH: u8 = 32;
+        if depth > MAX_ALIAS_MATCH_DEPTH {
+            return false;
+        }
+
+        if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(pattern)
+            && param_names.contains(&info.name)
+        {
+            return match substitution.get(info.name) {
+                Some(existing) => existing == actual,
+                None => {
+                    substitution.insert(info.name, actual);
+                    true
+                }
+            };
+        }
+
+        match (self.interner.lookup(pattern), self.interner.lookup(actual)) {
+            (Some(TypeData::Mapped(pattern_id)), Some(TypeData::Mapped(actual_id))) => {
+                let pattern_mapped = self.interner.mapped_type(pattern_id);
+                let actual_mapped = self.interner.mapped_type(actual_id);
+                pattern_mapped.type_param.name == actual_mapped.type_param.name
+                    && pattern_mapped.readonly_modifier == actual_mapped.readonly_modifier
+                    && pattern_mapped.optional_modifier == actual_mapped.optional_modifier
+                    && self.collect_alias_param_substitutions(
+                        pattern_mapped.constraint,
+                        actual_mapped.constraint,
+                        param_names,
+                        substitution,
+                        depth + 1,
+                    )
+                    && self.collect_alias_param_substitutions(
+                        pattern_mapped.template,
+                        actual_mapped.template,
+                        param_names,
+                        substitution,
+                        depth + 1,
+                    )
+                    && match (pattern_mapped.name_type, actual_mapped.name_type) {
+                        (Some(pattern_name), Some(actual_name)) => self
+                            .collect_alias_param_substitutions(
+                                pattern_name,
+                                actual_name,
+                                param_names,
+                                substitution,
+                                depth + 1,
+                            ),
+                        (None, None) => true,
+                        _ => false,
+                    }
+            }
+            (
+                Some(TypeData::IndexAccess(p_obj, p_idx)),
+                Some(TypeData::IndexAccess(a_obj, a_idx)),
+            ) => {
+                self.collect_alias_param_substitutions(
+                    p_obj,
+                    a_obj,
+                    param_names,
+                    substitution,
+                    depth + 1,
+                ) && self.collect_alias_param_substitutions(
+                    p_idx,
+                    a_idx,
+                    param_names,
+                    substitution,
+                    depth + 1,
+                )
+            }
+            (Some(TypeData::KeyOf(pattern_operand)), Some(TypeData::KeyOf(actual_operand))) => self
+                .collect_alias_param_substitutions(
+                    pattern_operand,
+                    actual_operand,
+                    param_names,
+                    substitution,
+                    depth + 1,
+                ),
+            (
+                Some(TypeData::StringIntrinsic {
+                    kind: pattern_kind,
+                    type_arg: pattern_arg,
+                }),
+                Some(TypeData::StringIntrinsic {
+                    kind: actual_kind,
+                    type_arg: actual_arg,
+                }),
+            ) => {
+                pattern_kind == actual_kind
+                    && self.collect_alias_param_substitutions(
+                        pattern_arg,
+                        actual_arg,
+                        param_names,
+                        substitution,
+                        depth + 1,
+                    )
+            }
+            (
+                Some(TypeData::TemplateLiteral(pattern_id)),
+                Some(TypeData::TemplateLiteral(actual_id)),
+            ) => {
+                let pattern_spans = self.interner.template_list(pattern_id);
+                let actual_spans = self.interner.template_list(actual_id);
+                pattern_spans.len() == actual_spans.len()
+                    && pattern_spans.iter().zip(actual_spans.iter()).all(
+                        |(pattern_span, actual_span)| match (pattern_span, actual_span) {
+                            (
+                                crate::types::TemplateSpan::Text(p),
+                                crate::types::TemplateSpan::Text(a),
+                            ) => p == a,
+                            (
+                                crate::types::TemplateSpan::Type(p),
+                                crate::types::TemplateSpan::Type(a),
+                            ) => self.collect_alias_param_substitutions(
+                                *p,
+                                *a,
+                                param_names,
+                                substitution,
+                                depth + 1,
+                            ),
+                            _ => false,
+                        },
+                    )
+            }
+            (Some(TypeData::Object(pattern_id)), Some(TypeData::Object(actual_id)))
+            | (
+                Some(TypeData::ObjectWithIndex(pattern_id)),
+                Some(TypeData::ObjectWithIndex(actual_id)),
+            ) => {
+                let pattern_shape = self.interner.object_shape(pattern_id);
+                let actual_shape = self.interner.object_shape(actual_id);
+                pattern_shape.properties.len() == actual_shape.properties.len()
+                    && pattern_shape
+                        .properties
+                        .iter()
+                        .zip(actual_shape.properties.iter())
+                        .all(|(pattern_prop, actual_prop)| {
+                            pattern_prop.name == actual_prop.name
+                                && pattern_prop.optional == actual_prop.optional
+                                && pattern_prop.readonly == actual_prop.readonly
+                                && self.collect_alias_param_substitutions(
+                                    pattern_prop.type_id,
+                                    actual_prop.type_id,
+                                    param_names,
+                                    substitution,
+                                    depth + 1,
+                                )
+                        })
+            }
+            _ => pattern == actual,
+        }
+    }
+
     /// For Application-arg display: when the arg is an `IndexAccess(obj, idx)`
     /// whose `obj` is fully concrete (no type parameters, no infer
     /// placeholders) and `idx` is a literal, resolve the indexed access for
@@ -1985,6 +2204,7 @@ impl<'a> TypeFormatter<'a> {
                     .filter(|&alias| {
                         matches!(self.interner.lookup(alias), Some(TypeData::Application(_)))
                     })
+                    .or_else(|| self.generic_mapped_alias_application_for_body(*obj))
                     .unwrap_or(*obj);
                 let obj_str = if obj_for_display == *obj
                     && matches!(self.interner.lookup(*obj), Some(TypeData::Mapped(_)))
