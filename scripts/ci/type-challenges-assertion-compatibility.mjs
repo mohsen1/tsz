@@ -654,6 +654,47 @@ for (const [compiler, result] of [
       );
     }
   }
+  if (diagnostics.bySemanticFamily !== null && diagnostics.bySemanticFamily !== undefined) {
+    if (!Array.isArray(diagnostics.bySemanticFamily)) {
+      fail(`assertion classification ${compiler}.diagnostics.bySemanticFamily must be an array`);
+    }
+    const families = diagnostics.bySemanticFamily.map((entry, index) => {
+      if (typeof entry?.family !== "string" || entry.family.trim() === "") {
+        fail(
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].family must be a non-empty string`,
+        );
+      }
+      if (!Number.isInteger(entry.errorCount) || entry.errorCount < 0) {
+        fail(
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].errorCount must be a non-negative integer`,
+        );
+      }
+      if (!Array.isArray(entry.files)) {
+        fail(
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].files must be an array`,
+        );
+      }
+      const files = entry.files.map((file, fileIndex) =>
+        validateCandidateOutputPath(
+          file,
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].files[${fileIndex}]`,
+        ),
+      );
+      const duplicateFiles = duplicatedValues(files);
+      if (duplicateFiles.length > 0) {
+        fail(
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].files contains duplicate files: ${duplicateFiles.join(", ")}`,
+        );
+      }
+      return entry.family;
+    });
+    const duplicateFamilies = duplicatedValues(families);
+    if (duplicateFamilies.length > 0) {
+      fail(
+        `assertion classification ${compiler}.diagnostics.bySemanticFamily contains duplicate families: ${duplicateFamilies.join(", ")}`,
+      );
+    }
+  }
 }
 for (const [compiler, diagnostics] of [
   ["tsc", tscCandidateDiagnostics],

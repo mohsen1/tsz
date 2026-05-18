@@ -676,6 +676,110 @@ withTempDir((dir) => {
         tsc: {
           status: "pass",
           diagnostics: {
+            bySemanticFamily: [
+              {
+                family: "mapped/key-remapped types",
+                errorCount: 1,
+                files: ["C:/tmp/assertions/one.ts"],
+              },
+            ],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc\.diagnostics\.bySemanticFamily\[0\]\.files\[0\] must stay inside the assertion candidate directory/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: {
+        tsc: {
+          status: "pass",
+          diagnostics: {
+            bySemanticFamily: [
+              {
+                family: "mapped/key-remapped types",
+                errorCount: -1,
+                files: ["assertions/one.ts"],
+              },
+            ],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc\.diagnostics\.bySemanticFamily\[0\]\.errorCount must be a non-negative integer/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
+      compilers: {
+        tsc: {
+          status: "pass",
+          diagnostics: {
+            bySemanticFamily: [
+              {
+                family: "mapped/key-remapped types",
+                errorCount: 1,
+                files: ["assertions/one.ts"],
+              },
+              {
+                family: "mapped/key-remapped types",
+                errorCount: 1,
+                files: ["assertions/two.ts"],
+              },
+            ],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc\.diagnostics\.bySemanticFamily contains duplicate families: mapped\/key-remapped types/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: {
+        tsc: {
+          status: "pass",
+          diagnostics: {
             byFile: [{ key: "C:/tmp/assertions/one.ts", count: 1 }],
           },
         },
