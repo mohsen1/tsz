@@ -222,6 +222,50 @@ class CacheVisibilityReportTests(unittest.TestCase):
         self.assertEqual(candidates[0].owner, "<module>")
         self.assertEqual(candidates[0].name, "Cache")
 
+    def test_multiline_cache_field_type_is_reported(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.write(
+                root,
+                "src/lib.rs",
+                "\n".join(
+                    [
+                        "pub struct ModuleResolver {",
+                        "    skip_fallback_cache:",
+                        "        std::cell::RefCell<FxHashMap<SkipFallbackCacheKey, bool>>,",
+                        "}",
+                    ]
+                )
+                + "\n",
+            )
+            candidates = self.module.scan([root / "src"])
+
+        self.assertEqual([candidate.name for candidate in candidates], ["skip_fallback_cache"])
+        self.assertEqual(
+            candidates[0].type,
+            "std::cell::RefCell<FxHashMap<SkipFallbackCacheKey, bool>>",
+        )
+
+    def test_multiline_cache_type_alias_is_reported(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.write(
+                root,
+                "src/lib.rs",
+                "\n".join(
+                    [
+                        "type NestedCache = RefCell<",
+                        "    FxHashMap<String, Vec<SymbolId>>,",
+                        ">;",
+                    ]
+                )
+                + "\n",
+            )
+            candidates = self.module.scan([root / "src"])
+
+        self.assertEqual([candidate.name for candidate in candidates], ["NestedCache"])
+        self.assertEqual(candidates[0].owner, "<module>")
+
     def test_camel_case_alias_matches_snake_case_statistics(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
