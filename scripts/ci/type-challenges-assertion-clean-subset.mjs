@@ -260,6 +260,34 @@ function duplicates(files) {
     .sort();
 }
 
+function validateProvidedDiagnosticCount(value, expected, label) {
+  if (value === null || value === undefined) {
+    return;
+  }
+  if (!Number.isInteger(value)) {
+    fail(`${label} must be an integer`);
+  }
+  if (value !== expected) {
+    fail(`${label} (${value}) does not match ${expected}`);
+  }
+}
+
+validateProvidedDiagnosticCount(
+  tscCandidateDiagnostics.totalCandidates,
+  originalEntries.length,
+  "assertion classifier tsc candidateDiagnostics.totalCandidates",
+);
+validateProvidedDiagnosticCount(
+  tscCandidateDiagnostics.candidatesWithoutDiagnostics,
+  tscAcceptedFileList.length,
+  "assertion classifier tsc candidateDiagnostics.candidatesWithoutDiagnostics",
+);
+validateProvidedDiagnosticCount(
+  tscCandidateDiagnostics.candidatesWithDiagnostics,
+  tscRejectedFileList.length,
+  "assertion classifier tsc candidateDiagnostics.candidatesWithDiagnostics",
+);
+
 const duplicateAcceptedFiles = duplicates(tscAcceptedFileList);
 if (duplicateAcceptedFiles.length > 0) {
   reportFileSetError(
