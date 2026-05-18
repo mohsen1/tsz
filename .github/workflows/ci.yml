@@ -326,7 +326,7 @@ jobs:
   project-corpus-pr-body:
     name: project-corpus-pr-body
     needs: gate
-    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false && needs.gate.outputs.should_run == 'true'
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -353,6 +353,16 @@ jobs:
             page=$((page + 1))
             if [[ "$page" -gt 30 ]]; then break; fi
           done
+
+          title=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.title // ""')
+          wip_label_count=$(gh api \
+            "repos/${REPOSITORY}/pulls/${PR_NUMBER}" \
+            --jq '[.labels[]?.name | select(. == "WIP")] | length')
+          if [[ "${wip_label_count}" != "0" ]] || [[ "${title}" =~ (^|[[:space:]])\[WIP\]([[:space:]]|$) ]]; then
+            echo "Ready PRs must not carry WIP status."
+            echo "Remove the WIP label/title marker only after implementation and verification are complete."
+            exit 1
+          fi
 
           body=$(gh api "repos/${REPOSITORY}/pulls/${PR_NUMBER}" --jq '.body // ""')
           if ! grep -Eq '^[[:space:]]*AgentName:[[:space:]]*[^[:space:]]+' <<<"$body"; then
@@ -992,8 +1002,29 @@ jobs:
           bench_shell_only = gate.get("outputs", {}).get("bench_shell_only") == "true"
           compiler_checks_required = gate.get("outputs", {}).get("compiler_checks_required") != "false"
 
-          if gate.get("result") != "success":
-              print(f"gate did not pass: {gate.get('result')}")
+          gate_result = gate.get("result")
+          if gate_result != "success":
+              non_success = {
+                  name: data.get("result")
+                  for name, data in needs.items()
+                  if name != "gate" and data.get("result") not in ("success", "skipped")
+              }
+              if gate_result == "cancelled" and all(
+                  result == "cancelled" for result in non_success.values()
+              ):
+                  print(
+                      "CI run superseded by a newer push before gate completed: "
+                      f"gate cancelled and {len(non_success)} downstream job(s) "
+                      "cancelled, none failed. Treating as neutral — the "
+                      "superseding run provides the final status."
+                  )
+                  sys.exit(0)
+              print(f"gate did not pass: {gate_result}")
+              sys.exit(1)
+
+          pr_body = needs.get("project-corpus-pr-body")
+          if pr_body and pr_body.get("result") not in ("success", "skipped"):
+              print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
               sys.exit(1)
 
           if not should_run:
@@ -1012,10 +1043,6 @@ jobs:
               required.add("unit")
           else:
               print("Compiler checks are non-required for this non-compiler diff.")
-          pr_body = needs.get("project-corpus-pr-body")
-          if pr_body and pr_body.get("result") not in ("success", "skipped"):
-              print(f"project-corpus-pr-body did not pass: {pr_body.get('result')}")
-              sys.exit(1)
 
           if full_run and compiler_checks_required:
               required.update({

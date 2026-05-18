@@ -282,6 +282,7 @@ try {
 
   const charts = getBenchmarkCharts();
   assert.match(charts, /External libraries/);
+  assert.match(charts, /Utility types project/);
   assert.match(charts, /Compile canaries and incomplete project timings/);
   assert.match(charts, /type-challenges project/);
   assert.match(charts, /type-challenges solutions project/);
@@ -348,6 +349,7 @@ try {
   process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT = failedOnlyArtifact;
   const failedOnlyCharts = getBenchmarkCharts();
   assert.doesNotMatch(failedOnlyCharts, /No benchmark data/i);
+  assert.match(failedOnlyCharts, /No successful project benchmark timing pairs/);
   assert.match(failedOnlyCharts, /Compile canaries and incomplete project timings/);
   assert.match(failedOnlyCharts, /RxJS project/);
   const failedOnlyCompatibility = getProjectCompatibilityDashboard();
