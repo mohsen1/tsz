@@ -127,10 +127,17 @@ function ensureManifestShape(label, manifest, expectedFixture, expectedPath) {
   process.exit(1);
 }
 
+function normalizeManifestPath(value) {
+  return String(value).replace(/\\/g, "/").replace(/^(?:\.\/)+/, "");
+}
+
 function ensureManifestEntries(label, manifest) {
   const entries = manifest?.entries;
   const generated = Number(manifest?.generated);
   const expectedGenerated = Number(manifest?.expectedGenerated);
+  const requiredChallengeFields = label === "solution"
+    ? ["level", "title"]
+    : ["level", "slug"];
 
   if (!Array.isArray(entries) || entries.length === 0) {
     console.error(`error: Type Challenges ${label} manifest has no entries`);
@@ -152,6 +159,51 @@ function ensureManifestEntries(label, manifest) {
       ].join("\n"),
     );
     process.exit(1);
+  }
+
+  const outputs = new Set();
+  const sources = new Set();
+  for (const [index, entry] of entries.entries()) {
+    const output = entry?.output == null ? "" : String(entry.output);
+    const source = entry?.source == null ? "" : String(entry.source);
+    if (!output) {
+      console.error(
+        `error: Type Challenges ${label} manifest entry ${index + 1} has no output path`,
+      );
+      process.exit(1);
+    }
+    const normalizedOutput = normalizeManifestPath(output);
+    if (outputs.has(normalizedOutput)) {
+      console.error(
+        `error: Type Challenges ${label} manifest contains duplicate output path ${normalizedOutput}`,
+      );
+      process.exit(1);
+    }
+    outputs.add(normalizedOutput);
+
+    if (!source) {
+      console.error(
+        `error: Type Challenges ${label} manifest entry ${index + 1} has no source path`,
+      );
+      process.exit(1);
+    }
+    const normalizedSource = normalizeManifestPath(source);
+    if (sources.has(normalizedSource)) {
+      console.error(
+        `error: Type Challenges ${label} manifest contains duplicate source path ${normalizedSource}`,
+      );
+      process.exit(1);
+    }
+    sources.add(normalizedSource);
+
+    for (const field of requiredChallengeFields) {
+      if (challengeField(entry, field)) continue;
+
+      console.error(
+        `error: Type Challenges ${label} manifest entry ${index + 1} has no challenge ${field}`,
+      );
+      process.exit(1);
+    }
   }
 }
 
