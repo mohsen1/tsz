@@ -357,7 +357,7 @@ withTempDir((dir) => {
     pairingPath,
     basePairingReport({
       sources: {
-        templates: { repository: "type", ref: "" },
+        templates: { repository: "type", ref: "   " },
         testCases: { repository: "type", ref: "type-ref" },
         solutions: { repository: "solutions", ref: "solutions-ref" },
       },

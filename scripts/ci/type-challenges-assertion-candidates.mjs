@@ -107,7 +107,14 @@ function ensurePairingReportShape(report) {
 
   for (const label of ["templates", "testCases", "solutions"]) {
     const source = report?.sources?.[label];
-    if (source?.repository && source?.ref) continue;
+    if (
+      typeof source?.repository === "string" &&
+      source.repository.trim() !== "" &&
+      typeof source?.ref === "string" &&
+      source.ref.trim() !== ""
+    ) {
+      continue;
+    }
 
     console.error(
       [
