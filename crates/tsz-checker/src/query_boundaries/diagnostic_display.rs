@@ -1,5 +1,8 @@
-use super::common::{object_shape_for_type, widen_literal_type};
+//! Query helpers used by diagnostic type-display policy.
+
 use tsz_solver::{ObjectShape, TypeDatabase, TypeId};
+
+use super::common;
 
 /// Widen object property literal types for use in a diagnostic display context.
 ///
@@ -57,6 +60,13 @@ fn widen_object_properties_for_diagnostic_display_depth(
     }
 }
 
+fn object_shape_for_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<ObjectShape>> {
+    tsz_solver::type_queries::get_object_shape(db, type_id)
+}
+
 fn widen_props_for_diagnostic_display(
     db: &dyn TypeDatabase,
     props: &mut [tsz_solver::PropertyInfo],
@@ -97,7 +107,7 @@ fn widen_prop_for_diagnostic_display(
     type_id: TypeId,
     depth: usize,
 ) -> TypeId {
-    let widened = widen_literal_type(db, type_id);
+    let widened = common::widen_literal_type(db, type_id);
     if widened != type_id {
         return widened;
     }
@@ -107,14 +117,15 @@ fn widen_prop_for_diagnostic_display(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::query_boundaries::common::object_shape_for_type;
     use tsz_solver::{
-        IndexSignature, ObjectShape, PropertyInfo, QueryDatabase, TypeFormatter, TypeInterner,
-        TypeParamInfo,
+        IndexSignature, ObjectShape, PropertyInfo, TypeFormatter, TypeInterner, TypeParamInfo,
     };
 
     fn object_with_props(db: &TypeInterner, props: Vec<PropertyInfo>) -> TypeId {
-        db.factory().object(props)
+        db.object_with_index(ObjectShape {
+            properties: props,
+            ..Default::default()
+        })
     }
 
     fn formatted(db: &TypeInterner, type_id: TypeId) -> String {
@@ -128,7 +139,7 @@ mod tests {
     fn diagnostic_display_widens_fresh_display_properties() {
         let db = TypeInterner::new();
         let x = db.intern_string("x");
-        let fresh = db.factory().object_fresh_with_display(
+        let fresh = db.object_fresh_with_display(
             vec![PropertyInfo::new(x, TypeId::NUMBER)],
             vec![PropertyInfo::new(x, db.literal_number(3.0))],
         );
@@ -151,9 +162,7 @@ mod tests {
     fn diagnostic_display_widens_direct_structural_fresh_literals() {
         let db = TypeInterner::new();
         let x = db.intern_string("x");
-        let object = db
-            .factory()
-            .object_fresh(vec![PropertyInfo::new(x, db.literal_number(3.0))]);
+        let object = db.object_fresh(vec![PropertyInfo::new(x, db.literal_number(3.0))]);
 
         let widened = widen_object_properties_for_diagnostic_display(&db, object);
         let shape = object_shape_for_type(&db, widened).expect("expected object shape");
@@ -199,14 +208,14 @@ mod tests {
     #[test]
     fn diagnostic_display_widens_anonymous_index_signatures() {
         let db = TypeInterner::new();
-        let object = db.factory().object_with_index(ObjectShape {
+        let object = db.object_with_index(ObjectShape {
             string_index: Some(IndexSignature {
                 key_type: TypeId::STRING,
                 value_type: db.literal_number(3.0),
                 readonly: false,
                 param_name: None,
             }),
-            ..ObjectShape::default()
+            ..Default::default()
         });
 
         let widened = widen_object_properties_for_diagnostic_display(&db, object);
