@@ -344,7 +344,7 @@ REGEX_LINE_COUNT_CHECKS = [
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
         [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
         re.compile(r"^pub use (?:[A-Za-z_][A-Za-z0-9_]*::)+\*;"),
-        14,
+        12,
     ),
     (
         "Checker relation boundary: raw diagnostic assignability predicates (#8227)",
@@ -362,7 +362,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"\b(?:self|self\.ctx\.types|self\.interner)"
             r"\.is_assignable_to(?:_[A-Za-z0-9_]+)?\s*\("
         ),
-        144,
+        136,
     ),
     (
         "Checker relation boundary: diagnostic-local RelationRequest constructors (#8227)",
