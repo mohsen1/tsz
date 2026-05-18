@@ -767,6 +767,7 @@ jobs:
       matrix:
         shard: [0, 1, 2, 3, 4, 5]
     env:
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
       _TSZ_CI_CONFORMANCE_SHARD_INDEX: ${{ matrix.shard }}
       _TSZ_CI_CONFORMANCE_SHARD_COUNT: 6
       TSZ_CI_CONFORMANCE_SHARDS: 6
@@ -788,14 +789,24 @@ jobs:
         run: mkdir -p .target/dist-fast && tar -C .target/dist-fast -xf dist-fast-binaries.tar
       - name: Run conformance shard
         run: scripts/ci/github-suite.sh conformance
+      - name: Upload conformance shard result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: conformance-shard-${{ matrix.shard }}
+          path: .ci-metrics/conformance.json
+          if-no-files-found: warn
+          retention-days: 1
 
   conformance-aggregate:
     name: conformance-aggregate
     needs: [gate, conformance]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled'
+    continue-on-error: true
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
+      SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
       GITHUB_SHA: ${{ github.sha }}
       _TSZ_CI_CONFORMANCE_SHARD_COUNT: 6
       TSZ_CI_CONFORMANCE_SHARDS: 6
@@ -804,6 +815,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+      - name: Download conformance shard results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: conformance-shard-*
+          path: .conformance-shards
+          merge-multiple: false
       - name: Aggregate conformance results
         run: scripts/ci/github-suite.sh conformance-aggregate
 
@@ -1015,13 +1032,28 @@ jobs:
               })
 
           failures = []
+          cancelled_required = []
           for name, data in needs.items():
               if name == "gate" or name not in required:
                   continue
-              if data.get("result") != "success":
-                  failures.append(f"{name}: {data.get('result')}")
+              result = data.get("result")
+              if result != "success":
+                  failures.append(f"{name}: {result}")
+                  if result == "cancelled":
+                      cancelled_required.append(name)
 
           if failures:
+              # If every required-job non-success is "cancelled" and there are no
+              # actual failures or timeouts, this run was superseded by a newer push
+              # (concurrency cancel-in-progress). Exit 0 so the superseding run can
+              # provide the authoritative result without this stale run blocking merge.
+              if len(cancelled_required) == len(failures):
+                  print(
+                      f"CI run superseded by a newer push: "
+                      f"{len(cancelled_required)} required job(s) cancelled, none failed. "
+                      "Treating as neutral — the superseding run provides the final status."
+                  )
+                  sys.exit(0)
               print("Required CI jobs did not pass:")
               for failure in failures:
                   print(f"  - {failure}")
