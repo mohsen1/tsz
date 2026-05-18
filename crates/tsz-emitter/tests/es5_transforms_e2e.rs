@@ -736,6 +736,36 @@ fn test_arrow_function_this_capture() {
     );
 }
 
+#[test]
+fn test_async_arrow_in_function_passes_lexical_this_to_awaiter() {
+    let output = emit_es5(
+        "function f() {\n    const promise = (async () => {\n        await null;\n    })();\n}\n",
+    );
+
+    assert!(
+        output.contains("var _this = this;"),
+        "Async arrow inside a function should capture lexical this in ES5.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__awaiter(_this, void 0, void 0"),
+        "Async arrow inside a function should pass lexical this to __awaiter.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_top_level_async_arrow_still_passes_void_0_to_awaiter() {
+    let output = emit_es5("const f = async () => {\n    await null;\n};\n");
+
+    assert!(
+        output.contains("__awaiter(void 0, void 0, void 0"),
+        "Top-level async arrow should not synthesize a lexical this capture.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _this = this;"),
+        "Top-level async arrow should not emit a file-level _this capture.\nOutput:\n{output}"
+    );
+}
+
 // =============================================================================
 // Let/Const -> Var
 // =============================================================================

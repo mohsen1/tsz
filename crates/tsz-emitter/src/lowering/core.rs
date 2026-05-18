@@ -1552,6 +1552,9 @@ impl<'a> LoweringPass<'a> {
             return;
         };
 
+        let mut es5_captures_this = false;
+        let mut es5_captures_arguments = false;
+
         if self.ctx.target_es5 {
             let malformed_return_type = arrow.type_annotation.is_some()
                 && self
@@ -1569,11 +1572,16 @@ impl<'a> LoweringPass<'a> {
                 return;
             }
 
-            let captures_this = contains_this_reference(self.arena, idx);
+            let contains_this = contains_this_reference(self.arena, idx);
+            let async_arrow_needs_awaiter_this =
+                arrow.is_async && self.enclosing_function_bodies.len() > 1;
+            let captures_this = contains_this || async_arrow_needs_awaiter_this;
             let captures_arguments = contains_arguments_reference(self.arena, idx);
+            es5_captures_this = captures_this;
+            es5_captures_arguments = captures_arguments;
 
             tracing::debug!(
-                "[lowering][arrow] idx={} captures_this={captures_this} is_async={}",
+                "[lowering][arrow] idx={} contains_this={contains_this} captures_this={captures_this} is_async={}",
                 idx.0,
                 arrow.is_async
             );
@@ -1599,10 +1607,12 @@ impl<'a> LoweringPass<'a> {
                 self.mark_async_helpers();
             }
 
-            // If this arrow function captures 'this', increment the capture level
-            // so that nested 'this' references get substituted.
+            // If this arrow function captures lexical `this`, increment the
+            // capture level so that nested `this` references get substituted.
             // Also mark the enclosing function body so the emitter inserts
             // `var _this = this;` at the start of that scope.
+            // Async arrows need the lexical thisArg passed to `__awaiter` even
+            // when the generator body does not spell `this`.
             // But NOT when inside an ES5 class — class_es5_ir handles _this
             // capture independently within constructor/method bodies.
             if captures_this {
@@ -1650,13 +1660,11 @@ impl<'a> LoweringPass<'a> {
 
         // Restore capture level after visiting the arrow function body
         if self.ctx.target_es5 {
-            let captures_this = contains_this_reference(self.arena, idx);
-            if captures_this {
+            if es5_captures_this {
                 self.this_capture_level -= 1;
             }
 
-            let captures_arguments = contains_arguments_reference(self.arena, idx);
-            if captures_arguments {
+            if es5_captures_arguments {
                 self.arguments_capture_level -= 1;
             }
         }
