@@ -16,13 +16,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
-fn should_resolve_simple_object_missing_interface_decl_from_lib(name: &str) -> bool {
-    matches!(
-        name,
-        "PropertyDescriptor" | "PropertyDescriptorMap" | "RegExpIndicesArray"
-    )
-}
-
 impl<'a> CheckerState<'a> {
     pub(crate) fn normalize_namespace_export_declaration_order(props: &mut [PropertyInfo]) {
         props.sort_by(
@@ -1574,9 +1567,12 @@ impl<'a> CheckerState<'a> {
             // through to the full merge path so user-declared members are included.
             let should_suppress_missing_interface_decl_reject =
                 tsz_common::perf_counters::enabled_fast()
-                    && !has_local_interface_decl
-                    && self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
-                    && should_resolve_simple_object_missing_interface_decl_from_lib(&escaped_name);
+                    && self
+                        .ctx
+                        .simple_object_missing_interface_decl_residue_is_lib_provenance_case(
+                            sym_id,
+                            has_local_interface_decl,
+                        );
             let can_resolve_lib_interface_without_local_decl =
                 !has_local_interface_decl && (has_out_of_arena_decl || is_lib_symbol);
 
