@@ -2014,6 +2014,9 @@ export function getProjectCompatibilityDashboard() {
     if (cleanSubset.tsz_status) {
       parts.push(`clean tsz: ${cleanSubset.tsz_status}`);
     }
+    if (cleanSubset.comparison_status) {
+      parts.push(`clean comparison: ${cleanSubset.comparison_status}`);
+    }
     addCount("clean tsc diagnostic-free", cleanSubset.tsc_diagnostic_free);
     addCount("clean tsz diagnostic-free", cleanSubset.tsz_diagnostic_free);
     return parts;
