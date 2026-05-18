@@ -539,6 +539,13 @@ for (const [compiler, diagnostics] of [
           `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].file`,
         );
       }
+      if (entry?.errorCount !== null && entry?.errorCount !== undefined) {
+        if (!Number.isInteger(entry.errorCount) || entry.errorCount < 0) {
+          fail(
+            `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].errorCount must be a non-negative integer`,
+          );
+        }
+      }
       if (entry?.codes !== null && entry?.codes !== undefined) {
         if (!Array.isArray(entry.codes)) {
           fail(
@@ -554,6 +561,57 @@ for (const [compiler, diagnostics] of [
           if (!Number.isInteger(code.count) || code.count < 0) {
             fail(
               `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].codes[${codeIndex}].count must be a non-negative integer`,
+            );
+          }
+        });
+      }
+      if (entry?.semanticFamilies !== null && entry?.semanticFamilies !== undefined) {
+        if (!Array.isArray(entry.semanticFamilies)) {
+          fail(
+            `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].semanticFamilies must be an array`,
+          );
+        }
+        entry.semanticFamilies.forEach((family, familyIndex) => {
+          if (typeof family !== "string" || family.trim() === "") {
+            fail(
+              `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].semanticFamilies[${familyIndex}] must be a non-empty string`,
+            );
+          }
+        });
+      }
+      if (entry?.firstErrors !== null && entry?.firstErrors !== undefined) {
+        if (!Array.isArray(entry.firstErrors)) {
+          fail(
+            `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].firstErrors must be an array`,
+          );
+        }
+        entry.firstErrors.forEach((error, errorIndex) => {
+          if (error?.line !== null && error?.line !== undefined && !Number.isInteger(error.line)) {
+            fail(
+              `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].firstErrors[${errorIndex}].line must be an integer`,
+            );
+          }
+          if (
+            error?.column !== null &&
+            error?.column !== undefined &&
+            !Number.isInteger(error.column)
+          ) {
+            fail(
+              `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].firstErrors[${errorIndex}].column must be an integer`,
+            );
+          }
+          if (error?.code !== null && error?.code !== undefined && typeof error.code !== "string") {
+            fail(
+              `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].firstErrors[${errorIndex}].code must be a string`,
+            );
+          }
+          if (
+            error?.message !== null &&
+            error?.message !== undefined &&
+            typeof error.message !== "string"
+          ) {
+            fail(
+              `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].firstErrors[${errorIndex}].message must be a string`,
             );
           }
         });
