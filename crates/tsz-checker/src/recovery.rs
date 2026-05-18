@@ -1,26 +1,17 @@
 //! Typed recovery sentinels for checker `TypeId::ANY` fallbacks.
 //!
-//! Checker code occasionally has to return `TypeId::ANY` for a node whose
-//! "real" type is either inexpressible (e.g. `this` outside any binding),
-//! unresolved (cycle reentry, missing skeleton), or already diagnosed (so
-//! returning a precise type would only produce cascading errors). Returning
-//! the bare `TypeId::ANY` literal hides those cases inside a real TypeScript
-//! type, makes them indistinguishable from a user-written `: any` annotation,
-//! and lets the same fallback be re-implemented inline at every new site.
+//! Bare `TypeId::ANY` returned from a recovery path is indistinguishable
+//! from a user-written `: any` annotation. [`CheckerContext::recover_any`]
+//! is the single named entry-point that records the (node, reason) pair in
+//! a per-checker [`RecoverySites`] registry and emits a structured
+//! `tracing::debug!` event, so relation/diagnostic paths can later
+//! distinguish a *recovered* ANY from a declared `any` without inspecting
+//! printed type strings.
 //!
-//! [`CheckerContext::recover_any`] is the single named entry-point for those
-//! fallbacks. Callers pick a [`RecoveryReason`] from a closed enum (rather
-//! than a free-form trace string), and the method both emits a structured
-//! `tracing::debug!` event and records the site in a per-checker
-//! [`RecoverySites`] registry so relation/diagnostic paths can later
-//! distinguish a *recovered* ANY from a real declared `any` without
-//! relying on printed type strings.
-//!
-//! Adding a new recovery family means adding a variant to [`RecoveryReason`]
-//! and migrating the inline `TypeId::ANY` fallback to call
-//! `ctx.recover_any(node, RecoveryReason::…)`. The closed enum keeps the set
-//! of recovery sites auditable instead of letting free-form trace strings
-//! drift at every new site.
+//! Add a new recovery family by adding a variant to [`RecoveryReason`] and
+//! routing the inline `TypeId::ANY` fallback through
+//! `ctx.recover_any(node, RecoveryReason::…)`. The closed enum keeps the
+//! set of recovery sites auditable.
 
 use crate::context::CheckerContext;
 use rustc_hash::FxHashMap;
@@ -108,37 +99,30 @@ impl RecoverySites {
         self.sites.insert(node, reason);
     }
 
-    pub fn get(&self, node: NodeIndex) -> Option<RecoveryReason> {
+    pub(crate) fn get(&self, node: NodeIndex) -> Option<RecoveryReason> {
         self.sites.get(&node).copied()
     }
 
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.sites.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.sites.is_empty()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (NodeIndex, RecoveryReason)> + '_ {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (NodeIndex, RecoveryReason)> + '_ {
         self.sites.iter().map(|(node, reason)| (*node, *reason))
     }
 }
 
 impl<'a> CheckerContext<'a> {
     /// Record `node` as a recovery site with `reason` and return
-    /// [`TypeId::ANY`]. This is the single named entry-point for checker
-    /// recovery fallbacks; prefer it over inline
+    /// [`TypeId::ANY`]. Prefer this over inline
     /// `tracing::debug!(...); TypeId::ANY` blocks so the set of recovery
-    /// reasons stays a closed typed set and so relation/diagnostic paths
-    /// can distinguish a real declared `any` from an ANY produced by
-    /// recovery.
-    ///
-    /// The returned `TypeId` is *intentionally* `TypeId::ANY` so existing
-    /// any-propagation semantics are preserved. The recovery distinction
-    /// is available via [`get_recovery_reason`](Self::get_recovery_reason)
-    /// for paths that want to behave differently for recovered ANY vs
-    /// declared `any`.
+    /// reasons stays a closed typed set. The returned `TypeId` is
+    /// intentionally `TypeId::ANY` to preserve existing any-propagation
+    /// semantics.
     pub fn recover_any(&self, node: NodeIndex, reason: RecoveryReason) -> TypeId {
         tracing::debug!(
             site = reason.trace_site(),
@@ -149,12 +133,6 @@ impl<'a> CheckerContext<'a> {
         );
         self.recovery_sites.borrow_mut().record(node, reason);
         TypeId::ANY
-    }
-
-    /// Recovery reason recorded for `node`, or `None` if `node` did not
-    /// fall back through a recovery path.
-    pub fn get_recovery_reason(&self, node: NodeIndex) -> Option<RecoveryReason> {
-        self.recovery_sites.borrow().get(node)
     }
 
     /// Snapshot of every recorded `(node, reason)` pair. Used by audit
@@ -182,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn record_then_get_round_trips_the_reason() {
+    fn record_then_get_returns_reason() {
         let mut sites = RecoverySites::default();
         sites.record(node(17), RecoveryReason::YieldOutsideGenerator);
         assert_eq!(
@@ -224,7 +202,7 @@ mod tests {
     }
 
     #[test]
-    fn unrecorded_node_remains_unrecovered_when_other_nodes_are_recorded() {
+    fn get_returns_none_for_unrecorded_node() {
         // Models "real declared `any`": a node that legitimately produced
         // TypeId::ANY through type evaluation rather than recovery is NOT
         // in the registry.

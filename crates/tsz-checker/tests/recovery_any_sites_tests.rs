@@ -8,9 +8,8 @@
 //! integration counterpart to the unit tests in
 //! `crates/tsz-checker/src/recovery.rs`.
 
-use tsz_checker::context::CheckerOptions;
-use tsz_checker::recovery::RecoveryReason;
 use tsz_checker::test_utils::check_source_recovery_sites;
+use tsz_checker::{CheckerOptions, RecoveryReason};
 
 fn check_sites(source: &str) -> Vec<(u32, RecoveryReason)> {
     check_source_recovery_sites(source, "test.ts", CheckerOptions::default())

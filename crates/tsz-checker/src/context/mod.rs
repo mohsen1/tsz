@@ -358,7 +358,7 @@ pub struct CheckerContext<'a> {
 
     /// Typed registry of nodes whose `TypeId::ANY` came from a recovery
     /// fallback rather than a real `: any` annotation. Write via
-    /// `CheckerContext::recover_any`; read via `get_recovery_reason` /
+    /// `CheckerContext::recover_any`; bulk read via
     /// `recovery_sites_snapshot`. See `crates/tsz-checker/src/recovery.rs`.
     pub(crate) recovery_sites: RefCell<crate::recovery::RecoverySites>,
 

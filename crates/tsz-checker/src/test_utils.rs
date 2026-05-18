@@ -683,15 +683,17 @@ pub fn check_source_with_libs(
     options: CheckerOptions,
     lib_files: &[Arc<LibFile>],
 ) -> Vec<Diagnostic> {
+    if lib_files.is_empty() {
+        return with_checked_source(source, file_name, options, None, |checker| {
+            checker.ctx.diagnostics.clone()
+        });
+    }
+
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let source_file = parser.parse_source_file();
 
     let mut binder = BinderState::new();
-    if lib_files.is_empty() {
-        binder.bind_source_file(parser.get_arena(), source_file);
-    } else {
-        binder.bind_source_file_with_libs(parser.get_arena(), source_file, lib_files);
-    }
+    binder.bind_source_file_with_libs(parser.get_arena(), source_file, lib_files);
 
     let types = TypeInterner::new();
     let mut checker = CheckerState::new(
@@ -703,19 +705,15 @@ pub fn check_source_with_libs(
     );
     checker.enable_source_file_test_pragmas();
 
-    if lib_files.is_empty() {
-        checker.ctx.set_lib_contexts(Vec::new());
-    } else {
-        let lib_contexts: Vec<LibContext> = lib_files
-            .iter()
-            .map(|lib| LibContext {
-                arena: Arc::clone(&lib.arena),
-                binder: Arc::clone(&lib.binder),
-            })
-            .collect();
-        checker.ctx.set_lib_contexts(lib_contexts);
-        checker.ctx.set_actual_lib_file_count(lib_files.len());
-    }
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    checker.ctx.set_lib_contexts(lib_contexts);
+    checker.ctx.set_actual_lib_file_count(lib_files.len());
 
     checker.check_source_file(source_file);
     checker.ctx.diagnostics.clone()

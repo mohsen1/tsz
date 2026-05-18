@@ -295,8 +295,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         .checker
                         .is_this_in_nested_function_without_own_this_binding(idx)
                 {
-                    // `this` in a class or object literal member but enclosing_class
-                    // not yet set. Suppress TS2683 - `this` is contextually typed.
                     self.checker.ctx.recover_any(
                         idx,
                         crate::recovery::RecoveryReason::ThisUnresolvedClassOrObjectLiteralMember,
@@ -486,7 +484,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             .get_class_constructor_type_with_request(idx, &class, request)
                     }
                 } else {
-                    // Suppress cascading TS2571 errors.
                     self.checker.ctx.recover_any(
                         idx,
                         crate::recovery::RecoveryReason::ClassConstructorTargetUnresolved,

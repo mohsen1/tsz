@@ -195,7 +195,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
             });
         if !is_in_generator {
-            // TS1163 already emitted by the parser.
             return self
                 .checker
                 .ctx
