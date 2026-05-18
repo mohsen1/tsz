@@ -436,6 +436,9 @@ function compatibilityRowFor(definition, allResults) {
     assertionCandidates: compatibility.assertion_candidates && typeof compatibility.assertion_candidates === "object"
       ? compatibility.assertion_candidates
       : null,
+    assertionCleanSubset: compatibility.assertion_clean_subset && typeof compatibility.assertion_clean_subset === "object"
+      ? compatibility.assertion_clean_subset
+      : null,
     reductionCandidates: Array.isArray(compatibility.reduction_candidates)
       ? compatibility.reduction_candidates.slice(0, 5)
       : [],
@@ -1978,6 +1981,44 @@ export function getProjectCompatibilityDashboard() {
     return parts;
   };
 
+  const assertionCleanSubsetParts = (row) => {
+    const cleanSubset = row.assertionCleanSubset;
+    if (!cleanSubset || typeof cleanSubset !== "object") return [];
+
+    const parts = [];
+    const addCount = (label, value) => {
+      if (Number.isFinite(Number(value))) {
+        parts.push(`${label}: ${fmt(Number(value))}`);
+      }
+    };
+    if (cleanSubset.manifest_path) {
+      parts.push(`clean manifest: ${cleanSubset.manifest_path}`);
+    }
+    if (cleanSubset.classification_path) {
+      parts.push(`clean classification: ${cleanSubset.classification_path}`);
+    }
+    addCount("clean total candidates", cleanSubset.total_candidates);
+    addCount("clean subset", cleanSubset.generated_assertions);
+    addCount(
+      "clean references solutions",
+      cleanSubset.assertions_referencing_solution_declaration,
+    );
+    addCount(
+      "clean missing solution references",
+      cleanSubset.assertions_missing_solution_declaration_reference,
+    );
+    addCount("clean rejected from full corpus", cleanSubset.rejected_from_full_corpus);
+    if (cleanSubset.tsc_status) {
+      parts.push(`clean tsc: ${cleanSubset.tsc_status}`);
+    }
+    if (cleanSubset.tsz_status) {
+      parts.push(`clean tsz: ${cleanSubset.tsz_status}`);
+    }
+    addCount("clean tsc diagnostic-free", cleanSubset.tsc_diagnostic_free);
+    addCount("clean tsz diagnostic-free", cleanSubset.tsz_diagnostic_free);
+    return parts;
+  };
+
   const exitCodeParts = (row) => {
     const codes = row.exitCodes || {};
     return ["tsc", "tsz", "tsgo"]
@@ -2020,6 +2061,7 @@ export function getProjectCompatibilityDashboard() {
       row.dtsStatus ? `dts: ${row.dtsStatus}` : "",
       ...measurementParts(row),
       ...assertionCandidateParts(row),
+      ...assertionCleanSubsetParts(row),
       ...exitCodeParts(row),
     ].filter(Boolean);
     const blockerHtml = row.className === "green" || !knownBlockers.length
