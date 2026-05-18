@@ -247,7 +247,54 @@ fn const_vs_const_augmentation_still_errors() {
 "#;
     let errs = check_for_dup(&[("source.ts", source), ("test.ts", test)], "test.ts");
     assert!(
+        errs.iter().any(|(code, _)| *code == 2451),
+        "const-vs-const augmentation conflict must produce TS2451; got: {errs:?}"
+    );
+}
+
+// ─── negative: cross-module mismatch must still emit ─────────────────────────
+
+/// Re-export from ./a while augmenting ./b (a different module) with an interface of
+/// the same name.  The augmentation does NOT cover the from-clause module, so the
+/// suppression must NOT fire.
+#[test]
+fn reexport_from_a_augment_b_interface_still_errors() {
+    let source_a = "export interface User { id: number; }\n";
+    let source_b = "export interface User { name: string; }\n";
+    // Exports from ./a but augments ./b — mismatched from-clause.
+    let test = r#"export { User } from "./source_a";
+declare module "./source_b" {
+    interface User { email?: string; }
+}
+"#;
+    let errs = check_for_dup(
+        &[
+            ("source_a.ts", source_a),
+            ("source_b.ts", source_b),
+            ("test.ts", test),
+        ],
+        "test.ts",
+    );
+    assert!(
+        errs.iter().any(|(code, _)| *code == 2300 || *code == 2451),
+        "re-export from ./a + augment ./b must still produce TS2300/2451; got: {errs:?}"
+    );
+}
+
+/// Re-export from ./a while augmenting ./a with a `const` (non-mergeable).
+/// The from-clause matches, but the declaration is not an interface or function, so
+/// the suppression must NOT fire.
+#[test]
+fn reexport_from_a_augment_a_with_const_still_errors() {
+    let source_a = "export const counter = 0;\n";
+    let test = r#"export { counter } from "./source_a";
+declare module "./source_a" {
+    const counter: number;
+}
+"#;
+    let errs = check_for_dup(&[("source_a.ts", source_a), ("test.ts", test)], "test.ts");
+    assert!(
         errs.iter().any(|(code, _)| *code == 2451 || *code == 2300),
-        "const-vs-const augmentation conflict must still produce an error; got: {errs:?}"
+        "re-export from ./a + augment ./a with const must still produce an error; got: {errs:?}"
     );
 }
