@@ -1838,9 +1838,39 @@ impl<'a> CheckerState<'a> {
                 if let Some(node) = self.ctx.arena.get(node_idx)
                     && let Some(ident) = self.ctx.arena.get_identifier(node)
                 {
-                    if !self
-                        .ctx
-                        .file_local_type_shadow_for_lib_name(&ident.escaped_text)
+                    // When the lexical scope resolved to a user-defined symbol that is
+                    // declared inside a namespace/module, that local definition must win
+                    // over the lib's canonical DefId. TypeScript's lexical scoping gives
+                    // namespace-local declarations priority within the namespace body,
+                    // even when the name collides with a global lib type (e.g. a local
+                    // `interface Promise<T>` inside `namespace m2 { ... }` must shadow
+                    // the global `Promise` for all type references within that namespace).
+                    // Only apply the lib-override for file-level or global-scope symbols.
+                    let sym_is_inside_namespace = {
+                        use tsz_binder::symbol_flags;
+                        let lib_binders = self.get_lib_binders();
+                        self.ctx
+                            .binder
+                            .get_symbol_with_libs(sym_id, &lib_binders)
+                            .and_then(|sym| {
+                                if sym.parent.is_some() {
+                                    self.ctx
+                                        .binder
+                                        .get_symbol_with_libs(sym.parent, &lib_binders)
+                                } else {
+                                    None
+                                }
+                            })
+                            .is_some_and(|parent| {
+                                parent.has_any_flags(
+                                    symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE,
+                                )
+                            })
+                    };
+                    if !sym_is_inside_namespace
+                        && !self
+                            .ctx
+                            .file_local_type_shadow_for_lib_name(&ident.escaped_text)
                         && let Some(def_id) =
                             self.resolve_actual_lib_name_to_def_id_for_lowering(&ident.escaped_text)
                     {

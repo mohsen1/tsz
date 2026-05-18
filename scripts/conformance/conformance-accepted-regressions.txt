@@ -48,5 +48,4 @@ TypeScript/tests/cases/conformance/node/esmModuleExports2.ts
 TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts
 TypeScript/tests/cases/conformance/types/intersection/recursiveIntersectionTypes.ts
 TypeScript/tests/cases/conformance/types/members/indexSignatures1.ts
-TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/genericCallToOverloadedMethodWithOverloadedArguments.ts
 TypeScript/tests/cases/conformance/types/unknown/unknownType2.ts
