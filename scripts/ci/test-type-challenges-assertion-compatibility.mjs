@@ -53,6 +53,8 @@ function candidateCounts(generatedAssertions = 1) {
   return {
     pairedSolutions: generatedAssertions,
     generatedAssertions,
+    assertionsReferencingSolutionDeclaration: generatedAssertions,
+    assertionsMissingSolutionDeclarationReference: 0,
   };
 }
 
@@ -539,6 +541,58 @@ withTempDir((dir) => {
   assert.match(
     result.stderr,
     /tsc-clean assertion classification comparison\.status must be a non-empty string/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: {
+        sources: candidateSources(),
+        counts: {
+          pairedSolutions: 1,
+          generatedAssertions: 1,
+        },
+      },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /counts\.assertionsReferencingSolutionDeclaration must be an integer/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: {
+        sources: candidateSources(),
+        counts: {
+          pairedSolutions: 2,
+          generatedAssertions: 2,
+          assertionsReferencingSolutionDeclaration: 2,
+          assertionsMissingSolutionDeclarationReference: 1,
+        },
+      },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /declaration-reference counts \(2 \+ 1\) do not match generatedAssertions \(2\)/,
   );
   assert.equal(fs.existsSync(outFile), false);
 });

@@ -311,6 +311,29 @@ if (counts.pairedSolutions !== counts.generatedAssertions) {
 if (counts.generatedAssertions === 0) {
   fail("assertion classification generatedAssertions must be greater than zero");
 }
+const assertionsReferencingSolutionDeclaration =
+  counts.assertionsReferencingSolutionDeclaration;
+const assertionsMissingSolutionDeclarationReference =
+  counts.assertionsMissingSolutionDeclarationReference;
+if (!Number.isInteger(assertionsReferencingSolutionDeclaration)) {
+  fail(
+    "assertion classification candidateManifest.counts.assertionsReferencingSolutionDeclaration must be an integer",
+  );
+}
+if (!Number.isInteger(assertionsMissingSolutionDeclarationReference)) {
+  fail(
+    "assertion classification candidateManifest.counts.assertionsMissingSolutionDeclarationReference must be an integer",
+  );
+}
+if (
+  assertionsReferencingSolutionDeclaration +
+    assertionsMissingSolutionDeclarationReference !==
+  counts.generatedAssertions
+) {
+  fail(
+    `assertion classification declaration-reference counts (${assertionsReferencingSolutionDeclaration} + ${assertionsMissingSolutionDeclarationReference}) do not match generatedAssertions (${counts.generatedAssertions})`,
+  );
+}
 const tscCandidateDiagnostics = tsc.candidateDiagnostics || {};
 const tszCandidateDiagnostics = tsz.candidateDiagnostics || {};
 for (const [compiler, diagnostics] of [
