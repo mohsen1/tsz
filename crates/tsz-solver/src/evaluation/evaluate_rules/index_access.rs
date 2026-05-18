@@ -47,6 +47,37 @@ fn get_or_init_array_member_types(
         .clone()
 }
 
+fn evaluate_conditional_key_branches(
+    db: &dyn TypeDatabase,
+    cond_id: u32,
+    mut evaluate_branch: impl FnMut(TypeId) -> TypeId,
+) -> Option<TypeId> {
+    let cond = db.conditional_type(crate::types::ConditionalTypeId(cond_id));
+    let mut results = Vec::with_capacity(2);
+    let mut saw_never_branch = false;
+
+    for branch in [cond.true_type, cond.false_type] {
+        if branch == TypeId::NEVER {
+            saw_never_branch = true;
+            continue;
+        }
+        let result = evaluate_branch(branch);
+        if result != TypeId::UNDEFINED {
+            results.push(result);
+        }
+    }
+
+    if results.is_empty() {
+        Some(if saw_never_branch {
+            TypeId::NEVER
+        } else {
+            TypeId::UNDEFINED
+        })
+    } else {
+        Some(db.union(results))
+    }
+}
+
 /// Standalone helper to get array member kind.
 /// Extracted from `TypeEvaluator` to be usable by visitors.
 pub(crate) fn get_array_member_kind(name: &str) -> Option<ApparentMemberKind> {
@@ -950,6 +981,10 @@ impl<'a> ArrayKeyVisitor<'a> {
 impl<'a> TypeVisitor for ArrayKeyVisitor<'a> {
     type Output = Option<TypeId>;
 
+    fn visit_conditional(&mut self, cond_id: u32) -> Self::Output {
+        evaluate_conditional_key_branches(self.db, cond_id, |branch| self.evaluate(branch))
+    }
+
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
         let members = self.db.type_list(TypeListId(list_id));
         let mut results = Vec::new();
@@ -1207,6 +1242,10 @@ impl<'a> TupleKeyVisitor<'a> {
 
 impl<'a> TypeVisitor for TupleKeyVisitor<'a> {
     type Output = Option<TypeId>;
+
+    fn visit_conditional(&mut self, cond_id: u32) -> Self::Output {
+        evaluate_conditional_key_branches(self.db, cond_id, |branch| self.evaluate(branch))
+    }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
         let members = self.db.type_list(TypeListId(list_id));

@@ -2483,7 +2483,7 @@ impl<'a> CheckerState<'a> {
     /// obj2["c"];  // OK: Has string index signature
     /// ```
     pub(crate) fn should_report_no_index_signature(
-        &self,
+        &mut self,
         object_type: TypeId,
         index_type: TypeId,
         literal_index: Option<usize>,
@@ -2570,7 +2570,36 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        !self.is_element_indexable(unwrapped_type, wants_string, wants_number)
+        if self.is_element_indexable(unwrapped_type, wants_string, wants_number) {
+            return false;
+        }
+
+        // Deferred aliases/indexed-access wrappers can carry a receiver whose
+        // evaluated shape is indexable, e.g. `[T][T extends any ? 0 : never]`
+        // where `T` is constrained to `readonly unknown[]`.
+        let evaluated_type = self.evaluate_type_with_env(unwrapped_type);
+        if evaluated_type != unwrapped_type {
+            let evaluated_unwrapped =
+                query::unwrap_readonly_for_lookup(self.ctx.types, evaluated_type);
+            if wants_string
+                && let Some(string_index) =
+                    crate::query_boundaries::common::IndexSignatureResolver::new(self.ctx.types)
+                        .get_index_info(evaluated_unwrapped)
+                        .string_index
+                        .as_ref()
+                && !crate::query_boundaries::index_signature::index_key_type_satisfies_index_signature(
+                    self.ctx.types,
+                    index_type,
+                    string_index.key_type,
+                )
+            {
+                return true;
+            }
+
+            return !self.is_element_indexable(evaluated_unwrapped, wants_string, wants_number);
+        }
+
+        true
     }
 
     /// Determine what kind of index key a type represents.
