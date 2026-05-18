@@ -826,8 +826,10 @@ fn direct_source_file_type_alias_lowers_mapped_type_body() {
     let (target_arena, target_binder, types) = parse_bound_source(
         r#"
                 type Clean<T> = T;
-                export type Gaps<L extends unknown[]> =
-                    Clean<{ [K in keyof L]?: L[K] | null }>;
+                type Cast<A, B> = A & B;
+                type LocalList = readonly unknown[];
+                export type Gaps<L extends LocalList> =
+                    Cast<Clean<{ [K in keyof L]?: L[K] | null }>, LocalList>;
             "#,
     );
     let (requester_arena, requester_binder, _) =

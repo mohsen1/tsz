@@ -117,13 +117,11 @@ pub(super) fn is_generic_direct_lowerable(
                         .as_ref()
                         .is_none_or(|args| args.nodes.is_empty());
                 }
-                type_ref.type_arguments.as_ref().is_some_and(|args| {
-                    !args.nodes.is_empty()
-                        && args
-                            .nodes
-                            .iter()
-                            .copied()
-                            .all(|arg| is_generic_direct_lowerable(arena, arg, type_param_names))
+                type_ref.type_arguments.as_ref().is_none_or(|args| {
+                    args.nodes
+                        .iter()
+                        .copied()
+                        .all(|arg| is_generic_direct_lowerable(arena, arg, type_param_names))
                 })
             })
         }
