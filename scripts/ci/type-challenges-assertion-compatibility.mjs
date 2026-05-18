@@ -164,7 +164,12 @@ function hasConcreteCandidateDiagnosticFiles(diagnostics) {
   );
 }
 
-function assertSameFileSet(actual, expected, label) {
+function assertSameFileSet(
+  actual,
+  expected,
+  label,
+  expectedDescription = "compiler candidate diagnostic file lists",
+) {
   const sortedActual = [...actual].sort();
   const sortedExpected = [...expected].sort();
   if (
@@ -172,7 +177,7 @@ function assertSameFileSet(actual, expected, label) {
     sortedActual.some((file, index) => file !== sortedExpected[index])
   ) {
     fail(
-      `${label} does not match compiler candidate diagnostic file lists: expected ${sortedExpected.join(", ") || "<none>"}, actual ${sortedActual.join(", ") || "<none>"}`,
+      `${label} does not match ${expectedDescription}: expected ${sortedExpected.join(", ") || "<none>"}, actual ${sortedActual.join(", ") || "<none>"}`,
     );
   }
 }
@@ -312,6 +317,18 @@ if (cleanSubsetManifest) {
   const cleanSubsetEntries = cleanSubsetManifest.entries;
   if (!Array.isArray(cleanSubsetEntries)) {
     fail("tsc-clean assertion manifest entries must be an array");
+  }
+  const cleanSubsetOutputs = cleanSubsetEntries.map((entry, index) =>
+    validateCandidateOutputPath(
+      entry?.output,
+      `tsc-clean assertion manifest entries[${index}].output`,
+    ),
+  );
+  const duplicateCleanSubsetOutputs = duplicatedValues(cleanSubsetOutputs);
+  if (duplicateCleanSubsetOutputs.length > 0) {
+    fail(
+      `tsc-clean assertion manifest entries contain duplicate outputs: ${duplicateCleanSubsetOutputs.join(", ")}`,
+    );
   }
   const cleanSubsetCounts = cleanSubsetManifest.counts;
   const acceptedAssertions = cleanSubsetCounts.tscAcceptedAssertions;
@@ -482,6 +499,24 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
         `tsc-clean assertion classification ${compiler} candidatesWithoutDiagnostics (${candidatesWithoutDiagnostics}) must be between 0 and totalCandidates (${totalCandidates})`,
       );
     }
+    const candidatesWithDiagnostics =
+      cleanSubsetClassification.compilers?.[compiler]?.candidateDiagnostics
+        ?.candidatesWithDiagnostics;
+    if (!Number.isInteger(candidatesWithDiagnostics)) {
+      fail(
+        `tsc-clean assertion classification ${compiler} candidateDiagnostics.candidatesWithDiagnostics must be an integer`,
+      );
+    }
+    if (candidatesWithDiagnostics < 0 || candidatesWithDiagnostics > totalCandidates) {
+      fail(
+        `tsc-clean assertion classification ${compiler} candidatesWithDiagnostics (${candidatesWithDiagnostics}) must be between 0 and totalCandidates (${totalCandidates})`,
+      );
+    }
+    if (candidatesWithDiagnostics + candidatesWithoutDiagnostics !== totalCandidates) {
+      fail(
+        `tsc-clean assertion classification ${compiler} candidate diagnostic counts (${candidatesWithDiagnostics} + ${candidatesWithoutDiagnostics}) do not match totalCandidates (${totalCandidates})`,
+      );
+    }
   }
   validateComparisonCompilerStatuses(
     cleanSubsetClassification.comparison,
@@ -506,6 +541,32 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
       `tsc-clean assertion classification tsc candidatesWithoutDiagnostics (${cleanTscDiagnosticFree}) must match manifest tscAcceptedAssertions (${acceptedAssertions})`,
     );
   }
+  const cleanTscDiagnosticFreeFiles =
+    cleanTsc.candidateDiagnostics?.filesWithoutDiagnostics;
+  if (!Array.isArray(cleanTscDiagnosticFreeFiles)) {
+    fail(
+      "tsc-clean assertion classification tsc candidateDiagnostics.filesWithoutDiagnostics must be an array",
+    );
+  }
+  const normalizedCleanTscDiagnosticFreeFiles = cleanTscDiagnosticFreeFiles.map(
+    (file, index) =>
+      validateCandidateOutputPath(
+        file,
+        `tsc-clean assertion classification tsc candidateDiagnostics.filesWithoutDiagnostics[${index}]`,
+      ),
+  );
+  const cleanSubsetOutputs = cleanSubsetManifest.entries.map((entry, index) =>
+    validateCandidateOutputPath(
+      entry?.output,
+      `tsc-clean assertion manifest entries[${index}].output`,
+    ),
+  );
+  assertSameFileSet(
+    normalizedCleanTscDiagnosticFreeFiles,
+    cleanSubsetOutputs,
+    "tsc-clean assertion classification tsc candidateDiagnostics.filesWithoutDiagnostics",
+    "tsc-clean assertion manifest entries",
+  );
 }
 const tsc = report.compilers?.tsc || {};
 const tsz = report.compilers?.tsz || {};
@@ -628,6 +689,70 @@ for (const [compiler, result] of [
     if (duplicateCodes.length > 0) {
       fail(
         `assertion classification ${compiler}.diagnostics.byCode contains duplicate codes: ${duplicateCodes.join(", ")}`,
+      );
+    }
+  }
+  if (diagnostics.byFile !== null && diagnostics.byFile !== undefined) {
+    if (!Array.isArray(diagnostics.byFile)) {
+      fail(`assertion classification ${compiler}.diagnostics.byFile must be an array`);
+    }
+    const files = diagnostics.byFile.map((entry, index) => {
+      const file = validateCandidateOutputPath(
+        entry?.key,
+        `assertion classification ${compiler}.diagnostics.byFile[${index}].key`,
+      );
+      if (!Number.isInteger(entry.count) || entry.count < 0) {
+        fail(
+          `assertion classification ${compiler}.diagnostics.byFile[${index}].count must be a non-negative integer`,
+        );
+      }
+      return file;
+    });
+    const duplicateFiles = duplicatedValues(files);
+    if (duplicateFiles.length > 0) {
+      fail(
+        `assertion classification ${compiler}.diagnostics.byFile contains duplicate files: ${duplicateFiles.join(", ")}`,
+      );
+    }
+  }
+  if (diagnostics.bySemanticFamily !== null && diagnostics.bySemanticFamily !== undefined) {
+    if (!Array.isArray(diagnostics.bySemanticFamily)) {
+      fail(`assertion classification ${compiler}.diagnostics.bySemanticFamily must be an array`);
+    }
+    const families = diagnostics.bySemanticFamily.map((entry, index) => {
+      if (typeof entry?.family !== "string" || entry.family.trim() === "") {
+        fail(
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].family must be a non-empty string`,
+        );
+      }
+      if (!Number.isInteger(entry.errorCount) || entry.errorCount < 0) {
+        fail(
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].errorCount must be a non-negative integer`,
+        );
+      }
+      if (!Array.isArray(entry.files)) {
+        fail(
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].files must be an array`,
+        );
+      }
+      const files = entry.files.map((file, fileIndex) =>
+        validateCandidateOutputPath(
+          file,
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].files[${fileIndex}]`,
+        ),
+      );
+      const duplicateFiles = duplicatedValues(files);
+      if (duplicateFiles.length > 0) {
+        fail(
+          `assertion classification ${compiler}.diagnostics.bySemanticFamily[${index}].files contains duplicate files: ${duplicateFiles.join(", ")}`,
+        );
+      }
+      return entry.family;
+    });
+    const duplicateFamilies = duplicatedValues(families);
+    if (duplicateFamilies.length > 0) {
+      fail(
+        `assertion classification ${compiler}.diagnostics.bySemanticFamily contains duplicate families: ${duplicateFamilies.join(", ")}`,
       );
     }
   }
