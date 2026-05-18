@@ -85,6 +85,27 @@ function optionalCount(value, label) {
   return requiredCount(value, label);
 }
 
+function validateSourceMetadata(source, label) {
+  if (source?.repository && source?.ref) {
+    return;
+  }
+  fail(
+    [
+      `manifest sources.${label} is missing source metadata`,
+      `${source?.repository || "<missing repository>"} @ ${source?.ref || "<missing ref>"}`,
+    ].join("\n"),
+  );
+}
+
+function validateManifestSources(manifest) {
+  if (!manifest?.sources || typeof manifest.sources !== "object") {
+    fail("manifest is missing sources");
+  }
+  for (const label of ["templates", "testCases", "solutions"]) {
+    validateSourceMetadata(manifest.sources[label], label);
+  }
+}
+
 function validateCandidateManifest(manifest) {
   const acceptedFixtures = new Set([
     "type-challenges-assertion-candidates",
@@ -209,6 +230,7 @@ function validateCandidateManifest(manifest) {
       output,
     };
   });
+  validateManifestSources(manifest);
 
   return {
     ...manifest,
