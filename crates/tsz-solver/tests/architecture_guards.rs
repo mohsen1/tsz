@@ -232,7 +232,8 @@ fn evaluation_engine_keeps_request_stage_boundary() {
     assert!(
         query_cache_rs
             .contains("use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};")
-            && query_cache_rs.contains("request.cache_key()"),
-        "query cache evaluation entries must derive option-sensitive keys from EvaluationRequest"
+            && query_cache_rs.contains("request.cache_key()")
+            && query_cache_rs.contains("evaluate_request_result(request).into_type_id()"),
+        "query cache evaluation entries must derive option-sensitive keys from EvaluationRequest and unwrap EvaluationResult only at the cache compatibility edge"
     );
 }
