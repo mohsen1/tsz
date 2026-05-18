@@ -6,384 +6,72 @@ import json
 import shlex
 import subprocess
 import sys
+import tomllib
 from collections import Counter
 from pathlib import Path
 from typing import Optional
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+POLICY_PATH = pathlib.Path(__file__).resolve().parent / "arch_guard_policy.toml"
 
-CHECKS = [
-    (
-        "Production code must not branch on conformance fixture identity",
-        ROOT / "crates",
-        re.compile(
-            r"\bTSZ_CONFORMANCE_TEST\b"
-            r"|\bconformance_test_name\b"
-            r"|\btest_path\.contains\s*\("
-            r"|False Positive Suppressions"
-        ),
-        {
-            "exclude_dirs": {"conformance", "tests"},
-            "exclude_test_files": True,
-            "ignore_comment_lines": True,
-        },
-    ),
-    (
-        "Root boundary: no tsz_solver module re-export alias",
-        ROOT / "src",
-        re.compile(r"\bpub\s+use\s+tsz_solver\s+as\s+solver\s*;"),
-        {},
-    ),
-    (
-        "Root boundary: no direct TypeKey internal usage in production code",
-        ROOT / "src",
-        re.compile(r"\btsz_solver::TypeKey\b|\btsz_solver::types::TypeKey\b|\bTypeKey::"),
-        {"exclude_dirs": {"tests"}, "ignore_comment_lines": True},
-    ),
-    (
-        "Checker boundary: direct lookup() outside query boundaries/tests",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"\.lookup\s*\("),
-        {
-            "exclude_dirs": {"query_boundaries", "tests"},
-            "exclude_files": {
-                # These files use .lookup() in tracing::trace! macros for debug output only
-                "crates/tsz-checker/src/types/computation/complex.rs",
-                # Pre-existing: class member lookup in class_checker
-                "crates/tsz-checker/src/classes/class_checker.rs",
-                "crates/tsz-checker/src/classes/class_checker_compat.rs",
-                # Pre-existing: property access lookup
-                "crates/tsz-checker/src/checkers/property_checker.rs",
-                "crates/tsz-checker/src/state/state_checking/property.rs",
-                # Pre-existing: type computation access lookup
-                "crates/tsz-checker/src/types/computation/access.rs",
-                # Pre-existing baseline debt
-                "crates/tsz-checker/src/types/property_access_type/resolve.rs",
-                "crates/tsz-checker/src/types/class_type/core.rs",
-                "crates/tsz-checker/src/types/queries/lib_resolution.rs",
-                "crates/tsz-checker/src/context/cross_file_query.rs",
-            },
-        },
-    ),
-    (
-        "Checker legacy surface must stay removed",
-        ROOT / "crates" / "tsz-checker" / "src",
-        re.compile(
-            r"\bmod\s+types\s*;"
-            r"|\bpub\s+mod\s+types\s*;"
-            r"|\bpub\s+mod\s+arena\s*;"
-            r"|\bpub\s+use\s+arena::TypeArena\b"
-        ),
-        {
-            "exclude_dirs": {"tests", "jsdoc"},
-        },
-    ),
-    (
-        "Checker boundary: direct TypeKey inspection outside query boundaries/tests",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"^\s*(match|if let|if matches!|matches!\().*TypeKey::"),
-        {"exclude_dirs": {"query_boundaries", "tests"}},
-    ),
-    (
-        "Checker boundary: direct TypeKey import/intern usage",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(
-            r"\buse\s+tsz_solver::.*TypeKey"
-            r"|\bintern\(\s*TypeKey::"
-            r"|\bintern\(\s*tsz_solver::TypeKey::"
-            r"|\bTypeKey::"
-        ),
-        {"exclude_dirs": {"tests"}, "ignore_comment_lines": True},
-    ),
-    (
-        "Checker boundary: direct solver internal imports",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"\btsz_solver::types::"),
-        {
-            "exclude_dirs": {"tests"},
-            "exclude_files": {
-                # Pre-existing baseline debt
-                "crates/tsz-checker/src/query_boundaries/class.rs",
-                "crates/tsz-checker/src/query_boundaries/property_access.rs",
-            },
-        },
-    ),
-    (
-        "Checker boundary: ObjectFlags must not be imported (use ObjectShape builder methods)",
-        ROOT / "crates" / "tsz-checker" / "src",
-        re.compile(r"\buse\s+tsz_solver::.*ObjectFlags\b|\bObjectFlags::"),
-        {
-            "exclude_dirs": {"tests"},
-            "ignore_comment_lines": True,
-            # Pre-existing: type_environment uses ObjectFlags for const enum checks
-            # namespace_checker creates enum namespace objects with ENUM_NAMESPACE flag
-            "exclude_files": {
-                "crates/tsz-checker/src/state/type_environment/core.rs",
-                "crates/tsz-checker/src/declarations/namespace_checker.rs",
-                # Pre-existing baseline debt
-                "crates/tsz-checker/src/query_boundaries/common.rs",
-                "crates/tsz-checker/src/types/property_access_augmentation.rs",
-                "crates/tsz-checker/src/types/class_type/core.rs",
-            },
-        },
-    ),
-    (
-        "Checker boundary: direct solver relation queries outside query boundaries/tests",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"\btsz_solver::(is_subtype_of|is_assignable_to)\s*\("),
-        {
-            "exclude_dirs": {"query_boundaries", "tests"},
-            "exclude_files": set(),
-            "ignore_comment_lines": True,
-        },
-    ),
-    (
-        "Checker boundary: direct CallEvaluator usage outside query boundaries/tests",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"\btsz_solver::CallEvaluator\b|\bCallEvaluator::new\s*\("),
-        {"exclude_dirs": {"query_boundaries", "tests"}, "ignore_comment_lines": True},
-    ),
-    (
-        "Checker boundary: direct CompatChecker construction outside query boundaries/tests",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"\bCompatChecker::new\s*\(|\bCompatChecker::with_resolver\s*\("),
-        {"exclude_dirs": {"query_boundaries", "tests"}, "ignore_comment_lines": True},
-    ),
-    (
-        "Checker query boundary: call_checker must not construct CompatChecker directly",
-        ROOT / "crates" / "tsz-checker" / "src" / "query_boundaries",
-        re.compile(r"\bCompatChecker::with_resolver\s*\("),
-        {
-            "exclude_files": {
-                "crates/tsz-checker/src/query_boundaries/assignability.rs",
-            },
-            "ignore_comment_lines": True,
-        },
-    ),
-    (
-        "Checker query boundary: call_checker must not use concrete CallEvaluator<CompatChecker>",
-        ROOT / "crates" / "tsz-checker" / "src" / "query_boundaries",
-        re.compile(r"\bCallEvaluator::<\s*tsz_solver::CompatChecker\s*>::"),
-        {"ignore_comment_lines": True},
-    ),
-    (
-        "Checker boundary: raw interner access",
-        ROOT / "crates" / "tsz-checker",
-        re.compile(r"\.intern\s*\("),
-        {"exclude_dirs": {"tests"}},
-    ),
-    # union2/intersection2 are semantically equivalent to union()/intersection()
-    # — just optimized two-argument versions. They are part of the public solver
-    # TypeDatabase API and safe to use from the checker.
-    # (
-    #     "Checker boundary: deprecated two-arg intersection/union constructors",
-    #     ROOT / "crates" / "tsz-checker",
-    #     re.compile(r"\.intersection2\s*\(|\.union2\s*\("),
-    #     {"exclude_dirs": {"tests"}},
-    # ),
-    (
-        "Code quality: no bare .unwrap() in checker production code (use .expect())",
-        ROOT / "crates" / "tsz-checker" / "src",
-        re.compile(r"\.unwrap\(\)"),
-        {
-            "exclude_dirs": {"tests"},
-            "ignore_comment_lines": True,
-            "exclude_test_files": True,  # Skip *_tests.rs files
-        },
-    ),
-    (
-        "Code quality: no bare .unwrap() in solver production code (use .expect())",
-        ROOT / "crates" / "tsz-solver" / "src",
-        re.compile(r"\.unwrap\(\)"),
-        {
-            "exclude_dirs": {"tests"},
-            "ignore_comment_lines": True,
-            "exclude_test_files": True,
-            # Inline #[cfg(test)] modules at the bottom of these files
-            "exclude_files": {
-                "crates/tsz-solver/src/type_queries/flow.rs",
-                # Inline/adjacent test modules under src/
-                "crates/tsz-solver/src/type_queries/data/tests.rs",
-            },
-        },
-    ),
-    (
-        "Code quality: no bare .unwrap() in binder production code (use .expect())",
-        ROOT / "crates" / "tsz-binder" / "src",
-        re.compile(r"\.unwrap\(\)"),
-        {
-            "exclude_dirs": {"tests"},
-            "ignore_comment_lines": True,
-            "exclude_test_files": True,
-            # state/tests.rs is a #[path = "tests.rs"] test module
-            "exclude_files": {
-                "crates/tsz-binder/src/state/tests.rs",
-            },
-        },
-    ),
-    (
-        "Solver dependency direction freeze",
-        ROOT / "crates" / "tsz-solver",
-        re.compile(r"\btsz_parser::\b|\btsz_checker::\b"),
-        {"exclude_dirs": {"tests"}},
-    ),
-    (
-        "Binder dependency direction freeze",
-        ROOT / "crates" / "tsz-binder",
-        re.compile(r"\btsz_solver::\b"),
-        {"exclude_dirs": {"tests"}, "ignore_comment_lines": True},
-    ),
-    (
-        "Emitter dependency direction freeze",
-        ROOT / "crates" / "tsz-emitter",
-        re.compile(r"\btsz_checker::\b"),
-        {"exclude_dirs": {"tests"}},
-    ),
-    (
-        "Emitter boundary: direct TypeKey import/match",
-        ROOT / "crates" / "tsz-emitter",
-        re.compile(r"\bTypeKey::|\buse\s+tsz_solver::.*TypeKey"),
-        {"exclude_dirs": {"tests"}, "ignore_comment_lines": True},
-    ),
-    (
-        "Emitter boundary: direct lookup() on solver interner",
-        ROOT / "crates" / "tsz-emitter",
-        re.compile(r"\.lookup\s*\("),
-        {
-            "exclude_dirs": {"tests"},
-            "exclude_files": {
-                # Pre-existing baseline debt
-                "crates/tsz-emitter/src/declaration_emitter/helpers/mod.rs",
-                "crates/tsz-emitter/src/declaration_emitter/helpers/type_printing.rs",
-            },
-        },
-    ),
-    (
-        "Non-solver crates must not depend on TypeKey internals",
-        ROOT / "crates",
-        re.compile(r"\buse\s+tsz_solver::.*TypeKey|\bTypeKey::"),
-        {"exclude_dirs": {"tsz-solver", "tests"}, "ignore_comment_lines": True},
-    ),
-    # --- WASM compatibility rules ---
-    # Crates compiled to WASM: all except tsz-cli and conformance.
-    # std::time::Instant panics at runtime on wasm32-unknown-unknown (no clock);
-    # use web_time::Instant which is a drop-in replacement on all platforms.
-    (
-        "WASM compat: std::time::Instant banned in WASM-compiled crates (use web_time::Instant)",
-        ROOT / "crates",
-        re.compile(
-            r"\buse\s+std::time::Instant\b"
-            r"|\buse\s+std::time::\{[^}]*\bInstant\b"
-            r"|\bstd::time::Instant::"
-        ),
-        {
-            "exclude_dirs": {"tsz-cli", "tsz-core", "conformance", "tests"},
-            "ignore_comment_lines": True,
-        },
-    ),
-    # std::time::SystemTime also panics on wasm32-unknown-unknown.
-    (
-        "WASM compat: std::time::SystemTime banned in WASM-compiled crates",
-        ROOT / "crates",
-        re.compile(
-            r"\buse\s+std::time::SystemTime\b"
-            r"|\buse\s+std::time::\{[^}]*\bSystemTime\b"
-            r"|\bstd::time::SystemTime::"
-        ),
-        {
-            "exclude_dirs": {"tsz-cli", "tsz-core", "conformance", "tests"},
-            "ignore_comment_lines": True,
-        },
-    ),
-    (
-        "Non-solver/non-lowering crates must not inspect TypeData internals in production code",
-        ROOT / "crates",
-        re.compile(r"\buse\s+tsz_solver::.*TypeData\b|\bTypeData::"),
-        {
-            "exclude_dirs": {"tsz-solver", "tsz-lowering", "tsz-core", "tests"},
-            "exclude_files": {
-                # query_boundaries is the canonical boundary layer — TypeData
-                # matching here is intentional and architecturally correct.
-                "crates/tsz-checker/src/query_boundaries/state/type_environment.rs",
-                "crates/tsz-checker/src/query_boundaries/class.rs",
-                "crates/tsz-checker/src/query_boundaries/type_rewrite.rs",
-                # Pre-existing baseline debt
-                "crates/tsz-checker/src/types/class_type/core.rs",
-                "crates/tsz-emitter/src/declaration_emitter/helpers/mod.rs",
-                "crates/tsz-emitter/src/declaration_emitter/helpers/type_printing.rs",
-                "crates/tsz-lsp/src/signature_help.rs",
-            },
-            "ignore_comment_lines": True,
-        },
-    ),
-    (
-        "Core boundary: wasm bindings must stay in current wasm surface files",
-        ROOT / "crates" / "tsz-core" / "src",
-        re.compile(r"\bwasm_bindgen\b|\bserde_wasm_bindgen\b|\bJsValue\b"),
-        {
-            "exclude_dirs": {"tests"},
-            "exclude_files": {
-                # Transitional baseline: core lib exports the wasm API today.
-                "crates/tsz-core/src/lib.rs",
-                # Explicit wasm API module surface.
-                "crates/tsz-core/src/api/wasm/code_actions.rs",
-                "crates/tsz-core/src/api/wasm/compiler_options.rs",
-                "crates/tsz-core/src/api/wasm/core_utils.rs",
-                "crates/tsz-core/src/api/wasm/parser.rs",
-                "crates/tsz-core/src/api/wasm/program.rs",
-                "crates/tsz-core/src/api/wasm/program_results.rs",
-                "crates/tsz-core/src/api/wasm/transforms.rs",
-            },
-            "ignore_comment_lines": True,
-        },
-    ),
-    (
-        "LSP boundary: direct lookup() on solver interner",
-        ROOT / "crates" / "tsz-lsp",
-        re.compile(r"\.lookup\s*\("),
-        {"exclude_dirs": {"tests"}, "exclude_files": {
-            # file_id_allocator.lookup() is not a solver interner lookup
-            "crates/tsz-lsp/src/project/core.rs",
-            # Pre-existing baseline debt
-            "crates/tsz-lsp/src/signature_help.rs",
-        }},
-    ),
-    (
-        "Checker test boundary: no direct solver internal type inspection in integration tests",
-        ROOT / "crates" / "tsz-checker" / "tests",
-        re.compile(r"\btsz_solver::types::|\bTypeData::|\buse\s+tsz_solver::TypeData\b"),
-        {"exclude_files": {"crates/tsz-checker/tests/architecture_contract_tests.rs"}},
-    ),
-    (
-        "Checker test boundary: no direct solver internal type inspection in src tests",
-        ROOT / "crates" / "tsz-checker" / "src" / "tests",
-        re.compile(r"\btsz_solver::types::|\bTypeData::|\buse\s+tsz_solver::TypeData\b"),
-        {
-            "exclude_files": {
-                "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
-            },
-            "ignore_comment_lines": True,
-        },
-    ),
-]
 
-MANIFEST_CHECKS = [
-    (
-        "Emitter manifest dependency freeze",
-        ROOT / "crates" / "tsz-emitter" / "Cargo.toml",
-        re.compile(r"^\s*tsz-checker\s*=", re.MULTILINE),
-    ),
-    (
-        "Binder manifest dependency freeze",
-        ROOT / "crates" / "tsz-binder" / "Cargo.toml",
-        re.compile(r"^\s*tsz-solver\s*=", re.MULTILINE),
-    ),
-    (
-        "Checker manifest: legacy type arena feature must stay removed",
-        ROOT / "crates" / "tsz-checker" / "Cargo.toml",
-        re.compile(r"^\s*legacy-type-arena\s*=", re.MULTILINE),
-    ),
-]
+def _build_excludes(entry: dict) -> dict:
+    excludes: dict = {}
+    if entry.get("exclude_dirs") is not None:
+        excludes["exclude_dirs"] = set(entry["exclude_dirs"])
+    if entry.get("exclude_files") is not None:
+        excludes["exclude_files"] = set(entry["exclude_files"])
+    if entry.get("exclude_test_files"):
+        excludes["exclude_test_files"] = True
+    if entry.get("ignore_comment_lines"):
+        excludes["ignore_comment_lines"] = True
+    return excludes
+
+
+def _parse_pattern_checks(data: dict) -> list[tuple[str, pathlib.Path, re.Pattern, dict]]:
+    return [
+        (entry["name"], ROOT / entry["base"], re.compile(entry["pattern"]), _build_excludes(entry))
+        for entry in data.get("pattern_checks", [])
+    ]
+
+
+def _parse_manifest_checks(data: dict) -> list[tuple[str, pathlib.Path, re.Pattern]]:
+    return [
+        (entry["name"], ROOT / entry["file"], re.compile(entry["pattern"], re.MULTILINE))
+        for entry in data.get("manifest_checks", [])
+    ]
+
+
+def _load_pattern_checks(
+    policy_path: pathlib.Path = POLICY_PATH,
+) -> list[tuple[str, pathlib.Path, re.Pattern, dict]]:
+    """Load [[pattern_checks]] entries from the declarative policy TOML."""
+    with policy_path.open("rb") as f:
+        return _parse_pattern_checks(tomllib.load(f))
+
+
+def _load_manifest_checks(
+    policy_path: pathlib.Path = POLICY_PATH,
+) -> list[tuple[str, pathlib.Path, re.Pattern]]:
+    """Load [[manifest_checks]] entries from the declarative policy TOML.
+
+    Patterns are compiled with ``re.MULTILINE`` so ``^`` and ``$`` match
+    at line boundaries within Cargo.toml files.
+    """
+    with policy_path.open("rb") as f:
+        return _parse_manifest_checks(tomllib.load(f))
+
+
+def _load_all_checks(
+    policy_path: pathlib.Path = POLICY_PATH,
+) -> tuple[list[tuple[str, pathlib.Path, re.Pattern, dict]], list[tuple[str, pathlib.Path, re.Pattern]]]:
+    """Parse the policy TOML once and return both check lists."""
+    with policy_path.open("rb") as f:
+        data = tomllib.load(f)
+    return _parse_pattern_checks(data), _parse_manifest_checks(data)
+
+
+CHECKS, MANIFEST_CHECKS = _load_all_checks()
 
 LINE_LIMIT_CHECKS = [
     (
