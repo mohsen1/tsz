@@ -277,6 +277,10 @@ pub enum IRNode {
     /// `var ClassName = /** @class */ (function (_super) { ... }(BaseClass));`
     ES5ClassIIFE {
         name: Cow<'static, str>,
+        /// Optional outer binding name when block-scoped class lowering must
+        /// avoid colliding with an outer declaration while preserving the
+        /// class's own lexical name inside the IIFE.
+        binding_name: Option<Cow<'static, str>>,
         base_class: Option<Box<Self>>,
         super_param: Option<Cow<'static, str>>,
         body: Vec<Self>,
@@ -580,6 +584,9 @@ pub enum IRNode {
         body: Vec<Self>,
         is_exported: bool,
         attach_to_exports: bool,
+        /// CommonJS export property for an exported namespace IIFE. Usually the
+        /// local namespace name, but `export { N as Alias }` folds `Alias`.
+        commonjs_export_name: Option<Cow<'static, str>>,
         /// `SystemJS` export names folded into the namespace IIFE tail:
         /// `N || (exports_1("alias", exports_1("name", N = {})))`.
         system_export_names: Vec<Cow<'static, str>>,

@@ -310,6 +310,9 @@ pub struct Printer<'a> {
     /// Emit `void 0` for missing initializers during recovery.
     pub(crate) emit_missing_initializer_as_void_0: bool,
 
+    /// Function depth whose loop body should reset initializerless lexical bindings.
+    pub(crate) loop_body_missing_initializer_function_depth: Option<u32>,
+
     /// Current declaration list is being printed in a `for` header.
     pub(crate) in_for_initializer: bool,
 
@@ -456,6 +459,10 @@ pub struct Printer<'a> {
     /// When true, the next namespace IIFE tail should fold `exports.Name` into
     /// the closing: `(N || (exports.N = N = {}))` instead of `(N || (N = {}))`.
     pub(crate) pending_cjs_namespace_export_fold: bool,
+
+    /// Export property name to use with `pending_cjs_namespace_export_fold`.
+    /// This differs from the namespace's local name for `export { N as Alias }`.
+    pub(crate) pending_cjs_namespace_export_name: Option<String>,
 
     /// `SystemJS` export names for the next namespace IIFE tail:
     /// `(N || (exports_1("alias", exports_1("name", N = {}))))`.
@@ -829,6 +836,11 @@ pub struct Printer<'a> {
     /// expression, e.g. `(_a = class Foo { m() { return _a; } }, _a.x = 1, _a)`.
     pub(crate) scoped_class_expression_self_alias: Option<(Arc<str>, Arc<str>)>,
 
+    /// Named-evaluation context for the next TC39-decorated anonymous class
+    /// expression. The boolean is true when the name is a runtime expression
+    /// such as a computed property temp, not a string literal.
+    pub(crate) pending_tc39_class_expression_name: Option<(String, bool)>,
+
     pub(crate) tagged_template_var_map: FxHashMap<NodeIndex, String>,
 }
 
@@ -1072,6 +1084,7 @@ impl<'a> Printer<'a> {
             transforms: TransformContext::new(), // Empty by default, can be set later
             emit_plan,
             emit_missing_initializer_as_void_0: false,
+            loop_body_missing_initializer_function_depth: None,
             in_for_initializer: false,
             source_text: None,
             jsx_pragmas: crate::jsx_pragmas::JsxPragmaFacts::default(),
@@ -1116,6 +1129,7 @@ impl<'a> Printer<'a> {
             metadata_class_type_params: None,
             pending_block_comment_space: false,
             pending_cjs_namespace_export_fold: false,
+            pending_cjs_namespace_export_name: None,
             pending_system_namespace_export_fold: None,
             suppress_default_export_merge_iife: false,
             pending_commonjs_class_export_name: None,
@@ -1200,6 +1214,7 @@ impl<'a> Printer<'a> {
             scoped_static_super_index_alias: None,
             scoped_static_super_index_value_access: false,
             scoped_class_expression_self_alias: None,
+            pending_tc39_class_expression_name: None,
             tagged_template_var_map: FxHashMap::default(),
         }
     }

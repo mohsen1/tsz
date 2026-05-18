@@ -12,9 +12,12 @@
 //! 4. Different `any_propagation_mode` values must produce distinct keys.
 
 use super::*;
+use crate::caches::db::QueryDatabase;
 use crate::caches::query_cache::{
-    assignability_cache_config_from_legacy_flags, subtype_cache_config_from_legacy_flags,
+    QueryCache, assignability_cache_config_from_legacy_flags,
+    subtype_cache_config_from_legacy_flags,
 };
+use crate::intern::TypeInterner;
 use crate::relations::relation_queries::RelationPolicy;
 use crate::relations::subtype::AnyPropagationMode;
 use crate::types::{
@@ -305,6 +308,38 @@ fn legacy_assignability_cache_bridge_routes_through_relation_policy() {
             .flags
             .contains(RelationFlags::STRICT_ANY_PROPAGATION),
         "legacy assignability cache bridge must not infer strict-any from strict function types",
+    );
+}
+
+#[test]
+fn query_cache_relation_misses_insert_policy_shaped_keys() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let source = interner.literal_string("policy-key-source");
+    let flags =
+        RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES | RelationCacheKey::FLAG_NO_ERASE_GENERICS;
+    let config = RelationPolicy::from_flags(flags).cache_config();
+
+    assert!(db.is_subtype_of_with_flags(source, TypeId::STRING, flags));
+    assert_eq!(
+        db.lookup_subtype_cache(RelationCacheKey::for_subtype(
+            source,
+            TypeId::STRING,
+            config,
+        )),
+        Some(true),
+        "subtype miss path must insert under the policy-derived cache key",
+    );
+
+    assert!(db.is_assignable_to_with_flags(source, TypeId::STRING, flags));
+    assert_eq!(
+        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
+            source,
+            TypeId::STRING,
+            config,
+        )),
+        Some(true),
+        "assignability miss path must insert under the policy-derived cache key",
     );
 }
 
