@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { REQUIRED_COMPATIBILITY_FIELDS } from "../bench/project-rows.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -97,6 +98,15 @@ function readJsonl(file) {
     .split(/\r?\n/)
     .filter(Boolean)
     .map((line) => JSON.parse(line));
+}
+
+function assertRequiredCompatibilityFields(row) {
+  for (const field of REQUIRED_COMPATIBILITY_FIELDS) {
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(row, field),
+      `project compatibility row is missing ${field}`,
+    );
+  }
 }
 
 withTempDir((dir) => {
@@ -461,6 +471,7 @@ withTempDir((dir) => {
   const rows = readJsonl(path.join(fixtureRoot, "project-compatibility.jsonl"));
   const cleanRow = rows.find((row) => row.name === "type-challenges-assertions-tsc-clean");
   assert.ok(cleanRow, "expected tsc-clean assertion project row");
+  assertRequiredCompatibilityFields(cleanRow);
   assert.equal(cleanRow.state, "yellow");
   assert.equal(cleanRow.exit_class, "fixture invalid");
   assert.equal(cleanRow.phase, "fixture setup");
