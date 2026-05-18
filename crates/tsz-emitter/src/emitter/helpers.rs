@@ -227,6 +227,17 @@ impl<'a> Printer<'a> {
         while static_end > 0 && matches!(bytes[static_end - 1], b' ' | b'\t') {
             static_end -= 1;
         }
+        if static_end >= "async".len()
+            && text.get(static_end - "async".len()..static_end) == Some("async")
+            && static_end
+                .checked_sub("async".len() + 1)
+                .is_none_or(|idx| !is_identifier_continue(bytes[idx]))
+        {
+            static_end -= "async".len();
+            while static_end > 0 && matches!(bytes[static_end - 1], b' ' | b'\t') {
+                static_end -= 1;
+            }
+        }
         let static_start = static_end.saturating_sub("static".len());
         if static_start >= static_end
             || text.get(static_start..static_end) != Some("static")

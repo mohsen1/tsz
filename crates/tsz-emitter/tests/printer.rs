@@ -2101,6 +2101,30 @@ fn invalid_namespace_static_modifiers_are_erased_for_es5() {
 }
 
 #[test]
+fn invalid_namespace_static_async_function_modifier_is_preserved_before_lowering() {
+    let source = r#"namespace N {
+    static async function staticAsync() { }
+    static async function* staticAsyncGen() { }
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("static function staticAsync()"),
+        "Invalid static modifier should be preserved on lowered async namespace functions.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static function staticAsyncGen()"),
+        "Invalid static modifier should be preserved on lowered async generator namespace functions.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_cjs_exported_namespace_reopen_declares_var_once_es5() {
     let source = r#"export namespace N {
     export class A {}
