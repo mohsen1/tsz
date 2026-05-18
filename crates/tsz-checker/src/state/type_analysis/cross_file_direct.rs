@@ -1137,6 +1137,75 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn source_file_type_node_generic_references_resolve_to_types(
+        &self,
+        arena: &NodeArena,
+        delegate_binder: &BinderState,
+        root: NodeIndex,
+        type_param_names: &[String],
+    ) -> bool {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(type_ref) = arena.get_type_ref(node)
+                && type_ref
+                    .type_arguments
+                    .as_ref()
+                    .is_some_and(|args| !args.nodes.is_empty())
+                && let Some(type_name) = Self::source_file_type_name_text(arena, type_ref.type_name)
+                && !type_param_names.iter().any(|param| param == &type_name)
+                && !self.source_file_generic_reference_name_resolves_to_type(
+                    delegate_binder,
+                    arena,
+                    &type_name,
+                )
+            {
+                return false;
+            }
+            stack.extend(arena.get_children(idx));
+        }
+        true
+    }
+
+    fn source_file_generic_reference_name_resolves_to_type(
+        &self,
+        delegate_binder: &BinderState,
+        arena: &NodeArena,
+        type_name: &str,
+    ) -> bool {
+        let local_type =
+            self.source_file_local_name_def_id_for_lowering(delegate_binder, arena, type_name);
+        if delegate_binder.file_locals.get(type_name).is_some() {
+            return local_type.is_some();
+        }
+
+        local_type.is_some()
+            || (!self.ctx.file_local_type_shadow_for_lib_name(type_name)
+                && self
+                    .resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+                    .is_some())
+            || self
+                .resolve_entity_name_text_to_def_id_for_lowering(type_name)
+                .is_some()
+    }
+
+    fn source_file_type_name_text(arena: &NodeArena, node_idx: NodeIndex) -> Option<String> {
+        let node = arena.get(node_idx)?;
+        if let Some(ident) = arena.get_identifier(node) {
+            return Some(ident.escaped_text.to_string());
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qualified = arena.get_qualified_name(node)?;
+            let left = Self::source_file_type_name_text(arena, qualified.left)?;
+            let right = Self::source_file_type_name_text(arena, qualified.right)?;
+            return Some(format!("{left}.{right}"));
+        }
+        None
+    }
+
     fn source_file_interface_declarations_are_direct_lowerable_with_seen<'b>(
         declarations: &[(NodeIndex, &'b NodeArena)],
         delegate_binder: &BinderState,
@@ -1414,6 +1483,11 @@ impl<'a> CheckerState<'a> {
             symbol_arena,
             type_alias.type_node,
             &name,
+        ) || !self.source_file_type_node_generic_references_resolve_to_types(
+            symbol_arena,
+            delegate_binder,
+            type_alias.type_node,
+            &type_param_names,
         ) {
             record(DirectSourceFileTypeAliasLoweringOutcome::TypeQueryOrSelfReference);
             return None;
@@ -1430,6 +1504,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         if common::contains_error_type_in_args(self.ctx.types, alias_type) {
+            record(DirectSourceFileTypeAliasLoweringOutcome::UnknownOrError);
+            return None;
+        }
+        if crate::query_boundaries::spread::contains_unresolved_application(
+            self.ctx.types,
+            alias_type,
+        ) {
             record(DirectSourceFileTypeAliasLoweringOutcome::UnknownOrError);
             return None;
         }

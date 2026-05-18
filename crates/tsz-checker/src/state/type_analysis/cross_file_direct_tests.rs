@@ -729,6 +729,54 @@ fn direct_source_file_type_alias_lowers_alias_applications() {
 }
 
 #[test]
+fn direct_source_file_type_alias_rejects_unresolved_alias_applications() {
+    let (target_arena, target_binder, types) = parse_bound_source(
+        r#"
+                export type Bad<T> = Missing<T>;
+                const Value = 1;
+                export type FromValue<T> = Value<T>;
+            "#,
+    );
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import { Bad } from './target';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+
+    let bad_sym = target_binder.file_locals.get("Bad").expect("Bad symbol");
+    assert!(
+        state
+            .direct_source_file_type_alias_result(bad_sym, Some(1), true)
+            .is_none(),
+        "unresolved generic alias applications need the child-checker path",
+    );
+
+    let from_value_sym = target_binder
+        .file_locals
+        .get("FromValue")
+        .expect("FromValue symbol");
+    assert!(
+        state
+            .direct_source_file_type_alias_result(from_value_sym, Some(1), true)
+            .is_none(),
+        "value-only generic-looking references need the child-checker path",
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_indexed_type_literal_body() {
     let (target_arena, target_binder, types) = parse_bound_source(
         r#"
