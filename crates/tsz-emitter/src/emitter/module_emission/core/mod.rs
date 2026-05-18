@@ -1976,6 +1976,117 @@ impl<'a> Printer<'a> {
         false
     }
 
+    pub(in crate::emitter) fn file_should_auto_detect_commonjs(
+        &self,
+        statements: &NodeList,
+    ) -> bool {
+        if self.ctx.options.module_detection_force {
+            return true;
+        }
+        if self.jsx_automatic_runtime_makes_module() {
+            return true;
+        }
+        if self.ctx.options.resolved_node_module_to_esm {
+            return true;
+        }
+        for &stmt_idx in &statements.nodes {
+            let Some(node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::IMPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
+                {
+                    return true;
+                }
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                    if !self.export_declaration_is_namespace_import_alias(node)
+                        && !self.export_declaration_is_empty_recovery(node)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                    if let Some(import_data) = self.arena.get_import_decl(node) {
+                        if import_data.module_specifier.is_none() {
+                            return true;
+                        }
+                        if let Some(spec_node) = self.arena.get(import_data.module_specifier)
+                            && spec_node.kind == SyntaxKind::StringLiteral as u16
+                        {
+                            return true;
+                        }
+                    }
+                }
+                _ => {
+                    if self.statement_has_export_modifier(node) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn export_declaration_is_namespace_import_alias(&self, node: &Node) -> bool {
+        let Some(export) = self.arena.get_export_decl(node) else {
+            return false;
+        };
+        let Some(clause_node) = self.arena.get(export.export_clause) else {
+            return false;
+        };
+        if clause_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return false;
+        }
+        let Some(import_data) = self.arena.get_import_decl(clause_node) else {
+            return false;
+        };
+        self.arena
+            .get(import_data.module_specifier)
+            .is_some_and(|spec_node| {
+                !spec_node.is_string_literal()
+                    && spec_node.kind != syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+            })
+    }
+
+    pub(in crate::emitter) fn file_contains_namespace_export_import_alias(
+        &self,
+        statements: &NodeList,
+    ) -> bool {
+        statements.nodes.iter().any(|&stmt_idx| {
+            let Some(node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                return self.export_declaration_is_namespace_import_alias(node);
+            }
+            if node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                return false;
+            }
+            let Some(import_data) = self.arena.get_import_decl(node) else {
+                return false;
+            };
+            if !self
+                .arena
+                .has_modifier(&import_data.modifiers, SyntaxKind::ExportKeyword)
+            {
+                return false;
+            }
+            self.arena
+                .get(import_data.module_specifier)
+                .is_some_and(|spec_node| {
+                    !spec_node.is_string_literal()
+                        && spec_node.kind != syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                })
+        })
+    }
+
+    fn export_declaration_is_empty_recovery(&self, node: &Node) -> bool {
+        self.arena.get_export_decl(node).is_some_and(|export| {
+            export.export_clause.is_none() && export.module_specifier.is_none()
+        })
+    }
+
     fn jsx_automatic_runtime_makes_module(&self) -> bool {
         if self.ctx.options.module_detection_legacy {
             return false;

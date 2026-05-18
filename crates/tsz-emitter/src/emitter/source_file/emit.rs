@@ -1,9 +1,9 @@
 use super::super::Printer;
 use super::super::core::JsxEmit;
 use tsz_common::common::{ModuleKind, ScriptTarget};
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
@@ -24,7 +24,7 @@ impl<'a> Printer<'a> {
         // Do NOT override explicit module targets like ES2015/ESNext.
         if self.ctx.auto_detect_module
             && matches!(self.ctx.options.module, ModuleKind::None)
-            && self.file_is_module(&source.statements)
+            && self.file_should_auto_detect_commonjs(&source.statements)
         {
             self.ctx.options.module = ModuleKind::CommonJS;
         }
@@ -466,10 +466,15 @@ impl<'a> Printer<'a> {
                 self.ctx.original_module_kind,
                 Some(ModuleKind::AMD) | Some(ModuleKind::UMD)
             );
+        let preserves_es_namespace_import_export =
+            (matches!(self.ctx.options.module, ModuleKind::None) || is_es_module_output)
+                && is_file_module
+                && self.file_contains_namespace_export_import_alias(&source.statements);
         let needs_use_strict_always = self.ctx.options.always_strict
             && !has_module_wrapper_stmt
             && self.ctx.original_module_kind.is_none()
             && !(is_es_module_output && is_file_module)
+            && !preserves_es_namespace_import_export
             && !jsx_will_add_esm_imports;
         // moduleDetection=legacy: a non-module file under module=System still
         // emits a top-level "use strict" because System modules are strict.
@@ -494,6 +499,7 @@ impl<'a> Printer<'a> {
             && (matches!(self.ctx.options.module, ModuleKind::None) || is_es_module_output)
             && self.ctx.original_module_kind.is_none()
             && !has_module_wrapper_stmt
+            && !preserves_es_namespace_import_export
             && !jsx_will_add_esm_imports;
 
         // Issue #3516: when the `using`/`await using` downlevel transform
@@ -509,9 +515,14 @@ impl<'a> Printer<'a> {
         let will_emit_runtime_helpers = !self.ctx.options.no_emit_helpers
             && self.transforms.helpers_populated()
             && self.transforms.helpers().any_needed();
+        let suppress_recovered_declare_export_import_strict = self
+            .source_has_top_level_declare_modifier_artifact(&source.statements)
+            && self.file_contains_namespace_export_import_alias(&source.statements)
+            || self.source_has_top_level_declare_export_import_alias(&source.statements);
 
         let should_emit_use_strict = !source_has_use_strict
             && !self.ctx.options.suppress_use_strict
+            && !suppress_recovered_declare_export_import_strict
             && (needs_use_strict_cjs
                 || needs_use_strict_amd_umd
                 || needs_use_strict_inside_wrapper
@@ -2257,6 +2268,48 @@ impl<'a> Printer<'a> {
 
         // Exit root scope for block-scoped variable tracking
         self.ctx.block_scope_state.exit_scope();
+    }
+
+    fn source_has_top_level_declare_modifier_artifact(&self, statements: &NodeList) -> bool {
+        statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                return false;
+            };
+            self.arena
+                .get(expr_stmt.expression)
+                .and_then(|expr| self.arena.get_identifier(expr))
+                .is_some_and(|ident| ident.escaped_text == "declare")
+                && self.is_declare_modifier_artifact(stmt_node)
+        })
+    }
+
+    fn source_has_top_level_declare_export_import_alias(&self, statements: &NodeList) -> bool {
+        statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
+                return false;
+            };
+            if !self
+                .arena
+                .has_modifier(&import_decl.modifiers, SyntaxKind::DeclareKeyword)
+                || !self
+                    .arena
+                    .has_modifier(&import_decl.modifiers, SyntaxKind::ExportKeyword)
+            {
+                return false;
+            }
+            self.arena
+                .get(import_decl.module_specifier)
+                .is_some_and(|spec_node| {
+                    !spec_node.is_string_literal()
+                        && spec_node.kind != syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                })
+        })
     }
 }
 

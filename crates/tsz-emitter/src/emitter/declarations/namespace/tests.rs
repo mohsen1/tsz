@@ -339,6 +339,31 @@ fn namespace_iife_param_renamed_for_import_equals_conflict() {
     );
 }
 
+#[test]
+fn namespace_iife_param_reuses_name_for_exported_import_alias() {
+    let source = "namespace Z.M {\n  export function bar() { return ''; }\n}\nnamespace A.M {\n  export import M = Z.M;\n  export function bar() {}\n  M.bar();\n}";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains("(function (M)"),
+        "Exported namespace import aliases become namespace properties and should not rename the IIFE parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("M.M = Z.M;"),
+        "Exported namespace import alias should still emit as a namespace property assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("M.M.bar();"),
+        "Uses should qualify through the namespace property assignment.\nOutput:\n{output}"
+    );
+}
+
 /// When a dotted namespace `Y.Y` collides at every level (outer renamed to
 /// `Y_1`, inner to `Y_2` because the body declares `enum Y`), the inner
 /// IIFE's argument expression must reference the outer's renamed binding,
