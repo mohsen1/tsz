@@ -3,6 +3,8 @@ import pathlib
 import re
 import argparse
 import json
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -1219,6 +1221,52 @@ def extract_project_fixture_source_case_names(text: str) -> Optional[list[str]]:
     return names
 
 
+def emitted_project_fixture_sources(
+    fixture_path: pathlib.Path,
+    row_name: str,
+) -> tuple[list[tuple[str, str, str]], Optional[str]]:
+    """Run `tsz_project_fixture_sources` and validate emitted metadata lines."""
+    command = (
+        "set -euo pipefail; "
+        f"source {shlex.quote(str(fixture_path))}; "
+        f"tsz_project_fixture_sources {shlex.quote(row_name)}"
+    )
+    try:
+        result = subprocess.run(
+            ["bash", "-c", command],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return [], f"could not run fixture source metadata for {row_name}: {exc}"
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        suffix = f": {detail}" if detail else ""
+        return [], f"could not run fixture source metadata for {row_name}{suffix}"
+
+    sources: list[tuple[str, str, str]] = []
+    for line_number, raw_line in enumerate(result.stdout.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        fields = [field.strip() for field in line.split("|")]
+        if len(fields) != 3 or any(field == "" for field in fields):
+            return (
+                [],
+                f"malformed fixture source metadata for {row_name} line {line_number}: {line}",
+            )
+        sources.append((fields[0], fields[1], fields[2]))
+
+    if not sources:
+        return [], f"empty fixture source metadata for {row_name}"
+
+    return sources, None
+
+
 def scan_project_fixture_sources(
     row_path: pathlib.Path,
     fixture_path: pathlib.Path,
@@ -1264,6 +1312,10 @@ def scan_project_fixture_sources(
     for name in expected_rows:
         if name not in source_set:
             hits.append(f"{fixture_rel}:0 missing fixture source metadata for {name}")
+            continue
+        _, error = emitted_project_fixture_sources(fixture_path, name)
+        if error is not None:
+            hits.append(f"{fixture_rel}:0 {error}")
 
     for name in sorted(source_set - expected_set):
         hits.append(f"{fixture_rel}:0 stale fixture source metadata for {name}")

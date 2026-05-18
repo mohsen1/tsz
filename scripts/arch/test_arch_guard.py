@@ -1569,6 +1569,51 @@ tsz_project_fixture_sources() {
         self.assertEqual(len(hits), 1)
         self.assertIn("duplicate fixture source metadata for utility-types-project", hits[0])
 
+    def test_empty_source_metadata_case_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      ;;
+  esac
+}
+"""
+        hits = self._write_and_scan(rows, fixtures)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("empty fixture source metadata for utility-types-project", hits[0])
+
+    def test_malformed_source_metadata_line_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-project"];
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|repo\\n'
+      ;;
+    type-challenges-project)
+      printf 'type-challenges|repo|\\n'
+      ;;
+  esac
+}
+"""
+        hits = self._write_and_scan(rows, fixtures)
+        self.assertEqual(len(hits), 2)
+        self.assertTrue(
+            any("malformed fixture source metadata for utility-types-project" in hit for hit in hits),
+            hits,
+        )
+        self.assertTrue(
+            any("malformed fixture source metadata for type-challenges-project" in hit for hit in hits),
+            hits,
+        )
+
     def test_check_is_registered(self):
         names = [entry[0] for entry in self.arch_guard.PROJECT_FIXTURE_SOURCE_CHECKS]
         self.assertTrue(
