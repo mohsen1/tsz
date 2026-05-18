@@ -1400,50 +1400,6 @@ pub(crate) fn homomorphic_mapped_source(db: &dyn TypeDatabase, type_id: TypeId) 
     tsz_solver::type_queries::homomorphic_mapped_source(db, type_id)
 }
 
-/// Return an instantiated homomorphic mapped target that projects over `source`.
-///
-/// This preserves deferred targets such as `{ [P in keyof S]?: S[P] }` through
-/// checker-side assignability preparation so the solver relation can decide the
-/// mapped comparison structurally.
-pub(crate) fn homomorphic_mapped_projection_target<R: TypeResolver>(
-    db: &dyn QueryDatabase,
-    resolver: &R,
-    _source: TypeId,
-    target: TypeId,
-) -> Option<TypeId> {
-    let candidate = if mapped_type_info(db.as_type_database(), target).is_some() {
-        target
-    } else if let Some(app) = type_application(db.as_type_database(), target) {
-        let def_id = lazy_def_id(db.as_type_database(), app.base)?;
-        let type_params = resolver.get_lazy_type_params(def_id)?;
-        if type_params.is_empty() {
-            return None;
-        }
-        let body = resolver.resolve_lazy(def_id, db.as_type_database())?;
-        let substitution =
-            TypeSubstitution::from_args(db.as_type_database(), &type_params, &app.args);
-        instantiate_type(db, body, &substitution)
-    } else {
-        return None;
-    };
-
-    let mapped = mapped_type_info(db.as_type_database(), candidate)?;
-    if mapped.name_type.is_some()
-        || mapped.optional_modifier == Some(tsz_solver::MappedModifier::Remove)
-    {
-        return None;
-    }
-
-    let mapped_source = keyof_inner_type(db.as_type_database(), mapped.constraint)?;
-    let (template_obj, template_idx) = index_access_parts(db.as_type_database(), mapped.template)?;
-    let idx_param = type_param_info(db.as_type_database(), template_idx)?;
-    if idx_param.name == mapped.type_param.name && template_obj == mapped_source {
-        Some(candidate)
-    } else {
-        None
-    }
-}
-
 pub(crate) fn map_compound_members_if_changed(
     db: &dyn TypeDatabase,
     type_id: TypeId,

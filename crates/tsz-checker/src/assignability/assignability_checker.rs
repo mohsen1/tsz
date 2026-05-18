@@ -2014,14 +2014,14 @@ impl<'a> CheckerState<'a> {
         let raw_source = self.substitute_this_type_if_needed(source);
         let raw_target = self.substitute_this_type_if_needed(target);
         let source = self.evaluate_type_for_assignability(raw_source);
-        let target = crate::query_boundaries::common::homomorphic_mapped_projection_target(
+        let target = crate::query_boundaries::assignability::homomorphic_mapped_projection_target(
             self.ctx.types,
             &self.ctx,
             raw_source,
             raw_target,
         )
         .or_else(|| {
-            crate::query_boundaries::common::homomorphic_mapped_projection_target(
+            crate::query_boundaries::assignability::homomorphic_mapped_projection_target(
                 self.ctx.types,
                 &self.ctx,
                 source,
