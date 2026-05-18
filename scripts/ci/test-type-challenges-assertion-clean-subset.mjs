@@ -359,6 +359,57 @@ withTempDir((dir) => {
   const subsetManifestPath = path.join(outputDir, "type-challenges-assertions-tsc-clean-manifest.json");
 
   writeFile(path.join(candidateDir, "utils", "index.d.ts"), "export {};\n");
+  writeJson(candidateManifestPath, {
+    fixture: "type-challenges-assertion-candidates",
+    sources: {},
+    counts: { generatedAssertions: 2 },
+    entries: [
+      { id: "14", output: "assertions/14-easy-first.ts" },
+      { id: "14", output: "assertions/14-easy-second.ts" },
+    ],
+  });
+  writeJson(classificationPath, {
+    fixture: "type-challenges-assertion-classification",
+    compilers: {
+      tsc: {
+        status: "pass",
+        candidateDiagnostics: {
+          filesWithoutDiagnostics: [
+            "assertions/14-easy-first.ts",
+            "assertions/14-easy-second.ts",
+          ],
+          filesWithDiagnostics: [],
+        },
+      },
+      tsz: { status: "pass" },
+    },
+    comparison: { status: "both-pass" },
+  });
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, candidateDir, candidateManifestPath, classificationPath, outputDir, subsetManifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /assertion candidate manifest reported duplicate candidate ids:[\s\S]*14/,
+  );
+  assert.equal(fs.existsSync(subsetManifestPath), false);
+});
+
+withTempDir((dir) => {
+  const candidateDir = path.join(dir, "candidates");
+  const outputDir = path.join(dir, "clean");
+  const candidateManifestPath = path.join(candidateDir, "type-challenges-assertions-manifest.json");
+  const classificationPath = path.join(candidateDir, "type-challenges-assertions-classification.json");
+  const subsetManifestPath = path.join(outputDir, "type-challenges-assertions-tsc-clean-manifest.json");
+
+  writeFile(path.join(candidateDir, "utils", "index.d.ts"), "export {};\n");
   writeFile(path.join(candidateDir, "assertions", "14-easy-first.ts"), "export {};\n");
   writeJson(candidateManifestPath, {
     fixture: "type-challenges-assertion-candidates",
