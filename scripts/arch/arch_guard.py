@@ -654,9 +654,30 @@ PROJECT_FIXTURE_SOURCE_CHECKS = [
     ),
 ]
 
+PROJECT_INCLUSION_POLICY_CHECKS = [
+    (
+        "Project corpus inclusion: row manifest must match compile guard and benchmark rows (Track 1)",
+        ROOT / "scripts" / "bench" / "project-rows.mjs",
+        ROOT / "scripts" / "ci" / "project-compile-guard.sh",
+        ROOT / "scripts" / "bench" / "bench-vs-tsgo.sh",
+    ),
+]
+
 GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE = {
     "vite-vanilla-ts-app",
     "nextjs-fresh-app",
+}
+
+COMPILE_GUARD_ONLY_PROJECT_ROWS = {
+    "type-challenges-project",
+    "type-challenges-solutions-project",
+    "type-challenges-assertion-candidates",
+    "type-challenges-assertions-tsc-clean",
+}
+
+BENCHMARK_ONLY_PROJECT_ROWS = {
+    "nextjs",
+    "large-ts-repo",
 }
 
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
@@ -1230,6 +1251,70 @@ def scan_project_fixture_sources(
     duplicates = sorted({name for name in source_cases if source_cases.count(name) > 1})
     for name in duplicates:
         hits.append(f"{fixture_rel}:0 duplicate fixture source metadata for {name}")
+
+    return hits
+
+
+def extract_project_compile_guard_rows(text: str) -> list[str]:
+    """Extract row names routed through `should_check_project`."""
+    return re.findall(r'\bshould_check_project\s+"([^"]+)"', text)
+
+
+def extract_project_benchmark_rows(text: str) -> list[str]:
+    """Extract project row names registered in the benchmark runner."""
+    return re.findall(r'\brun_isolated\s+"([^"]+)"\s+run_[A-Za-z0-9_]+_benchmarks', text)
+
+
+def scan_project_inclusion_policy(
+    row_path: pathlib.Path,
+    compile_guard_path: pathlib.Path,
+    bench_path: pathlib.Path,
+) -> list[str]:
+    """Ensure project row inventories match the shell inclusion policies."""
+    hits: list[str] = []
+    row_rel = relative_path(row_path)
+    compile_rel = relative_path(compile_guard_path)
+    bench_rel = relative_path(bench_path)
+
+    if not row_path.exists():
+        return [f"{row_rel}:0 project row manifest is missing"]
+    if not compile_guard_path.exists():
+        return [f"{compile_rel}:0 project compile guard is missing"]
+    if not bench_path.exists():
+        return [f"{bench_rel}:0 benchmark runner is missing"]
+
+    row_text = row_path.read_text(encoding="utf-8", errors="ignore")
+    required = extract_js_array_strings(row_text, "REQUIRED_PROJECT_ROWS")
+    canary = extract_js_array_strings(row_text, "COMPILE_CANARY_PROJECT_ROWS")
+    if required is None:
+        hits.append(f"{row_rel}:0 missing REQUIRED_PROJECT_ROWS array")
+        required = []
+    if canary is None:
+        hits.append(f"{row_rel}:0 missing COMPILE_CANARY_PROJECT_ROWS array")
+        canary = []
+
+    manifest_rows = sorted(set(required) | set(canary))
+
+    compile_text = compile_guard_path.read_text(encoding="utf-8", errors="ignore")
+    compile_rows = extract_project_compile_guard_rows(compile_text)
+    compile_set = set(compile_rows)
+    manifest_set = set(manifest_rows)
+    expected_compile_rows = sorted(set(manifest_rows) - BENCHMARK_ONLY_PROJECT_ROWS)
+    expected_compile_set = set(expected_compile_rows)
+    for name in expected_compile_rows:
+        if name not in compile_set:
+            hits.append(f"{compile_rel}:0 missing project compile guard inclusion for {name}")
+    for name in sorted(compile_set - expected_compile_set):
+        hits.append(f"{compile_rel}:0 stale project compile guard inclusion for {name}")
+
+    bench_text = bench_path.read_text(encoding="utf-8", errors="ignore")
+    bench_rows = extract_project_benchmark_rows(bench_text)
+    bench_set = set(bench_rows)
+    expected_bench_rows = sorted(manifest_set - COMPILE_GUARD_ONLY_PROJECT_ROWS)
+    expected_bench_set = set(expected_bench_rows)
+    for name in expected_bench_rows:
+        if name not in bench_set:
+            hits.append(f"{bench_rel}:0 missing project benchmark inclusion for {name}")
 
     return hits
 
@@ -1847,6 +1932,12 @@ def main() -> int:
 
     for name, row_path, fixture_path in PROJECT_FIXTURE_SOURCE_CHECKS:
         hits = scan_project_fixture_sources(row_path, fixture_path)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, row_path, compile_guard_path, bench_path in PROJECT_INCLUSION_POLICY_CHECKS:
+        hits = scan_project_inclusion_policy(row_path, compile_guard_path, bench_path)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))

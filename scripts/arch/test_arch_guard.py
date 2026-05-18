@@ -1582,6 +1582,123 @@ tsz_project_fixture_sources() {
             self.assertEqual(hits, [], f"{name}: {hits[:5]}")
 
 
+class ArchGuardProjectInclusionPolicyTests(unittest.TestCase):
+    """Cover Track 1 project row inclusion-policy drift checks."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _write_and_scan(self, rows_body: str, compile_body: str, bench_body: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            row_path = root / "project-rows.mjs"
+            compile_path = root / "project-compile-guard.sh"
+            bench_path = root / "bench-vs-tsgo.sh"
+            row_path.write_text(rows_body, encoding="utf-8")
+            compile_path.write_text(compile_body, encoding="utf-8")
+            bench_path.write_text(bench_body, encoding="utf-8")
+            return self.arch_guard.scan_project_inclusion_policy(
+                row_path,
+                compile_path,
+                bench_path,
+            )
+
+    def test_matching_compile_and_benchmark_inclusions_pass(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project", "vite-vanilla-ts-app"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-assertion-candidates"];
+"""
+        compile_guard = """
+if should_check_project "utility-types-project"; then :; fi
+if should_check_project "vite-vanilla-ts-app"; then :; fi
+if should_check_project "type-challenges-assertion-candidates"; then :; fi
+"""
+        bench = """
+run_isolated "utility-types-project" run_utility_types_project_benchmarks
+run_isolated "vite-vanilla-ts-app" run_vite_app_project_benchmarks
+"""
+        self.assertEqual(self._write_and_scan(rows, compile_guard, bench), [])
+
+    def test_missing_compile_guard_inclusion_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["zod-project"];
+"""
+        compile_guard = 'if should_check_project "utility-types-project"; then :; fi'
+        bench = """
+run_isolated "utility-types-project" run_utility_types_project_benchmarks
+run_isolated "zod-project" run_zod_project_benchmarks
+"""
+        hits = self._write_and_scan(rows, compile_guard, bench)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("missing project compile guard inclusion for zod-project", hits[0])
+
+    def test_stale_compile_guard_inclusion_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+"""
+        compile_guard = """
+if should_check_project "utility-types-project"; then :; fi
+if should_check_project "removed-project"; then :; fi
+"""
+        bench = 'run_isolated "utility-types-project" run_utility_types_project_benchmarks'
+        hits = self._write_and_scan(rows, compile_guard, bench)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("stale project compile guard inclusion for removed-project", hits[0])
+
+    def test_missing_benchmark_inclusion_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project", "type-fest-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+"""
+        compile_guard = """
+if should_check_project "utility-types-project"; then :; fi
+if should_check_project "type-fest-project"; then :; fi
+"""
+        bench = 'run_isolated "utility-types-project" run_utility_types_project_benchmarks'
+        hits = self._write_and_scan(rows, compile_guard, bench)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("missing project benchmark inclusion for type-fest-project", hits[0])
+
+    def test_compile_guard_only_rows_do_not_require_benchmark_inclusion(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = [];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-assertions-tsc-clean"];
+"""
+        compile_guard = 'if should_check_project "type-challenges-assertions-tsc-clean"; then :; fi'
+        bench = ""
+        self.assertEqual(self._write_and_scan(rows, compile_guard, bench), [])
+
+    def test_benchmark_only_rows_do_not_require_compile_guard_inclusion(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["large-ts-repo", "nextjs"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+"""
+        compile_guard = ""
+        bench = """
+run_isolated "large-ts-repo" run_large_ts_repo_benchmarks
+run_isolated "nextjs" run_nextjs_benchmarks
+"""
+        self.assertEqual(self._write_and_scan(rows, compile_guard, bench), [])
+
+    def test_check_is_registered(self):
+        names = [entry[0] for entry in self.arch_guard.PROJECT_INCLUSION_POLICY_CHECKS]
+        self.assertTrue(
+            any("Track 1" in name for name in names),
+            "Project inclusion policy check missing from PROJECT_INCLUSION_POLICY_CHECKS",
+        )
+
+    def test_real_project_inclusion_policy_matches_manifest(self):
+        for name, row_path, compile_path, bench_path in self.arch_guard.PROJECT_INCLUSION_POLICY_CHECKS:
+            hits = self.arch_guard.scan_project_inclusion_policy(
+                row_path,
+                compile_path,
+                bench_path,
+            )
+            self.assertEqual(hits, [], f"{name}: {hits[:5]}")
+
+
 class ArchGuardRegexLineCountTests(unittest.TestCase):
     """Cover Track 10 count ratchets in `REGEX_LINE_COUNT_CHECKS`.
 
