@@ -166,6 +166,13 @@ impl<'a> Printer<'a> {
         let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
 
         self.emit_create_element_call(tag_name, attributes, &children);
+        let trailing_start = self
+            .arena
+            .get(jsx.closing_element)
+            .map_or(node.end, |closing| {
+                self.find_token_end_before_trivia(closing.pos, closing.end)
+            });
+        self.emit_jsx_transformed_trailing_comments(trailing_start);
     }
 
     fn emit_jsx_self_closing_classic(&mut self, node: &Node) {
@@ -177,6 +184,8 @@ impl<'a> Printer<'a> {
         let attributes = jsx.attributes;
 
         self.emit_create_element_call(tag_name, attributes, &[]);
+        let trailing_start = self.find_token_end_before_trivia(node.pos, node.end);
+        self.emit_jsx_transformed_trailing_comments(trailing_start);
     }
 
     fn emit_jsx_fragment_classic(&mut self, node: &Node) {
@@ -216,6 +225,42 @@ impl<'a> Printer<'a> {
         self.write(")");
         if multiline {
             self.decrease_indent();
+        }
+        let trailing_start = self
+            .arena
+            .get(jsx.closing_fragment)
+            .map_or(node.end, |closing| {
+                self.find_token_end_before_trivia(closing.pos, closing.end)
+            });
+        self.emit_jsx_transformed_trailing_comments(trailing_start);
+    }
+
+    fn emit_jsx_transformed_trailing_comments(&mut self, end_pos: u32) {
+        if self.has_trailing_comment_on_same_line(end_pos, u32::MAX) {
+            self.emit_trailing_comments(end_pos);
+            return;
+        }
+
+        let Some(text) = self.source_text else {
+            return;
+        };
+
+        for comment in crate::emitter::get_trailing_comment_ranges(text, end_pos as usize) {
+            self.write_space();
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment.pos as usize, comment.end as usize)
+                && !comment_text.is_empty()
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment.pos));
+            }
+            while self.comment_emit_idx < self.all_comments.len()
+                && self.all_comments[self.comment_emit_idx].pos <= comment.pos
+            {
+                self.comment_emit_idx += 1;
+            }
+            if comment.has_trailing_newline {
+                self.write_line();
+            }
         }
     }
 
