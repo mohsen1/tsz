@@ -556,6 +556,27 @@ fn es5_param_nested_object_patterns_inline_simple_sources() {
 }
 
 #[test]
+fn es5_param_string_literal_nested_object_patterns_keep_temp_path() {
+    let output = emit_es5(
+        "function f({ \"not-ident\": { value } }: any) { }\n\
+         function g({ \"not-ident\": [first] }: any) { }\n",
+    );
+
+    assert!(
+        output.contains("var _b = _a[\"not-ident\"], value = _b.value;"),
+        "String-literal nested object parameter sources should keep the temp path.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _b = _a[\"not-ident\"], first = _b[0];"),
+        "String-literal nested array parameter sources should keep the temp path.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_a[\"not-ident\"].value") && !output.contains("_a[\"not-ident\"][0]"),
+        "String-literal nested parameter sources should not use direct chained reads.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es5_param_empty_nested_patterns_keep_source_reads() {
     let output = emit_es5(
         "function f0([[]]: any) { }\n\
