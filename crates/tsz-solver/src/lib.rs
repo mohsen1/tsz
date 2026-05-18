@@ -243,7 +243,13 @@ pub use instantiation::instantiate::{
     substitute_this_type_at_return_position, substitute_this_type_cached,
 };
 pub use intern::type_factory::TypeFactory;
-pub use narrowing::*;
+pub use narrowing::{
+    CachedPropertyType, DiscriminantInfo, GuardSense, NarrowingCache, NarrowingContext,
+    NarrowingResult, NullishFilter, OptionalPropertyChainKey, TypeGuard, TypeofKind,
+    find_discriminants, is_definitely_nullish, is_nullish_type, narrow_by_discriminant,
+    narrow_by_typeof, remove_nullish, remove_nullish_query, remove_undefined, split_nullish_type,
+    type_contains_undefined,
+};
 pub use objects::*;
 pub use operations::compound_assignment;
 pub use operations::compound_assignment::{
