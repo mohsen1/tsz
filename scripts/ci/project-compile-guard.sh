@@ -225,6 +225,8 @@ record_project_compatibility() {
   COMPAT_TSCONFIG_PATH="$tsconfig_path" \
   COMPAT_SOURCE_ROOT="$source_root" \
   COMPAT_FIXTURE_ROOT="$FIXTURE_ROOT" \
+  COMPAT_TYPE_CHALLENGES_CLEAN_MANIFEST="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-manifest.json" \
+  COMPAT_TYPE_CHALLENGES_CLEAN_CLASSIFICATION="$FIXTURE_ROOT/type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-classification.json" \
   node scripts/ci/project-compatibility.mjs record
 }
 
