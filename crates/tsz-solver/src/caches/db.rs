@@ -23,11 +23,152 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
+/// Diagnostic-only display provenance side tables.
+///
+/// Stores and retrieves diagnostic-display metadata for type aliases, fresh object
+/// literals, and unions. Algorithms that only format types for error messages can
+/// bound on this trait instead of the full [`TypeDatabase`].
+pub trait DisplayProvenanceStore {
+    /// Store display-only properties for a fresh object literal.
+    ///
+    /// These are the pre-widened property types shown in error messages.
+    /// The `type_id` is the widened (interned) type; `props` contains
+    /// the original literal types from the source code.
+    fn store_display_properties(&self, _type_id: TypeId, _props: Vec<PropertyInfo>) {}
+
+    /// Retrieve display-only properties for a fresh object literal.
+    ///
+    /// Returns `None` if no display properties were stored.
+    fn get_display_properties(&self, _type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
+        None
+    }
+
+    /// Store a reverse mapping from an evaluated Application result back to
+    /// its original Application TypeId for diagnostic display.
+    fn store_display_alias(&self, _evaluated: TypeId, _application: TypeId) {}
+
+    /// Store an Application display alias even when structural provenance was
+    /// recorded earlier for the same evaluated type.
+    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
+        self.store_display_alias(evaluated, application);
+    }
+
+    /// Look up the original Application TypeId for a type produced by
+    /// evaluating an Application. Returns `None` if no mapping exists.
+    fn get_display_alias(&self, _type_id: TypeId) -> Option<TypeId> {
+        None
+    }
+
+    /// Mark an application base whose type-alias body is a conditional type.
+    fn mark_conditional_alias_base(&self, _base: TypeId) {}
+
+    /// Return whether an application base was marked as a conditional alias.
+    fn is_conditional_alias_base(&self, _base: TypeId) -> bool {
+        false
+    }
+
+    /// Record the as-written origin members for a flattened Union TypeId.
+    ///
+    /// The checker calls this from `get_type_from_union_type` so that the
+    /// printer can recover top-level alias names lost during flattening.
+    fn store_union_origin(&self, _union_type_id: TypeId, _origin_members: Vec<TypeId>) {}
+
+    /// Replace display-origin members for a union in a diagnostic-specific context.
+    fn replace_union_origin_for_display(
+        &self,
+        _union_type_id: TypeId,
+        _origin_members: Vec<TypeId>,
+    ) {
+    }
+
+    /// Look up the as-written origin members for a flattened Union TypeId.
+    fn get_union_origin(&self, _type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
+        None
+    }
+
+    /// Atomically read and clear the "union too complex" flag.
+    ///
+    /// Returns `true` if a union construction was aborted due to complexity
+    /// since the last call. The checker uses this to emit TS2590.
+    fn take_union_too_complex(&self) -> bool {
+        false
+    }
+
+    /// Mark the current operation as having produced a too-complex union.
+    ///
+    /// This mirrors `take_union_too_complex` for solver paths that discover the
+    /// complexity limit during evaluation rather than initial construction.
+    fn mark_union_too_complex(&self) {}
+}
+
+/// Compiler-option flags exposed to solver algorithms.
+///
+/// Algorithms that consult compiler flags can bound on this trait alone when
+/// they do not need type storage or construction.
+pub trait SolverConfig {
+    /// Whether `exactOptionalPropertyTypes` is enabled.
+    ///
+    /// Exposed on the solver boundary so that inference matching can distinguish
+    /// synthetic `| undefined` from optional markers vs. explicit `| undefined`
+    /// in user-written types.
+    fn exact_optional_property_types(&self) -> bool {
+        false
+    }
+}
+
+/// Global evaluation fuel budget.
+///
+/// Tracks cumulative evaluation work across all `TypeEvaluator` instances,
+/// mirroring TypeScript's global `instantiationCount` limit. Algorithms that
+/// only need to check or consume fuel can bound on this trait alone.
+pub trait EvaluationFuel {
+    /// Increment the global evaluation fuel counter and return whether fuel is exhausted.
+    ///
+    /// Returns `true` if fuel is exhausted (evaluation should stop).
+    fn consume_evaluation_fuel(&self, _amount: u32) -> bool {
+        false
+    }
+
+    /// Check whether global evaluation fuel is exhausted without consuming any.
+    fn is_evaluation_fuel_exhausted(&self) -> bool {
+        false
+    }
+}
+
+/// Memoization caches for stable type predicate queries.
+///
+/// These predicates are stable per `TypeId` within a single `TypeInterner`
+/// because interned type data is immutable. Algorithms that only cache or
+/// look up predicate results can bound on this trait alone.
+pub trait TypePredicateCache {
+    fn contains_this_type_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+    fn set_contains_this_type_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    fn contains_infer_types_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+    fn set_contains_infer_types_cache(&self, _type_id: TypeId, _result: bool) {}
+
+    fn contains_type_query_cached(&self, _type_id: TypeId) -> Option<bool> {
+        None
+    }
+    fn set_contains_type_query_cache(&self, _type_id: TypeId, _result: bool) {}
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
 /// into concrete storage structures directly.
-pub trait TypeDatabase {
+///
+/// `TypeDatabase` is a composed capability: it requires [`DisplayProvenanceStore`],
+/// [`SolverConfig`], [`EvaluationFuel`], and [`TypePredicateCache`] as supertraits.
+/// Algorithms that only need a narrow subset of those capabilities can bound on the
+/// appropriate sub-trait instead of the full `TypeDatabase` surface.
+pub trait TypeDatabase:
+    DisplayProvenanceStore + SolverConfig + EvaluationFuel + TypePredicateCache
+{
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
     fn lookup_alloc_order(&self, _id: TypeId) -> Option<u32> {
@@ -143,78 +284,6 @@ pub trait TypeDatabase {
         }
     }
 
-    /// Store display-only properties for a fresh object literal.
-    ///
-    /// These are the pre-widened property types shown in error messages.
-    /// The `shape_id` is the widened (interned) shape; `props` contains
-    /// the original literal types from the source code.
-    fn store_display_properties(&self, _type_id: TypeId, _props: Vec<PropertyInfo>) {}
-
-    /// Retrieve display-only properties for a fresh object literal.
-    ///
-    /// Returns `None` if no display properties were stored.
-    fn get_display_properties(&self, _type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
-        None
-    }
-
-    /// Store a reverse mapping from an evaluated Application result back to
-    /// its original Application TypeId for diagnostic display.
-    fn store_display_alias(&self, _evaluated: TypeId, _application: TypeId) {}
-
-    /// Store an Application display alias even when structural provenance was
-    /// recorded earlier for the same evaluated type.
-    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
-        self.store_display_alias(evaluated, application);
-    }
-
-    /// Look up the original Application TypeId for a type produced by
-    /// evaluating an Application. Returns `None` if no mapping exists.
-    fn get_display_alias(&self, _type_id: TypeId) -> Option<TypeId> {
-        None
-    }
-
-    /// Mark an application base whose type-alias body is a conditional type.
-    fn mark_conditional_alias_base(&self, _base: TypeId) {}
-
-    /// Return whether an application base was marked as a conditional alias.
-    fn is_conditional_alias_base(&self, _base: TypeId) -> bool {
-        false
-    }
-
-    /// Record the as-written origin members for a flattened Union TypeId.
-    ///
-    /// The checker calls this from `get_type_from_union_type` so that the
-    /// printer can recover top-level alias names lost during flattening.
-    /// See `TypeInterner::store_union_origin` for the full contract.
-    fn store_union_origin(&self, _union_type_id: TypeId, _origin_members: Vec<TypeId>) {}
-
-    /// Replace display-origin members for a union in a diagnostic-specific context.
-    fn replace_union_origin_for_display(
-        &self,
-        _union_type_id: TypeId,
-        _origin_members: Vec<TypeId>,
-    ) {
-    }
-
-    /// Look up the as-written origin members for a flattened Union TypeId.
-    fn get_union_origin(&self, _type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
-        None
-    }
-
-    /// Atomically read and clear the "union too complex" flag.
-    ///
-    /// Returns `true` if a union construction was aborted due to complexity
-    /// since the last call. The checker uses this to emit TS2590.
-    fn take_union_too_complex(&self) -> bool {
-        false
-    }
-
-    /// Mark the current operation as having produced a too-complex union.
-    ///
-    /// This mirrors `take_union_too_complex` for solver paths that discover the
-    /// complexity limit during evaluation rather than initial construction.
-    fn mark_union_too_complex(&self) {}
-
     /// Get the base class type for a symbol (class/interface).
     /// Returns the `TypeId` of the extends clause, or None if the symbol doesn't extend anything.
     /// This is used by the BCT algorithm to find common base classes.
@@ -272,72 +341,6 @@ pub trait TypeDatabase {
 
     /// Check if a `DefId` corresponds to the `ThisType` marker interface.
     fn is_this_type_marker_def_id(&self, _def_id: DefId) -> bool {
-        false
-    }
-
-    /// Increment the global evaluation fuel counter and return whether fuel is exhausted.
-    ///
-    /// This counter tracks cumulative evaluation work across ALL `TypeEvaluator` instances.
-    /// Unlike per-evaluator iteration limits, this enforces a system-wide budget that prevents
-    /// deeply recursive type libraries (like ts-toolbelt) from consuming unbounded memory
-    /// through type instantiation.
-    ///
-    /// Returns `true` if fuel is exhausted (evaluation should stop).
-    ///
-    /// Mirrors TypeScript's global `instantiationCount` which limits total type
-    /// instantiation work across the entire program check.
-    fn consume_evaluation_fuel(&self, _amount: u32) -> bool {
-        false
-    }
-
-    /// Check whether global evaluation fuel is exhausted without consuming any.
-    fn is_evaluation_fuel_exhausted(&self) -> bool {
-        false
-    }
-
-    /// Look up a cached `contains_this_type(type_id)` result if available.
-    ///
-    /// Default impl returns `None` (no caching). The primary implementation
-    /// on `TypeInterner` consults a project-wide `DashMap`; the `QueryCache`
-    /// delegate forwards through to the interner so all sharing callers hit
-    /// the same cache.
-    fn contains_this_type_cached(&self, _type_id: TypeId) -> Option<bool> {
-        None
-    }
-
-    /// Record the result of `contains_this_type(type_id)` in the shared
-    /// interner cache. Default impl is a no-op.
-    fn set_contains_this_type_cache(&self, _type_id: TypeId, _result: bool) {}
-
-    /// Look up a cached `contains_infer_types_db(type_id)` result if available.
-    ///
-    /// Like `contains_this_type`, the answer is stable for a `TypeId` within one
-    /// interner because interned type data is immutable.
-    fn contains_infer_types_cached(&self, _type_id: TypeId) -> Option<bool> {
-        None
-    }
-
-    /// Record the result of `contains_infer_types_db(type_id)` in the shared
-    /// interner cache. Default impl is a no-op.
-    fn set_contains_infer_types_cache(&self, _type_id: TypeId, _result: bool) {}
-
-    /// Look up a cached `contains_type_query_db(type_id)` result if available.
-    fn contains_type_query_cached(&self, _type_id: TypeId) -> Option<bool> {
-        None
-    }
-
-    /// Record the result of `contains_type_query_db(type_id)` in the shared
-    /// interner cache. Default impl is a no-op.
-    fn set_contains_type_query_cache(&self, _type_id: TypeId, _result: bool) {}
-
-    /// Whether `exactOptionalPropertyTypes` is enabled.
-    ///
-    /// Exposed on `TypeDatabase` (in addition to `QueryDatabase`) so that
-    /// inference matching can distinguish synthetic `| undefined` from
-    /// optional markers vs. explicit `| undefined` in user-written types.
-    /// The default returns `false`; canonical implementations live on
-    /// `TypeInterner` and `QueryCache`.
-    fn exact_optional_property_types(&self) -> bool {
         false
     }
 }
@@ -612,57 +615,7 @@ impl TypeDatabase for TypeInterner {
         Self::string_intrinsic(self, kind, type_arg)
     }
 
-    fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
-        Self::store_display_properties(self, type_id, props);
-    }
-
-    fn get_display_properties(&self, type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
-        Self::get_display_properties(self, type_id)
-    }
-
-    fn store_display_alias(&self, evaluated: TypeId, application: TypeId) {
-        Self::store_display_alias(self, evaluated, application);
-    }
-
-    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
-        Self::store_display_alias_preferring_application(self, evaluated, application);
-    }
-
-    fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
-        Self::get_display_alias(self, type_id)
-    }
-
-    fn mark_conditional_alias_base(&self, base: TypeId) {
-        Self::mark_conditional_alias_base(self, base);
-    }
-
-    fn is_conditional_alias_base(&self, base: TypeId) -> bool {
-        Self::is_conditional_alias_base(self, base)
-    }
-
-    fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
-        Self::store_union_origin(self, union_type_id, origin_members);
-    }
-
-    fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
-        Self::replace_union_origin_for_display(self, union_type_id, origin_members);
-    }
-
-    fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
-        Self::get_union_origin(self, type_id)
-    }
-
-    fn take_union_too_complex(&self) -> bool {
-        Self::take_union_too_complex(self)
-    }
-
-    fn mark_union_too_complex(&self) {
-        self.set_union_too_complex();
-    }
-
     fn get_class_base_type(&self, _symbol_id: SymbolId) -> Option<TypeId> {
-        // TypeInterner doesn't have access to the Binder, so it can't resolve base classes.
-        // The Checker will override this to provide the actual implementation.
         None
     }
 
@@ -697,41 +650,97 @@ impl TypeDatabase for TypeInterner {
     fn is_this_type_marker_def_id(&self, def_id: DefId) -> bool {
         Self::is_this_type_marker_def_id(self, def_id)
     }
+}
 
+impl DisplayProvenanceStore for TypeInterner {
+    fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
+        TypeInterner::store_display_properties(self, type_id, props);
+    }
+
+    fn get_display_properties(&self, type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
+        TypeInterner::get_display_properties(self, type_id)
+    }
+
+    fn store_display_alias(&self, evaluated: TypeId, application: TypeId) {
+        TypeInterner::store_display_alias(self, evaluated, application);
+    }
+
+    fn store_display_alias_preferring_application(&self, evaluated: TypeId, application: TypeId) {
+        TypeInterner::store_display_alias_preferring_application(self, evaluated, application);
+    }
+
+    fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
+        TypeInterner::get_display_alias(self, type_id)
+    }
+
+    fn mark_conditional_alias_base(&self, base: TypeId) {
+        TypeInterner::mark_conditional_alias_base(self, base);
+    }
+
+    fn is_conditional_alias_base(&self, base: TypeId) -> bool {
+        TypeInterner::is_conditional_alias_base(self, base)
+    }
+
+    fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        TypeInterner::store_union_origin(self, union_type_id, origin_members);
+    }
+
+    fn replace_union_origin_for_display(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
+        TypeInterner::replace_union_origin_for_display(self, union_type_id, origin_members);
+    }
+
+    fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
+        TypeInterner::get_union_origin(self, type_id)
+    }
+
+    fn take_union_too_complex(&self) -> bool {
+        TypeInterner::take_union_too_complex(self)
+    }
+
+    fn mark_union_too_complex(&self) {
+        self.set_union_too_complex();
+    }
+}
+
+impl SolverConfig for TypeInterner {
+    fn exact_optional_property_types(&self) -> bool {
+        TypeInterner::exact_optional_property_types(self)
+    }
+}
+
+impl EvaluationFuel for TypeInterner {
     fn consume_evaluation_fuel(&self, amount: u32) -> bool {
-        Self::consume_evaluation_fuel(self, amount)
+        TypeInterner::consume_evaluation_fuel(self, amount)
     }
 
     fn is_evaluation_fuel_exhausted(&self) -> bool {
-        Self::is_evaluation_fuel_exhausted(self)
+        TypeInterner::is_evaluation_fuel_exhausted(self)
     }
+}
 
+impl TypePredicateCache for TypeInterner {
     fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_this_cache.get(&type_id).map(|v| *v)
+        TypeInterner::contains_this_type_cached(self, type_id)
     }
 
     fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_this_cache.insert(type_id, result);
+        TypeInterner::set_contains_this_type_cache(self, type_id, result);
     }
 
     fn contains_infer_types_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_infer_cache.get(&type_id).map(|v| *v)
+        TypeInterner::contains_infer_types_cached(self, type_id)
     }
 
     fn set_contains_infer_types_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_infer_cache.insert(type_id, result);
+        TypeInterner::set_contains_infer_types_cache(self, type_id, result);
     }
 
     fn contains_type_query_cached(&self, type_id: TypeId) -> Option<bool> {
-        self.contains_type_query_cache.get(&type_id).map(|v| *v)
+        TypeInterner::contains_type_query_cached(self, type_id)
     }
 
     fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
-        self.contains_type_query_cache.insert(type_id, result);
-    }
-
-    fn exact_optional_property_types(&self) -> bool {
-        TypeInterner::exact_optional_property_types(self)
+        TypeInterner::set_contains_type_query_cache(self, type_id, result);
     }
 }
 
@@ -1432,5 +1441,71 @@ impl QueryDatabase for TypeInterner {
         use crate::canonicalize::Canonicalizer;
         let mut canon = Canonicalizer::new(self, self);
         canon.canonicalize(type_id)
+    }
+}
+
+#[cfg(test)]
+mod capability_trait_tests {
+    use super::*;
+    use crate::types::TypeId;
+
+    struct MinimalDisplayStore {
+        alias_map: std::cell::RefCell<std::collections::HashMap<TypeId, TypeId>>,
+    }
+
+    impl MinimalDisplayStore {
+        fn new() -> Self {
+            Self {
+                alias_map: std::cell::RefCell::new(std::collections::HashMap::new()),
+            }
+        }
+    }
+
+    impl DisplayProvenanceStore for MinimalDisplayStore {
+        fn store_display_alias(&self, evaluated: TypeId, application: TypeId) {
+            self.alias_map.borrow_mut().insert(evaluated, application);
+        }
+
+        fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
+            self.alias_map.borrow().get(&type_id).copied()
+        }
+    }
+
+    /// Algorithm that only needs display provenance — takes `DisplayProvenanceStore`,
+    /// not the full `TypeDatabase`.
+    fn resolve_alias_chain<S: DisplayProvenanceStore>(store: &S, type_id: TypeId) -> TypeId {
+        let mut current = type_id;
+        let mut depth = 0;
+        while let Some(alias) = store.get_display_alias(current) {
+            current = alias;
+            depth += 1;
+            if depth > 8 {
+                break;
+            }
+        }
+        current
+    }
+
+    #[test]
+    fn narrow_bound_display_provenance_store_works() {
+        let store = MinimalDisplayStore::new();
+        let a = TypeId(TypeId::FIRST_USER);
+        let b = TypeId(TypeId::FIRST_USER + 1);
+        let c = TypeId(TypeId::FIRST_USER + 2);
+
+        store.store_display_alias(a, b);
+        store.store_display_alias(b, c);
+
+        assert_eq!(resolve_alias_chain(&store, a), c);
+        assert_eq!(resolve_alias_chain(&store, c), c);
+    }
+
+    #[test]
+    fn type_interner_satisfies_sub_traits() {
+        let interner = TypeInterner::new();
+        let _ = interner.exact_optional_property_types();
+        let _ = interner.is_evaluation_fuel_exhausted();
+        let _ = interner.contains_this_type_cached(TypeId(1));
+        let _ = interner.get_display_alias(TypeId(1));
     }
 }

@@ -4,7 +4,10 @@
 //! relation, property, and element access queries. This is the concrete
 //! database implementation used by the checker at runtime.
 
-use crate::caches::db::{QueryDatabase, TypeDatabase};
+use crate::caches::db::{
+    DisplayProvenanceStore, EvaluationFuel, QueryDatabase, SolverConfig, TypeDatabase,
+    TypePredicateCache,
+};
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_trace;
 use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
@@ -1064,6 +1067,45 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.string_intrinsic(kind, type_arg)
     }
 
+    fn get_class_base_type(&self, symbol_id: SymbolId) -> Option<TypeId> {
+        // Delegate to the interner
+        self.interner.get_class_base_type(symbol_id)
+    }
+
+    fn is_identity_comparable_type(&self, type_id: TypeId) -> bool {
+        self.interner.is_identity_comparable_type(type_id)
+    }
+
+    fn get_array_base_type(&self) -> Option<TypeId> {
+        self.interner.get_array_base_type()
+    }
+
+    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
+        self.interner.get_array_base_type_params()
+    }
+
+    fn get_array_display_base_type(&self) -> Option<TypeId> {
+        self.interner.get_array_display_base_type()
+    }
+
+    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
+        self.interner.get_readonly_array_base_type()
+    }
+
+    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        self.interner.get_boxed_type(kind)
+    }
+
+    fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
+        self.interner.is_boxed_def_id(def_id, kind)
+    }
+
+    fn is_this_type_marker_def_id(&self, def_id: DefId) -> bool {
+        self.interner.is_this_type_marker_def_id(def_id)
+    }
+}
+
+impl DisplayProvenanceStore for QueryCache<'_> {
     fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
         self.interner.store_display_properties(type_id, props);
     }
@@ -1112,46 +1154,17 @@ impl TypeDatabase for QueryCache<'_> {
     }
 
     fn mark_union_too_complex(&self) {
-        self.interner.set_union_too_complex();
+        self.interner.mark_union_too_complex();
     }
+}
 
-    fn get_class_base_type(&self, symbol_id: SymbolId) -> Option<TypeId> {
-        // Delegate to the interner
-        self.interner.get_class_base_type(symbol_id)
+impl SolverConfig for QueryCache<'_> {
+    fn exact_optional_property_types(&self) -> bool {
+        self.exact_optional_property_types.get()
     }
+}
 
-    fn is_identity_comparable_type(&self, type_id: TypeId) -> bool {
-        self.interner.is_identity_comparable_type(type_id)
-    }
-
-    fn get_array_base_type(&self) -> Option<TypeId> {
-        self.interner.get_array_base_type()
-    }
-
-    fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
-        self.interner.get_array_base_type_params()
-    }
-
-    fn get_array_display_base_type(&self) -> Option<TypeId> {
-        self.interner.get_array_display_base_type()
-    }
-
-    fn get_readonly_array_base_type(&self) -> Option<TypeId> {
-        self.interner.get_readonly_array_base_type()
-    }
-
-    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
-        self.interner.get_boxed_type(kind)
-    }
-
-    fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
-        self.interner.is_boxed_def_id(def_id, kind)
-    }
-
-    fn is_this_type_marker_def_id(&self, def_id: DefId) -> bool {
-        self.interner.is_this_type_marker_def_id(def_id)
-    }
-
+impl EvaluationFuel for QueryCache<'_> {
     fn consume_evaluation_fuel(&self, amount: u32) -> bool {
         self.interner.consume_evaluation_fuel(amount)
     }
@@ -1159,7 +1172,9 @@ impl TypeDatabase for QueryCache<'_> {
     fn is_evaluation_fuel_exhausted(&self) -> bool {
         self.interner.is_evaluation_fuel_exhausted()
     }
+}
 
+impl TypePredicateCache for QueryCache<'_> {
     fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
         self.interner.contains_this_type_cached(type_id)
     }
@@ -1183,10 +1198,6 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
         self.interner.set_contains_type_query_cache(type_id, result);
-    }
-
-    fn exact_optional_property_types(&self) -> bool {
-        self.exact_optional_property_types.get()
     }
 }
 

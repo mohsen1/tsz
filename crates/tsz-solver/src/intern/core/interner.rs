@@ -1941,6 +1941,36 @@ impl TypeInterner {
     }
 
     #[inline]
+    pub fn contains_this_type_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_this_cache.get(&type_id).map(|v| *v)
+    }
+
+    #[inline]
+    pub fn set_contains_this_type_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_this_cache.insert(type_id, result);
+    }
+
+    #[inline]
+    pub fn contains_infer_types_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_infer_cache.get(&type_id).map(|v| *v)
+    }
+
+    #[inline]
+    pub fn set_contains_infer_types_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_infer_cache.insert(type_id, result);
+    }
+
+    #[inline]
+    pub fn contains_type_query_cached(&self, type_id: TypeId) -> Option<bool> {
+        self.contains_type_query_cache.get(&type_id).map(|v| *v)
+    }
+
+    #[inline]
+    pub fn set_contains_type_query_cache(&self, type_id: TypeId, result: bool) {
+        self.contains_type_query_cache.insert(type_id, result);
+    }
+
+    #[inline]
     fn make_id(&self, local_index: u32, shard_idx: u32) -> TypeId {
         let raw_val = (local_index << SHARD_BITS) | (shard_idx & SHARD_MASK);
         let id = TypeId(TypeId::FIRST_USER + raw_val);

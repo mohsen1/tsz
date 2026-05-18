@@ -170,7 +170,10 @@ pub mod computation {
 /// These create or modify types via the interner. Should be accessed through
 /// `query_boundaries` in the checker crate.
 pub mod construction {
-    pub use crate::caches::db::{QueryDatabase, TypeDatabase};
+    pub use crate::caches::db::{
+        DisplayProvenanceStore, EvaluationFuel, QueryDatabase, SolverConfig, TypeDatabase,
+        TypePredicateCache,
+    };
     pub use crate::caches::query_cache::QueryCache;
     pub use crate::intern::TypeInterner;
     pub use crate::intern::type_factory::*;
@@ -205,7 +208,10 @@ pub use visitors::visitor::{
     walk_referenced_types,
 };
 
-pub use caches::db::{QueryDatabase, TypeDatabase};
+pub use caches::db::{
+    DisplayProvenanceStore, EvaluationFuel, QueryDatabase, SolverConfig, TypeDatabase,
+    TypePredicateCache,
+};
 pub use caches::query_cache::{
     QueryCache, QueryCacheStatistics, RelationCacheProbe, RelationCacheStats, SharedQueryCache,
 };
