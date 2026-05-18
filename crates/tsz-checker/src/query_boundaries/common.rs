@@ -257,49 +257,10 @@ pub(crate) fn type_parameter_has_mapped_constraint(db: &dyn TypeDatabase, type_i
     false
 }
 
-/// Recursively check if a type contains a conditional type.
+/// Forwards to `tsz_solver::type_queries::contains_conditional_type_db`
+/// (see #8225 for why the recursion lives in solver).
 pub(crate) fn contains_conditional_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if tsz_solver::type_queries::is_conditional_type(db, type_id) {
-        return true;
-    }
-
-    // Check type application arguments
-    if let Some(app) = tsz_solver::type_queries::get_type_application(db, type_id)
-        && app
-            .args
-            .iter()
-            .any(|&arg| contains_conditional_type(db, arg))
-    {
-        return true;
-    }
-
-    // Check intersection members
-    if let Some(members) = tsz_solver::type_queries::get_intersection_members(db, type_id)
-        && members
-            .iter()
-            .any(|&member| contains_conditional_type(db, member))
-    {
-        return true;
-    }
-
-    // Check union members
-    if let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id)
-        && members
-            .iter()
-            .any(|&member| contains_conditional_type(db, member))
-    {
-        return true;
-    }
-
-    // Check index access types
-    if let Some((object_type, index_type)) =
-        tsz_solver::type_queries::get_index_access_types(db, type_id)
-    {
-        return contains_conditional_type(db, object_type)
-            || contains_conditional_type(db, index_type);
-    }
-
-    false
+    tsz_solver::type_queries::contains_conditional_type_db(db, type_id)
 }
 
 pub(crate) fn is_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -362,23 +323,10 @@ pub(crate) fn has_unresolved_type_parameters(db: &dyn TypeDatabase, type_id: Typ
     }
 }
 
-/// Check if a type is a *generic* mapped type — one whose key constraint still
-/// contains type parameters (e.g., `{ [K in keyof T]: ... }` where T is unresolved).
-/// Mapped types with concrete key types (like `Partial<ConcreteType>`) return false
-/// because they resolve to object types with statically known members.
-/// This matches tsc's `isGenericMappedType`.
+/// Forwards to `tsz_solver::type_queries::is_generic_mapped_type_db`
+/// (see #8225 for why the rule lives in solver).
 pub(crate) fn is_generic_mapped_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    if let Some(mapped) = tsz_solver::type_queries::get_mapped_type(db, type_id) {
-        // Match tsc's isGenericMappedType: only check constraint and name_type.
-        // The template always contains the mapped type's own iteration variable
-        // which is NOT an external type parameter.
-        tsz_solver::type_queries::contains_type_parameters_db(db, mapped.constraint)
-            || mapped
-                .name_type
-                .is_some_and(|nt| tsz_solver::type_queries::contains_type_parameters_db(db, nt))
-    } else {
-        false
-    }
+    tsz_solver::type_queries::is_generic_mapped_type_db(db, type_id)
 }
 
 pub(crate) fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

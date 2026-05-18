@@ -1157,3 +1157,197 @@ fn literal_or_primitive_compound_rejects_application() {
         &interner, app
     ));
 }
+
+// =========================================================================
+// contains_conditional_type_db / is_generic_mapped_type_db (issue #8225)
+// =========================================================================
+
+fn unconstrained_type_param(interner: &TypeInterner, name: &str) -> TypeId {
+    let atom = interner.intern_string(name);
+    interner.type_param(TypeParamInfo {
+        name: atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    })
+}
+
+fn conditional_t_extends_string_to_t_else_never(interner: &TypeInterner) -> TypeId {
+    let t = unconstrained_type_param(interner, "T");
+    interner.conditional(crate::types::ConditionalType {
+        check_type: t,
+        extends_type: TypeId::STRING,
+        true_type: t,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    })
+}
+
+fn make_mapped(
+    interner: &TypeInterner,
+    iter_name: &str,
+    constraint: TypeId,
+    name_type: Option<TypeId>,
+    template: TypeId,
+) -> TypeId {
+    let atom = interner.intern_string(iter_name);
+    interner.mapped(crate::types::MappedType {
+        type_param: TypeParamInfo {
+            name: atom,
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+        },
+        constraint,
+        name_type,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    })
+}
+
+#[test]
+fn contains_conditional_type_db_true_for_direct_conditional() {
+    let interner = TypeInterner::new();
+    let cond = conditional_t_extends_string_to_t_else_never(&interner);
+    assert!(contains_conditional_type_db(&interner, cond));
+}
+
+#[test]
+fn contains_conditional_type_db_false_for_intrinsics_and_primitives() {
+    let interner = TypeInterner::new();
+    assert!(!contains_conditional_type_db(&interner, TypeId::ANY));
+    assert!(!contains_conditional_type_db(&interner, TypeId::STRING));
+    assert!(!contains_conditional_type_db(&interner, TypeId::NEVER));
+    let obj = interner.object(vec![]);
+    assert!(!contains_conditional_type_db(&interner, obj));
+}
+
+#[test]
+fn contains_conditional_type_db_walks_application_args() {
+    let interner = TypeInterner::new();
+    let cond = conditional_t_extends_string_to_t_else_never(&interner);
+    let base = interner.lazy(crate::def::DefId(7));
+    // Application(Lazy(7), [Conditional]) — conditional is buried in args.
+    let app = interner.application(base, vec![cond]);
+    assert!(contains_conditional_type_db(&interner, app));
+    // Application with only concrete args is not a containing-conditional.
+    let app_concrete = interner.application(base, vec![TypeId::STRING]);
+    assert!(!contains_conditional_type_db(&interner, app_concrete));
+}
+
+#[test]
+fn contains_conditional_type_db_walks_union_and_intersection_members() {
+    let interner = TypeInterner::new();
+    let cond = conditional_t_extends_string_to_t_else_never(&interner);
+    let union = interner.union2(TypeId::STRING, cond);
+    assert!(contains_conditional_type_db(&interner, union));
+    let intersection = interner.intersection2(TypeId::NUMBER, cond);
+    assert!(contains_conditional_type_db(&interner, intersection));
+}
+
+#[test]
+fn contains_conditional_type_db_walks_index_access_halves() {
+    let interner = TypeInterner::new();
+    let cond = conditional_t_extends_string_to_t_else_never(&interner);
+    // `Conditional[key]` — conditional is the object half.
+    let ia_object = interner.index_access(cond, TypeId::STRING);
+    assert!(contains_conditional_type_db(&interner, ia_object));
+    // `obj[Conditional]` — conditional is the index half.
+    let obj = interner.object(vec![]);
+    let ia_index = interner.index_access(obj, cond);
+    assert!(contains_conditional_type_db(&interner, ia_index));
+}
+
+#[test]
+fn contains_conditional_type_db_renamed_type_parameter_still_detected() {
+    // CLAUDE.md §25 rename axis: the predicate must not be sensitive to the
+    // user-chosen identifier name of the conditional's check_type parameter.
+    let interner = TypeInterner::new();
+    let q = unconstrained_type_param(&interner, "Q");
+    let cond_q = interner.conditional(crate::types::ConditionalType {
+        check_type: q,
+        extends_type: TypeId::NUMBER,
+        true_type: q,
+        false_type: TypeId::NEVER,
+        is_distributive: true,
+    });
+    let union = interner.union2(TypeId::STRING, cond_q);
+    assert!(contains_conditional_type_db(&interner, union));
+}
+
+#[test]
+fn contains_conditional_type_db_does_not_walk_into_object_properties() {
+    // Anti-regression: the narrow walk must not surface a property-position
+    // conditional — TS2339 deferral callers depend on that boundary.
+    use crate::types::{PropertyInfo, Visibility};
+
+    let interner = TypeInterner::new();
+    let cond = conditional_t_extends_string_to_t_else_never(&interner);
+    let prop_name = interner.intern_string("p");
+    let obj = interner.object(vec![PropertyInfo {
+        name: prop_name,
+        type_id: cond,
+        write_type: cond,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    }]);
+    assert!(!contains_conditional_type_db(&interner, obj));
+}
+
+#[test]
+fn is_generic_mapped_type_db_false_for_non_mapped_types() {
+    let interner = TypeInterner::new();
+    assert!(!is_generic_mapped_type_db(&interner, TypeId::STRING));
+    assert!(!is_generic_mapped_type_db(&interner, TypeId::ANY));
+    let obj = interner.object(vec![]);
+    assert!(!is_generic_mapped_type_db(&interner, obj));
+}
+
+#[test]
+fn is_generic_mapped_type_db_true_when_constraint_has_type_parameter() {
+    let interner = TypeInterner::new();
+    let t = unconstrained_type_param(&interner, "T");
+    let keyof_t = interner.keyof(t);
+    // { [K in keyof T]: string } — generic because constraint is `keyof T`.
+    let mapped = make_mapped(&interner, "K", keyof_t, None, TypeId::STRING);
+    assert!(is_generic_mapped_type_db(&interner, mapped));
+}
+
+#[test]
+fn is_generic_mapped_type_db_false_when_constraint_is_concrete() {
+    let interner = TypeInterner::new();
+    let concrete_keys = interner.union2(interner.literal_string("a"), interner.literal_string("b"));
+    // { [K in "a" | "b"]: string } — not generic; key space is statically known.
+    let mapped = make_mapped(&interner, "K", concrete_keys, None, TypeId::STRING);
+    assert!(!is_generic_mapped_type_db(&interner, mapped));
+}
+
+#[test]
+fn is_generic_mapped_type_db_true_when_name_type_has_type_parameter() {
+    let interner = TypeInterner::new();
+    let t = unconstrained_type_param(&interner, "T");
+    let concrete_keys = interner.union2(interner.literal_string("a"), interner.literal_string("b"));
+    // Constraint is concrete but `name_type` still references `T` — generic.
+    let mapped = make_mapped(&interner, "K", concrete_keys, Some(t), TypeId::STRING);
+    assert!(is_generic_mapped_type_db(&interner, mapped));
+}
+
+#[test]
+fn is_generic_mapped_type_db_ignores_template_referencing_iteration_var() {
+    // Iter-var named `P` to also satisfy CLAUDE.md §25's rename axis. The
+    // template references `P` itself, which is bound locally.
+    let interner = TypeInterner::new();
+    let concrete_keys = interner.union2(interner.literal_string("x"), interner.literal_string("y"));
+    let p = unconstrained_type_param(&interner, "P");
+    let mapped = make_mapped(&interner, "P", concrete_keys, None, p);
+    assert!(!is_generic_mapped_type_db(&interner, mapped));
+}

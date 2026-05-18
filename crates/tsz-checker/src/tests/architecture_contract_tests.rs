@@ -5309,3 +5309,54 @@ fn test_namespace_checker_no_raw_lazy_construction() {
          Only pure-namespace sub-members may use Lazy(DefId) to avoid recursion."
     );
 }
+
+/// Guard: recursive type-shape predicates must not be re-introduced as
+/// owners inside `query_boundaries/common.rs`. See issue #8225 — the
+/// boundary module is for orchestration, not for owning pure type-semantic
+/// recursion. `contains_conditional_type` and `is_generic_mapped_type` live
+/// in `tsz_solver::type_queries::data::content_predicates` as `*_db`
+/// functions; the wrappers in `common.rs` must remain one-line forwards.
+#[test]
+fn test_query_boundaries_common_does_not_own_recursive_type_shape_predicates() {
+    let src = read_checker_source_file("src/query_boundaries/common.rs");
+
+    let (contains_conditional_uses, is_generic_mapped_uses) =
+        src.lines().fold((0usize, 0usize), |(a, b), line| {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                return (a, b);
+            }
+            (
+                a + usize::from(line.contains("contains_conditional_type(db,")),
+                b + usize::from(line.contains("is_generic_mapped_type(db,")),
+            )
+        });
+
+    // Treat the present baseline as a tight ceiling so new recursive call
+    // sites force the author to think twice about whether the rule belongs
+    // in solver instead.
+    const CALL_CEILING: usize = 2;
+    assert!(
+        contains_conditional_uses <= CALL_CEILING,
+        "common.rs has {contains_conditional_uses} calls to \
+         `contains_conditional_type(db, ...)` (ceiling: {CALL_CEILING}). \
+         Move the recursion to solver instead of owning a parallel walk."
+    );
+    assert!(
+        is_generic_mapped_uses <= CALL_CEILING,
+        "common.rs has {is_generic_mapped_uses} calls to \
+         `is_generic_mapped_type(db, ...)` (ceiling: {CALL_CEILING}). \
+         Move the rule to solver instead of re-implementing it."
+    );
+
+    // Catch regression where someone reintroduces the walk by checking for
+    // the forwarding lines themselves.
+    assert!(
+        src.contains("tsz_solver::type_queries::contains_conditional_type_db"),
+        "common.rs must forward `contains_conditional_type` to the solver-owned helper"
+    );
+    assert!(
+        src.contains("tsz_solver::type_queries::is_generic_mapped_type_db"),
+        "common.rs must forward `is_generic_mapped_type` to the solver-owned helper"
+    );
+}

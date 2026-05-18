@@ -5,6 +5,7 @@
 
 use crate::TypeDatabase;
 use crate::def::DefinitionStore;
+use crate::type_queries::data::signatures_and_advanced::get_mapped_type;
 use crate::types::{IntrinsicKind, TypeData, TypeId};
 use crate::visitors::visitor_predicates::contains_type_matching;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -599,6 +600,49 @@ pub fn contains_conditional_with_application_extends(
     }
 
     walk(db, type_id, 0)
+}
+
+/// Returns `true` if `type_id` is, or transitively contains via `Application`
+/// args, `Union`/`Intersection` members, or `IndexAccess` halves, a
+/// `Conditional` type. Moved here from `query_boundaries/common.rs` per #8225.
+///
+/// The walk is intentionally narrow: it does not descend into object
+/// properties, function signatures, mapped templates, or conditional branches.
+/// Widening it would change TS2339-deferral behavior in the checker callers.
+pub fn contains_conditional_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Conditional(_)) => true,
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .any(|&m| contains_conditional_type_db(db, m)),
+        Some(TypeData::Application(app_id)) => db
+            .type_application(app_id)
+            .args
+            .iter()
+            .any(|&arg| contains_conditional_type_db(db, arg)),
+        Some(TypeData::IndexAccess(obj, idx)) => {
+            contains_conditional_type_db(db, obj) || contains_conditional_type_db(db, idx)
+        }
+        _ => false,
+    }
+}
+
+/// Check whether `type_id` is a *generic* mapped type — a `Mapped(...)` whose
+/// key constraint or `name_type` still references type parameters. Matches
+/// tsc's `isGenericMappedType`. The template body is not consulted because it
+/// always contains the mapped type's own (locally-bound) iteration variable.
+pub fn is_generic_mapped_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    let Some(mapped) = get_mapped_type(db, type_id) else {
+        return false;
+    };
+    contains_type_parameters_db(db, mapped.constraint)
+        || mapped
+            .name_type
+            .is_some_and(|nt| contains_type_parameters_db(db, nt))
 }
 
 // =============================================================================
