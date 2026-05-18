@@ -1,8 +1,9 @@
 #!/usr/bin/env node
+import { pathToFileURL } from "node:url";
 import { PROJECT_ROW_DEFINITIONS, REQUIRED_PROJECT_ROWS, COMPILE_GUARD_REQUIRED_ROWS, COMPILE_CANARY_PROJECT_ROWS, COMPILE_GUARD_CANARY_PROJECT_ROWS } from "./project-rows.mjs";
 import { GENERATOR_SCRIPTS_PREFIX } from "./fixture-provenance.mjs";
 
-const requiredFields = [
+export const REQUIRED_METADATA_FIELDS = [
   "name",
   "label",
   "owner",
@@ -16,8 +17,8 @@ const requiredFields = [
 ];
 
 const allowedGuardSets = new Set(["required", "canary", null]);
-const failures = [];
-const seen = new Set();
+const allowedBenchmarkSets = new Set(["required", "canary"]);
+const allowedCategories = new Set(["external", "generated"]);
 
 const pinCouplings = [
   {
@@ -46,73 +47,126 @@ const pinCouplings = [
   },
 ];
 
-for (const row of PROJECT_ROW_DEFINITIONS) {
-  if (typeof row.name !== "string" || !row.name.trim()) {
-    failures.push("project row has invalid or empty name");
-    continue;
-  }
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
 
-  if (seen.has(row.name)) {
-    failures.push(`duplicate project row name: ${row.name}`);
-    continue;
-  }
-  seen.add(row.name);
+export function validateProjectMetadata({
+  projectRows,
+  requiredProjectRows,
+  compileGuardRequiredRows,
+  compileCanaryProjectRows,
+  compileGuardCanaryProjectRows,
+}) {
+  const failures = [];
+  const seen = new Set();
 
-  for (const field of requiredFields) {
-    if (!(field in row) || row[field] === undefined) {
-      failures.push(`${row.name}: missing required field ${field}`);
+  for (const row of projectRows) {
+    if (!isNonEmptyString(row.name)) {
+      failures.push("project row has invalid or empty name");
+      continue;
+    }
+
+    if (seen.has(row.name)) {
+      failures.push(`duplicate project row name: ${row.name}`);
+      continue;
+    }
+    seen.add(row.name);
+
+    for (const field of REQUIRED_METADATA_FIELDS) {
+      if (!(field in row) || row[field] === undefined) {
+        failures.push(`${row.name}: missing required field ${field}`);
+      }
+    }
+
+    for (const field of ["label", "owner", "family", "fixture_dir", "source_dir"]) {
+      if (!isNonEmptyString(row[field])) {
+        failures.push(`${row.name}: ${field} must be a non-empty string`);
+      }
+    }
+
+    if (!allowedBenchmarkSets.has(row.benchmark_set)) {
+      failures.push(`${row.name}: invalid benchmark_set ${String(row.benchmark_set)}`);
+    }
+
+    if (!allowedGuardSets.has(row.guard_set)) {
+      failures.push(`${row.name}: invalid guard_set ${String(row.guard_set)}`);
+    }
+
+    if (!allowedCategories.has(row.category)) {
+      failures.push(`${row.name}: invalid category ${String(row.category)}`);
+    }
+
+    if (!Array.isArray(row.readme_candidates) || row.readme_candidates.length === 0) {
+      failures.push(`${row.name}: readme_candidates must be a non-empty array`);
+    } else {
+      row.readme_candidates.forEach((candidate, index) => {
+        if (!isNonEmptyString(candidate)) {
+          failures.push(`${row.name}: readme_candidates[${index}] must be a non-empty string`);
+        }
+      });
+    }
+
+    for (const field of ["repo_env", "ref_env"]) {
+      if (field in row && !isNonEmptyString(row[field])) {
+        failures.push(`${row.name}: ${field} must be a non-empty string when present`);
+      }
+    }
+
+    for (const { envField, valueField, valid, message } of pinCouplings) {
+      if (row[envField] !== undefined && !valid(row[valueField])) {
+        failures.push(`${row.name}: ${envField} is set but ${message}`);
+      }
+    }
+
+    if (row.generated_by === undefined) continue;
+    if (
+      typeof row.generated_by !== "string" ||
+      !row.generated_by.startsWith(GENERATOR_SCRIPTS_PREFIX) ||
+      !row.generated_by.endsWith(".mjs")
+    ) {
+      failures.push(
+        `${row.name}: generated_by must point to a ${GENERATOR_SCRIPTS_PREFIX}*.mjs generator script`,
+      );
     }
   }
 
-  if (typeof row.benchmark_set !== "string" || !row.benchmark_set) {
-    failures.push(`${row.name}: invalid benchmark_set ${String(row.benchmark_set)}`);
-  }
+  const rowNames = new Set(projectRows.map((row) => row.name));
+  const expectedRows = [
+    ...requiredProjectRows,
+    ...compileGuardRequiredRows,
+    ...compileCanaryProjectRows,
+    ...compileGuardCanaryProjectRows,
+  ];
 
-  if (!allowedGuardSets.has(row.guard_set)) {
-    failures.push(`${row.name}: invalid guard_set ${String(row.guard_set)}`);
-  }
-
-  if (!Array.isArray(row.readme_candidates) || row.readme_candidates.length === 0) {
-    failures.push(`${row.name}: readme_candidates must be a non-empty array`);
-  }
-
-  for (const { envField, valueField, valid, message } of pinCouplings) {
-    if (row[envField] !== undefined && !valid(row[valueField])) {
-      failures.push(`${row.name}: ${envField} is set but ${message}`);
+  for (const rowName of expectedRows) {
+    if (!rowNames.has(rowName)) {
+      failures.push(`${rowName}: referenced by generated export but not present in definitions`);
     }
   }
 
-  if (row.generated_by === undefined) continue;
-  if (
-    typeof row.generated_by !== "string" ||
-    !row.generated_by.startsWith(GENERATOR_SCRIPTS_PREFIX) ||
-    !row.generated_by.endsWith(".mjs")
-  ) {
-    failures.push(
-      `${row.name}: generated_by must point to a ${GENERATOR_SCRIPTS_PREFIX}*.mjs generator script`,
-    );
-  }
+  return failures;
 }
 
-const rowNames = new Set(PROJECT_ROW_DEFINITIONS.map((row) => row.name));
-const expectedRows = [
-  ...REQUIRED_PROJECT_ROWS,
-  ...COMPILE_GUARD_REQUIRED_ROWS,
-  ...COMPILE_CANARY_PROJECT_ROWS,
-  ...COMPILE_GUARD_CANARY_PROJECT_ROWS,
-];
-
-for (const rowName of expectedRows) {
-  if (!rowNames.has(rowName)) {
-    failures.push(`${rowName}: referenced by generated export but not present in definitions`);
-  }
+export function validateCurrentProjectMetadata() {
+  return validateProjectMetadata({
+    projectRows: PROJECT_ROW_DEFINITIONS,
+    requiredProjectRows: REQUIRED_PROJECT_ROWS,
+    compileGuardRequiredRows: COMPILE_GUARD_REQUIRED_ROWS,
+    compileCanaryProjectRows: COMPILE_CANARY_PROJECT_ROWS,
+    compileGuardCanaryProjectRows: COMPILE_GUARD_CANARY_PROJECT_ROWS,
+  });
 }
 
-if (failures.length > 0) {
-  for (const failure of failures) {
-    console.error(failure);
-  }
-  process.exit(1);
-}
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  const failures = validateCurrentProjectMetadata();
 
-process.exit(0);
+  if (failures.length > 0) {
+    for (const failure of failures) {
+      console.error(failure);
+    }
+    process.exit(1);
+  }
+
+  process.exit(0);
+}
