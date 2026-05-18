@@ -6,7 +6,10 @@ use crate::test_utils::load_lib_files;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_binder::{BinderState, ModuleAugmentation};
-use tsz_common::perf_counters::{CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome};
+use tsz_common::perf_counters::{
+    CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome,
+    DirectCrossFileInterfaceLoweringOutcome, PerfCounters,
+};
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::{ParserState, syntax_kind_ext};
 use tsz_solver::TypeId;
@@ -1898,10 +1901,10 @@ fn direct_actual_lib_alias_proof_matches_mapped_utility_fallback_bodies() {
 fn setup_cross_file_index_state<'a>(
     symbol_name: &str,
     types: &'a TypeInterner,
-    requester_arena: Arc<tsz_parser::parser::node::NodeArena>,
-    requester_binder: Arc<BinderState>,
-    target_arena: Arc<tsz_parser::parser::node::NodeArena>,
-    target_binder: Arc<BinderState>,
+    requester_arena: &'a Arc<tsz_parser::parser::node::NodeArena>,
+    requester_binder: &'a Arc<BinderState>,
+    target_arena: &Arc<tsz_parser::parser::node::NodeArena>,
+    target_binder: &Arc<BinderState>,
 ) -> (CheckerState<'a>, tsz_binder::SymbolId) {
     let sym = target_binder
         .file_locals
@@ -1931,7 +1934,7 @@ fn setup_cross_file_index_state<'a>(
         Arc::clone(&requester_binder),
         Arc::clone(&target_binder),
     ]));
-    let mut state = CheckerState { ctx };
+    let state = CheckerState { ctx };
 
     let target_file_idx = state
         .ctx
@@ -1939,6 +1942,25 @@ fn setup_cross_file_index_state<'a>(
         .expect("target arena should be indexed");
     state.ctx.register_symbol_file_index(sym, target_file_idx);
     (state, sym)
+}
+
+fn enable_perf_counters_for_direct_lowering_test() {
+    #[cfg(any(test, debug_assertions))]
+    tsz_common::perf_counters::force_enable_perf_counters_for_tests();
+    assert!(
+        tsz_common::perf_counters::enabled_fast(),
+        "direct-lowering branch tests need perf counters enabled"
+    );
+}
+
+fn direct_interface_lowering_count(outcome: DirectCrossFileInterfaceLoweringOutcome) -> u64 {
+    PerfCounters::snapshot().direct_interface_lowering_outcomes[outcome.as_index()].count
+}
+
+fn with_parent_cache_constructed_count() -> u64 {
+    PerfCounters::snapshot()
+        .checker
+        .with_parent_cache_constructed
 }
 
 #[test]
@@ -1960,15 +1982,32 @@ fn delegate_cross_arena_source_option_bag_lowers_directly_via_cross_file_index()
     let (mut state, plugin_sym) = setup_cross_file_index_state(
         "PluginConfig",
         &types,
-        requester_arena,
-        requester_binder,
-        target_arena,
-        target_binder,
+        &requester_arena,
+        &requester_binder,
+        &target_arena,
+        &target_binder,
     );
 
+    enable_perf_counters_for_direct_lowering_test();
+    let success_before =
+        direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+    let child_checkers_before = with_parent_cache_constructed_count();
     let (ty, params) = state
         .delegate_cross_arena_symbol_resolution(plugin_sym)
         .expect("cross-file source-file option-bag interface should delegate successfully");
+    let success_after =
+        direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+    let child_checkers_after = with_parent_cache_constructed_count();
+
+    assert_eq!(
+        success_after - success_before,
+        1,
+        "PluginConfig should hit direct cross-file interface lowering"
+    );
+    assert_eq!(
+        child_checkers_after, child_checkers_before,
+        "direct source-file option-bag lowering must not construct a delegated child checker"
+    );
 
     assert_ne!(
         ty,
@@ -2010,15 +2049,32 @@ fn delegate_cross_arena_source_option_bag_with_sibling_alias_lowers_directly_via
     let (mut state, work_item_sym) = setup_cross_file_index_state(
         "WorkItem",
         &types,
-        requester_arena,
-        requester_binder,
-        target_arena,
-        target_binder,
+        &requester_arena,
+        &requester_binder,
+        &target_arena,
+        &target_binder,
     );
 
+    enable_perf_counters_for_direct_lowering_test();
+    let success_before =
+        direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+    let child_checkers_before = with_parent_cache_constructed_count();
     let (ty, params) = state
         .delegate_cross_arena_symbol_resolution(work_item_sym)
         .expect("cross-file option-bag with sibling alias should delegate successfully");
+    let success_after =
+        direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+    let child_checkers_after = with_parent_cache_constructed_count();
+
+    assert_eq!(
+        success_after - success_before,
+        1,
+        "WorkItem should hit direct cross-file interface lowering"
+    );
+    assert_eq!(
+        child_checkers_after, child_checkers_before,
+        "direct source-file option-bag lowering with sibling aliases must not construct a delegated child checker"
+    );
 
     assert_ne!(ty, TypeId::UNKNOWN);
     assert_ne!(ty, TypeId::ERROR);
@@ -2095,12 +2151,33 @@ fn delegate_cross_arena_source_option_bag_resolves_in_program_with_module_augmen
         Arc::clone(&target_binder),
     ]));
     let mut state = CheckerState { ctx };
+    assert!(
+        state.ctx.program_has_module_augmentations(),
+        "fixture should make the source-file symbol-arena cache ineligible"
+    );
 
+    enable_perf_counters_for_direct_lowering_test();
+    let success_before =
+        direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+    let child_checkers_before = with_parent_cache_constructed_count();
     let (ty, params) = state
         .delegate_cross_arena_symbol_resolution(build_opts_sym)
         .expect(
             "source-file option-bag should delegate even when the program has module augmentations",
         );
+    let success_after =
+        direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+    let child_checkers_after = with_parent_cache_constructed_count();
+
+    assert_eq!(
+        success_after - success_before,
+        1,
+        "BuildOptions should hit direct lowering even when module augmentations disable shared source-file symbol caching"
+    );
+    assert_eq!(
+        child_checkers_after, child_checkers_before,
+        "module-augmentation source-file option-bag lowering must not construct a delegated child checker"
+    );
 
     assert_ne!(
         ty,
@@ -2118,5 +2195,77 @@ fn delegate_cross_arena_source_option_bag_resolves_in_program_with_module_augmen
         )
         .is_some(),
         "BuildOptions should retain 'minify' property even with program-level augmentations present",
+    );
+}
+
+#[test]
+fn delegate_cross_arena_source_interface_with_heritage_still_falls_back() {
+    let (target_arena, target_binder, types) = parse_bound_source_with_name(
+        "complex.ts",
+        r#"
+                export interface BaseOptions {
+                    enabled: boolean;
+                }
+                export interface ComplexOptions extends BaseOptions {
+                    timeout: number;
+                }
+            "#,
+    );
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source_with_name("consumer.ts", "// imports ComplexOptions from complex");
+
+    let (mut state, complex_sym) = setup_cross_file_index_state(
+        "ComplexOptions",
+        &types,
+        &requester_arena,
+        &requester_binder,
+        &target_arena,
+        &target_binder,
+    );
+
+    enable_perf_counters_for_direct_lowering_test();
+    let success_before =
+        direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+    let complex_before = direct_interface_lowering_count(
+        DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration,
+    );
+    let child_checkers_before = with_parent_cache_constructed_count();
+    let (ty, params) = state
+        .delegate_cross_arena_symbol_resolution(complex_sym)
+        .expect("complex source-file interface should still delegate through fallback");
+    let success_after =
+        direct_interface_lowering_count(DirectCrossFileInterfaceLoweringOutcome::Success);
+    let complex_after = direct_interface_lowering_count(
+        DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration,
+    );
+    let child_checkers_after = with_parent_cache_constructed_count();
+
+    assert_eq!(
+        success_after, success_before,
+        "heritage-bearing source-file interfaces must not be admitted to direct lowering"
+    );
+    assert_eq!(
+        complex_after - complex_before,
+        1,
+        "heritage-bearing source-file interfaces should be rejected by the structural direct-lowering guard"
+    );
+    assert_eq!(
+        child_checkers_after - child_checkers_before,
+        1,
+        "complex source-file interfaces should fall back to delegated child-checker resolution"
+    );
+
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert!(params.is_empty(), "ComplexOptions should be non-generic");
+    let timeout = state.ctx.types.intern_string("timeout");
+    assert!(
+        crate::query_boundaries::common::raw_property_type(
+            state.ctx.types.as_type_database(),
+            ty,
+            timeout,
+        )
+        .is_some(),
+        "fallback-lowered ComplexOptions should retain its own property",
     );
 }

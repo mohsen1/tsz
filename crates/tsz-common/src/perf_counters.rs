@@ -52,12 +52,24 @@ impl PaddedAtomicU64 {
 /// numbers we're trying to collect.
 static ENABLED_FAST: OnceLock<bool> = OnceLock::new();
 
+#[cfg(any(test, debug_assertions))]
+static FORCE_ENABLED_FOR_TESTS: AtomicBool = AtomicBool::new(false);
+
 /// Cheap O(1) gate readable from any hot path. Reads a `OnceLock<bool>`
 /// (one branch + one load) instead of going through `counters().enabled`
 /// (deref-via-OnceLock + load).
 #[inline(always)]
 pub fn enabled_fast() -> bool {
+    #[cfg(any(test, debug_assertions))]
+    if FORCE_ENABLED_FOR_TESTS.load(Ordering::Relaxed) {
+        return true;
+    }
     *ENABLED_FAST.get_or_init(|| std::env::var_os("TSZ_PERF_COUNTERS").is_some())
+}
+
+#[cfg(any(test, debug_assertions))]
+pub fn force_enable_perf_counters_for_tests() {
+    FORCE_ENABLED_FOR_TESTS.store(true, Ordering::Relaxed);
 }
 
 /// Why a `CheckerState::with_parent_cache` (and the matching
