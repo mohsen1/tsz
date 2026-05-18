@@ -278,31 +278,53 @@ fn lib_context_resets_clear_actual_lib_def_id_cache() {
 
     checker
         .ctx
-        .actual_lib_def_id_cache
-        .borrow_mut()
-        .insert("Array".to_string(), None);
-    assert!(!checker.ctx.actual_lib_def_id_cache.borrow().is_empty());
+        .lib_delegation_cache
+        .insert_actual_lib_def_id("Array".to_string(), None);
+    assert!(
+        !checker
+            .ctx
+            .lib_delegation_cache
+            .actual_lib_def_ids_is_empty()
+    );
 
     checker.ctx.set_lib_contexts(Vec::new());
-    assert!(checker.ctx.actual_lib_def_id_cache.borrow().is_empty());
+    assert!(
+        checker
+            .ctx
+            .lib_delegation_cache
+            .actual_lib_def_ids_is_empty()
+    );
 
     checker
         .ctx
-        .actual_lib_def_id_cache
-        .borrow_mut()
-        .insert("Object".to_string(), None);
-    assert!(!checker.ctx.actual_lib_def_id_cache.borrow().is_empty());
+        .lib_delegation_cache
+        .insert_actual_lib_def_id("Object".to_string(), None);
+    assert!(
+        !checker
+            .ctx
+            .lib_delegation_cache
+            .actual_lib_def_ids_is_empty()
+    );
 
     checker.ctx.set_lib_contexts_shared(Arc::new(vec![]));
-    assert!(checker.ctx.actual_lib_def_id_cache.borrow().is_empty());
+    assert!(
+        checker
+            .ctx
+            .lib_delegation_cache
+            .actual_lib_def_ids_is_empty()
+    );
 
     checker
         .ctx
-        .actual_lib_def_id_cache
-        .borrow_mut()
-        .insert("ReadonlyArray".to_string(), None);
+        .lib_delegation_cache
+        .insert_actual_lib_def_id("ReadonlyArray".to_string(), None);
     checker.ctx.set_actual_lib_file_count(1);
-    assert!(checker.ctx.actual_lib_def_id_cache.borrow().is_empty());
+    assert!(
+        checker
+            .ctx
+            .lib_delegation_cache
+            .actual_lib_def_ids_is_empty()
+    );
 }
 
 #[test]

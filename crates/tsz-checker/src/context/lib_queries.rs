@@ -61,14 +61,13 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
 
-        if let Some(cached) = self.actual_lib_def_id_cache.borrow().get(name).copied() {
+        if let Some(cached) = self.lib_delegation_cache.actual_lib_def_id(name) {
             return cached;
         }
 
         let result = self.actual_lib_def_id_for_bare_name_uncached(name);
-        self.actual_lib_def_id_cache
-            .borrow_mut()
-            .insert(name.to_string(), result);
+        self.lib_delegation_cache
+            .insert_actual_lib_def_id(name.to_string(), result);
         result
     }
 
