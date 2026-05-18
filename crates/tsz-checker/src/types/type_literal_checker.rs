@@ -1065,8 +1065,7 @@ impl<'a> CheckerState<'a> {
             CALL_SIGNATURE, CONSTRUCT_SIGNATURE, METHOD_SIGNATURE, PROPERTY_SIGNATURE,
         };
         use tsz_solver::{
-            CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
-            PropertyInfo,
+            CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectShape, PropertyInfo,
         };
         let factory = self.ctx.types.factory();
 
@@ -1658,20 +1657,17 @@ impl<'a> CheckerState<'a> {
             return result;
         }
 
-        let late_bound_flags = if has_late_bound_members {
-            ObjectFlags::HAS_LATE_BOUND_MEMBERS
-        } else {
-            ObjectFlags::empty()
-        };
-
         if string_index.is_some() || number_index.is_some() {
-            let mut result = factory.object_with_index(ObjectShape {
+            let mut shape = ObjectShape {
                 properties,
                 string_index,
                 number_index,
-                flags: late_bound_flags,
                 ..ObjectShape::default()
-            });
+            };
+            if has_late_bound_members {
+                shape.mark_has_late_bound_members();
+            }
+            let mut result = factory.object_with_index(shape);
             for idx in extra_number_indices {
                 let member = factory.object_with_index(ObjectShape {
                     number_index: Some(idx),
@@ -1682,6 +1678,10 @@ impl<'a> CheckerState<'a> {
             return result;
         }
 
-        factory.object_with_flags_and_symbol(properties, late_bound_flags, None)
+        if has_late_bound_members {
+            factory.object_with_late_bound_members(properties, None)
+        } else {
+            factory.object_with_symbol(properties, None)
+        }
     }
 }
