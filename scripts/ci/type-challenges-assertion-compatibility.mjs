@@ -213,6 +213,12 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
     }
   }
   for (const compiler of ["tsc", "tsz"]) {
+    const status = cleanSubsetClassification.compilers?.[compiler]?.status;
+    if (typeof status !== "string" || status.trim() === "") {
+      fail(
+        `tsc-clean assertion classification ${compiler} status must be a non-empty string`,
+      );
+    }
     const totalCandidates =
       cleanSubsetClassification.compilers?.[compiler]?.candidateDiagnostics?.totalCandidates;
     if (!Number.isInteger(totalCandidates)) {
