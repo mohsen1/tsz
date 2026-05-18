@@ -5,7 +5,7 @@
 use crate::compiler_options::canonical_option_name;
 use crate::parity_fingerprints::{classify_parity, MatchScope, ParityAction};
 use crate::tsc_results::DiagnosticFingerprint;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// Result of compiling a test file
@@ -750,8 +750,9 @@ pub fn parse_tsz_output(
     // tsc does not load these test helper libraries, so our diagnostics from
     // them are false positives. Filter before parsing to avoid counting them.
     let combined = filter_lib_diagnostics(&combined, project_root);
-    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&combined, project_root);
     let error_codes = parse_error_codes_from_text(&combined);
+    let diagnostic_fingerprints =
+        retained_diagnostic_fingerprints(&combined, project_root, &error_codes);
     CompilationResult {
         error_codes,
         diagnostic_fingerprints,
@@ -808,9 +809,6 @@ fn parse_diagnostic_fingerprints_from_text(
                 );
                 let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
                 let message = normalize_message_paths(raw_message, project_root);
-                if is_extra_signature_inheritance_fingerprint(code, &message) {
-                    continue;
-                }
                 let (code, line_no, col_no, message) =
                     match classify_parity(code, &message, MatchScope::NormalizedMessage)
                         .map(|rule| rule.action)
@@ -863,6 +861,17 @@ fn parse_diagnostic_fingerprints_from_text(
             ))
     });
     fingerprints.dedup();
+    fingerprints
+}
+
+fn retained_diagnostic_fingerprints(
+    text: &str,
+    project_root: &Path,
+    error_codes: &[u32],
+) -> Vec<DiagnosticFingerprint> {
+    let retained_codes: HashSet<u32> = error_codes.iter().copied().collect();
+    let mut fingerprints = parse_diagnostic_fingerprints_from_text(text, project_root);
+    fingerprints.retain(|fingerprint| retained_codes.contains(&fingerprint.code));
     fingerprints
 }
 
@@ -1102,12 +1111,6 @@ fn normalize_builtin_iterator_return_message(message: &str) -> String {
         "IteratorResult<number, undefined>",
     );
     result
-}
-
-fn is_extra_signature_inheritance_fingerprint(code: u32, message: &str) -> bool {
-    code == 2430
-        && ((message == "Interface 'I' incorrectly extends interface 'A'.")
-            || (message == "Interface 'I' incorrectly extends interface 'B'."))
 }
 
 /// Normalize temp directory paths to a consistent format for fingerprint comparison.
@@ -1920,8 +1923,9 @@ pub fn parse_batch_output(
     // tsc does not load these test helper libraries, so our diagnostics from
     // them are false positives.
     let text = filter_lib_diagnostics(text, project_root);
-    let diagnostic_fingerprints = parse_diagnostic_fingerprints_from_text(&text, project_root);
     let error_codes = parse_error_codes_from_text(&text);
+    let diagnostic_fingerprints =
+        retained_diagnostic_fingerprints(&text, project_root, &error_codes);
 
     CompilationResult {
         error_codes,
