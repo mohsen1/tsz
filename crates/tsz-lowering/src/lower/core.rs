@@ -87,6 +87,14 @@ pub struct TypeLowering<'a> {
     /// This enables flow-sensitive narrowing for `typeof expr` in type positions
     /// (e.g., inside type alias bodies where flow narrowing has already been computed).
     pub(super) type_query_override: Option<&'a NodeIndexResolver<'a, TypeId>>,
+    /// Optional import type resolver — resolves `TYPE_REFERENCE` nodes whose `type_name`
+    /// is or starts with an `import()` `CALL_EXPRESSION` to a pre-computed `TypeId`.
+    ///
+    /// `TypeLowering` cannot perform module resolution; the checker pre-resolves import
+    /// type references and supplies them through this callback. The argument is the full
+    /// `type_name` `NodeIndex` (either the `CALL_EXPRESSION` itself or the `QUALIFIED_NAME`
+    /// rooted in it). Returns `Some` when pre-resolved, `None` to fall through to `ERROR`.
+    pub(super) import_type_resolver: Option<&'a NodeIndexResolver<'a, TypeId>>,
     /// Operation counter to prevent infinite loops
     pub(super) operations: Rc<RefCell<u32>>,
     /// Whether the operation limit has been exceeded
@@ -367,6 +375,7 @@ impl<'a> TypeLowering<'a> {
             operations: Rc::new(RefCell::new(0)),
             limit_exceeded: Rc::new(RefCell::new(false)),
             type_query_override: None,
+            import_type_resolver: None,
         }
     }
 
@@ -476,6 +485,7 @@ impl<'a> TypeLowering<'a> {
             name_def_id_resolver: self.name_def_id_resolver,
             strict_null_checks: self.strict_null_checks,
             type_query_override: self.type_query_override,
+            import_type_resolver: self.import_type_resolver,
             // Rc::clone() shares the underlying Rc instead of copying data
             type_param_scopes: Rc::clone(&self.type_param_scopes),
             typeof_param_scopes: Rc::clone(&self.typeof_param_scopes),
@@ -784,6 +794,20 @@ impl<'a> TypeLowering<'a> {
         resolver: &'a dyn Fn(NodeIndex) -> Option<TypeId>,
     ) -> Self {
         self.type_query_override = Some(resolver);
+        self
+    }
+
+    /// Attach an import-type resolver so that `TYPE_REFERENCE` nodes whose `type_name`
+    /// is or starts with an `import()` call can be resolved during lowering.
+    ///
+    /// The checker pre-resolves such references (which require module resolution) and
+    /// supplies this callback. Without it, `import("./x").Foo` in type position
+    /// (e.g. the extends clause of a conditional type) would lower to `TypeId::ERROR`.
+    pub fn with_import_type_resolver(
+        mut self,
+        resolver: &'a NodeIndexResolver<'a, TypeId>,
+    ) -> Self {
+        self.import_type_resolver = Some(resolver);
         self
     }
 
