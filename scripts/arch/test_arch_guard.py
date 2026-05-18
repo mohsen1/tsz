@@ -201,6 +201,52 @@ class ArchGuardSolverRelationBoundaryTests(unittest.TestCase):
         self.assertEqual(test_hits, [])
 
 
+class ArchGuardBinaryEvaluatorBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _binary_evaluator_surface_check(self):
+        for name, _base, pattern, excludes in self.arch_guard.CHECKS:
+            if name == "Checker type-computation boundary: no direct BinaryOpEvaluator surface (#8226)":
+                return pattern, excludes
+        self.fail("BinaryOpEvaluator boundary check is missing from CHECKS")
+
+    def test_rule_exists(self):
+        self._binary_evaluator_surface_check()
+
+    def test_rule_flags_imports_and_signatures_outside_boundary(self):
+        pattern, excludes = self._binary_evaluator_surface_check()
+        text = "\n".join(
+            [
+                "use tsz_solver::computation::BinaryOpEvaluator;",
+                "fn helper(evaluator: &BinaryOpEvaluator) {}",
+            ]
+        )
+        hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/src/types/computation/binary.rs", excludes
+        )
+        self.assertEqual(hits, [1, 2])
+
+    def test_rule_ignores_query_boundaries_tests_and_comments(self):
+        pattern, excludes = self._binary_evaluator_surface_check()
+        text = "/// `BinaryOpEvaluator` is documented here\nlet evaluator = BinaryOpEvaluator;"
+        query_boundary_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/src/query_boundaries/common.rs", excludes
+        )
+        test_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/src/tests/architecture_contract_tests.rs", excludes
+        )
+        comment_hits = self.arch_guard.find_matches(
+            "/// `BinaryOpEvaluator` comment only",
+            pattern,
+            "crates/tsz-checker/src/types/computation/binary.rs",
+            excludes,
+        )
+        self.assertEqual(query_boundary_hits, [])
+        self.assertEqual(test_hits, [])
+        self.assertEqual(comment_hits, [])
+
+
 class ArchGuardCoreWasmBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.arch_guard = load_arch_guard_module()

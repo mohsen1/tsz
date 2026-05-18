@@ -74,6 +74,13 @@ exclude_files = [
 ]
 
 [[pattern_checks]]
+name = "Checker type-computation boundary: no direct BinaryOpEvaluator surface (#8226)"
+base = "crates/tsz-checker"
+pattern = '\bBinaryOpEvaluator\b'
+exclude_dirs = ["query_boundaries", "tests"]
+ignore_comment_lines = true
+
+[[pattern_checks]]
 name = "Checker legacy surface must stay removed"
 base = "crates/tsz-checker/src"
 pattern = '\bmod\s+types\s*;|\bpub\s+mod\s+types\s*;|\bpub\s+mod\s+arena\s*;|\bpub\s+use\s+arena::TypeArena\b'
