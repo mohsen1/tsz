@@ -1,6 +1,7 @@
 use super::*;
 use crate::parallel::residency::{MemoryPressure, ResidencyBudget};
 use crate::parallel::skeleton::diff_skeletons;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::fs;
 use std::path::Path;
 use tsz_common::common::ModuleKind;
@@ -150,6 +151,41 @@ fn test_resolve_lib_reference_path_prefers_available_candidate_names() {
     assert_eq!(wrapped_path, lib_dir.join("lib.custom.d.ts"));
 
     assert!(resolve_lib_reference_path(base_path, "nonexistent").is_none());
+}
+
+#[test]
+fn test_resolve_lib_reference_path_uses_embedded_virtual_root_without_disk_probe_shape() {
+    let base_path = Path::new("/embedded-lib/es2020.d.ts");
+
+    let es5 = resolve_lib_reference_path(base_path, "lib.es5.d.ts").expect("resolve es5");
+    assert_eq!(es5, Path::new("/embedded-lib/es5.d.ts"));
+
+    let dom = resolve_lib_reference_path(base_path, "dom.generated").expect("resolve dom");
+    assert_eq!(dom, Path::new("/embedded-lib/dom.d.ts"));
+
+    assert!(resolve_lib_reference_path(base_path, "definitely-not-a-lib").is_none());
+}
+
+#[test]
+fn test_collect_lib_files_recursive_cached_reads_embedded_virtual_root_as_static() {
+    let mut loaded = FxHashSet::default();
+    let mut file_contents = Vec::new();
+    let file_cache = FxHashMap::default();
+
+    collect_lib_files_recursive_cached(
+        Path::new("/embedded-lib/es2020.d.ts"),
+        &mut loaded,
+        &mut file_contents,
+        &file_cache,
+    )
+    .expect("collect embedded lib files");
+
+    let (_, source_text) = file_contents
+        .iter()
+        .find(|(name, _)| name == "/embedded-lib/es2020.d.ts")
+        .expect("es2020 entry");
+    assert!(matches!(source_text, LibSourceText::Static(_)));
+    assert!(loaded.iter().all(|path| path.starts_with("/embedded-lib")));
 }
 
 #[test]

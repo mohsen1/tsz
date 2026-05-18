@@ -1330,6 +1330,12 @@ fn collect_lib_files_recursive_cached(
     let source_text = if let Some(cached) = file_cache.get(&lib_path) {
         // File was read from disk (custom lib dir with non-standard files) — use it
         LibSourceText::Owned(cached.clone())
+    } else if lib_path.starts_with(Path::new("/embedded-lib"))
+        && let Some(embedded) = crate::embedded_libs::get_lib_content(embedded_key)
+    {
+        // Embedded virtual-root paths are never real files; avoid a failed stat
+        // before reading the built-in content.
+        LibSourceText::Static(embedded)
     } else if lib_path.exists() {
         LibSourceText::Owned(
             std::fs::read_to_string(&lib_path)
@@ -1412,6 +1418,13 @@ fn resolve_lib_reference_path(base_path: &Path, lib_name: &str) -> Option<PathBu
         "dom.iterable.generated" => candidate_names.push("dom.iterable".to_string()),
         "dom.asynciterable.generated" => candidate_names.push("dom.asynciterable".to_string()),
         _ => {}
+    }
+    if base_path.starts_with(Path::new("/embedded-lib")) {
+        return candidate_names.into_iter().find_map(|name| {
+            let embedded_name = format!("{name}.d.ts");
+            crate::embedded_libs::is_embedded_lib(&embedded_name)
+                .then(|| lib_dir.join(embedded_name))
+        });
     }
     let candidates: Vec<PathBuf> = candidate_names
         .into_iter()
