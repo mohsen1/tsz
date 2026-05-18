@@ -108,6 +108,12 @@ impl<'a> CheckerState<'a> {
             {
                 return declared_type;
             }
+
+            if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, declared_type)
+                .is_some_and(|shape| shape.string_index.is_some() || shape.number_index.is_some())
+            {
+                return declared_type;
+            }
         }
 
         // Get the flow node for this expression usage FIRST
