@@ -334,6 +334,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": typeof globalThis");
             } else if keyword != "const"
                 && has_initializer
+                && !js_has_jsdoc_type
                 && self
                     .arena
                     .get(initializer)
@@ -427,6 +428,20 @@ impl<'a> DeclarationEmitter<'a> {
                     .unwrap_or(type_text);
                 self.write(&type_text);
             } else if has_initializer
+                && let Some(type_text) = self.json_import_reference_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
+                && self
+                    .arena
+                    .get(initializer)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
+                && let Some(type_text) = self.json_require_call_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
                 && self
                     .arena
                     .get(initializer)
@@ -482,6 +497,8 @@ impl<'a> DeclarationEmitter<'a> {
                     .unwrap_or(type_text);
                 type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
                     .unwrap_or(type_text);
+                type_text =
+                    Self::unwrap_return_type_zero_arg_import_type(&type_text).unwrap_or(type_text);
                 if let Some(labelled_type_text) = self
                     .preserve_spread_argument_tuple_labels_in_call_return_type(
                         initializer,
@@ -521,8 +538,15 @@ impl<'a> DeclarationEmitter<'a> {
                     .type_text_is_directly_nameable_reference(&type_text)
                     && (Self::type_text_starts_with_import_type(&type_text)
                         || type_text.contains(['<', '.']));
+                let fallback_to_any_for_types_versions_self_reference = self
+                    .call_initializer_types_versions_self_reference_falls_back_to_any(
+                        initializer,
+                        &type_text,
+                    );
                 self.write(": ");
-                if keyword == "const"
+                if fallback_to_any_for_types_versions_self_reference {
+                    self.write("any");
+                } else if keyword == "const"
                     && let Some(formatted) =
                         self.call_initializer_unexported_alias_literal_text(initializer)
                 {
@@ -530,7 +554,8 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     self.write(&type_text);
                 }
-                if !has_public_import_type
+                if !fallback_to_any_for_types_versions_self_reference
+                    && !has_public_import_type
                     && !has_reusable_surface_type
                     && let Some(name_text) = self.get_identifier_text(decl_name)
                     && let Some(name_node) = self.arena.get(decl_name)
@@ -880,8 +905,14 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
 
+                let selected_type_text = if has_initializer {
+                    self.object_literal_declared_shorthand_type_text(initializer, self.indent_level)
+                        .unwrap_or_else(|| selected_type_text.to_string())
+                } else {
+                    selected_type_text.to_string()
+                };
                 let selected_type_text =
-                    self.qualify_current_namespace_self_type_text(selected_type_text);
+                    self.qualify_current_namespace_self_type_text(&selected_type_text);
                 let selected_type_text = if has_initializer {
                     self.imported_call_public_type_text(initializer, &selected_type_text)
                 } else {
@@ -917,24 +948,36 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     selected_type_text
                 };
+                let selected_type_text =
+                    Self::unwrap_return_type_zero_arg_import_type(&selected_type_text)
+                        .unwrap_or(selected_type_text);
                 if has_initializer {
                     self.insert_import_for_reused_static_call_type(
                         initializer,
                         &selected_type_text,
                     );
                 }
-                self.insert_import_for_unqualified_imported_type(&selected_type_text);
-                self.write(": ");
-                if keyword == "const"
-                    && has_initializer
-                    && let Some(template_index_type) =
-                        self.template_index_signature_element_access_type_text(initializer)
-                {
-                    self.write(&template_index_type);
-                } else {
-                    self.write(&Self::strip_synthetic_anonymous_object_members(
+                if has_initializer
+                    && self.call_initializer_types_versions_self_reference_falls_back_to_any(
+                        initializer,
                         &selected_type_text,
-                    ));
+                    )
+                {
+                    self.write(": any");
+                } else {
+                    self.insert_import_for_unqualified_imported_type(&selected_type_text);
+                    self.write(": ");
+                    if keyword == "const"
+                        && has_initializer
+                        && let Some(template_index_type) =
+                            self.template_index_signature_element_access_type_text(initializer)
+                    {
+                        self.write(&template_index_type);
+                    } else {
+                        self.write(&Self::strip_synthetic_anonymous_object_members(
+                            &selected_type_text,
+                        ));
+                    }
                 }
             } else if let Some(typeof_text) =
                 self.typeof_prefix_for_value_entity(initializer, has_initializer, None)

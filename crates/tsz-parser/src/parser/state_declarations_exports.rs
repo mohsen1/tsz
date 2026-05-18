@@ -1195,9 +1195,6 @@ impl ParserState {
         }
 
         self.parse_expected(SyntaxKind::CloseParenToken);
-        if self.look_ahead_is_leftover_type_predicate_tail_before_close_paren() {
-            self.next_token();
-        }
 
         let then_statement = if self.is_token(SyntaxKind::Unknown) {
             // Emit TS1127 for any unexpected characters before this malformed body,
@@ -1277,26 +1274,6 @@ impl ParserState {
                 else_statement,
             },
         )
-    }
-
-    fn look_ahead_is_leftover_type_predicate_tail_before_close_paren(&mut self) -> bool {
-        if !self.is_token(SyntaxKind::IsKeyword) || self.scanner.has_preceding_line_break() {
-            return false;
-        }
-
-        let snapshot = self.scanner.save_state();
-        let current = self.current_token;
-
-        self.next_token();
-        let is_tail = self.can_token_start_type();
-        if is_tail {
-            let _ = self.parse_type();
-        }
-        let result = is_tail && self.is_token(SyntaxKind::CloseParenToken);
-
-        self.scanner.restore_state(snapshot);
-        self.current_token = current;
-        result
     }
 
     // Parse return statement

@@ -27,6 +27,24 @@ fn test_interner_deduplication() {
 }
 
 #[test]
+fn test_fresh_type_param_constructor_preserves_declaration_identity() {
+    let interner = TypeInterner::new();
+    let info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(interner.keyof(interner.object(vec![]))),
+        default: None,
+        is_const: false,
+    };
+
+    let first = interner.fresh_type_param(info);
+    let second = interner.fresh_type_param(info);
+
+    assert_ne!(first, second);
+    assert_eq!(interner.lookup(first), Some(TypeData::TypeParameter(info)));
+    assert_eq!(interner.lookup(second), Some(TypeData::TypeParameter(info)));
+}
+
+#[test]
 fn test_interner_fresh_object_distinct_from_non_fresh() {
     let interner = TypeInterner::new();
     let prop = PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER);

@@ -2,6 +2,7 @@ use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeList;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn normalize_base_instance_type_for_merge(
@@ -32,9 +33,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let array_base = tsz_solver::TypeResolver::get_array_base_type(self.ctx.types)?;
-        let array_params =
-            tsz_solver::TypeResolver::get_array_base_type_params(self.ctx.types).to_vec();
+        let array_base = TypeResolver::get_array_base_type(self.ctx.types)?;
+        let array_params = TypeResolver::get_array_base_type_params(self.ctx.types).to_vec();
         Some(self.instantiate_base_instance_type_with_args(
             array_base,
             &array_params,
