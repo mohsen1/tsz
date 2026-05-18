@@ -647,15 +647,21 @@ impl<'a> CheckerContext<'a> {
         def_id
     }
 
-    /// Ensure the `TypeEnvironment` has a reference to the shared `DefinitionStore`.
+    /// Ensure **both** `TypeEnvironment` instances have a reference to the shared
+    /// `DefinitionStore`.
     ///
-    /// This enables `TypeEnvironment::get_def_kind` to fall back to the
-    /// `DefinitionStore` when the local `def_kinds` map is missing entries
-    /// (which happens when `insert_def_kind` fails due to `RefCell` borrow conflicts).
-    pub fn ensure_type_env_has_definition_store(&self) {
-        if let Ok(mut env) = self.type_env.try_borrow_mut() {
+    /// Both `type_env` (primary evaluator) and `type_environment` (flow-analyzer)
+    /// need the `DefinitionStore` fallback so that `get_def_kind` can locate
+    /// entries that were not written directly due to `RefCell` borrow conflicts
+    /// during recursive resolution.
+    ///
+    /// Wiring only `type_env` and leaving `type_environment` without the store
+    /// forces callers to clone one environment over the other just to propagate
+    /// the pointer — this helper eliminates that need.
+    pub fn ensure_both_envs_have_definition_store(&self) {
+        self.with_envs_for_register("set_definition_store", |env| {
             env.set_definition_store(std::sync::Arc::clone(&self.definition_store));
-        }
+        });
     }
 
     // ---- Dual-environment registration helpers ----
@@ -1540,8 +1546,8 @@ impl<'a> CheckerContext<'a> {
 
             // NOTE: DefKind registration is intentionally skipped here.
             // The TypeEnvironment is rebuilt from scratch in build_type_environment()
-            // (called later in check_source_file), and ensure_type_env_has_definition_store()
-            // installs the DefinitionStore reference for lazy DefKind fallback.
+            // (called later in check_source_file), and ensure_both_envs_have_definition_store()
+            // installs the DefinitionStore reference into both TypeEnvironments for lazy DefKind fallback.
             // Eagerly registering DefKinds here would be overwritten and wastes
             // N DashMap lookups per symbol (for .get() and .get_constructor_def()).
 
