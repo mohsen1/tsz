@@ -1531,6 +1531,130 @@ function test(a: A2) {
     );
 }
 
+/// Shared assertion for the structural rule:
+/// TS18013 on a generic class instance must reference the declared class
+/// name (not the `"the class"` fallback) regardless of what the user named
+/// the type parameter.
+fn assert_ts18013_uses_class_name(source: &str, class_name: &str, expected_count: usize) {
+    let diagnostics = compile_and_get_diagnostics(source);
+    let ts18013_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 18013)
+        .map(|(_, m)| m.as_str())
+        .collect();
+
+    assert_eq!(
+        ts18013_messages.len(),
+        expected_count,
+        "Should emit {expected_count} TS18013 errors.\nActual errors: {diagnostics:?}"
+    );
+    let needle = format!("'{class_name}'");
+    for msg in &ts18013_messages {
+        assert!(
+            msg.contains(&needle),
+            "TS18013 should reference the declared class {needle}, not 'the class'.\n\
+             Actual message: {msg}"
+        );
+        assert!(
+            !msg.contains("the class"),
+            "TS18013 must not fall back to 'the class'.\nActual message: {msg}"
+        );
+    }
+}
+
+/// TS18013 must use the actual class name for generic class instances
+/// (`C<number>`). The display-type-to-class resolver previously only handled
+/// uninstantiated instance types, brand-bearing object shapes, and `Lazy(DefId)`
+/// — so any `TypeData::Application(base, args)` for an instance type fell
+/// through to the `"the class"` fallback whenever the class references itself
+/// under multiple instantiations like `bar(x: C<T>)`, `baz(x: C<number>)`,
+/// which forces the instance type to stay in `Application` form. Source:
+/// conformance test `privateNamesInGenericClasses.ts`.
+#[test]
+fn test_ts18013_uses_class_name_for_generic_class_instance() {
+    assert_ts18013_uses_class_name(
+        r#"
+class C<T> {
+    #foo: T = undefined as any;
+    #method(): T { return this.#foo; }
+    bar(x: C<T>) { return x.#foo; }
+    baz(x: C<number>) { return x.#foo; }
+    quux(x: C<string>) { return x.#foo; }
+}
+declare let a: C<number>;
+a.#foo;
+a.#method;
+        "#,
+        "C",
+        2,
+    );
+}
+
+/// Same rule with a renamed type parameter (`U` instead of `T`) and class
+/// (`Q` instead of `C`). If the fix is hardcoded to a specific identifier
+/// name, this test will fail.
+#[test]
+fn test_ts18013_uses_class_name_for_generic_class_instance_renamed_type_param() {
+    assert_ts18013_uses_class_name(
+        r#"
+class Q<U> {
+    #x: U = undefined as any;
+    #m(): U { return this.#x; }
+    self(p: Q<U>) { return p.#x; }
+    numericInst(p: Q<number>) { return p.#x; }
+    stringInst(p: Q<string>) { return p.#x; }
+}
+declare let qq: Q<number>;
+qq.#x;
+qq.#m;
+        "#,
+        "Q",
+        2,
+    );
+}
+
+/// When `#x` is declared in generic `Base<T>` and accessed via an instance of
+/// generic `Derived<number>`, TS18013 must report the *declaring* class name
+/// (`Base`), not the receiver's display name. This combines the
+/// declaring-class-name rule (`test_ts18013_reports_declaring_class_name`) with
+/// the Application-unwrap fix: the receiver is an instance of `Derived<number>`
+/// (which is `Application(Derived, [number])`), and the brand of `#x` points
+/// to `Base`. The resolver must unwrap the application and walk the class
+/// hierarchy to find `Base` as the declaring class.
+#[test]
+fn test_ts18013_declaring_class_name_for_generic_inheritance() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Base<T> {
+    #x: T = undefined as any;
+    self(p: Base<T>) { return p.#x; }
+    numericInst(p: Base<number>) { return p.#x; }
+}
+class Derived<T> extends Base<T> {}
+declare let d: Derived<number>;
+d.#x;
+        "#,
+    );
+
+    let ts18013_messages: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(c, _)| *c == 18013)
+        .map(|(_, m)| m.as_str())
+        .collect();
+
+    assert_eq!(
+        ts18013_messages.len(),
+        1,
+        "Should emit exactly one TS18013.\nActual errors: {diagnostics:?}"
+    );
+    assert!(
+        ts18013_messages[0].contains("'Base'"),
+        "TS18013 should reference the declaring class 'Base', not 'Derived' \
+         and not 'the class'.\nActual message: {}",
+        ts18013_messages[0]
+    );
+}
+
 /// TS2344 false positive: a generic indexed-access type argument `T[K]` whose
 /// resolved property values structurally satisfy a non-callable interface
 /// constraint should not emit TS2344. The conformance test

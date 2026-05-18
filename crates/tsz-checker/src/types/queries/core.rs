@@ -1625,6 +1625,24 @@ impl<'a> CheckerState<'a> {
             return Some((class_idx, true));
         }
 
+        // Generic instance types like `C<number>` appear as
+        // `TypeData::Application(base, args)`. The preceding brand and
+        // `class_instance_type_to_decl` paths only see uninstantiated
+        // instances, so walk the application chain to its underlying base
+        // and resolve that. The `current != type_id` guard ensures we only
+        // recurse when an application was actually unwrapped.
+        let mut current = type_id;
+        while let Some(app_base) =
+            crate::query_boundaries::common::get_application_base(self.ctx.types, current)
+        {
+            current = app_base;
+        }
+        if current != type_id
+            && let Some((class_idx, _)) = self.get_class_decl_for_display_type(current)
+        {
+            return Some((class_idx, false));
+        }
+
         if let Some((&class_idx, _)) = self
             .ctx
             .class_constructor_type_cache
