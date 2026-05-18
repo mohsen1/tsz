@@ -199,6 +199,41 @@ fn test_await_using_in_async_body_lowers_to_generator_disposable_region() {
 }
 
 #[test]
+fn test_async_for_in_parenthesized_await_object_lowers_without_raw_fallback() {
+    let output = transform_and_print(
+        "async function f() { for (var k in (await getObj())) { await h(k); } }",
+    );
+
+    assert!(
+        output.contains("return [4 /*yield*/, getObj()];"),
+        "Parenthesized direct await in for-in object should be lowered before key snapshotting.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await getObj") && !output.contains("for (var k in (await"),
+        "Raw suspended for-in syntax must not remain in async ES5 output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_for_in_awaited_element_target_lowers_object_and_index() {
+    let output = transform_and_print(
+        "async function f(obj) { for ((await getBox())[await getKey()] in obj) { await h(); } }",
+    );
+
+    assert!(
+        output.contains("return [4 /*yield*/, getBox()];")
+            && output.contains("return [4 /*yield*/, getKey()];"),
+        "Awaited for-in element target should suspend for object and index in order.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await getBox")
+            && !output.contains("await getKey")
+            && !output.contains("for ((await"),
+        "Raw awaited element target must not remain in async ES5 output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_await_assignment_captures_property_target_before_yield() {
     let output = transform_and_print("async function foo() { var o; o.a = await p; after(); }");
 

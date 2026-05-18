@@ -965,6 +965,7 @@ impl<'a> AstToIr<'a> {
             initializer: Box::new(initializer),
             expression: Box::new(self.convert_expression(loop_data.expression)),
             body: Box::new(self.convert_statement(loop_data.statement)),
+            multiline_body: false,
         }
     }
 
