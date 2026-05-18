@@ -12,6 +12,7 @@ use tsz_common::perf_counters::{
 };
 use tsz_lowering::TypeLowering;
 use tsz_parser::NodeIndex;
+use tsz_parser::parser::base::NodeList;
 use tsz_parser::parser::node::{NodeAccess, NodeArena, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::def::{DefId, DefKind};
@@ -1190,7 +1191,78 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_type_node_is_generic_scope_independent(
+    fn source_file_parameters_are_generic_direct_lowerable(
+        arena: &NodeArena,
+        parameters: &NodeList,
+        type_param_names: &[String],
+    ) -> bool {
+        parameters.nodes.iter().copied().all(|param_idx| {
+            let Some(param_node) = arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = arena.get_parameter(param_node) else {
+                return false;
+            };
+            param.type_annotation.is_none()
+                || Self::source_file_type_node_is_generic_direct_lowerable(
+                    arena,
+                    param.type_annotation,
+                    type_param_names,
+                )
+        })
+    }
+
+    fn source_file_type_literal_member_is_generic_direct_lowerable(
+        arena: &NodeArena,
+        member_idx: NodeIndex,
+        type_param_names: &[String],
+    ) -> bool {
+        let Some(member_node) = arena.get(member_idx) else {
+            return false;
+        };
+
+        if let Some(signature) = arena.get_signature(member_node) {
+            if signature.type_parameters.is_some() {
+                return false;
+            }
+            if let Some(name_node) = arena.get(signature.name)
+                && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            {
+                return false;
+            }
+            let params_lowerable = signature.parameters.as_ref().is_none_or(|params| {
+                Self::source_file_parameters_are_generic_direct_lowerable(
+                    arena,
+                    params,
+                    type_param_names,
+                )
+            });
+            return params_lowerable
+                && (signature.type_annotation.is_none()
+                    || Self::source_file_type_node_is_generic_direct_lowerable(
+                        arena,
+                        signature.type_annotation,
+                        type_param_names,
+                    ));
+        }
+
+        if let Some(index_sig) = arena.get_index_signature(member_node) {
+            return Self::source_file_parameters_are_generic_direct_lowerable(
+                arena,
+                &index_sig.parameters,
+                type_param_names,
+            ) && (index_sig.type_annotation.is_none()
+                || Self::source_file_type_node_is_generic_direct_lowerable(
+                    arena,
+                    index_sig.type_annotation,
+                    type_param_names,
+                ));
+        }
+
+        false
+    }
+
+    fn source_file_type_node_is_generic_direct_lowerable(
         arena: &NodeArena,
         node_idx: NodeIndex,
         type_param_names: &[String],
@@ -1221,15 +1293,16 @@ impl<'a> CheckerState<'a> {
                             .as_ref()
                             .is_none_or(|args| args.nodes.is_empty());
                     }
-                    matches!(name, "Array" | "ReadonlyArray")
-                        && type_ref.type_arguments.as_ref().is_some_and(|args| {
-                            args.nodes.len() == 1
-                                && Self::source_file_type_node_is_generic_scope_independent(
+                    type_ref.type_arguments.as_ref().is_some_and(|args| {
+                        !args.nodes.is_empty()
+                            && args.nodes.iter().copied().all(|arg| {
+                                Self::source_file_type_node_is_generic_direct_lowerable(
                                     arena,
-                                    args.nodes[0],
+                                    arg,
                                     type_param_names,
                                 )
-                        })
+                            })
+                    })
                 })
             }
             k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
@@ -1240,19 +1313,19 @@ impl<'a> CheckerState<'a> {
                         conditional.extends_type,
                         &mut true_branch_names,
                     );
-                    Self::source_file_type_node_is_generic_scope_independent(
+                    Self::source_file_type_node_is_generic_direct_lowerable(
                         arena,
                         conditional.check_type,
                         type_param_names,
-                    ) && Self::source_file_type_node_is_generic_scope_independent(
+                    ) && Self::source_file_type_node_is_generic_direct_lowerable(
                         arena,
                         conditional.extends_type,
                         type_param_names,
-                    ) && Self::source_file_type_node_is_generic_scope_independent(
+                    ) && Self::source_file_type_node_is_generic_direct_lowerable(
                         arena,
                         conditional.true_type,
                         &true_branch_names,
-                    ) && Self::source_file_type_node_is_generic_scope_independent(
+                    ) && Self::source_file_type_node_is_generic_direct_lowerable(
                         arena,
                         conditional.false_type,
                         type_param_names,
@@ -1272,7 +1345,7 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::ARRAY_TYPE => {
                 arena.get_array_type(node).is_some_and(|array| {
-                    Self::source_file_type_node_is_generic_scope_independent(
+                    Self::source_file_type_node_is_generic_direct_lowerable(
                         arena,
                         array.element_type,
                         type_param_names,
@@ -1282,7 +1355,7 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::TUPLE_TYPE => {
                 arena.get_tuple_type(node).is_some_and(|tuple| {
                     tuple.elements.nodes.iter().copied().all(|element| {
-                        Self::source_file_type_node_is_generic_scope_independent(
+                        Self::source_file_type_node_is_generic_direct_lowerable(
                             arena,
                             element,
                             type_param_names,
@@ -1293,7 +1366,7 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
                 arena.get_composite_type(node).is_some_and(|composite| {
                     composite.types.nodes.iter().copied().all(|member| {
-                        Self::source_file_type_node_is_generic_scope_independent(
+                        Self::source_file_type_node_is_generic_direct_lowerable(
                             arena,
                             member,
                             type_param_names,
@@ -1301,12 +1374,39 @@ impl<'a> CheckerState<'a> {
                     })
                 })
             }
+            k if k == syntax_kind_ext::TYPE_LITERAL => {
+                arena.get_type_literal(node).is_some_and(|type_literal| {
+                    type_literal.members.nodes.iter().copied().all(|member| {
+                        Self::source_file_type_literal_member_is_generic_direct_lowerable(
+                            arena,
+                            member,
+                            type_param_names,
+                        )
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                arena.get_function_type(node).is_some_and(|function_type| {
+                    function_type.type_parameters.is_none()
+                        && Self::source_file_parameters_are_generic_direct_lowerable(
+                            arena,
+                            &function_type.parameters,
+                            type_param_names,
+                        )
+                        && (function_type.type_annotation.is_none()
+                            || Self::source_file_type_node_is_generic_direct_lowerable(
+                                arena,
+                                function_type.type_annotation,
+                                type_param_names,
+                            ))
+                })
+            }
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE
                 || k == syntax_kind_ext::OPTIONAL_TYPE
                 || k == syntax_kind_ext::REST_TYPE =>
             {
                 arena.get_wrapped_type(node).is_some_and(|wrapped| {
-                    Self::source_file_type_node_is_generic_scope_independent(
+                    Self::source_file_type_node_is_generic_direct_lowerable(
                         arena,
                         wrapped.type_node,
                         type_param_names,
@@ -1315,7 +1415,7 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::TYPE_OPERATOR => {
                 arena.get_type_operator(node).is_some_and(|operator| {
-                    Self::source_file_type_node_is_generic_scope_independent(
+                    Self::source_file_type_node_is_generic_direct_lowerable(
                         arena,
                         operator.type_node,
                         type_param_names,
@@ -1324,11 +1424,11 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
                 arena.get_indexed_access_type(node).is_some_and(|indexed| {
-                    Self::source_file_type_node_is_generic_scope_independent(
+                    Self::source_file_type_node_is_generic_direct_lowerable(
                         arena,
                         indexed.object_type,
                         type_param_names,
-                    ) && Self::source_file_type_node_is_generic_scope_independent(
+                    ) && Self::source_file_type_node_is_generic_direct_lowerable(
                         arena,
                         indexed.index_type,
                         type_param_names,
@@ -1657,15 +1757,11 @@ impl<'a> CheckerState<'a> {
             return None;
         };
         let type_param_names = Self::type_alias_type_param_names(symbol_arena, type_alias);
-        let body_is_direct_lowerable = if type_param_names.is_empty() {
-            Self::source_file_type_node_is_scope_independent(symbol_arena, type_alias.type_node)
-        } else {
-            Self::source_file_type_node_is_generic_scope_independent(
-                symbol_arena,
-                type_alias.type_node,
-                &type_param_names,
-            )
-        };
+        let body_is_direct_lowerable = Self::source_file_type_node_is_generic_direct_lowerable(
+            symbol_arena,
+            type_alias.type_node,
+            &type_param_names,
+        );
         if !body_is_direct_lowerable {
             record(DirectSourceFileTypeAliasLoweringOutcome::BodyNotDirectLowerable);
             return None;
@@ -1694,6 +1790,10 @@ impl<'a> CheckerState<'a> {
             type_alias,
         );
         if matches!(alias_type, TypeId::UNKNOWN | TypeId::ERROR) {
+            record(DirectSourceFileTypeAliasLoweringOutcome::UnknownOrError);
+            return None;
+        }
+        if common::contains_error_type_in_args(self.ctx.types, alias_type) {
             record(DirectSourceFileTypeAliasLoweringOutcome::UnknownOrError);
             return None;
         }
