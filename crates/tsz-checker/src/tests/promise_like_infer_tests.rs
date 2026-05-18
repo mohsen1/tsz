@@ -3,7 +3,7 @@
 //! When `T = Promise<string>`, TypeScript infers `U = string` because
 //! `Promise<T> <: PromiseLike<T>` (one-directional subtype). The fix extends
 //! Application-level infer matching to allow one-directional subtyping
-//! (source_base <: pattern_base, same arity), rather than requiring mutual
+//! (`source_base` <: `pattern_base`, same arity), rather than requiring mutual
 //! subtyping (isomorphism). Positional type-argument correspondence is correct
 //! for covariant interface hierarchies.
 //!
@@ -56,7 +56,7 @@ fn assert_no_ts2322(source: &str, context: &str) {
 }
 
 /// `Promise<string>` should match `PromiseLike<infer U>` → U = string.
-/// The inferred MyAwaited<Promise<string>> = string, so assigning "hello" is valid.
+/// The inferred `MyAwaited<Promise<string>>` = string, so assigning "hello" is valid.
 #[test]
 fn promise_string_extends_promiselike_infer_u_no_error() {
     let source = with_promise_defs(
@@ -112,7 +112,7 @@ const _ok: string = r;
     assert_no_ts2322(&source, "Extract<Promise<string>> = string");
 }
 
-/// User-defined type implementing PromiseLike should also be matched.
+/// User-defined type implementing `PromiseLike` should also be matched.
 /// `MyPromise<T>` is a subtype of `PromiseLike<T>` via structural compatibility.
 #[test]
 fn user_defined_promiselike_subtype_infer_u_no_error() {
