@@ -539,6 +539,13 @@ for (const [compiler, diagnostics] of [
           `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].file`,
         );
       }
+      if (entry?.candidate?.id !== null && entry?.candidate?.id !== undefined) {
+        if (typeof entry.candidate.id !== "string" || entry.candidate.id.trim() === "") {
+          fail(
+            `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].candidate.id must be a non-empty string`,
+          );
+        }
+      }
       if (entry?.errorCount !== null && entry?.errorCount !== undefined) {
         if (!Number.isInteger(entry.errorCount) || entry.errorCount < 0) {
           fail(
