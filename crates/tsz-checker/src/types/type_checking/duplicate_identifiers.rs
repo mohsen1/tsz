@@ -1195,19 +1195,21 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // Targeted module augmentations are allowed to merge interface
-                    // declarations with an existing interface export surface.
-                    // Also allow function declarations to merge - TypeScript permits
-                    // function overloads to be added via module augmentation.
-                    // Keep the dedicated cross-file interface-member conflict pass
-                    // above responsible for property-vs-method mismatches instead of
-                    // collapsing benign interface merges into TS2300 here.
+                    // Targeted module augmentations allow merging: interface+interface,
+                    // function+function (overloads), and import aliases (which are not local
+                    // declarations — they reference the source module's export and never
+                    // conflict with an augmentation of that same source module).
+                    // Property-vs-method mismatches are handled by the dedicated cross-file
+                    // interface-member conflict pass above.
                     if (decl_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation
                         || other_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation)
                         && (((decl_flags & symbol_flags::INTERFACE) != 0
                             && (other_flags & symbol_flags::INTERFACE) != 0)
                             || ((decl_flags & symbol_flags::FUNCTION) != 0
-                                && (other_flags & symbol_flags::FUNCTION) != 0))
+                                && (other_flags & symbol_flags::FUNCTION) != 0)
+                            || (decl_is_local && self.node_is_import_alias(decl_flags, decl_idx))
+                            || (other_is_local
+                                && self.node_is_import_alias(other_flags, other_idx)))
                     {
                         continue;
                     }
@@ -1315,10 +1317,9 @@ impl<'a> CheckerState<'a> {
                     // Import alias referencing a remote non-alias declaration
                     // is not a conflict — suppress the false duplicate.
                     if !same_source_file {
-                        let decl_is_import_alias = (decl_flags & symbol_flags::ALIAS) != 0
-                            && self.is_import_alias_node(decl_idx);
-                        let other_is_import_alias = (other_flags & symbol_flags::ALIAS) != 0
-                            && self.is_import_alias_node(other_idx);
+                        let decl_is_import_alias = self.node_is_import_alias(decl_flags, decl_idx);
+                        let other_is_import_alias =
+                            self.node_is_import_alias(other_flags, other_idx);
                         if (decl_is_import_alias && (other_flags & symbol_flags::ALIAS) == 0)
                             || (other_is_import_alias && (decl_flags & symbol_flags::ALIAS) == 0)
                         {
