@@ -1,7 +1,7 @@
 use tsz_common::Atom;
 use tsz_solver::{
     ObjectShape, PropertyInfo, QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId,
-    TypeResolver, TypeSubstitution,
+    TypeResolver,
 };
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
@@ -35,50 +35,6 @@ pub(crate) fn remapped_mapped_type_has_no_outer_type_params(
     type_id: TypeId,
 ) -> bool {
     tsz_solver::type_queries::remapped_mapped_type_has_no_outer_type_params(db, type_id)
-}
-
-/// Return an instantiated homomorphic mapped target that projects over `source`.
-///
-/// This preserves deferred targets such as `{ [P in keyof S]?: S[P] }` through
-/// checker-side assignability preparation so the solver relation can decide the
-/// mapped comparison structurally.
-pub(crate) fn homomorphic_mapped_projection_target<R: TypeResolver>(
-    db: &dyn QueryDatabase,
-    resolver: &R,
-    _source: TypeId,
-    target: TypeId,
-) -> Option<TypeId> {
-    let type_db = db.as_type_database();
-    let candidate = if tsz_solver::type_queries::get_mapped_type(type_db, target).is_some() {
-        target
-    } else if let Some(app) = tsz_solver::type_queries::get_type_application(type_db, target) {
-        let def_id = tsz_solver::type_queries::get_lazy_def_id(type_db, app.base)?;
-        let type_params = resolver.get_lazy_type_params(def_id)?;
-        if type_params.is_empty() {
-            return None;
-        }
-        let body = resolver.resolve_lazy(def_id, type_db)?;
-        let substitution = TypeSubstitution::from_args(type_db, &type_params, &app.args);
-        tsz_solver::instantiate_type_cached(type_db, Some(db), body, &substitution)
-    } else {
-        return None;
-    };
-
-    let mapped = tsz_solver::type_queries::get_mapped_type(type_db, candidate)?;
-    if mapped.name_type.is_some()
-        || mapped.optional_modifier == Some(tsz_solver::MappedModifier::Remove)
-    {
-        return None;
-    }
-
-    let mapped_source = tsz_solver::keyof_inner_type(type_db, mapped.constraint)?;
-    let (template_obj, template_idx) = tsz_solver::index_access_parts(type_db, mapped.template)?;
-    let idx_param = tsz_solver::type_param_info(type_db, template_idx)?;
-    if idx_param.name == mapped.type_param.name && template_obj == mapped_source {
-        Some(candidate)
-    } else {
-        None
-    }
 }
 
 // ---------------------------------------------------------------------------

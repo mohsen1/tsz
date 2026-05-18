@@ -271,47 +271,23 @@ fn generic_tuple_to_object_preserves_typeof_tuple_unique_symbol_keys() {
 }
 
 #[test]
-fn inline_expected_unique_symbol_object_literal_preserves_computed_keys() {
+fn tuple_to_object_type_challenges_assertion_tuple_preserves_unique_symbol_keys() {
     assert_no_errors_with_symbol_lib(
-        "inline computed-symbol expected object in Equal",
+        "Type Challenges tuple-of-assertions context keeps unique-symbol computed keys",
         r#"
         type Equal<X, Y> =
           (<T>() => T extends X ? 1 : 2) extends
           (<T>() => T extends Y ? 1 : 2) ? true : false;
         type Expect<T extends true> = T;
-
-        declare const sym1: unique symbol;
-        declare const sym2: unique symbol;
-
-        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
-          [K in T[number]]: K
-        };
-        type Case = Expect<Equal<
-          TupleToObject<readonly [typeof sym1, typeof sym2]>,
-          { [sym1]: typeof sym1; [sym2]: typeof sym2 }
-        >>;
-        "#,
-    );
-}
-
-#[test]
-fn type_challenges_tuple_to_object_symbol_cases_use_typeof_tuple() {
-    assert_no_errors_with_symbol_lib(
-        "Type Challenges tuple-to-object symbol and mixed cases",
-        r#"
-        type Equal<X, Y> =
-          (<T>() => T extends X ? 1 : 2) extends
-          (<T>() => T extends Y ? 1 : 2) ? true : false;
-        type Expect<T extends true> = T;
-
-        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
-          [K in T[number]]: K
-        };
 
         const sym1 = Symbol(1);
         const sym2 = Symbol(2);
         const tupleSymbol = [sym1, sym2] as const;
         const tupleMix = [1, "2", 3, "4", sym1] as const;
+
+        type TupleToObject<T extends readonly (string | number | symbol)[]> = {
+          [Key in T[number]]: Key
+        };
 
         type cases = [
           Expect<Equal<TupleToObject<typeof tupleSymbol>, { [sym1]: typeof sym1; [sym2]: typeof sym2 }>>,

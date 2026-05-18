@@ -781,12 +781,11 @@ impl<'a> CheckerState<'a> {
         // can detect fresh depth exceedance from this particular relation.
         self.ctx.relation_depth_exceeded.set(false);
         let assignable = self.diagnostic_relation_boolean_guard(source, target);
-        // TS2859: if the solver hit its recursion/complexity limit and could
-        // not establish assignability, emit "Excessive complexity comparing
-        // types". A successful relation may still set the sticky depth flag
-        // while exploring expansive recursive siblings; tsc does not report
-        // TS2859 when an assignable path was found.
-        if !assignable && self.ctx.relation_depth_exceeded.get() {
+        // TS2859: if the solver hit its recursion/complexity limit during the check
+        // (including the constituent-count overflow guard in check_subtype_inner),
+        // emit "Excessive complexity comparing types" regardless of whether the
+        // relation technically succeeded or failed.
+        if self.ctx.relation_depth_exceeded.get() {
             let source_name = self.format_type_diagnostic(source);
             let target_name = self.format_type_diagnostic(target);
             self.error_at_node(

@@ -1225,14 +1225,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
-            if let Some(value_type) = self.declared_type_for_type_query_symbol(sym_id) {
-                if let Some(type_arguments) = &type_arguments {
-                    return self
-                        .apply_instantiation_expression_type_arguments(value_type, type_arguments);
-                }
-                return value_type;
-            }
-
             let factory = self.ctx.types.factory();
             let base = factory.type_query(tsz_solver::SymbolRef(sym_id.0));
             if let Some(type_arguments) = &type_arguments {

@@ -301,9 +301,7 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(idx)
             .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
-            && let Some(sym_id) = self
-                .resolve_identifier_symbol(idx)
-                .or_else(|| self.ctx.binder.get_node_symbol(idx))
+            && let Some(sym_id) = self.resolve_identifier_symbol(idx)
         {
             let declared = self.get_type_of_symbol(sym_id);
             let parameter_declaration = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
@@ -332,31 +330,6 @@ impl<'a> CheckerState<'a> {
                 }
                 None
             });
-            if let Some((_parameter_idx, type_annotation)) = parameter_declaration
-                && let Some(annotation_node) = self.ctx.arena.get(type_annotation)
-                && let Some(type_name) = self
-                    .ctx
-                    .arena
-                    .get_identifier_at(
-                        self.ctx
-                            .arena
-                            .get_type_ref(annotation_node)
-                            .map_or(type_annotation, |type_ref| type_ref.type_name),
-                    )
-                    .map(|identifier| identifier.escaped_text.as_str())
-            {
-                let annotated_surface =
-                    self.ctx
-                        .types
-                        .factory()
-                        .type_param(tsz_solver::TypeParamInfo {
-                            name: self.ctx.types.intern_string(type_name),
-                            constraint: Some(fallback),
-                            default: None,
-                            is_const: false,
-                        });
-                return annotated_surface;
-            }
             if let Some((parameter_idx, type_annotation)) = parameter_declaration
                 && let Some(annotation_node) = self.ctx.arena.get(type_annotation)
                 && let annotation_name = self
@@ -914,13 +887,9 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn format_type_for_operator_display(&mut self, type_id: TypeId) -> String {
-        if let Some(info) =
-            crate::query_boundaries::common::type_param_info(self.ctx.types, type_id)
-        {
-            return self.ctx.types.resolve_atom(info.name);
-        }
         let display_type = self.widen_type_for_operator_display(type_id);
-        if self.operator_operand_may_include_bigint(display_type)
+        if crate::query_boundaries::common::type_param_info(self.ctx.types, display_type).is_none()
+            && self.operator_operand_may_include_bigint(display_type)
             && let Some(members) =
                 crate::query_boundaries::common::union_members(self.ctx.types, display_type)
         {

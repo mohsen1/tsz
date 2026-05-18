@@ -1237,11 +1237,8 @@ impl<'a> TypeInstantiator<'a> {
                             }
                             let mut member_subst = self.substitution.clone();
                             member_subst.insert(info.name, member);
-                            let instantiated = if self.preserve_unsubstituted_type_params {
-                                instantiate_type_preserving(self.interner, cond_type, &member_subst)
-                            } else {
-                                instantiate_type(self.interner, cond_type, &member_subst)
-                            };
+                            let instantiated =
+                                instantiate_type(self.interner, cond_type, &member_subst);
                             if instantiated == TypeId::ERROR {
                                 self.depth_exceeded = true;
                                 return TypeId::ERROR;
@@ -1285,11 +1282,8 @@ impl<'a> TypeInstantiator<'a> {
                             }
                             let mut member_subst = self.substitution.clone();
                             member_subst.insert(info.name, member);
-                            let instantiated = if self.preserve_unsubstituted_type_params {
-                                instantiate_type_preserving(self.interner, cond_type, &member_subst)
-                            } else {
-                                instantiate_type(self.interner, cond_type, &member_subst)
-                            };
+                            let instantiated =
+                                instantiate_type(self.interner, cond_type, &member_subst);
                             // Check if instantiation hit depth limit
                             if instantiated == TypeId::ERROR {
                                 self.depth_exceeded = true;
@@ -1661,17 +1655,12 @@ impl<'a> TypeInstantiator<'a> {
                     subst = ?self.substitution.map.iter().map(|(k, v)| (self.interner.resolve_atom_ref(*k), v.0)).collect::<Vec<_>>(),
                     "instantiate Mapped: about to instantiate constraint"
                 );
-                let saved_preserve_unsubstituted = self.preserve_unsubstituted_type_params;
-                self.preserve_unsubstituted_type_params = true;
-
                 let new_constraint = self.instantiate(mapped.constraint);
                 let new_template = self.instantiate(mapped.template);
                 let new_name_type = mapped.name_type.map(|t| self.instantiate(t));
                 let new_param_constraint =
                     mapped.type_param.constraint.map(|c| self.instantiate(c));
                 let new_param_default = mapped.type_param.default.map(|d| self.instantiate(d));
-
-                self.preserve_unsubstituted_type_params = saved_preserve_unsubstituted;
 
                 self.exit_shadowing_scope(shadowed_len, saved_visiting);
 
@@ -1729,14 +1718,11 @@ impl<'a> TypeInstantiator<'a> {
                 // `undefined extends T[P] ? never : P` where the extends_type is an
                 // IndexAccess that may contain Lazy internally but can be evaluated.
                 let mapped_type = self.interner.mapped(instantiated);
-                let has_lazy_conditional_boundary = if let Some(cond) =
+                let has_lazy_extends = if let Some(cond) =
                     crate::type_queries::get_conditional_type(self.interner, new_template)
                 {
                     matches!(
                         self.interner.lookup(cond.extends_type),
-                        Some(crate::types::TypeData::Lazy(_))
-                    ) || matches!(
-                        self.interner.lookup(cond.check_type),
                         Some(crate::types::TypeData::Lazy(_))
                     )
                 } else {
@@ -1758,7 +1744,7 @@ impl<'a> TypeInstantiator<'a> {
                 let resolver_dependent_constraint =
                     mapped_constraint_needs_resolver(self.interner, new_constraint);
                 if self.preserve_meta_types
-                    || has_lazy_conditional_boundary
+                    || has_lazy_extends
                     || has_lazy_application
                     || name_type_has_lazy_application
                     || resolver_dependent_constraint

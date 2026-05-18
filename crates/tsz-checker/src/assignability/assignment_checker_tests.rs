@@ -14,7 +14,6 @@ fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::pars
     (parser, root)
 }
 
-mod assignment_checker_mapped_type_tests;
 mod assignment_checker_return_inference_tests;
 mod assignment_checker_template_display_tests;
 mod assignment_checker_typebox_tests;

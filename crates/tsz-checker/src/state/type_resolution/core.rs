@@ -11,48 +11,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Keep the lowered generic base/defaults, but replace explicit type
-    /// arguments with checker-resolved forms so inline type literals preserve
-    /// computed property names and other checker-owned facts.
-    fn rebuild_application_with_checker_type_args(
-        &mut self,
-        application: TypeId,
-        type_args: &NodeList,
-    ) -> TypeId {
-        let Some((base, mut app_args)) = query::get_application_info(self.ctx.types, application)
-        else {
-            return application;
-        };
-
-        for (slot, &arg_idx) in app_args.iter_mut().zip(type_args.nodes.iter()) {
-            if self.type_arg_needs_checker_resolution(arg_idx) {
-                *slot = self.get_type_from_type_node(arg_idx);
-            }
-        }
-
-        self.ctx.types.application(base, app_args)
-    }
-
-    fn type_arg_needs_checker_resolution(&self, arg_idx: NodeIndex) -> bool {
-        let Some(type_lit) = self
-            .ctx
-            .arena
-            .get(arg_idx)
-            .and_then(|node| self.ctx.arena.get_type_literal(node))
-        else {
-            return false;
-        };
-
-        type_lit.members.nodes.iter().any(|&member_idx| {
-            self.ctx
-                .arena
-                .get(member_idx)
-                .and_then(|member| self.ctx.arena.get_signature(member))
-                .and_then(|sig| self.ctx.arena.get(sig.name))
-                .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
-        })
-    }
-
     fn same_file_type_alias_parts_for_name(
         &self,
         name: &str,
@@ -133,21 +91,7 @@ impl<'a> CheckerState<'a> {
                         .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
                         .collect();
                     if !type_args.is_empty() {
-                        let base = self
-                            .resolve_import_type_target_symbol(call_idx, type_name_idx)
-                            .and_then(|target_sym_id| {
-                                let symbol_name = self
-                                    .get_cross_file_symbol(target_sym_id)
-                                    .or_else(|| self.ctx.binder.get_symbol(target_sym_id))
-                                    .map(|symbol| symbol.escaped_name.clone())?;
-                                let def_id = self.ctx.get_or_create_def_id_for_symbol_name(
-                                    target_sym_id,
-                                    &symbol_name,
-                                );
-                                Some(self.ctx.types.lazy(def_id))
-                            })
-                            .unwrap_or(resolved);
-                        return self.ctx.types.application(base, type_args);
+                        return self.ctx.types.application(resolved, type_args);
                     }
                 }
                 return resolved;
@@ -312,9 +256,6 @@ impl<'a> CheckerState<'a> {
                 .with_computed_name_resolver(&computed_name_resolver)
                 .with_computed_symbol_name_resolver(&computed_symbol_name_resolver);
                 let mut type_id = lowering.lower_type(idx);
-                if let Some(args) = &type_ref.type_arguments {
-                    type_id = self.rebuild_application_with_checker_type_args(type_id, args);
-                }
                 if query::get_application_info(self.ctx.types, type_id).is_none()
                     && let Some(args) = &type_ref.type_arguments
                 {
@@ -958,35 +899,6 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
                 }
-                if matches!(
-                    name,
-                    "Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize"
-                ) && !is_builtin_array
-                    && self.ctx.file_local_type_shadow_for_lib_name(name)
-                    && self.ctx.same_file_type_declaration_exists(name)
-                    && let Some(sym_id) = sym_id
-                {
-                    self.ensure_def_ready_for_lowering(sym_id, name);
-                    let type_args = type_ref
-                        .type_arguments
-                        .as_ref()
-                        .map(|args| {
-                            args.nodes
-                                .iter()
-                                .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
-                    let def_id = self
-                        .resolve_def_id_for_lowering(type_name_idx)
-                        .unwrap_or_else(|| self.ctx.get_or_create_def_id(sym_id));
-                    let base = self.ctx.types.factory().lazy(def_id);
-                    return if type_args.is_empty() {
-                        base
-                    } else {
-                        self.ctx.types.factory().application(base, type_args)
-                    };
-                }
                 if name == "Readonly"
                     && !is_intrinsic_type
                     && !is_builtin_array
@@ -1089,9 +1001,6 @@ impl<'a> CheckerState<'a> {
                 .with_computed_name_resolver(&computed_name_resolver)
                 .with_computed_symbol_name_resolver(&computed_symbol_name_resolver);
                 let mut result = lowering.lower_type(idx);
-                if let Some(args) = &type_ref.type_arguments {
-                    result = self.rebuild_application_with_checker_type_args(result, args);
-                }
                 if let Some((base, app_args)) = query::get_application_info(self.ctx.types, result)
                     && !is_builtin_array
                     && query::get_lazy_def_id(self.ctx.types, base).is_none()

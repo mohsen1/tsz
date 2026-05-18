@@ -266,21 +266,16 @@ impl<'a> TypeFormatter<'a> {
         // `n?: number | undefined`. If the stored type doesn't already contain
         // undefined, we append it.
         let type_str: String = if prop.optional {
+            let formatted = self.format(prop.type_id).into_owned();
             if self.preserve_optional_property_surface_syntax {
-                let surface_type = if prop.write_type != TypeId::NONE {
-                    prop.write_type
-                } else {
-                    prop.type_id
-                };
-                self.format(surface_type).into_owned()
+                formatted
             } else if prop.type_id == TypeId::NEVER {
                 // `never | undefined` simplifies to `undefined`; tsc displays just `undefined`
                 "undefined".to_string()
             } else if !self.type_contains_undefined(prop.type_id) {
-                let formatted = self.format(prop.type_id).into_owned();
                 format!("{formatted} | undefined")
             } else {
-                self.format(prop.type_id).into_owned()
+                formatted
             }
         } else {
             self.format(prop.type_id).into_owned()

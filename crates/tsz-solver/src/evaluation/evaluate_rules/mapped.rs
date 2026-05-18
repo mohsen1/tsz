@@ -4,9 +4,7 @@
 //! Including homomorphic mapped types that preserve modifiers.
 
 use crate::TypeDatabase;
-use crate::instantiation::instantiate::{
-    TypeSubstitution, instantiate_type, instantiate_type_preserving,
-};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::Visibility;
@@ -89,7 +87,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         );
 
         let subst = TypeSubstitution::single(mapped.type_param.name, key_type);
-        let remapped = instantiate_type_preserving(self.interner(), name_type, &subst);
+        let remapped = instantiate_type(self.interner(), name_type, &subst);
 
         tracing::trace!(
             remapped_before_eval = remapped.0,
@@ -320,25 +318,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // template is `M0[K]`, not `Partial<M0>[K]`.
         let is_homomorphic = source_object.is_some();
 
-        // A filtering/remapping `as` clause can still use the original source
-        // property template (`T[K]`). In that case, preserved optional source
-        // properties must carry their declared type through the mapped result
-        // rather than the read type (`T[K]` -> `T | undefined`). Conditional
-        // extends identity checks observe that difference even when ordinary
-        // assignability does not.
-        let template_reads_source_property =
-            source_object.is_some_and(|source| match self.interner().lookup(mapped.template) {
-                Some(TypeData::IndexAccess(obj, idx)) if obj == source => {
-                    matches!(
-                        self.interner().lookup(idx),
-                        Some(TypeData::TypeParameter(param)) if param.name == mapped.type_param.name
-                    )
-                }
-                _ => false,
-            });
-        let should_use_declared_source_property_type =
-            is_identity_homomorphic || template_reads_source_property;
-
         // PERF: Memoize source properties into a hash map for O(1) lookup during the key loop.
         // This avoids repeated O(N) collect_properties calls inside the loop.
         // Also capture resolved_source once to avoid double evaluate(source) calls.
@@ -543,7 +522,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // For non-optional properties in identity homomorphic types, the
             // evaluated T[K] equals the declared type, so we can also skip.
             //
-            let property_type = if should_use_declared_source_property_type
+            let property_type = if is_identity_homomorphic
                 && !source_has_type_params
                 && let Some(&(_, _, declared_type, _, _, _)) = source_info
             {
@@ -554,7 +533,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                 // Substitute into the template
                 let instantiated_template =
-                    instantiate_type_preserving(self.interner(), mapped.template, &subst);
+                    instantiate_type(self.interner(), mapped.template, &subst);
                 let evaluated = self.evaluate(instantiated_template);
 
                 // Check if evaluation hit depth limit
@@ -644,7 +623,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 source_readonly,
             );
 
-            let property_type = if should_use_declared_source_property_type
+            let property_type = if is_identity_homomorphic
                 && !source_has_type_params
                 && let Some(&(_, _, declared_type, _, _, _)) = source_info
             {
@@ -652,8 +631,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             } else {
                 subst.clear();
                 subst.insert(mapped.type_param.name, *symbol_key_id);
-                let instantiated =
-                    instantiate_type_preserving(self.interner(), mapped.template, &subst);
+                let instantiated = instantiate_type(self.interner(), mapped.template, &subst);
                 let evaluated = self.evaluate(instantiated);
                 if evaluated == TypeId::ERROR && self.is_depth_exceeded() {
                     return TypeId::ERROR;
@@ -851,11 +829,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             subst.insert(mapped.type_param.name, member);
 
             // Evaluate the `as` clause to get the remapped key
-            let remapped_key = self.evaluate(instantiate_type_preserving(
-                self.interner(),
-                name_type,
-                &subst,
-            ));
+            let remapped_key = self.evaluate(instantiate_type(self.interner(), name_type, &subst));
 
             // If remapped key is `never`, skip this member (filtered out)
             if remapped_key == TypeId::NEVER {
@@ -882,8 +856,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             // Evaluate the template with the substitution
-            let instantiated_template =
-                instantiate_type_preserving(self.interner(), mapped.template, &subst);
+            let instantiated_template = instantiate_type(self.interner(), mapped.template, &subst);
             let property_type = self.evaluate(instantiated_template);
 
             if property_type == TypeId::ERROR && self.is_depth_exceeded() {

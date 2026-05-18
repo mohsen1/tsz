@@ -327,7 +327,7 @@ let c: "no_match" = r;  // should error: R is "hello"
 fn test_array_element_infer_extends_object_accepts_object_element() {
     let source = r#"
 type ExtractElement<T> = T extends (infer U extends object)[] ? U : never;
-type Elem = ExtractElement<{ name: string }[]>;
+type Elem = ExtractElement<Array<{ name: string }>>;
 
 const elem: Elem = { name: "test" };
 "#;

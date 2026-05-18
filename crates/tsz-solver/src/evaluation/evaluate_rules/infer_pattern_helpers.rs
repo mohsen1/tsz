@@ -2221,9 +2221,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if self.is_template_infer_span(pattern.get(index))
             && matches!(
                 pattern.get(index + 1),
-                Some(TemplateSpan::Type(
-                    TypeId::STRING | TypeId::ANY | TypeId::UNKNOWN
-                ))
+                Some(TemplateSpan::Type(TypeId::STRING))
             )
         {
             if self.is_template_infer_span(pattern.get(index + 2)) {

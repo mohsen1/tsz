@@ -1144,12 +1144,7 @@ a16 = b16;
 b16 = a16;
 "#;
 
-    let options = CheckerOptions {
-        strict_null_checks: true,
-        exact_optional_property_types: true,
-        ..CheckerOptions::default()
-    };
-    let diagnostics = with_lib_contexts(source, "test.ts", options);
+    let diagnostics = get_all_diagnostics(source);
     let ts2322_errors: Vec<_> = diagnostics
         .into_iter()
         .filter(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
@@ -4711,10 +4706,10 @@ fn test_ts2322_conditional_extends_distinguishes_optional_and_optional_undefined
         "Expected one TS2322 for conditional extends optional-property identity. Actual diagnostics: {diagnostics:?}"
     );
     assert!(
-        ts2322[0].1.contains(
-            "is not assignable to type '<T>() => T extends { a?: string | undefined; } ? 0 : 1'"
-        ),
-        "Expected TS2322 for differing optional-property conditional signatures. Actual diagnostics: {diagnostics:?}"
+        ts2322[0]
+            .1
+            .contains("Type '<T>() => T extends { a?: string; } ? 0 : 1' is not assignable to type '<T>() => T extends { a?: string | undefined; } ? 0 : 1'"),
+        "Expected TS2322 to preserve the differing optional-property conditional signatures. Actual diagnostics: {diagnostics:?}"
     );
 }
 
