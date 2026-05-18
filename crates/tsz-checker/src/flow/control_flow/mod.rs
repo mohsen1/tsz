@@ -25,6 +25,7 @@ mod call_condition_narrowing;
 mod comparison_types;
 pub(crate) mod condition_narrowing;
 mod core;
+mod flow_dp;
 pub(crate) mod narrowing;
 mod narrowing_helpers;
 mod optional_chain;

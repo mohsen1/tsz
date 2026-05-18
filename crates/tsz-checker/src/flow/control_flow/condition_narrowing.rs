@@ -1,4 +1,5 @@
 use super::FlowAnalyzer;
+use super::flow_dp::{DpMemo, DpState};
 use crate::query_boundaries::common::is_union_type;
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis::{
@@ -12,17 +13,51 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{GuardSense, NarrowingContext, TypeGuard, TypeId, TypeofKind};
 
 impl<'a> FlowAnalyzer<'a> {
+    /// Returns `true` when every reachable antecedent path through `flow_id`
+    /// has compared `target` to `null`. The traversal is memoized per flow
+    /// node so it runs in `O(N)` and produces the same answer regardless of
+    /// the order in which DAG-shared antecedents are visited; the previous
+    /// implementation shared a single `visited` `Vec` across siblings, which
+    /// made the second branch see shared antecedents as already-visited and
+    /// (silently, incorrectly) collapsed the AND to `false`.
     fn antecedent_chain_excludes_null_for_target(
         &self,
         flow_id: FlowNodeId,
         target: NodeIndex,
-        visited: &mut Vec<FlowNodeId>,
     ) -> bool {
-        if flow_id.is_none() || visited.contains(&flow_id) {
+        let mut memo: DpMemo<bool> = DpMemo::default();
+        self.excludes_null_memoized(flow_id, target, &mut memo)
+    }
+
+    fn excludes_null_memoized(
+        &self,
+        flow_id: FlowNodeId,
+        target: NodeIndex,
+        memo: &mut DpMemo<bool>,
+    ) -> bool {
+        if flow_id.is_none() {
             return false;
         }
-        visited.push(flow_id);
+        match memo.get(&flow_id) {
+            // Back-edge: preserve the historical fail-safe (treat the loop as
+            // not contributing a null-exclusion) so loops do not over-narrow.
+            Some(DpState::InProgress) => return false,
+            Some(DpState::Done(value)) => return *value,
+            None => {}
+        }
+        memo.insert(flow_id, DpState::InProgress);
 
+        let value = self.compute_excludes_null(flow_id, target, memo);
+        memo.insert(flow_id, DpState::Done(value));
+        value
+    }
+
+    fn compute_excludes_null(
+        &self,
+        flow_id: FlowNodeId,
+        target: NodeIndex,
+        memo: &mut DpMemo<bool>,
+    ) -> bool {
         let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
             return false;
         };
@@ -33,12 +68,15 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         let mut saw_antecedent = false;
-        for &antecedent in &flow.antecedent {
+        // Snapshot so we can release the borrow on `flow_nodes` before
+        // recursing into siblings.
+        let antecedents: Vec<FlowNodeId> = flow.antecedent.to_vec();
+        for antecedent in antecedents {
             if antecedent.is_none() {
                 continue;
             }
             saw_antecedent = true;
-            if !self.antecedent_chain_excludes_null_for_target(antecedent, target, visited) {
+            if !self.excludes_null_memoized(antecedent, target, memo) {
                 return false;
             }
         }
@@ -712,8 +750,7 @@ impl<'a> FlowAnalyzer<'a> {
             && let Some(current_exclusion) =
                 self.typeof_exclusion_for_condition(condition_idx, target, is_true_branch)
         {
-            let prior_exclusions =
-                self.antecedent_typeof_exclusion_mask(antecedent_id, target, &mut Vec::new());
+            let prior_exclusions = self.antecedent_typeof_exclusion_mask(antecedent_id, target);
             let exclusions = prior_exclusions | Self::typeof_exclusion_bit(current_exclusion);
             if exclusions == Self::ALL_TYPEOF_EXCLUSIONS {
                 return empty_object_type(self.interner);
@@ -845,7 +882,6 @@ impl<'a> FlowAnalyzer<'a> {
                                 && self.antecedent_chain_excludes_null_for_target(
                                     antecedent_id,
                                     target,
-                                    &mut Vec::new(),
                                 )
                             {
                                 return narrowing.narrow_excluding_type(result, TypeId::NULL);
@@ -1347,11 +1383,7 @@ impl<'a> FlowAnalyzer<'a> {
                 );
                 if effective_truth
                     && typeof_kind == TypeofKind::Object
-                    && self.antecedent_chain_excludes_null_for_target(
-                        antecedent_id,
-                        target,
-                        &mut Vec::new(),
-                    )
+                    && self.antecedent_chain_excludes_null_for_target(antecedent_id, target)
                 {
                     return narrowing.narrow_excluding_type(narrowed, TypeId::NULL);
                 }

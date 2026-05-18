@@ -1321,5 +1321,9 @@ path = "tests/static_readonly_unique_symbol_tests.rs"
 name = "operator_literal_annotation_display_tests"
 path = "tests/operator_literal_annotation_display_tests.rs"
 
+[[test]]
+name = "flow_dp_memoization_tests"
+path = "tests/flow_dp_memoization_tests.rs"
+
 [lints]
 workspace = true
