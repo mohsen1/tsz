@@ -139,17 +139,17 @@ impl<'a> CheckerState<'a> {
             .resolve_import_alias_and_register(local_sym_id)
             .unwrap_or(local_sym_id);
         let symbol = self.get_cross_file_symbol(sym_id)?;
-        let value_decl = symbol.value_declaration;
-        let decl_arena = self
+        let file_idx = self
             .ctx
             .resolve_symbol_file_index(sym_id)
-            .map(|file_idx| self.ctx.get_arena_for_file(file_idx as u32))
-            .unwrap_or(self.ctx.arena);
+            .unwrap_or(symbol.decl_file_idx as usize);
+        let value_decl = symbol.value_declaration;
+        let decl_arena = self.ctx.get_arena_for_file(file_idx as u32);
         if value_decl.is_none() || !decl_arena.is_const_variable_declaration(value_decl) {
             return None;
         }
 
-        Some(format!("__symbol_{}", sym_id.0))
+        Some(format!("__symbol_{}_{}", file_idx, sym_id.0))
     }
 
     // =========================================================================

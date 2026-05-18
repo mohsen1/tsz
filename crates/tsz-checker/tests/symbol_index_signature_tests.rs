@@ -222,10 +222,10 @@ export interface WithSymbol {
             (
                 "./b.ts",
                 r#"
-import { sym, type WithSymbol } from "./a";
+import { sym as importedSym, type WithSymbol } from "./a";
 
 declare const ws: WithSymbol;
-const value: number = ws[sym];
+const value: number = ws[importedSym];
 "#,
             ),
         ],
