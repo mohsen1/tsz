@@ -20,6 +20,8 @@
 //!   `unknown` depending on compiler options.
 //! - **`OptionalChainNonNullish`**: an optional chain (e.g. `a?.b`) was observed
 //!   in a truthy branch, implying the base is non-nullish.
+//! - **`NonNullish`**: checker CFG/reference matching established that a value
+//!   is not `null` or `undefined`; solver applies the type algebra.
 //! - **`ForOfElement`**: a `for-of` loop destructures an iterable; the solver
 //!   resolves the iterated element type.
 //! - **`TruthyNarrow`**: a value was used in a boolean context; remove nullish
@@ -52,6 +54,10 @@ pub(crate) enum FlowObservation {
     /// An optional-chain expression was observed in a truthy branch, meaning
     /// the base value is non-nullish.
     OptionalChainNonNullish,
+
+    /// The checker established that this reference is non-nullish through a
+    /// condition, assertion predicate, or truthy result path.
+    NonNullish,
 
     /// A for-of loop destructures an iterable. The solver resolves the
     /// iterated element type from the iterable/iterator protocol.
@@ -103,7 +109,9 @@ pub(crate) fn apply_flow_observation(
             }
         }
 
-        FlowObservation::OptionalChainNonNullish => tsz_solver::remove_nullish(db, base_type),
+        FlowObservation::OptionalChainNonNullish | FlowObservation::NonNullish => {
+            tsz_solver::remove_nullish(db, base_type)
+        }
 
         FlowObservation::TruthyNarrow { is_true_branch } => {
             if *is_true_branch {
@@ -162,6 +170,14 @@ fn narrow_with_default_policy(
 /// Routes through [`apply_flow_observation`] with [`FlowObservation::OptionalChainNonNullish`].
 pub(crate) fn narrow_optional_chain(db: &dyn TypeDatabase, base_type: TypeId) -> TypeId {
     apply_flow_observation(db, base_type, &FlowObservation::OptionalChainNonNullish)
+}
+
+/// Apply non-nullish flow narrowing through the boundary.
+///
+/// Callers use this after checker-owned CFG/reference analysis has proved that
+/// a value is neither `null` nor `undefined`. The solver owns the type algebra.
+pub(crate) fn narrow_non_nullish(db: &dyn TypeDatabase, base_type: TypeId) -> TypeId {
+    apply_flow_observation(db, base_type, &FlowObservation::NonNullish)
 }
 
 /// Resolve catch variable type through the boundary.
@@ -329,6 +345,7 @@ pub(crate) fn resolve_lazy_def_with_env(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tsz_solver::TypeInterner;
 
     #[test]
     fn catch_variable_type_returns_unknown_when_flag_set() {
@@ -368,5 +385,17 @@ mod tests {
     fn catch_variable_typeof_base_preserves_non_catch() {
         let result = catch_variable_typeof_base(TypeId::STRING, false, true);
         assert_eq!(result, TypeId::STRING);
+    }
+
+    #[test]
+    fn non_nullish_observation_removes_null_and_undefined() {
+        let db = TypeInterner::new();
+        let nullable = db.union(vec![TypeId::STRING, TypeId::NULL, TypeId::UNDEFINED]);
+
+        let observed = apply_flow_observation(&db, nullable, &FlowObservation::NonNullish);
+        let helper = narrow_non_nullish(&db, nullable);
+
+        assert_eq!(observed, TypeId::STRING);
+        assert_eq!(helper, TypeId::STRING);
     }
 }

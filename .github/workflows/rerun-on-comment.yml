@@ -64,20 +64,38 @@ jobs:
         run: |
           # The CI workflow file (must match the workflow we want to re-run).
           # Update this if the main CI workflow filename changes.
-          run_id=$(gh run list \
+          runs_json=$(gh run list \
             --repo "${REPO}" \
             --workflow ci.yml \
             --commit "${HEAD_SHA}" \
-            --limit 1 \
-            --json databaseId,conclusion,status \
-            --jq '.[0].databaseId // empty')
+            --limit 10 \
+            --json databaseId,conclusion,status,url)
+
+          active_run_id=$(printf '%s' "${runs_json}" | jq -r '
+            [.[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending")]
+            | .[0].databaseId // empty
+          ')
+          active_run_url=$(printf '%s' "${runs_json}" | jq -r '
+            [.[] | select(.status == "queued" or .status == "in_progress" or .status == "waiting" or .status == "requested" or .status == "pending")]
+            | .[0].url // empty
+          ')
+          if [ -n "${active_run_id}" ]; then
+            echo "active_run_id=${active_run_id}" >> "$GITHUB_OUTPUT"
+            echo "active_run_url=${active_run_url}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          run_id=$(printf '%s' "${runs_json}" | jq -r '.[0].databaseId // empty')
+          run_url=$(printf '%s' "${runs_json}" | jq -r '.[0].url // empty')
           if [ -z "${run_id}" ]; then
             echo "::error::No CI run found for SHA ${HEAD_SHA}; nothing to re-run."
             exit 1
           fi
           echo "run_id=${run_id}" >> "$GITHUB_OUTPUT"
+          echo "run_url=${run_url}" >> "$GITHUB_OUTPUT"
 
       - name: Re-run failed jobs
+        if: steps.run.outputs.active_run_id == ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -92,10 +110,14 @@ jobs:
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.issue.number }}
           RUN_ID: ${{ steps.run.outputs.run_id }}
+          RUN_URL: ${{ steps.run.outputs.run_url }}
+          ACTIVE_RUN_URL: ${{ steps.run.outputs.active_run_url }}
           JOB_STATUS: ${{ job.status }}
         run: |
-          if [ "${JOB_STATUS}" = "success" ]; then
-            body="Re-running failed jobs on the latest CI run: https://github.com/${REPO}/actions/runs/${RUN_ID}"
+          if [ -n "${ACTIVE_RUN_URL}" ]; then
+            body="CI is already queued or running for the latest PR head; skipping a duplicate re-run: ${ACTIVE_RUN_URL}"
+          elif [ "${JOB_STATUS}" = "success" ]; then
+            body="Re-running failed jobs on the latest CI run: ${RUN_URL:-https://github.com/${REPO}/actions/runs/${RUN_ID}}"
           else
             body="Could not re-run CI. See workflow logs."
           fi

@@ -11,6 +11,7 @@ use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     /// Check for missing global types (TS2318).
@@ -126,7 +127,7 @@ impl<'a> CheckerState<'a> {
         // before ordinary global constructors are resolved.
         let (resolved_array_for_params, resolved_array_params) =
             self.resolve_lib_type_with_params("Array");
-        let existing_array_base = tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types);
+        let existing_array_base = TypeResolver::get_array_base_type(&self.ctx.types);
         let array_type_for_params = match (resolved_array_for_params, existing_array_base) {
             (Some(candidate), Some(existing)) => {
                 let candidate_prop_count = crate::query_boundaries::common::object_shape_for_type(
@@ -160,8 +161,7 @@ impl<'a> CheckerState<'a> {
             array_type_params = resolved_array_params;
         }
         if array_type_params.is_empty() {
-            array_type_params =
-                tsz_solver::TypeResolver::get_array_base_type_params(&self.ctx.types).to_vec();
+            array_type_params = TypeResolver::get_array_base_type_params(&self.ctx.types).to_vec();
         }
         let array_type_params_for_flow = array_type_params.clone();
 
@@ -299,7 +299,7 @@ impl<'a> CheckerState<'a> {
                 augmented_type,
             )
             .map_or(0, |shape| shape.properties.len());
-            let current_prop_count = tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types)
+            let current_prop_count = TypeResolver::get_array_base_type(&self.ctx.types)
                 .and_then(|current| {
                     crate::query_boundaries::common::object_shape_for_type(self.ctx.types, current)
                 })
