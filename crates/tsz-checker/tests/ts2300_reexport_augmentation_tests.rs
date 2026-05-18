@@ -15,11 +15,13 @@
 //! - multiple imports/re-exports + multiple augmentations
 //! - renamed bindings (two names per case, proving the fix is structural not name-keyed)
 //! - negative: genuine const-vs-const conflict still produces TS2451
+//! - negative: cross-module mismatch (export from ./a + augment ./b) still errors
+//! - negative: non-mergeable augmentation (const) still errors
 
 use tsz_checker::context::CheckerOptions;
 use tsz_common::common::ModuleKind;
 
-fn check_for_dup(files: &[(&str, &str)], entry_file: &str) -> Vec<(u32, String)> {
+fn check_diags(files: &[(&str, &str)], entry_file: &str) -> Vec<(u32, String)> {
     tsz_checker::test_utils::check_multi_file(
         files,
         entry_file,
@@ -29,9 +31,15 @@ fn check_for_dup(files: &[(&str, &str)], entry_file: &str) -> Vec<(u32, String)>
         },
     )
     .into_iter()
-    .filter(|d| matches!(d.code, 2300 | 2451))
     .map(|d| (d.code, d.message_text))
     .collect()
+}
+
+fn check_for_dup(files: &[(&str, &str)], entry_file: &str) -> Vec<(u32, String)> {
+    check_diags(files, entry_file)
+        .into_iter()
+        .filter(|(code, _)| matches!(code, 2300 | 2451))
+        .collect()
 }
 
 // ─── re-export with rename ────────────────────────────────────────────────────
@@ -45,10 +53,10 @@ declare module "./source" {
     interface User { email?: string; }
 }
 "#;
-    let errs = check_for_dup(&[("source.ts", source), ("test.ts", test)], "test.ts");
+    let diags = check_diags(&[("source.ts", source), ("test.ts", test)], "test.ts");
     assert!(
-        errs.is_empty(),
-        "`export {{ User as MyUser }}` + interface augmentation must not produce TS2300/2451; got: {errs:?}"
+        diags.is_empty(),
+        "`export {{ User as MyUser }}` + interface augmentation must produce no diagnostics; got: {diags:?}"
     );
 }
 
@@ -61,10 +69,10 @@ declare module "./source" {
     interface Config { host?: string; }
 }
 "#;
-    let errs = check_for_dup(&[("source.ts", source), ("test.ts", test)], "test.ts");
+    let diags = check_diags(&[("source.ts", source), ("test.ts", test)], "test.ts");
     assert!(
-        errs.is_empty(),
-        "`export {{ Config as PublicConfig }}` + interface augmentation must not produce TS2300/2451; got: {errs:?}"
+        diags.is_empty(),
+        "`export {{ Config as PublicConfig }}` + interface augmentation must produce no diagnostics; got: {diags:?}"
     );
 }
 
@@ -78,10 +86,10 @@ declare module "./source" {
     interface Widget { label?: string; }
 }
 "#;
-    let errs = check_for_dup(&[("source.ts", source), ("test.ts", test)], "test.ts");
+    let diags = check_diags(&[("source.ts", source), ("test.ts", test)], "test.ts");
     assert!(
-        errs.is_empty(),
-        "`export {{ Widget }}` + interface augmentation must not produce TS2300/2451; got: {errs:?}"
+        diags.is_empty(),
+        "`export {{ Widget }}` + interface augmentation must produce no diagnostics; got: {diags:?}"
     );
 }
 
@@ -93,10 +101,10 @@ declare module "./source" {
     interface Request { headers?: string; }
 }
 "#;
-    let errs = check_for_dup(&[("source.ts", source), ("test.ts", test)], "test.ts");
+    let diags = check_diags(&[("source.ts", source), ("test.ts", test)], "test.ts");
     assert!(
-        errs.is_empty(),
-        "`export {{ Request }}` + interface augmentation must not produce TS2300/2451; got: {errs:?}"
+        diags.is_empty(),
+        "`export {{ Request }}` + interface augmentation must produce no diagnostics; got: {diags:?}"
     );
 }
 
@@ -110,10 +118,10 @@ declare module "./source" {
     interface Item { name?: string; }
 }
 "#;
-    let errs = check_for_dup(&[("source.ts", source), ("test.ts", test)], "test.ts");
+    let diags = check_diags(&[("source.ts", source), ("test.ts", test)], "test.ts");
     assert!(
-        errs.is_empty(),
-        "`export type {{ Item }}` + interface augmentation must not produce TS2300/2451; got: {errs:?}"
+        diags.is_empty(),
+        "`export type {{ Item }}` + interface augmentation must produce no diagnostics; got: {diags:?}"
     );
 }
 
@@ -125,10 +133,10 @@ declare module "./source" {
     interface Entity { name?: string; }
 }
 "#;
-    let errs = check_for_dup(&[("source.ts", source), ("test.ts", test)], "test.ts");
+    let diags = check_diags(&[("source.ts", source), ("test.ts", test)], "test.ts");
     assert!(
-        errs.is_empty(),
-        "`export type {{ Entity as PublicEntity }}` + interface augmentation must not produce TS2300/2451; got: {errs:?}"
+        diags.is_empty(),
+        "`export type {{ Entity as PublicEntity }}` + interface augmentation must produce no diagnostics; got: {diags:?}"
     );
 }
 
@@ -142,10 +150,10 @@ declare module "./source" {
     interface User { email?: string; }
 }
 "#;
-    let errs = check_for_dup(&[("source.ts", source), ("test.ts", test)], "test.ts");
+    let diags = check_diags(&[("source.ts", source), ("test.ts", test)], "test.ts");
     assert!(
-        errs.is_empty(),
-        "`import {{ User }}` + interface augmentation must not produce TS2300/2451; got: {errs:?}"
+        diags.is_empty(),
+        "`import {{ User }}` + interface augmentation must produce no diagnostics; got: {diags:?}"
     );
 }
 
@@ -158,10 +166,10 @@ declare module "./source" {
     interface Response { body?: string; }
 }
 "#;
-    let errs = check_for_dup(&[("source.ts", source), ("test.ts", test)], "test.ts");
+    let diags = check_diags(&[("source.ts", source), ("test.ts", test)], "test.ts");
     assert!(
-        errs.is_empty(),
-        "`import {{ Response }}` + interface augmentation must not produce TS2300/2451; got: {errs:?}"
+        diags.is_empty(),
+        "`import {{ Response }}` + interface augmentation must produce no diagnostics; got: {diags:?}"
     );
 }
 
@@ -175,10 +183,10 @@ declare module "./source" {
     interface Product { price?: number; }
 }
 "#;
-    let errs = check_for_dup(&[("source.ts", source), ("test.ts", test)], "test.ts");
+    let diags = check_diags(&[("source.ts", source), ("test.ts", test)], "test.ts");
     assert!(
-        errs.is_empty(),
-        "`import type {{ Product }}` + interface augmentation must not produce TS2300/2451; got: {errs:?}"
+        diags.is_empty(),
+        "`import type {{ Product }}` + interface augmentation must produce no diagnostics; got: {diags:?}"
     );
 }
 
@@ -190,10 +198,10 @@ declare module "./source" {
     interface Service { version?: string; }
 }
 "#;
-    let errs = check_for_dup(&[("source.ts", source), ("test.ts", test)], "test.ts");
+    let diags = check_diags(&[("source.ts", source), ("test.ts", test)], "test.ts");
     assert!(
-        errs.is_empty(),
-        "`import type {{ Service }}` + interface augmentation must not produce TS2300/2451; got: {errs:?}"
+        diags.is_empty(),
+        "`import type {{ Service }}` + interface augmentation must produce no diagnostics; got: {diags:?}"
     );
 }
 
@@ -210,10 +218,10 @@ declare module "./source" {
     interface Beta { w?: boolean; }
 }
 "#;
-    let errs = check_for_dup(&[("source.ts", source), ("test.ts", test)], "test.ts");
+    let diags = check_diags(&[("source.ts", source), ("test.ts", test)], "test.ts");
     assert!(
-        errs.is_empty(),
-        "Multiple re-exports + augmentations must not produce TS2300/2451; got: {errs:?}"
+        diags.is_empty(),
+        "Multiple re-exports + augmentations must produce no diagnostics; got: {diags:?}"
     );
 }
 
@@ -228,10 +236,10 @@ declare module "./source" {
     interface Beta { w?: boolean; }
 }
 "#;
-    let errs = check_for_dup(&[("source.ts", source), ("test.ts", test)], "test.ts");
+    let diags = check_diags(&[("source.ts", source), ("test.ts", test)], "test.ts");
     assert!(
-        errs.is_empty(),
-        "Multiple `import type` + augmentations must not produce TS2300/2451; got: {errs:?}"
+        diags.is_empty(),
+        "Multiple `import type` + augmentations must produce no diagnostics; got: {diags:?}"
     );
 }
 
