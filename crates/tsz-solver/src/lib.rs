@@ -225,7 +225,7 @@ pub use diagnostics::{
 };
 pub use evaluation::evaluate::*;
 pub use evaluation::session::EvaluationSession;
-pub use instantiation::application::*;
+pub use instantiation::application::{ApplicationEvaluator, ApplicationResult};
 pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
     instantiate_function_with_type_args, instantiate_generic, instantiate_type,
