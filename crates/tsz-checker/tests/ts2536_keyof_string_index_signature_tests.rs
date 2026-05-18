@@ -123,6 +123,27 @@ type Snapshot<Arr extends unknown[]> = { [Idx in keyof Arr]: Registry[Idx] };
     );
 }
 
+// ── negative: objects without a plain string index signature are not covered ───
+
+/// An object with only named properties (no index signature at all) does not have
+/// a plain string index sig. `K extends string` is still invalid → TS2536.
+/// This proves the `has_plain_string_index` guard (`key_type == STRING`) is active:
+/// without it, `is_assignable_to(K extends string, string | number)` would
+/// incorrectly suppress TS2536 for ANY object with any index signature.
+#[test]
+fn type_level_no_index_sig_still_emits_ts2536() {
+    let source = r#"
+interface Exact { x: string; y: number; }
+type Bad4<K extends string> = Exact[K];
+"#;
+    let diags = check_source_diagnostics(source);
+    assert!(
+        count(&diags, 2536) > 0,
+        "Exact (no index sig) with K extends string must still emit TS2536; got: {:?}",
+        diag_summary(&diags)
+    );
+}
+
 // ── TYPE-LEVEL indexed access: TS2536 must fire (index can include symbol) ────
 
 /// Unconstrained `K` can be any type including symbol → TS2536.
