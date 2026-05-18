@@ -1473,21 +1473,13 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     // Build the shared SymbolId→file-index map once; shared via Arc across all checkers.
     program_context.build_global_symbol_file_index();
 
-    // Create a shared DefinitionStore for all parallel checkers.
-    // CRITICAL: All parallel checkers MUST share the same DefinitionStore so that
-    // DefId allocation is globally unique. Without this, independent DefId sequences
-    // in separate checkers cause TypeId collisions via Lazy(DefId) interning.
-    {
-        let shared_store = Arc::new(
-            tsz_solver::def::DefinitionStore::from_semantic_defs_with_overlays(
-                &program.semantic_defs,
-                program.files.iter().map(|file| file.semantic_defs.as_ref()),
-                |s| program.type_interner.intern_string(s),
-            ),
-        );
-        shared_store.init_file_locks(program.files.len());
-        program_context.shared_definition_store = Some(shared_store);
-    }
+    // Reuse the merge-owned shared DefinitionStore for all checkers. DefId
+    // allocation is already global and deterministic at merge time; the driver
+    // only needs to initialize per-file delegation locks for this invocation.
+    program
+        .definition_store
+        .init_file_locks(program.files.len());
+    program_context.shared_definition_store = Some(Arc::clone(&program.definition_store));
 
     let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
         Arc::new(dashmap::DashMap::new());
