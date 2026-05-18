@@ -100,6 +100,7 @@ impl BlockScopeState {
         let is_builtin_shadow = original_name == "arguments";
 
         let needs_rename = is_builtin_shadow
+            || self.reserved_names.contains(original_name)
             || if at_function_level {
                 // At function body level: only check the current function scope itself
                 // (for redeclarations within the same scope)
@@ -143,7 +144,45 @@ impl BlockScopeState {
         if let Some(current_scope) = self.scope_stack.last_mut() {
             current_scope.insert(original_name.to_string(), emitted_name.clone());
         }
+        if emitted_name != original_name {
+            self.reserved_names.insert(emitted_name.clone());
+        }
 
+        emitted_name
+    }
+
+    /// Register a class declaration lowered to ES5.
+    ///
+    /// Class declarations are block-scoped, but ES5 emits `var`. A class inside
+    /// a nested block therefore needs a synthetic binding even when no outer
+    /// declaration currently has the same name; otherwise the lowered `var`
+    /// would leak out of the block.
+    pub fn register_block_scoped_class(&mut self, original_name: &str) -> String {
+        if self.function_scope_marks.last().copied().unwrap_or(false) {
+            return self.register_variable(original_name);
+        }
+
+        let mut suffix = 1u32;
+        let emitted_name = loop {
+            let candidate = format!("{original_name}_{suffix}");
+            if !self.reserved_names.contains(&candidate)
+                && !self
+                    .scope_stack
+                    .iter()
+                    .any(|scope| scope.values().any(|v| v == &candidate))
+            {
+                break candidate;
+            }
+            suffix += 1;
+            if suffix > 1000 {
+                break format!("{original_name}_{suffix}");
+            }
+        };
+
+        if let Some(current_scope) = self.scope_stack.last_mut() {
+            current_scope.insert(original_name.to_string(), emitted_name.clone());
+        }
+        self.reserved_names.insert(emitted_name.clone());
         emitted_name
     }
 
@@ -240,6 +279,11 @@ impl BlockScopeState {
         self.reserved_names.insert(name);
     }
 
+    /// Return whether a generated helper/temp name has already been reserved.
+    pub fn is_reserved_name(&self, name: &str) -> bool {
+        self.reserved_names.contains(name)
+    }
+
     /// Look up the emitted name for a variable reference
     pub fn get_emitted_name(&self, original_name: &str) -> Option<String> {
         // Search from innermost to outermost scope
@@ -263,6 +307,7 @@ impl BlockScopeState {
         self.loop_counter = 0;
         self.reserved_names.clear();
         self.function_scope_marks.clear();
+        self.var_registrations.clear();
     }
 }
 
@@ -322,6 +367,24 @@ fn check_closure_capture(
                 }
                 // Check body
                 check_closure_capture(arena, func.body, loop_vars, info, true);
+            }
+        }
+
+        k if k == syntax_kind_ext::METHOD_DECLARATION => {
+            if let Some(method) = arena.get_method_decl(node) {
+                for &param_idx in &method.parameters.nodes {
+                    check_closure_capture(arena, param_idx, loop_vars, info, true);
+                }
+                check_closure_capture(arena, method.body, loop_vars, info, true);
+            }
+        }
+
+        k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+            if let Some(accessor) = arena.get_accessor(node) {
+                for &param_idx in &accessor.parameters.nodes {
+                    check_closure_capture(arena, param_idx, loop_vars, info, true);
+                }
+                check_closure_capture(arena, accessor.body, loop_vars, info, true);
             }
         }
 

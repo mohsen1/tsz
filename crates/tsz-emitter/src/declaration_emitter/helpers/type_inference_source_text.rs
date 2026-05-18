@@ -412,6 +412,18 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| binder.file_locals.get(ident))
     }
 
+    pub(in crate::declaration_emitter) fn resolve_lexical_identifier_symbol(
+        &self,
+        expr_idx: NodeIndex,
+        ident: &str,
+    ) -> Option<SymbolId> {
+        let binder = self.binder?;
+        let no_libs: &[Arc<BinderState>] = &[];
+        binder
+            .resolve_name_with_filter(ident, self.arena, expr_idx, no_libs, |_| true)
+            .or_else(|| binder.file_locals.get(ident))
+    }
+
     pub(in crate::declaration_emitter) fn emit_type_node_text(
         &self,
         type_idx: NodeIndex,

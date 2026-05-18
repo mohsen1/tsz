@@ -616,7 +616,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn public_api_type_surface_contains_typeof_name(&self, name: &str) -> bool {
+    pub(in crate::declaration_emitter) fn public_api_type_surface_contains_typeof_name(
+        &self,
+        name: &str,
+    ) -> bool {
         let Some(source_file) = self
             .current_source_file_idx
             .and_then(|source_file_idx| self.arena.get(source_file_idx))
@@ -701,7 +704,10 @@ impl<'a> DeclarationEmitter<'a> {
             .any(|child_idx| self.entity_name_contains_identifier(child_idx, name))
     }
 
-    fn public_api_export_specifier_exports_name(&self, name: &str) -> bool {
+    pub(in crate::declaration_emitter) fn public_api_export_specifier_exports_name(
+        &self,
+        name: &str,
+    ) -> bool {
         let Some(source_file) = self
             .current_source_file_idx
             .and_then(|source_file_idx| self.arena.get(source_file_idx))

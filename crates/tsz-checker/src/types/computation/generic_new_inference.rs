@@ -2,6 +2,7 @@ use crate::query_boundaries::common::{self, LiteralTypeKind};
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeSubstitution;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn generic_new_literal_preservation_mask(
@@ -71,7 +72,7 @@ impl<'a> CheckerState<'a> {
 
     pub(super) fn seed_substitution_from_partial_function_returns(
         &mut self,
-        substitution: &mut tsz_solver::TypeSubstitution,
+        substitution: &mut TypeSubstitution,
         source_partial: TypeId,
         target_param: TypeId,
         type_params: &[tsz_solver::TypeParamInfo],
@@ -149,7 +150,7 @@ impl<'a> CheckerState<'a> {
 
     fn seed_substitution_from_return_type_pair(
         &self,
-        substitution: &mut tsz_solver::TypeSubstitution,
+        substitution: &mut TypeSubstitution,
         source_return: TypeId,
         target_return: TypeId,
         type_params: &[tsz_solver::TypeParamInfo],
@@ -208,7 +209,7 @@ impl<'a> CheckerState<'a> {
 
     fn seed_single_type_param_from_source_return_application(
         &self,
-        substitution: &mut tsz_solver::TypeSubstitution,
+        substitution: &mut TypeSubstitution,
         source_return: TypeId,
         target_type: TypeId,
         type_params: &[tsz_solver::TypeParamInfo],
