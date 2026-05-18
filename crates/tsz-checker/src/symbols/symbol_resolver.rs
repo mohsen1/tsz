@@ -170,26 +170,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns an `Arc`-wrapped vec for O(1) cloning. The `Arc<Vec<_>>` auto-derefs
     /// to `&[Arc<BinderState>]` so callers using `&lib_binders` work unchanged.
-    ///
-    /// Several call sites mutate `ctx.lib_contexts` directly (see the ~25
-    /// `checker.ctx.lib_contexts = ...` assignments across the checker)
-    /// without going through `set_lib_contexts_shared`, which is the setter
-    /// that keeps `lib_binders_cached` in sync. When that happens on a
-    /// checker constructed without parent state (e.g.
-    /// `new_with_shared_def_store`), `lib_binders_cached` starts empty and
-    /// the direct assignment leaves it stale. Self-heal here so every caller
-    /// observes a consistent view; a follow-up should make those direct
-    /// mutations use the setter and let this fallback go away.
     pub(crate) fn get_lib_binders(&self) -> Arc<Vec<Arc<tsz_binder::BinderState>>> {
-        if self.ctx.lib_binders_cached.is_empty() && !self.ctx.lib_contexts.is_empty() {
-            return Arc::new(
-                self.ctx
-                    .lib_contexts
-                    .iter()
-                    .map(|lc| Arc::clone(&lc.binder))
-                    .collect(),
-            );
-        }
+        // O(1) Arc::clone — the entire vec is shared, not individual elements.
         Arc::clone(&self.ctx.lib_binders_cached)
     }
 
@@ -515,7 +497,7 @@ impl<'a> CheckerState<'a> {
             let name = self.ctx.arena.get_identifier_at(idx)?.escaped_text.as_str();
             if let Some(file_sym_id) = self.ctx.binder.resolve_name_in_lib_module_locals(
                 name,
-                &lib_binders,
+                &self.ctx.lib_contexts,
                 |file_sym_id, _flags| {
                     (!self.is_string_literal_module_symbol(file_sym_id, &lib_binders))
                         .then_some(file_sym_id)
@@ -801,7 +783,7 @@ impl<'a> CheckerState<'a> {
             && !name_in_local_scope
             && let Some(sym_id) = self.ctx.binder.resolve_name_in_lib_module_locals(
                 name,
-                &lib_binders,
+                &self.ctx.lib_contexts,
                 |file_sym_id, flags| {
                     if flags & NS_OR_MODULE != 0 {
                         return Some(file_sym_id);
