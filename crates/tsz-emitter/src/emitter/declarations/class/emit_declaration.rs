@@ -120,6 +120,11 @@ impl<'a> Printer<'a> {
                 !legacy_class_decorators.is_empty() || has_ctor_param_decorators;
 
             if self.ctx.target_es5 {
+                let binding_name = self
+                    .ctx
+                    .block_scope_state
+                    .register_block_scoped_class(&class_name);
+                let binding_name = (binding_name != class_name).then_some(binding_name);
                 let needs_alias = needs_class_decorate
                     && class_has_self_references(
                         self.arena,
@@ -182,7 +187,11 @@ impl<'a> Printer<'a> {
                 if let Some(alias) = alias_name {
                     es5_emitter.set_class_self_reference_alias(alias);
                 }
-                let output = es5_emitter.emit_class_with_name(idx, &class_name);
+                let output = if let Some(binding_name) = binding_name.as_deref() {
+                    es5_emitter.emit_class_with_binding_name(idx, binding_name)
+                } else {
+                    es5_emitter.emit_class_with_name(idx, &class_name)
+                };
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let mappings = es5_emitter.take_mappings();
                 if !mappings.is_empty() && self.writer.has_source_map() {
@@ -371,7 +380,15 @@ impl<'a> Printer<'a> {
             }
             es5_emitter
                 .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
-            let output = es5_emitter.emit_class(idx);
+            let output = if class.name.is_none() {
+                if let Some(class_name) = self.anonymous_default_export_name.clone() {
+                    es5_emitter.emit_class_with_name(idx, &class_name)
+                } else {
+                    es5_emitter.emit_class(idx)
+                }
+            } else {
+                es5_emitter.emit_class(idx)
+            };
             self.sync_es5_class_emitter_state(&mut es5_emitter);
             let mappings = es5_emitter.take_mappings();
             if !mappings.is_empty() && self.writer.has_source_map() {

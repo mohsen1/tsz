@@ -40,6 +40,7 @@ use tsz_parser::syntax_kind_ext;
 struct NamespaceIifeContext<'a> {
     is_exported: bool,
     attach_to_exports: bool,
+    commonjs_export_name: Option<&'a str>,
     system_export_names: &'a [Cow<'static, str>],
     should_declare_var: bool,
     default_export_merge: bool,
@@ -1222,6 +1223,7 @@ impl<'a> IRPrinter<'a> {
             // ES5 Class Transform Specific
             IRNode::ES5ClassIIFE {
                 name,
+                binding_name,
                 base_class,
                 super_param,
                 body,
@@ -1263,8 +1265,9 @@ impl<'a> IRPrinter<'a> {
                 }
 
                 // var ClassName = /** @class */ (function (_super) { ... }(BaseClass));
+                let class_binding_name = binding_name.as_ref().unwrap_or(name);
                 self.write("var ");
-                self.write(name);
+                self.write(class_binding_name);
                 self.write(" = ");
                 self.emit_es5_class_expression(
                     name,
@@ -1294,7 +1297,7 @@ impl<'a> IRPrinter<'a> {
                     self.write_indent();
                     self.write(alias);
                     self.write(" = ");
-                    self.write(name);
+                    self.write(class_binding_name);
                     self.write(";");
                 }
                 // Emit deferred static block IIFEs after the class IIFE
@@ -2383,6 +2386,7 @@ impl<'a> IRPrinter<'a> {
                 body,
                 is_exported,
                 attach_to_exports,
+                commonjs_export_name,
                 system_export_names,
                 should_declare_var,
                 parent_name,
@@ -2398,6 +2402,7 @@ impl<'a> IRPrinter<'a> {
                     NamespaceIifeContext {
                         is_exported: *is_exported,
                         attach_to_exports: *attach_to_exports,
+                        commonjs_export_name: commonjs_export_name.as_deref(),
                         system_export_names,
                         should_declare_var: *should_declare_var,
                         default_export_merge: *default_export_merge,
@@ -2602,6 +2607,7 @@ impl<'a> IRPrinter<'a> {
                 NamespaceIifeContext {
                     is_exported: context.is_exported,
                     attach_to_exports: context.attach_to_exports,
+                    commonjs_export_name: context.commonjs_export_name,
                     system_export_names: &[],
                     should_declare_var: true,
                     default_export_merge: false,
@@ -2631,9 +2637,10 @@ impl<'a> IRPrinter<'a> {
                 self.write(current_name);
                 self.write(" = {})");
             } else if context.is_exported && context.attach_to_exports {
+                let export_name = context.commonjs_export_name.unwrap_or(current_name);
                 self.write(current_name);
                 self.write(" || (exports.");
-                self.write(current_name);
+                self.write(export_name);
                 self.write(" = ");
                 self.write(current_name);
                 self.write(" = {})");
