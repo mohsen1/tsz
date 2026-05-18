@@ -8,6 +8,64 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+fn skip_jsx_quoted_text(bytes: &[u8], mut pos: usize, end: usize) -> usize {
+    let quote = bytes[pos];
+    pos += 1;
+    while pos < end {
+        if bytes[pos] == b'\\' {
+            pos = (pos + 2).min(end);
+        } else if bytes[pos] == quote {
+            return pos + 1;
+        } else {
+            pos += 1;
+        }
+    }
+    end
+}
+
+fn skip_jsx_braced_expression(bytes: &[u8], mut pos: usize, end: usize) -> usize {
+    let mut depth = 1usize;
+    pos += 1;
+    while pos < end {
+        match bytes[pos] {
+            b'\'' | b'"' | b'`' => {
+                pos = skip_jsx_quoted_text(bytes, pos, end);
+            }
+            b'/' if pos + 1 < end && bytes[pos + 1] == b'/' => {
+                pos += 2;
+                while pos < end && !matches!(bytes[pos], b'\n' | b'\r') {
+                    pos += 1;
+                }
+            }
+            b'/' if pos + 1 < end && bytes[pos + 1] == b'*' => {
+                pos += 2;
+                while pos + 1 < end {
+                    if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                        pos += 2;
+                        break;
+                    }
+                    pos += 1;
+                }
+            }
+            b'{' => {
+                depth += 1;
+                pos += 1;
+            }
+            b'}' => {
+                depth -= 1;
+                pos += 1;
+                if depth == 0 {
+                    return pos;
+                }
+            }
+            _ => {
+                pos += 1;
+            }
+        }
+    }
+    end
+}
+
 impl<'a> Printer<'a> {
     // =========================================================================
     // JSX - Preserve Mode (default)
@@ -274,12 +332,40 @@ impl<'a> Printer<'a> {
         let bytes = text.as_bytes();
         let mut pos = node.pos as usize;
         let end = (node.end as usize).min(bytes.len());
+
         while pos + 1 < end {
-            if bytes[pos] == b'/' && bytes[pos + 1] == b'>' {
-                return Some((pos + 2) as u32);
+            match bytes[pos] {
+                b'\'' | b'"' | b'`' => {
+                    pos = skip_jsx_quoted_text(bytes, pos, end);
+                }
+                b'{' => {
+                    pos = skip_jsx_braced_expression(bytes, pos, end);
+                }
+                b'/' if bytes[pos + 1] == b'/' => {
+                    pos += 2;
+                    while pos < end && !matches!(bytes[pos], b'\n' | b'\r') {
+                        pos += 1;
+                    }
+                }
+                b'/' if bytes[pos + 1] == b'*' => {
+                    pos += 2;
+                    while pos + 1 < end {
+                        if bytes[pos] == b'*' && bytes[pos + 1] == b'/' {
+                            pos += 2;
+                            break;
+                        }
+                        pos += 1;
+                    }
+                }
+                b'/' if bytes[pos + 1] == b'>' => {
+                    return Some((pos + 2) as u32);
+                }
+                _ => {
+                    pos += 1;
+                }
             }
-            pos += 1;
         }
+
         None
     }
 

@@ -765,6 +765,23 @@ mod tests {
     }
 
     #[test]
+    fn jsx_classic_self_closing_trailing_comment_ignores_attribute_string_slash_gt() {
+        let source = "const x = (\n  <Item label=\"/>\"\n    value={1} /> // kept\n);";
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains("React.createElement(Item, { label: \"/>\", value: 1 }) // kept"),
+            "Classic JSX transform should use the real self-closing tag end, not `/>` inside an attribute string.\nOutput: {output}"
+        );
+        let after_comment = &output[output
+            .find("// kept")
+            .expect("self-closing JSX line comment should be emitted")..];
+        assert!(
+            after_comment.starts_with("// kept\n"),
+            "Classic JSX self-closing trailing line comment must keep the source newline.\nOutput: {output}"
+        );
+    }
+
+    #[test]
     fn jsx_classic_fragment_trailing_line_comment_is_preserved() {
         let source = "const x = (<>{x}</> // kept\n);";
         let output = emit_jsx_react(source);
