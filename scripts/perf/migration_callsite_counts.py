@@ -57,6 +57,16 @@ def line_is_ignored(line: str) -> bool:
     )
 
 
+def hit_is_ignored(metric: str, rel: str, line: str) -> bool:
+    if (
+        metric == "with_parent_cache"
+        and rel.endswith("state/state.rs")
+        and "CheckerContext::with_parent_cache" in line
+    ):
+        return True
+    return False
+
+
 def scan(search_roots: Iterable[Path]) -> list[Hit]:
     hits: list[Hit] = []
     for root, path in iter_rust_files(search_roots):
@@ -65,7 +75,7 @@ def scan(search_roots: Iterable[Path]) -> list[Hit]:
             if line_is_ignored(line):
                 continue
             for metric, pattern in PATTERNS.items():
-                if pattern.search(line):
+                if pattern.search(line) and not hit_is_ignored(metric, rel, line):
                     hits.append(Hit(metric=metric, rel=rel, line=line_no))
     return sorted(hits, key=lambda hit: (hit.metric, hit.rel, hit.line))
 

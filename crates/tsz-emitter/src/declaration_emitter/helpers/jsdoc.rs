@@ -3097,6 +3097,44 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(crate) fn emit_js_export_equals_type_alias_namespace_for_name(
+        &mut self,
+        name_idx: NodeIndex,
+        pos: u32,
+    ) {
+        if !self.is_js_export_equals_name(name_idx) {
+            return;
+        }
+        let aliases = self.jsdoc_type_alias_decls_before_pos(pos);
+        if aliases.is_empty() {
+            return;
+        }
+
+        self.write_indent();
+        if self.should_emit_declare_keyword(false) {
+            self.write("declare ");
+        }
+        self.write("namespace ");
+        self.emit_node(name_idx);
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+        self.write_indent();
+        self.write("export { ");
+        for (idx, alias) in aliases.iter().enumerate() {
+            if idx > 0 {
+                self.write(", ");
+            }
+            self.write(&alias.name);
+        }
+        self.write(" };");
+        self.write_line();
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        self.write_line();
+    }
+
     pub(in crate::declaration_emitter) fn jsdoc_type_alias_decls_before_pos(
         &self,
         pos: u32,

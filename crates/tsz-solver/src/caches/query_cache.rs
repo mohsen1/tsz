@@ -12,12 +12,14 @@ use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheK
 use crate::caches::query_trace;
 use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
 use crate::def::DefId;
+use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};
 use crate::intern::TypeInterner;
 use crate::objects::element_access::ElementAccessResult;
 use crate::operations::property::PropertyAccessResult;
-use crate::relations::compat::CompatChecker;
-use crate::relations::relation_queries::RelationPolicy;
-use crate::relations::subtype::TypeResolver;
+use crate::relations::relation_queries::{
+    RelationContext, RelationPolicy, configured_compat_checker, configured_subtype_checker,
+};
+use crate::relations::subtype::{NoopResolver, TypeResolver};
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
@@ -34,7 +36,6 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
-type EvalCacheKey = (TypeId, bool);
 type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool);
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
@@ -68,7 +69,7 @@ pub const fn assignability_cache_config_from_legacy_flags(flags: u16) -> Relatio
 /// - `subtype_cache`: subtype relation results
 /// - `assignability_cache`: assignability relation results
 pub struct SharedQueryCache {
-    eval_cache: DashMap<EvalCacheKey, TypeId>,
+    eval_cache: DashMap<EvaluationCacheKey, TypeId>,
     subtype_cache: DashMap<RelationCacheKey, bool>,
     assignability_cache: DashMap<RelationCacheKey, bool>,
 }
@@ -130,6 +131,12 @@ pub struct QueryCacheStatistics {
     pub variance_cache_entries: usize,
     /// Number of memoized canonical type mappings.
     pub canonical_cache_entries: usize,
+    /// Number of memoized intersection-to-merged-object results.
+    pub intersection_merge_cache_entries: usize,
+    /// Number of times the intersection-merge cache returned a hit.
+    pub intersection_merge_cache_hits: u64,
+    /// Number of times the intersection-merge cache was probed and missed.
+    pub intersection_merge_cache_misses: u64,
     /// Number of memoized `instantiate_type` results.
     pub instantiation_cache_entries: usize,
     /// Number of times the instantiation cache returned a hit.
@@ -156,6 +163,9 @@ impl QueryCacheStatistics {
         self.property_cache_entries += other.property_cache_entries;
         self.variance_cache_entries += other.variance_cache_entries;
         self.canonical_cache_entries += other.canonical_cache_entries;
+        self.intersection_merge_cache_entries += other.intersection_merge_cache_entries;
+        self.intersection_merge_cache_hits += other.intersection_merge_cache_hits;
+        self.intersection_merge_cache_misses += other.intersection_merge_cache_misses;
         self.instantiation_cache_entries += other.instantiation_cache_entries;
         self.instantiation_cache_hits += other.instantiation_cache_hits;
         self.instantiation_cache_misses += other.instantiation_cache_misses;
@@ -210,6 +220,9 @@ impl QueryCacheStatistics {
         // canonical_cache: TypeId -> TypeId  ≈ 4+4 = 8
         let canonical = self.canonical_cache_entries * (BUCKET_OVERHEAD + 8);
 
+        // intersection_merge_cache: TypeId -> Option<TypeId>  ≈ 4+8 = 12
+        let intersection_merge = self.intersection_merge_cache_entries * (BUCKET_OVERHEAD + 12);
+
         // subtype_cache: RelationCacheKey -> bool  ≈ 12 + 1 = 13
         let subtype = self.relation.subtype_entries * (BUCKET_OVERHEAD + 13);
 
@@ -233,6 +246,7 @@ impl QueryCacheStatistics {
             + prop
             + variance
             + canonical
+            + intersection_merge
             + subtype
             + assignability
             + instantiation
@@ -273,6 +287,13 @@ impl std::fmt::Display for QueryCacheStatistics {
             f,
             "  canonical_cache:        {}",
             self.canonical_cache_entries
+        )?;
+        writeln!(
+            f,
+            "  intersection_merge:     {} entries ({} hits, {} misses)",
+            self.intersection_merge_cache_entries,
+            self.intersection_merge_cache_hits,
+            self.intersection_merge_cache_misses,
         )?;
         writeln!(
             f,
@@ -317,7 +338,7 @@ impl std::fmt::Display for QueryCacheStatistics {
 /// every subtype check, property lookup, and evaluation cache hit.
 pub struct QueryCache<'a> {
     interner: &'a TypeInterner,
-    eval_cache: RefCell<FxHashMap<EvalCacheKey, TypeId>>,
+    eval_cache: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
     application_eval_cache: RefCell<FxHashMap<ApplicationEvalCacheKey, TypeId>>,
     element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
     object_spread_properties_cache: RefCell<FxHashMap<TypeId, Vec<PropertyInfo>>>,
@@ -356,6 +377,8 @@ pub struct QueryCache<'a> {
     subtype_cache_misses: Cell<u64>,
     assignability_cache_hits: Cell<u64>,
     assignability_cache_misses: Cell<u64>,
+    intersection_merge_cache_hits: Cell<u64>,
+    intersection_merge_cache_misses: Cell<u64>,
     instantiation_cache_hits: Cell<u64>,
     instantiation_cache_misses: Cell<u64>,
     subtype_reduction_cache_hits: Cell<u64>,
@@ -404,6 +427,8 @@ impl<'a> QueryCache<'a> {
             subtype_cache_misses: Cell::new(0),
             assignability_cache_hits: Cell::new(0),
             assignability_cache_misses: Cell::new(0),
+            intersection_merge_cache_hits: Cell::new(0),
+            intersection_merge_cache_misses: Cell::new(0),
             instantiation_cache_hits: Cell::new(0),
             instantiation_cache_misses: Cell::new(0),
             subtype_reduction_cache_hits: Cell::new(0),
@@ -455,6 +480,9 @@ impl<'a> QueryCache<'a> {
             property_cache_entries: self.property_cache.borrow().len(),
             variance_cache_entries: self.variance_cache.borrow().len(),
             canonical_cache_entries: self.canonical_cache.borrow().len(),
+            intersection_merge_cache_entries: self.intersection_merge_cache.borrow().len(),
+            intersection_merge_cache_hits: self.intersection_merge_cache_hits.get(),
+            intersection_merge_cache_misses: self.intersection_merge_cache_misses.get(),
             instantiation_cache_entries: self.instantiation_cache.len(),
             instantiation_cache_hits: self.instantiation_cache_hits.get(),
             instantiation_cache_misses: self.instantiation_cache_misses.get(),
@@ -485,7 +513,7 @@ impl<'a> QueryCache<'a> {
             let map = self.eval_cache.borrow();
             size += map.capacity()
                 * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<EvalCacheKey>()
+                    + std::mem::size_of::<EvaluationCacheKey>()
                     + std::mem::size_of::<TypeId>());
         }
 
@@ -571,6 +599,15 @@ impl<'a> QueryCache<'a> {
             size += map.capacity() * (BUCKET_OVERHEAD + 2 * std::mem::size_of::<TypeId>());
         }
 
+        // intersection_merge_cache: TypeId -> Option<TypeId>
+        {
+            let map = self.intersection_merge_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<TypeId>()
+                    + std::mem::size_of::<Option<TypeId>>());
+        }
+
         // instantiation_cache: (TypeId, CanonicalSubst, u8, Option<TypeId>) -> TypeId
         // CanonicalSubst's inline SmallVec buffer is included in the
         // `InstantiationCacheKey` size; spilled entries pay extra heap.
@@ -595,6 +632,8 @@ impl<'a> QueryCache<'a> {
         self.subtype_cache_misses.set(0);
         self.assignability_cache_hits.set(0);
         self.assignability_cache_misses.set(0);
+        self.intersection_merge_cache_hits.set(0);
+        self.intersection_merge_cache_misses.set(0);
         self.instantiation_cache_hits.set(0);
         self.instantiation_cache_misses.set(0);
         self.subtype_reduction_cache_hits.set(0);
@@ -1239,6 +1278,10 @@ impl QueryDatabase for QueryCache<'_> {
         self
     }
 
+    fn fresh_type_param(&self, info: TypeParamInfo) -> TypeId {
+        self.interner.fresh_type_param(info)
+    }
+
     fn register_array_base_type(&self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
         self.interner.set_array_base_type(type_id, type_params);
     }
@@ -1277,7 +1320,9 @@ impl QueryDatabase for QueryCache<'_> {
             return type_id;
         }
 
-        let key = (type_id, no_unchecked_indexed_access);
+        let request = EvaluationRequest::new(type_id)
+            .with_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        let key = request.cache_key();
         let cached = self.eval_cache.borrow().get(&key).copied();
 
         if let Some(result) = cached {
@@ -1332,9 +1377,8 @@ impl QueryDatabase for QueryCache<'_> {
 
         let mut evaluator =
             crate::evaluation::evaluate::TypeEvaluator::new(self.as_type_database());
-        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator = evaluator.with_query_db(self);
-        let result = evaluator.evaluate(type_id);
+        let result = evaluator.evaluate_request(request);
 
         // PERF: Persist intermediate evaluation results from this session into
         // the long-lived eval_cache. During recursive mapped type expansion
@@ -1351,7 +1395,7 @@ impl QueryDatabase for QueryCache<'_> {
             }
             for (intermediate_id, intermediate_result) in evaluator.drain_cache() {
                 if intermediate_id != intermediate_result && !intermediate_id.is_intrinsic() {
-                    let ikey = (intermediate_id, no_unchecked_indexed_access);
+                    let ikey = request.with_type_id(intermediate_id).cache_key();
                     cache.entry(ikey).or_insert(intermediate_result);
                     if let Some(shared) = self.shared {
                         shared.eval_cache.entry(ikey).or_insert(intermediate_result);
@@ -1517,12 +1561,15 @@ impl QueryDatabase for QueryCache<'_> {
         self.subtype_cache_misses
             .set(self.subtype_cache_misses.get() + 1);
 
-        let result = crate::relations::subtype::is_subtype_of_with_flags(
+        let policy = RelationPolicy::from_flags(flags);
+        let resolver = NoopResolver;
+        let mut checker = configured_subtype_checker(
             self.as_type_database(),
-            source,
-            target,
-            flags,
+            &resolver,
+            policy,
+            RelationContext::default(),
         );
+        let result = checker.is_subtype_of(source, target);
         self.subtype_cache.borrow_mut().insert(key, result);
         // Write to shared cache for cross-file benefit.
         if let Some(shared) = self.shared {
@@ -1606,14 +1653,14 @@ impl QueryDatabase for QueryCache<'_> {
         self.assignability_cache_misses
             .set(self.assignability_cache_misses.get() + 1);
 
-        // Use CompatChecker with all compatibility rules
-        let mut checker = CompatChecker::new(self.as_type_database());
-
-        // FIX: Apply flags to ensure checker matches the cache key configuration
-        // This prevents cache poisoning where results from non-strict checks
-        // leak into strict checks (Gap C fix)
-        checker.apply_flags(flags);
-
+        let policy = RelationPolicy::from_flags(flags);
+        let resolver = NoopResolver;
+        let mut checker = configured_compat_checker(
+            self.as_type_database(),
+            &resolver,
+            policy,
+            RelationContext::default(),
+        );
         let result = checker.is_assignable(source, target);
 
         self.insert_cache(&self.assignability_cache, key, result);
@@ -1670,10 +1717,19 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn lookup_intersection_merge(&self, intersection_id: TypeId) -> Option<Option<TypeId>> {
-        self.intersection_merge_cache
+        let result = self
+            .intersection_merge_cache
             .borrow()
             .get(&intersection_id)
-            .copied()
+            .copied();
+        if result.is_some() {
+            self.intersection_merge_cache_hits
+                .set(self.intersection_merge_cache_hits.get() + 1);
+        } else {
+            self.intersection_merge_cache_misses
+                .set(self.intersection_merge_cache_misses.get() + 1);
+        }
+        result
     }
 
     fn insert_intersection_merge(&self, intersection_id: TypeId, result: Option<TypeId>) {
