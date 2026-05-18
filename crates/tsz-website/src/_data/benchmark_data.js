@@ -1949,6 +1949,15 @@ export function getProjectCompatibilityDashboard() {
       ? candidates.tsc_clean_subset
       : null;
     if (cleanSubset) {
+      if (cleanSubset.manifest_path) {
+        parts.push(`tsc-clean manifest: ${cleanSubset.manifest_path}`);
+      }
+      if (cleanSubset.classification_path) {
+        parts.push(`tsc-clean classification: ${cleanSubset.classification_path}`);
+      }
+      if (cleanSubset.tsconfig_path) {
+        parts.push(`tsc-clean tsconfig: ${cleanSubset.tsconfig_path}`);
+      }
       addCount("tsc-clean subset", cleanSubset.generated_assertions);
       addCount(
         "tsc-clean references solutions",
@@ -1968,6 +1977,8 @@ export function getProjectCompatibilityDashboard() {
       if (cleanSubset.comparison_status) {
         parts.push(`tsc-clean comparison: ${cleanSubset.comparison_status}`);
       }
+      addCount("tsc-clean tsc diagnostic-free", cleanSubset.tsc_diagnostic_free);
+      addCount("tsc-clean tsz diagnostic-free", cleanSubset.tsz_diagnostic_free);
     }
 
     const counts = candidates.file_comparison?.counts;
