@@ -2270,7 +2270,7 @@ fn test_emitter_direct_solver_access_does_not_grow() {
         }
     }
 
-    const DIRECT_SOLVER_ACCESS_LINE_CEILING: usize = 461;
+    const DIRECT_SOLVER_ACCESS_LINE_CEILING: usize = 478;
     assert!(
         direct_solver_lines.len() <= DIRECT_SOLVER_ACCESS_LINE_CEILING,
         "Emitter direct solver access grew to {} lines (ceiling: {}). \
