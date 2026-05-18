@@ -5,6 +5,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::ContextualTypeContext;
 
 #[derive(Clone, Copy, Debug)]
 struct SuperInitFlowState {
@@ -730,8 +731,7 @@ impl<'a> CheckerState<'a> {
             if var_decl.type_annotation.is_some() {
                 // Resolve the type annotation and check if it provides a `this` type
                 let declared_type = self.get_type_from_type_node(var_decl.type_annotation);
-                let ctx =
-                    tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, declared_type);
+                let ctx = ContextualTypeContext::with_expected(self.ctx.types, declared_type);
                 if ctx.get_this_type().is_some() {
                     return true;
                 }
@@ -749,10 +749,7 @@ impl<'a> CheckerState<'a> {
             && let Some(jsdoc_callable_type) =
                 self.jsdoc_callable_type_annotation_for_function(enclosing_fn)
         {
-            let ctx = tsz_solver::ContextualTypeContext::with_expected(
-                self.ctx.types,
-                jsdoc_callable_type,
-            );
+            let ctx = ContextualTypeContext::with_expected(self.ctx.types, jsdoc_callable_type);
             if ctx.get_this_type().is_some() {
                 return true;
             }
@@ -828,13 +825,13 @@ impl<'a> CheckerState<'a> {
             let callee_type = self.resolve_lazy_type(callee_type);
             let callee_type = self.evaluate_contextual_type(callee_type);
 
-            let ctx = tsz_solver::ContextualTypeContext::with_expected_and_options(
+            let ctx = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 callee_type,
                 self.ctx.compiler_options.no_implicit_any,
             );
             let param_type = ctx.get_parameter_type_for_call(arg_index, args.nodes.len())?;
-            let param_ctx = tsz_solver::ContextualTypeContext::with_expected_and_options(
+            let param_ctx = ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 param_type,
                 self.ctx.compiler_options.no_implicit_any,

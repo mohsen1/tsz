@@ -231,11 +231,12 @@ jobs:
             snapshot_generated="$(jq -r '.generated_at // ""' "${snapshot}" 2>/dev/null || echo "")"
             if [[ -n "${snapshot_generated}" && "${snapshot_generated}" > "${artifact_generated}" ]]; then
               echo "Repository benchmark snapshot (${snapshot_generated}) is newer than GitHub artifact (${artifact_generated:-unknown}); using snapshot."
-              rm -f artifacts/bench-results.json
+              rm -f artifacts/bench-results.json artifacts/bench-results-tsgo-winners.json
             fi
           fi
 
           if [[ ! -f artifacts/bench-results.json ]]; then
+            rm -f artifacts/bench-results-tsgo-winners.json
             echo "No benchmark artifact downloaded; bench charts will use repository/local fallback data."
             exit 0
           fi
@@ -244,9 +245,12 @@ jobs:
           timed_rows=$(jq '[.results[]? | select(.tsz_ms > 0 and .tsgo_ms > 0)] | length' artifacts/bench-results.json 2>/dev/null || echo "0")
           if [[ "${rows}" -gt 0 ]]; then
             mv artifacts/bench-results.json artifacts/bench-vs-tsgo-github-latest.json
+            if [[ -f artifacts/bench-results-tsgo-winners.json ]]; then
+              mv artifacts/bench-results-tsgo-winners.json artifacts/bench-vs-tsgo-github-latest.tsgo-winners.json
+            fi
             echo "Prepared ${rows} benchmark rows from GitHub Actions artifact (${timed_rows} with timing pairs)."
           else
-            rm -f artifacts/bench-results.json
+            rm -f artifacts/bench-results.json artifacts/bench-results-tsgo-winners.json
             echo "GitHub benchmark artifact has no result rows; skipping bench charts."
           fi
         continue-on-error: true

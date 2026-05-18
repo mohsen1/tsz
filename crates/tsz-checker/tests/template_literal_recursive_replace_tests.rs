@@ -278,3 +278,213 @@ const wp3: WAPaths = "meta.count";
         "Path<WithArray> should include the non-array sibling path \"meta.count\"; got: {diags:#?}"
     );
 }
+
+// ─── Issue #6540: recursive template-literal infer constraints ─────────────
+//
+// When an `infer X` variable is introduced inside a template-literal extends
+// pattern, tsc gives it an implicit `string` constraint. Until the fix, tsz
+// installed the provisional scope entry with `constraint: None`, so downstream
+// `scoped_type_param_substituted_form` substituted `unknown` and any wrapper
+// like `Capitalize<Self<R>>` failed TS2344 — even though the recursive call
+// would be valid once `R` is properly typed as `string`. These tests pin the
+// structural rule: the implicit constraint must reach the scope entry, not
+// just the eventual substitution result.
+
+/// Original repro from #6540: `KebabToCamel` capitalises segments by
+/// recursively calling itself inside `Capitalize<...>`. Without the implicit
+/// `string` constraint on `R`, tsc would (and tsz did) report TS2344 on the
+/// inner `KebabToCamel<R>` call because `R` would substitute to `unknown`.
+#[test]
+fn recursive_template_infer_satisfies_capitalize_constraint() {
+    let diags = check(
+        r#"
+type KebabToCamel<S extends string> =
+  S extends `${infer F}-${infer R}` ? `${F}${Capitalize<KebabToCamel<R>>}` : S;
+type T = KebabToCamel<"foo-bar-baz">;
+const _: T = "fooBarBaz";
+"#,
+    );
+    assert!(
+        error_codes(&diags).is_empty(),
+        "KebabToCamel<\"foo-bar-baz\"> should be \"fooBarBaz\"; got: {diags:#?}"
+    );
+}
+
+/// Same structural shape as the `Capitalize` repro but wrapped in
+/// `Uppercase<...>`. Proves the fix targets the constraint propagation, not
+/// the specific intrinsic.
+#[test]
+fn recursive_template_infer_satisfies_uppercase_constraint() {
+    let diags = check(
+        r#"
+type ShoutAll<S extends string> =
+  S extends `${infer F}-${infer R}` ? `${F}${Uppercase<ShoutAll<R>>}` : S;
+type T = ShoutAll<"foo-bar-baz">;
+const _: T = "fooBARBAZ";
+"#,
+    );
+    assert!(
+        error_codes(&diags).is_empty(),
+        "ShoutAll<\"foo-bar-baz\"> should be \"fooBARBAZ\"; got: {diags:#?}"
+    );
+}
+
+/// Same shape with `Lowercase<...>` — third intrinsic that takes `string`.
+#[test]
+fn recursive_template_infer_satisfies_lowercase_constraint() {
+    let diags = check(
+        r#"
+type HushAll<S extends string> =
+  S extends `${infer F}-${infer R}` ? `${F}${Lowercase<HushAll<R>>}` : S;
+type T = HushAll<"FOO-BAR-BAZ">;
+const _: T = "FOObarbaz";
+"#,
+    );
+    assert!(
+        error_codes(&diags).is_empty(),
+        "HushAll<\"FOO-BAR-BAZ\"> should be \"FOObarbaz\"; got: {diags:#?}"
+    );
+}
+
+/// Non-recursive sanity case: a user-defined `Inner<S extends string>` called
+/// on `${infer R}` should also see `R` typed as `string`, not `unknown`.
+/// Catches the same bug without recursion.
+#[test]
+fn non_recursive_template_infer_satisfies_capitalize_constraint() {
+    let diags = check(
+        r#"
+type Inner<S extends string> = S extends "x" ? "y" : S;
+type Bar<S extends string> =
+  S extends `${infer F}-${infer R}` ? Capitalize<Inner<R>> : S;
+type T = Bar<"foo-bar">;
+const _: T = "Bar";
+"#,
+    );
+    assert!(
+        error_codes(&diags).is_empty(),
+        "Bar<\"foo-bar\"> should satisfy Capitalize constraint; got: {diags:#?}"
+    );
+}
+
+/// Renamed infer variables to prove the fix is structural, not name-based.
+#[test]
+fn renamed_infer_binding_satisfies_constraint() {
+    let diags = check(
+        r#"
+type KebabAlt<X extends string> =
+  X extends `${infer P}_${infer Q}` ? `${P}${Capitalize<KebabAlt<Q>>}` : X;
+type T = KebabAlt<"a_b_c">;
+const _: T = "aBC";
+"#,
+    );
+    assert!(
+        error_codes(&diags).is_empty(),
+        "KebabAlt with renamed infer vars should satisfy constraint; got: {diags:#?}"
+    );
+}
+
+/// Explicit `infer R extends string` in a non-template position must still
+/// satisfy the `string` constraint — the new TEMPLATE arm in the constraint
+/// walker must not regress the explicit-extends arm.
+#[test]
+fn infer_extends_string_explicit_constraint_passes() {
+    let diags = check(
+        r#"
+interface Box<T> { value: T }
+type E<T> = T extends Box<infer R extends string> ? Capitalize<R> : never;
+type Ex = E<Box<"hello">>;
+const _: Ex = "Hello";
+"#,
+    );
+    assert!(
+        error_codes(&diags).is_empty(),
+        "explicit `infer R extends string` should satisfy Capitalize; got: {diags:#?}"
+    );
+}
+
+/// Negative case: an infer variable used against a `number` constraint must
+/// still emit TS2344. Proves the fix does not over-accept.
+#[test]
+fn negative_infer_number_constraint_still_emits_ts2344() {
+    let diags = check(
+        r#"
+type NumberOnly<T extends number> = T;
+type Bad<S extends string> =
+  S extends `${infer R}` ? NumberOnly<R> : S;
+type B = Bad<"a">;
+"#,
+    );
+    assert!(
+        error_codes(&diags).contains(&2344),
+        "NumberOnly<R> with R: string should emit TS2344; got: {diags:#?}"
+    );
+}
+
+// ─── Issue #6748: recursive conditional type result satisfies string constraint ──
+
+/// `CamelCase` with underscore separator — the same structural shape as
+/// `KebabToCamel` but with a different separator. Proves constraint propagation
+/// is not tied to the separator literal.
+///
+/// tsc accepts `Capitalize<CamelCase<Rest>>` because `CamelCase<S extends string>`
+/// is declared with `S extends string`, so `CamelCase<Rest>` (where `Rest` is
+/// inferred from a template literal position) satisfies `string`.
+#[test]
+fn camel_case_underscore_separator_satisfies_capitalize_constraint() {
+    let diags = check(
+        r#"
+type CamelCase<S extends string> =
+  S extends `${infer First}_${infer Rest}`
+    ? `${First}${Capitalize<CamelCase<Rest>>}`
+    : S;
+type T = CamelCase<"foo_bar_baz">;
+const _: T = "fooBarBaz";
+"#,
+    );
+    assert!(
+        error_codes(&diags).is_empty(),
+        "CamelCase<\"foo_bar_baz\"> should be \"fooBarBaz\"; got: {diags:#?}"
+    );
+}
+
+/// Renamed type parameters and separator — proves the fix is structural, not
+/// tied to the identifier names `First`/`Rest` or the specific separator.
+#[test]
+fn camel_case_renamed_params_satisfies_capitalize_constraint() {
+    let diags = check(
+        r#"
+type MyCase<X extends string> =
+  X extends `${infer A}__${infer B}`
+    ? `${A}${Capitalize<MyCase<B>>}`
+    : X;
+type T = MyCase<"hello__world__again">;
+const _: T = "helloWorldAgain";
+"#,
+    );
+    assert!(
+        error_codes(&diags).is_empty(),
+        "MyCase with renamed infer vars should satisfy Capitalize constraint; got: {diags:#?}"
+    );
+}
+
+/// `TrimStart` used as a type argument to another generic that requires
+/// `extends string`. The inferred `Rest` from a template literal pattern
+/// must carry the implicit `string` constraint so `TrimStart<Rest>` satisfies
+/// `TrimStart`'s `S extends string` parameter.
+#[test]
+fn trim_start_nested_in_parse_json_satisfies_string_constraint() {
+    let diags = check(
+        r#"
+type TrimStart<S extends string> = S extends ` ${infer Rest}` ? TrimStart<Rest> : S;
+type ParseJSON<S extends string> = S extends `"${infer Str}"` ? Str : never;
+type ParseArray<S extends string> =
+  S extends `${infer First},${infer Rest}`
+    ? [ParseJSON<TrimStart<First>>, ...ParseArray<Rest>]
+    : [ParseJSON<TrimStart<S>>];
+"#,
+    );
+    assert!(
+        error_codes(&diags).is_empty(),
+        "TrimStart<First> and ParseJSON<TrimStart<First>> should satisfy string constraints; got: {diags:#?}"
+    );
+}

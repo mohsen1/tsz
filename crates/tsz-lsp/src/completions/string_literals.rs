@@ -584,7 +584,7 @@ impl<'a> Completions<'a> {
             return;
         }
 
-        let evaluated = tsz_solver::evaluate_type(interner, type_id);
+        let evaluated = tsz_solver::computation::evaluate_type(interner, type_id);
         if evaluated != type_id {
             self.collect_string_literal_candidates(evaluated, interner, checker, visited, labels);
         }

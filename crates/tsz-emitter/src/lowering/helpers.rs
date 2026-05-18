@@ -84,10 +84,32 @@ impl<'a> LoweringPass<'a> {
                     spec.name
                 };
                 if let Some(name) = self.get_identifier_text_ref(local_name_idx) {
-                    self.re_exported_names.insert(name.to_string());
+                    let local_name = name.to_string();
+                    self.re_exported_names.insert(local_name.clone());
+                    if let Some(export_name_id) = self.get_identifier_id(spec.name) {
+                        self.re_exported_export_names
+                            .entry(local_name)
+                            .or_default()
+                            .push(export_name_id);
+                    }
                 }
             }
         }
+    }
+
+    pub(super) fn commonjs_export_names_for_local(
+        &self,
+        local_name: Option<&str>,
+        fallback_name: IdentifierId,
+    ) -> Arc<[IdentifierId]> {
+        if let Some(local_name) = local_name
+            && let Some(export_names) = self.re_exported_export_names.get(local_name)
+            && !export_names.is_empty()
+        {
+            return Arc::from(export_names.clone());
+        }
+
+        Arc::from(vec![fallback_name])
     }
 
     pub(super) const fn is_commonjs(&self) -> bool {
@@ -1764,7 +1786,7 @@ impl<'a> LoweringPass<'a> {
                 || node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             {
                 if let Some(import_decl) = self.arena.get_import_decl(node) {
-                    if !self.import_has_runtime_dependency(import_decl) {
+                    if !self.import_should_schedule_runtime_dependency(node, import_decl) {
                         continue;
                     }
                     if let Some(text) =
@@ -1872,6 +1894,85 @@ impl<'a> LoweringPass<'a> {
         }
 
         false
+    }
+
+    pub(super) fn import_should_schedule_runtime_dependency(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+        import_decl: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        if !self.import_has_runtime_dependency(import_decl) {
+            return false;
+        }
+
+        let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
+            return true;
+        };
+        if clause_node.kind != syntax_kind_ext::IMPORT_CLAUSE {
+            return true;
+        }
+
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return true;
+        };
+        if clause.is_type_only {
+            return false;
+        }
+        if self.ctx.options.verbatim_module_syntax {
+            return true;
+        }
+        if self.import_clause_is_empty_named_import(clause) {
+            return false;
+        }
+        if self.import_clause_is_namespace_only(clause)
+            && self.import_references_type_only_export_equals_module(import_decl)
+        {
+            return false;
+        }
+
+        self.import_has_value_usage_after_node(node, clause)
+    }
+
+    fn import_clause_is_namespace_only(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
+                .is_some_and(|named| named.name.is_some() && named.elements.nodes.is_empty())
+    }
+
+    fn import_clause_is_empty_named_import(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
+                .is_some_and(|named| named.name.is_none() && named.elements.nodes.is_empty())
+    }
+
+    fn import_references_type_only_export_equals_module(
+        &self,
+        import_decl: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        let Some(module_node) = self.arena.get(import_decl.module_specifier) else {
+            return false;
+        };
+        let Some(lit) = self.arena.get_literal(module_node) else {
+            return false;
+        };
+        self.ctx
+            .options
+            .type_only_export_equals_modules
+            .contains(lit.text.as_str())
     }
 
     pub(super) fn import_equals_has_external_module(&self, module_specifier: NodeIndex) -> bool {
