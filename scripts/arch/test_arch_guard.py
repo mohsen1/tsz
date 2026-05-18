@@ -522,6 +522,102 @@ class ArchGuardStructFieldCountTests(unittest.TestCase):
             )
 
 
+class ArchGuardTraitMethodCountTests(unittest.TestCase):
+    """Cover `TRAIT_METHOD_COUNT_CHECKS` + `scan_trait_method_count`.
+
+    The `TypeDatabase` check is the #8205 solver boundary ratchet: the current
+    broad trait is tolerated as baseline debt, but its capability surface must
+    not grow while narrower storage/config/provenance traits are extracted.
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _write_and_scan(self, body: str, trait_name: str, max_methods: int):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "trait.rs"
+            path.write_text(body, encoding="utf-8")
+            return self.arch_guard.scan_trait_method_count(
+                path, trait_name, max_methods
+            )
+
+    def test_counts_required_and_default_methods(self):
+        body = "\n".join(
+            [
+                "pub trait Sample {",
+                "    fn lookup(&self);",
+                "    fn construct(&self) {}",
+                "    unsafe fn raw(&self);",
+                "}",
+            ]
+        )
+        hits = self._write_and_scan(body, "Sample", 2)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("3 methods", hits[0])
+        self.assertIn("cap 2", hits[0])
+
+    def test_passes_when_at_or_under_cap(self):
+        body = "\n".join(
+            [
+                "pub trait Sample {",
+                "    fn a(&self);",
+                "    fn b(&self) {}",
+                "}",
+            ]
+        )
+        self.assertEqual(self._write_and_scan(body, "Sample", 2), [])
+        self.assertEqual(self._write_and_scan(body, "Sample", 3), [])
+
+    def test_strips_comments_and_handles_nested_default_body(self):
+        body = "\n".join(
+            [
+                "pub trait Sample {",
+                "    fn a(&self) {",
+                "        if true {",
+                "            let _x = 1;",
+                "        }",
+                "    }",
+                "    // fn b(&self);",
+                "    /* fn c(&self); */",
+                "}",
+            ]
+        )
+        self.assertEqual(self._write_and_scan(body, "Sample", 1), [])
+
+    def test_reports_trait_not_found(self):
+        body = "pub trait Other { fn a(&self); }"
+        hits = self._write_and_scan(body, "Sample", 10)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("not found", hits[0])
+
+    def test_typedatabase_method_count_check_is_registered(self):
+        for entry in self.arch_guard.TRAIT_METHOD_COUNT_CHECKS:
+            name, path, trait_name, _max = entry
+            if trait_name == "TypeDatabase":
+                self.assertTrue(
+                    path.exists(),
+                    f"TypeDatabase check points at missing path: {path}",
+                )
+                self.assertIn("#8205", name)
+                return
+        self.fail(
+            "TypeDatabase method-count check is missing from TRAIT_METHOD_COUNT_CHECKS"
+        )
+
+    def test_real_typedatabase_passes_at_pinned_cap(self):
+        """The pinned cap must match the live count (no off-by-one)."""
+        for entry in self.arch_guard.TRAIT_METHOD_COUNT_CHECKS:
+            name, path, trait_name, max_methods = entry
+            hits = self.arch_guard.scan_trait_method_count(
+                path, trait_name, max_methods
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
 class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
     """Cover the T2.1.A CheckerContext lifetime inventory guard."""
 

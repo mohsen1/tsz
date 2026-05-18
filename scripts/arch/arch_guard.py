@@ -466,6 +466,21 @@ STRUCT_FIELD_COUNT_CHECKS = [
     ),
 ]
 
+# Pin the size of the solver's full database capability trait while #8205
+# splits it into narrower storage/config/provenance traits.  The live count is
+# tolerated as baseline debt, but new methods must either land on a narrower
+# trait or deliberately bump this cap with a roadmap/issue explanation.
+#
+# Each entry: (description, file_path, trait_name, max_methods).
+TRAIT_METHOD_COUNT_CHECKS = [
+    (
+        "Solver boundary: TypeDatabase method count (#8205)",
+        ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
+        "TypeDatabase",
+        97,
+    ),
+]
+
 VALID_CHECKER_CONTEXT_LIFETIMES = {
     "ProgramStable",
     "WorkerReusable",
@@ -1361,6 +1376,35 @@ def scan_struct_field_count(
     return []
 
 
+def scan_trait_method_count(
+    path: pathlib.Path, trait_name: str, max_methods: int
+) -> list[str]:
+    """Count method declarations in `pub trait <trait_name>`.
+
+    This is a cheap architecture metric for broad capability traits.  It counts
+    every `fn name...` declaration in the trait body, including default-method
+    bodies, because both expand the capability surface exposed to algorithms.
+    Comments are stripped first so doc examples or commented-out signatures do
+    not affect the ratchet.
+    """
+    if not path.exists():
+        return []
+    rel = relative_path(path)
+    body = find_trait_body(path, trait_name)
+    if body is None:
+        return [f"{rel}:0 trait {trait_name!r} not found"]
+
+    method_count = len(extract_trait_method_names_from_body(body))
+
+    if method_count > max_methods:
+        return [
+            f"{rel}:trait {trait_name} has {method_count} methods "
+            f"(cap {max_methods}; split onto a narrower trait or bump cap "
+            f"intentionally and update #8205)"
+        ]
+    return []
+
+
 def relative_path(path: pathlib.Path) -> str:
     try:
         return path.relative_to(ROOT).as_posix()
@@ -1394,8 +1438,39 @@ def find_struct_body(path: pathlib.Path, struct_name: str):
     return stripped[body_start:body_end]
 
 
+def find_trait_body(path: pathlib.Path, trait_name: str):
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    stripped = strip_rust_comments(text)
+    header_pattern = re.compile(
+        rf"\bpub\s+trait\s+{re.escape(trait_name)}\b[^{{]*\{{",
+        re.MULTILINE,
+    )
+    match = header_pattern.search(stripped)
+    if match is None:
+        return None
+
+    body_start = match.end()
+    depth = 1
+    body_end = body_start
+    for i in range(body_start, len(stripped)):
+        ch = stripped[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                body_end = i
+                break
+    return stripped[body_start:body_end]
+
+
 STRUCT_FIELD_PATTERN = re.compile(
     r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?P<name>[a-z_][a-zA-Z0-9_]*)\s*:"
+)
+
+TRAIT_METHOD_PATTERN = re.compile(
+    r"^\s*(?:async\s+|unsafe\s+|const\s+)?fn\s+"
+    r"(?P<name>[a-zA-Z_][a-zA-Z0-9_]*)\s*[<(]"
 )
 
 
@@ -1403,6 +1478,15 @@ def extract_struct_field_names_from_body(body: str) -> list[str]:
     names = []
     for line in body.splitlines():
         match = STRUCT_FIELD_PATTERN.match(line)
+        if match:
+            names.append(match.group("name"))
+    return names
+
+
+def extract_trait_method_names_from_body(body: str) -> list[str]:
+    names = []
+    for line in body.splitlines():
+        match = TRAIT_METHOD_PATTERN.match(line)
         if match:
             names.append(match.group("name"))
     return names
@@ -1824,6 +1908,12 @@ def main() -> int:
 
     for name, path, struct_name, max_fields in STRUCT_FIELD_COUNT_CHECKS:
         hits = scan_struct_field_count(path, struct_name, max_fields)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, path, trait_name, max_methods in TRAIT_METHOD_COUNT_CHECKS:
+        hits = scan_trait_method_count(path, trait_name, max_methods)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
