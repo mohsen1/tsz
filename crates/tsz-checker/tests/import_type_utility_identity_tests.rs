@@ -74,6 +74,28 @@ const isBox: IsImportedBox<import("./module").Box> = true;
 }
 
 #[test]
+fn nested_import_type_argument_feeds_conditional_type() {
+    let diagnostics = diagnostics_for_import_utility(
+        r#"
+type LocalBox<T> = { item: T };
+type Envelope<X> = { payload: X };
+
+type ExtractFromBox<T> = T extends LocalBox<import("./module").Wrap<infer U>> ? U : never;
+const fromBox: ExtractFromBox<LocalBox<import("./module").Wrap<string>>> = "value";
+
+type ExtractFromEnvelope<T> = T extends Envelope<import("./module").Wrap<infer V>> ? V : never;
+const fromEnvelope: ExtractFromEnvelope<Envelope<import("./module").Wrap<number>>> = 1;
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected nested `import(\"./module\").T` type arguments to preserve identity inside \
+         conditional type checks. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn typeof_import_function_member_feeds_return_type() {
     let diagnostics = diagnostics_for_import_utility(
         r#"

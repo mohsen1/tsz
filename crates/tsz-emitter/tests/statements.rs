@@ -58,6 +58,24 @@ fn recovered_regex_close_bracket_slash_tail_emits_slash_statement() {
     assert_eq!(output.trim_end(), "\"use strict\";\nvar v = /[]/;\n/;");
 }
 
+#[test]
+fn invalid_as_type_predicate_assertion_recovers_is_as_if_body() {
+    let source = r#"
+declare var numOrStr: number | string;
+declare var flag: boolean;
+if ((numOrStr === undefined) as numOrStr is string) {
+}
+if (flag as candidate is number) {
+}
+"#;
+    let output = parse_and_emit_strict_es2015(source, "a.ts");
+
+    assert_eq!(
+        output.trim_end(),
+        "\"use strict\";\nif ((numOrStr === undefined))\n    is;\nstring;\n{\n}\nif (flag)\n    is;\nnumber;\n{\n}"
+    );
+}
+
 /// Case clause with a single non-block statement on the same source line
 /// should be emitted on one line: `case true: return "true";`
 #[test]

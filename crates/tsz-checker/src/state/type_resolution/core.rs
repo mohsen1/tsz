@@ -234,6 +234,14 @@ impl<'a> CheckerState<'a> {
                         .get(&type_query_idx.0)
                         .copied()
                         .filter(|&type_id| type_id != TypeId::ANY && type_id != TypeId::ERROR)
+                        .or_else(|| {
+                            self.computed_property_expression_unique_symbol_type(expr_name_idx)
+                        })
+                };
+                let computed_name_resolver =
+                    |expr_idx: NodeIndex| self.computed_property_expression_name_atom(expr_idx);
+                let computed_symbol_name_resolver = |expr_idx: NodeIndex| {
+                    self.computed_property_expression_is_symbol_named(expr_idx)
                 };
                 let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
@@ -244,7 +252,9 @@ impl<'a> CheckerState<'a> {
                 )
                 .with_type_param_bindings(type_param_bindings)
                 .with_name_def_id_resolver(&name_resolver)
-                .with_type_query_override(&type_query_override);
+                .with_type_query_override(&type_query_override)
+                .with_computed_name_resolver(&computed_name_resolver)
+                .with_computed_symbol_name_resolver(&computed_symbol_name_resolver);
                 let mut type_id = lowering.lower_type(idx);
                 if query::get_application_info(self.ctx.types, type_id).is_none()
                     && let Some(args) = &type_ref.type_arguments
@@ -968,6 +978,14 @@ impl<'a> CheckerState<'a> {
                         .get(&type_query_idx.0)
                         .copied()
                         .filter(|&type_id| type_id != TypeId::ANY && type_id != TypeId::ERROR)
+                        .or_else(|| {
+                            self.computed_property_expression_unique_symbol_type(expr_name_idx)
+                        })
+                };
+                let computed_name_resolver =
+                    |expr_idx: NodeIndex| self.computed_property_expression_name_atom(expr_idx);
+                let computed_symbol_name_resolver = |expr_idx: NodeIndex| {
+                    self.computed_property_expression_is_symbol_named(expr_idx)
                 };
                 let lowering = tsz_lowering::TypeLowering::with_hybrid_resolver(
                     self.ctx.arena,
@@ -979,7 +997,9 @@ impl<'a> CheckerState<'a> {
                 .with_type_param_bindings(type_param_bindings)
                 .with_lazy_type_params_resolver(&lazy_type_params_resolver)
                 .with_name_def_id_resolver(&name_resolver)
-                .with_type_query_override(&type_query_override);
+                .with_type_query_override(&type_query_override)
+                .with_computed_name_resolver(&computed_name_resolver)
+                .with_computed_symbol_name_resolver(&computed_symbol_name_resolver);
                 let mut result = lowering.lower_type(idx);
                 if let Some((base, app_args)) = query::get_application_info(self.ctx.types, result)
                     && !is_builtin_array

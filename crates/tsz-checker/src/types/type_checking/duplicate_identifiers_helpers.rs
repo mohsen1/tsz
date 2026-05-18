@@ -2187,6 +2187,10 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    pub(super) fn node_is_import_alias(&self, flags: u32, idx: NodeIndex) -> bool {
+        (flags & symbol_flags::ALIAS) != 0 && self.is_import_alias_node(idx)
+    }
+
     /// Emit duplicate-identifier diagnostics, defaulting to local-anchored
     /// errors but redirecting to a remote anchor when tsc's plain-JS
     /// `addDuplicateLocations` filter (checker.ts ~L2782-L2783) applies.
