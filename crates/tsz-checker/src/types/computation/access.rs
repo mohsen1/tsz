@@ -7,7 +7,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{SymbolRef, TypeId};
 
 pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
     let Some(node) = arena.get(idx) else {
@@ -241,6 +241,18 @@ impl<'a> CheckerState<'a> {
             .filter(|_| numeric_string_index.is_none())
             .map(|name| self.ctx.types.literal_string(name))
             .unwrap_or(index_type);
+
+        // When the index is a `symbol`-typed identifier, convert to a
+        // `UniqueSymbol(SymbolRef)` so the solver can match binding-identity
+        // properties stored as `__unique_<sym_id>`.  This mirrors how TypeScript
+        // resolves `ws[sym]` when `sym: symbol` was used as a computed property
+        // name in the object's type declaration.
+        let index_type_for_access = if index_type == TypeId::SYMBOL {
+            self.nonunique_symbol_index_type(access.name_or_argument)
+                .unwrap_or(index_type_for_access)
+        } else {
+            index_type_for_access
+        };
 
         // Get the type of the object. In write context, prefer the receiver's
         // declared type when it already has the indexed member, otherwise fall
@@ -1992,6 +2004,36 @@ impl<'a> CheckerState<'a> {
             self.apply_flow_narrowing(idx, result_type)
         };
         self.instantiate_callable_result_from_request(idx, result_type, request)
+    }
+
+    /// When `index_node` is a `symbol`-typed identifier, follow its import
+    /// chain to the canonical binding and return
+    /// `UniqueSymbol(SymbolRef(canonical_id))`.
+    ///
+    /// Returns `None` when the node is not a plain identifier.  The caller
+    /// uses this to override the `index_type_for_access` so the solver's
+    /// property-lookup loop can match `__unique_<id>` entries produced by
+    /// `get_property_name_resolved` for non-unique symbol computed properties.
+    fn nonunique_symbol_index_type(&self, index_node: NodeIndex) -> Option<TypeId> {
+        let node = self.ctx.arena.get(index_node)?;
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.resolve_identifier_symbol_without_tracking(index_node)?;
+        // Follow import aliases to the canonical declaration symbol.
+        let mut current = sym_id;
+        let mut hops = 0usize;
+        while hops < 32 {
+            hops += 1;
+            let Some(next) = self.ctx.binder.resolve_import_symbol(current) else {
+                break;
+            };
+            if next == current {
+                break;
+            }
+            current = next;
+        }
+        Some(self.ctx.types.unique_symbol(SymbolRef(current.0)))
     }
 }
 
