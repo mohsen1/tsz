@@ -1382,6 +1382,10 @@ name = "operator_literal_annotation_display_tests"
 path = "tests/operator_literal_annotation_display_tests.rs"
 
 [[test]]
+name = "operator_literal_annotation_widen_tests"
+path = "tests/operator_literal_annotation_widen_tests.rs"
+
+[[test]]
 name = "flow_dp_memoization_tests"
 path = "tests/flow_dp_memoization_tests.rs"
 
