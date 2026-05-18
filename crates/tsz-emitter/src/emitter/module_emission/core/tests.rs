@@ -1700,9 +1700,8 @@ export const x = 1;
 }
 
 /// When a class has legacy decorators and is exported in CJS, the
-/// `exports.X = X;` pre-assignment should appear exactly once — from
-/// `emit_legacy_class_decorator_assignment`, NOT also from the
-/// `pending_commonjs_class_export_name` path.
+/// `exports.X = X;` pre-assignment should appear exactly once at the class
+/// boundary before the decorator assignment.
 #[test]
 fn decorated_class_export_no_duplicate_exports() {
     let source = "declare var dec: any;\n@dec export class A {}\n";
@@ -1730,6 +1729,55 @@ fn decorated_class_export_no_duplicate_exports() {
     assert!(
         output.contains("exports.A = A = __decorate("),
         "Should contain the decorator assignment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn decorated_commonjs_exported_class_static_self_reference_uses_alias() {
+    let source = "declare var Something: any;\n@Something({ v: () => Testing123 })\nexport class Testing123 {\n    static prop0: string;\n    static prop1 = Testing123.prop0;\n}\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        legacy_decorators: true,
+        emit_decorator_metadata: true,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var Testing123_1;"),
+        "CommonJS decorated class exports should hoist a self-reference alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("let Testing123 = Testing123_1 = class Testing123"),
+        "The exported decorated class should initialize the alias with the class value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Testing123.prop1 = Testing123_1.prop0;"),
+        "Lowered static self-references should use the hoisted alias.\nOutput:\n{output}"
+    );
+    let export_idx = output
+        .find("exports.Testing123 = Testing123;")
+        .expect("early CommonJS export assignment should be emitted");
+    let static_idx = output
+        .find("Testing123.prop1 = Testing123_1.prop0;")
+        .expect("static self-reference initializer should be emitted");
+    let decorator_idx = output
+        .find("exports.Testing123 = Testing123 = Testing123_1 = __decorate([")
+        .expect("decorator reassignment should be emitted");
+    assert!(
+        export_idx < static_idx && static_idx < decorator_idx,
+        "The early export assignment must stay between the class value and lowered static initializers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.Testing123 = Testing123 = Testing123_1 = __decorate(["),
+        "The decorator reassignment should preserve the alias in the CommonJS export chain.\nOutput:\n{output}"
     );
 }
 
