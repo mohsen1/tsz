@@ -58,7 +58,9 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1273: modifiers categorically invalid on a type parameter. TS1274 is
+    /// TS1273: modifiers categorically invalid on a type parameter (`public`,
+    /// `private`, `protected`, `static`, `readonly`, `async`, `declare`,
+    /// `abstract`, `override`, `export`, `default`, `accessor`). TS1274 is
     /// reserved for `in`/`out` in the wrong context.
     pub(crate) fn check_never_valid_type_parameter_modifiers(
         &mut self,
