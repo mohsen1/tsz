@@ -136,7 +136,7 @@ impl Server {
             }
             Some(response)
         })();
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!({"configFileName": "", "fileNames": []}))),
