@@ -487,6 +487,23 @@ if (
     );
   }
 }
+if (comparison.bySemanticFamilyDelta !== null && comparison.bySemanticFamilyDelta !== undefined) {
+  if (!Array.isArray(comparison.bySemanticFamilyDelta)) {
+    fail("assertion classification comparison.bySemanticFamilyDelta must be an array");
+  }
+  comparison.bySemanticFamilyDelta.forEach((entry, index) => {
+    if (typeof entry?.key !== "string" || entry.key.trim() === "") {
+      fail(
+        `assertion classification comparison.bySemanticFamilyDelta[${index}].key must be a non-empty string`,
+      );
+    }
+    if (!Number.isInteger(entry.delta)) {
+      fail(
+        `assertion classification comparison.bySemanticFamilyDelta[${index}].delta must be an integer`,
+      );
+    }
+  });
+}
 const candidateFileComparisonCounts = comparison.candidateFileComparison?.counts || {};
 const normalizedCandidateFileComparison = {};
 if (comparison.candidateFileComparison) {
