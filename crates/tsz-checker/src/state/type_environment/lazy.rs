@@ -1331,9 +1331,11 @@ impl<'a> CheckerState<'a> {
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
         let lib_name = self.ctx.definition_store.get(def_id).and_then(|info| {
-            (info.file_id == Some(u32::MAX)
-                && matches!(info.kind, tsz_solver::def::DefKind::Interface))
-            .then(|| self.ctx.types.resolve_atom(info.name))
+            if !matches!(info.kind, tsz_solver::def::DefKind::Interface) {
+                return None;
+            }
+            let name = self.ctx.types.resolve_atom(info.name);
+            (self.ctx.actual_lib_def_id_for_bare_name(&name) == Some(def_id)).then_some(name)
         });
         if let Some(name) = lib_name
             && self
