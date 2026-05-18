@@ -3,6 +3,8 @@ import pathlib
 import re
 import argparse
 import json
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
@@ -646,6 +648,60 @@ PROJECT_DASHBOARD_ROW_CHECKS = [
     ),
 ]
 
+PROJECT_FIXTURE_SOURCE_CHECKS = [
+    (
+        "Project corpus fixtures: pinned rows must record fixture source refs (Track 1)",
+        ROOT / "scripts" / "bench" / "project-rows.mjs",
+        ROOT / "scripts" / "bench" / "project-fixtures.sh",
+    ),
+]
+
+PROJECT_INCLUSION_POLICY_CHECKS = [
+    (
+        "Project corpus inclusion: row manifest must match compile guard and benchmark rows (Track 1)",
+        ROOT / "scripts" / "bench" / "project-rows.mjs",
+        ROOT / "scripts" / "ci" / "project-compile-guard.sh",
+        ROOT / "scripts" / "bench" / "bench-vs-tsgo.sh",
+    ),
+]
+
+PROJECT_CONFIG_WRITER_CHECKS = [
+    (
+        "Project corpus config shape: shared rows must use shared config writers (Track 1)",
+        ROOT / "scripts" / "bench" / "project-fixtures.sh",
+        ROOT / "scripts" / "ci" / "project-compile-guard.sh",
+        ROOT / "scripts" / "bench" / "bench-vs-tsgo.sh",
+    ),
+]
+
+PROJECT_CONFIG_WRITERS = {
+    "utility-types-project": "tsz_write_utility_types_config",
+    "ts-toolbelt-project": "tsz_write_ts_toolbelt_config",
+    "ts-essentials-project": "tsz_write_ts_essentials_config",
+    "rxjs-project": "tsz_write_rxjs_config",
+    "type-fest-project": "tsz_write_type_fest_config",
+    "zod-project": "tsz_write_zod_config",
+    "kysely-project": "tsz_write_kysely_config",
+    "nextjs": "tsz_write_nextjs_config",
+}
+
+GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE = {
+    "vite-vanilla-ts-app",
+    "nextjs-fresh-app",
+}
+
+COMPILE_GUARD_ONLY_PROJECT_ROWS = {
+    "type-challenges-project",
+    "type-challenges-solutions-project",
+    "type-challenges-assertion-candidates",
+    "type-challenges-assertions-tsc-clean",
+}
+
+BENCHMARK_ONLY_PROJECT_ROWS = {
+    "nextjs",
+    "large-ts-repo",
+}
+
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/mod.rs",
@@ -1142,6 +1198,236 @@ def scan_project_dashboard_rows(path: pathlib.Path) -> list[str]:
     duplicates = sorted({name for name in dashboard if dashboard.count(name) > 1})
     for name in duplicates:
         hits.append(f"{rel}:0 duplicate compatibility dashboard row for {name}")
+
+    return hits
+
+
+def extract_project_fixture_source_case_names(text: str) -> Optional[list[str]]:
+    """Extract row names handled by `tsz_project_fixture_sources`."""
+    match = re.search(
+        r"\btsz_project_fixture_sources\s*\(\)\s*\{(?P<body>.*?)^\}",
+        text,
+        re.DOTALL | re.MULTILINE,
+    )
+    if match is None:
+        return None
+
+    names: list[str] = []
+    for line in match.group("body").splitlines():
+        case_match = re.match(r"^\s*([A-Za-z0-9_.-]+(?:\|[A-Za-z0-9_.-]+)*)\)\s*$", line)
+        if case_match is None:
+            continue
+        names.extend(case_match.group(1).split("|"))
+    return names
+
+
+def emitted_project_fixture_sources(
+    fixture_path: pathlib.Path,
+    row_name: str,
+) -> tuple[list[tuple[str, str, str]], Optional[str]]:
+    """Run `tsz_project_fixture_sources` and validate emitted metadata lines."""
+    command = (
+        "set -euo pipefail; "
+        f"source {shlex.quote(str(fixture_path))}; "
+        f"tsz_project_fixture_sources {shlex.quote(row_name)}"
+    )
+    try:
+        result = subprocess.run(
+            ["bash", "-c", command],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return [], f"could not run fixture source metadata for {row_name}: {exc}"
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        suffix = f": {detail}" if detail else ""
+        return [], f"could not run fixture source metadata for {row_name}{suffix}"
+
+    sources: list[tuple[str, str, str]] = []
+    for line_number, raw_line in enumerate(result.stdout.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        fields = [field.strip() for field in line.split("|")]
+        if len(fields) != 3 or any(field == "" for field in fields):
+            return (
+                [],
+                f"malformed fixture source metadata for {row_name} line {line_number}: {line}",
+            )
+        sources.append((fields[0], fields[1], fields[2]))
+
+    if not sources:
+        return [], f"empty fixture source metadata for {row_name}"
+
+    return sources, None
+
+
+def scan_project_fixture_sources(
+    row_path: pathlib.Path,
+    fixture_path: pathlib.Path,
+) -> list[str]:
+    """Ensure pinned project rows have fixture source/ref metadata.
+
+    `scripts/bench/project-rows.mjs` owns the public project row inventory.
+    `scripts/bench/project-fixtures.sh` owns the pinned external fixture refs
+    and exposes `tsz_project_fixture_sources` so benchmark/CI compatibility
+    rows carry reproducibility metadata.
+    """
+    hits: list[str] = []
+    row_rel = relative_path(row_path)
+    fixture_rel = relative_path(fixture_path)
+
+    if not row_path.exists():
+        return [f"{row_rel}:0 project row manifest is missing"]
+    if not fixture_path.exists():
+        return [f"{fixture_rel}:0 project fixture metadata file is missing"]
+
+    row_text = row_path.read_text(encoding="utf-8", errors="ignore")
+    required = extract_js_array_strings(row_text, "REQUIRED_PROJECT_ROWS")
+    canary = extract_js_array_strings(row_text, "COMPILE_CANARY_PROJECT_ROWS")
+    if required is None:
+        hits.append(f"{row_rel}:0 missing REQUIRED_PROJECT_ROWS array")
+        required = []
+    if canary is None:
+        hits.append(f"{row_rel}:0 missing COMPILE_CANARY_PROJECT_ROWS array")
+        canary = []
+
+    fixture_text = fixture_path.read_text(encoding="utf-8", errors="ignore")
+    source_cases = extract_project_fixture_source_case_names(fixture_text)
+    if source_cases is None:
+        hits.append(f"{fixture_rel}:0 missing tsz_project_fixture_sources function")
+        source_cases = []
+
+    expected_rows = sorted(
+        (set(required) | set(canary)) - GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE,
+    )
+    expected_set = set(expected_rows)
+    source_set = set(source_cases)
+
+    for name in expected_rows:
+        if name not in source_set:
+            hits.append(f"{fixture_rel}:0 missing fixture source metadata for {name}")
+            continue
+        _, error = emitted_project_fixture_sources(fixture_path, name)
+        if error is not None:
+            hits.append(f"{fixture_rel}:0 {error}")
+
+    for name in sorted(source_set - expected_set):
+        hits.append(f"{fixture_rel}:0 stale fixture source metadata for {name}")
+
+    duplicates = sorted({name for name in source_cases if source_cases.count(name) > 1})
+    for name in duplicates:
+        hits.append(f"{fixture_rel}:0 duplicate fixture source metadata for {name}")
+
+    return hits
+
+
+def extract_project_compile_guard_rows(text: str) -> list[str]:
+    """Extract row names routed through `should_check_project`."""
+    return re.findall(r'\bshould_check_project\s+"([^"]+)"', text)
+
+
+def extract_project_benchmark_rows(text: str) -> list[str]:
+    """Extract project row names registered in the benchmark runner."""
+    return re.findall(r'\brun_isolated\s+"([^"]+)"\s+run_[A-Za-z0-9_]+_benchmarks', text)
+
+
+def scan_project_inclusion_policy(
+    row_path: pathlib.Path,
+    compile_guard_path: pathlib.Path,
+    bench_path: pathlib.Path,
+) -> list[str]:
+    """Ensure project row inventories match the shell inclusion policies."""
+    hits: list[str] = []
+    row_rel = relative_path(row_path)
+    compile_rel = relative_path(compile_guard_path)
+    bench_rel = relative_path(bench_path)
+
+    if not row_path.exists():
+        return [f"{row_rel}:0 project row manifest is missing"]
+    if not compile_guard_path.exists():
+        return [f"{compile_rel}:0 project compile guard is missing"]
+    if not bench_path.exists():
+        return [f"{bench_rel}:0 benchmark runner is missing"]
+
+    row_text = row_path.read_text(encoding="utf-8", errors="ignore")
+    required = extract_js_array_strings(row_text, "REQUIRED_PROJECT_ROWS")
+    canary = extract_js_array_strings(row_text, "COMPILE_CANARY_PROJECT_ROWS")
+    if required is None:
+        hits.append(f"{row_rel}:0 missing REQUIRED_PROJECT_ROWS array")
+        required = []
+    if canary is None:
+        hits.append(f"{row_rel}:0 missing COMPILE_CANARY_PROJECT_ROWS array")
+        canary = []
+
+    manifest_rows = sorted(set(required) | set(canary))
+
+    compile_text = compile_guard_path.read_text(encoding="utf-8", errors="ignore")
+    compile_rows = extract_project_compile_guard_rows(compile_text)
+    compile_set = set(compile_rows)
+    manifest_set = set(manifest_rows)
+    expected_compile_rows = sorted(set(manifest_rows) - BENCHMARK_ONLY_PROJECT_ROWS)
+    expected_compile_set = set(expected_compile_rows)
+    for name in expected_compile_rows:
+        if name not in compile_set:
+            hits.append(f"{compile_rel}:0 missing project compile guard inclusion for {name}")
+    for name in sorted(compile_set - expected_compile_set):
+        hits.append(f"{compile_rel}:0 stale project compile guard inclusion for {name}")
+
+    bench_text = bench_path.read_text(encoding="utf-8", errors="ignore")
+    bench_rows = extract_project_benchmark_rows(bench_text)
+    bench_set = set(bench_rows)
+    expected_bench_rows = sorted(manifest_set - COMPILE_GUARD_ONLY_PROJECT_ROWS)
+    expected_bench_set = set(expected_bench_rows)
+    for name in expected_bench_rows:
+        if name not in bench_set:
+            hits.append(f"{bench_rel}:0 missing project benchmark inclusion for {name}")
+
+    return hits
+
+
+def scan_project_config_writers(
+    fixture_path: pathlib.Path,
+    compile_guard_path: pathlib.Path,
+    bench_path: pathlib.Path,
+) -> list[str]:
+    """Ensure shared project rows use shared config writer functions."""
+    hits: list[str] = []
+    fixture_rel = relative_path(fixture_path)
+    compile_rel = relative_path(compile_guard_path)
+    bench_rel = relative_path(bench_path)
+
+    if not fixture_path.exists():
+        return [f"{fixture_rel}:0 project fixture metadata file is missing"]
+    if not compile_guard_path.exists():
+        return [f"{compile_rel}:0 project compile guard is missing"]
+    if not bench_path.exists():
+        return [f"{bench_rel}:0 benchmark runner is missing"]
+
+    fixture_text = fixture_path.read_text(encoding="utf-8", errors="ignore")
+    compile_text = compile_guard_path.read_text(encoding="utf-8", errors="ignore")
+    bench_text = bench_path.read_text(encoding="utf-8", errors="ignore")
+
+    for row, writer in sorted(PROJECT_CONFIG_WRITERS.items()):
+        if not re.search(rf"\b{re.escape(writer)}\s*\(\)", fixture_text):
+            hits.append(f"{fixture_rel}:0 missing shared config writer {writer} for {row}")
+
+        if row not in BENCHMARK_ONLY_PROJECT_ROWS and not re.search(
+            rf"\b{re.escape(writer)}\b",
+            compile_text,
+        ):
+            hits.append(f"{compile_rel}:0 {row} does not use shared config writer {writer}")
+
+        if row not in COMPILE_GUARD_ONLY_PROJECT_ROWS and not re.search(
+            rf"\b{re.escape(writer)}\b",
+            bench_text,
+        ):
+            hits.append(f"{bench_rel}:0 {row} does not use shared config writer {writer}")
 
     return hits
 
@@ -1753,6 +2039,24 @@ def main() -> int:
 
     for name, file_path in PROJECT_DASHBOARD_ROW_CHECKS:
         hits = scan_project_dashboard_rows(file_path)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, row_path, fixture_path in PROJECT_FIXTURE_SOURCE_CHECKS:
+        hits = scan_project_fixture_sources(row_path, fixture_path)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, row_path, compile_guard_path, bench_path in PROJECT_INCLUSION_POLICY_CHECKS:
+        hits = scan_project_inclusion_policy(row_path, compile_guard_path, bench_path)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, fixture_path, compile_guard_path, bench_path in PROJECT_CONFIG_WRITER_CHECKS:
+        hits = scan_project_config_writers(fixture_path, compile_guard_path, bench_path)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
