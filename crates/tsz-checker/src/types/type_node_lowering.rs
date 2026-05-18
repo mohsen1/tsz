@@ -75,6 +75,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         &mut self,
         idx: NodeIndex,
     ) -> FxHashMap<NodeIndex, TypeId> {
+        // Skip the subtree walk for leaf-only nodes that structurally cannot contain
+        // TYPE_REFERENCE nodes (and therefore cannot have import() type refs).
+        if let Some(node) = self.ctx.arena.get(idx)
+            && (node.kind == syntax_kind_ext::INFER_TYPE
+                || node.kind == syntax_kind_ext::LITERAL_TYPE)
+        {
+            return FxHashMap::default();
+        }
         let mut map = FxHashMap::default();
         self.collect_import_types_recursive(idx, &mut map, 0);
         map
@@ -86,30 +94,32 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         map: &mut FxHashMap<NodeIndex, TypeId>,
         depth: u32,
     ) {
-        // Guard against adversarially deep nesting (e.g. deeply chained conditional types).
-        if depth > tsz_common::limits::MAX_TREE_WALK_ITERATIONS {
+        // Guard against adversarially deep nesting (matches codebase consensus of 64
+        // for AST recursive walkers).
+        if depth > 64 {
             return;
         }
         let Some(node) = self.ctx.arena.get(idx) else {
             return;
         };
-        // These node kinds structurally cannot contain a TYPE_REFERENCE whose
-        // type_name roots in an import() call.
-        if node.kind == syntax_kind_ext::INFER_TYPE || node.kind == syntax_kind_ext::LITERAL_TYPE {
-            return;
-        }
-        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
-            if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-                && let Some(resolved) = self.import_call_type_reference(type_ref.type_name)
-            {
-                map.insert(type_ref.type_name, resolved);
+        match node.kind {
+            // These node kinds structurally cannot contain a TYPE_REFERENCE whose
+            // type_name roots in an import() call.
+            k if k == syntax_kind_ext::INFER_TYPE || k == syntax_kind_ext::LITERAL_TYPE => {}
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                    && let Some(resolved) = self.import_call_type_reference(type_ref.type_name)
+                {
+                    map.insert(type_ref.type_name, resolved);
+                }
+                // Do not recurse into type arguments — those are handled by TypeLowering's
+                // application lowering after the base type is resolved.
             }
-            // Do not recurse into type arguments — those are handled by TypeLowering's
-            // application lowering after the base type is resolved.
-            return;
-        }
-        for child_idx in self.ctx.arena.get_children(idx) {
-            self.collect_import_types_recursive(child_idx, map, depth + 1);
+            _ => {
+                for child_idx in self.ctx.arena.get_children(idx) {
+                    self.collect_import_types_recursive(child_idx, map, depth + 1);
+                }
+            }
         }
     }
 

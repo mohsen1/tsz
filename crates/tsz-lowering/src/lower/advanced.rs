@@ -544,11 +544,10 @@ impl<'a> TypeLowering<'a> {
                 }
             }
 
-            // When the checker has pre-resolved import() type references (which require
-            // module resolution that TypeLowering cannot perform), pick up the result
-            // via the import_type_resolver callback before falling through.
+            // Module resolution requires &mut self (checker state); pick up the
+            // checker's pre-resolved result before falling through to the generic lowering.
             if let Some(resolver) = self.import_type_resolver
-                && self.find_import_call_in_type_name(data.type_name).is_some()
+                && self.has_import_call_in_type_name(data.type_name)
                 && let Some(resolved) = resolver(data.type_name)
             {
                 if let Some(args) = &data.type_arguments
@@ -655,38 +654,57 @@ impl<'a> TypeLowering<'a> {
         TypeId::ERROR
     }
 
-    /// Walk `type_name_idx` leftward to find the root `import()` `CALL_EXPRESSION`.
+    /// Returns `true` when `type_name_idx` is or starts with an `import()` `CALL_EXPRESSION`.
     ///
-    /// Returns `Some(call_idx)` when:
-    /// - `type_name_idx` is directly a `CALL_EXPRESSION` whose callee is `import`, or
-    /// - `type_name_idx` is a `QUALIFIED_NAME` chain whose leftmost leaf is such a call.
+    /// Covers:
+    /// - `import("./m")` — `type_name_idx` is directly a `CALL_EXPRESSION` whose callee is `import`
+    /// - `import("./m").Foo` — `type_name_idx` is a `QUALIFIED_NAME` chain whose leftmost leaf is such a call
     ///
-    /// Returns `None` for plain identifiers or any non-import call, keeping the cost
-    /// O(1) for the common case where `type_name_idx` is a simple identifier.
-    fn find_import_call_in_type_name(&self, type_name_idx: NodeIndex) -> Option<NodeIndex> {
-        let node = self.arena.get(type_name_idx)?;
-        if node.kind == syntax_kind_ext::CALL_EXPRESSION {
-            let call = self.arena.get_call_expr(node)?;
-            let callee = self.arena.get(call.expression)?;
-            return (callee.kind == SyntaxKind::ImportKeyword as u16).then_some(type_name_idx);
-        }
-        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
-            let mut current = type_name_idx;
-            for _ in 0..64 {
-                let n = self.arena.get(current)?;
-                if n.kind == syntax_kind_ext::QUALIFIED_NAME {
-                    let qn = self.arena.get_qualified_name(n)?;
-                    current = qn.left;
-                } else if n.kind == syntax_kind_ext::CALL_EXPRESSION {
-                    let call = self.arena.get_call_expr(n)?;
-                    let callee = self.arena.get(call.expression)?;
-                    return (callee.kind == SyntaxKind::ImportKeyword as u16).then_some(current);
-                } else {
-                    return None;
-                }
+    /// Plain identifiers are O(1) false.
+    fn has_import_call_in_type_name(&self, type_name_idx: NodeIndex) -> bool {
+        const MAX_IMPORT_CHAIN_DEPTH: usize = 64;
+        let Some(node) = self.arena.get(type_name_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                let Some(call) = self.arena.get_call_expr(node) else {
+                    return false;
+                };
+                let Some(callee) = self.arena.get(call.expression) else {
+                    return false;
+                };
+                callee.kind == SyntaxKind::ImportKeyword as u16
             }
+            k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                let mut current = type_name_idx;
+                for _ in 0..MAX_IMPORT_CHAIN_DEPTH {
+                    let Some(n) = self.arena.get(current) else {
+                        return false;
+                    };
+                    match n.kind {
+                        k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                            let Some(qn) = self.arena.get_qualified_name(n) else {
+                                return false;
+                            };
+                            current = qn.left;
+                        }
+                        k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                            let Some(call) = self.arena.get_call_expr(n) else {
+                                return false;
+                            };
+                            let Some(callee) = self.arena.get(call.expression) else {
+                                return false;
+                            };
+                            return callee.kind == SyntaxKind::ImportKeyword as u16;
+                        }
+                        _ => return false,
+                    }
+                }
+                false // depth limit reached
+            }
+            _ => false,
         }
-        None
     }
 
     /// Lower an identifier as a type (simple type reference)

@@ -94,7 +94,7 @@ pub struct TypeLowering<'a> {
     /// type references and supplies them through this callback. The argument is the full
     /// `type_name` `NodeIndex` (either the `CALL_EXPRESSION` itself or the `QUALIFIED_NAME`
     /// rooted in it). Returns `Some` when pre-resolved, `None` to fall through to `ERROR`.
-    pub(super) import_type_resolver: Option<&'a dyn Fn(NodeIndex) -> Option<TypeId>>,
+    pub(super) import_type_resolver: Option<&'a NodeIndexResolver<'a, TypeId>>,
     /// Operation counter to prevent infinite loops
     pub(super) operations: Rc<RefCell<u32>>,
     /// Whether the operation limit has been exceeded
@@ -805,7 +805,7 @@ impl<'a> TypeLowering<'a> {
     /// (e.g. the extends clause of a conditional type) would lower to `TypeId::ERROR`.
     pub fn with_import_type_resolver(
         mut self,
-        resolver: &'a dyn Fn(NodeIndex) -> Option<TypeId>,
+        resolver: &'a NodeIndexResolver<'a, TypeId>,
     ) -> Self {
         self.import_type_resolver = Some(resolver);
         self
