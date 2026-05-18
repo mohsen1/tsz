@@ -139,7 +139,7 @@ impl<'a> NamespaceES5Emitter<'a> {
     }
 
     /// When true, suppress `/** @class */` annotation in output.
-    pub fn set_remove_comments(&mut self, remove: bool) {
+    pub const fn set_remove_comments(&mut self, remove: bool) {
         self.remove_comments = remove;
         self.transformer.set_remove_comments(remove);
     }

@@ -94,8 +94,10 @@ fn namespace_relative_const_enum_aliases_inline_and_elide_es5() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrintOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrintOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let mut printer = Printer::new(&parser.arena, options);
     printer.set_source_text(source);
     printer.print(root);
