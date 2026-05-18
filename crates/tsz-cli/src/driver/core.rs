@@ -2605,11 +2605,7 @@ fn resolve_effective_lib_paths(
                     lib_names_from_paths(&expanded_source_paths),
                 );
             } else {
-                append_unique_lib_paths(
-                    &mut lib_paths,
-                    &mut seen,
-                    expanded_source_paths.into_iter(),
-                );
+                append_unique_lib_paths(&mut lib_paths, &mut seen, expanded_source_paths);
             }
         }
     }
