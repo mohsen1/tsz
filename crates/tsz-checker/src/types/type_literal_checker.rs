@@ -1099,6 +1099,7 @@ impl<'a> CheckerState<'a> {
         let mut number_index = None;
         let mut extra_number_indices = Vec::new();
         let mut has_abstract_construct_sig = false;
+        let mut has_late_bound_members = false;
         // Global member counter for preserving source declaration order across
         // both properties and methods. Using properties.len() would give methods
         // higher declaration_order than all properties since methods are merged
@@ -1176,6 +1177,14 @@ impl<'a> CheckerState<'a> {
                     }
                     METHOD_SIGNATURE | PROPERTY_SIGNATURE => {
                         let Some(name) = self.get_property_name_resolved(sig.name) else {
+                            if self
+                                .ctx
+                                .arena
+                                .get(sig.name)
+                                .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                            {
+                                has_late_bound_members = true;
+                            }
                             continue;
                         };
                         let name_atom = self.ctx.types.intern_string(&name);
@@ -1483,6 +1492,15 @@ impl<'a> CheckerState<'a> {
                         circular_self_reference,
                     });
                 }
+            } else if member.is_accessor()
+                && let Some(accessor) = self.ctx.arena.get_accessor(member)
+                && self
+                    .ctx
+                    .arena
+                    .get(accessor.name)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+            {
+                has_late_bound_members = true;
             }
         }
 
@@ -1640,12 +1658,16 @@ impl<'a> CheckerState<'a> {
         }
 
         if string_index.is_some() || number_index.is_some() {
-            let mut result = factory.object_with_index(ObjectShape {
+            let mut shape = ObjectShape {
                 properties,
                 string_index,
                 number_index,
                 ..ObjectShape::default()
-            });
+            };
+            if has_late_bound_members {
+                shape.mark_has_late_bound_members();
+            }
+            let mut result = factory.object_with_index(shape);
             for idx in extra_number_indices {
                 let member = factory.object_with_index(ObjectShape {
                     number_index: Some(idx),
@@ -1656,6 +1678,10 @@ impl<'a> CheckerState<'a> {
             return result;
         }
 
-        factory.object(properties)
+        if has_late_bound_members {
+            factory.object_with_late_bound_members(properties, None)
+        } else {
+            factory.object_with_symbol(properties, None)
+        }
     }
 }

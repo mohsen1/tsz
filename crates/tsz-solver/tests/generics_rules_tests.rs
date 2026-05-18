@@ -1689,6 +1689,12 @@ fn test_evaluated_callable_assignable_to_all_any_application_via_display_alias()
             .is_true(),
         "GenericFn<unknown> should be assignable to GenericFn<any>"
     );
+    assert!(
+        checker
+            .check_subtype(target_app_any, source_app_unknown)
+            .is_true(),
+        "GenericFn<any> should be assignable to GenericFn<unknown>"
+    );
 
     // Unrelated base must not be affected
     let other_base = interner.lazy(DefId(100));

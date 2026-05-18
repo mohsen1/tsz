@@ -275,7 +275,7 @@ impl CheckerState<'_> {
             .then(|| DiagnosticSpeculationSnapshot::new(&self.ctx));
         let rhs_type = self.get_type_of_node(rhs_idx);
         if let Some(snap) = diag_snap {
-            snap.rollback(&mut self.ctx);
+            snap.rollback(&mut self.ctx.diagnostic_state());
         }
         rhs_type
     }

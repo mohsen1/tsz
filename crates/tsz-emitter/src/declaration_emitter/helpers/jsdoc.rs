@@ -592,6 +592,9 @@ impl<'a> DeclarationEmitter<'a> {
         if trimmed.is_empty() {
             return "any".to_string();
         }
+        if Self::jsdoc_module_reference_type_falls_back_to_any(trimmed) {
+            return "any".to_string();
+        }
         if let Some(index_signature) = Self::normalize_jsdoc_object_index_type(trimmed) {
             return index_signature;
         }
@@ -790,6 +793,9 @@ impl<'a> DeclarationEmitter<'a> {
     /// Normalize a single JSDoc type atom: `*` -> `any`, otherwise pass through.
     fn normalize_jsdoc_type_atom(s: &str) -> String {
         let s = s.trim();
+        if Self::jsdoc_module_reference_type_falls_back_to_any(s) {
+            return "any".to_string();
+        }
         if let Some((base, args)) = Self::split_jsdoc_generic_atom(s) {
             if args.trim().is_empty() {
                 return match base {
@@ -816,6 +822,13 @@ impl<'a> DeclarationEmitter<'a> {
             "Promise" | "Promise.<>" | "Promise<>" => "Promise<any>".to_string(),
             _ => s.to_string(),
         }
+    }
+
+    fn jsdoc_module_reference_type_falls_back_to_any(type_text: &str) -> bool {
+        type_text
+            .trim()
+            .strip_prefix("module:")
+            .is_some_and(|rest| !rest.trim().is_empty())
     }
 
     fn split_jsdoc_generic_atom(s: &str) -> Option<(&str, &str)> {
@@ -2160,7 +2173,7 @@ impl<'a> DeclarationEmitter<'a> {
             .as_deref()
             .is_some_and(Self::jsdoc_has_function_signature_tags);
         let has_any_jsdoc = jsdoc.is_some();
-        if !has_jsdoc_tags && !is_export_equals_root && !has_any_jsdoc {
+        if !has_jsdoc_tags && !is_export_equals_root && !has_any_jsdoc && !is_exported {
             return false;
         }
 
@@ -2263,6 +2276,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write(";");
         self.write_line();
+        self.emit_js_function_computed_binding_key_declarations(&func.parameters);
         self.emit_js_function_like_class_if_needed(
             decl_name,
             &func.parameters,
@@ -2622,6 +2636,35 @@ impl<'a> DeclarationEmitter<'a> {
         lines
     }
 
+    fn jsdoc_typedef_trailing_description_lines(jsdoc: &str) -> Vec<String> {
+        let normalized = Self::normalize_jsdoc_block(jsdoc);
+        let Some(tag_pos) = normalized.find("@typedef") else {
+            return Vec::new();
+        };
+        let rest = normalized[tag_pos + "@typedef".len()..]
+            .lines()
+            .next()
+            .unwrap_or("")
+            .trim();
+        let Some((_, name_rest)) = Self::parse_jsdoc_braced_type_and_name(rest) else {
+            return Vec::new();
+        };
+        let name_rest = name_rest.trim();
+        if name_rest.is_empty() {
+            return Vec::new();
+        }
+
+        let name_end = name_rest
+            .find(char::is_whitespace)
+            .unwrap_or(name_rest.len());
+        let description = name_rest[name_end..].trim();
+        if description.is_empty() || description.starts_with('@') {
+            Vec::new()
+        } else {
+            vec![description.to_string()]
+        }
+    }
+
     pub(in crate::declaration_emitter) fn jsdoc_has_property_tags(jsdoc: &str) -> bool {
         jsdoc.lines().any(|raw_line| {
             let line = raw_line.trim_start_matches('*').trim();
@@ -2808,7 +2851,8 @@ impl<'a> DeclarationEmitter<'a> {
         jsdoc: &str,
     ) -> Option<JsdocTypeAliasDecl> {
         let type_params = Self::parse_jsdoc_template_params(jsdoc);
-        let description_lines = Self::jsdoc_description_lines(jsdoc);
+        let mut description_lines = Self::jsdoc_description_lines(jsdoc);
+        description_lines.extend(Self::jsdoc_typedef_trailing_description_lines(jsdoc));
 
         if Self::jsdoc_has_property_tags(jsdoc) {
             let (name, type_text) = Self::parse_jsdoc_property_type_alias(jsdoc)?;
@@ -2960,6 +3004,9 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn format_jsdoc_type_text_for_declaration(type_text: &str) -> String {
+        if Self::jsdoc_module_reference_type_falls_back_to_any(type_text) {
+            return "any".to_string();
+        }
         let Some(open) = type_text.find("<{") else {
             return type_text.to_string();
         };
@@ -3039,15 +3086,53 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(crate) fn emit_leading_jsdoc_type_aliases_for_pos(&mut self, pos: u32) {
+    pub(crate) fn emit_leading_jsdoc_type_aliases_for_pos(&mut self, pos: u32, exported: bool) {
         if !self.source_is_js_file {
             return;
         }
         for jsdoc in self.leading_jsdoc_comment_chain_for_pos(pos) {
             if let Some(decl) = Self::parse_jsdoc_type_alias_decl(&jsdoc) {
-                self.emit_rendered_jsdoc_type_alias(decl, true);
+                self.emit_rendered_jsdoc_type_alias(decl, exported);
             }
         }
+    }
+
+    pub(crate) fn emit_js_export_equals_type_alias_namespace_for_name(
+        &mut self,
+        name_idx: NodeIndex,
+        pos: u32,
+    ) {
+        if !self.is_js_export_equals_name(name_idx) {
+            return;
+        }
+        let aliases = self.jsdoc_type_alias_decls_before_pos(pos);
+        if aliases.is_empty() {
+            return;
+        }
+
+        self.write_indent();
+        if self.should_emit_declare_keyword(false) {
+            self.write("declare ");
+        }
+        self.write("namespace ");
+        self.emit_node(name_idx);
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+        self.write_indent();
+        self.write("export { ");
+        for (idx, alias) in aliases.iter().enumerate() {
+            if idx > 0 {
+                self.write(", ");
+            }
+            self.write(&alias.name);
+        }
+        self.write(" };");
+        self.write_line();
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        self.write_line();
     }
 
     pub(in crate::declaration_emitter) fn jsdoc_type_alias_decls_before_pos(
@@ -3300,7 +3385,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(crate) fn emit_jsdoc_default_typedef_aliases_for_hoisted_default_exports(
+    pub(crate) fn emit_jsdoc_default_typedef_aliases_for_js_default_export(
         &mut self,
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) {
@@ -3341,6 +3426,20 @@ impl<'a> DeclarationEmitter<'a> {
                 exported,
                 alias_can_share_declaration_name,
             );
+        }
+    }
+
+    pub(crate) fn emit_jsdoc_default_typedef_aliases_for_js_default_export_in_current_file(
+        &mut self,
+    ) {
+        let source_file = self
+            .current_source_file_idx
+            .and_then(|root_idx| self.arena.get(root_idx))
+            .and_then(|root_node| self.arena.get_source_file(root_node))
+            .cloned();
+
+        if let Some(source_file) = source_file {
+            self.emit_jsdoc_default_typedef_aliases_for_js_default_export(&source_file);
         }
     }
 
