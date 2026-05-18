@@ -419,6 +419,12 @@ impl<'a> Printer<'a> {
                                     .default_exported_func_names
                                     .contains(&n)
                             });
+                        let cjs_export_name = names.first().and_then(|name_id| {
+                            self.arena
+                                .identifiers
+                                .get(*name_id as usize)
+                                .map(|ident| ident.escaped_text.clone())
+                        });
                         if self.ctx.target_es5 {
                             // ES5: use the IR-based ES5 namespace emitter
                             let mut ns_emitter = NamespaceES5Emitter::with_commonjs(
@@ -450,6 +456,7 @@ impl<'a> Printer<'a> {
                             ns_emitter.set_emit_decorator_metadata(
                                 self.ctx.options.emit_decorator_metadata,
                             );
+                            ns_emitter.set_commonjs_export_name(cjs_export_name.clone());
                             ns_emitter.set_transforms(self.transforms.clone());
                             if let Some(text) = self.source_text_for_map() {
                                 ns_emitter.set_source_text(text);
@@ -478,7 +485,18 @@ impl<'a> Printer<'a> {
                             if let Some(module_decl) = self.arena.get_module(node) {
                                 let ns_name = self.get_identifier_text_idx(module_decl.name);
                                 if !ns_name.is_empty() {
-                                    self.ctx.module_state.iife_exported_names.insert(ns_name);
+                                    let folded_export_name =
+                                        cjs_export_name.unwrap_or_else(|| ns_name.clone());
+                                    self.ctx
+                                        .module_state
+                                        .iife_exported_names
+                                        .insert(ns_name.clone());
+                                    self.ctx
+                                        .module_state
+                                        .iife_exported_bindings
+                                        .entry(ns_name)
+                                        .or_default()
+                                        .insert(folded_export_name);
                                 }
                             }
                             let output = if merges_with_default_func {
@@ -494,6 +512,7 @@ impl<'a> Printer<'a> {
                         if !merges_with_default_func {
                             // Set flag so the IIFE tail folds exports.N into the closing.
                             self.pending_cjs_namespace_export_fold = true;
+                            self.pending_cjs_namespace_export_name = cjs_export_name.clone();
                         } else {
                             // Suppress the default_export_merge IIFE pattern —
                             // the exported namespace just augments the local binding.
@@ -504,10 +523,18 @@ impl<'a> Printer<'a> {
                         if let Some(module_decl) = self.arena.get_module(node) {
                             let ns_name = self.get_identifier_text_idx(module_decl.name);
                             if !ns_name.is_empty() {
+                                let folded_export_name =
+                                    cjs_export_name.unwrap_or_else(|| ns_name.clone());
                                 self.ctx
                                     .module_state
                                     .iife_exported_names
                                     .insert(ns_name.clone());
+                                self.ctx
+                                    .module_state
+                                    .iife_exported_bindings
+                                    .entry(ns_name.clone())
+                                    .or_default()
+                                    .insert(folded_export_name);
                             }
                             // Track whether the namespace var was already declared
                             // (merged with class/enum/function).
@@ -1465,6 +1492,12 @@ impl<'a> Printer<'a> {
                 inner,
             } => {
                 if node.kind == syntax_kind_ext::MODULE_DECLARATION && !*is_default {
+                    let cjs_export_name = names.first().and_then(|name_id| {
+                        self.arena
+                            .identifiers
+                            .get(*name_id as usize)
+                            .map(|ident| ident.escaped_text.clone())
+                    });
                     let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
                     ns_emitter.set_const_enum_facts(
                         self.const_enum_values.clone(),
@@ -1490,6 +1523,7 @@ impl<'a> Printer<'a> {
                     ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
                     ns_emitter
                         .set_emit_decorator_metadata(self.ctx.options.emit_decorator_metadata);
+                    ns_emitter.set_commonjs_export_name(cjs_export_name.clone());
                     ns_emitter.set_transforms(self.transforms.clone());
                     if let Some(text) = self.source_text_for_map() {
                         ns_emitter.set_source_text(text);
@@ -1505,6 +1539,23 @@ impl<'a> Printer<'a> {
                         ns_emitter.set_should_declare_var(should_declare_var);
                     }
                     let output = ns_emitter.emit_exported_namespace(idx);
+                    if let Some(module_decl) = self.arena.get_module(node) {
+                        let ns_name = self.get_identifier_text_idx(module_decl.name);
+                        if !ns_name.is_empty() {
+                            let folded_export_name =
+                                cjs_export_name.unwrap_or_else(|| ns_name.clone());
+                            self.ctx
+                                .module_state
+                                .iife_exported_names
+                                .insert(ns_name.clone());
+                            self.ctx
+                                .module_state
+                                .iife_exported_bindings
+                                .entry(ns_name)
+                                .or_default()
+                                .insert(folded_export_name);
+                        }
+                    }
                     self.write(output.trim_end_matches('\n'));
                     self.skip_comments_for_erased_node(node);
                     return;
