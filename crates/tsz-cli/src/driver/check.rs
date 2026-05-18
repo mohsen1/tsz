@@ -931,46 +931,58 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         use rayon::prelude::*;
         let _span = tracing::info_span!("per_file_ts7016_diagnostics", files = program.files.len())
             .entered();
-        program
-            .files
-            .par_iter()
-            .enumerate()
-            .map(|(file_idx, file)| {
-                let mut diags = Vec::new();
-                for (specifier, spec_node, import_kind, _) in &cached_module_specifiers[file_idx] {
-                    if !matches!(import_kind, tsz::module_resolver::ImportKind::CjsRequire) {
-                        continue;
-                    }
-                    if let Some(error) = resolved_module_errors.get(&(file_idx, specifier.clone()))
+        let has_cjs_require_specifier = cached_module_specifiers.iter().any(|specifiers| {
+            specifiers.iter().any(|(_, _, import_kind, _)| {
+                matches!(import_kind, tsz::module_resolver::ImportKind::CjsRequire)
+            })
+        });
+        if !has_cjs_require_specifier {
+            vec![Vec::new(); program.files.len()]
+        } else {
+            program
+                .files
+                .par_iter()
+                .enumerate()
+                .map(|(file_idx, file)| {
+                    let mut diags = Vec::new();
+                    for (specifier, spec_node, import_kind, _) in
+                        &cached_module_specifiers[file_idx]
                     {
-                        if error.code != 7016 {
+                        if !matches!(import_kind, tsz::module_resolver::ImportKind::CjsRequire) {
                             continue;
                         }
-                        // Find the string literal argument of the require() call for the span.
-                        let (start, length) = if let Some(node) = file.arena.get(*spec_node)
-                            && let Some(call) = file.arena.get_call_expr(node)
-                            && let Some(args) = call.arguments.as_ref()
-                            && let Some(&arg_idx) = args.nodes.first()
-                            && let Some(arg_node) = file.arena.get(arg_idx)
+                        if let Some(error) =
+                            resolved_module_errors.get(&(file_idx, specifier.clone()))
                         {
-                            (arg_node.pos, arg_node.end.saturating_sub(arg_node.pos))
-                        } else if let Some(node) = file.arena.get(*spec_node) {
-                            (node.pos, node.end.saturating_sub(node.pos))
-                        } else {
-                            continue;
-                        };
-                        diags.push(Diagnostic::error(
-                            &file.file_name,
-                            start,
-                            length,
-                            &error.message,
-                            error.code,
-                        ));
+                            if error.code != 7016 {
+                                continue;
+                            }
+                            // Find the string literal argument of the require() call for the span.
+                            let (start, length) = if let Some(node) = file.arena.get(*spec_node)
+                                && let Some(call) = file.arena.get_call_expr(node)
+                                && let Some(args) = call.arguments.as_ref()
+                                && let Some(&arg_idx) = args.nodes.first()
+                                && let Some(arg_node) = file.arena.get(arg_idx)
+                            {
+                                (arg_node.pos, arg_node.end.saturating_sub(arg_node.pos))
+                            } else if let Some(node) = file.arena.get(*spec_node) {
+                                (node.pos, node.end.saturating_sub(node.pos))
+                            } else {
+                                continue;
+                            };
+                            diags.push(Diagnostic::error(
+                                &file.file_name,
+                                start,
+                                length,
+                                &error.message,
+                                error.code,
+                            ));
+                        }
                     }
-                }
-                diags
-            })
-            .collect()
+                    diags
+                })
+                .collect()
+        }
     };
     let per_file_ts7016_diagnostics = Arc::new(per_file_ts7016_diagnostics);
 
