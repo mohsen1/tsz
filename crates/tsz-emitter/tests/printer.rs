@@ -1389,6 +1389,32 @@ fn test_invalid_interface_without_name_recovers_body_text() {
 }
 
 #[test]
+fn test_invalid_predefined_interface_names_recover_tsc_runtime_tokens() {
+    let source =
+        "interface any { }\ninterface string { }\ninterface void {}\ninterface number<T> {}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("interface;\n"),
+        "Invalid `interface any` should recover the runtime interface token statement.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("void {};"),
+        "Invalid `interface void` should recover as a void object statement.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("interface string") && !output.contains("interface number"),
+        "Other predefined type-name interfaces should stay erased here.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_unterminated_empty_switch_recovers_following_class() {
     let source = "class C {\n  constructor() {\n    switch (e) {\n\nclass D {\n}\n";
     let output = parse_lower_print(
