@@ -451,10 +451,10 @@ impl<'a> CheckerState<'a> {
         // for this name. Augmentations by the current file live in self.ctx.binder.
         let mut local_aug_flags = Vec::new();
         for (module_spec, augmentations) in self.ctx.binder.module_augmentations.iter() {
-            if !self
+            if self
                 .ctx
                 .resolve_import_target_from_file(self.ctx.current_file_idx, module_spec)
-                .is_some_and(|t| t == from_file_idx)
+                .is_none_or(|t| t != from_file_idx)
             {
                 continue;
             }
