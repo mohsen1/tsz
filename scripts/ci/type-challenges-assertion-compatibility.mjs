@@ -141,20 +141,21 @@ function validateCandidateOutputPath(value, label) {
   if (typeof value !== "string" || value.trim() === "") {
     fail(`${label} must be a non-empty relative path`);
   }
-  const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
-  const segments = normalized.split("/");
+  const normalizedInput = value.replace(/\\/g, "/").replace(/^\.\//, "");
+  const segments = normalizedInput.split("/");
   if (
     path.isAbsolute(value) ||
-    normalized.startsWith("/") ||
-    /^[A-Za-z]:(?:\/|$)/.test(normalized) ||
-    normalized === "" ||
-    normalized === "." ||
+    normalizedInput.startsWith("/") ||
+    /^[A-Za-z]:(?:\/|$)/.test(normalizedInput) ||
+    normalizedInput === "" ||
+    normalizedInput === "." ||
     segments.includes("") ||
     segments.includes(".") ||
     segments.includes("..")
   ) {
     fail(`${label} must stay inside the assertion candidate directory: ${value}`);
   }
+  const normalized = segments.join("/");
   if (!normalized.startsWith("assertions/")) {
     fail(`${label} must be under assertions/: ${normalized}`);
   }
