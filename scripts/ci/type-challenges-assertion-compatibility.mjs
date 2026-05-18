@@ -354,6 +354,39 @@ for (const [compiler, diagnostics] of [
   }
 }
 const candidateFileComparisonCounts = comparison.candidateFileComparison?.counts || {};
+if (comparison.candidateFileComparison) {
+  const candidateFileComparisonTotal = comparison.candidateFileComparison.totalCandidates;
+  if (!Number.isInteger(candidateFileComparisonTotal)) {
+    fail(
+      "assertion classification candidateFileComparison.totalCandidates must be an integer",
+    );
+  }
+  if (candidateFileComparisonTotal !== counts.generatedAssertions) {
+    fail(
+      `assertion classification candidateFileComparison.totalCandidates (${candidateFileComparisonTotal}) does not match generatedAssertions (${counts.generatedAssertions})`,
+    );
+  }
+  let bucketTotal = 0;
+  for (const field of [
+    "bothAccepted",
+    "bothRejected",
+    "tscAcceptedTszRejected",
+    "tscRejectedTszAccepted",
+  ]) {
+    const count = candidateFileComparisonCounts[field];
+    if (!Number.isInteger(count)) {
+      fail(
+        `assertion classification candidateFileComparison.counts.${field} must be an integer`,
+      );
+    }
+    bucketTotal += count;
+  }
+  if (bucketTotal !== candidateFileComparisonTotal) {
+    fail(
+      `assertion classification candidateFileComparison bucket counts (${bucketTotal}) do not match totalCandidates (${candidateFileComparisonTotal})`,
+    );
+  }
+}
 const tscFilesWithDiagnostics = Array.isArray(tscCandidateDiagnostics.filesWithDiagnostics)
   ? tscCandidateDiagnostics.filesWithDiagnostics
   : [];
