@@ -23,6 +23,10 @@ test-threads = "num-cpus"
 filter = 'test(compile_contextually_typed_jsx_attribute2_react16_fixture_has_no_ts7006) | test(compile_jsx_call_elaboration_check_no_crash1_react16_fixture_reports_ts2322) | test(compile_jsdoc_type_reference_to_ambient_value_keeps_construct_signature) | test(test_divergent_accessor_read_keeps_getter_surface_without_ts2339) | test(test_ts2536_with_lib_mismatched_keyof_source) | test(default_lib_validation) | test(collect_diagnostics_reports_default_lib_breakage)'
 slow-timeout = { period = "120s", terminate-after = 2 }
 
+[[profile.default.overrides]]
+filter = 'test(/^no_false_ts2322_generic_conditional_default_/) | test(real_ts2322_is_still_reported_with_conditional_default) | test(explicit_third_arg_mismatch_still_errors)'
+threads-required = "num-test-threads"
+
 [profile.default.junit]
 path = "target/nextest/default/junit.xml"
 
