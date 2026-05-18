@@ -175,6 +175,7 @@ withTempDir((dir) => {
   assert.equal(rows[0].assertion_clean_subset.rejected_from_full_corpus, 0);
   assert.equal(rows[0].assertion_clean_subset.tsc_status, "pass");
   assert.equal(rows[0].assertion_clean_subset.tsz_status, "pass");
+  assert.equal(rows[0].assertion_clean_subset.comparison_status, "both-pass");
   assert.equal(rows[0].assertion_clean_subset.tsc_diagnostic_free, 1);
   assert.equal(rows[0].assertion_clean_subset.tsz_diagnostic_free, 1);
 
