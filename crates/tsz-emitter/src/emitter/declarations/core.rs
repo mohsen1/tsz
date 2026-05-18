@@ -745,6 +745,10 @@ impl<'a> Printer<'a> {
     }
 
     fn recovered_interface_body_statements(&self, node: &Node) -> Vec<String> {
+        if let Some(statement) = self.recovered_predefined_interface_name_statement(node) {
+            return vec![statement];
+        }
+
         let Some(text) = self.source_text else {
             return Vec::new();
         };
@@ -774,6 +778,23 @@ impl<'a> Printer<'a> {
                 })
             })
             .collect()
+    }
+
+    fn recovered_predefined_interface_name_statement(&self, node: &Node) -> Option<String> {
+        let interface = self.arena.get_interface(node)?;
+        if !interface.members.nodes.is_empty()
+            || interface.type_parameters.is_some()
+            || interface.heritage_clauses.is_some()
+        {
+            return None;
+        }
+
+        let name = self.get_identifier_text_idx(interface.name);
+        match name.as_str() {
+            "any" => Some("interface;".to_string()),
+            "void" => Some("void {};".to_string()),
+            _ => None,
+        }
     }
 
     fn recover_interface_var_statement(&self, line: &str) -> Option<String> {
