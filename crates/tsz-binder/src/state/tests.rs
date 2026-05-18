@@ -1,7 +1,7 @@
 use super::{BinderOptions, BinderState};
 use crate::flow::{FlowNodeId, flow_flags};
 use crate::scopes::ContainerKind;
-use crate::{SymbolTable, symbol_flags};
+use crate::{SymbolId, SymbolTable, symbol_flags};
 use std::sync::Arc;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::{ParserState, node_flags, syntax_kind_ext};
@@ -7642,6 +7642,37 @@ declare module \"virtual:env\" {
             .expect("RwLock should not be poisoned")
             .is_empty(),
         "resolved_identifier_cache must be empty after deserialize"
+    );
+}
+
+#[test]
+fn binder_resolution_cache_statistics_track_entries_and_clear() {
+    let mut binder = BinderState::new();
+    binder
+        .resolved_export_cache
+        .write()
+        .expect("resolved_export_cache RwLock should not be poisoned")
+        .insert(
+            ("module".to_string(), "value".to_string()),
+            Some(SymbolId(1)),
+        );
+    binder
+        .resolved_identifier_cache
+        .write()
+        .expect("resolved_identifier_cache RwLock should not be poisoned")
+        .insert((42, 7), None);
+
+    let stats = binder.resolution_cache_statistics();
+    assert_eq!(stats.export_cache_entries, 1);
+    assert_eq!(stats.identifier_cache_entries, 1);
+    assert_eq!(stats.total_entries(), 2);
+    assert!(stats.estimated_size_bytes() > 0);
+
+    binder.clear_resolution_caches();
+    assert_eq!(
+        binder.resolution_cache_statistics(),
+        Default::default(),
+        "resolution cache stats should return to zero after clear"
     );
 }
 

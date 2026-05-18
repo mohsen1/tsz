@@ -37,7 +37,8 @@ impl<'a> DeclarationEmitter<'a> {
 
         let is_exported = self
             .arena
-            .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword);
+            .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword)
+            || self.is_js_named_exported_name(iface.name);
         if !self.should_emit_public_api_member(&iface.modifiers)
             && !self.should_emit_public_api_dependency(iface.name)
         {
@@ -80,18 +81,55 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
-        // Members
-        for &member_idx in &iface.members.nodes {
-            if let Some(mn) = self.arena.get(member_idx) {
-                self.emit_leading_jsdoc_comments(mn.pos);
-            }
-            self.emit_interface_member(member_idx);
-        }
+        self.emit_interface_members(&iface.members.nodes);
 
         self.decrease_indent();
         self.write_indent();
         self.write("}");
         self.write_line();
+    }
+
+    pub(crate) fn emit_interface_members(&mut self, members: &[NodeIndex]) {
+        if self.source_is_js_file {
+            for phase in 0..3 {
+                for &member_idx in members {
+                    if self.js_interface_member_phase(member_idx) == Some(phase) {
+                        self.emit_interface_member_with_leading_comments(member_idx);
+                    }
+                }
+            }
+            return;
+        }
+
+        for &member_idx in members {
+            self.emit_interface_member_with_leading_comments(member_idx);
+        }
+    }
+
+    fn js_interface_member_phase(&self, member_idx: NodeIndex) -> Option<u8> {
+        let member_node = self.arena.get(member_idx)?;
+        Some(match member_node.kind {
+            k if k == syntax_kind_ext::CONSTRUCT_SIGNATURE => 0,
+            k if k == syntax_kind_ext::CALL_SIGNATURE => 1,
+            _ => 2,
+        })
+    }
+
+    fn emit_interface_member_with_leading_comments(&mut self, member_idx: NodeIndex) {
+        let before_jsdoc_len = self.writer.len();
+        let saved_comment_idx = self.comment_emit_idx;
+        if let Some(member_node) = self.arena.get(member_idx) {
+            self.emit_leading_jsdoc_comments(member_node.pos);
+        }
+        let before_member_len = self.writer.len();
+        self.emit_interface_member(member_idx);
+        if self.writer.len() == before_member_len {
+            self.writer.truncate(before_jsdoc_len);
+            self.comment_emit_idx = saved_comment_idx;
+            if let Some(member_node) = self.arena.get(member_idx) {
+                self.skip_comments_in_node(member_node.pos, member_node.end);
+            }
+        }
     }
 
     fn should_skip_namespace_proto_interface_merge(
@@ -125,6 +163,15 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Skip members with computed property names that are not emittable in .d.ts
         if self.member_has_non_emittable_computed_name(member_idx) {
+            return;
+        }
+        if self.source_is_js_file
+            && member_node.kind == syntax_kind_ext::METHOD_SIGNATURE
+            && self
+                .arena
+                .get_signature(member_node)
+                .is_some_and(|sig| sig.question_token)
+        {
             return;
         }
 

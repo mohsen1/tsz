@@ -9,30 +9,36 @@ impl<'a> Printer<'a> {
         name_node: &Node,
         dot_pos: u32,
     ) -> bool {
+        let expr_token_end = self.find_token_end_before_trivia(expr_node.pos, expr_node.end);
         let has_comment_between = self
             .all_comments
             .iter()
-            .any(|comment| comment.pos >= expr_node.end && comment.end <= name_node.pos);
+            .any(|comment| comment.pos >= expr_token_end && comment.end <= name_node.pos);
         if !has_comment_between {
             return false;
         }
 
-        let newline_before_dot = self.source_range_has_newline_local(expr_node.end, dot_pos);
+        let newline_before_dot = self.source_range_has_newline_local(expr_token_end, dot_pos);
         let newline_after_dot = self.source_range_has_newline_local(dot_pos + 1, name_node.pos);
 
         if newline_before_dot {
-            self.write_line();
             self.increase_indent();
         }
 
         let (emitted_before_dot, before_dot_trailing_newline) =
-            self.emit_property_access_compact_comments(expr_node.end, dot_pos, !newline_before_dot);
-        if emitted_before_dot && !before_dot_trailing_newline && newline_before_dot {
-            self.write_space();
+            self.emit_property_access_compact_comments(expr_token_end, dot_pos, true);
+        if newline_before_dot {
+            if emitted_before_dot {
+                if !before_dot_trailing_newline {
+                    self.write_space();
+                }
+            } else if !self.writer.is_at_line_start() {
+                self.write_line();
+            }
         }
 
         self.map_source_offset(dot_pos);
-        self.write_dot_token(access.expression);
+        self.write_property_access_dot_token(access.expression, Some(dot_pos));
 
         if newline_after_dot {
             self.increase_indent();
@@ -167,7 +173,7 @@ impl<'a> Printer<'a> {
         }
 
         self.map_source_offset(dot_pos);
-        self.write_dot_token(access.expression);
+        self.write_property_access_dot_token(access.expression, Some(dot_pos));
 
         let (_emitted_after_dot, after_dot_trailing_newline) =
             self.emit_optional_property_access_post_dot_comments(dot_pos + 1, name_node.pos);

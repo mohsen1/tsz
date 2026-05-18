@@ -149,6 +149,40 @@ impl<'a> Printer<'a> {
             .contains(lit.text.as_str())
     }
 
+    pub(in crate::emitter) fn import_decl_should_schedule_wrapped_dependency(
+        &self,
+        node: &Node,
+        import_decl: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        if !self.import_decl_has_runtime_value(import_decl) {
+            return false;
+        }
+
+        let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
+            return true;
+        };
+
+        if clause_node.kind != syntax_kind_ext::IMPORT_CLAUSE {
+            if self.ctx.options.verbatim_module_syntax || self.source_is_js_file {
+                return true;
+            }
+            return self.import_equals_has_value_usage_after_node(node, import_decl);
+        }
+
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return true;
+        };
+        if clause.is_type_only {
+            return false;
+        }
+
+        if self.ctx.options.verbatim_module_syntax || self.source_is_js_file {
+            return true;
+        }
+
+        self.import_has_value_usage_after_node(node, clause)
+    }
+
     fn async_return_type_uses_imported_promise_constructor_after_node(
         &self,
         import_node: &Node,
@@ -1401,7 +1435,16 @@ impl<'a> Printer<'a> {
         is_external: bool,
         is_exported_var: bool,
     ) {
-        if is_exported_var {
+        let is_es_module_output = matches!(
+            self.ctx.options.module,
+            ModuleKind::ES2015 | ModuleKind::ES2020 | ModuleKind::ES2022 | ModuleKind::ESNext
+        );
+
+        if is_exported_var && !is_external && is_es_module_output {
+            self.write("export var ");
+            self.emit_decl_name(import_clause);
+            self.write(" = ");
+        } else if is_exported_var {
             // Emit directly as `exports.b = ...;` — the identifier substitution
             // in emit() will produce `exports.b`.
             self.emit(import_clause);

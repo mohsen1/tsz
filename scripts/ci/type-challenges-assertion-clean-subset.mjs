@@ -36,15 +36,17 @@ function normalizeManifestPath(value, label) {
   if (typeof value !== "string" || value.trim() === "") {
     fail(`${label} must be a non-empty relative path`);
   }
-  const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
+  const normalizedInput = value.replace(/\\/g, "/").replace(/^\.\//, "");
+  const segments = normalizedInput.split("/");
   if (
     path.isAbsolute(value) ||
-    normalized === "" ||
-    normalized === "." ||
-    normalized.split("/").includes("..")
+    normalizedInput === "" ||
+    normalizedInput === "." ||
+    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
   ) {
     fail(`${label} must stay inside the assertion candidate directory: ${value}`);
   }
+  const normalized = segments.join("/");
   if (!normalized.startsWith("assertions/")) {
     fail(`${label} must be under assertions/: ${normalized}`);
   }
@@ -62,21 +64,26 @@ function validateEvidencePath(value, label) {
   if (typeof value !== "string" || value.trim() === "") {
     fail(`${label} must be a non-empty relative path`);
   }
-  const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
-  const segments = normalized.split("/");
+  const normalizedInput = value.replace(/\\/g, "/").replace(/^\.\//, "");
+  const segments = normalizedInput.split("/");
   if (
     path.isAbsolute(value) ||
-    /^[A-Za-z]:\//.test(normalized) ||
-    normalized === "" ||
-    normalized === "." ||
-    segments.some((segment) => segment === "." || segment === "..")
+    /^[A-Za-z]:\//.test(normalizedInput) ||
+    normalizedInput === "" ||
+    normalizedInput === "." ||
+    segments.some((segment) => segment.length === 0 || segment === "." || segment === "..")
   ) {
     fail(`${label} must be a relative source path: ${value}`);
   }
 }
 
 function validateSourceMetadata(source, label) {
-  if (source?.repository && source?.ref) {
+  if (
+    typeof source?.repository === "string" &&
+    source.repository.trim() !== "" &&
+    typeof source?.ref === "string" &&
+    source.ref.trim() !== ""
+  ) {
     return;
   }
 
@@ -121,7 +128,12 @@ function validateClassificationManifestSources(candidateManifest, classification
   for (const label of ["templates", "testCases", "solutions"]) {
     const candidateSource = candidateManifest.sources[label];
     const classificationSource = classificationManifest.sources[label];
-    if (!classificationSource?.repository || !classificationSource?.ref) {
+    if (
+      typeof classificationSource?.repository !== "string" ||
+      classificationSource.repository.trim() === "" ||
+      typeof classificationSource?.ref !== "string" ||
+      classificationSource.ref.trim() === ""
+    ) {
       fail(
         [
           `classification candidateManifest.sources.${label} is missing source metadata`,
@@ -247,6 +259,10 @@ function validateInputs(candidateManifest, classification) {
 function copyRequiredFile(from, to, label) {
   if (!fs.existsSync(from)) {
     console.error(`error: ${label} does not exist: ${from}`);
+    process.exit(1);
+  }
+  if (!fs.statSync(from).isFile()) {
+    console.error(`error: ${label} is not a file: ${from}`);
     process.exit(1);
   }
   fs.mkdirSync(path.dirname(to), { recursive: true });

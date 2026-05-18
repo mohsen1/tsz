@@ -116,6 +116,8 @@ impl<'a> ClassES5Emitter<'a> {
 
     pub fn set_printer_options(&mut self, options: crate::emitter::PrinterOptions) {
         self.transformer.set_module_kind(options.module);
+        self.transformer
+            .set_downlevel_iteration(options.downlevel_iteration);
         self.printer_options = Some(options);
     }
 
@@ -264,6 +266,91 @@ impl<'a> ClassES5Emitter<'a> {
         self.emit_class_internal(class_idx, Some(name))
     }
 
+    /// Emit a class declaration with a different outer binding name while
+    /// preserving the class's own lexical name inside the generated IIFE.
+    pub fn emit_class_with_binding_name(
+        &mut self,
+        class_idx: NodeIndex,
+        binding_name: &str,
+    ) -> String {
+        let mut ir = match self.transformer.transform_class_to_ir(class_idx) {
+            Some(ir) => ir,
+            None => return String::new(),
+        };
+        if let IRNode::ES5ClassIIFE {
+            binding_name: ref mut class_binding_name,
+            ..
+        } = ir
+        {
+            *class_binding_name = Some(binding_name.to_string().into());
+        }
+        self.emit_class_ir(class_idx, Some(binding_name), ir)
+    }
+
+    /// Emit a class declaration as an assignment to an already-hoisted binding.
+    pub fn emit_class_assignment_with_name(
+        &mut self,
+        class_idx: NodeIndex,
+        assignment_name: &str,
+    ) -> String {
+        let ir = match self
+            .transformer
+            .transform_class_to_ir_with_name(class_idx, Some(assignment_name))
+        {
+            Some(ir) => ir,
+            None => return String::new(),
+        };
+        let IRNode::ES5ClassIIFE {
+            name,
+            binding_name: _,
+            base_class,
+            super_param,
+            body,
+            weakmap_decls,
+            computed_prop_temp_decls,
+            computed_prop_temp_inits,
+            weakmap_inits,
+            leading_comment,
+            deferred_static_blocks,
+            deferred_block_class_alias,
+        } = ir
+        else {
+            return self.emit_class_ir(class_idx, Some(assignment_name), ir);
+        };
+
+        let mut output = String::new();
+        for decl_name in weakmap_decls
+            .into_iter()
+            .chain(computed_prop_temp_decls)
+            .chain(deferred_block_class_alias.iter().cloned())
+        {
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str("var ");
+            output.push_str(&decl_name);
+            output.push(';');
+        }
+
+        let assignment_ir = IRNode::ES5ClassAssignment {
+            name,
+            base_class,
+            super_param,
+            body,
+            computed_prop_temp_inits,
+            weakmap_inits,
+            leading_comment,
+            deferred_static_blocks,
+            deferred_block_class_alias,
+        };
+        let assignment = self.emit_class_ir(class_idx, Some(assignment_name), assignment_ir);
+        if !output.is_empty() && !assignment.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(&assignment);
+        output
+    }
+
     fn emit_class_internal(&mut self, class_idx: NodeIndex, override_name: Option<&str>) -> String {
         let ir = if let Some(name) = override_name {
             self.transformer
@@ -272,11 +359,20 @@ impl<'a> ClassES5Emitter<'a> {
             self.transformer.transform_class_to_ir(class_idx)
         };
 
-        let mut ir = match ir {
+        let ir = match ir {
             Some(ir) => ir,
             None => return String::new(),
         };
 
+        self.emit_class_ir(class_idx, override_name, ir)
+    }
+
+    fn emit_class_ir(
+        &mut self,
+        class_idx: NodeIndex,
+        override_name: Option<&str>,
+        mut ir: IRNode,
+    ) -> String {
         if !self.externally_hoisted_decls.is_empty()
             && let IRNode::ES5ClassIIFE {
                 ref mut weakmap_decls,

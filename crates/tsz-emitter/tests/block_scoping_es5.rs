@@ -98,6 +98,39 @@ fn test_reset_clears_reserved_names() {
 }
 
 #[test]
+fn generated_block_scope_names_are_reserved_after_scope_exit() {
+    let mut state = BlockScopeState::new();
+
+    state.enter_function_scope();
+    assert_eq!(state.register_var_declaration("x"), "x");
+
+    state.enter_scope();
+    assert_eq!(state.register_variable("x"), "x_1");
+    state.exit_scope();
+
+    state.enter_scope();
+    assert_eq!(state.register_variable("x"), "x_2");
+    state.exit_scope();
+    state.exit_scope();
+}
+
+#[test]
+fn unrenamed_block_scope_names_can_reuse_after_scope_exit() {
+    let mut state = BlockScopeState::new();
+
+    state.enter_function_scope();
+
+    state.enter_scope();
+    assert_eq!(state.register_variable("x"), "x");
+    state.exit_scope();
+
+    state.enter_scope();
+    assert_eq!(state.register_variable("x"), "x");
+    state.exit_scope();
+    state.exit_scope();
+}
+
+#[test]
 fn test_var_redeclaration_same_scope() {
     let mut state = BlockScopeState::new();
 

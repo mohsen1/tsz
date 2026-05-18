@@ -8,6 +8,7 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 mod indexed_access_helpers;
+mod mapped_key_check;
 
 use indexed_access_helpers::{
     indexed_access_object_alias_application_exceeds_depth, is_broad_index_type,
@@ -16,192 +17,6 @@ use indexed_access_helpers::{
 };
 
 impl<'a> CheckerState<'a> {
-    fn is_mapped_key_index_for_current_object(
-        &mut self,
-        node_idx: NodeIndex,
-        object_node_idx: NodeIndex,
-        index_node_idx: NodeIndex,
-        object_type: TypeId,
-        object_type_for_check: TypeId,
-    ) -> bool {
-        let Some(index_name) = self.simple_type_reference_name(index_node_idx) else {
-            return false;
-        };
-
-        let mut current = self.ctx.arena.parent_of(node_idx);
-        while current.is_some() {
-            let parent_idx = current.expect("loop guard ensures current.is_some()");
-            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                break;
-            };
-            if parent_node.kind == syntax_kind_ext::MAPPED_TYPE {
-                let Some(mapped) = self.ctx.arena.get_mapped_type(parent_node) else {
-                    return false;
-                };
-                let Some(tp_node) = self.ctx.arena.get(mapped.type_parameter) else {
-                    return false;
-                };
-                let Some(tp) = self.ctx.arena.get_type_parameter(tp_node) else {
-                    return false;
-                };
-                let Some(name_node) = self.ctx.arena.get(tp.name) else {
-                    return false;
-                };
-                let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
-                    return false;
-                };
-                if ident.escaped_text != index_name || tp.constraint == NodeIndex::NONE {
-                    return false;
-                }
-                let Some(constraint_node) = self.ctx.arena.get(tp.constraint) else {
-                    return false;
-                };
-                // Check if the constraint is `keyof X` directly
-                if let Some(type_operator) = self.ctx.arena.get_type_operator(constraint_node)
-                    && type_operator.operator == SyntaxKind::KeyOfKeyword as u16
-                {
-                    return self.mapped_keyof_target_matches_object(
-                        type_operator.type_node,
-                        object_node_idx,
-                        object_type,
-                        object_type_for_check,
-                    );
-                }
-                // Check if the constraint is an intersection containing `keyof X`
-                // (e.g., `[K in keyof T & keyof U]`)
-                if constraint_node.kind == syntax_kind_ext::INTERSECTION_TYPE
-                    && let Some(composite) = self.ctx.arena.get_composite_type(constraint_node)
-                {
-                    return composite.types.nodes.iter().any(|&member_idx| {
-                        self.ctx
-                            .arena
-                            .get(member_idx)
-                            .and_then(|n| self.ctx.arena.get_type_operator(n))
-                            .is_some_and(|op| {
-                                op.operator == SyntaxKind::KeyOfKeyword as u16
-                                    && self.mapped_keyof_target_matches_object(
-                                        op.type_node,
-                                        object_node_idx,
-                                        object_type,
-                                        object_type_for_check,
-                                    )
-                            })
-                    });
-                }
-                // Semantic fallback for alias/type-expression constraints
-                // (e.g. `optionalKeys<T>`, `Extract<keyof T, string>`).
-                if crate::query_boundaries::common::is_type_parameter_like(
-                    self.ctx.types,
-                    object_type,
-                ) {
-                    let constraint_type = self.get_type_from_type_node(tp.constraint);
-                    let constraint_eval = self.evaluate_type_with_env(constraint_type);
-                    let keyof_object_param = self.ctx.types.factory().keyof(object_type);
-                    if self.is_assignable_to(constraint_eval, keyof_object_param) {
-                        return true;
-                    }
-                    // Also handle constraints that structurally contain `keyof T`.
-                    if self.is_keyof_for_current_object(
-                        constraint_eval,
-                        object_type,
-                        object_type_for_check,
-                    ) || self.is_keyof_for_current_object(
-                        constraint_type,
-                        object_type,
-                        object_type_for_check,
-                    ) {
-                        return true;
-                    }
-                }
-                return false;
-            }
-            current = self
-                .ctx
-                .arena
-                .get_extended(parent_idx)
-                .map(|ext| ext.parent);
-        }
-
-        false
-    }
-
-    /// Check if the keyof target in a mapped type constraint matches the object being indexed.
-    /// Handles: direct name match, indexed access type objects, and cross-type extends.
-    fn mapped_keyof_target_matches_object(
-        &mut self,
-        keyof_target_node: NodeIndex,
-        object_node_idx: NodeIndex,
-        object_type: TypeId,
-        object_type_for_check: TypeId,
-    ) -> bool {
-        // Direct name match: `keyof T` and object is `T`
-        let keyof_target_name = self.simple_type_reference_name(keyof_target_node);
-        let object_name = self.simple_type_reference_name(object_node_idx);
-        if keyof_target_name.is_some() && object_name.is_some() && keyof_target_name == object_name
-        {
-            return true;
-        }
-
-        // Indexed access match: `keyof T["_type"]` and object is `T["_type"]`
-        // Compare via AST structure for indexed access type objects.
-        if let Some(keyof_target_node_data) = self.ctx.arena.get(keyof_target_node)
-            && keyof_target_node_data.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
-            && let Some(object_node_data) = self.ctx.arena.get(object_node_idx)
-            && object_node_data.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
-        {
-            // Compare the indexed access types structurally via AST text
-            if let Some(keyof_iat) = self
-                .ctx
-                .arena
-                .get_indexed_access_type(keyof_target_node_data)
-                && let Some(object_iat) = self.ctx.arena.get_indexed_access_type(object_node_data)
-            {
-                let keyof_obj_name = self.simple_type_reference_name(keyof_iat.object_type);
-                let obj_obj_name = self.simple_type_reference_name(object_iat.object_type);
-                if keyof_obj_name.is_some()
-                    && keyof_obj_name == obj_obj_name
-                    && self.nodes_have_same_text(keyof_iat.index_type, object_iat.index_type)
-                {
-                    return true;
-                }
-            }
-        }
-
-        // Cross-type extends: `keyof T` and object is `U` where `U extends T`.
-        // Since U extends T, keyof T ⊆ keyof U, so a mapped key over keyof T can index U.
-        if let Some(ref target_name) = keyof_target_name {
-            // Check if the object type parameter has a constraint matching the keyof target
-            let object_constraint = crate::query_boundaries::common::type_parameter_constraint(
-                self.ctx.types,
-                object_type,
-            )
-            .or_else(|| {
-                crate::query_boundaries::common::type_parameter_constraint(
-                    self.ctx.types,
-                    object_type_for_check,
-                )
-            });
-            if let Some(constraint) = object_constraint {
-                // Check if the constraint's type parameter name matches the keyof target
-                if let Some(info) =
-                    crate::query_boundaries::common::type_param_info(self.ctx.types, constraint)
-                {
-                    let constraint_name = self.ctx.types.resolve_atom(info.name);
-                    if constraint_name == *target_name {
-                        return true;
-                    }
-                }
-                // Also check by TypeId: resolve keyof target type and compare
-                let keyof_target_type = self.get_type_from_type_node(keyof_target_node);
-                if same_object_key_space(self.ctx.types, constraint, keyof_target_type) {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
     /// Check if an object type is a deferred indexed access that can't be resolved.
     /// Only suppresses TS2536 when the base of the indexed access is a type parameter
     /// (e.g., `Shape[k]` where Shape is a generic param), NOT when it's a concrete type
@@ -1221,6 +1036,12 @@ impl<'a> CheckerState<'a> {
             ) {
                 return;
             }
+            if self.keyof_index_valid_for_string_indexed_object(
+                object_type_for_check,
+                index_type_for_check,
+            ) {
+                return;
+            }
             if let Some(object_type_node) = self.ctx.arena.get(data.object_type)
                 && let Some(nested_indexed_access) =
                     self.ctx.arena.get_indexed_access_type(object_type_node)
@@ -1395,17 +1216,10 @@ impl<'a> CheckerState<'a> {
                 index_type_for_check,
             )
             .is_some();
-            // Suppress TS2536 when the index type is deferred — i.e., it involves
-            // a conditional, application, keyof, or error type that can't be fully
-            // resolved at the generic level. TSC defers these checks to instantiation
-            // time.
-            // Example: { 0: X; 1: Y }[HasTail<T> extends true ? 0 : 1]
-            // KeyOf types remain deferred when wrapping type parameters (e.g.,
-            // `keyof T` where T extends object) because the constraint has no
-            // useful keys. This is valid for `K extends keyof T` patterns.
-            // Check BOTH the evaluated type AND the original (pre-evaluation) type,
-            // because evaluation may partially resolve an Application into a
-            // Conditional, or may produce ERROR.
+            // Suppress TS2536 when the index is deferred (conditional, application,
+            // keyof, or error) — tsc defers generic-level checks to instantiation time.
+            // Check both evaluated and original types since evaluation can partially
+            // resolve to ERROR or Conditional.
             let is_deferred_object_type = |ty: TypeId| -> bool {
                 ty == TypeId::ERROR
                     || crate::query_boundaries::common::is_conditional_type(self.ctx.types, ty)
