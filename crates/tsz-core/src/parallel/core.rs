@@ -1159,36 +1159,32 @@ fn parse_and_bind_lib_files(
     }
 }
 
-/// Clone lib files into fresh checker-only binders using the already-loaded source text.
+/// Clone lib files into fresh checker-only binders.
 ///
 /// The binders used during program construction are mutated while merging lib symbols into
 /// user-file binders. Checker-facing lib contexts and lib-file checks need fresh binder state
 /// so declaration merging and semantic lookups run against clean lib binders.
 ///
-/// The clone needs an independent parsed + bound copy of every lib file.
-/// Reusing `parse_and_bind_lib_file` lets the checker-facing clone hit the
-/// same content-addressed lib snapshot cache as the initial bind load. With
-/// ~40 lib files in the full ES2020+DOM lib set, cache misses still run
-/// parse + bind across rayon's global pool, mirroring
-/// `load_lib_files_for_binding_strict`. Output order matches input order via
-/// rayon's order-preserving `collect`.
+/// The clone needs an independent parsed + bound copy of every lib file, but
+/// the source lib files have already been loaded into clean parsed/bound state.
+/// Deep-cloning that state in memory preserves distinct arena/binder identity
+/// for checker resolution while avoiding a second pass through the disk-backed
+/// lib snapshot cache. Output order matches input order via rayon's
+/// order-preserving `collect`.
 #[must_use]
 pub fn clone_lib_files_for_checker(
     lib_files: &[Arc<lib_loader::LibFile>],
     should_clone_libs_in_parallel: bool,
 ) -> Vec<Arc<lib_loader::LibFile>> {
     let clone_lib_file = |lib: &Arc<lib_loader::LibFile>| {
-        let source = lib
-            .arena
-            .get_source_file_at(lib.root_index)
-            .unwrap_or_else(|| panic!("missing source text for lib file {}", lib.file_name));
-        parse_and_bind_lib_file_borrowed(lib.file_name.clone(), source.text.as_ref())
-            .unwrap_or_else(|err| {
-                panic!(
-                    "failed to clone lib file {} for checker: {err:#}",
-                    lib.file_name
-                )
-            })
+        let mut binder = (*lib.binder).clone();
+        binder.clear_resolution_caches();
+        Arc::new(lib_loader::LibFile::new(
+            lib.file_name.clone(),
+            Arc::new((*lib.arena).clone()),
+            Arc::new(binder),
+            lib.root_index,
+        ))
     };
 
     if should_clone_libs_in_parallel {
@@ -1221,13 +1217,6 @@ fn parse_and_bind_lib_file(
     source_text: String,
 ) -> Result<Arc<lib_loader::LibFile>> {
     parse_and_bind_lib_file_with_source(file_name, Cow::Owned(source_text))
-}
-
-fn parse_and_bind_lib_file_borrowed(
-    file_name: String,
-    source_text: &str,
-) -> Result<Arc<lib_loader::LibFile>> {
-    parse_and_bind_lib_file_with_source(file_name, Cow::Borrowed(source_text))
 }
 
 fn parse_and_bind_lib_source(

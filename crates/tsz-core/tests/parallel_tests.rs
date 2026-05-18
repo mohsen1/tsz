@@ -505,6 +505,32 @@ fn test_load_lib_files_for_binding_strict_recurses_reference_libs() {
 }
 
 #[test]
+fn clone_lib_files_for_checker_creates_distinct_parsed_bound_copies() {
+    let lib = std::sync::Arc::new(tsz_binder::lib_loader::LibFile::from_source(
+        "lib.test.d.ts".to_string(),
+        "interface Array<T> { length: number; }\ninterface Promise<T> { then(): Promise<T>; }\n"
+            .to_string(),
+    ));
+
+    let cloned = clone_lib_files_for_checker(&[std::sync::Arc::clone(&lib)], false);
+
+    assert_eq!(cloned.len(), 1);
+    let cloned_lib = &cloned[0];
+    assert_eq!(cloned_lib.file_name, lib.file_name);
+    assert_eq!(cloned_lib.root_index, lib.root_index);
+    assert!(
+        !std::sync::Arc::ptr_eq(&cloned_lib.arena, &lib.arena),
+        "checker lib clone must have independent arena identity",
+    );
+    assert!(
+        !std::sync::Arc::ptr_eq(&cloned_lib.binder, &lib.binder),
+        "checker lib clone must have independent binder identity",
+    );
+    assert_eq!(cloned_lib.arena.len(), lib.arena.len());
+    assert_eq!(cloned_lib.binder.symbols.len(), lib.binder.symbols.len());
+}
+
+#[test]
 fn test_compile_files_with_default_libs_preserves_promise_type_parameters() {
     let lib_paths =
         crate::config::resolve_default_lib_files(tsz_common::common::ScriptTarget::ES2015)
