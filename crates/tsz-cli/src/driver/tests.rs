@@ -674,6 +674,53 @@ fn test_compile_no_unchecked_side_effect_imports_cli_reenables_ts2882() {
 }
 
 #[test]
+fn test_compile_ambient_wildcard_asset_import_suppresses_unresolved_module() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("index.ts"),
+        "import logo from './assets/logo.svg';\nlogo;\n",
+    )
+    .expect("write source");
+    fs::write(
+        dir.path().join("assets.d.ts"),
+        r#"declare module "*.svg" {
+  const src: string;
+  export default src;
+}
+"#,
+    )
+    .expect("write ambient module");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noEmit": true,
+    "noUncheckedSideEffectImports": true,
+    "strict": true,
+    "target": "ES2020"
+  },
+  "files": ["index.ts", "assets.d.ts"]
+}"#,
+    )
+    .expect("write tsconfig");
+
+    let args = CliArgs::try_parse_from(["tsz", "-p", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile");
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code != 2307),
+        "ambient wildcard should suppress TS2307, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code != 2882),
+        "ambient wildcard should suppress TS2882, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
 fn test_cli_source_map_satisfies_config_map_root_validation() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(dir.path().join("a.ts"), "export const x = 1;\n").expect("write source");

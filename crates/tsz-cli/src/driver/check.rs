@@ -686,6 +686,21 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     // This is consumer-side only: `MergedProgram` retains both fields unchanged.
     let skeleton_for_ambient: Option<&tsz::parallel::SkeletonIndex> =
         program.skeleton_index.as_ref();
+    let wildcard_ambient_modules_for_resolution = source_module_resolutions.and_then(|_| {
+        let has_wildcard_ambient = program
+            .declared_modules
+            .iter()
+            .chain(program.shorthand_ambient_modules.iter())
+            .any(|name| name.contains('*'));
+        has_wildcard_ambient.then(|| {
+            tsz::checker::context::GlobalDeclaredModules::from_module_names(
+                program
+                    .declared_modules
+                    .iter()
+                    .chain(program.shorthand_ambient_modules.iter()),
+            )
+        })
+    });
     {
         let _span = tracing::info_span!("build_resolved_module_maps").entered();
         for (file_idx, file) in program.files.iter().enumerate() {
@@ -750,6 +765,18 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                                 .insert((file_idx, specifier.clone()), true);
                         }
                     }
+                    continue;
+                }
+
+                // Source discovery has already tried to map this specifier to a
+                // source/declaration file. If it failed and a program-wide
+                // ambient wildcard (for example `*.svg`) covers the specifier,
+                // treat it as ambient without repeating the filesystem probe.
+                if wildcard_ambient_modules_for_resolution
+                    .as_ref()
+                    .is_some_and(|modules| modules.matches_wildcard(specifier))
+                {
+                    resolved_module_specifiers.insert((file_idx, specifier.clone()));
                     continue;
                 }
 
