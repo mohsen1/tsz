@@ -127,6 +127,12 @@ pub struct QueryCacheStatistics {
     pub variance_cache_entries: usize,
     /// Number of memoized canonical type mappings.
     pub canonical_cache_entries: usize,
+    /// Number of memoized intersection-to-merged-object results.
+    pub intersection_merge_cache_entries: usize,
+    /// Number of times the intersection-merge cache returned a hit.
+    pub intersection_merge_cache_hits: u64,
+    /// Number of times the intersection-merge cache was probed and missed.
+    pub intersection_merge_cache_misses: u64,
     /// Number of memoized `instantiate_type` results.
     pub instantiation_cache_entries: usize,
     /// Number of times the instantiation cache returned a hit.
@@ -153,6 +159,9 @@ impl QueryCacheStatistics {
         self.property_cache_entries += other.property_cache_entries;
         self.variance_cache_entries += other.variance_cache_entries;
         self.canonical_cache_entries += other.canonical_cache_entries;
+        self.intersection_merge_cache_entries += other.intersection_merge_cache_entries;
+        self.intersection_merge_cache_hits += other.intersection_merge_cache_hits;
+        self.intersection_merge_cache_misses += other.intersection_merge_cache_misses;
         self.instantiation_cache_entries += other.instantiation_cache_entries;
         self.instantiation_cache_hits += other.instantiation_cache_hits;
         self.instantiation_cache_misses += other.instantiation_cache_misses;
@@ -207,6 +216,9 @@ impl QueryCacheStatistics {
         // canonical_cache: TypeId -> TypeId  ≈ 4+4 = 8
         let canonical = self.canonical_cache_entries * (BUCKET_OVERHEAD + 8);
 
+        // intersection_merge_cache: TypeId -> Option<TypeId>  ≈ 4+8 = 12
+        let intersection_merge = self.intersection_merge_cache_entries * (BUCKET_OVERHEAD + 12);
+
         // subtype_cache: RelationCacheKey -> bool  ≈ 12 + 1 = 13
         let subtype = self.relation.subtype_entries * (BUCKET_OVERHEAD + 13);
 
@@ -230,6 +242,7 @@ impl QueryCacheStatistics {
             + prop
             + variance
             + canonical
+            + intersection_merge
             + subtype
             + assignability
             + instantiation
@@ -270,6 +283,13 @@ impl std::fmt::Display for QueryCacheStatistics {
             f,
             "  canonical_cache:        {}",
             self.canonical_cache_entries
+        )?;
+        writeln!(
+            f,
+            "  intersection_merge:     {} entries ({} hits, {} misses)",
+            self.intersection_merge_cache_entries,
+            self.intersection_merge_cache_hits,
+            self.intersection_merge_cache_misses,
         )?;
         writeln!(
             f,
@@ -353,6 +373,8 @@ pub struct QueryCache<'a> {
     subtype_cache_misses: Cell<u64>,
     assignability_cache_hits: Cell<u64>,
     assignability_cache_misses: Cell<u64>,
+    intersection_merge_cache_hits: Cell<u64>,
+    intersection_merge_cache_misses: Cell<u64>,
     instantiation_cache_hits: Cell<u64>,
     instantiation_cache_misses: Cell<u64>,
     subtype_reduction_cache_hits: Cell<u64>,
@@ -401,6 +423,8 @@ impl<'a> QueryCache<'a> {
             subtype_cache_misses: Cell::new(0),
             assignability_cache_hits: Cell::new(0),
             assignability_cache_misses: Cell::new(0),
+            intersection_merge_cache_hits: Cell::new(0),
+            intersection_merge_cache_misses: Cell::new(0),
             instantiation_cache_hits: Cell::new(0),
             instantiation_cache_misses: Cell::new(0),
             subtype_reduction_cache_hits: Cell::new(0),
@@ -452,6 +476,9 @@ impl<'a> QueryCache<'a> {
             property_cache_entries: self.property_cache.borrow().len(),
             variance_cache_entries: self.variance_cache.borrow().len(),
             canonical_cache_entries: self.canonical_cache.borrow().len(),
+            intersection_merge_cache_entries: self.intersection_merge_cache.borrow().len(),
+            intersection_merge_cache_hits: self.intersection_merge_cache_hits.get(),
+            intersection_merge_cache_misses: self.intersection_merge_cache_misses.get(),
             instantiation_cache_entries: self.instantiation_cache.len(),
             instantiation_cache_hits: self.instantiation_cache_hits.get(),
             instantiation_cache_misses: self.instantiation_cache_misses.get(),
@@ -568,6 +595,15 @@ impl<'a> QueryCache<'a> {
             size += map.capacity() * (BUCKET_OVERHEAD + 2 * std::mem::size_of::<TypeId>());
         }
 
+        // intersection_merge_cache: TypeId -> Option<TypeId>
+        {
+            let map = self.intersection_merge_cache.borrow();
+            size += map.capacity()
+                * (BUCKET_OVERHEAD
+                    + std::mem::size_of::<TypeId>()
+                    + std::mem::size_of::<Option<TypeId>>());
+        }
+
         // instantiation_cache: (TypeId, CanonicalSubst, u8, Option<TypeId>) -> TypeId
         // CanonicalSubst's inline SmallVec buffer is included in the
         // `InstantiationCacheKey` size; spilled entries pay extra heap.
@@ -592,6 +628,8 @@ impl<'a> QueryCache<'a> {
         self.subtype_cache_misses.set(0);
         self.assignability_cache_hits.set(0);
         self.assignability_cache_misses.set(0);
+        self.intersection_merge_cache_hits.set(0);
+        self.intersection_merge_cache_misses.set(0);
         self.instantiation_cache_hits.set(0);
         self.instantiation_cache_misses.set(0);
         self.subtype_reduction_cache_hits.set(0);
@@ -1659,10 +1697,19 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn lookup_intersection_merge(&self, intersection_id: TypeId) -> Option<Option<TypeId>> {
-        self.intersection_merge_cache
+        let result = self
+            .intersection_merge_cache
             .borrow()
             .get(&intersection_id)
-            .copied()
+            .copied();
+        if result.is_some() {
+            self.intersection_merge_cache_hits
+                .set(self.intersection_merge_cache_hits.get() + 1);
+        } else {
+            self.intersection_merge_cache_misses
+                .set(self.intersection_merge_cache_misses.get() + 1);
+        }
+        result
     }
 
     fn insert_intersection_merge(&self, intersection_id: TypeId, result: Option<TypeId>) {

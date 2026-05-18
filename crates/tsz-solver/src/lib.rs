@@ -408,6 +408,9 @@ mod numeric_keyof_tests;
 #[path = "../tests/property_helpers_tests.rs"]
 mod property_helpers_tests;
 #[cfg(test)]
+#[path = "caches/query_cache_statistics_test.rs"]
+mod query_cache_statistics_tests;
+#[cfg(test)]
 #[path = "../tests/relation_cache_config_tests.rs"]
 mod relation_cache_config_tests;
 #[cfg(test)]
