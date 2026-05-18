@@ -594,7 +594,13 @@ pub(super) fn collect_diagnostics(
         program
             .files
             .par_iter()
-            .map(|file| collect_module_specifiers(&file.arena, file.source_file))
+            .map(|file| {
+                collect_module_specifiers_for_check(
+                    &file.arena,
+                    file.source_file,
+                    file.is_external_module,
+                )
+            })
             .collect()
     };
 

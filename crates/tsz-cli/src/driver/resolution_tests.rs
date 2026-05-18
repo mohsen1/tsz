@@ -959,6 +959,83 @@ declare module "pkg" {
 }
 
 #[test]
+fn test_collect_module_specifiers_for_check_skips_declaration_file_ambient_names() {
+    let text = r#"
+declare module "*.css" {}
+declare module "virtual:asset" {}
+declare module "./augment" {}
+declare module "pkg" {
+  export { T } from "dep";
+}
+"#;
+    let mut parser = tsz::parser::ParserState::new("types.d.ts".to_string(), text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+
+    let specifiers: Vec<_> = collect_module_specifiers_for_check(&arena, source_file, true)
+        .into_iter()
+        .map(|(specifier, _, _, _)| specifier)
+        .collect();
+
+    assert!(
+        !specifiers.iter().any(|specifier| specifier == "*.css"),
+        "ambient wildcard declarations are not driver lookups: {specifiers:?}"
+    );
+    assert!(
+        !specifiers
+            .iter()
+            .any(|specifier| specifier == "virtual:asset"),
+        "ambient bare declarations are not driver lookups: {specifiers:?}"
+    );
+    assert!(
+        !specifiers.iter().any(|specifier| specifier == "pkg"),
+        "ambient declaration names are not driver lookups in declaration files: {specifiers:?}"
+    );
+    assert!(
+        specifiers.iter().any(|specifier| specifier == "./augment"),
+        "relative augmentation names still need source-file-specific lookup: {specifiers:?}"
+    );
+    assert!(
+        specifiers.iter().any(|specifier| specifier == "dep"),
+        "real re-exports inside ambient module bodies remain dependencies: {specifiers:?}"
+    );
+}
+
+#[test]
+fn test_collect_module_specifiers_for_check_keeps_bare_source_augmentation_targets() {
+    let text = r#"
+export {};
+declare module "pkg" {
+  export const value: number;
+}
+"#;
+    let mut parser = tsz::parser::ParserState::new("source.ts".to_string(), text.to_string());
+    let source_file = parser.parse_source_file();
+    let (arena, _diagnostics) = parser.into_parts();
+
+    let external_specifiers: Vec<_> =
+        collect_module_specifiers_for_check(&arena, source_file, true)
+            .into_iter()
+            .map(|(specifier, _, _, _)| specifier)
+            .collect();
+    assert!(
+        external_specifiers
+            .iter()
+            .any(|specifier| specifier == "pkg"),
+        "external source augmentations need lookup for TS2664: {external_specifiers:?}"
+    );
+
+    let script_specifiers: Vec<_> = collect_module_specifiers_for_check(&arena, source_file, false)
+        .into_iter()
+        .map(|(specifier, _, _, _)| specifier)
+        .collect();
+    assert!(
+        !script_specifiers.iter().any(|specifier| specifier == "pkg"),
+        "script ambient declarations should not become driver lookups: {script_specifiers:?}"
+    );
+}
+
+#[test]
 fn simple_module_request_scanner_collects_static_imports_and_reexports() {
     let requests = collect_simple_module_requests_from_text(
         r#"

@@ -16,6 +16,16 @@ type CollectedModuleSpecifier = (String, NodeIndex, ImportKind, Option<Importing
 
 type SourceDiscoveryModuleRequest = (String, ImportKind, Option<ImportingModuleKind>, bool);
 
+#[derive(Clone, Copy)]
+enum AmbientModuleDeclarationSpecifierPolicy {
+    #[cfg(test)]
+    All,
+    SourceDiscovery,
+    Check {
+        is_external_module: bool,
+    },
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Counting filesystem probes (`PERFORMANCE_PLAN.md` §4.T0.3 follow-up)
 //
@@ -1091,24 +1101,45 @@ const fn is_jsdoc_import_keyword_part(ch: char) -> bool {
     ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
 }
 
+#[cfg(test)]
 pub(crate) fn collect_module_specifiers(
     arena: &NodeArena,
     source_file: NodeIndex,
 ) -> Vec<CollectedModuleSpecifier> {
-    collect_module_specifiers_impl(arena, source_file, true)
+    collect_module_specifiers_impl(
+        arena,
+        source_file,
+        AmbientModuleDeclarationSpecifierPolicy::All,
+    )
+}
+
+pub(crate) fn collect_module_specifiers_for_check(
+    arena: &NodeArena,
+    source_file: NodeIndex,
+    is_external_module: bool,
+) -> Vec<CollectedModuleSpecifier> {
+    collect_module_specifiers_impl(
+        arena,
+        source_file,
+        AmbientModuleDeclarationSpecifierPolicy::Check { is_external_module },
+    )
 }
 
 fn collect_module_specifiers_for_source_discovery(
     arena: &NodeArena,
     source_file: NodeIndex,
 ) -> Vec<CollectedModuleSpecifier> {
-    collect_module_specifiers_impl(arena, source_file, false)
+    collect_module_specifiers_impl(
+        arena,
+        source_file,
+        AmbientModuleDeclarationSpecifierPolicy::SourceDiscovery,
+    )
 }
 
 fn collect_module_specifiers_impl(
     arena: &NodeArena,
     source_file: NodeIndex,
-    include_non_relative_ambient_module_declarations: bool,
+    ambient_declaration_policy: AmbientModuleDeclarationSpecifierPolicy,
 ) -> Vec<CollectedModuleSpecifier> {
     use tsz::module_resolver::ImportKind;
 
@@ -1215,13 +1246,19 @@ fn collect_module_specifiers_impl(
             });
             if has_declare && let Some(text) = arena.get_literal_text(module_decl.name) {
                 let specifier = strip_quotes(text);
-                // A non-relative `declare module "x"` name declares an ambient
-                // module; it is not a source-discovery dependency. Relative names
-                // can be module augmentations of concrete sibling files, so keep
-                // those discoverable.
-                if include_non_relative_ambient_module_declarations
-                    || tsz::module_resolver::is_path_relative(&specifier)
-                {
+                // Relative names can be module augmentations of concrete sibling
+                // files. Non-relative names only need driver resolution in
+                // non-declaration external modules, where the lookup proves
+                // whether a bare augmentation target exists for TS2664.
+                let include_non_relative = match ambient_declaration_policy {
+                    #[cfg(test)]
+                    AmbientModuleDeclarationSpecifierPolicy::All => true,
+                    AmbientModuleDeclarationSpecifierPolicy::SourceDiscovery => false,
+                    AmbientModuleDeclarationSpecifierPolicy::Check { is_external_module } => {
+                        is_external_module && !source.is_declaration_file
+                    }
+                };
+                if include_non_relative || tsz::module_resolver::is_path_relative(&specifier) {
                     specifiers.push((specifier, module_decl.name, ImportKind::EsmImport, None));
                 }
             }
