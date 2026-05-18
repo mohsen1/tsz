@@ -1411,9 +1411,8 @@ mod tests {
         assert!(!has_code(&diagnostics, 2341));
     }
 
-    /// Union of two protected members from different declaring classes, accessed
-    /// inside an unrelated class method — tsc emits TS2339 because the property
-    /// doesn't exist on the union type surface.
+    /// tsc emits TS2339 (not TS2445) even inside a class body: the union surface
+    /// doesn't expose a property restricted across different declaring classes.
     #[test]
     fn union_different_protected_inside_class_method_emits_ts2339() {
         let diagnostics = check_diagnostics(
@@ -1464,8 +1463,6 @@ mod tests {
         );
     }
 
-    /// Union of two protected members from the SAME declaring class, accessed
-    /// inside a method — property should be accessible (no TS2339).
     #[test]
     fn union_same_protected_declaring_class_inside_method_no_error() {
         let diagnostics = check_diagnostics(
