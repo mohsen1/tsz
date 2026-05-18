@@ -5,14 +5,11 @@
 
 use super::{FlowAnalyzer, PropertyKey};
 use crate::query_boundaries::common::{
-    enum_components, is_assignment_operator as boundary_is_assignment_operator,
-    is_compound_assignment_operator, is_logical_compound_assignment_operator,
-    map_compound_assignment_to_binary,
+    is_assignment_operator as boundary_is_assignment_operator, is_compound_assignment_operator,
+    is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
 };
 use crate::query_boundaries::flow_analysis::{
-    array_type, enum_member_domain, evaluate_application_type, fallback_compound_assignment_result,
-    get_array_element_type, get_lazy_def_id, is_assignable,
-    is_assignable_strict_null as is_assignable_to_strict_null, is_assignable_with_env,
+    array_type, fallback_compound_assignment_result, get_array_element_type,
     tuple_elements_for_type, union_members_for_type, widen_literal_to_primitive,
 };
 use crate::query_boundaries::type_computation::core::BinaryOpResult;
@@ -1776,86 +1773,21 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     pub(crate) fn narrow_assignment(&self, initial_type: TypeId, assigned_type: TypeId) -> TypeId {
-        if initial_type == TypeId::ANY
-            || initial_type == TypeId::ERROR
-            || initial_type == TypeId::UNKNOWN
-        {
-            return initial_type;
-        }
-
-        // Resolve/evaluate the initial type for union member filtering and enum
-        // checks. IMPORTANT: preserve the original initial_type for non-union
-        // return paths. evaluate_application_type converts Application types to
-        // their structural Object form, destroying the generic identity needed
-        // for variance-based assignability rejection. For non-union types (like
-        // Promise<Foo>), we must return the ORIGINAL Application type, not the
-        // evaluated Object form.
-        let resolved_initial = self.resolve_assignment_reduction_type(initial_type);
-
-        // For enum types, narrow directly to the assigned type when it is
-        // assignable to the enum AND the assignment preserves enum-member
-        // identity. This keeps `let e: E = E.ONE` narrowed to `E.ONE`
-        // (not decomposed to `0`), while `let e: E = 1` keeps the declared
-        // enum type `E` so that a subsequent cross-enum assignment like
-        // `let f: F = e` still triggers TS2322 (numeric-enum nominal mismatch).
-        if enum_member_domain(self.interner, resolved_initial) != resolved_initial {
-            let assigned_resolved = self.resolve_assignment_reduction_type(assigned_type);
-            if !is_assignable(self.interner, assigned_resolved, resolved_initial) {
-                return initial_type;
-            }
-            return self.narrow_enum_assignment_target(
-                resolved_initial,
-                assigned_resolved,
+        if let Some(env) = &self.type_environment {
+            let env = env.borrow();
+            crate::query_boundaries::flow_analysis::narrow_assignment(
+                self.interner,
+                Some(&env),
                 initial_type,
-            );
-        }
-
-        let members_opt = union_members_for_type(self.interner, resolved_initial);
-        let members = match members_opt {
-            Some(m) => m,
-            // Non-union types: return the ORIGINAL type (not the resolved/evaluated
-            // form) to preserve Application type identity for variance checking.
-            None => return initial_type,
-        };
-
-        if members.len() <= 1 {
-            return initial_type;
-        }
-
-        // Resolve Lazy(DefId) types to their concrete representations via the
-        // TypeEnvironment before structural subtype comparison. node_types may
-        // store unevaluated type alias references when a variable was inferred
-        // (no annotation), while union members are already resolved. Without this,
-        // the bare SubtypeChecker used by are_types_mutually_subtype cannot match
-        // a Lazy(DefId) against a concrete Object type, causing narrowing to fail.
-        let assigned_type = self.resolve_assignment_reduction_type(assigned_type);
-
-        // Match tsc's getAssignmentReducedType: keep union members where the
-        // assigned type is assignable to the member. This is one-way
-        // assignability (`typeMaybeAssignableTo(assignedType, member)` in tsc),
-        // NOT mutual subtype. One-way is essential for cases like:
-        //   - `let b: 0|1|9; [b] = [0];` → b narrows to 0 (0 <: 0)
-        //   - `let c: string|number; c = 0;` → c narrows to number (0 <: number)
-        let assigned_members = union_members_for_type(self.interner, assigned_type);
-        let mut kept = Vec::new();
-        for &m in &members {
-            let assignable_to_member = assigned_members.as_ref().is_some_and(|sources| {
-                sources
-                    .iter()
-                    .any(|&source| self.assignment_source_assignable_to_member(source, m))
-            }) || self
-                .assignment_source_assignable_to_member(assigned_type, m);
-            if assignable_to_member {
-                kept.push(m);
-            }
-        }
-
-        if kept.is_empty() {
-            initial_type
-        } else if kept.len() == 1 {
-            kept[0]
+                assigned_type,
+            )
         } else {
-            crate::query_boundaries::flow_analysis::union_types(self.interner, kept)
+            crate::query_boundaries::flow_analysis::narrow_assignment(
+                self.interner,
+                None,
+                initial_type,
+                assigned_type,
+            )
         }
     }
 
@@ -1863,31 +1795,15 @@ impl<'a> FlowAnalyzer<'a> {
     /// `TypeEnvironment`. Returns the original type if not lazy or if the
     /// environment is unavailable / doesn't contain the DefId.
     pub(super) fn resolve_lazy_via_env(&self, type_id: TypeId) -> TypeId {
-        if let Some(def_id) = get_lazy_def_id(self.interner, type_id) {
-            if let Some(env) = self.type_environment {
-                env.borrow().get_def(def_id).unwrap_or(type_id)
-            } else {
-                type_id
-            }
-        } else {
-            type_id
-        }
-    }
-
-    fn resolve_assignment_reduction_type(&self, type_id: TypeId) -> TypeId {
-        let resolved = self.resolve_lazy_via_env(type_id);
-        let Some(env) = &self.type_environment else {
-            return resolved;
-        };
-        let env = env.borrow();
-        evaluate_application_type(self.interner, &env, resolved)
-    }
-
-    fn assignment_source_assignable_to_member(&self, source: TypeId, member: TypeId) -> bool {
         if let Some(env) = &self.type_environment {
-            is_assignable_with_env(self.interner, &env.borrow(), source, member, true)
+            let env = env.borrow();
+            crate::query_boundaries::flow::resolve_lazy_def_with_env(
+                self.interner,
+                Some(&env),
+                type_id,
+            )
         } else {
-            is_assignable_to_strict_null(self.interner, source, member)
+            crate::query_boundaries::flow::resolve_lazy_def_with_env(self.interner, None, type_id)
         }
     }
 
@@ -1905,36 +1821,23 @@ impl<'a> FlowAnalyzer<'a> {
         assigned_resolved: TypeId,
         initial_type: TypeId,
     ) -> TypeId {
-        let Some((initial_def, _)) = enum_components(self.interner, initial_resolved) else {
-            return initial_type;
-        };
-        if self.assigned_value_preserves_enum_identity(assigned_resolved, initial_def) {
-            assigned_resolved
+        if let Some(env) = &self.type_environment {
+            let env = env.borrow();
+            crate::query_boundaries::flow_analysis::narrow_enum_assignment_target(
+                self.interner,
+                Some(&env),
+                initial_resolved,
+                assigned_resolved,
+                initial_type,
+            )
         } else {
-            initial_type
+            crate::query_boundaries::flow_analysis::narrow_enum_assignment_target(
+                self.interner,
+                None,
+                initial_resolved,
+                assigned_resolved,
+                initial_type,
+            )
         }
-    }
-
-    pub(crate) fn assigned_value_preserves_enum_identity(
-        &self,
-        assigned_type: TypeId,
-        initial_enum_def: tsz_solver::def::DefId,
-    ) -> bool {
-        if let Some(members) = union_members_for_type(self.interner, assigned_type) {
-            return !members.is_empty()
-                && members
-                    .iter()
-                    .all(|&m| self.assigned_value_preserves_enum_identity(m, initial_enum_def));
-        }
-        let Some((def_id, _)) = enum_components(self.interner, assigned_type) else {
-            return false;
-        };
-        if def_id == initial_enum_def {
-            return true;
-        }
-        let Some(env) = &self.type_environment else {
-            return false;
-        };
-        env.borrow().get_enum_parent(def_id) == Some(initial_enum_def)
     }
 }

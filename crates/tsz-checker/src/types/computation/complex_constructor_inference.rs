@@ -1,11 +1,12 @@
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeSubstitution;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn seed_new_literal_constraint_type_args(
         &mut self,
-        substitution: &mut tsz_solver::TypeSubstitution,
+        substitution: &mut TypeSubstitution,
         shape: &tsz_solver::FunctionShape,
         args: &[tsz_parser::NodeIndex],
     ) -> bool {
@@ -73,7 +74,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         shape: &tsz_solver::FunctionShape,
         type_args: &[TypeId],
-        substitution: &tsz_solver::TypeSubstitution,
+        substitution: &TypeSubstitution,
     ) -> bool {
         let mut has_concrete_arg = false;
 
@@ -111,7 +112,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn default_current_infer_placeholders_to_unknown(&self, type_id: TypeId) -> TypeId {
-        let mut substitution = tsz_solver::TypeSubstitution::new();
+        let mut substitution = TypeSubstitution::new();
         for ty in crate::query_boundaries::common::collect_all_types(self.ctx.types, type_id) {
             let Some(info) = crate::query_boundaries::common::type_param_info(self.ctx.types, ty)
             else {
@@ -180,7 +181,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let mut substitution = tsz_solver::TypeSubstitution::new();
+        let mut substitution = TypeSubstitution::new();
         for type_param in &shape.type_params {
             let replacement = type_param
                 .constraint
