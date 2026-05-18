@@ -631,6 +631,29 @@ for (const [compiler, result] of [
       );
     }
   }
+  if (diagnostics.byFile !== null && diagnostics.byFile !== undefined) {
+    if (!Array.isArray(diagnostics.byFile)) {
+      fail(`assertion classification ${compiler}.diagnostics.byFile must be an array`);
+    }
+    const files = diagnostics.byFile.map((entry, index) => {
+      const file = validateCandidateOutputPath(
+        entry?.key,
+        `assertion classification ${compiler}.diagnostics.byFile[${index}].key`,
+      );
+      if (!Number.isInteger(entry.count) || entry.count < 0) {
+        fail(
+          `assertion classification ${compiler}.diagnostics.byFile[${index}].count must be a non-negative integer`,
+        );
+      }
+      return file;
+    });
+    const duplicateFiles = duplicatedValues(files);
+    if (duplicateFiles.length > 0) {
+      fail(
+        `assertion classification ${compiler}.diagnostics.byFile contains duplicate files: ${duplicateFiles.join(", ")}`,
+      );
+    }
+  }
 }
 for (const [compiler, diagnostics] of [
   ["tsc", tscCandidateDiagnostics],
