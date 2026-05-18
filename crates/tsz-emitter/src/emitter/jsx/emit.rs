@@ -236,8 +236,11 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_jsx_transformed_trailing_comments(&mut self, end_pos: u32) {
-        if self.has_trailing_comment_on_same_line(end_pos, u32::MAX) {
-            self.emit_trailing_comments(end_pos);
+        if self.ctx.options.remove_comments {
+            return;
+        }
+
+        if self.emit_jsx_trailing_comments_from_cursor(end_pos) {
             return;
         }
 
@@ -262,6 +265,57 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
         }
+    }
+
+    fn emit_jsx_trailing_comments_from_cursor(&mut self, end_pos: u32) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+
+        let mut emitted = false;
+        let bytes = text.as_bytes();
+        while self.comment_emit_idx < self.all_comments.len() {
+            let comment = &self.all_comments[self.comment_emit_idx];
+            let comment_pos = comment.pos;
+            let comment_end = comment.end;
+            let has_trailing_new_line = comment.has_trailing_new_line;
+
+            if comment_pos < end_pos {
+                let gap_end = std::cmp::min(end_pos as usize, bytes.len());
+                if bytes[comment_pos as usize..gap_end]
+                    .iter()
+                    .any(|&b| b == b'\n' || b == b'\r')
+                {
+                    break;
+                }
+                self.comment_emit_idx += 1;
+                continue;
+            }
+
+            let gap_start = std::cmp::min(end_pos as usize, bytes.len());
+            let gap_end = std::cmp::min(comment_pos as usize, bytes.len());
+            if bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| b == b'\n' || b == b'\r')
+            {
+                break;
+            }
+
+            self.write_space();
+            if let Ok(comment_text) =
+                crate::safe_slice::slice(text, comment_pos as usize, comment_end as usize)
+                && !comment_text.is_empty()
+            {
+                self.write_comment_with_reindent(comment_text, Some(comment_pos));
+            }
+            self.comment_emit_idx += 1;
+            emitted = true;
+            if has_trailing_new_line {
+                self.write_line();
+            }
+        }
+
+        emitted
     }
 
     /// Emit `factory(tag, props, ...children)`
