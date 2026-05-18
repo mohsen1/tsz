@@ -1522,6 +1522,76 @@ export var x = 1;
     );
 }
 
+#[test]
+fn es5_esm_class_namespace_merge_uses_bare_iife_after_export_clause() {
+    let source = r#"export class C {
+}
+export namespace C {
+export const x = 1;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("export { C };"),
+        "ES5 class ESM export should use a separate export clause.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(function (C) {"),
+        "Merged namespace should still emit its IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export (function"),
+        "Merged namespace IIFE should not be prefixed with `export`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_esm_erased_namespace_does_not_consume_runtime_export_var() {
+    let source = r#"export namespace N {
+}
+export namespace N {
+export const x = 1;
+}
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("export var N;"),
+        "First runtime namespace block should declare the ESM binding even after an erased namespace.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export (function"),
+        "Namespace IIFE should stay bare after the exported var declaration.\nOutput:\n{output}"
+    );
+}
+
 /// When a class has legacy decorators and is exported in CJS, the
 /// `exports.X = X;` pre-assignment should appear exactly once — from
 /// `emit_legacy_class_decorator_assignment`, NOT also from the
