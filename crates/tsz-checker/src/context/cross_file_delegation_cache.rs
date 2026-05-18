@@ -12,6 +12,7 @@ pub struct CrossFileDelegationCache {
     symbol_types: FxHashMap<SymbolId, (TypeId, Vec<TypeParamInfo>)>,
     declaration_node_types: Arc<dashmap::DashMap<(usize, NodeIndex, u8), TypeId>>,
     actual_lib_def_ids: RefCell<FxHashMap<String, Option<DefId>>>,
+    file_local_type_shadows: RefCell<FxHashMap<String, bool>>,
 }
 
 impl Default for CrossFileDelegationCache {
@@ -20,6 +21,7 @@ impl Default for CrossFileDelegationCache {
             symbol_types: FxHashMap::default(),
             declaration_node_types: Arc::new(dashmap::DashMap::new()),
             actual_lib_def_ids: RefCell::new(FxHashMap::default()),
+            file_local_type_shadows: RefCell::new(FxHashMap::default()),
         }
     }
 }
@@ -29,7 +31,13 @@ impl CrossFileDelegationCache {
     pub fn clear(&mut self) {
         self.symbol_types.clear();
         self.declaration_node_types.clear();
+        self.clear_lib_name_caches();
+    }
+
+    #[inline]
+    pub fn clear_lib_name_caches(&self) {
         self.clear_actual_lib_def_ids();
+        self.clear_file_local_type_shadows();
     }
 
     #[inline]
@@ -50,6 +58,28 @@ impl CrossFileDelegationCache {
     #[inline]
     pub fn actual_lib_def_ids_is_empty(&self) -> bool {
         self.actual_lib_def_ids.borrow().is_empty()
+    }
+
+    #[inline]
+    pub fn clear_file_local_type_shadows(&self) {
+        self.file_local_type_shadows.borrow_mut().clear();
+    }
+
+    #[inline]
+    pub fn file_local_type_shadow(&self, name: &str) -> Option<bool> {
+        self.file_local_type_shadows.borrow().get(name).copied()
+    }
+
+    #[inline]
+    pub fn insert_file_local_type_shadow(&self, name: String, value: bool) {
+        self.file_local_type_shadows
+            .borrow_mut()
+            .insert(name, value);
+    }
+
+    #[inline]
+    pub fn file_local_type_shadows_is_empty(&self) -> bool {
+        self.file_local_type_shadows.borrow().is_empty()
     }
 
     #[inline]

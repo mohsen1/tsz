@@ -116,6 +116,17 @@ impl<'a> CheckerContext<'a> {
     }
 
     pub fn file_local_type_shadow_for_lib_name(&self, name: &str) -> bool {
+        if let Some(cached) = self.lib_delegation_cache.file_local_type_shadow(name) {
+            return cached;
+        }
+
+        let result = self.file_local_type_shadow_for_lib_name_uncached(name);
+        self.lib_delegation_cache
+            .insert_file_local_type_shadow(name.to_string(), result);
+        result
+    }
+
+    fn file_local_type_shadow_for_lib_name_uncached(&self, name: &str) -> bool {
         use tsz_binder::symbol_flags;
 
         if !self.binder.is_external_module() {

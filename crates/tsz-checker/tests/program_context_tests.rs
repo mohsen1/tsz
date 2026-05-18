@@ -280,11 +280,21 @@ fn lib_context_resets_clear_actual_lib_def_id_cache() {
         .ctx
         .lib_delegation_cache
         .insert_actual_lib_def_id("Array".to_string(), None);
+    checker
+        .ctx
+        .lib_delegation_cache
+        .insert_file_local_type_shadow("Array".to_string(), false);
     assert!(
         !checker
             .ctx
             .lib_delegation_cache
             .actual_lib_def_ids_is_empty()
+    );
+    assert!(
+        !checker
+            .ctx
+            .lib_delegation_cache
+            .file_local_type_shadows_is_empty()
     );
 
     checker.ctx.set_lib_contexts(Vec::new());
@@ -294,16 +304,32 @@ fn lib_context_resets_clear_actual_lib_def_id_cache() {
             .lib_delegation_cache
             .actual_lib_def_ids_is_empty()
     );
+    assert!(
+        checker
+            .ctx
+            .lib_delegation_cache
+            .file_local_type_shadows_is_empty()
+    );
 
     checker
         .ctx
         .lib_delegation_cache
         .insert_actual_lib_def_id("Object".to_string(), None);
+    checker
+        .ctx
+        .lib_delegation_cache
+        .insert_file_local_type_shadow("Object".to_string(), false);
     assert!(
         !checker
             .ctx
             .lib_delegation_cache
             .actual_lib_def_ids_is_empty()
+    );
+    assert!(
+        !checker
+            .ctx
+            .lib_delegation_cache
+            .file_local_type_shadows_is_empty()
     );
 
     checker.ctx.set_lib_contexts_shared(Arc::new(vec![]));
@@ -313,17 +339,33 @@ fn lib_context_resets_clear_actual_lib_def_id_cache() {
             .lib_delegation_cache
             .actual_lib_def_ids_is_empty()
     );
+    assert!(
+        checker
+            .ctx
+            .lib_delegation_cache
+            .file_local_type_shadows_is_empty()
+    );
 
     checker
         .ctx
         .lib_delegation_cache
         .insert_actual_lib_def_id("ReadonlyArray".to_string(), None);
+    checker
+        .ctx
+        .lib_delegation_cache
+        .insert_file_local_type_shadow("ReadonlyArray".to_string(), false);
     checker.ctx.set_actual_lib_file_count(1);
     assert!(
         checker
             .ctx
             .lib_delegation_cache
             .actual_lib_def_ids_is_empty()
+    );
+    assert!(
+        checker
+            .ctx
+            .lib_delegation_cache
+            .file_local_type_shadows_is_empty()
     );
 }
 
