@@ -467,6 +467,31 @@ hyperfine_exit_status_for() {
     return 0
 }
 
+project_hyperfine_command() {
+    local env_prefix="$1"
+    local compiler="$2"
+    local tsconfig="$3"
+    local run_timeout="$4"
+    local use_shell_cpu_limit="$5"
+    local quoted_compiler
+    local quoted_tsconfig
+
+    printf -v quoted_compiler "%q" "$compiler"
+    printf -v quoted_tsconfig "%q" "$tsconfig"
+
+    if [ "$use_shell_cpu_limit" = "true" ]; then
+        # Tiny project rows are prevalidated with `run_with_timeout` before
+        # timing. Keep a cheap inherited CPU-time guard for runaway compiler
+        # loops, but avoid adding a timed Perl watchdog process to sub-40ms
+        # rows where fixed wrapper overhead materially changes the ratio.
+        printf "ulimit -t %q; %sexec %s --noEmit -p %s 2>/dev/null" \
+            "$run_timeout" "$env_prefix" "$quoted_compiler" "$quoted_tsconfig"
+    else
+        printf "%sperl -e 'alarm(%q); exec @ARGV' -- %s --noEmit -p %s 2>/dev/null" \
+            "$env_prefix" "$run_timeout" "$quoted_compiler" "$quoted_tsconfig"
+    fi
+}
+
 project_failure_class() {
     local status="$1"
     shift || true
@@ -1576,6 +1601,10 @@ run_project_benchmark() {
         proj_min="$MIN_RUNS"
         proj_max="$MAX_RUNS"
     fi
+    local use_shell_cpu_limit=false
+    if [ "$name" != "large-ts-repo" ] && [ "$file_count" -le 64 ]; then
+        use_shell_cpu_limit=true
+    fi
     local json_file=$(mktemp)
     local tsz_env_prefix=""
     local tsgo_env_prefix=""
@@ -1655,6 +1684,16 @@ run_project_benchmark() {
     fi
 
     local hyperfine_status=0
+    local tsz_hyperfine_command
+    local tsgo_hyperfine_command
+    tsz_hyperfine_command="$(
+        project_hyperfine_command \
+            "$tsz_env_prefix" "$TSZ" "$tsconfig" "$run_timeout" "$use_shell_cpu_limit"
+    )"
+    tsgo_hyperfine_command="$(
+        project_hyperfine_command \
+            "$tsgo_env_prefix" "$TSGO" "$tsconfig" "$run_timeout" "$use_shell_cpu_limit"
+    )"
     if [ "${#hyperfine_prepare_args[@]}" -gt 0 ]; then
         hyperfine \
             --warmup "$proj_warmup" \
@@ -1664,8 +1703,8 @@ run_project_benchmark() {
             --ignore-failure \
             --export-json "$json_file" \
             "${hyperfine_prepare_args[@]}" \
-            -n "tsz" "${tsz_env_prefix}perl -e 'alarm($run_timeout); exec @ARGV' -- $TSZ --noEmit -p $tsconfig 2>/dev/null" \
-            -n "tsgo" "${tsgo_env_prefix}perl -e 'alarm($run_timeout); exec @ARGV' -- $TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
+            -n "tsz" "$tsz_hyperfine_command" \
+            -n "tsgo" "$tsgo_hyperfine_command" || hyperfine_status=$?
     else
         hyperfine \
             --warmup "$proj_warmup" \
@@ -1674,8 +1713,8 @@ run_project_benchmark() {
             --style full \
             --ignore-failure \
             --export-json "$json_file" \
-            -n "tsz" "${tsz_env_prefix}perl -e 'alarm($run_timeout); exec @ARGV' -- $TSZ --noEmit -p $tsconfig 2>/dev/null" \
-            -n "tsgo" "${tsgo_env_prefix}perl -e 'alarm($run_timeout); exec @ARGV' -- $TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
+            -n "tsz" "$tsz_hyperfine_command" \
+            -n "tsgo" "$tsgo_hyperfine_command" || hyperfine_status=$?
     fi
     if [ "$hyperfine_status" -ne 0 ]; then
         local status="hyperfine error"
