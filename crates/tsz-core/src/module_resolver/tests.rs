@@ -1773,6 +1773,38 @@ fn test_resolver_cache_statistics_cover_owned_caches() {
 }
 
 #[test]
+fn test_package_type_cold_lookup_counts_starting_dir_once() {
+    use std::fs;
+
+    let dir = std::env::temp_dir().join("tsz_package_type_cold_lookup_counts_start_once");
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("package.json"), r#"{"type":"module"}"#).unwrap();
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        ..Default::default()
+    };
+    let resolver = ModuleResolver::new(&options);
+
+    assert_eq!(
+        resolver.get_package_type_for_dir(&dir),
+        Some(PackageType::Module)
+    );
+
+    let stats = resolver.cache_statistics();
+    assert_eq!(stats.package_type_cache_hits, 0);
+    assert_eq!(
+        stats.package_type_cache_misses, 1,
+        "cold lookup should count the starting directory miss once"
+    );
+    assert_eq!(stats.package_json_cache_misses, 1);
+    assert_eq!(stats.package_type_cache_entries, 1);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn test_resolver_explicit_dts_import_probes_sibling_implementation() {
     use std::fs;
     let dir = std::env::temp_dir().join("tsz_test_resolver_explicit_dts_import");
