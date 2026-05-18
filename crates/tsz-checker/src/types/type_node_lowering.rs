@@ -76,7 +76,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         idx: NodeIndex,
     ) -> FxHashMap<NodeIndex, TypeId> {
         let mut map = FxHashMap::default();
-        self.collect_import_types_recursive(idx, &mut map);
+        self.collect_import_types_recursive(idx, &mut map, 0);
         map
     }
 
@@ -84,27 +84,32 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         &mut self,
         idx: NodeIndex,
         map: &mut FxHashMap<NodeIndex, TypeId>,
+        depth: u32,
     ) {
+        // Guard against adversarially deep nesting (e.g. deeply chained conditional types).
+        if depth > tsz_common::limits::MAX_TREE_WALK_ITERATIONS {
+            return;
+        }
         let Some(node) = self.ctx.arena.get(idx) else {
             return;
         };
-
-        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
-            if let Some(type_ref) = self.ctx.arena.get_type_ref(node) {
-                // `import_call_type_reference` is cheap to call for non-import refs:
-                // it calls `find_leftmost_import_call` first which returns None in O(1)
-                // for plain identifiers and QUALIFIED_NAMEs without an import call root.
-                if let Some(resolved) = self.import_call_type_reference(type_ref.type_name) {
-                    map.insert(type_ref.type_name, resolved);
-                }
-            }
-            // Don't recurse further into a TYPE_REFERENCE — its type arguments are
-            // applied after the base is resolved (during application lowering).
+        // These node kinds structurally cannot contain a TYPE_REFERENCE whose
+        // type_name roots in an import() call.
+        if node.kind == syntax_kind_ext::INFER_TYPE || node.kind == syntax_kind_ext::LITERAL_TYPE {
             return;
         }
-
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                && let Some(resolved) = self.import_call_type_reference(type_ref.type_name)
+            {
+                map.insert(type_ref.type_name, resolved);
+            }
+            // Do not recurse into type arguments — those are handled by TypeLowering's
+            // application lowering after the base type is resolved.
+            return;
+        }
         for child_idx in self.ctx.arena.get_children(idx) {
-            self.collect_import_types_recursive(child_idx, map);
+            self.collect_import_types_recursive(child_idx, map, depth + 1);
         }
     }
 
@@ -262,15 +267,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         if !type_param_bindings.is_empty() {
             lowering = lowering.with_type_param_bindings(type_param_bindings);
         }
-        // Wire in pre-resolved import type references when available. These are keyed by
-        // the `type_name` NodeIndex inside the TYPE_REFERENCE (which is either the
-        // CALL_EXPRESSION directly or the QUALIFIED_NAME rooted in one).
-        //
-        // The closure is declared in the outer scope so its lifetime covers
-        // `lowering.lower_type(idx)` — `with_import_type_resolver` borrows it and the
-        // TypeLowering uses it during traversal.
+        // Wire in pre-resolved import type references. The closure is declared here
+        // so its lifetime covers `lowering.lower_type(idx)`.
         let import_type_resolver = import_overrides.filter(|m| !m.is_empty()).map(|overrides| {
-            move |_call_idx: NodeIndex, type_name_idx: NodeIndex| -> Option<TypeId> {
+            move |type_name_idx: NodeIndex| -> Option<TypeId> {
                 overrides.get(&type_name_idx).copied()
             }
         });

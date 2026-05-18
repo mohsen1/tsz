@@ -91,11 +91,10 @@ pub struct TypeLowering<'a> {
     /// is or starts with an `import()` `CALL_EXPRESSION` to a pre-computed `TypeId`.
     ///
     /// `TypeLowering` cannot perform module resolution; the checker pre-resolves import
-    /// type references and supplies them through this callback. The first `NodeIndex` is
-    /// the `import()` call; the second is the full `type_name` (a `QUALIFIED_NAME` when
-    /// segments follow the call, e.g. `import("./x").Foo`). Returns `Some` when
-    /// pre-resolved, `None` to fall through to the default `ERROR` path.
-    pub(super) import_type_resolver: Option<&'a dyn Fn(NodeIndex, NodeIndex) -> Option<TypeId>>,
+    /// type references and supplies them through this callback. The argument is the full
+    /// `type_name` `NodeIndex` (either the `CALL_EXPRESSION` itself or the `QUALIFIED_NAME`
+    /// rooted in it). Returns `Some` when pre-resolved, `None` to fall through to `ERROR`.
+    pub(super) import_type_resolver: Option<&'a dyn Fn(NodeIndex) -> Option<TypeId>>,
     /// Operation counter to prevent infinite loops
     pub(super) operations: Rc<RefCell<u32>>,
     /// Whether the operation limit has been exceeded
@@ -806,7 +805,7 @@ impl<'a> TypeLowering<'a> {
     /// (e.g. the extends clause of a conditional type) would lower to `TypeId::ERROR`.
     pub fn with_import_type_resolver(
         mut self,
-        resolver: &'a dyn Fn(NodeIndex, NodeIndex) -> Option<TypeId>,
+        resolver: &'a dyn Fn(NodeIndex) -> Option<TypeId>,
     ) -> Self {
         self.import_type_resolver = Some(resolver);
         self

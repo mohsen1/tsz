@@ -548,8 +548,8 @@ impl<'a> TypeLowering<'a> {
             // module resolution that TypeLowering cannot perform), pick up the result
             // via the import_type_resolver callback before falling through.
             if let Some(resolver) = self.import_type_resolver
-                && let Some(call_idx) = self.find_import_call_in_type_name(data.type_name)
-                && let Some(resolved) = resolver(call_idx, data.type_name)
+                && self.find_import_call_in_type_name(data.type_name).is_some()
+                && let Some(resolved) = resolver(data.type_name)
             {
                 if let Some(args) = &data.type_arguments
                     && !args.nodes.is_empty()

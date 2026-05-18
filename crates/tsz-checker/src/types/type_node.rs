@@ -180,11 +180,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
 
             // Fall back to TypeLowering for type nodes not handled above
-            // (conditional types, indexed access types, etc.).
-            //
-            // Before lowering, pre-resolve any import() type references in the
-            // subtree. TypeLowering cannot perform module resolution, so we do it
-            // here with &mut self and pass the results as a pre-resolved map.
+            // (conditional types, indexed access types, etc.). Pre-resolve any
+            // import() type references with &mut self first — TypeLowering cannot
+            // do module resolution, so we supply the results as a pre-resolved map.
             _ => {
                 let import_overrides = self.collect_import_type_overrides(idx);
                 self.lower_with_resolvers_impl(idx, true, true, Some(&import_overrides))
