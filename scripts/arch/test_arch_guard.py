@@ -712,10 +712,12 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability = "CheckerInputs"',
                 'reason = "borrowed current-file arena"',
                 "",
                 "[request_node_types]",
                 'lifetime = "SpeculationScoped"',
+                'capability = "SpeculationState"',
                 'reason = "snapshot by speculative return-type inference"',
             ]
         )
@@ -732,8 +734,8 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
         )
         manifest_body = "\n".join(
             [
-                'arena = { lifetime = "FileLocalReset", reason = "current arena" }',
-                'binder = { lifetime = "FileLocalReset", reason = "current binder" }',
+                'arena = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "current arena" }',
+                'binder = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "current binder" }',
             ]
         )
         self.assertEqual(self._write_and_scan(struct_body, manifest_body), [])
@@ -751,6 +753,7 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability = "CheckerInputs"',
                 'reason = "borrowed current-file arena"',
             ]
         )
@@ -770,10 +773,12 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability = "CheckerInputs"',
                 'reason = "borrowed current-file arena"',
                 "",
                 "[removed_field]",
                 'lifetime = "FileLocalReset"',
+                'capability = "FileTypeCache"',
                 'reason = "old field"',
             ]
         )
@@ -787,6 +792,7 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "Unknown"',
+                'capability = "CheckerInputs"',
                 'reason = "unclassified"',
             ]
         )
@@ -800,6 +806,7 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "ForeverCache"',
+                'capability = "CheckerInputs"',
                 'reason = "invalid class"',
             ]
         )
@@ -807,12 +814,54 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
         self.assertEqual(len(hits), 1)
         self.assertIn("invalid lifetime 'ForeverCache'", hits[0])
 
+    def test_missing_capability_is_reported(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+                'reason = "borrowed current-file arena"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("[arena] missing capability", hits[0])
+
+    def test_unknown_capability_is_reported(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+                'capability = "Unknown"',
+                'reason = "borrowed current-file arena"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("[arena] capability must not be Unknown", hits[0])
+
+    def test_invalid_capability_is_reported(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+                'capability = "GlobalBag"',
+                'reason = "borrowed current-file arena"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("invalid capability 'GlobalBag'", hits[0])
+
     def test_missing_reason_is_reported(self):
         struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
         manifest_body = "\n".join(
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability = "CheckerInputs"',
             ]
         )
         hits = self._write_and_scan(struct_body, manifest_body)

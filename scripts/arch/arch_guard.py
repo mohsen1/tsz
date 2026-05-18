@@ -191,6 +191,17 @@ VALID_CHECKER_CONTEXT_LIFETIMES = {
     "LspPersistent",
 }
 
+VALID_CHECKER_CONTEXT_CAPABILITIES = {
+    "CheckerInputs",
+    "DiagnosticState",
+    "EmitSummaryState",
+    "FileTypeCache",
+    "FlowSessionState",
+    "ProgramLookupContext",
+    "RelationSessionState",
+    "SpeculationState",
+}
+
 CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS = [
     (
         "Checker boundary: CheckerContext lifetime inventory (T2.1.A)",
@@ -1809,6 +1820,7 @@ def parse_checker_context_lifetime_manifest(
     inline_entry_pattern = re.compile(
         r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{\s*'
         r'lifetime\s*=\s*"([^"]*)"\s*,\s*'
+        r'capability\s*=\s*"([^"]*)"\s*,\s*'
         r'reason\s*=\s*"([^"]*)"\s*'
         r'\}\s*(?:#.*)?$'
     )
@@ -1826,13 +1838,14 @@ def parse_checker_context_lifetime_manifest(
 
         inline_entry_match = inline_entry_pattern.match(line)
         if inline_entry_match and current is None:
-            field, lifetime, reason = inline_entry_match.groups()
+            field, lifetime, capability, reason = inline_entry_match.groups()
             if field in entries:
                 errors.append(f"{rel}:{line_no} duplicate manifest entry [{field}]")
             else:
                 entries[field] = {
                     "line": line_no,
                     "lifetime": lifetime,
+                    "capability": capability,
                     "reason": reason,
                 }
             continue
@@ -1896,6 +1909,7 @@ def scan_checker_context_lifetime_manifest(
     ):
         line = entry.get("line", 0)
         lifetime = entry.get("lifetime")
+        capability = entry.get("capability")
         reason = entry.get("reason")
         if lifetime is None:
             hits.append(f"{manifest_rel}:{line} [{field}] missing lifetime")
@@ -1904,6 +1918,14 @@ def scan_checker_context_lifetime_manifest(
         elif lifetime not in VALID_CHECKER_CONTEXT_LIFETIMES:
             hits.append(
                 f"{manifest_rel}:{line} [{field}] invalid lifetime {lifetime!r}"
+            )
+        if capability is None:
+            hits.append(f"{manifest_rel}:{line} [{field}] missing capability")
+        elif capability == "Unknown":
+            hits.append(f"{manifest_rel}:{line} [{field}] capability must not be Unknown")
+        elif capability not in VALID_CHECKER_CONTEXT_CAPABILITIES:
+            hits.append(
+                f"{manifest_rel}:{line} [{field}] invalid capability {capability!r}"
             )
         if not isinstance(reason, str) or not reason.strip():
             hits.append(f"{manifest_rel}:{line} [{field}] missing reason")
@@ -1923,14 +1945,15 @@ def checker_context_lifetime_markdown(
     fields = extract_struct_field_names(struct_path, struct_name)
     entries, _errors = parse_checker_context_lifetime_manifest(manifest_path)
     lines = [
-        "| Field | Lifetime | Reason |",
-        "| --- | --- | --- |",
+        "| Field | Lifetime | Capability | Reason |",
+        "| --- | --- | --- | --- |",
     ]
     for field in fields:
         entry = entries.get(field, {})
         lifetime = escape_markdown_cell(entry.get("lifetime", "MISSING"))
+        capability = escape_markdown_cell(entry.get("capability", "MISSING"))
         reason = escape_markdown_cell(entry.get("reason", "MISSING"))
-        lines.append(f"| `{field}` | `{lifetime}` | {reason} |")
+        lines.append(f"| `{field}` | `{lifetime}` | `{capability}` | {reason} |")
     return "\n".join(lines)
 
 
