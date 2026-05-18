@@ -537,3 +537,96 @@ fn test_private_identifier_emits_private_marker() {
         "#secret should not appear in .d.ts: {output}"
     );
 }
+
+#[test]
+fn test_class_method_overloads_summary_suppresses_implementation() {
+    // The implementation method should be suppressed; only overload signatures emitted.
+    // Verifies ClassDeclarationSummary precomputes overloads before emit.
+    for param_name in ["name", "input", "x"] {
+        let output = emit_dts(&format!(
+            r#"
+        export class Greeter {{
+            greet({param_name}: string): string;
+            greet({param_name}: number): string;
+            greet({param_name}: any): string {{ return ""; }}
+        }}
+        "#,
+        ));
+        assert!(
+            output.contains(&format!("greet({param_name}: string): string;")),
+            "Expected string overload ({param_name}): {output}"
+        );
+        assert!(
+            output.contains(&format!("greet({param_name}: number): string;")),
+            "Expected number overload ({param_name}): {output}"
+        );
+        assert!(
+            !output.contains(&format!("greet({param_name}: any)")),
+            "Implementation should not appear ({param_name}): {output}"
+        );
+    }
+}
+
+#[test]
+fn test_private_method_overloads_emit_marker_once() {
+    // Private methods with overloads should emit exactly one `private name;` stub,
+    // regardless of how many overload signatures appear.
+    let output = emit_dts(
+        r#"
+    export class Service {
+        private handle(x: string): void;
+        private handle(x: number): void;
+        private handle(x: any): void {}
+    }
+    "#,
+    );
+    let count = output.matches("private handle;").count();
+    assert_eq!(
+        count, 1,
+        "Expected exactly one `private handle;`, got {count}: {output}"
+    );
+}
+
+#[test]
+fn test_class_extends_another_nonempty_constructor_emitted() {
+    // When a class extends another, an empty constructor is still emitted in .d.ts.
+    let output = emit_dts(
+        r#"
+    export class Animal {}
+    export class Dog extends Animal {
+        constructor() { super(); }
+    }
+    "#,
+    );
+    assert!(
+        output.contains("class Dog extends Animal"),
+        "Expected extends clause: {output}"
+    );
+    assert!(
+        output.contains("constructor();"),
+        "Expected constructor in extending class: {output}"
+    );
+}
+
+#[test]
+fn test_non_exported_class_not_emitted_in_dts() {
+    // Non-exported classes should not appear in .d.ts output.
+    let output = emit_dts(
+        r#"
+    class InternalHelper {
+        compute(): number { return 0; }
+    }
+    export class PublicApi {
+        value: string = "";
+    }
+    "#,
+    );
+    assert!(
+        !output.contains("class InternalHelper"),
+        "Non-exported class should not appear: {output}"
+    );
+    assert!(
+        output.contains("class PublicApi"),
+        "Exported class should appear: {output}"
+    );
+}

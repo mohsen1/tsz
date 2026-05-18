@@ -1,9 +1,102 @@
 use rustc_hash::FxHashSet;
+use tsz_parser::parser::node::ClassData;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 
 use crate::declaration_emitter::core::emit_members::ClassMemberKind;
 
 use super::DeclarationEmitter;
+
+/// Precomputed facts about a class declaration for use during DTS emit.
+///
+/// Built by `build_class_declaration_summary` in one pre-pass before any
+/// output is written. The emitter consumes this summary to avoid discovering
+/// these facts incrementally and redundantly during the emit walk.
+pub(in crate::declaration_emitter) struct ClassDeclarationSummary {
+    pub extends_another: bool,
+    pub has_constructor_overloads: bool,
+    pub method_names_with_overloads: FxHashSet<String>,
+}
+
+impl<'a> DeclarationEmitter<'a> {
+    /// Precompute class-level DTS emit facts in a single pass over the member list.
+    ///
+    /// This replaces the five copies of the inline "reset and re-derive"
+    /// pattern that was duplicated at the top of each class emit function.
+    pub(in crate::declaration_emitter) fn build_class_declaration_summary(
+        &self,
+        class: &ClassData,
+    ) -> ClassDeclarationSummary {
+        let extends_another = self.class_extends_expression(class).is_some();
+
+        let mut has_constructor_overloads = false;
+        let mut overload_names: FxHashSet<String> = FxHashSet::default();
+        // Collect accessor and method-impl computed names to compute the
+        // accessor-shadowed set: tsc suppresses a method impl whose computed
+        // name also appears on a get/set accessor.
+        let mut accessor_computed_names: FxHashSet<String> = FxHashSet::default();
+        let mut method_impl_computed_names: FxHashSet<String> = FxHashSet::default();
+
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            match member_node.kind {
+                k if k == syntax_kind_ext::CONSTRUCTOR => {
+                    if let Some(ctor) = self.arena.get_constructor(member_node) {
+                        if ctor.body.is_none() {
+                            has_constructor_overloads = true;
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    if let Some(method) = self.arena.get_method_decl(member_node) {
+                        if method.body.is_none() {
+                            if let Some(name) = self.get_function_name(member_idx) {
+                                overload_names.insert(name);
+                            }
+                        } else if let Some(name_node) = self.arena.get(method.name) {
+                            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                                if let Some(text) =
+                                    self.get_source_slice(name_node.pos, name_node.end)
+                                {
+                                    method_impl_computed_names.insert(text);
+                                }
+                            }
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    if let Some(info) = self.class_member_info(member_idx) {
+                        if let Some(name_idx) = info.name {
+                            if let Some(name_node) = self.arena.get(name_idx) {
+                                if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                                    if let Some(text) =
+                                        self.get_source_slice(name_node.pos, name_node.end)
+                                    {
+                                        accessor_computed_names.insert(text);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        for name in method_impl_computed_names {
+            if accessor_computed_names.contains(&name) {
+                overload_names.insert(name);
+            }
+        }
+
+        ClassDeclarationSummary {
+            extends_another,
+            has_constructor_overloads,
+            method_names_with_overloads: overload_names,
+        }
+    }
+}
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn class_member_emit_order(
@@ -168,60 +261,5 @@ impl<'a> DeclarationEmitter<'a> {
                 .is_some_and(|node| node.kind == kind)
                 && self.member_name_source_text(member_idx).as_deref() == Some(name)
         })
-    }
-
-    /// Pre-scan class members: when a computed property name appears on both
-    /// a method implementation and a get/set accessor, tsc suppresses the
-    /// method in the .d.ts output (the accessor wins). This returns the set
-    /// of computed name texts that should be treated as "already declared"
-    /// so the method implementation is skipped.
-    pub(in crate::declaration_emitter) fn computed_names_shadowed_by_accessors(
-        &self,
-        members: &NodeList,
-    ) -> FxHashSet<String> {
-        let mut accessor_names = FxHashSet::default();
-        let mut method_impl_names: Vec<String> = Vec::new();
-        for &m in &members.nodes {
-            let Some(mn) = self.arena.get(m) else {
-                continue;
-            };
-            let Some(info) = self.class_member_info(m) else {
-                continue;
-            };
-            let is_accessor = info.kind == ClassMemberKind::Accessor;
-            let is_method = info.kind == ClassMemberKind::Method;
-            if !is_accessor && !is_method {
-                continue;
-            }
-            let name_idx = info.name;
-            let Some(name_idx) = name_idx else {
-                continue;
-            };
-            let Some(name_node) = self.arena.get(name_idx) else {
-                continue;
-            };
-            if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                continue;
-            }
-            let Some(text) = self.get_source_slice(name_node.pos, name_node.end) else {
-                continue;
-            };
-            if is_accessor {
-                accessor_names.insert(text);
-            } else if self
-                .arena
-                .get_method_decl(mn)
-                .is_some_and(|md| md.body.is_some())
-            {
-                method_impl_names.push(text);
-            }
-        }
-        let mut result = FxHashSet::default();
-        for name in method_impl_names {
-            if accessor_names.contains(&name) {
-                result.insert(name);
-            }
-        }
-        result
     }
 }

@@ -1884,15 +1884,11 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
-        self.class_has_constructor_overloads = false;
-        self.class_extends_another = class.heritage_clauses.as_ref().is_some_and(|hc| {
-            hc.nodes.iter().any(|&clause_idx| {
-                self.arena
-                    .get_heritage_clause_at(clause_idx)
-                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
-            })
-        });
-        self.method_names_with_overloads = FxHashSet::default();
+        let summary = self.build_class_declaration_summary(class);
+        self.class_has_constructor_overloads = summary.has_constructor_overloads;
+        self.class_extends_another = summary.extends_another;
+        self.method_names_with_overloads = summary.method_names_with_overloads;
+        self.emitted_private_method_markers = FxHashSet::default();
 
         self.emit_parameter_properties(&class.members);
         let delay_private_identifier_marker = self
@@ -1986,15 +1982,11 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
-        self.class_has_constructor_overloads = false;
-        self.class_extends_another = class.heritage_clauses.as_ref().is_some_and(|hc| {
-            hc.nodes.iter().any(|&clause_idx| {
-                self.arena
-                    .get_heritage_clause_at(clause_idx)
-                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
-            })
-        });
-        self.method_names_with_overloads = FxHashSet::default();
+        let summary = self.build_class_declaration_summary(class);
+        self.class_has_constructor_overloads = summary.has_constructor_overloads;
+        self.class_extends_another = summary.extends_another;
+        self.method_names_with_overloads = summary.method_names_with_overloads;
+        self.emitted_private_method_markers = FxHashSet::default();
 
         self.emit_parameter_properties(&class.members);
         let delay_private_identifier_marker = self

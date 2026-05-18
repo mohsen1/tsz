@@ -119,6 +119,10 @@ pub struct DeclarationEmitter<'a> {
     pub(super) class_extends_another: bool,
     /// Track method names that have overload signatures in current class (to skip implementation signatures)
     pub(super) method_names_with_overloads: FxHashSet<String>,
+    /// Private method names that have already had their `private name;` marker
+    /// emitted in the current class declaration. Reset at each class emit site
+    /// before calling any member emit functions.
+    pub(super) emitted_private_method_markers: FxHashSet<String>,
     pub(super) all_comments: Vec<CommentRange>,
     pub(super) comment_emit_idx: usize,
     pub(super) current_statement_jsdoc_chain: Vec<String>,

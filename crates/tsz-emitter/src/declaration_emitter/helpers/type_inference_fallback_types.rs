@@ -951,7 +951,7 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn class_extends_expression(
+    pub(in crate::declaration_emitter) fn class_extends_expression(
         &self,
         class: &tsz_parser::parser::node::ClassData,
     ) -> Option<NodeIndex> {

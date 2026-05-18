@@ -44,30 +44,18 @@ impl<'a> DeclarationEmitter<'a> {
         // Get method name as string for overload tracking
         let method_name = self.get_function_name(method_idx);
 
-        // Check if this is an overload (no body) or implementation (has body)
-        let is_overload = method.body.is_none();
-        let is_implementation = !is_overload;
-
-        // Check if private
         let is_private = self
             .arena
             .has_modifier(&method.modifiers, SyntaxKind::PrivateKeyword);
 
-        // Method overload handling:
-        // - If this is an overload, emit it and mark that this method has overloads
-        // - If this is an implementation and the method already has overloads, skip it
-        // - If this is an implementation with no overloads, emit it
-        // SPECIAL: For private methods with overloads, emit just `private foo;`
-        if is_overload {
-            // For private methods, emit `private foo;` on first encounter only
+        if method.body.is_none() {
             if is_private {
-                let already_seen = if let Some(ref name) = method_name {
-                    !self.method_names_with_overloads.insert(name.clone())
-                } else {
-                    false
-                };
-                if !already_seen {
-                    // First private overload: emit `private foo;`
+                // Private overloads collapse to a single `private foo;` stub.
+                // emitted_private_method_markers gates emission to the first encounter.
+                let already_emitted = method_name
+                    .as_ref()
+                    .is_some_and(|n| !self.emitted_private_method_markers.insert(n.clone()));
+                if !already_emitted {
                     self.write_indent();
                     self.emit_member_modifiers(&method.modifiers);
                     self.emit_node(method.name);
@@ -77,28 +65,16 @@ impl<'a> DeclarationEmitter<'a> {
                 self.skip_comments_in_node(method_node.pos, method_node.end);
                 return;
             }
-            // Mark that this method name has overload signatures
-            if let Some(ref name) = method_name {
-                self.method_names_with_overloads.insert(name.clone());
-            }
-        } else if is_implementation {
-            // This is an implementation - check if we've seen overloads for this name
-            if let Some(ref name) = method_name
-                && self.method_names_with_overloads.contains(name)
-            {
-                // Skip implementation signature when overloads exist
-                // (for private methods, `private foo;` was already emitted at first overload)
-                self.skip_comments_in_node(method_node.pos, method_node.end);
-                return;
-            }
+        } else if let Some(ref name) = method_name
+            && self.method_names_with_overloads.contains(name)
+        {
+            self.skip_comments_in_node(method_node.pos, method_node.end);
+            return;
         }
 
         if self.source_is_js_file && !is_private {
             let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(method_idx);
             if self.emit_jsdoc_overload_method_signatures(method_idx, &jsdoc_overload_signatures) {
-                if let Some(ref name) = method_name {
-                    self.method_names_with_overloads.insert(name.clone());
-                }
                 return;
             }
         }
@@ -715,23 +691,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        // Check if this is an overload (no body) or implementation (has body)
-        let is_overload = ctor.body.is_none();
-        let is_implementation = !is_overload;
-
-        // Constructor overload handling:
-        // - If this is an overload, emit it and mark that the class has constructor overloads
-        // - If this is an implementation and the class already has constructor overloads, skip it
-        // - If this is an implementation with no overloads, emit it
-        if is_overload {
-            // Mark that this class has constructor overloads
-            self.class_has_constructor_overloads = true;
-        } else if is_implementation {
-            // This is an implementation - check if we've seen constructor overloads
-            if self.class_has_constructor_overloads {
-                // Skip implementation constructor when overloads exist
-                return;
-            }
+        // Skip the implementation constructor when overload signatures are present
+        // (precomputed by build_class_declaration_summary; JS path may update below).
+        if ctor.body.is_some() && self.class_has_constructor_overloads {
+            return;
         }
 
         if self.source_is_js_file {
