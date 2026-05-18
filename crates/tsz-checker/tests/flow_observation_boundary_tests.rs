@@ -728,6 +728,27 @@ function f(x: { y: number } | null) {
     );
 }
 
+/// Equality/nullish checks should route the non-nullish type algebra through
+/// the flow boundary after checker reference matching identifies the target.
+#[test]
+fn non_nullish_equality_check_narrows() {
+    let diags = tsz_checker::test_utils::check_source_diagnostics(
+        r#"
+function f(x: string | null | undefined) {
+    if (x != null) {
+        const s: string = x;
+    }
+}
+"#,
+    );
+    let errs = codes(&diags, 2322);
+    assert!(
+        errs.is_empty(),
+        "Non-nullish equality check should strip nullish via boundary, got TS2322: {:?}",
+        errs.iter().map(|d| &d.message_text).collect::<Vec<_>>()
+    );
+}
+
 // =============================================================================
 // Phase 2: Non-null assertion boundary routing
 // =============================================================================
