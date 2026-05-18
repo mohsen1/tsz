@@ -21,6 +21,7 @@
 //! This design allows true parallel type checking without lock contention.
 
 mod core;
+pub(in crate::intern) mod display_provenance;
 mod intersection;
 mod normalize;
 mod template;

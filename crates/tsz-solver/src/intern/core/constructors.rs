@@ -1536,12 +1536,9 @@ impl TypeInterner {
             * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() + 1);
         // alloc_order is now stored per-shard alongside index_to_key (4 bytes per type)
         size += type_count * 4;
-        size += self.display_properties.len()
-            * (DASHMAP_ENTRY_OVERHEAD
-                + std::mem::size_of::<TypeId>()
-                + std::mem::size_of::<Arc<Vec<PropertyInfo>>>());
-        size +=
-            self.display_alias.len() * (DASHMAP_ENTRY_OVERHEAD + std::mem::size_of::<TypeId>() * 2);
+        size += self
+            .display_provenance
+            .memory_size_estimate(DASHMAP_ENTRY_OVERHEAD);
         size += self.boxed_types.len() * (DASHMAP_ENTRY_OVERHEAD + 16);
         size += self.boxed_def_ids.len() * (DASHMAP_ENTRY_OVERHEAD + 32);
         size += self.this_type_marker_def_ids.len() * (DASHMAP_ENTRY_OVERHEAD + 8);

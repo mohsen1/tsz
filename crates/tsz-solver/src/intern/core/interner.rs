@@ -5,6 +5,7 @@
 //! construction convenience methods.
 
 use crate::def::DefId;
+use crate::intern::display_provenance::{DisplayProvenanceStore, ProvenanceLookup};
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IntrinsicKind, LiteralValue, MappedType, MappedTypeId, ObjectFlags,
@@ -554,10 +555,6 @@ pub struct TypeInterner {
     /// `RwLock` so file checkers can overwrite the prime checker's value without
     /// lock contention on this frequently-read field.
     pub(super) array_base_type: AtomicU32,
-    /// Display-order Array base type used for keyof/mapped diagnostics.
-    /// This may differ from `array_base_type` when the semantic base and the
-    /// lib-merged display surface are not the same lowered type.
-    pub(super) array_display_base_type: AtomicU32,
     /// Type parameters for the Array base type.
     /// Kept as `OnceLock` since params don't contain `DefIds` and are stable
     /// across checkers (the interner allocates `TypeParam` `TypeIds` centrally).
@@ -588,53 +585,13 @@ pub struct TypeInterner {
     pub(super) no_unchecked_indexed_access: AtomicBool,
     /// Effective value for `exactOptionalPropertyTypes` used by query-boundary helpers.
     pub(super) exact_optional_property_types: AtomicBool,
-    /// Display properties for fresh object literal types.
+    /// Dedicated store for diagnostic display provenance records and priority rules.
     ///
-    /// When object literal properties are widened (e.g., `"hello"` → `string`),
-    /// the pre-widened types are stored here for display in error messages.
-    /// This implements tsc's "freshness" model where error messages show
-    /// literal types (`{ x: "hello" }`) even though the type system uses
-    /// widened types (`{ x: string }`).
-    ///
-    /// Key: `ObjectShapeId` of the widened (interned) shape.
-    /// Value: Vec of `PropertyInfo` with original (non-widened) `type_ids`.
-    pub(super) display_properties: DashMap<TypeId, Arc<Vec<PropertyInfo>>, FxBuildHasher>,
-    /// Reverse mapping from evaluated Application results back to their
-    /// original Application TypeId for diagnostic display.
-    ///
-    /// When `Application(Lazy(Dictionary), [string])` evaluates to
-    /// `ObjectWithIndex({ [index: string]: string })`, this maps
-    /// the `ObjectWithIndex` TypeId back to the Application TypeId.
-    /// The formatter checks this to show `Dictionary<string>` instead
-    /// of `{ [index: string]: string; }` in error messages.
-    pub(super) display_alias: DashMap<TypeId, TypeId, FxBuildHasher>,
-    /// Application bases whose type-alias body is a conditional type.
-    ///
-    /// Conditional aliases often evaluate to a branch with its own display
-    /// surface. Keep this small provenance bit so application-preferring alias
-    /// storage can avoid repainting an already-recorded branch intersection.
-    pub(super) conditional_alias_bases: DashMap<TypeId, (), FxBuildHasher>,
-    /// As-written origin members for a Union TypeId, used to preserve top-level
-    /// alias names that would otherwise be lost during union flattening.
-    ///
-    /// When a user writes `T | null` and `T` is a type alias whose body is itself
-    /// a union (e.g., `type T = "a" | "b" | undefined`), tsc's `getUnionType`
-    /// flattens the inputs into `"a" | "b" | undefined | null`, but the printer
-    /// still displays `T | null` by consulting the union's `origin` field.
-    ///
-    /// tsz captures the equivalent information here: the checker records the
-    /// *unflattened* member list (e.g., `[Lazy(T), null]`) for the resulting
-    /// flattened union. The formatter consults this map before falling through
-    /// to structural display.
-    ///
-    /// Key: the flattened Union `TypeId` returned to the checker.
-    /// Value: the unflattened input member list, in the order the user wrote.
-    pub(super) display_union_origin: DashMap<TypeId, Arc<Vec<TypeId>>, FxBuildHasher>,
-    /// Flag set when union normalization detects that a union type is too complex
-    /// to represent (would require > 1M pairwise subtype comparisons during
-    /// reduction). Mirrors tsc's `removeSubtypes` complexity heuristic that
-    /// emits TS2590. The checker reads and clears this flag to emit the diagnostic.
-    pub(super) union_too_complex: AtomicBool,
+    /// Owns alias application mappings, fresh object literal property display,
+    /// union origin lists, conditional alias base markers, and the union-too-complex
+    /// flag. Methods on this store encode the display policy so the interner
+    /// stays focused on canonical identity and deduplication.
+    pub(crate) display_provenance: DisplayProvenanceStore,
     /// Global evaluation fuel counter.
     ///
     /// Tracks cumulative evaluation work across ALL `TypeEvaluator` instances.
@@ -686,7 +643,6 @@ impl TypeInterner {
             contains_infer_cache: DashMap::with_hasher(FxBuildHasher),
             contains_type_query_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: AtomicU32::new(u32::MAX),
-            array_display_base_type: AtomicU32::new(u32::MAX),
             array_base_type_params: OnceLock::new(),
             readonly_array_base_type: AtomicU32::new(u32::MAX),
             boxed_types: DashMap::with_hasher(FxBuildHasher),
@@ -696,11 +652,7 @@ impl TypeInterner {
             poisoned: std::sync::atomic::AtomicBool::new(false),
             no_unchecked_indexed_access: AtomicBool::new(false),
             exact_optional_property_types: AtomicBool::new(false),
-            display_properties: DashMap::with_hasher(FxBuildHasher),
-            display_alias: DashMap::with_hasher(FxBuildHasher),
-            conditional_alias_bases: DashMap::with_hasher(FxBuildHasher),
-            display_union_origin: DashMap::with_hasher(FxBuildHasher),
-            union_too_complex: AtomicBool::new(false),
+            display_provenance: DisplayProvenanceStore::default(),
             evaluation_fuel: AtomicU32::new(0),
             instance_id: NEXT_INTERNER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
         }
@@ -735,14 +687,14 @@ impl TypeInterner {
     /// The checker uses this to emit TS2590.
     #[inline]
     pub fn take_union_too_complex(&self) -> bool {
-        self.union_too_complex.swap(false, Ordering::Relaxed)
+        self.display_provenance.take_union_too_complex()
     }
 
     /// Mark that a union construction was aborted due to complexity.
     /// Called from `reduce_union_subtypes` when pairwise comparisons would exceed 1M.
     #[inline]
     pub(crate) fn set_union_too_complex(&self) {
-        self.union_too_complex.store(true, Ordering::Relaxed);
+        self.display_provenance.set_union_too_complex();
     }
 
     /// Set the global Array base type (e.g., Array<T> from lib.d.ts).
@@ -775,8 +727,7 @@ impl TypeInterner {
 
     /// Set the Array base type used for display-order-sensitive queries.
     pub fn set_array_display_base_type(&self, type_id: TypeId) {
-        self.array_display_base_type
-            .store(type_id.0, Ordering::Relaxed);
+        self.display_provenance.set_array_display_base_type(type_id);
     }
 
     /// Get the global Array base type, if it has been set.
@@ -793,12 +744,7 @@ impl TypeInterner {
     /// Get the Array base type used for display-order-sensitive queries.
     #[inline]
     pub fn get_array_display_base_type(&self) -> Option<TypeId> {
-        let raw = self.array_display_base_type.load(Ordering::Relaxed);
-        if raw == u32::MAX {
-            None
-        } else {
-            Some(TypeId(raw))
-        }
+        self.display_provenance.get_array_display_base_type()
     }
 
     /// Get the type parameters for the global Array base type, if it has been set.
@@ -1392,496 +1338,67 @@ impl TypeInterner {
         ObjectShapeId(self.object_shapes.intern(shape))
     }
 
-    /// Store display-only properties for a fresh object literal.
-    ///
-    /// These are the pre-widened property types shown in error messages.
-    /// The `shape_id` is the widened (interned) shape; `props` contains
-    /// the original literal types from the source code.
+    /// Store pre-widened property types for a fresh object literal type.
     pub fn store_display_properties(&self, type_id: TypeId, props: Vec<PropertyInfo>) {
-        self.display_properties.insert(type_id, Arc::new(props));
+        self.display_provenance
+            .record_fresh_object_properties(type_id, props);
     }
 
-    /// Retrieve display-only properties for a fresh object literal.
-    ///
-    /// Returns `None` if no display properties were stored (i.e., the
-    /// object type was not a fresh literal or had no widened properties).
+    /// Retrieve pre-widened property types for a fresh object literal type.
     pub fn get_display_properties(&self, type_id: TypeId) -> Option<Arc<Vec<PropertyInfo>>> {
-        self.display_properties.get(&type_id).map(|r| r.clone())
+        self.display_provenance.get_fresh_object_properties(type_id)
     }
 
-    /// Store a reverse mapping from an evaluated Application result to its
-    /// original Application TypeId for diagnostic display.
-    ///
-    /// Called during Application evaluation so that the formatter can recover
-    /// the named form (e.g., `Dictionary<string>`) when it encounters the
-    /// evaluated type (e.g., `{ [index: string]: string }`).
+    /// Record that `evaluated` was produced by evaluating `application`.
     pub fn store_display_alias(&self, evaluated: TypeId, application: TypeId) {
-        // Only store if the evaluated type differs from the application
-        // (i.e., evaluation actually produced a different type).
-        if evaluated == application {
-            return;
-        }
-        // A generic alias can evaluate to a bare type parameter (for example
-        // `type Id<T> = T` or a conditional alias branch that returns `T`).
-        // Type parameter ids are scoped semantic identities, not fresh display
-        // surfaces for one alias application. Recording `T -> Alias<...>` here
-        // repaints unrelated uses of `T` in later diagnostics.
-        if matches!(self.lookup(evaluated), Some(TypeData::TypeParameter(_))) {
-            return;
-        }
-        // Only alias types produced by this evaluation. Generic helper aliases
-        // can otherwise repaint unrelated earlier structural types that happen
-        // to intern to the same shape. Concrete applications remain eligible so
-        // named library/interface instantiations can display their nominal form.
-        let application_is_alias =
-            matches!(self.lookup(application), Some(TypeData::Application(_)));
-        let application_has_generic_args = application_is_alias
-            && self
-                .lookup(application)
-                .and_then(|data| match data {
-                    TypeData::Application(app_id) => Some(self.type_application(app_id)),
-                    _ => None,
-                })
-                .is_some_and(|app| {
-                    app.args.iter().any(|&arg| {
-                        crate::type_queries::contains_generic_type_parameters_db(self, arg)
-                    })
-                });
-        let evaluated_is_mapped = matches!(self.lookup(evaluated), Some(TypeData::Mapped(_)));
-        let evaluated_precedes_application = match (
-            self.lookup_alloc_order(evaluated),
-            self.lookup_alloc_order(application),
-        ) {
-            (Some(evaluated_order), Some(application_order)) => {
-                evaluated_order <= application_order
-            }
-            _ => evaluated.0 <= application.0,
-        };
-        if application_is_alias
-            && application_has_generic_args
-            && evaluated_precedes_application
-            && !evaluated_is_mapped
-        {
-            let existing_is_application =
-                self.display_alias.get(&evaluated).is_some_and(|existing| {
-                    matches!(self.lookup(*existing), Some(TypeData::Application(_)))
-                });
-            if !existing_is_application {
-                return;
-            }
-        }
-        // Never alias intrinsic types (string, number, any, etc.) — they are
-        // shared sentinels and aliasing them would make ALL occurrences display
-        // as whatever alias happened to be stored last.
-        if evaluated.is_intrinsic() {
-            return;
-        }
-        // Guard against self-referential cycles: if the Application's args
-        // contain the evaluated type itself, storing this alias would create
-        // a formatting cycle (e.g., `Wrap<T> = T | T[]` where evaluating
-        // `Wrap<{x?: "ok"}>` produces a union, and a later re-application
-        // creates `Wrap<union>` whose arg IS the union). Skip storage in
-        // that case to prevent infinite `Wrap<Wrap<Wrap<...>>>` in diagnostics.
-        if let Some(TypeData::Application(app_id)) = self.lookup(application) {
-            let app = self.type_application(app_id);
-            if app.args.contains(&evaluated) {
-                return;
-            }
-        }
-        if application_is_alias
-            && let Some(existing) = self.display_alias.get(&evaluated).map(|alias| *alias)
-            && !matches!(self.lookup(existing), Some(TypeData::Application(_)))
-        {
-            return;
-        }
-        self.display_alias.insert(evaluated, application);
+        self.display_provenance
+            .record_alias_application(self, evaluated, application);
     }
 
-    /// Prefer a concrete Application display alias over structural provenance
+    /// Prefer a concrete `Application` display alias over structural provenance
     /// recorded while evaluating the alias body.
     pub fn store_display_alias_preferring_application(
         &self,
         evaluated: TypeId,
         application: TypeId,
     ) {
-        self.store_display_alias(evaluated, application);
-        if self.get_display_alias(evaluated) == Some(application) {
-            return;
-        }
-        if evaluated == application || evaluated.is_intrinsic() {
-            return;
-        }
-        if matches!(self.lookup(evaluated), Some(TypeData::TypeParameter(_))) {
-            return;
-        }
-        let Some(TypeData::Application(app_id)) = self.lookup(application) else {
-            return;
-        };
-        let app = self.type_application(app_id);
-        if app.args.contains(&evaluated) {
-            return;
-        }
-        let preserves_conditional_branch_alias = self.is_conditional_alias_base(app.base)
-            && self.get_display_alias(evaluated).is_some_and(|existing| {
-                matches!(self.lookup(existing), Some(TypeData::Intersection(_)))
-            });
-        if preserves_conditional_branch_alias {
-            return;
-        }
-        let application_has_generic_args = app
-            .args
-            .iter()
-            .any(|&arg| crate::type_queries::contains_generic_type_parameters_db(self, arg));
-        let evaluated_precedes_application = match (
-            self.lookup_alloc_order(evaluated),
-            self.lookup_alloc_order(application),
-        ) {
-            (Some(evaluated_order), Some(application_order)) => {
-                evaluated_order <= application_order
-            }
-            _ => evaluated.0 <= application.0,
-        };
-        let evaluated_is_mapped = matches!(self.lookup(evaluated), Some(TypeData::Mapped(_)));
-        if application_has_generic_args && evaluated_precedes_application && !evaluated_is_mapped {
-            return;
-        }
-        self.display_alias.insert(evaluated, application);
+        self.display_provenance
+            .record_alias_application_preferring_application(self, evaluated, application);
     }
 
-    /// Look up the original Application TypeId for a type that was produced
-    /// by evaluating an Application.
-    ///
-    /// Returns `None` if this type was not produced from an Application evaluation.
+    /// Look up the alias application recorded for `type_id`.
     pub fn get_display_alias(&self, type_id: TypeId) -> Option<TypeId> {
-        self.display_alias.get(&type_id).map(|r| *r)
+        self.display_provenance.get_alias(type_id)
     }
 
-    /// Record that an application base belongs to a type alias whose body is a
-    /// conditional type. This is diagnostic-only provenance.
+    /// Mark an application base whose type-alias body is a conditional type.
     pub fn mark_conditional_alias_base(&self, base: TypeId) {
-        self.conditional_alias_bases.insert(base, ());
+        self.display_provenance.mark_conditional_alias_base(base);
     }
 
     pub fn is_conditional_alias_base(&self, base: TypeId) -> bool {
-        self.conditional_alias_bases.contains_key(&base)
+        self.display_provenance.is_conditional_alias_base(base)
     }
 
-    /// Record the as-written origin members for a flattened Union TypeId.
-    ///
-    /// Mirrors tsc's `UnionType.origin` mechanism: when `T | null` is built and
-    /// `T` is itself a union alias, normalization flattens the result, but the
-    /// printer needs the unflattened input list to display `T | null` instead
-    /// of the structural expansion.
-    ///
-    /// We store the origin when normalization changed the visible order:
-    /// - Flattening occurred (resulting Union has strictly more members), OR
-    /// - The Union contains anonymous Object members whose canonical sort
-    ///   (by `ShapeId`) doesn't match tsc's display order. tsc displays
-    ///   anonymous objects in source/declaration order, but our interner
-    ///   sorts by `ShapeId` (allocation order), which can reorder e.g.
-    ///   `{} | { a: number }` to `{ a: number; } | {}` when the empty
-    ///   shape was interned later than `{ a: number }`.
-    ///
-    /// We DO NOT store origin for canonical sort that matches tsc for non-
-    /// anonymous-object cases (e.g., user wrote `"foo" | Refrigerator` but
-    /// the interner sorted to `Refrigerator | "foo"` — tsc does the same).
+    /// Record the as-written origin members for a flattened Union `TypeId`.
     pub fn store_union_origin(&self, union_type_id: TypeId, origin_members: Vec<TypeId>) {
-        if origin_members.len() < 2 {
-            return;
-        }
-        let Some(TypeData::Union(list_id)) = self.lookup(union_type_id) else {
-            // Only store origins for actual Union TypeIds; other shapes have
-            // their own display paths.
-            return;
-        };
-        let current = self.type_list(list_id);
-        let flattened = current.len() > origin_members.len();
-        if !flattened {
-            // No flattening — only store if the canonical sort reordered
-            // members whose source order tsc preserves verbatim.
-            let needs_origin = self.union_origin_overrides_canonical_anon_object_sort(
-                current.as_ref(),
-                &origin_members,
-            ) || self.union_origin_overrides_canonical_number_literal_sort(
-                current.as_ref(),
-                &origin_members,
-            ) || self
-                .union_origin_overrides_canonical_keyof_sort(current.as_ref(), &origin_members)
-                || self.union_origin_overrides_canonical_application_sort(
-                    current.as_ref(),
-                    &origin_members,
-                )
-                || self.union_origin_overrides_canonical_array_pair_sort(
-                    current.as_ref(),
-                    &origin_members,
-                )
-                || self.union_origin_overrides_canonical_keyof_literal_sort(
-                    current.as_ref(),
-                    &origin_members,
-                )
-                || self.union_origin_overrides_canonical_generic_display_sort(
-                    current.as_ref(),
-                    &origin_members,
-                );
-            if !needs_origin {
-                return;
-            }
-        }
-        // First writer wins so deterministic display order is preserved when
-        // the same flattened union is reached from multiple annotation sites.
-        self.display_union_origin
-            .entry(union_type_id)
-            .or_insert_with(|| Arc::new(origin_members));
+        self.display_provenance
+            .record_union_origin(self, union_type_id, origin_members);
     }
 
-    /// Replace the display origin for a union whose diagnostic context has a
-    /// more specific tsc-compatible member order than the source union.
+    /// Replace the display origin with a more specific tsc-compatible member order.
     pub fn replace_union_origin_for_display(
         &self,
         union_type_id: TypeId,
         origin_members: Vec<TypeId>,
     ) {
-        if origin_members.len() < 2 {
-            return;
-        }
-        let Some(TypeData::Union(_)) = self.lookup(union_type_id) else {
-            return;
-        };
-        self.display_union_origin
-            .insert(union_type_id, Arc::new(origin_members));
+        self.display_provenance
+            .replace_union_origin(self, union_type_id, origin_members);
     }
 
-    /// Decide whether storing the as-written origin is needed even when no
-    /// flattening occurred — i.e. the union contains anonymous Object members
-    /// and our canonical sort reordered them relative to the input.
-    ///
-    /// tsc displays anonymous (symbol-less) object union members in source/
-    /// declaration order. Our interner sorts by `ShapeId` (allocation order),
-    /// which can reorder them when the same shape is reached from earlier
-    /// annotations in the file. Returns true only when (a) at least one
-    /// member of the resulting union is an anonymous Object/ObjectWithIndex
-    /// and (b) the resulting member order differs from the input.
-    fn union_origin_overrides_canonical_anon_object_sort(
-        &self,
-        current: &[TypeId],
-        origin: &[TypeId],
-    ) -> bool {
-        if current.len() != origin.len() {
-            return false;
-        }
-        let mut has_anon_object = false;
-        for &id in current {
-            if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
-                self.lookup(id)
-            {
-                let shape = self.object_shape(shape_id);
-                if shape.symbol.is_none() {
-                    has_anon_object = true;
-                    break;
-                }
-            }
-        }
-        if !has_anon_object {
-            return false;
-        }
-        current != origin
-    }
-
-    /// Decide whether storing the as-written origin is needed for a union
-    /// whose members are all number literals.
-    ///
-    /// The canonical comparator only special-cases the `0` literal and falls
-    /// back to allocation order for other number literals. Allocation order
-    /// is global and depends on which literals tsz happens to intern earlier
-    /// (e.g., from lib processing or unrelated code), so the canonical sort
-    /// can reorder source-written `0 | 1 | 2` into `0 | 2 | 1` even though
-    /// tsc preserves the as-written order. When the canonical sort changed
-    /// the order of a literal-only union, persist the origin so the printer
-    /// can render the source-written form.
-    fn union_origin_overrides_canonical_number_literal_sort(
-        &self,
-        current: &[TypeId],
-        origin: &[TypeId],
-    ) -> bool {
-        if current.len() != origin.len() || current == origin {
-            return false;
-        }
-        current.iter().all(|&id| {
-            matches!(
-                self.lookup(id),
-                Some(TypeData::Literal(LiteralValue::Number(_)))
-            )
-        })
-    }
-
-    /// Decide whether storing the as-written origin is needed for a union that
-    /// contains a `keyof` member. TypeScript preserves source order for
-    /// displays such as `keyof Shape | "knownLiteralKey"`, while the semantic
-    /// union comparator can place the literal first.
-    fn union_origin_overrides_canonical_keyof_sort(
-        &self,
-        current: &[TypeId],
-        origin: &[TypeId],
-    ) -> bool {
-        if current.len() != origin.len() || current == origin {
-            return false;
-        }
-        current
-            .iter()
-            .chain(origin.iter())
-            .any(|&id| matches!(self.lookup(id), Some(TypeData::KeyOf(_))))
-    }
-
-    /// Decide whether storing origin is needed for a generated union of
-    /// same-base generic applications.
-    ///
-    /// Distributive conditional alias display builds unions such as
-    /// `ChannelOfType<T, TextChannel> | ChannelOfType<T, EmailChannel>`.
-    /// The semantic union comparator sorts same-base applications by their
-    /// type arguments, which can invert the branch order that tsc displays from
-    /// the source union being distributed. Preserve that origin only when the
-    /// canonical union contains exactly the same same-base applications.
-    fn union_origin_overrides_canonical_application_sort(
-        &self,
-        current: &[TypeId],
-        origin: &[TypeId],
-    ) -> bool {
-        if current.len() != origin.len() || current == origin {
-            return false;
-        }
-
-        let mut current_sorted = current.to_vec();
-        let mut origin_sorted = origin.to_vec();
-        current_sorted.sort_unstable_by_key(|id| id.0);
-        origin_sorted.sort_unstable_by_key(|id| id.0);
-        if current_sorted != origin_sorted {
-            return false;
-        }
-
-        fn same_application_base(
-            interner: &TypeInterner,
-            ids: &[TypeId],
-            expected_base: &mut Option<TypeId>,
-        ) -> bool {
-            for &id in ids {
-                let Some(TypeData::Application(app_id)) = interner.lookup(id) else {
-                    return false;
-                };
-                let app = interner.type_application(app_id);
-                match expected_base {
-                    Some(base) if *base != app.base => return false,
-                    Some(_) => {}
-                    None => *expected_base = Some(app.base),
-                }
-            }
-            true
-        }
-
-        let mut expected_base = None;
-        same_application_base(self, origin, &mut expected_base)
-            && same_application_base(self, current, &mut expected_base)
-            && expected_base.is_some()
-    }
-
-    fn union_origin_overrides_canonical_array_pair_sort(
-        &self,
-        current: &[TypeId],
-        origin: &[TypeId],
-    ) -> bool {
-        if current.len() != 2 || origin.len() != 2 || current == origin {
-            return false;
-        }
-
-        let mut current_sorted = current.to_vec();
-        let mut origin_sorted = origin.to_vec();
-        current_sorted.sort_unstable_by_key(|id| id.0);
-        origin_sorted.sort_unstable_by_key(|id| id.0);
-        if current_sorted != origin_sorted {
-            return false;
-        }
-
-        fn is_array_of(interner: &TypeInterner, array: TypeId, element: TypeId) -> bool {
-            matches!(interner.lookup(array), Some(TypeData::Array(inner)) if inner == element)
-        }
-
-        is_array_of(self, origin[0], origin[1]) || is_array_of(self, origin[1], origin[0])
-    }
-
-    fn union_origin_overrides_canonical_keyof_literal_sort(
-        &self,
-        current: &[TypeId],
-        origin: &[TypeId],
-    ) -> bool {
-        if current.len() != 2 || origin.len() != 2 || current == origin {
-            return false;
-        }
-
-        let mut current_sorted = current.to_vec();
-        let mut origin_sorted = origin.to_vec();
-        current_sorted.sort_unstable_by_key(|id| id.0);
-        origin_sorted.sort_unstable_by_key(|id| id.0);
-        if current_sorted != origin_sorted {
-            return false;
-        }
-
-        let is_keyof = |id| matches!(self.lookup(id), Some(TypeData::KeyOf(_)));
-        let is_literal = |id| matches!(self.lookup(id), Some(TypeData::Literal(_)));
-        (is_keyof(origin[0]) && is_literal(origin[1]))
-            || (is_literal(origin[0]) && is_keyof(origin[1]))
-    }
-
-    /// Preserve source-written order for generic display unions whose canonical
-    /// member sort is not the order tsc prints in diagnostics.
-    ///
-    /// Pure-literal unions are excluded: when every member is a literal,
-    /// our canonical alloc-order sort already matches tsc's
-    /// registration-order display (e.g. for instantiation-time unions like
-    /// `T | U` with `T="World", U="Hello"` where `"Hello"` was registered
-    /// first, tsc displays `"Hello" | "World"`).
-    fn union_origin_overrides_canonical_generic_display_sort(
-        &self,
-        current: &[TypeId],
-        origin: &[TypeId],
-    ) -> bool {
-        if current.len() != origin.len() || current == origin {
-            return false;
-        }
-
-        let mut current_sorted = current.to_vec();
-        let mut origin_sorted = origin.to_vec();
-        current_sorted.sort_unstable_by_key(|id| id.0);
-        origin_sorted.sort_unstable_by_key(|id| id.0);
-        if current_sorted != origin_sorted {
-            return false;
-        }
-
-        let has_complex_generic = origin.iter().any(|&id| {
-            matches!(
-                self.lookup(id),
-                Some(TypeData::Application(_) | TypeData::KeyOf(_) | TypeData::IndexAccess(_, _))
-            )
-        });
-        if has_complex_generic {
-            return true;
-        }
-
-        // Mixed unions where literals coexist with non-literal complex types
-        // still need origin preservation, but pure-literal unions don't.
-        let all_literals = origin
-            .iter()
-            .all(|&id| matches!(self.lookup(id), Some(TypeData::Literal(_))));
-        if all_literals {
-            return false;
-        }
-
-        origin
-            .iter()
-            .any(|&id| matches!(self.lookup(id), Some(TypeData::Literal(_))))
-    }
-
-    /// Look up the as-written origin members for a flattened Union TypeId.
+    /// Look up the as-written origin members for a flattened Union `TypeId`.
     pub fn get_union_origin(&self, type_id: TypeId) -> Option<Arc<Vec<TypeId>>> {
-        self.display_union_origin.get(&type_id).map(|r| r.clone())
+        self.display_provenance.get_union_origin(type_id)
     }
 
     pub(super) fn intern_function_shape(&self, shape: FunctionShape) -> FunctionShapeId {
@@ -2042,6 +1559,32 @@ impl TypeInterner {
             TypeId::FUNCTION => Some(TypeData::Intrinsic(IntrinsicKind::Function)),
             _ => None,
         }
+    }
+}
+
+impl ProvenanceLookup for TypeInterner {
+    fn lookup(&self, id: TypeId) -> Option<TypeData> {
+        TypeInterner::lookup(self, id)
+    }
+
+    fn lookup_alloc_order(&self, id: TypeId) -> Option<u32> {
+        TypeInterner::lookup_alloc_order(self, id)
+    }
+
+    fn type_application(&self, id: TypeApplicationId) -> Arc<TypeApplication> {
+        TypeInterner::type_application(self, id)
+    }
+
+    fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
+        TypeInterner::type_list(self, id)
+    }
+
+    fn object_shape(&self, id: ObjectShapeId) -> Arc<ObjectShape> {
+        TypeInterner::object_shape(self, id)
+    }
+
+    fn contains_generic_type_parameters(&self, id: TypeId) -> bool {
+        crate::type_queries::contains_generic_type_parameters_db(self, id)
     }
 }
 
