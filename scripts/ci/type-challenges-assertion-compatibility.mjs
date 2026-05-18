@@ -115,11 +115,16 @@ function validateCandidateOutputPath(value, label) {
     fail(`${label} must be a non-empty relative path`);
   }
   const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
+  const segments = normalized.split("/");
   if (
     path.isAbsolute(value) ||
+    normalized.startsWith("/") ||
+    /^[A-Za-z]:(?:\/|$)/.test(normalized) ||
     normalized === "" ||
     normalized === "." ||
-    normalized.split("/").includes("..")
+    segments.includes("") ||
+    segments.includes(".") ||
+    segments.includes("..")
   ) {
     fail(`${label} must stay inside the assertion candidate directory: ${value}`);
   }
@@ -488,6 +493,19 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
     cleanSubsetClassification.compilers,
     "tsc-clean assertion classification",
   );
+  const cleanTsc = cleanSubsetClassification.compilers?.tsc || {};
+  if (cleanTsc.status !== "pass") {
+    fail(
+      `tsc-clean assertion classification tsc status (${cleanTsc.status}) must be pass`,
+    );
+  }
+  const cleanTscDiagnosticFree =
+    cleanTsc.candidateDiagnostics?.candidatesWithoutDiagnostics;
+  if (cleanTscDiagnosticFree !== acceptedAssertions) {
+    fail(
+      `tsc-clean assertion classification tsc candidatesWithoutDiagnostics (${cleanTscDiagnosticFree}) must match manifest tscAcceptedAssertions (${acceptedAssertions})`,
+    );
+  }
 }
 const tsc = report.compilers?.tsc || {};
 const tsz = report.compilers?.tsz || {};
