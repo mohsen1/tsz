@@ -152,6 +152,16 @@ function validateCompilerStatus(status, label) {
   }
 }
 
+function validateCompilerExitCode(exitCode, label) {
+  if (
+    exitCode !== null &&
+    exitCode !== undefined &&
+    !Number.isInteger(exitCode)
+  ) {
+    fail(`${label} exitCode must be an integer when present`);
+  }
+}
+
 function validateReport(report) {
   validateClassificationCompilerReport(report);
   if (!report.comparison || typeof report.comparison !== "object") {
@@ -326,10 +336,17 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
     }
   }
   for (const compiler of ["tsc", "tsz"]) {
-    const status = cleanSubsetClassification.compilers?.[compiler]?.status;
-    validateCompilerStatus(status, `tsc-clean assertion classification ${compiler}`);
+    const compilerResult = cleanSubsetClassification.compilers?.[compiler] || {};
+    validateCompilerStatus(
+      compilerResult.status,
+      `tsc-clean assertion classification ${compiler}`,
+    );
+    validateCompilerExitCode(
+      compilerResult.exitCode,
+      `tsc-clean assertion classification ${compiler}`,
+    );
     const totalCandidates =
-      cleanSubsetClassification.compilers?.[compiler]?.candidateDiagnostics?.totalCandidates;
+      compilerResult.candidateDiagnostics?.totalCandidates;
     if (!Number.isInteger(totalCandidates)) {
       fail(
         `tsc-clean assertion classification ${compiler} candidateDiagnostics.totalCandidates must be an integer`,
@@ -364,13 +381,7 @@ for (const [compiler, result] of [
   ["tsz", tsz],
 ]) {
   validateCompilerStatus(result.status, `assertion classification ${compiler}`);
-  if (
-    result.exitCode !== null &&
-    result.exitCode !== undefined &&
-    !Number.isInteger(result.exitCode)
-  ) {
-    fail(`assertion classification ${compiler} exitCode must be an integer when present`);
-  }
+  validateCompilerExitCode(result.exitCode, `assertion classification ${compiler}`);
 }
 if (!Number.isInteger(counts.pairedSolutions)) {
   fail("assertion classification candidateManifest.counts.pairedSolutions must be an integer");
