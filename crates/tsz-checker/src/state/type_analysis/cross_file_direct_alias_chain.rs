@@ -5,9 +5,18 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 
 impl<'a> CheckerState<'a> {
-    /// Like `source_file_type_node_is_scope_independent`, but also follows
-    /// file-local, non-generic type-alias chains that can lower lazily.
-    pub(super) fn source_file_type_node_is_local_alias_chain_lowerable(
+    pub(super) fn source_file_type_node_is_non_generic_local_alias_chain_lowerable(
+        arena: &NodeArena,
+        binder: &BinderState,
+        node_idx: NodeIndex,
+    ) -> bool {
+        let mut seen = AliasCycleTracker::new();
+        Self::source_file_type_node_is_local_alias_chain_lowerable(
+            arena, binder, node_idx, &mut seen,
+        )
+    }
+
+    fn source_file_type_node_is_local_alias_chain_lowerable(
         arena: &NodeArena,
         binder: &BinderState,
         node_idx: NodeIndex,

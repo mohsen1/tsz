@@ -2,7 +2,6 @@
 
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
-use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_common::perf_counters::{
     CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome,
@@ -1662,19 +1661,12 @@ impl<'a> CheckerState<'a> {
         };
         let type_param_names = Self::type_alias_type_param_names(symbol_arena, type_alias);
         let body_is_direct_lowerable = if type_param_names.is_empty() {
-            // Fast path for primitives/literals — avoid AliasCycleTracker allocation.
             Self::source_file_type_node_is_scope_independent(symbol_arena, type_alias.type_node)
-                || {
-                    // Each alias in the chain lowers to Lazy(DefId) and resolves lazily
-                    // via delegate_cross_arena.
-                    let mut seen = AliasCycleTracker::new();
-                    Self::source_file_type_node_is_local_alias_chain_lowerable(
-                        symbol_arena,
-                        delegate_binder,
-                        type_alias.type_node,
-                        &mut seen,
-                    )
-                }
+                || Self::source_file_type_node_is_non_generic_local_alias_chain_lowerable(
+                    symbol_arena,
+                    delegate_binder,
+                    type_alias.type_node,
+                )
         } else {
             Self::source_file_type_node_is_generic_scope_independent(
                 symbol_arena,
