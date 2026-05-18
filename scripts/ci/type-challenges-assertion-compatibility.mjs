@@ -517,6 +517,7 @@ const row = {
           tsconfig_path: cleanSubsetDir
             ? rel(path.join(cleanSubsetDir, "tsconfig.tsz-guard.json"))
             : null,
+          total_candidates: cleanSubsetManifest.counts?.totalCandidates ?? null,
           generated_assertions: cleanSubsetManifest.counts?.tscAcceptedAssertions ?? null,
           assertions_referencing_solution_declaration:
             cleanSubsetManifest.counts?.tscAcceptedAssertionsReferencingSolutionDeclaration ?? null,
