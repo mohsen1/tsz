@@ -1215,17 +1215,13 @@ impl<'a> CheckerState<'a> {
                         index_type_for_check,
                     );
             let constraint_is_keyof = !index_is_keyof
-                && match index_constraint {
-                    Some(c)
-                        if crate::query_boundaries::common::is_keyof_type(self.ctx.types, c) =>
-                    {
-                        true
-                    }
-                    Some(c) => {
+                && if let Some(c) = index_constraint {
+                    crate::query_boundaries::common::is_keyof_type(self.ctx.types, c) || {
                         let c_eval = self.evaluate_type_with_env(c);
                         crate::query_boundaries::common::is_keyof_type(self.ctx.types, c_eval)
                     }
-                    None => false,
+                } else {
+                    false
                 };
             if (index_is_keyof || constraint_is_keyof)
                 && self.is_element_indexable(object_type_for_check, true, false)
