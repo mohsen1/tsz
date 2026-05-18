@@ -195,14 +195,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
             });
         if !is_in_generator {
-            // Robustness audit (PR #J, item 10): emit a structured trace
-            // so the rate of yield-outside-generator ANY fallbacks is visible.
-            tracing::debug!(
-                site = "dispatch_yield::yield_outside_generator",
-                idx = idx.0,
-                "TypeId::ANY fallback (yield outside generator; TS1163 already from parser)"
+            // Recorded as a typed recovery site so relation/diagnostic
+            // paths can distinguish this from a declared `: any`. The
+            // parser already emitted TS1163.
+            return crate::recovery::recovery_any(
+                &self.checker.ctx.recovery_sites,
+                idx,
+                crate::recovery::RecoveryReason::YieldOutsideGenerator,
             );
-            return TypeId::ANY;
         }
 
         // TS2523: 'yield' expressions cannot be used in a parameter initializer.
@@ -692,15 +692,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 self.checker.ctx.generator_had_ts7057 = true;
             }
         }
-        // Robustness audit (PR #J, item 10): emit a structured trace so the
-        // rate of yield-result ANY fallbacks (no generator next-type, no
-        // explicit return annotation) is visible.
-        tracing::debug!(
-            site = "dispatch_yield::yield_result_no_generator_context",
-            idx = idx.0,
-            "TypeId::ANY fallback (yield expression with no generator next-type context)"
-        );
-        TypeId::ANY
+        // Recorded as a typed recovery site so relation/diagnostic
+        // paths can distinguish this from a declared `: any`.
+        crate::recovery::recovery_any(
+            &self.checker.ctx.recovery_sites,
+            idx,
+            crate::recovery::RecoveryReason::YieldExpressionNoGeneratorContext,
+        )
     }
 
     /// Check if an expression's result value is unused (discarded).

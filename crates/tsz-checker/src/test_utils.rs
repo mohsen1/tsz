@@ -22,6 +22,41 @@ pub fn check_source(source: &str, file_name: &str, options: CheckerOptions) -> V
     check_source_with_file_is_esm(source, file_name, options, None)
 }
 
+/// Parse, bind, and type-check a TypeScript source string, returning every
+/// recovery fallback site recorded by [`crate::recovery::recovery_any`] during
+/// the check. Each entry is `(node_index, reason)`.
+///
+/// Used by tests that need to assert which nodes the checker recovered to
+/// `TypeId::ANY` and why, without inspecting diagnostic strings.
+pub fn check_source_recovery_sites(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, crate::recovery::RecoveryReason)> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let source_file = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), source_file);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        options,
+    );
+    checker.enable_source_file_test_pragmas();
+    checker.ctx.set_lib_contexts(Vec::new());
+    checker.check_source_file(source_file);
+
+    let sites = checker.ctx.recovery_sites.borrow();
+    let mut snapshot: Vec<_> = sites.iter().map(|(idx, reason)| (idx.0, reason)).collect();
+    snapshot.sort_by_key(|(idx, _)| *idx);
+    snapshot
+}
+
 /// Parse, bind, and type-check a source string with no lib contexts, source
 /// file test pragmas enabled, and an explicit Node module file-format
 /// classification.
