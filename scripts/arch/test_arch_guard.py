@@ -2174,6 +2174,30 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
         self.assertIn("lib.rs:1", hits[0])
 
+    def test_flags_legacy_relation_flag_bridge_surface(self):
+        pattern, _max_lines = self._check_by_name("#8207")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/types.rs": (
+                    "RelationCacheConfig::from_checker_flags_u16(flags);\n"
+                    "CachedAnyMode::from_legacy_u8(raw);\n"
+                    "mode.to_legacy_u8();\n"
+                    "// CachedAnyMode::from_legacy_u8(commented);\n"
+                ),
+                "crates/tsz-solver/src/caches/query_cache.rs": (
+                    "subtype_cache_config_from_legacy_flags(flags);\n"
+                    "assignability_cache_config_from_legacy_flags(flags);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 6, f"unexpected hits: {hits!r}")
+        self.assertIn("query_cache.rs:1", hits[0])
+        self.assertIn("query_cache.rs:2", hits[1])
+        self.assertIn("types.rs:1", hits[2])
+        self.assertIn("types.rs:2", hits[3])
+        self.assertIn("types.rs:3", hits[4])
+
     def test_scan_regex_line_count_accepts_file_roots(self):
         pattern, _max_lines = self._check_by_name("#8227")
         root = self._make_tree(
@@ -2233,6 +2257,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertTrue(any("rendered type strings" in name for name in names))
         self.assertTrue(any("#8227" in name for name in names))
         self.assertTrue(any("#8204" in name for name in names))
+        self.assertTrue(any("#8207" in name for name in names))
 
     def test_real_counts_pass_at_pinned_caps(self):
         """The pinned caps must match the live count (no off-by-one)."""
