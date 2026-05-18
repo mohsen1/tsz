@@ -705,4 +705,22 @@ impl<'a> CheckerContext<'a> {
 
         ctx
     }
+
+    /// Attributed variant of [`Self::with_parent_cache`].
+    ///
+    /// Use this for child `CheckerContext` construction sites that do not wrap
+    /// the context in `CheckerState::with_parent_cache_attributed`, so
+    /// `TSZ_PERF_COUNTERS` can still report the construction reason.
+    pub fn with_parent_cache_attributed(
+        arena: &'a NodeArena,
+        binder: &'a BinderState,
+        types: &'a dyn QueryDatabase,
+        file_name: String,
+        compiler_options: CheckerOptions,
+        parent: &Self,
+        reason: tsz_common::perf_counters::CheckerCreationReason,
+    ) -> Self {
+        tsz_common::perf_counters::record_with_parent_cache(reason);
+        Self::with_parent_cache(arena, binder, types, file_name, compiler_options, parent)
+    }
 }
