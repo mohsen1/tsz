@@ -19,7 +19,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
-use tsz_solver::computation::TypeSubstitution;
+use tsz_solver::computation::{ContextualTypeContext, TypeSubstitution};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ContextualPropertyPresence {
@@ -1319,9 +1319,8 @@ impl<'a> CheckerState<'a> {
         current: TypeId,
         candidate: TypeId,
     ) -> Option<TypeId> {
-        let current_ctx = tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, current);
-        let candidate_ctx =
-            tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, candidate);
+        let current_ctx = ContextualTypeContext::with_expected(self.ctx.types, current);
+        let candidate_ctx = ContextualTypeContext::with_expected(self.ctx.types, candidate);
 
         let mut prefer_current = false;
         let mut prefer_candidate = false;

@@ -14,6 +14,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::ContextualTypeContext;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
 const SPREAD_DISPLAY_ORDER_OFFSET: u32 = 1_000_000;
@@ -1807,12 +1808,11 @@ impl<'a> CheckerState<'a> {
                         // body sees concrete `this` types (fixing TS2783 for spreads of
                         // `this.options.suggestion` where Options = { suggestion: Foo }).
                         let method_ctx_this = method_request.contextual_type.and_then(|ctx_ty| {
-                            let ctx_helper =
-                                tsz_solver::ContextualTypeContext::with_expected_and_options(
-                                    self.ctx.types,
-                                    ctx_ty,
-                                    self.ctx.compiler_options.no_implicit_any,
-                                );
+                            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                                self.ctx.types,
+                                ctx_ty,
+                                self.ctx.compiler_options.no_implicit_any,
+                            );
                             ctx_helper.get_this_type()
                         });
                         if let Some(mut method_this) = method_ctx_this {
@@ -1850,12 +1850,11 @@ impl<'a> CheckerState<'a> {
 
                     let contextual_method_param_types =
                         method_request.contextual_type.map(|ctx_ty| {
-                            let ctx_helper =
-                                tsz_solver::ContextualTypeContext::with_expected_and_options(
-                                    self.ctx.types,
-                                    ctx_ty,
-                                    self.ctx.compiler_options.no_implicit_any,
-                                );
+                            let ctx_helper = ContextualTypeContext::with_expected_and_options(
+                                self.ctx.types,
+                                ctx_ty,
+                                self.ctx.compiler_options.no_implicit_any,
+                            );
                             let this_atom = self.ctx.types.intern_string("this");
                             let mut contextual_index = 0usize;
                             method
