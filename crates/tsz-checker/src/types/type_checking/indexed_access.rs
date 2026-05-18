@@ -1206,6 +1206,32 @@ impl<'a> CheckerState<'a> {
             ) {
                 return;
             }
+            // String index signatures cover all non-symbol keys; tsc accepts `Obj[keyof T]`
+            // without TS2536 — symbol-keyed parts of `keyof T` produce `never` at instantiation.
+            let index_is_keyof =
+                crate::query_boundaries::common::is_keyof_type(self.ctx.types, index_type)
+                    || crate::query_boundaries::common::is_keyof_type(
+                        self.ctx.types,
+                        index_type_for_check,
+                    );
+            let constraint_is_keyof = !index_is_keyof
+                && match index_constraint {
+                    Some(c)
+                        if crate::query_boundaries::common::is_keyof_type(self.ctx.types, c) =>
+                    {
+                        true
+                    }
+                    Some(c) => {
+                        let c_eval = self.evaluate_type_with_env(c);
+                        crate::query_boundaries::common::is_keyof_type(self.ctx.types, c_eval)
+                    }
+                    None => false,
+                };
+            if (index_is_keyof || constraint_is_keyof)
+                && self.is_element_indexable(object_type_for_check, true, false)
+            {
+                return;
+            }
             if let Some(object_type_node) = self.ctx.arena.get(data.object_type)
                 && let Some(nested_indexed_access) =
                     self.ctx.arena.get_indexed_access_type(object_type_node)

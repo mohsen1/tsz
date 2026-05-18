@@ -1321,5 +1321,9 @@ path = "tests/static_readonly_unique_symbol_tests.rs"
 name = "operator_literal_annotation_display_tests"
 path = "tests/operator_literal_annotation_display_tests.rs"
 
+[[test]]
+name = "ts2536_keyof_string_index_tests"
+path = "tests/ts2536_keyof_string_index_tests.rs"
+
 [lints]
 workspace = true
