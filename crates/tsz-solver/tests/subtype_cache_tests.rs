@@ -10,8 +10,9 @@
 //! - Separates subtype and assignability caches (no cross-contamination)
 
 use super::*;
-use crate::caches::query_cache::{QueryCache, subtype_cache_config_from_legacy_flags};
+use crate::caches::query_cache::QueryCache;
 use crate::intern::TypeInterner;
+use crate::relations::relation_queries::RelationPolicy;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{PropertyInfo, RelationCacheKey, TypeId};
 
@@ -529,7 +530,7 @@ fn probe_returns_hit_after_check() {
     let key = RelationCacheKey::for_subtype(
         hello,
         TypeId::STRING,
-        subtype_cache_config_from_legacy_flags(0),
+        RelationPolicy::from_flags(0).cache_config(),
     );
     assert_eq!(
         db.probe_subtype_cache(key),
@@ -547,7 +548,7 @@ fn probe_negative_hit_after_failed_check() {
     let key = RelationCacheKey::for_subtype(
         TypeId::STRING,
         TypeId::NUMBER,
-        subtype_cache_config_from_legacy_flags(0),
+        RelationPolicy::from_flags(0).cache_config(),
     );
     assert_eq!(
         db.probe_subtype_cache(key),

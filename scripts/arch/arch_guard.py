@@ -405,6 +405,19 @@ REGEX_LINE_COUNT_CHECKS = [
         re.compile(r"\bRelationRequest::[A-Za-z_][A-Za-z0-9_]*\s*\("),
         0,
     ),
+    (
+        "Solver relation boundary: legacy packed relation flag bridges (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src"],
+        re.compile(
+            r"\b(?:subtype_cache_config_from_legacy_flags|"
+            r"assignability_cache_config_from_legacy_flags|"
+            r"from_checker_flags_u16|from_legacy_u8|to_legacy_u8|"
+            r"RelationCacheKey::(?:subtype|assignability)\s*\(|"
+            r"RelationFlags::from_bits_truncate\s*\(|"
+            r"CachedAnyMode::from_legacy_u8)"
+        ),
+        11,
+    ),
 ]
 
 # Track 10 performance guardrail: branch-local `visited.clone()` traversal

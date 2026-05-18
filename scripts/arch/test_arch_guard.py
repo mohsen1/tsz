@@ -2525,6 +2525,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertTrue(any("rendered type strings" in name for name in names))
         self.assertTrue(any("#8227" in name for name in names))
         self.assertTrue(any("diagnostic-local RelationRequest" in name for name in names))
+        self.assertTrue(any("#8207" in name for name in names))
         self.assertTrue(any("#8204" in name for name in names))
 
     def test_real_counts_pass_at_pinned_caps(self):

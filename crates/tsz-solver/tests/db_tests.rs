@@ -1,4 +1,4 @@
-use crate::caches::query_cache::subtype_cache_config_from_legacy_flags;
+use crate::relations::relation_queries::RelationPolicy;
 use crate::{
     LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryCacheStatistics, QueryDatabase,
     RelationCacheKey, RelationCacheProbe, TupleElement, TypeData, TypeDatabase, TypeId,
@@ -135,7 +135,7 @@ fn relation_cache_stats_track_hits_and_misses() {
     let key = RelationCacheKey::for_subtype(
         hello,
         TypeId::STRING,
-        subtype_cache_config_from_legacy_flags(0),
+        RelationPolicy::from_flags(0).cache_config(),
     );
 
     assert_eq!(
