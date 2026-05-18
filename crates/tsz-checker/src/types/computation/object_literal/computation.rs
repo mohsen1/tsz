@@ -1945,7 +1945,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     if method_return_this_circularity {
-                        method_diag_snap.rollback(&mut self.ctx);
+                        method_diag_snap.rollback(&mut self.ctx.diagnostic_state());
                         self.invalidate_expression_for_contextual_retry(elem_idx);
                         let refined_method_type = crate::query_boundaries::assignability::get_function_return_type(
                             self.ctx.types,
@@ -2003,7 +2003,7 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.arena.get(*idx).map(|node| node.pos)
                                 })
                                 .collect();
-                        rerun_snap.rollback_filtered(&mut self.ctx, |diag| {
+                        rerun_snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
                             let is_replaced_this_property_error =
                                 diag.code == 2339 && this_property_positions.contains(&diag.start);
                             !is_replaced_this_property_error

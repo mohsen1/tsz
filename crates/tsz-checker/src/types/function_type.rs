@@ -2287,7 +2287,7 @@ impl<'a> CheckerState<'a> {
                                     self.get_type_of_node_with_request(cond.when_true, &return_req);
                                 let mut when_false = self
                                     .get_type_of_node_with_request(cond.when_false, &return_req);
-                                snap.rollback(&mut self.ctx);
+                                snap.rollback(&mut self.ctx.diagnostic_state());
                                 if is_async_for_context {
                                     when_true =
                                         self.unwrap_promise_type(when_true).unwrap_or(when_true);
@@ -2485,7 +2485,7 @@ impl<'a> CheckerState<'a> {
                     self.check_statement_with_request(body, &body_request);
                 }
                 if let Some(snap) = diag_snap {
-                    snap.rollback(&mut self.ctx);
+                    snap.rollback(&mut self.ctx.diagnostic_state());
                 }
 
                 // For annotated generator expressions, check that Generator<TYield, any, any>
