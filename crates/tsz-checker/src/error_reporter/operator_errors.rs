@@ -378,8 +378,10 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .get(type_ref.type_name)
                         .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
-                    && let TypeSymbolResolution::Type(annotation_sym_id) =
-                        self.resolve_identifier_symbol_in_type_position(type_ref.type_name)
+                    && let TypeSymbolResolution::Type(annotation_sym_id) = self
+                        .resolve_identifier_symbol_in_type_position_without_tracking(
+                            type_ref.type_name,
+                        )
                     && self
                         .ctx
                         .binder

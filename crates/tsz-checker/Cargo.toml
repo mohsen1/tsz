@@ -1321,5 +1321,9 @@ path = "tests/static_readonly_unique_symbol_tests.rs"
 name = "ts2365_relational_operator_display_tests"
 path = "tests/ts2365_relational_operator_display_tests.rs"
 
+[[test]]
+name = "operator_literal_annotation_display_tests"
+path = "tests/operator_literal_annotation_display_tests.rs"
+
 [lints]
 workspace = true
