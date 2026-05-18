@@ -4,6 +4,7 @@ use super::type_node::TypeNodeChecker;
 use super::unique_symbol_arena::{is_symbol_call_initializer, is_unique_symbol_type_annotation};
 use crate::symbols_domain::name_text::expression_name_text_in_arena;
 use tsz_binder::SymbolId;
+use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -87,6 +88,29 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         self.resolve_computed_property_symbol(computed.expression)
             .is_some_and(|sym_id| self.symbol_refers_to_unique_symbol(sym_id))
+    }
+
+    pub(super) fn computed_property_expression_name_atom(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<Atom> {
+        if let Some(symbol_name) = self.get_well_known_symbol_property_name(expr_idx) {
+            return Some(self.ctx.types.intern_string(&symbol_name));
+        }
+
+        let sym_id = self.resolve_computed_property_symbol(expr_idx)?;
+        self.symbol_refers_to_unique_symbol(sym_id).then(|| {
+            self.ctx
+                .types
+                .intern_string(&format!("__unique_{}", sym_id.0))
+        })
+    }
+
+    pub(super) fn computed_property_expression_is_symbol_named(&self, expr_idx: NodeIndex) -> bool {
+        self.get_well_known_symbol_property_name(expr_idx).is_some()
+            || self
+                .resolve_computed_property_symbol(expr_idx)
+                .is_some_and(|sym_id| self.symbol_refers_to_unique_symbol(sym_id))
     }
 
     fn get_well_known_symbol_property_name(&self, expr_idx: NodeIndex) -> Option<String> {

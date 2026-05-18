@@ -51,6 +51,10 @@ withTempDir((dir) => {
     COMPAT_TSCONFIG_PATH: tsconfig,
     COMPAT_SOURCE_ROOT: sourceRoot,
     COMPAT_FIXTURE_ROOT: path.join(dir, "fixture"),
+    COMPAT_FIXTURE_SOURCES: [
+      "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
+      "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
+    ].join("\n"),
   });
 
   assert.equal(result.status, 0, result.stderr);
@@ -72,8 +76,48 @@ withTempDir((dir) => {
   assert.equal(row.repro.source_root, "src");
   assert.equal(row.repro.first_failure_path, "src/index.ts");
   assert.equal(row.repro.first_failure_code, "TS2344");
+  assert.deepEqual(row.fixture_sources, [
+    {
+      name: "type-fest",
+      repository: "https://github.com/sindresorhus/type-fest.git",
+      ref: "4005f60",
+    },
+  ]);
   assert.equal(row.diagnostic_subsystems[0].subsystem, "evaluation-inference-instantiation");
   assert.equal(row.diagnostic_subsystems[1].subsystem, "uncoded diagnostic");
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const cases = [
+    {
+      source: "malformed",
+      message: "line 1 must be name|repository|ref",
+    },
+    {
+      source: "fixture|https://example.invalid/repo.git|",
+      message: "line 1 must be name|repository|ref",
+    },
+    {
+      source: "fixture|https://example.invalid/repo.git|abc123|extra",
+      message: "line 1 must be name|repository|ref",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = runProjectCompatibility(["record"], {
+      COMPAT_JSONL_FILE: jsonl,
+      COMPAT_NAME: "type-fest-project",
+      COMPAT_EXIT_CLASS: "exit success",
+      COMPAT_PHASE: "check",
+      COMPAT_DIAGNOSTIC_STATUS: "none",
+      COMPAT_FIXTURE_SOURCES: testCase.source,
+    });
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, new RegExp(testCase.message));
+  }
+  assert.equal(fs.existsSync(jsonl), false);
 });
 
 withTempDir((dir) => {
@@ -103,6 +147,29 @@ withTempDir((dir) => {
     "relations-assignability",
   ]);
   assert.deepEqual(row.exit_codes, { tsc: [0], tsz: [1, 124], tsgo: [0] });
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const manifestDir = path.join(dir, "clean-manifest.json");
+  const classificationDir = path.join(dir, "clean-classification.json");
+  fs.mkdirSync(manifestDir, { recursive: true });
+  fs.mkdirSync(classificationDir, { recursive: true });
+
+  const result = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: jsonl,
+    COMPAT_NAME: "type-challenges-assertions-tsc-clean",
+    COMPAT_EXIT_CLASS: "success",
+    COMPAT_PHASE: "check",
+    COMPAT_DIAGNOSTIC_STATUS: "no diagnostics",
+    COMPAT_TYPE_CHALLENGES_CLEAN_MANIFEST: manifestDir,
+    COMPAT_TYPE_CHALLENGES_CLEAN_CLASSIFICATION: classificationDir,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const [row] = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  assert.equal(row.name, "type-challenges-assertions-tsc-clean");
+  assert.equal(row.assertion_clean_subset, undefined);
 });
 
 withTempDir((dir) => {

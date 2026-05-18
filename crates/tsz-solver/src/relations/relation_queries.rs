@@ -345,7 +345,7 @@ pub struct RelationQueryInputs<'a, R: TypeResolver, P: AssignabilityOverrideProv
     pub overrides: &'a P,
 }
 
-fn configured_compat_checker<'a, R: TypeResolver>(
+pub(crate) fn configured_compat_checker<'a, R: TypeResolver>(
     interner: &'a dyn TypeDatabase,
     resolver: &'a R,
     policy: RelationPolicy,
@@ -365,7 +365,7 @@ fn configured_compat_checker<'a, R: TypeResolver>(
     checker
 }
 
-fn configured_subtype_checker<'a, R: TypeResolver>(
+pub(crate) fn configured_subtype_checker<'a, R: TypeResolver>(
     interner: &'a dyn TypeDatabase,
     resolver: &'a R,
     policy: RelationPolicy,

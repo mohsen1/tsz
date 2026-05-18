@@ -139,6 +139,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
+        if self.import_declaration_is_local_json_value_import(import) {
+            return;
+        }
+
         // Check if we should elide this import based on usage
         let (default_used, named_used) = self.count_used_imports(import);
         if default_used == 0 && named_used == 0 {
@@ -195,6 +199,54 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_declaration_import_attributes(import.attributes);
         self.write(";");
         self.write_line();
+    }
+
+    fn import_declaration_is_local_json_value_import(
+        &self,
+        import: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        let Some(module_node) = self.arena.get(import.module_specifier) else {
+            return false;
+        };
+        if !self
+            .arena
+            .get_literal(module_node)
+            .is_some_and(|literal| literal.text.ends_with(".json"))
+        {
+            return false;
+        }
+        let Some(clause_node) = self.arena.get(import.import_clause) else {
+            return false;
+        };
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return false;
+        };
+        if clause.is_type_only {
+            return false;
+        }
+
+        let mut imported_names = Vec::new();
+        if let Some(name) = self.get_identifier_text(clause.name) {
+            imported_names.push(name);
+        }
+
+        if let Some(named_bindings_node) = self.arena.get(clause.named_bindings)
+            && let Some(named_bindings) = self.arena.get_named_imports(named_bindings_node)
+        {
+            if named_bindings.name.is_some() && named_bindings.elements.nodes.is_empty() {
+                if let Some(name) = self.get_identifier_text(named_bindings.name) {
+                    imported_names.push(name);
+                }
+            } else if !named_bindings.elements.nodes.is_empty() {
+                return false;
+            }
+        }
+
+        !imported_names.is_empty()
+            && imported_names.iter().all(|name| {
+                !self.public_api_type_surface_contains_typeof_name(name)
+                    && !self.public_api_export_specifier_exports_name(name)
+            })
     }
 
     /// Emit named imports, filtering out unused specifiers.
@@ -2307,7 +2359,9 @@ impl<'a> DeclarationEmitter<'a> {
                 // Inline JSDoc comment before type parameter
                 self.emit_inline_parameter_comment(param_node.pos);
 
-                // Emit variance/const modifiers (in, out, const)
+                // Emit type-parameter modifiers as parsed. `public` is not a
+                // valid variance modifier, but tsc preserves it in declaration
+                // emit when recovering from invalid type-parameter syntax.
                 if let Some(ref mods) = param.modifiers {
                     for &mod_idx in &mods.nodes {
                         if let Some(mod_node) = self.arena.get(mod_idx) {
@@ -2315,6 +2369,9 @@ impl<'a> DeclarationEmitter<'a> {
                                 k if k == SyntaxKind::InKeyword as u16 => self.write("in "),
                                 k if k == SyntaxKind::OutKeyword as u16 => self.write("out "),
                                 k if k == SyntaxKind::ConstKeyword as u16 => self.write("const "),
+                                k if k == SyntaxKind::PublicKeyword as u16 => {
+                                    self.write("public ");
+                                }
                                 _ => {}
                             }
                         }
@@ -2716,6 +2773,8 @@ impl<'a> DeclarationEmitter<'a> {
                             // encodes Promise<T>, so the modifier is redundant.
                         }
                         k if k == SyntaxKind::AccessorKeyword as u16 => self.write("accessor "),
+                        k if k == SyntaxKind::InKeyword as u16 => self.write("in "),
+                        k if k == SyntaxKind::OutKeyword as u16 => self.write("out "),
                         k if k == SyntaxKind::DeclareKeyword as u16 => {
                             // tsc strips `declare` from class members in .d.ts — it is
                             // only meaningful at the top-level statement level

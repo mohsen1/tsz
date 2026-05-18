@@ -84,6 +84,49 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         sym_id: SymbolId,
     ) -> Option<String> {
+        self.with_declared_type_annotation_for_symbol(sym_id, |source_arena, type_annotation| {
+            self.type_annotation_text_from_arena_node(source_arena, type_annotation)
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn reference_declared_source_type_annotation_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let binder = self.binder?;
+        let raw_sym_id = self
+            .get_identifier_text(expr_idx)
+            .and_then(|ident| self.resolve_lexical_identifier_symbol(expr_idx, &ident))
+            .or_else(|| self.value_reference_symbol(expr_idx))?;
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_declaration_symbol(raw_sym_id, binder));
+
+        self.declared_source_type_annotation_text_for_symbol(sym_id)
+    }
+
+    fn declared_source_type_annotation_text_for_symbol(&self, sym_id: SymbolId) -> Option<String> {
+        self.with_declared_type_annotation_for_symbol(sym_id, |source_arena, type_annotation| {
+            let type_text = if std::ptr::eq(source_arena, self.arena) {
+                self.local_type_annotation_text(type_annotation)
+                    .or_else(|| self.emit_type_node_text(type_annotation))
+            } else {
+                self.source_slice_from_arena(source_arena, type_annotation)
+                    .or_else(|| self.emit_type_node_text_from_arena(source_arena, type_annotation))
+            }?;
+
+            let trimmed = type_text.trim_end();
+            let trimmed = trimmed.strip_suffix(';').unwrap_or(trimmed).trim_end();
+            let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
+            Some(trimmed.to_string())
+        })
+    }
+
+    fn with_declared_type_annotation_for_symbol<T>(
+        &self,
+        sym_id: SymbolId,
+        mut f: impl FnMut(&NodeArena, NodeIndex) -> Option<T>,
+    ) -> Option<T> {
         self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
             let decl_idx = Self::annotation_bearing_declaration_from_arena(source_arena, decl_idx)
                 .unwrap_or(decl_idx);
@@ -102,7 +145,8 @@ impl<'a> DeclarationEmitter<'a> {
                         .map(|param| param.type_annotation)
                 })
                 .filter(|type_idx| type_idx.is_some())?;
-            self.type_annotation_text_from_arena_node(source_arena, type_annotation)
+
+            f(source_arena, type_annotation)
         })
     }
 
