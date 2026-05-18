@@ -1283,10 +1283,23 @@ mod tests {
             result.code
         );
         assert!(
+            result.code.contains("const a2 = (...args_1) => {")
+                && result
+                    .code
+                    .contains("return __awaiter(this, [...args_1], void 0, function* (x = z)"),
+            "Sibling async arrows should allocate default-param forwarding temps in their own function scope.\nOutput:\n{}",
+            result.code
+        );
+        assert!(
             result.code.contains(
                 "const a3 = () => __awaiter(this, void 0, void 0, function* () { return (...args_1) => __awaiter(this, [...args_1], void 0, function* (x = z) { return arguments_1; }); });"
             ),
             "Sibling async arrows should reuse the existing function-scoped arguments capture.\nOutput:\n{}",
+            result.code
+        );
+        assert!(
+            !result.code.contains("args_2"),
+            "Independent async-arrow forwarding scopes should not leak placeholder names across siblings.\nOutput:\n{}",
             result.code
         );
         assert!(
