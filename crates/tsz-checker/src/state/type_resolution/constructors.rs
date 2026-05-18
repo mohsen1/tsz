@@ -866,6 +866,9 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
         type_arguments: Option<&NodeList>,
     ) -> Option<TypeId> {
+        // `TypeId::ERROR` is an internal cycle/fuel sentinel; sanitize at the
+        // boundary so downstream TS2416/TS2417 paths never see it as a
+        // structural sink. See `cache_base_instance_result` and issue #7688.
         let type_argument_count = type_arguments.map_or(0, |args| args.nodes.len());
         let should_cache = should_cache_base_expr_result(
             type_argument_count,
@@ -884,26 +887,13 @@ impl<'a> CheckerState<'a> {
 
         if let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx) {
             if self.heritage_expression_shadows_nonconstructable_lib_value(expr_idx, base_sym_id) {
-                if should_cache {
-                    self.ctx
-                        .base_instance_expr_cache
-                        .borrow_mut()
-                        .insert(expr_idx, None);
-                }
-                return None;
+                return self.cache_base_instance_result(expr_idx, should_cache, None);
             }
 
             if let Some(array_base) =
                 self.array_base_instance_type_for_heritage(base_sym_id, type_arguments)
             {
-                let resolved = Some(array_base);
-                if should_cache {
-                    self.ctx
-                        .base_instance_expr_cache
-                        .borrow_mut()
-                        .insert(expr_idx, resolved);
-                }
-                return resolved;
+                return self.cache_base_instance_result(expr_idx, should_cache, Some(array_base));
             }
 
             if let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
@@ -918,20 +908,13 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or_else(|| self.get_class_instance_type(base_class_idx, base_class));
                 let (base_type_params, base_type_param_updates) =
                     self.push_type_parameters(&base_class.type_parameters);
-                let resolved = Some(self.instantiate_base_instance_type_with_args(
+                let instantiated = self.instantiate_base_instance_type_with_args(
                     base_instance_type,
                     &base_type_params,
                     type_arguments,
-                ));
+                );
                 self.pop_type_parameters(base_type_param_updates);
-
-                if should_cache {
-                    self.ctx
-                        .base_instance_expr_cache
-                        .borrow_mut()
-                        .insert(expr_idx, resolved);
-                }
-                return resolved;
+                return self.cache_base_instance_result(expr_idx, should_cache, Some(instantiated));
             }
 
             // Cross-file/lib heritage can resolve the symbol correctly but not the
@@ -941,19 +924,12 @@ impl<'a> CheckerState<'a> {
             if let Some((base_instance_type, base_type_params)) =
                 self.class_instance_type_with_params_from_symbol(base_sym_id)
             {
-                let resolved = Some(self.instantiate_base_instance_type_with_args(
+                let instantiated = self.instantiate_base_instance_type_with_args(
                     base_instance_type,
                     &base_type_params,
                     type_arguments,
-                ));
-
-                if should_cache {
-                    self.ctx
-                        .base_instance_expr_cache
-                        .borrow_mut()
-                        .insert(expr_idx, resolved);
-                }
-                return resolved;
+                );
+                return self.cache_base_instance_result(expr_idx, should_cache, Some(instantiated));
             }
 
             if self.symbol_has_js_constructor_evidence(base_sym_id) {
@@ -963,25 +939,17 @@ impl<'a> CheckerState<'a> {
                 if let Some(instance_type) =
                     self.cross_file_js_constructor_instance_type(base_sym_id, ctor_type)
                 {
-                    if should_cache {
-                        self.ctx
-                            .base_instance_expr_cache
-                            .borrow_mut()
-                            .insert(expr_idx, Some(instance_type));
-                    }
-                    return Some(instance_type);
+                    return self.cache_base_instance_result(
+                        expr_idx,
+                        should_cache,
+                        Some(instance_type),
+                    );
                 }
             }
         }
 
         if self.heritage_call_has_invalid_mixin_constructor_constraint(expr_idx) {
-            if should_cache {
-                self.ctx
-                    .base_instance_expr_cache
-                    .borrow_mut()
-                    .insert(expr_idx, None);
-            }
-            return None;
+            return self.cache_base_instance_result(expr_idx, should_cache, None);
         }
 
         let ctor_type = self.base_constructor_type_from_expression(expr_idx, type_arguments)?;
@@ -1001,13 +969,25 @@ impl<'a> CheckerState<'a> {
                 None => Some(synthesized),
             };
         }
+        self.cache_base_instance_result(expr_idx, should_cache, resolved)
+    }
+
+    /// Sanitize and cache a base-instance result. Drops `Some(ERROR)` to
+    /// `None` so the boundary rule is enforced as a cache invariant.
+    fn cache_base_instance_result(
+        &self,
+        expr_idx: NodeIndex,
+        should_cache: bool,
+        resolved: Option<TypeId>,
+    ) -> Option<TypeId> {
+        let sanitized = resolved.filter(|&t| t != TypeId::ERROR);
         if should_cache {
             self.ctx
                 .base_instance_expr_cache
                 .borrow_mut()
-                .insert(expr_idx, resolved);
+                .insert(expr_idx, sanitized);
         }
-        resolved
+        sanitized
     }
 
     pub(crate) fn merge_constructor_properties_from_type(
