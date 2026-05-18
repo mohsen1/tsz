@@ -45,5 +45,6 @@ TypeScript/tests/cases/conformance/jsx/tsxGenericAttributesType6.tsx
 TypeScript/tests/cases/conformance/node/esmModuleExports2.ts
 TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts
 TypeScript/tests/cases/conformance/types/conditional/inferTypes1.ts
+TypeScript/tests/cases/conformance/types/members/indexSignatures1.ts
 TypeScript/tests/cases/conformance/types/tuple/variadicTuples1.ts
 TypeScript/tests/cases/conformance/types/typeParameters/typeArgumentLists/instantiationExpressions.ts
