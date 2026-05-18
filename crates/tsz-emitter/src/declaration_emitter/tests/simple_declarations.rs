@@ -847,6 +847,67 @@ export class Next {}
 }
 
 #[test]
+fn test_returned_object_literal_local_function_declarations_inline() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function foo<T>(v: T) {
+    function a<T>(a: T) { return a; }
+    function b(): T { return v; }
+
+    function c<T>(v: T) {
+        function a<T>(a: T) { return a; }
+        function b(): T { return v; }
+        return { a, b };
+    }
+
+    return { a, b, c };
+}
+"#,
+    );
+
+    let expected = r#"declare function foo<T>(v: T): {
+    a: <T_1>(a: T_1) => T_1;
+    b: () => T;
+    c: <T_1>(v: T_1) => {
+        a: <T_2>(a: T_2) => T_2;
+        b: () => T_1;
+    };
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected returned local function declarations to inline as object member function types: {output}"
+    );
+}
+
+#[test]
+fn test_returned_object_literal_local_function_overloads_preserve_signatures() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function foo() {
+    function a(x: string): string;
+    function a(x: number): number;
+    function a(x: string | number) { return x; }
+
+    return { a };
+}
+"#,
+    );
+
+    let expected = r#"declare function foo(): {
+    a: {
+        (x: string): string;
+        (x: number): number;
+    };
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected returned overloaded local function declarations to preserve every overload signature: {output}"
+    );
+}
+
+#[test]
 fn test_destructured_binding_comments_are_preserved_before_flattened_name() {
     let output = emit_dts(
         r#"
