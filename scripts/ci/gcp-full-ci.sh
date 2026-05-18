@@ -332,6 +332,21 @@ ensure_host_tools() {
   nproc
 }
 
+ensure_gcs_auth() {
+  # Set GOOGLE_APPLICATION_CREDENTIALS from SCCACHE_GCS_KEY_JSON when the
+  # caller hasn't gone through setup_sccache (e.g. conformance shards that
+  # skip Rust compilation).  gsutil respects GOOGLE_APPLICATION_CREDENTIALS,
+  # so without this the upload/download falls back to the Cloud Run metadata
+  # server, which is intermittently unavailable on self-hosted runners.
+  if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" && -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]]; then
+    local key_file="/tmp/sccache-gcs-key.json"
+    printf '%s' "$SCCACHE_GCS_KEY_JSON" > "$key_file"
+    chmod 600 "$key_file"
+    export GOOGLE_APPLICATION_CREDENTIALS="$key_file"
+    echo "gcs-auth: using service account key from SCCACHE_GCS_KEY_JSON"
+  fi
+}
+
 setup_sccache() {
   if command -v sccache >/dev/null 2>&1; then
     echo "sccache $(sccache --version 2>&1 | head -1) already available"
@@ -1140,10 +1155,19 @@ run_conformance() {
     local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
     local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
     if [[ -n "$bucket" && "$run_key" != "unknown" ]] && command -v gsutil >/dev/null 2>&1; then
-      gsutil -q cp "$METRICS_DIR/conformance.json" \
-        "${bucket%/}/conformance-runs/${run_key}/shard-${shard_index}.json" 2>/dev/null \
-        && echo "Uploaded shard result: shard-${shard_index}.json" \
-        || echo "warning: failed to upload shard result (non-fatal)" >&2
+      ensure_gcs_auth
+      local up_attempt up_rc=1
+      for up_attempt in 1 2 3; do
+        if gsutil -q cp "$METRICS_DIR/conformance.json" \
+            "${bucket%/}/conformance-runs/${run_key}/shard-${shard_index}.json" 2>/dev/null; then
+          up_rc=0
+          echo "Uploaded shard result: shard-${shard_index}.json (attempt ${up_attempt})"
+          break
+        fi
+        echo "warning: upload attempt ${up_attempt}/3 failed for shard-${shard_index}.json" >&2
+        [[ "$up_attempt" -lt 3 ]] && sleep "$((up_attempt * 5))"
+      done
+      [[ "$up_rc" -ne 0 ]] && echo "warning: failed to upload shard result after 3 attempts (non-fatal)" >&2
 
       if [[ -f "$timings_file" ]]; then
         gsutil -q cp "$timings_file" \
@@ -1184,23 +1208,62 @@ run_conformance() {
 
 run_conformance_aggregate() {
   ci_section "Conformance aggregate"
-  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-  local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
   local expected_shards="${_TSZ_CI_CONFORMANCE_SHARD_COUNT:-${TSZ_CI_CONFORMANCE_SHARDS:-32}}"
-
-  if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
-    echo "error: cannot aggregate — no bucket or run key available" >&2
-    return 1
-  fi
-
-  local prefix="${bucket%/}/conformance-runs/${run_key}"
   local tmp_dir
   tmp_dir="$(mktemp -d)"
 
-  echo "Downloading shard results from ${prefix}/shard-*.json ..."
-  if ! gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
-    echo "error: failed to download shard results from GCS" >&2
-    return 1
+  # Prefer GitHub Actions artifacts (downloaded by the workflow's download-artifact step)
+  # over GCS, which requires SA key permissions that may not be available.
+  local artifacts_dir=".conformance-shards"
+  local using_artifacts=0
+  if [[ -d "$artifacts_dir" ]]; then
+    # upload-artifact@v4 preserves the full workspace-relative path inside the artifact.
+    # The file is at .ci-metrics/conformance.json in the workspace, so after download it
+    # lands at conformance-shard-N/.ci-metrics/conformance.json (not conformance-shard-N/conformance.json).
+    # Use find with maxdepth to locate the file regardless of the subdirectory depth.
+    local found=0
+    for shard_dir in "$artifacts_dir"/conformance-shard-*/; do
+      [[ -d "$shard_dir" ]] || continue
+      local json
+      json="$(find "$shard_dir" -name "conformance.json" -maxdepth 4 2>/dev/null | head -1)"
+      [[ -f "$json" ]] || continue
+      local shard_name
+      shard_name="$(basename "$shard_dir")"
+      cp "$json" "$tmp_dir/shard-${shard_name#conformance-shard-}.json"
+      found=$(( found + 1 ))
+    done
+    if [[ "$found" -gt 0 ]]; then
+      echo "Using ${found} GitHub Actions artifact shard results from ${artifacts_dir}/"
+      using_artifacts=1
+    else
+      echo "warning: ${artifacts_dir}/ exists but no conformance.json files found; falling back to GCS" >&2
+      ls -la "$artifacts_dir"/ 2>/dev/null || true
+    fi
+  fi
+
+  if [[ "$using_artifacts" -eq 0 ]]; then
+    local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+    local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+    if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
+      echo "error: cannot aggregate — no artifact dir and no GCS bucket/run key available" >&2
+      return 1
+    fi
+    local prefix="${bucket%/}/conformance-runs/${run_key}"
+    ensure_gcs_auth
+    echo "Downloading shard results from ${prefix}/shard-*.json ..."
+    local dl_attempt dl_rc=1
+    for dl_attempt in 1 2 3; do
+      if gsutil -q cp "${prefix}/shard-*.json" "$tmp_dir/" 2>/dev/null; then
+        dl_rc=0
+        break
+      fi
+      echo "warning: GCS download attempt ${dl_attempt}/3 failed" >&2
+      [[ "$dl_attempt" -lt 3 ]] && sleep "$((dl_attempt * 5))"
+    done
+    if [[ "$dl_rc" -ne 0 ]]; then
+      echo "error: failed to download shard results from GCS after 3 attempts" >&2
+      return 1
+    fi
   fi
 
   local total_passed=0 total_tests=0 shard_count=0
