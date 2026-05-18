@@ -469,6 +469,21 @@ STRUCT_FIELD_COUNT_CHECKS = [
     ),
 ]
 
+# Pin the size of the solver's full database capability trait while #8205
+# splits it into narrower storage/config/provenance traits.  The live count is
+# tolerated as baseline debt, but new methods must either land on a narrower
+# trait or deliberately bump this cap with a roadmap/issue explanation.
+#
+# Each entry: (description, file_path, trait_name, max_methods).
+TRAIT_METHOD_COUNT_CHECKS = [
+    (
+        "Solver boundary: TypeDatabase method count (#8205)",
+        ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
+        "TypeDatabase",
+        97,
+    ),
+]
+
 VALID_CHECKER_CONTEXT_LIFETIMES = {
     "ProgramStable",
     "WorkerReusable",
@@ -541,6 +556,28 @@ SOLVER_IMPORT_COUNT_CHECKS = [
             "crates/tsz-checker/",
         ),
         36,
+    ),
+]
+
+# Pin the count of flat root-level solver computation API references outside
+# the approved checker query-boundary layer. Existing references are
+# transitional compatibility debt from `tsz_solver::*` root re-exports; new
+# references should go through a named solver facade, a checker
+# `query_boundaries` helper, or intentionally bump this cap.
+#
+# Each entry:
+#   (description, search_roots, exclude_path_prefixes, max_references).
+ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
+    (
+        "Solver API boundary: flat root computation imports outside query boundaries (#8204)",
+        [
+            ROOT / "crates" / "tsz-checker" / "src",
+            ROOT / "crates" / "tsz-emitter" / "src",
+            ROOT / "crates" / "tsz-lsp" / "src",
+            ROOT / "crates" / "tsz-cli" / "src",
+        ],
+        ("crates/tsz-checker/src/query_boundaries/",),
+        97,
     ),
 ]
 
@@ -880,6 +917,61 @@ _SOLVER_IMPORT_PATTERN = re.compile(
     r"\buse\s+tsz_solver(?:::|\s*;|\s+as\b)|\bextern\s+crate\s+tsz_solver\b"
 )
 
+ROOT_SOLVER_COMPUTATION_API_SYMBOLS = (
+    "AnyPropagationMode",
+    "AnyPropagationRules",
+    "are_types_structurally_identical",
+    "AssignabilityChecker",
+    "BinaryOpEvaluator",
+    "BinaryOpResult",
+    "CallEvaluator",
+    "CallResult",
+    "CompatChecker",
+    "ContextualTypeContext",
+    "evaluate_type",
+    "get_contextual_signature",
+    "get_contextual_signature_cached",
+    "get_contextual_signature_cached_with_compat_checker",
+    "get_contextual_signature_for_arity",
+    "get_contextual_signature_for_arity_cached",
+    "get_contextual_signature_for_arity_cached_with_compat_checker",
+    "get_contextual_signature_for_arity_with_compat_checker",
+    "get_contextual_signature_with_compat_checker",
+    "infer_generic_function",
+    "instantiate_function_with_type_args",
+    "instantiate_generic",
+    "instantiate_type",
+    "instantiate_type_cached",
+    "instantiate_type_params_to_constraints",
+    "instantiate_type_preserving",
+    "instantiate_type_preserving_cached",
+    "instantiate_type_preserving_meta",
+    "instantiate_type_preserving_meta_cached",
+    "instantiate_type_with_depth_status",
+    "instantiate_type_with_infer",
+    "instantiate_type_with_infer_cached",
+    "is_subtype_of",
+    "rest_argument_element_type",
+    "SubtypeChecker",
+    "SubtypeResult",
+    "substitute_this_type",
+    "substitute_this_type_at_return_position",
+    "substitute_this_type_cached",
+    "TypeEnvironment",
+    "TypeInstantiator",
+    "TypeResolver",
+    "TypeSubstitution",
+)
+
+_ROOT_SOLVER_COMPUTATION_IMPORT_PATTERN = re.compile(
+    r"\btsz_solver::(?:"
+    + "|".join(re.escape(symbol) for symbol in ROOT_SOLVER_COMPUTATION_API_SYMBOLS)
+    + r")\b"
+    + r"|\buse\s+tsz_solver::\{[^\n}]*\b(?:"
+    + "|".join(re.escape(symbol) for symbol in ROOT_SOLVER_COMPUTATION_API_SYMBOLS)
+    + r")\b"
+)
+
 # Architecture health metric 5: snapshot-rollback call site count.
 #
 # Matches CheckerContext rollback methods, snapshot restorers, and
@@ -963,6 +1055,63 @@ def scan_solver_import_count(
             f"{len(importing_files)} (cap {max_imports}; bump cap intentionally "
             f"and update ROADMAP.md, or route the consumer through the compiler "
             f"service shell or `tsz_checker::query_boundaries` — workstream 3)"
+        )
+        return hits
+    return []
+
+
+def scan_root_solver_computation_import_count(
+    search_roots: list[pathlib.Path],
+    exclude_path_prefixes: tuple[str, ...],
+    max_references: int,
+) -> list[str]:
+    """Count flat `tsz_solver` computation API references in production code.
+
+    This ratchets #8204's compatibility debt: the solver crate still exposes
+    computation symbols from its root for legacy callers, but new production
+    code should route through named facades or the checker query-boundary
+    layer. Test files are excluded, and `exclude_path_prefixes` marks approved
+    boundary modules such as `crates/tsz-checker/src/query_boundaries/`.
+    """
+    matching_lines: list[tuple[str, int]] = []
+    for base in search_roots:
+        if not base.exists():
+            continue
+        for path in base.rglob("*.rs"):
+            try:
+                rel_to_root = path.relative_to(ROOT).as_posix()
+            except ValueError:
+                rel_to_root = path.relative_to(base).as_posix()
+            parts = set(rel_to_root.split("/"))
+            if EXCLUDE_DIRS.intersection(parts):
+                continue
+            if "tests" in parts or "benches" in parts:
+                continue
+            if is_test_file(rel_to_root):
+                continue
+            if any(rel_to_root.startswith(prefix) for prefix in exclude_path_prefixes):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                if line.lstrip().startswith("//"):
+                    continue
+                if _ROOT_SOLVER_COMPUTATION_IMPORT_PATTERN.search(line):
+                    matching_lines.append((rel_to_root, line_no))
+
+    matching_lines.sort()
+    if len(matching_lines) > max_references:
+        hits = [
+            f"flat solver computation API reference #{i + 1}: {rel}:{line_no}"
+            for i, (rel, line_no) in enumerate(matching_lines)
+        ]
+        hits.append(
+            f"total flat root solver computation API references outside "
+            f"query boundaries: {len(matching_lines)} (cap {max_references}; "
+            f"bump cap intentionally, or route the new site through a named "
+            f"solver facade / checker query-boundary helper — #8204)"
         )
         return hits
     return []
@@ -1611,6 +1760,35 @@ def scan_struct_field_count(
     return []
 
 
+def scan_trait_method_count(
+    path: pathlib.Path, trait_name: str, max_methods: int
+) -> list[str]:
+    """Count method declarations in `pub trait <trait_name>`.
+
+    This is a cheap architecture metric for broad capability traits.  It counts
+    every `fn name...` declaration in the trait body, including default-method
+    bodies, because both expand the capability surface exposed to algorithms.
+    Comments are stripped first so doc examples or commented-out signatures do
+    not affect the ratchet.
+    """
+    if not path.exists():
+        return []
+    rel = relative_path(path)
+    body = find_trait_body(path, trait_name)
+    if body is None:
+        return [f"{rel}:0 trait {trait_name!r} not found"]
+
+    method_count = len(extract_trait_method_names_from_body(body))
+
+    if method_count > max_methods:
+        return [
+            f"{rel}:trait {trait_name} has {method_count} methods "
+            f"(cap {max_methods}; split onto a narrower trait or bump cap "
+            f"intentionally and update #8205)"
+        ]
+    return []
+
+
 def relative_path(path: pathlib.Path) -> str:
     try:
         return path.relative_to(ROOT).as_posix()
@@ -1644,8 +1822,39 @@ def find_struct_body(path: pathlib.Path, struct_name: str):
     return stripped[body_start:body_end]
 
 
+def find_trait_body(path: pathlib.Path, trait_name: str):
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    stripped = strip_rust_comments(text)
+    header_pattern = re.compile(
+        rf"\bpub\s+trait\s+{re.escape(trait_name)}\b[^{{]*\{{",
+        re.MULTILINE,
+    )
+    match = header_pattern.search(stripped)
+    if match is None:
+        return None
+
+    body_start = match.end()
+    depth = 1
+    body_end = body_start
+    for i in range(body_start, len(stripped)):
+        ch = stripped[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                body_end = i
+                break
+    return stripped[body_start:body_end]
+
+
 STRUCT_FIELD_PATTERN = re.compile(
     r"^\s*(?:pub(?:\s*\([^)]*\))?\s+)?(?P<name>[a-z_][a-zA-Z0-9_]*)\s*:"
+)
+
+TRAIT_METHOD_PATTERN = re.compile(
+    r"^\s*(?:async\s+|unsafe\s+|const\s+)?fn\s+"
+    r"(?P<name>[a-zA-Z_][a-zA-Z0-9_]*)\s*[<(]"
 )
 
 
@@ -1653,6 +1862,15 @@ def extract_struct_field_names_from_body(body: str) -> list[str]:
     names = []
     for line in body.splitlines():
         match = STRUCT_FIELD_PATTERN.match(line)
+        if match:
+            names.append(match.group("name"))
+    return names
+
+
+def extract_trait_method_names_from_body(body: str) -> list[str]:
+    names = []
+    for line in body.splitlines():
+        match = TRAIT_METHOD_PATTERN.match(line)
         if match:
             names.append(match.group("name"))
     return names
@@ -2078,6 +2296,12 @@ def main() -> int:
         if hits:
             failures.append((name, hits))
 
+    for name, path, trait_name, max_methods in TRAIT_METHOD_COUNT_CHECKS:
+        hits = scan_trait_method_count(path, trait_name, max_methods)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
     for (
         name,
         struct_path,
@@ -2105,6 +2329,19 @@ def main() -> int:
     ) in SOLVER_IMPORT_COUNT_CHECKS:
         hits = scan_solver_import_count(
             search_roots, exclude_path_prefixes, max_imports
+        )
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for (
+        name,
+        search_roots,
+        exclude_path_prefixes,
+        max_references,
+    ) in ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS:
+        hits = scan_root_solver_computation_import_count(
+            search_roots, exclude_path_prefixes, max_references
         )
         total_hits += len(hits)
         if hits:

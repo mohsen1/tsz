@@ -33,6 +33,7 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
         "dom.d.ts",
         "dom.generated.d.ts",
         "dom.iterable.d.ts",
+        "esnext.iterator.d.ts",
         "esnext.d.ts",
     ])
 }
@@ -5414,6 +5415,67 @@ const r1: number = map.values().next().value;
             .any(|message| message.contains("BuiltinIteratorReturn")),
         "BuiltinIteratorReturn should not leak into strict diagnostics, got: {messages:?}"
     );
+}
+
+#[test]
+fn test_builtin_iterator_helpers_keep_contextual_callback_types() {
+    let source = r#"
+const iterator = Iterator.from([0, 1, 2]);
+
+const mapped: IteratorObject<string> =
+    iterator.map((value, index) => value === index ? "same" : String(value));
+const filtered: IteratorObject<number> =
+    iterator.filter((value, index) => value > index);
+
+function isZero(value: number): value is 0 {
+    return value === 0;
+}
+const zero: IteratorObject<0> = iterator.filter(isZero);
+
+function* gen() {
+    yield 0;
+}
+const mappedGen: IteratorObject<string> =
+    gen().map(value => value === 0 ? "zero" : "other");
+const mappedValues: IteratorObject<string> =
+    [0, 1, 2].values().map(value => value === 0 ? "zero" : "other");
+
+class GoodIterator extends Iterator<number> {
+    next() {
+        return { done: false, value: 0 } as const;
+    }
+}
+
+mapped;
+filtered;
+zero;
+mappedGen;
+mappedValues;
+new GoodIterator();
+"#;
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_builtin_iterator_return: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    for code in [
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+        diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+    ] {
+        assert_eq!(
+            diagnostic_count(&diagnostics, code),
+            0,
+            "builtin iterator helpers should not emit TS{code}, got: {diagnostics:?}"
+        );
+    }
 }
 
 /// When `strictBuiltinIteratorReturn` is false, `BuiltinIteratorReturn` resolves to `any`.

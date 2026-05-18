@@ -1008,23 +1008,94 @@ impl<'a> Printer<'a> {
         if let Some(r) = self.lookup_scoped_const_enum_values_direct(enum_path, access_pos) {
             return Some(r);
         }
+        if let Some(current_namespace) = self.current_namespace_source_path.as_deref() {
+            let qualified = format!("{current_namespace}.{enum_path}");
+            if let Some(r) = self.lookup_scoped_const_enum_values_direct(&qualified, access_pos) {
+                return Some(r);
+            }
+        }
+        if let Some(current_namespace) = self.current_namespace_source_path.as_deref()
+            && let Some(target) = self
+                .const_enum_import_aliases
+                .get(&format!("{current_namespace}.{enum_path}"))
+            && let Some(r) =
+                self.lookup_scoped_const_enum_alias_target_values(target, None, access_pos)
+        {
+            return Some(r);
+        }
+        if let Some(current_namespace) = self.current_namespace_name.as_deref()
+            && let Some(local_path) = enum_path.strip_prefix(&format!("{current_namespace}."))
+        {
+            if let Some(source_namespace) = self.current_namespace_source_path.as_deref()
+                && let Some(target) = self
+                    .const_enum_import_aliases
+                    .get(&format!("{source_namespace}.{local_path}"))
+                && let Some(r) =
+                    self.lookup_scoped_const_enum_alias_target_values(target, None, access_pos)
+            {
+                return Some(r);
+            }
+            if let Some(target) = self.const_enum_import_aliases.get(local_path)
+                && let Some(r) =
+                    self.lookup_scoped_const_enum_alias_target_values(target, None, access_pos)
+            {
+                return Some(r);
+            }
+        }
         if let Some(dot_pos) = enum_path.find('.') {
             let first = &enum_path[..dot_pos];
             let rest = &enum_path[dot_pos + 1..];
+            if let Some(current_namespace) = self.current_namespace_source_path.as_deref()
+                && let Some(target) = self
+                    .const_enum_import_aliases
+                    .get(&format!("{current_namespace}.{first}"))
+                && let Some(r) = self.lookup_scoped_const_enum_alias_target_values(
+                    target,
+                    Some(rest),
+                    access_pos,
+                )
+            {
+                return Some(r);
+            }
             if let Some(target) = self.const_enum_import_aliases.get(first) {
-                let resolved = format!("{target}.{rest}");
-                if let Some(r) = self.lookup_scoped_const_enum_values_direct(&resolved, access_pos)
-                {
+                if let Some(r) = self.lookup_scoped_const_enum_alias_target_values(
+                    target,
+                    Some(rest),
+                    access_pos,
+                ) {
                     return Some(r);
                 }
             }
         } else if let Some(target) = self.const_enum_import_aliases.get(enum_path)
-            && let Some(r) = self.lookup_scoped_const_enum_values_direct(target, access_pos)
+            && let Some(r) =
+                self.lookup_scoped_const_enum_alias_target_values(target, None, access_pos)
         {
             return Some(r);
         }
         None
     }
+
+    fn lookup_scoped_const_enum_alias_target_values(
+        &self,
+        target: &str,
+        rest: Option<&str>,
+        access_pos: u32,
+    ) -> Option<&rustc_hash::FxHashMap<String, crate::enums::evaluator::EnumValue>> {
+        let resolved = rest.map_or_else(|| target.to_string(), |rest| format!("{target}.{rest}"));
+        if let Some(r) = self.lookup_scoped_const_enum_values_direct(&resolved, access_pos) {
+            return Some(r);
+        }
+
+        if let Some(current_namespace) = self.current_namespace_source_path.as_deref() {
+            let qualified = format!("{current_namespace}.{resolved}");
+            if let Some(r) = self.lookup_scoped_const_enum_values_direct(&qualified, access_pos) {
+                return Some(r);
+            }
+        }
+
+        None
+    }
+
     fn lookup_scoped_const_enum_values_direct(
         &self,
         enum_path: &str,
@@ -1381,6 +1452,69 @@ mod tests {
         assert!(
             output.contains("(_a = getObj())"),
             "Optional chain lowering must use temp in assignment.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn invalid_new_optional_chain_lowers_as_optional_access_on_new_base() {
+        let source = "class A { b(x?: number) {} }\nnew A?.b();\nnew A?.b(1);\nnew A?.b.c;\nnew A?.[\"b\"].c;\nnew A()?.b();\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(_a = new A) === null || _a === void 0 ? void 0 : _a.b();"),
+            "Invalid `new A?.b()` should lower as optional access on `new A`.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_b = new A) === null || _b === void 0 ? void 0 : _b.b(1);"),
+            "Invalid `new A?.b(1)` should keep call arguments on the optional tail.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_c = new A) === null || _c === void 0 ? void 0 : _c.b.c;"),
+            "Invalid `new A?.b.c` should keep the non-optional property tail in the branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_d = new A) === null || _d === void 0 ? void 0 : _d[\"b\"].c;"),
+            "Invalid `new A?.[\"b\"].c` should keep element and property tails in the branch.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_e = new A()) === null || _e === void 0 ? void 0 : _e.b();"),
+            "Valid `new A()?.b()` should keep the constructed base expression.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn invalid_new_optional_chain_preserves_parent_context_and_callee_grouping() {
+        let source =
+            "declare function makeCtor(): any;\nnew A?.b() + 1;\nnew (makeCtor() as any)?.b();\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("((_a = new A) === null || _a === void 0 ? void 0 : _a.b()) + 1;"),
+            "Invalid-new optional chain should be grouped as a binary operand.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_b = new (makeCtor())) === null || _b === void 0 ? void 0 : _b.b();"),
+            "Invalid-new optional chain should preserve call grouping in the constructed base.\nOutput:\n{output}"
         );
     }
 

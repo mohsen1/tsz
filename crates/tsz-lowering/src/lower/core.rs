@@ -17,8 +17,8 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::def::DefId;
 use tsz_solver::types::{
-    CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectShape, ParamInfo,
-    PropertyInfo, TupleElement, TypeId, TypeParamInfo, TypePredicate, Visibility,
+    CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
+    ParamInfo, PropertyInfo, TupleElement, TypeId, TypeParamInfo, TypePredicate, Visibility,
 };
 use tsz_solver::{QueryDatabase, TypeDatabase};
 
@@ -114,6 +114,13 @@ pub(super) struct InterfaceParts {
     /// in `finish_interface_parts`, where the type interner is available.
     pub(super) extra_string_indices: Vec<IndexSignature>,
     pub(super) number_index: Option<IndexSignature>,
+    /// True when at least one member has a computed property name that could not
+    /// be resolved to a literal string/symbol key (e.g. `[sym]` where `sym` has
+    /// type `symbol` rather than a unique-symbol type).  The resulting object
+    /// type must carry `ObjectFlags::HAS_LATE_BOUND_MEMBERS` so that indexed
+    /// access via a `symbol`-typed key correctly returns `any` instead of
+    /// `undefined`.
+    pub(super) has_late_bound_members: bool,
     /// Base `declaration_order` for the current declaration pass.
     current_pass_base: u32,
     /// Counter within the current declaration pass.
@@ -154,6 +161,7 @@ impl InterfaceParts {
             string_index: None,
             extra_string_indices: Vec::new(),
             number_index: None,
+            has_late_bound_members: false,
             current_pass_base: 0,
             pass_local_counter: 0,
             declaration_orders: rustc_hash::FxHashMap::default(),
@@ -1555,6 +1563,7 @@ impl<'a> TypeLowering<'a> {
             let mut construct_signatures = Vec::new();
             let mut string_index = None;
             let mut number_index = None;
+            let mut has_late_bound_members = false;
 
             for &idx in &data.members.nodes {
                 let Some(member) = self.arena.get(idx) else {
@@ -1594,11 +1603,15 @@ impl<'a> TypeLowering<'a> {
                                     is_symbol_named,
                                     single_quoted_name,
                                 });
+                            } else if self.is_unresolved_computed_property_name(sig.name) {
+                                has_late_bound_members = true;
                             }
                         }
                         _ => {
                             if let Some(prop) = self.lower_type_element(idx) {
                                 properties.push(prop);
+                            } else if self.is_unresolved_computed_property_name(sig.name) {
+                                has_late_bound_members = true;
                             }
                         }
                     }
@@ -1678,6 +1691,11 @@ impl<'a> TypeLowering<'a> {
                             });
                         }
                     }
+                } else if member.is_accessor()
+                    && let Some(accessor) = self.arena.get_accessor(member)
+                    && self.is_unresolved_computed_property_name(accessor.name)
+                {
+                    has_late_bound_members = true;
                 }
             }
 
@@ -1693,6 +1711,12 @@ impl<'a> TypeLowering<'a> {
                 });
             }
 
+            let flags = if has_late_bound_members {
+                ObjectFlags::HAS_LATE_BOUND_MEMBERS
+            } else {
+                ObjectFlags::empty()
+            };
+
             if string_index.is_some() || number_index.is_some() {
                 if !self.index_signature_properties_compatible(
                     &properties,
@@ -1705,11 +1729,12 @@ impl<'a> TypeLowering<'a> {
                     properties,
                     string_index,
                     number_index,
+                    flags,
                     ..ObjectShape::default()
                 });
             }
 
-            self.interner.object(properties)
+            self.interner.object_with_flags(properties, flags)
         } else {
             self.interner.object(vec![])
         }
@@ -1988,11 +2013,15 @@ impl<'a> TypeLowering<'a> {
                                 is_string_named,
                                 single_quoted_name,
                             );
+                        } else if self.is_unresolved_computed_property_name(sig.name) {
+                            parts.has_late_bound_members = true;
                         }
                     }
                     _ => {
                         if let Some(prop) = self.lower_type_element(idx) {
                             parts.merge_property(prop);
+                        } else if self.is_unresolved_computed_property_name(sig.name) {
+                            parts.has_late_bound_members = true;
                         }
                     }
                 }
@@ -2007,8 +2036,7 @@ impl<'a> TypeLowering<'a> {
             }
 
             // Handle accessor declarations (get/set) in interfaces and type literals
-            if (member.kind == syntax_kind_ext::GET_ACCESSOR
-                || member.kind == syntax_kind_ext::SET_ACCESSOR)
+            if member.is_accessor()
                 && let Some(accessor) = self.arena.get_accessor(member)
                 && let Some(name) = self.lower_signature_name(accessor.name)
             {
@@ -2087,6 +2115,11 @@ impl<'a> TypeLowering<'a> {
                         }
                     }
                 }
+            } else if member.is_accessor()
+                && let Some(accessor) = self.arena.get_accessor(member)
+                && self.is_unresolved_computed_property_name(accessor.name)
+            {
+                parts.has_late_bound_members = true;
             }
         }
     }
@@ -2232,6 +2265,12 @@ impl<'a> TypeLowering<'a> {
             });
         }
 
+        let flags = if parts.has_late_bound_members {
+            ObjectFlags::HAS_LATE_BOUND_MEMBERS
+        } else {
+            ObjectFlags::empty()
+        };
+
         if parts.string_index.is_some() || parts.number_index.is_some() {
             if !self.index_signature_properties_compatible(
                 &properties,
@@ -2245,12 +2284,12 @@ impl<'a> TypeLowering<'a> {
                 string_index: parts.string_index,
                 number_index: parts.number_index,
                 symbol: symbol_id,
-                ..ObjectShape::default()
+                flags,
             });
         }
 
         self.interner
-            .object_with_flags_and_symbol(properties, Default::default(), symbol_id)
+            .object_with_flags_and_symbol(properties, flags, symbol_id)
     }
 
     fn lower_call_signature(&self, sig: &SignatureData) -> CallSignature {
@@ -2391,6 +2430,17 @@ impl<'a> TypeLowering<'a> {
             }
         }
         None
+    }
+
+    /// Returns true when `name_idx` refers to a `COMPUTED_PROPERTY_NAME` node whose
+    /// expression could not be resolved to a static string/symbol key by
+    /// `lower_signature_name`. Callers use this after `lower_signature_name`
+    /// returned `None` to distinguish "genuinely unresolvable computed name"
+    /// (which implies a late-bound member) from "missing or malformed node".
+    fn is_unresolved_computed_property_name(&self, name_idx: NodeIndex) -> bool {
+        self.arena
+            .get(name_idx)
+            .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
     }
 
     fn lower_signature_name_is_symbol_named(&self, node_idx: NodeIndex) -> bool {

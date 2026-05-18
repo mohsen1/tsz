@@ -924,6 +924,51 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
     }
 
     #[test]
+    fn legacy_decorated_es2015_same_name_block_class_uses_distinct_alias() {
+        let source = "function decorator() { return (target: any) => {}; }\n@decorator()\nclass Foo {\n    static func(): Foo {\n        return new Foo();\n    }\n}\ntry {\n    @decorator()\n    class Foo {\n        static func(): Foo {\n            return new Foo();\n        }\n    }\n    Foo.func();\n}\ncatch (e) {}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                emit_decorator_metadata: true,
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert_eq!(
+            output.matches("var Foo_1, Foo_2;").count(),
+            1,
+            "Same-named decorated classes should reserve distinct hoisted aliases.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("let Foo = Foo_1 = class Foo"),
+            "Outer decorated class should use the first alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return new Foo_1();"),
+            "Outer class body should reference the first alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("try {\n    let Foo = Foo_2 = class Foo"),
+            "Block-scoped decorated class should keep one block indent and use the second alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return new Foo_2();"),
+            "Block-scoped class body should reference the second alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("Foo = Foo_2 = __decorate(["),
+            "Block-scoped decorator assignment should update the second alias.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn legacy_decorated_es5_class_self_reference_uses_iife_alias() {
         let source = "function decorator() { return (target: any) => {}; }\n@decorator()\nclass Foo {\n    static func(): Foo {\n        return new Foo();\n    }\n}\n";
 

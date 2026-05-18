@@ -1972,7 +1972,14 @@ impl<'a> Printer<'a> {
         let mut field_init_comment_idx = 0usize;
         let prev_scoped_class_expression_self_alias =
             self.scoped_class_expression_self_alias.take();
-        if let Some(temp) = class_expr_temp.as_ref() {
+        if let Some(alias) = assignment_alias {
+            if class_name_is_real && !class_name.is_empty() && class_name != alias {
+                self.scoped_class_expression_self_alias = Some((
+                    Arc::<str>::from(class_name.as_str()),
+                    Arc::<str>::from(alias),
+                ));
+            }
+        } else if let Some(temp) = class_expr_temp.as_ref() {
             if class_name_is_real && !class_name.is_empty() && class_name != *temp {
                 self.scoped_class_expression_self_alias = Some((
                     Arc::<str>::from(class_name.as_str()),

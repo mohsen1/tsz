@@ -675,6 +675,51 @@ fn system_exported_legacy_decorated_class_aliases_static_self_references() {
 }
 
 #[test]
+fn system_same_name_legacy_decorated_classes_use_distinct_self_aliases() {
+    let source = "declare var Something: any;\n@Something({ v: () => Foo })\nexport class Foo {\n    static prop0: string;\n    static prop1 = Foo.prop0;\n}\ntry {\n    @Something({ v: () => Foo })\n    class Foo {\n        static prop0: string;\n        static prop1 = Foo.prop0;\n    }\n    Foo.prop1;\n}\ncatch (e) {}\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            legacy_decorators: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var Foo_1, Foo_2, Foo;"),
+        "System wrapper should hoist distinct decorated class self-reference aliases before the class binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Foo = Foo_1 = class Foo"),
+        "Exported decorated class should use the first alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Foo.prop1 = Foo_1.prop0;"),
+        "Exported decorated class static self-reference should use the first alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("let Foo = Foo_2 = class Foo"),
+        "Block-scoped same-name decorated class should use the second alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Foo.prop1 = Foo_2.prop0;"),
+        "Block-scoped decorated class static self-reference should use the second alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Foo = Foo_2 = __decorate(["),
+        "Block-scoped decorator assignment should update the second alias.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_nested_legacy_decorated_class_emits_decorate_helper() {
     let source = "declare var dec: any;\nexport function make() {\n    @dec\n    class Nested {}\n    return Nested;\n}\n";
 

@@ -1178,6 +1178,10 @@ name = "symbol_index_signature_tests"
 path = "tests/symbol_index_signature_tests.rs"
 
 [[test]]
+name = "non_unique_symbol_late_bound_member_tests"
+path = "tests/non_unique_symbol_late_bound_member_tests.rs"
+
+[[test]]
 name = "ts2855_static_super_field_tests"
 path = "tests/ts2855_static_super_field_tests.rs"
 
@@ -1340,6 +1344,10 @@ path = "tests/index_signature_argument_assignability_tests.rs"
 [[test]]
 name = "operator_literal_annotation_display_tests"
 path = "tests/operator_literal_annotation_display_tests.rs"
+
+[[test]]
+name = "public_package_unique_symbol_emit_tests"
+path = "tests/public_package_unique_symbol_emit_tests.rs"
 
 [lints]
 workspace = true

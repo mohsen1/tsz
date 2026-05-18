@@ -108,12 +108,21 @@ impl<'a> IRPrinter<'a> {
         (export_name == name && identifier_name == name).then_some((&**name, members, &**namespace))
     }
 
-    /// Check if a node is a `return [opcode ...];` generator op return statement.
-    /// Used to decide whether to inline `case N: return [opcode];` on one line.
-    fn is_generator_return(node: &IRNode) -> bool {
+    /// Check if a generator switch case should stay on the `case N:` line.
+    fn is_generator_inline_case_statement(node: &IRNode) -> bool {
+        match node {
+            IRNode::ThrowStatement(expr) => Self::is_generator_inline_throw_expression(expr),
+            IRNode::ReturnStatement(Some(expr)) => {
+                matches!(expr.as_ref(), IRNode::GeneratorOp { .. })
+            }
+            _ => false,
+        }
+    }
+
+    const fn is_generator_inline_throw_expression(expr: &IRNode) -> bool {
         matches!(
-            node,
-            IRNode::ReturnStatement(Some(expr)) if matches!(expr.as_ref(), IRNode::GeneratorOp { .. })
+            expr,
+            IRNode::Identifier(_) | IRNode::CallExpr { .. } | IRNode::GeneratorSent
         )
     }
 
@@ -1699,10 +1708,11 @@ impl<'a> IRPrinter<'a> {
                         self.write("case ");
                         self.write(&case_item.label.to_string());
                         self.write(":");
-                        // tsc puts single-return-generator-op cases on one line:
+                        // tsc puts simple single-statement cases on one line:
                         //   case 0: return [4 /*yield*/, x];
+                        //   case 1: throw err;
                         if case_item.statements.len() == 1
-                            && Self::is_generator_return(&case_item.statements[0])
+                            && Self::is_generator_inline_case_statement(&case_item.statements[0])
                         {
                             self.write(" ");
                             self.emit_node(&case_item.statements[0]);

@@ -244,6 +244,11 @@ impl BlockScopeState {
         self.reserved_names.insert(name);
     }
 
+    /// Return whether a generated helper/temp name has already been reserved.
+    pub fn is_reserved_name(&self, name: &str) -> bool {
+        self.reserved_names.contains(name)
+    }
+
     /// Look up the emitted name for a variable reference
     pub fn get_emitted_name(&self, original_name: &str) -> Option<String> {
         // Search from innermost to outermost scope

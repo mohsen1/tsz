@@ -12,6 +12,9 @@
 //! 4. Different `any_propagation_mode` values must produce distinct keys.
 
 use super::*;
+use crate::caches::query_cache::{
+    assignability_cache_config_from_legacy_flags, subtype_cache_config_from_legacy_flags,
+};
 use crate::relations::relation_queries::RelationPolicy;
 use crate::relations::subtype::AnyPropagationMode;
 use crate::types::{
@@ -256,6 +259,52 @@ fn legacy_flag_constants_match_typed_bitflags() {
     assert_eq!(
         u32::from(RelationCacheKey::FLAG_NO_ERASE_GENERICS),
         RelationFlags::NO_ERASE_GENERICS.bits()
+    );
+}
+
+#[test]
+fn legacy_subtype_cache_bridge_routes_through_relation_policy() {
+    let flags =
+        RelationCacheKey::FLAG_STRICT_NULL_CHECKS | RelationCacheKey::FLAG_NO_ERASE_GENERICS;
+
+    let via_legacy_bridge = subtype_cache_config_from_legacy_flags(flags);
+    let via_policy = RelationPolicy::from_flags(flags).cache_config();
+
+    assert_eq!(via_legacy_bridge, via_policy);
+    assert!(
+        via_legacy_bridge
+            .flags
+            .contains(RelationFlags::ASSUME_RELATED_ON_CYCLE),
+        "legacy subtype cache bridge must preserve RelationPolicy's cycle default",
+    );
+    assert!(
+        via_legacy_bridge
+            .flags
+            .contains(RelationFlags::NO_ERASE_GENERICS),
+        "legacy subtype cache bridge must preserve explicit legacy bits",
+    );
+}
+
+#[test]
+fn legacy_assignability_cache_bridge_routes_through_relation_policy() {
+    let flags = RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES
+        | RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES;
+
+    let via_legacy_bridge = assignability_cache_config_from_legacy_flags(flags);
+    let via_policy = RelationPolicy::from_flags(flags).cache_config();
+
+    assert_eq!(via_legacy_bridge, via_policy);
+    assert!(
+        via_legacy_bridge
+            .flags
+            .contains(RelationFlags::ASSUME_RELATED_ON_CYCLE),
+        "legacy assignability cache bridge must preserve RelationPolicy's cycle default",
+    );
+    assert!(
+        !via_legacy_bridge
+            .flags
+            .contains(RelationFlags::STRICT_ANY_PROPAGATION),
+        "legacy assignability cache bridge must not infer strict-any from strict function types",
     );
 }
 

@@ -767,6 +767,7 @@ impl<'a> Printer<'a> {
             let candidate = format!("{base}_{suffix}");
             if !self.file_identifiers.contains(&candidate)
                 && !self.generated_temp_names.contains(&candidate)
+                && !self.ctx.block_scope_state.is_reserved_name(&candidate)
             {
                 self.generated_temp_names.insert(candidate.clone());
                 self.ctx.block_scope_state.reserve_name(candidate.clone());
@@ -1558,6 +1559,12 @@ impl<'a> Printer<'a> {
                             module_node.kind == SyntaxKind::StringLiteral as u16
                                 || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
                         });
+                if self
+                    .arena
+                    .has_modifier(&import_data.modifiers, SyntaxKind::ExportKeyword)
+                {
+                    return false;
+                }
                 if self.recovered_module_syntax_block_depth > 0 {
                     return !is_external;
                 }
@@ -1573,6 +1580,12 @@ impl<'a> Printer<'a> {
                     return false;
                 }
                 if is_es_module_output && is_external {
+                    return true;
+                }
+                if !is_external
+                    && self.in_namespace_iife
+                    && !self.import_decl_has_runtime_value(import_data)
+                {
                     return true;
                 }
                 if self.ctx.is_commonjs() && is_external {
