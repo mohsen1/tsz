@@ -394,22 +394,20 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                if self
-                    .module_augmentation_conflict_declarations_for_current_file(&export_name)
-                    .is_empty()
-                {
+                let conflict_decls =
+                    self.module_augmentation_conflict_declarations_for_current_file(&export_name);
+                if conflict_decls.is_empty() {
                     continue;
                 }
 
-                // Skip function declarations - they can merge across module augmentation.
-                // Check if any of the conflict declarations for this export name are functions.
-                let conflict_decls =
-                    self.module_augmentation_conflict_declarations_for_current_file(&export_name);
-                let has_function_merge =
-                    conflict_decls.iter().any(|(_decl_idx, flags, _, _, _)| {
-                        (*flags & tsz_binder::symbol_flags::FUNCTION) != 0
-                    });
-                if has_function_merge {
+                // Re-exports (`export { X as Y } from "M"`) are not local declarations — they
+                // forward M's export. When M already has a mergeable declaration (interface or
+                // function), the module augmentation merely extends it; no conflict exists.
+                let has_mergeable_decl = conflict_decls.iter().any(|(_, flags, _, _, _)| {
+                    (*flags & tsz_binder::symbol_flags::FUNCTION) != 0
+                        || (*flags & tsz_binder::symbol_flags::INTERFACE) != 0
+                });
+                if has_mergeable_decl {
                     continue;
                 }
 

@@ -258,6 +258,10 @@ name = "ts2300_tests"
 path = "tests/ts2300_tests.rs"
 
 [[test]]
+name = "ts2300_reexport_augmentation_tests"
+path = "tests/ts2300_reexport_augmentation_tests.rs"
+
+[[test]]
 name = "ts2304_tests"
 path = "tests/ts2304_tests.rs"
 
