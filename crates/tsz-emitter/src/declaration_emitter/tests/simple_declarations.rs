@@ -6706,6 +6706,25 @@ u.noError();
 }
 
 #[test]
+fn test_js_local_destructured_require_alias_without_exports_is_elided() {
+    let source = r#"
+const { apply } = require("./moduleExportAliasDuplicateAlias");
+const result = apply.toFixed();
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        !output.contains("declare const apply"),
+        "Expected local destructured require alias in a non-exporting JS module to be elided: {output}"
+    );
+    assert!(
+        !output.contains("declare const result"),
+        "Expected locals derived from the elided destructured require alias to be omitted: {output}"
+    );
+    assert_eq!("export {};", output.trim());
+}
+
+#[test]
 fn test_js_local_dynamic_require_alias_without_exports_is_preserved() {
     let source = r#"
 const moduleName = "untyped";
