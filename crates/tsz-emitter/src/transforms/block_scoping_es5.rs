@@ -151,6 +151,41 @@ impl BlockScopeState {
         emitted_name
     }
 
+    /// Register a class declaration lowered to ES5.
+    ///
+    /// Class declarations are block-scoped, but ES5 emits `var`. A class inside
+    /// a nested block therefore needs a synthetic binding even when no outer
+    /// declaration currently has the same name; otherwise the lowered `var`
+    /// would leak out of the block.
+    pub fn register_block_scoped_class(&mut self, original_name: &str) -> String {
+        if self.function_scope_marks.last().copied().unwrap_or(false) {
+            return self.register_variable(original_name);
+        }
+
+        let mut suffix = 1u32;
+        let emitted_name = loop {
+            let candidate = format!("{original_name}_{suffix}");
+            if !self.reserved_names.contains(&candidate)
+                && !self
+                    .scope_stack
+                    .iter()
+                    .any(|scope| scope.values().any(|v| v == &candidate))
+            {
+                break candidate;
+            }
+            suffix += 1;
+            if suffix > 1000 {
+                break format!("{original_name}_{suffix}");
+            }
+        };
+
+        if let Some(current_scope) = self.scope_stack.last_mut() {
+            current_scope.insert(original_name.to_string(), emitted_name.clone());
+        }
+        self.reserved_names.insert(emitted_name.clone());
+        emitted_name
+    }
+
     /// Register a function parameter in the current function scope.
     ///
     /// Parameters should occupy the function's lowered `var` scope so

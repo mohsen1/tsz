@@ -14,6 +14,11 @@
 use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
 use crate::def::{DefId, DefKind};
+use crate::diagnostics::display_provenance::{
+    self, AliasApplicationPriority, AliasApplicationProvenance,
+    FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
+};
+use crate::evaluation::request::EvaluationRequest;
 use crate::instantiation::instantiate::instantiate_generic;
 use crate::relations::subtype::{NoopResolver, TypeResolver};
 #[cfg(test)]
@@ -343,6 +348,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.guard.reset();
         self.def_depth.clear();
         self.real_instantiation_depth_count = 0;
+    }
+
+    /// Evaluate a normalized request, applying option-sensitive configuration
+    /// before consulting this evaluator's local cache.
+    pub fn evaluate_request(&mut self, request: EvaluationRequest) -> TypeId {
+        self.set_no_unchecked_indexed_access(request.no_unchecked_indexed_access());
+        self.evaluate(request.type_id())
     }
 
     // =========================================================================
@@ -1221,7 +1233,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             self.interner.lookup(display_origin),
                             Some(TypeData::Application(_))
                         )
-                        && self.interner.get_display_alias(result).is_some();
+                        && display_provenance::display_alias(self.interner, result).is_some();
                     if !skip_type_alias_repaint && !keep_existing_conditional_branch_alias {
                         if prefer_application_display_alias
                             || (self.expand_application_display_alias_args
@@ -1230,10 +1242,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     Some(TypeData::Application(_))
                                 ))
                         {
-                            self.interner
-                                .store_display_alias_preferring_application(result, display_origin);
+                            display_provenance::record_alias_application(
+                                self.interner,
+                                AliasApplicationProvenance {
+                                    evaluated: result,
+                                    application: display_origin,
+                                },
+                                AliasApplicationPriority::PreferApplication,
+                            );
                         } else {
-                            self.interner.store_display_alias(result, display_origin);
+                            display_provenance::record_alias_application(
+                                self.interner,
+                                AliasApplicationProvenance {
+                                    evaluated: result,
+                                    application: display_origin,
+                                },
+                                AliasApplicationPriority::PreserveExisting,
+                            );
                         }
                     }
 
@@ -1250,8 +1275,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             Some(crate::types::TypeData::Application(_))
                         )
                     {
-                        self.interner
-                            .store_display_alias(original_type_id, branch_app);
+                        display_provenance::record_alias_application(
+                            self.interner,
+                            AliasApplicationProvenance {
+                                evaluated: original_type_id,
+                                application: branch_app,
+                            },
+                            AliasApplicationPriority::PreserveExisting,
+                        );
                     }
                 }
             }
@@ -1325,8 +1356,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return;
         }
 
-        self.interner
-            .store_display_alias_preferring_application(instantiated, original_type_id);
+        display_provenance::record_alias_application(
+            self.interner,
+            AliasApplicationProvenance {
+                evaluated: instantiated,
+                application: original_type_id,
+            },
+            AliasApplicationPriority::PreferApplication,
+        );
     }
 
     fn is_recursive_type_alias_application(&self, type_id: TypeId) -> bool {
@@ -1443,8 +1480,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if !Self::is_structural_display_alias_result(self.interner, evaluated) {
             return;
         }
-        self.interner
-            .store_display_alias_preferring_application(evaluated, original_type_id);
+        display_provenance::record_alias_application(
+            self.interner,
+            AliasApplicationProvenance {
+                evaluated,
+                application: original_type_id,
+            },
+            AliasApplicationPriority::PreferApplication,
+        );
     }
 
     fn is_structural_display_alias_result(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -1971,7 +2014,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             original_members,
         );
         if !display_vec.is_empty() {
-            self.interner.store_display_properties(result, display_vec);
+            display_provenance::record_fresh_object_literal_display(
+                self.interner,
+                FreshObjectLiteralDisplayProvenance {
+                    type_id: result,
+                    properties: display_vec,
+                },
+            );
         }
     }
 
@@ -1997,7 +2046,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.simplify_union_members(&mut evaluated_members);
 
         let result = self.interner.union(evaluated_members.clone());
-        self.interner.store_union_origin(result, evaluated_members);
+        display_provenance::record_union_origin(
+            self.interner,
+            UnionOriginProvenance {
+                union_type_id: result,
+                origin_members: evaluated_members,
+            },
+        );
         result
     }
 
@@ -2441,7 +2496,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     )
                 );
                 if operand_is_named {
-                    self.interner().store_display_alias(result, keyof_type);
+                    display_provenance::record_alias_application(
+                        self.interner(),
+                        AliasApplicationProvenance {
+                            evaluated: result,
+                            application: keyof_type,
+                        },
+                        AliasApplicationPriority::PreserveExisting,
+                    );
                 }
             }
         }
@@ -2801,8 +2863,16 @@ pub fn evaluate_index_access_with_options(
 
 /// Convenience function for full type evaluation
 pub fn evaluate_type(interner: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    evaluate_type_with_request(interner, EvaluationRequest::new(type_id))
+}
+
+/// Convenience function for full type evaluation with explicit request options.
+pub fn evaluate_type_with_request(
+    interner: &dyn TypeDatabase,
+    request: EvaluationRequest,
+) -> TypeId {
     let mut evaluator = TypeEvaluator::new(interner);
-    evaluator.evaluate(type_id)
+    evaluator.evaluate_request(request)
 }
 
 /// Convenience function for evaluating mapped types

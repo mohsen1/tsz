@@ -213,6 +213,7 @@ fn test_ir_es5_class_iife() {
     // Test the ES5 class IIFE structure
     let class_iife = IRNode::ES5ClassIIFE {
         name: "Point".into(),
+        binding_name: None,
         base_class: None,
         super_param: None,
         body: vec![
