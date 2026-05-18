@@ -914,12 +914,12 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn format_type_for_operator_display(&mut self, type_id: TypeId) -> String {
-        let display_type = self.widen_type_for_operator_display(type_id);
         if let Some(info) =
-            crate::query_boundaries::common::type_param_info(self.ctx.types, display_type)
+            crate::query_boundaries::common::type_param_info(self.ctx.types, type_id)
         {
             return self.ctx.types.resolve_atom(info.name);
         }
+        let display_type = self.widen_type_for_operator_display(type_id);
         if self.operator_operand_may_include_bigint(display_type)
             && let Some(members) =
                 crate::query_boundaries::common::union_members(self.ctx.types, display_type)
