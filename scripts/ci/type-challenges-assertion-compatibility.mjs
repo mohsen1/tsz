@@ -409,6 +409,19 @@ for (const [compiler, diagnostics] of [
     }
   }
 }
+if (
+  Number.isInteger(tscCandidateDiagnostics.candidatesWithoutDiagnostics) &&
+  Number.isInteger(tszCandidateDiagnostics.candidatesWithoutDiagnostics)
+) {
+  const expectedDiagnosticFreeDelta =
+    tszCandidateDiagnostics.candidatesWithoutDiagnostics -
+    tscCandidateDiagnostics.candidatesWithoutDiagnostics;
+  if (comparison.diagnosticFreeCandidateDelta !== expectedDiagnosticFreeDelta) {
+    fail(
+      `assertion classification diagnosticFreeCandidateDelta (${comparison.diagnosticFreeCandidateDelta}) does not match tsz/tsc diagnostic-free delta (${expectedDiagnosticFreeDelta})`,
+    );
+  }
+}
 const candidateFileComparisonCounts = comparison.candidateFileComparison?.counts || {};
 if (comparison.candidateFileComparison) {
   const candidateFileComparisonTotal = comparison.candidateFileComparison.totalCandidates;
