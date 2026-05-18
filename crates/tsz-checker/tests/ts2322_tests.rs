@@ -1545,6 +1545,113 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
 }
 
 #[test]
+fn mapped_application_generic_indexed_call_preserves_key_correlation() {
+    // Structural rule: indexing a homomorphic mapped alias application with a
+    // generic key preserves the key in the callable template. The return type is
+    // Model[Key], not the union Model[keyof Model].
+    let source = r#"
+type Readers<T> = { [K in keyof T]: (value: T[K]) => T[K] };
+
+type Model = {
+    alpha: { tag: "alpha"; value: number };
+    beta: { tag: "beta"; value: string };
+};
+
+declare const model: Model;
+declare const readers: Readers<Model>;
+
+function read<Key extends keyof Model>(key: Key): Model[Key] {
+    return readers[key](model[key]);
+}
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2322),
+        "homomorphic mapped alias application indexed with a generic key should keep return correlation, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2345),
+        "homomorphic mapped alias application indexed with a generic key should keep argument correlation, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn renamed_mapped_application_generic_indexed_call_preserves_key_correlation() {
+    // Same rule with different type parameter and mapped variable names to guard
+    // against spelling-based fixes.
+    let source = r#"
+type Accessors<Input> = { [Slot in keyof Input]: (item: Input[Slot]) => Input[Slot] };
+
+type Store = {
+    left: { side: "left"; count: number };
+    right: { side: "right"; label: string };
+};
+
+declare const store: Store;
+declare const accessors: Accessors<Store>;
+
+function get<X extends keyof Store>(slot: X): Store[X] {
+    return accessors[slot](store[slot]);
+}
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2322),
+        "renamed homomorphic mapped alias application should keep return correlation, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2345),
+        "renamed homomorphic mapped alias application should keep argument correlation, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn concrete_union_callable_still_rejects_uncorrelated_union_argument() {
+    let source = r#"
+declare const fnUnion:
+    ((value: { tag: "alpha"; value: number }) => { tag: "alpha"; value: number })
+    | ((value: { tag: "beta"; value: string }) => { tag: "beta"; value: string });
+declare const value:
+    { tag: "alpha"; value: number }
+    | { tag: "beta"; value: string };
+
+fnUnion(value);
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_diagnostic_code(&diagnostics, 2345),
+        "uncorrelated concrete union calls should still be rejected, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn mapped_type_generic_indexed_access_class_member() {
     // Repro from TypeScript#49242: accessing a mapped type class member
     // with a generic key derived from the same keyof should work.
@@ -8053,5 +8160,94 @@ let expected: Wrapper<"first" | "second"> = got;
     assert!(
         message.contains("Wrapper<\"first\" | \"second\">"),
         "generic alias target surface should be preserved independent of parameter name, got: {message}"
+    );
+}
+
+/// Regression test for issue #6800.
+///
+/// When an overloaded generic function is called with an inline arrow
+/// callback, the first-pass overload resolution collects argument types once
+/// using the union of all overload signatures as the contextual type. The
+/// callback parameter type therefore picks up a reference to the sigs' shared
+/// type-parameter atom (`T`). The per-overload rename then renames the sig's
+/// `T` to a fresh atom, leaving the arg's `T` as a stale reference. During
+/// inference, that stale reference would surface as a contravariant
+/// candidate and dominate the genuine covariant candidate inferred from the
+/// array value, causing the resolver to fall back to the contra-candidate
+/// (the bare type parameter name) rather than the widened concrete type.
+///
+/// The structural rule: when every contravariant candidate is a bare
+/// unconstrained type parameter (so it carries no shape requirement that
+/// could be violated), the informative covariant inference must win.
+#[test]
+fn overload_inline_callback_does_not_leak_outer_sig_type_param() {
+    let source = r#"
+declare function map<T, U>(arr: T[], fn: (x: T) => U): U[];
+declare function map<T>(arr: T[], fn: (x: T) => T): T[];
+
+const mapped = map([1, 2, 3], x => String(x));
+const check: string[] = mapped;
+"#;
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors for generic overload with callback returning different type. Got: {diagnostics:#?}"
+    );
+}
+
+/// Same as `overload_inline_callback_does_not_leak_outer_sig_type_param` but
+/// with the overload order reversed to verify the fix is symmetric.
+#[test]
+fn overload_inline_callback_does_not_leak_outer_sig_type_param_reversed_order() {
+    let source = r#"
+declare function map<T>(arr: T[], fn: (x: T) => T): T[];
+declare function map<T, U>(arr: T[], fn: (x: T) => U): U[];
+
+const mapped = map([1, 2, 3], x => String(x));
+const check: string[] = mapped;
+"#;
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no errors regardless of overload declaration order. Got: {diagnostics:#?}"
+    );
+}
+
+/// Renamed type-parameter variant of the bug: the fix must not depend on the
+/// spelling of the sig's type parameter name. Using `A`/`B` and `C` instead of
+/// `T`/`U` and `T` should produce the same result.
+#[test]
+fn overload_inline_callback_leak_fix_is_independent_of_type_param_name() {
+    let source = r#"
+declare function map<A, B>(arr: A[], fn: (x: A) => B): B[];
+declare function map<C>(arr: C[], fn: (x: C) => C): C[];
+
+const mapped = map([1, 2, 3], x => String(x));
+const check: string[] = mapped;
+"#;
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diagnostics.is_empty(),
+        "Fix must be structural, not name-dependent. Got: {diagnostics:#?}"
+    );
+}
+
+/// Negative case for the same fix: when the inline callback genuinely returns
+/// the input type, the `T`-identity overload should match cleanly without
+/// requiring the leak guard.
+#[test]
+fn overload_inline_callback_identity_overload_still_matches() {
+    let source = r#"
+declare function map<T, U>(arr: T[], fn: (x: T) => U): U[];
+declare function map<T>(arr: T[], fn: (x: T) => T): T[];
+
+const arr: number[] = [1, 2, 3];
+const mapped = map(arr, x => x + 1);
+const check: number[] = mapped;
+"#;
+    let diagnostics = compile_with_libs_for_ts(source, "test.ts", CheckerOptions::default());
+    assert!(
+        diagnostics.is_empty(),
+        "Identity-return callback should pick either overload and yield `number[]`. Got: {diagnostics:#?}"
     );
 }

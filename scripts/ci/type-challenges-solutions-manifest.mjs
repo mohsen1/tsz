@@ -18,7 +18,13 @@ const expectedGenerated = Number(
 );
 const CHALLENGE_LEVELS = new Set(["warm", "easy", "medium", "hard", "extreme"]);
 
-if (!repository || !ref || !Number.isInteger(expectedGenerated)) {
+if (
+  typeof repository !== "string" ||
+  repository.trim() === "" ||
+  typeof ref !== "string" ||
+  ref.trim() === "" ||
+  !Number.isInteger(expectedGenerated)
+) {
   console.error(
     "error: missing Type Challenges solutions repository, ref, or expected count",
   );
@@ -132,6 +138,10 @@ const entries = lines
     const outputPath = path.join(manifestDir, output);
     if (!fs.existsSync(outputPath)) {
       console.error(`error: manifest output does not exist: ${output}`);
+      process.exit(1);
+    }
+    if (!fs.statSync(outputPath).isFile()) {
+      console.error(`error: manifest output is not a file: ${output}`);
       process.exit(1);
     }
 

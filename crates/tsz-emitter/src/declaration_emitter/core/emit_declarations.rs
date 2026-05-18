@@ -157,6 +157,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_deferred_named_export_statements = deferred_named_exports;
         self.js_deferred_local_export_enum_statements =
             self.collect_js_local_export_enum_statements(source_file);
+        let (deferred_interface_statements, skipped_interface_exports) =
+            self.collect_js_local_export_interface_statements(source_file);
+        self.js_deferred_local_export_interface_statements = deferred_interface_statements;
+        self.js_skipped_local_export_interface_exports = skipped_interface_exports;
         let (local_export_aliases, skipped_local_export_aliases) =
             self.collect_js_local_export_aliases(source_file);
         self.js_local_export_aliases = local_export_aliases;
@@ -166,6 +170,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.js_export_default_names = self.collect_js_export_default_names(source_file);
         self.emitted_js_export_default_names.clear();
         self.js_shadowed_export_equals_local_aliases.clear();
+        self.js_elided_bare_require_binding_names.clear();
         let (
             js_commonjs_named_export_names,
             js_commonjs_named_function_exports,
@@ -331,17 +336,6 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_js_commonjs_closure_export_assignment(root_initializer, secondary_members);
         }
 
-        // For JS source files, hoist `export default <Identifier>` statements that
-        // reference a top-level local declaration to the very top of the .d.ts.
-        // This mirrors tsc's `transformDeclarations` behaviour for JS inputs.
-        // The original ExportDeclaration statement is suppressed when the main loop
-        // reaches it because `emit_export_declaration` checks
-        // `emitted_js_export_default_names`.
-        if self.source_is_js_file && !self.js_export_default_names.is_empty() {
-            self.emit_jsdoc_default_typedef_aliases_for_hoisted_default_exports(source_file);
-            self.emit_hoisted_js_export_default_statements(source_file);
-        }
-
         if self.source_is_js_file {
             for &stmt_idx in &source_file.statements.nodes {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -464,6 +458,12 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
             if self
+                .js_deferred_local_export_interface_statements
+                .contains(&stmt_idx)
+            {
+                continue;
+            }
+            if self
                 .js_named_export_equals_class_expression(stmt_idx)
                 .is_some()
                 || self
@@ -509,6 +509,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_trailing_top_level_jsdoc_type_aliases(source_file);
         self.emit_js_require_property_import_aliases();
         self.emit_deferred_js_local_export_enum_statements(source_file);
+        self.emit_deferred_js_local_export_interface_statements(source_file);
         self.emit_js_local_export_aliases();
         self.emit_js_cjs_export_aliases();
         if !self.source_is_js_file
@@ -624,6 +625,12 @@ impl<'a> DeclarationEmitter<'a> {
             .contains(&stmt_idx)
         {
             self.skip_comments_in_node(stmt_node.pos, stmt_node.end);
+            return;
+        }
+        if !self.emitting_js_default_export_declaration
+            && self.js_default_export_declaration_should_defer_until_export(stmt_idx)
+        {
+            self.skip_comments_before_raw(stmt_node.pos);
             return;
         }
 

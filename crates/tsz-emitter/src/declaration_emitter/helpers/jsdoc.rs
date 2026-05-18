@@ -592,6 +592,9 @@ impl<'a> DeclarationEmitter<'a> {
         if trimmed.is_empty() {
             return "any".to_string();
         }
+        if Self::jsdoc_module_reference_type_falls_back_to_any(trimmed) {
+            return "any".to_string();
+        }
         if let Some(index_signature) = Self::normalize_jsdoc_object_index_type(trimmed) {
             return index_signature;
         }
@@ -790,6 +793,9 @@ impl<'a> DeclarationEmitter<'a> {
     /// Normalize a single JSDoc type atom: `*` -> `any`, otherwise pass through.
     fn normalize_jsdoc_type_atom(s: &str) -> String {
         let s = s.trim();
+        if Self::jsdoc_module_reference_type_falls_back_to_any(s) {
+            return "any".to_string();
+        }
         if let Some((base, args)) = Self::split_jsdoc_generic_atom(s) {
             if args.trim().is_empty() {
                 return match base {
@@ -816,6 +822,13 @@ impl<'a> DeclarationEmitter<'a> {
             "Promise" | "Promise.<>" | "Promise<>" => "Promise<any>".to_string(),
             _ => s.to_string(),
         }
+    }
+
+    fn jsdoc_module_reference_type_falls_back_to_any(type_text: &str) -> bool {
+        type_text
+            .trim()
+            .strip_prefix("module:")
+            .is_some_and(|rest| !rest.trim().is_empty())
     }
 
     fn split_jsdoc_generic_atom(s: &str) -> Option<(&str, &str)> {
@@ -2961,6 +2974,9 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn format_jsdoc_type_text_for_declaration(type_text: &str) -> String {
+        if Self::jsdoc_module_reference_type_falls_back_to_any(type_text) {
+            return "any".to_string();
+        }
         let Some(open) = type_text.find("<{") else {
             return type_text.to_string();
         };
@@ -3301,7 +3317,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(crate) fn emit_jsdoc_default_typedef_aliases_for_hoisted_default_exports(
+    pub(crate) fn emit_jsdoc_default_typedef_aliases_for_js_default_export(
         &mut self,
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) {
@@ -3342,6 +3358,20 @@ impl<'a> DeclarationEmitter<'a> {
                 exported,
                 alias_can_share_declaration_name,
             );
+        }
+    }
+
+    pub(crate) fn emit_jsdoc_default_typedef_aliases_for_js_default_export_in_current_file(
+        &mut self,
+    ) {
+        let source_file = self
+            .current_source_file_idx
+            .and_then(|root_idx| self.arena.get(root_idx))
+            .and_then(|root_node| self.arena.get_source_file(root_node))
+            .cloned();
+
+        if let Some(source_file) = source_file {
+            self.emit_jsdoc_default_typedef_aliases_for_js_default_export(&source_file);
         }
     }
 

@@ -2,6 +2,7 @@ use rustc_hash::FxHashSet;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_parser::parser::node::FunctionData;
 use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::{SyntaxKind, string_to_token, token_is_reserved_word};
@@ -231,15 +232,29 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn js_top_level_variable_initializer(&self, name: &str) -> Option<NodeIndex> {
+        self.js_top_level_variable_initializer_info(name)
+            .map(|(initializer, _)| initializer)
+    }
+
+    fn js_top_level_variable_initializer_info(&self, name: &str) -> Option<(NodeIndex, bool)> {
         let root_idx = self.current_source_file_idx?;
         let root_node = self.arena.get(root_idx)?;
         let source_file = self.arena.get_source_file(root_node)?;
         for &stmt_idx in &source_file.statements.nodes {
             let stmt_node = self.arena.get(stmt_idx)?;
-            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            let (var_node, is_exported) = if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                (stmt_node, false)
+            } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let export = self.arena.get_export_decl(stmt_node)?;
+                let export_clause_node = self.arena.get(export.export_clause)?;
+                if export_clause_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                    continue;
+                }
+                (export_clause_node, true)
+            } else {
                 continue;
-            }
-            let var_stmt = self.arena.get_variable(stmt_node)?;
+            };
+            let var_stmt = self.arena.get_variable(var_node)?;
             for &decl_list_idx in &var_stmt.declarations.nodes {
                 let decl_list_node = self.arena.get(decl_list_idx)?;
                 let decl_list = self.arena.get_variable(decl_list_node)?;
@@ -247,7 +262,10 @@ impl<'a> DeclarationEmitter<'a> {
                     let decl_node = self.arena.get(decl_idx)?;
                     let decl = self.arena.get_variable_declaration(decl_node)?;
                     if self.get_identifier_text(decl.name).as_deref() == Some(name) {
-                        return decl.initializer.into_option();
+                        return decl
+                            .initializer
+                            .into_option()
+                            .map(|init| (init, is_exported));
                     }
                 }
             }
@@ -400,6 +418,14 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
+        self.js_object_literal_initializer_has_namespace_shape(initializer, true)
+    }
+
+    fn js_object_literal_initializer_has_namespace_shape(
+        &self,
+        initializer: NodeIndex,
+        allow_property_references: bool,
+    ) -> bool {
         let Some(init_node) = self.arena.get(initializer) else {
             return false;
         };
@@ -426,6 +452,13 @@ impl<'a> DeclarationEmitter<'a> {
                         return false;
                     };
                     if prop_name_node.kind != SyntaxKind::Identifier as u16 {
+                        return false;
+                    }
+                    if !allow_property_references
+                        && self.arena.get(prop.initializer).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        })
+                    {
                         return false;
                     }
                     if !self.js_namespace_object_member_initializer_supported(prop.initializer) {
@@ -560,6 +593,10 @@ impl<'a> DeclarationEmitter<'a> {
                             func.body,
                             func.type_annotation,
                         );
+                    } else if let Some(reference_text) =
+                        self.js_namespace_property_reference_text(prop.initializer)
+                    {
+                        self.emit_js_namespace_import_alias_member(prop.name, &reference_text);
                     } else if let Some(type_text) =
                         self.js_namespace_value_member_type_text(prop.initializer)
                     {
@@ -2552,6 +2589,10 @@ impl<'a> DeclarationEmitter<'a> {
                             func.body,
                             func.type_annotation,
                         );
+                    } else if let Some(reference_text) =
+                        self.js_namespace_property_reference_text(prop.initializer)
+                    {
+                        self.emit_js_namespace_import_alias_member(prop.name, &reference_text);
                     } else if let Some(type_text) =
                         self.js_namespace_value_member_type_text(prop.initializer)
                     {
@@ -3175,6 +3216,26 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
     }
 
+    pub(in crate::declaration_emitter) fn emit_js_namespace_import_alias_member(
+        &mut self,
+        name_idx: NodeIndex,
+        reference_text: &str,
+    ) {
+        self.write_indent();
+        self.write("import ");
+        self.emit_node(name_idx);
+        self.write(" = ");
+        self.write(reference_text);
+        self.write(";");
+        self.write_line();
+
+        self.write_indent();
+        self.write("export { ");
+        self.emit_node(name_idx);
+        self.write(" };");
+        self.write_line();
+    }
+
     pub(in crate::declaration_emitter) fn emit_js_namespace_value_member(
         &mut self,
         name_idx: NodeIndex,
@@ -3187,6 +3248,70 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(type_text);
         self.write(";");
         self.write_line();
+    }
+
+    pub(in crate::declaration_emitter) fn js_namespace_property_reference_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(initializer);
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        if !self.js_namespace_property_reference_has_namespace_root(initializer) {
+            return None;
+        }
+        self.js_qualified_value_reference_text(initializer)
+    }
+
+    fn js_namespace_property_reference_has_namespace_root(&self, initializer: NodeIndex) -> bool {
+        let Some(root_name) = self.js_qualified_value_reference_root_name(initializer) else {
+            return false;
+        };
+        let Some((root_initializer, is_exported)) =
+            self.js_top_level_variable_initializer_info(&root_name)
+        else {
+            return false;
+        };
+        if !is_exported {
+            return false;
+        }
+        self.js_object_literal_initializer_has_namespace_shape(root_initializer, false)
+    }
+
+    fn js_qualified_value_reference_root_name(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let node = self.arena.get(expr_idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self.get_identifier_text(expr_idx),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.arena.get_access_expr(node)?;
+                self.js_qualified_value_reference_root_name(access.expression)
+            }
+            _ => None,
+        }
+    }
+
+    fn js_qualified_value_reference_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let node = self.arena.get(expr_idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self.get_identifier_text(expr_idx),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.arena.get_access_expr(node)?;
+                let left = self.js_qualified_value_reference_text(access.expression)?;
+                let right = self.get_identifier_text(access.name_or_argument)?;
+                Some(format!("{left}.{right}"))
+            }
+            _ => None,
+        }
     }
 
     pub(in crate::declaration_emitter) fn js_namespace_value_member_type_text(
@@ -3219,6 +3344,49 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     None
                 }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
+                .get_node_type_or_names(&[initializer])
+                .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
+                .map(|type_id| self.print_type_id(type_id))
+                .or_else(|| self.js_namespace_property_access_value_type_text(initializer)),
+            _ => None,
+        }
+    }
+
+    fn js_namespace_property_access_value_type_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(init_node)?;
+        let property_name = self.get_identifier_text(access.name_or_argument)?;
+        if property_name != "length" {
+            return None;
+        }
+
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.expression);
+        let receiver_node = self.arena.get(receiver)?;
+        let receiver_initializer = if receiver_node.kind == SyntaxKind::Identifier as u16 {
+            let receiver_name = self.get_identifier_text(receiver)?;
+            self.js_top_level_variable_initializer(&receiver_name)
+        } else {
+            Some(receiver)
+        }?;
+        let receiver_initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(receiver_initializer);
+        let receiver_init_node = self.arena.get(receiver_initializer)?;
+        match receiver_init_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
+            {
+                Some("number".to_string())
             }
             _ => None,
         }
@@ -3906,6 +4074,49 @@ impl<'a> DeclarationEmitter<'a> {
         let mut bindings = Vec::new();
         self.collect_typed_bindings_recursive(pattern_idx, source_type, &mut bindings);
         bindings
+    }
+
+    pub(in crate::declaration_emitter) fn record_js_elided_bare_require_binding_names(
+        &mut self,
+        pattern_idx: NodeIndex,
+    ) {
+        let bindings = self.collect_flattened_binding_entries(pattern_idx, None);
+        for (ident_idx, _) in bindings {
+            if let Some(name) = self.get_identifier_text(ident_idx) {
+                self.js_elided_bare_require_binding_names.insert(name);
+            }
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn initializer_references_js_elided_bare_require_binding(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        if self.js_elided_bare_require_binding_names.is_empty() || initializer.is_none() {
+            return false;
+        }
+        let mut seen = FxHashSet::default();
+        self.node_references_js_elided_bare_require_binding(initializer, &mut seen)
+    }
+
+    fn node_references_js_elided_bare_require_binding(
+        &self,
+        node_idx: NodeIndex,
+        seen: &mut FxHashSet<NodeIndex>,
+    ) -> bool {
+        if node_idx.is_none() || !seen.insert(node_idx) {
+            return false;
+        }
+        if self
+            .get_identifier_text(node_idx)
+            .is_some_and(|name| self.js_elided_bare_require_binding_names.contains(&name))
+        {
+            return true;
+        }
+        self.arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| self.node_references_js_elided_bare_require_binding(child_idx, seen))
     }
 
     fn collect_flattened_binding_type_texts_from_annotation(

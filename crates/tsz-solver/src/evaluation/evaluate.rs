@@ -13,7 +13,7 @@
 
 use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
-use crate::def::DefId;
+use crate::def::{DefId, DefKind};
 use crate::instantiation::instantiate::instantiate_generic;
 use crate::relations::subtype::{NoopResolver, TypeResolver};
 #[cfg(test)]
@@ -1274,21 +1274,93 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }) {
             return;
         }
-        if !matches!(
+        let instantiated_is_application = matches!(
             self.interner.lookup(instantiated),
             Some(TypeData::Application(_))
-        ) || !matches!(
+        );
+        let original_is_application = matches!(
             self.interner.lookup(original_type_id),
             Some(TypeData::Application(_))
-        ) {
+        );
+
+        if !original_is_application {
             return;
         }
+
+        if !instantiated_is_application {
+            // Structural-body path: the type alias body resolved to a structural
+            // type rather than another Application (e.g.
+            // `type LinkedList<T> = T & { next: LinkedList<T> }` evaluates to an
+            // Intersection). Map `evaluated → original_type_id` so diagnostics show
+            // the alias name instead of the expanded structural form.
+            if self.is_recursive_type_alias_application(original_type_id)
+                && Self::is_structural_display_alias_result(self.interner, evaluated)
+            {
+                self.interner
+                    .store_display_alias_preferring_application(evaluated, original_type_id);
+            }
+            return;
+        }
+
         if !Self::is_structural_display_alias_result(self.interner, evaluated) {
             return;
         }
 
         self.interner
             .store_display_alias_preferring_application(instantiated, original_type_id);
+    }
+
+    fn is_recursive_type_alias_application(&self, type_id: TypeId) -> bool {
+        let Some(TypeData::Application(app_id)) = self.interner.lookup(type_id) else {
+            return false;
+        };
+        let app = self.interner.type_application(app_id);
+        let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) else {
+            return false;
+        };
+        if self.resolver.get_def_kind(def_id) != Some(DefKind::TypeAlias) {
+            return false;
+        }
+        let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
+            return false;
+        };
+        let mut visited = FxHashSet::default();
+        self.type_reaches_alias_def(body, def_id, &mut visited)
+    }
+
+    fn type_reaches_alias_def(
+        &self,
+        type_id: TypeId,
+        target_def_id: DefId,
+        visited: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        if type_id.is_intrinsic() || !visited.insert(type_id) {
+            return false;
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Lazy(def_id))
+                if self.resolver.defs_are_equivalent(def_id, target_def_id) =>
+            {
+                return true;
+            }
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                if let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base)
+                    && self.resolver.defs_are_equivalent(def_id, target_def_id)
+                {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+
+        let mut found = false;
+        crate::visitor::for_each_child_by_id(self.interner, type_id, |child| {
+            if !found {
+                found = self.type_reaches_alias_def(child, target_def_id, visited);
+            }
+        });
+        found
     }
 
     /// Record a back-reference from an evaluated structural form to its
@@ -2374,18 +2446,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Unlike resolve_ref, resolve_type_query is aware that TypeQuery needs the
         // constructor type, not the instance type that may be stored under SymbolRef
         // in TypeEnvironment (inserted by type_reference_symbol_type).
+        //
+        // We must evaluate the resolved type (as visit_lazy does) because the resolver
+        // may return a Lazy(DefId) that still needs unfolding — e.g. DateConstructor.
         if let Some(resolved) = self.resolver.resolve_type_query(symbol, self.interner) {
-            return resolved;
+            return self.evaluate_resolved_or_original(resolved, original_type_id);
         }
 
         // Fallback: try DefId-based resolution if no SymbolRef mapping exists
         if let Some(def_id) = self.resolver.symbol_to_def_id(symbol)
             && let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner)
         {
-            return resolved;
+            return self.evaluate_resolved_or_original(resolved, original_type_id);
         }
 
         original_type_id
+    }
+
+    /// Evaluate `resolved` if it differs from `original`; avoids re-entering a
+    /// type that resolved to itself (which would trigger the cycle guard unnecessarily).
+    #[inline]
+    fn evaluate_resolved_or_original(&mut self, resolved: TypeId, original: TypeId) -> TypeId {
+        if resolved == original {
+            original
+        } else {
+            self.evaluate(resolved)
+        }
     }
 
     /// Visit a generic type application: Base<Args>

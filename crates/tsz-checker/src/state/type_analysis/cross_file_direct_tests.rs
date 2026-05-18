@@ -154,6 +154,9 @@ fn detects_npm_and_source_tree_builtin_lib_names() {
     assert!(is_builtin_lib_file_name("dom.iterable.generated.d.ts"));
     assert!(is_builtin_lib_file_name("webworker.asynciterable.d.ts"));
     assert!(is_builtin_lib_file_name("decorators.legacy.d.ts"));
+    assert!(is_builtin_lib_file_name(
+        r"C:\repo\node_modules\typescript\lib\lib.es2020.symbol.wellknown.d.ts"
+    ));
 }
 
 #[test]
