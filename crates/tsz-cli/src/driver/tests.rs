@@ -261,6 +261,66 @@ fn test_read_source_file_binary_with_control_bytes() {
 }
 
 #[test]
+fn resolve_effective_lib_paths_preserves_resolved_libs_without_replacement_root() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let lib_dir = dir.path().join("resolved-libs");
+    fs::create_dir_all(&lib_dir).expect("create lib dir");
+    let es2020 = lib_dir.join("lib.es2020.d.ts");
+    let dom = lib_dir.join("lib.dom.d.ts");
+    fs::write(&es2020, "interface Array<T> {}\n").expect("write es2020 lib");
+    fs::write(&dom, "interface Document {}\n").expect("write dom lib");
+
+    let resolved = ResolvedCompilerOptions {
+        lib_files: vec![es2020.clone(), dom.clone(), es2020.clone()],
+        lib_replacement: true,
+        ..Default::default()
+    };
+
+    let paths = super::resolve_effective_lib_paths(&resolved, &[], dir.path(), false)
+        .expect("resolve libs");
+
+    assert_eq!(
+        paths,
+        vec![
+            fs::canonicalize(&es2020).expect("canonical es2020"),
+            fs::canonicalize(&dom).expect("canonical dom"),
+        ],
+        "when no @typescript replacement root exists, already-resolved libs should be reused and deduplicated"
+    );
+}
+
+#[test]
+fn resolve_effective_lib_paths_uses_lib_replacements_when_root_exists() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let original_dir = dir.path().join("resolved-libs");
+    fs::create_dir_all(&original_dir).expect("create original lib dir");
+    let original = original_dir.join("lib.es2020.d.ts");
+    fs::write(&original, "interface Original {}\n").expect("write original lib");
+
+    let replacement = dir
+        .path()
+        .join("node_modules/@typescript/lib-es2020/index.d.ts");
+    fs::create_dir_all(replacement.parent().expect("replacement parent"))
+        .expect("create replacement dir");
+    fs::write(&replacement, "interface Replacement {}\n").expect("write replacement lib");
+
+    let resolved = ResolvedCompilerOptions {
+        lib_files: vec![original],
+        lib_replacement: true,
+        ..Default::default()
+    };
+
+    let paths = super::resolve_effective_lib_paths(&resolved, &[], dir.path(), false)
+        .expect("resolve libs");
+
+    assert_eq!(
+        paths,
+        vec![fs::canonicalize(&replacement).expect("canonical replacement")],
+        "when the @typescript replacement root exists, matching replacement packages still win"
+    );
+}
+
+#[test]
 fn test_read_source_file_text_is_not_binary() {
     let mut file = NamedTempFile::new().expect("temporary file should be created");
     file.write_all(b"const x = 1;\n")

@@ -2568,11 +2568,23 @@ fn resolve_effective_lib_paths(
 ) -> Result<Vec<PathBuf>> {
     let include_config_libs =
         !(resolved.checker.no_lib || (resolved.lib_is_default && disable_default_libs));
-    let mut lib_names = if include_config_libs {
-        lib_names_from_paths(&resolved.lib_files)
-    } else {
-        Vec::new()
-    };
+    let can_have_lib_replacements =
+        resolved.lib_replacement && typescript_lib_replacement_root_exists(base_dir);
+    let mut lib_paths = Vec::new();
+    let mut seen = FxHashSet::default();
+    let mut lib_names = Vec::new();
+
+    if include_config_libs {
+        if can_have_lib_replacements {
+            lib_names.extend(lib_names_from_paths(&resolved.lib_files));
+        } else {
+            append_unique_lib_paths(
+                &mut lib_paths,
+                &mut seen,
+                resolved.lib_files.iter().cloned(),
+            );
+        }
+    }
 
     // When --noLib is set, ignore /// <reference lib="..." /> directives.
     // tsc skips lib reference resolution entirely when noLib is enabled.
@@ -2580,29 +2592,52 @@ fn resolve_effective_lib_paths(
         let source_reference_libs = collect_source_reference_libs(sources);
         if !source_reference_libs.is_empty() {
             // Source-file `/// <reference lib="..." />` directives may name libs
-            // that no longer exist in this TS version (e.g. rxjs references
+            // that no longer exist in this TS version (e.g., rxjs references
             // `esnext.asynciterable`, since folded into `es2018.asynciterable`).
             // The transitive resolver silently skips unknown names at this
             // layer; user-facing TS2726 for invalid initial names is emitted
             // separately by `collect_source_reference_lib_diagnostics`.
             let expanded_source_paths =
                 resolve_lib_files_with_options_transitive(&source_reference_libs, true)?;
-            append_unique_lib_names(&mut lib_names, lib_names_from_paths(&expanded_source_paths));
+            if can_have_lib_replacements {
+                append_unique_lib_names(
+                    &mut lib_names,
+                    lib_names_from_paths(&expanded_source_paths),
+                );
+            } else {
+                append_unique_lib_paths(
+                    &mut lib_paths,
+                    &mut seen,
+                    expanded_source_paths.into_iter(),
+                );
+            }
         }
     }
 
-    let mut lib_paths = Vec::with_capacity(lib_names.len());
-    let mut seen = FxHashSet::default();
     for lib_name in lib_names {
         let Some(path) = resolve_compiler_lib_path(&lib_name, resolved, base_dir)? else {
             continue;
         };
+        append_unique_lib_paths(&mut lib_paths, &mut seen, std::iter::once(path));
+    }
+    Ok(lib_paths)
+}
+
+fn append_unique_lib_paths(
+    lib_paths: &mut Vec<PathBuf>,
+    seen: &mut FxHashSet<PathBuf>,
+    paths: impl IntoIterator<Item = PathBuf>,
+) {
+    for path in paths {
         let canonical = canonicalize_or_owned(&path);
         if seen.insert(canonical.clone()) {
             lib_paths.push(canonical);
         }
     }
-    Ok(lib_paths)
+}
+
+fn typescript_lib_replacement_root_exists(base_dir: &Path) -> bool {
+    base_dir.join("node_modules").join("@typescript").is_dir()
 }
 
 fn collect_source_reference_libs(sources: &[SourceEntry]) -> Vec<String> {

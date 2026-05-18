@@ -83,11 +83,29 @@ struct LibSnapshot {
     root_index: NodeIndex,
 }
 
-fn content_hash(file_name: &str, source_text: &str) -> u64 {
+pub(super) fn content_hash(file_name: &str, source_text: &str) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = rustc_hash::FxHasher::default();
     file_name.hash(&mut hasher);
     source_text.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Persistent representation of an ordered lib-set snapshot.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct LibSnapshotSet {
+    set_hash: u64,
+    files: Vec<LibSnapshot>,
+}
+
+fn lib_set_hash(keys: &[(String, u64)]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = rustc_hash::FxHasher::default();
+    keys.len().hash(&mut hasher);
+    for (file_name, content_hash) in keys {
+        file_name.hash(&mut hasher);
+        content_hash.hash(&mut hasher);
+    }
     hasher.finish()
 }
 
@@ -130,6 +148,10 @@ fn snapshot_path(dir: &Path, hash: u64) -> PathBuf {
     dir.join(format!("{hash:016x}.bin"))
 }
 
+fn snapshot_set_path(dir: &Path, hash: u64) -> PathBuf {
+    dir.join(format!("set-{hash:016x}.bin"))
+}
+
 fn snapshot_temp_path(path: &Path) -> PathBuf {
     static TMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -166,6 +188,38 @@ pub(super) fn try_load(file_name: &str, source_text: &str) -> Option<Arc<LibFile
         Arc::new(snapshot.binder),
         snapshot.root_index,
     )))
+}
+
+/// Try to load an ordered set of cached lib snapshots from one cache file.
+///
+/// The key contains each lib file's name and content hash in final load order,
+/// so a hit is valid only for the exact same lib graph and physical contents.
+pub(super) fn try_load_many(keys: &[(String, u64)]) -> Option<Vec<Arc<LibFile>>> {
+    if keys.is_empty() || !is_enabled() {
+        return None;
+    }
+    let dir = cache_dir()?;
+    let set_hash = lib_set_hash(keys);
+    let path = snapshot_set_path(&dir, set_hash);
+    let bytes = fs::read(&path).ok()?;
+    let snapshot = decode_snapshot_set(&bytes).ok()?;
+    if snapshot.set_hash != set_hash || snapshot.files.len() != keys.len() {
+        return None;
+    }
+
+    let mut files = Vec::with_capacity(snapshot.files.len());
+    for (snapshot, (expected_name, expected_hash)) in snapshot.files.into_iter().zip(keys) {
+        if snapshot.content_hash != *expected_hash || snapshot.file_name != *expected_name {
+            return None;
+        }
+        files.push(Arc::new(LibFile::new(
+            snapshot.file_name,
+            Arc::new(snapshot.arena),
+            Arc::new(snapshot.binder),
+            snapshot.root_index,
+        )));
+    }
+    Some(files)
 }
 
 /// Persist a parsed + bound lib file. Errors are logged at `debug!`
@@ -208,8 +262,53 @@ pub(super) fn try_store(file_name: &str, source_text: &str, lib: &Arc<LibFile>) 
     Ok(())
 }
 
+/// Persist an ordered lib-set snapshot. Errors are propagated to the caller so
+/// it can log and continue, matching `try_store`.
+pub(super) fn try_store_many(keys: &[(String, u64)], libs: &[Arc<LibFile>]) -> Result<()> {
+    if keys.is_empty() || libs.len() != keys.len() || !is_enabled() {
+        return Ok(());
+    }
+    let dir = cache_dir().ok_or_else(|| anyhow!("no cache directory available"))?;
+    fs::create_dir_all(&dir)
+        .with_context(|| format!("failed to create lib cache dir {}", dir.display()))?;
+
+    let set_hash = lib_set_hash(keys);
+    let path = snapshot_set_path(&dir, set_hash);
+    let mut files = Vec::with_capacity(libs.len());
+    for ((file_name, content_hash), lib) in keys.iter().zip(libs) {
+        files.push(LibSnapshot {
+            file_name: file_name.clone(),
+            content_hash: *content_hash,
+            arena: (*lib.arena).clone(),
+            binder: (*lib.binder).clone(),
+            root_index: lib.root_index,
+        });
+    }
+
+    let encoded = encode_snapshot_set(&LibSnapshotSet { set_hash, files })?;
+    let tmp = snapshot_temp_path(&path);
+    {
+        let mut f = fs::File::create(&tmp)
+            .with_context(|| format!("create snapshot tmp {}", tmp.display()))?;
+        f.write_all(&encoded)
+            .with_context(|| format!("write snapshot tmp {}", tmp.display()))?;
+    }
+    fs::rename(&tmp, &path)
+        .with_context(|| format!("rename snapshot {} -> {}", tmp.display(), path.display()))?;
+
+    Ok(())
+}
+
 fn encode_snapshot(snapshot: &LibSnapshot) -> Result<Vec<u8>> {
     let payload = bincode::serialize(snapshot).context("bincode serialize lib snapshot")?;
+    let mut out = Vec::with_capacity(SNAPSHOT_MAGIC.len() + payload.len());
+    out.extend_from_slice(SNAPSHOT_MAGIC);
+    out.extend_from_slice(&payload);
+    Ok(out)
+}
+
+fn encode_snapshot_set(snapshot: &LibSnapshotSet) -> Result<Vec<u8>> {
+    let payload = bincode::serialize(snapshot).context("bincode serialize lib snapshot set")?;
     let mut out = Vec::with_capacity(SNAPSHOT_MAGIC.len() + payload.len());
     out.extend_from_slice(SNAPSHOT_MAGIC);
     out.extend_from_slice(&payload);
@@ -222,6 +321,14 @@ fn decode_snapshot(bytes: &[u8]) -> Result<LibSnapshot> {
     }
     let payload = &bytes[SNAPSHOT_MAGIC.len()..];
     bincode::deserialize(payload).context("bincode deserialize lib snapshot")
+}
+
+fn decode_snapshot_set(bytes: &[u8]) -> Result<LibSnapshotSet> {
+    if bytes.len() < SNAPSHOT_MAGIC.len() || &bytes[..SNAPSHOT_MAGIC.len()] != SNAPSHOT_MAGIC {
+        return Err(anyhow!("snapshot magic mismatch"));
+    }
+    let payload = &bytes[SNAPSHOT_MAGIC.len()..];
+    bincode::deserialize(payload).context("bincode deserialize lib snapshot set")
 }
 
 #[cfg(test)]
@@ -265,6 +372,61 @@ mod tests {
         let original_promise = lib.binder.file_locals.get("Promise");
         let restored_promise = decoded.binder.file_locals.get("Promise");
         assert_eq!(original_promise, restored_promise);
+    }
+
+    #[test]
+    #[allow(unsafe_code)]
+    fn snapshot_set_round_trips_ordered_libs() {
+        // SAFETY: nextest runs each test in its own process, so the env
+        // mutations don't race other threads.
+        unsafe {
+            std::env::set_var(ENV_VAR, "1");
+        }
+        let tmp = tempfile::TempDir::new().expect("tmp dir");
+        unsafe {
+            std::env::set_var(ENV_DIR, tmp.path());
+        }
+
+        let first_name = "lib.first.d.ts";
+        let first_source = "interface First { value: string; }";
+        let second_name = "lib.second.d.ts";
+        let second_source = "interface Second { value: number; }";
+        let first = parse_and_bind(first_name, first_source);
+        let second = parse_and_bind(second_name, second_source);
+        let keys = vec![
+            (
+                first_name.to_string(),
+                content_hash(first_name, first_source),
+            ),
+            (
+                second_name.to_string(),
+                content_hash(second_name, second_source),
+            ),
+        ];
+
+        try_store_many(&keys, &[Arc::clone(&first), Arc::clone(&second)])
+            .expect("set write should succeed");
+
+        let restored = try_load_many(&keys).expect("set cache should hit");
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored[0].file_name, first_name);
+        assert_eq!(restored[1].file_name, second_name);
+        assert_eq!(
+            restored[0].binder.file_locals.get("First"),
+            first.binder.file_locals.get("First")
+        );
+        assert_eq!(
+            restored[1].binder.file_locals.get("Second"),
+            second.binder.file_locals.get("Second")
+        );
+
+        let mut wrong_order = keys.clone();
+        wrong_order.reverse();
+        assert!(try_load_many(&wrong_order).is_none());
+
+        let mut wrong_hash = keys;
+        wrong_hash[0].1 ^= 1;
+        assert!(try_load_many(&wrong_hash).is_none());
     }
 
     #[test]

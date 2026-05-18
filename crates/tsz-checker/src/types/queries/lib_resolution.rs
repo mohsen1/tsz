@@ -871,6 +871,7 @@ impl<'a> CheckerState<'a> {
                     Some(self.ctx.arena),
                 );
                 let mut prewarmed_lazy_type_params = rustc_hash::FxHashMap::default();
+                let mut child_buffer = Vec::new();
                 for (decl_idx, decl_arena) in &decls_with_arenas {
                     let mut stack = vec![*decl_idx];
                     while let Some(node_idx) = stack.pop() {
@@ -923,7 +924,9 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         }
-                        stack.extend(decl_arena.get_children(node_idx));
+                        child_buffer.clear();
+                        decl_arena.get_children_into(node_idx, &mut child_buffer);
+                        stack.extend(child_buffer.iter().copied());
                     }
                 }
 

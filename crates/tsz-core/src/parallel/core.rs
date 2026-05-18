@@ -1107,10 +1107,31 @@ pub fn load_lib_files_for_binding_strict(
     // file #81 of 87 and becomes the critical-path bottleneck.
     file_contents.sort_by_key(|b| std::cmp::Reverse(b.1.len()));
 
-    let results = parse_and_bind_lib_files(file_contents);
+    let snapshot_keys: Vec<(String, u64)> = file_contents
+        .iter()
+        .map(|(file_name, source_text)| {
+            (
+                file_name.clone(),
+                super::lib_snapshot::content_hash(file_name, source_text.as_str()),
+            )
+        })
+        .collect();
+    if let Some(cached) = super::lib_snapshot::try_load_many(&snapshot_keys) {
+        return Ok(cached);
+    }
 
     // Collect results, propagating any parse errors
-    results.into_iter().collect()
+    let results: Vec<Arc<lib_loader::LibFile>> = parse_and_bind_lib_files(file_contents)
+        .into_iter()
+        .collect::<Result<Vec<_>>>()?;
+    if let Err(err) = super::lib_snapshot::try_store_many(&snapshot_keys, &results) {
+        tracing::debug!(
+            target: "wasm::lib_snapshot",
+            error = %err,
+            "lib snapshot set write failed (compilation continues normally)",
+        );
+    }
+    Ok(results)
 }
 
 fn parse_and_bind_lib_files(
