@@ -577,7 +577,7 @@ ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
             ROOT / "crates" / "tsz-cli" / "src",
         ],
         ("crates/tsz-checker/src/query_boundaries/",),
-        2,
+        0,
     ),
 ]
 
