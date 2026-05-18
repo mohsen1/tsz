@@ -770,6 +770,70 @@ fn direct_source_file_type_alias_lowers_import_backed_helper_applications() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_merged_lib_helper_applications() {
+    let lib_files = load_lib_files(&["es5.d.ts"]);
+
+    let mut target_parser = ParserState::new(
+        "target.ts".to_string(),
+        "export type Box<T extends object> = Required<T>;".to_string(),
+    );
+    let target_root = target_parser.parse_source_file();
+    let mut target_binder = BinderState::new();
+    target_binder.bind_source_file_with_libs(target_parser.get_arena(), target_root, &lib_files);
+    let target_arena = Arc::new(target_parser.get_arena().clone());
+    let target_binder = Arc::new(target_binder);
+
+    let mut requester_parser = ParserState::new(
+        "requester.ts".to_string(),
+        "import { Box } from './target';".to_string(),
+    );
+    let requester_root = requester_parser.parse_source_file();
+    let mut requester_binder = BinderState::new();
+    requester_binder.bind_source_file_with_libs(
+        requester_parser.get_arena(),
+        requester_root,
+        &lib_files,
+    );
+    let requester_arena = Arc::new(requester_parser.get_arena().clone());
+    let requester_binder = Arc::new(requester_binder);
+    let types = TypeInterner::new();
+    let mut ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    ctx.set_lib_contexts(
+        lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect(),
+    );
+    ctx.set_actual_lib_file_count(lib_files.len());
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+    let box_sym = target_binder.file_locals.get("Box").expect("Box symbol");
+
+    let (box_type, box_params) = state
+        .direct_source_file_type_alias_result(box_sym, Some(1), true)
+        .expect("merged lib helper applications should lower directly");
+    assert_ne!(box_type, TypeId::UNKNOWN);
+    assert_ne!(box_type, TypeId::ERROR);
+    assert_eq!(box_params.len(), 1);
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_unresolved_alias_applications() {
     let source = r#"
                 export type Bad<T> = Missing<T>;

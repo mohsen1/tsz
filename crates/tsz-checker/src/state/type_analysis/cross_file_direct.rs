@@ -1190,7 +1190,11 @@ impl<'a> CheckerState<'a> {
             {
                 return true;
             }
-            return false;
+            if !delegate_binder.lib_symbol_ids.contains(&local_sym_id)
+                && !self.ctx.symbol_is_from_actual_or_cloned_lib(local_sym_id)
+            {
+                return false;
+            }
         }
 
         local_type.is_some()
