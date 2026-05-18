@@ -432,15 +432,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Build a RelationRequest so the weak-union hint is collected
+        // Use the canonical assign relation outcome so the weak-union hint is collected
         // alongside the failure reason and can be reused by the skip gate.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (prepared_source, prepared_target) =
-                self.prepare_assignability_inputs(source, rest_target_type);
-            RelationRequest::assign(prepared_source, prepared_target)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source, rest_target_type);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             rest_target_type,

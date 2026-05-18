@@ -178,6 +178,23 @@ impl<'db> TypeFactory<'db> {
             .object_with_flags_and_symbol(properties, ObjectFlags::empty(), symbol)
     }
 
+    /// Create a non-fresh object type with late-bound computed members.
+    ///
+    /// Use this instead of importing `ObjectFlags::HAS_LATE_BOUND_MEMBERS`
+    /// outside the solver.
+    #[inline]
+    pub fn object_with_late_bound_members(
+        &self,
+        properties: Vec<PropertyInfo>,
+        symbol: Option<SymbolId>,
+    ) -> TypeId {
+        self.db.object_with_flags_and_symbol(
+            properties,
+            ObjectFlags::HAS_LATE_BOUND_MEMBERS,
+            symbol,
+        )
+    }
+
     #[inline]
     pub fn function(&self, shape: FunctionShape) -> TypeId {
         self.db.function(shape)

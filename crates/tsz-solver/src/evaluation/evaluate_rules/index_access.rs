@@ -3,7 +3,9 @@
 //! Handles TypeScript's index access types: `T[K]`
 //! Including property access, array indexing, and tuple indexing.
 
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{
+    TypeSubstitution, instantiate_type, instantiate_type_preserving_meta_cached,
+};
 use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
@@ -1508,6 +1510,80 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         ))
     }
 
+    fn try_mapped_application_type_param_substitution(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+    ) -> Option<TypeId> {
+        if object_type.is_intrinsic() {
+            return None;
+        }
+
+        let application_type = if matches!(
+            self.interner().lookup(object_type),
+            Some(TypeData::Application(_))
+        ) {
+            object_type
+        } else {
+            self.interner()
+                .get_display_alias(object_type)
+                .filter(|&alias| {
+                    matches!(
+                        self.interner().lookup(alias),
+                        Some(TypeData::Application(_))
+                    )
+                })?
+        };
+
+        let instantiated = self.instantiate_mapped_application_preserving_meta(application_type)?;
+        if instantiated == application_type {
+            return None;
+        }
+
+        if !matches!(
+            self.interner().lookup(instantiated),
+            Some(TypeData::Mapped(_))
+        ) {
+            return None;
+        }
+
+        self.try_mapped_type_param_substitution(instantiated, index_type)
+    }
+
+    fn instantiate_mapped_application_preserving_meta(
+        &mut self,
+        application_type: TypeId,
+    ) -> Option<TypeId> {
+        let app_id = match self.interner().lookup(application_type)? {
+            TypeData::Application(app_id) => app_id,
+            _ => return None,
+        };
+        let app = self.interner().type_application(app_id);
+        let def_id = match self.interner().lookup(app.base)? {
+            TypeData::Lazy(def_id) => def_id,
+            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref)?,
+            _ => return None,
+        };
+        let type_params = self.resolver().get_lazy_type_params(def_id)?;
+        let resolved = self.resolver().resolve_lazy(def_id, self.interner())?;
+        if !matches!(self.interner().lookup(resolved), Some(TypeData::Mapped(_))) {
+            return None;
+        }
+
+        let expanded_args = self.expand_type_args(&app.args);
+        let mut substitution = TypeSubstitution::new();
+        for (param, &arg) in type_params.iter().zip(expanded_args.iter()) {
+            substitution.insert(param.name, arg);
+        }
+
+        Some(instantiate_type_preserving_meta_cached(
+            self.interner(),
+            self.query_db(),
+            resolved,
+            &substitution,
+        ))
+    }
+
     /// Helper to recursively evaluate an index access while respecting depth limits.
     /// Creates an `IndexAccess` type and evaluates it through the main `evaluate()` method.
     pub(crate) fn recurse_index_access(
@@ -1534,6 +1610,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // should produce `(option: T & {kind:K}) => string`, not a union of functions.
         if let Some(mapped_result) =
             self.try_mapped_type_param_substitution(object_type, index_type)
+        {
+            return mapped_result;
+        }
+        if let Some(mapped_result) =
+            self.try_mapped_application_type_param_substitution(object_type, index_type)
         {
             return mapped_result;
         }

@@ -139,6 +139,31 @@ fn get_statement_expression(arena: &NodeArena, root: NodeIndex, stmt_index: usiz
     extract_expression_from_statement(arena, stmt_idx)
 }
 
+fn get_function_body_statement_expression(
+    arena: &NodeArena,
+    root: NodeIndex,
+    fn_index: usize,
+    stmt_index: usize,
+) -> NodeIndex {
+    let root_node = arena.get(root).expect("root node");
+    let source_file = arena.get_source_file(root_node).expect("source file");
+    let fn_idx = *source_file
+        .statements
+        .nodes
+        .get(fn_index)
+        .expect("function statement");
+    let fn_node = arena.get(fn_idx).expect("function node");
+    let function = arena.get_function(fn_node).expect("function data");
+    let body_node = arena.get(function.body).expect("function body node");
+    let body = arena.get_block(body_node).expect("function body");
+    let stmt_idx = *body
+        .statements
+        .nodes
+        .get(stmt_index)
+        .expect("body statement");
+    extract_expression_from_statement(arena, stmt_idx)
+}
+
 fn get_method_call_receiver_identifier(
     arena: &NodeArena,
     root: NodeIndex,
@@ -5153,6 +5178,74 @@ function f6() {
             .iter()
             .map(|d| &d.message_text)
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_member_write_does_not_count_as_parameter_reassignment() {
+    let source = r#"
+function f(name: string, value: string) {
+    this.name = name;
+    value = name;
+    name = value;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+
+    let member_write = get_function_body_statement_expression(arena, root, 0, 0);
+    let member_write_node = arena.get(member_write).expect("member write node");
+    let member_write_expr = arena
+        .get_binary_expr(member_write_node)
+        .expect("member write expression");
+    let parameter_reference = member_write_expr.right;
+
+    assert!(
+        !analyzer.assignment_targets_reference(member_write, parameter_reference),
+        "member writes should not be treated as reassigning a plain parameter reference"
+    );
+
+    let sibling_parameter_write = get_function_body_statement_expression(arena, root, 0, 1);
+    assert!(
+        !analyzer.assignment_targets_reference(sibling_parameter_write, parameter_reference),
+        "writes to a different known parameter symbol should not count as reassignments"
+    );
+
+    let parameter_write = get_function_body_statement_expression(arena, root, 0, 2);
+    assert!(
+        analyzer.assignment_targets_reference(parameter_write, parameter_reference),
+        "direct parameter writes should still be recognized as reassignments"
+    );
+}
+
+#[test]
+fn test_same_function_parameter_use_is_not_captured() {
+    let source = r#"
+function f(value: string) {
+    value;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let types = TypeInterner::new();
+    let analyzer = FlowAnalyzer::new(arena, &binder, &types);
+    let parameter_reference = get_function_body_statement_expression(arena, root, 0, 0);
+
+    assert!(
+        !analyzer.is_captured_variable(parameter_reference),
+        "parameter reads in their declaring function body are not closure captures"
     );
 }
 
