@@ -96,6 +96,21 @@ function validateCandidateManifestSources(manifest) {
   for (const label of ["templates", "testCases", "solutions"]) {
     validateSourceMetadata(manifest.sources[label], label);
   }
+
+  const templateSource = manifest.sources.templates;
+  const testCaseSource = manifest.sources.testCases;
+  if (
+    templateSource.repository !== testCaseSource.repository ||
+    templateSource.ref !== testCaseSource.ref
+  ) {
+    fail(
+      [
+        "candidate manifest template and test-case sources come from different snapshots",
+        `templates: ${templateSource.repository} @ ${templateSource.ref}`,
+        `testCases: ${testCaseSource.repository} @ ${testCaseSource.ref}`,
+      ].join("\n"),
+    );
+  }
 }
 
 function validateClassificationManifestSources(candidateManifest, classificationManifest) {
