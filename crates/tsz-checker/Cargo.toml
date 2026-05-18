@@ -30,6 +30,10 @@ dashmap = { workspace = true }
 stacker = "0.1.23"
 
 [[test]]
+name = "extract_alias_distributive_mapped_tests"
+path = "tests/extract_alias_distributive_mapped_tests.rs"
+
+[[test]]
 name = "generic_multi_prop_object_literal_tests"
 path = "tests/generic_multi_prop_object_literal_tests.rs"
 
@@ -466,6 +470,10 @@ name = "ts2353_generic_constraint_excess_property_tests"
 path = "tests/ts2353_generic_constraint_excess_property_tests.rs"
 
 [[test]]
+name = "relational_operator_type_display_tests"
+path = "tests/relational_operator_type_display_tests.rs"
+
+[[test]]
 name = "ts2677_intersection_predicate_tests"
 path = "tests/ts2677_intersection_predicate_tests.rs"
 
@@ -570,8 +578,20 @@ name = "nonnull_contextual_type_arg_inference_tests"
 path = "tests/nonnull_contextual_type_arg_inference_tests.rs"
 
 [[test]]
-name = "conformance_issues"
-path = "tests/conformance_issues.rs"
+name = "conformance_issues_errors"
+path = "tests/conformance_issues_errors.rs"
+
+[[test]]
+name = "conformance_issues_features"
+path = "tests/conformance_issues_features.rs"
+
+[[test]]
+name = "conformance_issues_modules"
+path = "tests/conformance_issues_modules.rs"
+
+[[test]]
+name = "conformance_issues_types"
+path = "tests/conformance_issues_types.rs"
 
 [[test]]
 name = "export_equals_display_order_tests"
@@ -690,8 +710,16 @@ name = "typeof_instantiation_expression_tests"
 path = "tests/typeof_instantiation_expression_tests.rs"
 
 [[test]]
-name = "ts2344_class_constructor_constraint"
-path = "tests/ts2344_class_constructor_constraint.rs"
+name = "ts2344_class_constructor_constraint_call"
+path = "tests/ts2344_class_constructor_constraint_call.rs"
+
+[[test]]
+name = "ts2344_class_constructor_constraint_expr"
+path = "tests/ts2344_class_constructor_constraint_expr.rs"
+
+[[test]]
+name = "ts2344_class_constructor_constraint_visibility"
+path = "tests/ts2344_class_constructor_constraint_visibility.rs"
 
 [[test]]
 name = "ts2344_accessor_constraint"
@@ -1344,6 +1372,10 @@ path = "tests/index_signature_argument_assignability_tests.rs"
 [[test]]
 name = "operator_literal_annotation_display_tests"
 path = "tests/operator_literal_annotation_display_tests.rs"
+
+[[test]]
+name = "flow_dp_memoization_tests"
+path = "tests/flow_dp_memoization_tests.rs"
 
 [[test]]
 name = "public_package_unique_symbol_emit_tests"

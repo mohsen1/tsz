@@ -370,6 +370,11 @@ impl<'a> Printer<'a> {
         } else {
             false
         };
+        let cjs_export_name = if parent_name.is_none() {
+            self.pending_cjs_namespace_export_name.take()
+        } else {
+            None
+        };
         let system_export_fold = if parent_name.is_none() {
             self.pending_system_namespace_export_fold.take()
         } else {
@@ -504,9 +509,10 @@ impl<'a> Printer<'a> {
             self.write("));");
         } else if cjs_export_fold {
             // CJS export fold: (N || (exports.N = N = {}))
+            let export_name = cjs_export_name.as_deref().unwrap_or(&name);
             self.write(&name);
             self.write(" || (exports.");
-            self.write(&name);
+            self.write(export_name);
             self.write(" = ");
             self.write(&name);
             self.write(" = {}));");

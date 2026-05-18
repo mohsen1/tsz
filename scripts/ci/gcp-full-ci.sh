@@ -44,167 +44,12 @@ cap_positive_baseline() {
 }
 
 HOST_CPUS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 8)"
-
-# Cap CARGO_BUILD_JOBS by memory to prevent rustc/linker SIGKILL during large
-# crate compiles. tsz-checker spawns many parallel codegen threads per rustc,
-# so the practical per-job RSS at peak (linker time) is bounded by the
-# `codegen-units` setting on the active profile. With dist-fast/ci-unit at
-# codegen-units=8, peak per-job RSS is ~7 GiB (down from ~12 GiB at cgu=16).
-#
-# We compute `memory_mb / mb_per_compile_job`, default 7168 MiB/job, then take
-# min(cpu, mem). Sizing examples:
-#   8 vCPU × 32 GiB  → min(8, 4)   = 4 jobs   (~28 GiB peak)
-#   16 vCPU × 64 GiB → min(16, 9)  = 9 jobs   (~63 GiB peak)
-#   32 vCPU × 128 GiB → min(32, 18) = 18 jobs (~126 GiB peak)
-default_cargo_build_jobs() {
-  local cpu_jobs mem_mb mem_per_job_mb mem_jobs
-  cpu_jobs="$HOST_CPUS"
-  mem_mb="$(awk '/MemTotal:/ { printf "%d\n", $2 / 1024 }' /proc/meminfo 2>/dev/null || echo 0)"
-  case "${TSZ_CI_SUITE:-${_TSZ_CI_SUITE:-}}" in
-    unit|unit-archive|unit-shard)
-      # Force `CARGO_BUILD_JOBS=1` on unit. Observed RSS-per-rustc on this
-      # workspace's lib-test compiles (notably tsz-checker, tsz-emitter,
-      # tsz-solver, tsz-core lib-test) now exceeds 16 GiB per process during
-      # the LLVM codegen phase. With any -j > 1, peaks coincide and SIGKILL
-      # fires on the 8 vCPU × 32 GiB Cloud Run runner.
-      #
-      # History of this knob, in order:
-      #   * commit 111d24ba98 — TSZ_CI_CARGO_MB_PER_JOB=7168 globally (4 jobs)
-      #   * commit 1bddbbfbf4 — TSZ_CI_UNIT_CARGO_MB_PER_JOB=16384 (2 jobs) +
-      #       sccache disablement, after silent-exit incidents.
-      #   * PR #7573 (rolled back here) — 8192 (4 jobs). Validated on one
-      #       run-of-the-day; sustained PR load on 2026-05-16 surfaced SIGKILL
-      #       in tsz-solver/checker/emitter lib-test compile.
-      #   * 12288 (2 jobs) intermediate — still SIGKILLs (this PR's first run).
-      #   * 24576 (1 job) ← current. Safe on 32 GiB box; floor(32768/24576)=1.
-      #
-      # The real fix for compile time is a bigger box (Cloud Build private
-      # pool e2-highcpu-32 in PR #7591). Once that lands and is promoted, this
-      # cap stops mattering — Cloud Build runs the same compile at -j32 on a
-      # box where memory isn't the constraint.
-      mem_per_job_mb="${TSZ_CI_UNIT_CARGO_MB_PER_JOB:-24576}"
-      ;;
-    *)
-      mem_per_job_mb="${TSZ_CI_CARGO_MB_PER_JOB:-7168}"
-      ;;
-  esac
-  if [[ "$mem_mb" =~ ^[0-9]+$ && "$mem_mb" -gt 0 && "$mem_per_job_mb" =~ ^[0-9]+$ && "$mem_per_job_mb" -gt 0 ]]; then
-    mem_jobs=$((mem_mb / mem_per_job_mb))
-    if (( mem_jobs < 1 )); then mem_jobs=1; fi
-    if (( cpu_jobs > mem_jobs )); then
-      printf '%s\n' "$mem_jobs"
-      return
-    fi
-  fi
-  printf '%s\n' "$cpu_jobs"
-}
+# shellcheck source=scripts/ci/ci-resources.sh
+source "$(dirname "${BASH_SOURCE[0]}")/ci-resources.sh"
 export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-$(default_cargo_build_jobs)}"
 echo "info: CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS} (HOST_CPUS=${HOST_CPUS})" >&2
 
-cap_workers() {
-  local requested="$1"
-  if (( requested < HOST_CPUS )); then
-    printf '%s\n' "$requested"
-  else
-    printf '%s\n' "$HOST_CPUS"
-  fi
-}
-
 SHARD_COUNT="${TSZ_CI_SHARDS:-4}"
-
-default_shard_workers() {
-  local usable per
-  usable=$((HOST_CPUS - 8))
-  if (( usable < SHARD_COUNT )); then
-    usable="$HOST_CPUS"
-  fi
-  per=$((usable / SHARD_COUNT))
-  if (( per < 20 )); then
-    per=20
-  elif (( per > 64 )); then
-    per=64
-  fi
-  cap_workers "$per"
-}
-
-default_emit_workers() {
-  local workers
-  workers="$(default_shard_workers)"
-  if (( workers > 32 )); then
-    workers=32
-  fi
-  cap_workers "$workers"
-}
-
-default_fourslash_workers() {
-  local usable per mem_mb mem_per_worker_mb mem_cap shard_count
-  # Use all CPUs split evenly across concurrent shards; no large OS reservation needed.
-  usable="$HOST_CPUS"
-  per=$((usable / SHARD_COUNT))
-  if (( per < 1 )); then per=1; fi
-
-  mem_mb="$(host_memory_mb)"
-  mem_per_worker_mb="${TSZ_CI_FOURSLASH_MB_PER_WORKER:-1024}"
-  shard_count="${SHARD_COUNT:-1}"
-  if [[ "$mem_mb" =~ ^[0-9]+$ && "$mem_mb" -gt 0 && "$mem_per_worker_mb" =~ ^[0-9]+$ && "$mem_per_worker_mb" -gt 0 && "$shard_count" -gt 0 ]]; then
-    # All shards run concurrently, so divide total budget by shard count for per-shard cap.
-    mem_cap=$(( mem_mb / (mem_per_worker_mb * shard_count) ))
-    if (( mem_cap < 2 )); then
-      mem_cap=2
-    fi
-    if (( per > mem_cap )); then
-      per="$mem_cap"
-    fi
-  fi
-
-  if (( per < 2 )); then
-    per=2
-  elif (( per > 32 )); then
-    per=32
-  fi
-  cap_workers "$per"
-}
-
-host_memory_mb() {
-  if [[ -r /proc/meminfo ]]; then
-    awk '/MemTotal:/ { printf "%d\n", $2 / 1024 }' /proc/meminfo
-  elif command -v sysctl >/dev/null 2>&1; then
-    local bytes
-    bytes="$(sysctl -n hw.memsize 2>/dev/null || echo 0)"
-    if [[ "$bytes" =~ ^[0-9]+$ && "$bytes" -gt 0 ]]; then
-      printf '%s\n' $((bytes / 1024 / 1024))
-    else
-      printf '0\n'
-    fi
-  else
-    printf '0\n'
-  fi
-}
-
-default_conformance_workers() {
-  local workers mem_mb mem_per_worker_mb mem_cap
-  workers=$((HOST_CPUS - 8))
-  if (( workers < 1 )); then
-    workers="$HOST_CPUS"
-  fi
-
-  mem_mb="$(host_memory_mb)"
-  mem_per_worker_mb="${TSZ_CI_CONFORMANCE_MB_PER_WORKER:-2048}"
-  if [[ "$mem_mb" =~ ^[0-9]+$ && "$mem_mb" -gt 0 && "$mem_per_worker_mb" =~ ^[0-9]+$ && "$mem_per_worker_mb" -gt 0 ]]; then
-    mem_cap=$((mem_mb / mem_per_worker_mb))
-    if (( mem_cap < 8 )); then
-      mem_cap=8
-    fi
-    if (( workers > mem_cap )); then
-      workers="$mem_cap"
-    fi
-  fi
-
-  if (( workers > 128 )); then
-    workers=128
-  fi
-  cap_workers "$workers"
-}
 
 EMIT_WORKERS="${TSZ_CI_EMIT_WORKERS:-${TSZ_CI_SHARD_WORKERS:-$(default_emit_workers)}}"
 FOURSLASH_WORKERS="${TSZ_CI_FOURSLASH_WORKERS:-${TSZ_CI_SHARD_WORKERS:-$(default_fourslash_workers)}}"
@@ -541,6 +386,7 @@ run_lint() {
   node scripts/ci/test-type-challenges-template-manifest.mjs || return $?
   node scripts/ci/test-type-challenges-test-cases-manifest.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
+  python3 scripts/ci/test_ci_resources.py || return $?
   # Use the dedicated ci-lint profile (debug=false, incremental=false,
   # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
   # — separate cache key from .target/debug so dev incrementals on a
@@ -633,20 +479,23 @@ checker_integration_test_args() {
   local test_name
   while IFS= read -r test_name; do
     printf -- '--test\n%s\n' "$test_name"
-  done < <(
-    cargo metadata --no-deps --format-version 1 \
-      | jq -r '.packages[]
-          | select(.name == "tsz-checker")
-          | .targets[]
-          | select(.kind[]? == "test")
-          | .name' \
-      | sort
-  )
+  done < <(checker_integration_test_names)
+}
+
+checker_integration_test_names() {
+  cargo metadata --no-deps --format-version 1 \
+    | jq -r '.packages[]
+        | select(.name == "tsz-checker")
+        | .targets[]
+        | select(.kind[]? == "test")
+        | .name' \
+    | sort
 }
 
 run_unit_tests() {
   ci_section "Workspace nextest suites"
-  local package package_names checker_selected general_pkg_args checker_test_args
+  local package package_names checker_selected general_pkg_args
+  local checker_batch_size checker_batch_names checker_batch_args
   mapfile -t package_names < <(unit_test_packages)
   if [[ -n "${_TSZ_CI_UNIT_PACKAGES_OVERRIDE:-}" ]]; then
     echo "info: narrowed unit run to: ${_TSZ_CI_UNIT_PACKAGES_OVERRIDE}"
@@ -672,10 +521,42 @@ run_unit_tests() {
     # The checker lib-test binary is larger than the 32 GiB CI runners can
     # link reliably. Keep checker integration tests in unit CI while avoiding
     # that monolithic `rustc --test crates/tsz-checker/src/lib.rs` artifact.
-    mapfile -t checker_test_args < <(checker_integration_test_args)
-    cargo nextest run --profile ci --cargo-profile ci-unit \
-      --build-jobs "$CARGO_BUILD_JOBS" \
-      -p tsz-checker "${checker_test_args[@]}"
+    #
+    # Cargo also struggles when one command asks it to link every checker
+    # integration target. Batch the declared targets so each `cargo test
+    # --no-run` phase has a bounded link set while preserving the same test
+    # coverage.
+    checker_batch_size="${TSZ_CI_CHECKER_TEST_BATCH_SIZE:-40}"
+    if ! [[ "$checker_batch_size" =~ ^[0-9]+$ ]] || (( checker_batch_size < 1 )); then
+      echo "error: TSZ_CI_CHECKER_TEST_BATCH_SIZE must be a positive integer" >&2
+      return 2
+    fi
+    checker_batch_names=()
+    while IFS= read -r test_name; do
+      checker_batch_names+=("$test_name")
+      if (( ${#checker_batch_names[@]} >= checker_batch_size )); then
+        checker_batch_args=()
+        for test_name in "${checker_batch_names[@]}"; do
+          checker_batch_args+=(--test "$test_name")
+        done
+        echo "info: checker integration batch (${#checker_batch_names[@]} targets): ${checker_batch_names[*]}"
+        cargo nextest run --profile ci --cargo-profile ci-unit \
+          --build-jobs "$CARGO_BUILD_JOBS" \
+          -p tsz-checker "${checker_batch_args[@]}"
+        checker_batch_names=()
+      fi
+    done < <(checker_integration_test_names)
+
+    if (( ${#checker_batch_names[@]} > 0 )); then
+      checker_batch_args=()
+      for test_name in "${checker_batch_names[@]}"; do
+        checker_batch_args+=(--test "$test_name")
+      done
+      echo "info: checker integration batch (${#checker_batch_names[@]} targets): ${checker_batch_names[*]}"
+      cargo nextest run --profile ci --cargo-profile ci-unit \
+        --build-jobs "$CARGO_BUILD_JOBS" \
+        -p tsz-checker "${checker_batch_args[@]}"
+    fi
   fi
 }
 
@@ -803,6 +684,7 @@ build_test_binaries() {
   fi
 
   cargo build --profile dist-fast \
+    --jobs "$CARGO_BUILD_JOBS" \
     -p tsz-cli \
     -p tsz-conformance \
     --bin tsz \
@@ -1213,6 +1095,12 @@ run_conformance_aggregate() {
   local expected_shards="${_TSZ_CI_CONFORMANCE_SHARD_COUNT:-${TSZ_CI_CONFORMANCE_SHARDS:-32}}"
   local tmp_dir
   tmp_dir="$(mktemp -d)"
+  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  local prefix=""
+  if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
+    prefix="${bucket%/}/conformance-runs/${run_key}"
+  fi
 
   # Prefer GitHub Actions artifacts (downloaded by the workflow's download-artifact step)
   # over GCS, which requires SA key permissions that may not be available.
@@ -1244,13 +1132,10 @@ run_conformance_aggregate() {
   fi
 
   if [[ "$using_artifacts" -eq 0 ]]; then
-    local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-    local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
-    if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
+    if [[ -z "$prefix" ]]; then
       echo "error: cannot aggregate — no artifact dir and no GCS bucket/run key available" >&2
       return 1
     fi
-    local prefix="${bucket%/}/conformance-runs/${run_key}"
     ensure_gcs_auth
     echo "Downloading shard results from ${prefix}/shard-*.json ..."
     local dl_attempt dl_rc=1
@@ -1340,7 +1225,7 @@ run_conformance_aggregate() {
     > "$METRICS_DIR/conformance.json"
   publish_latest_metric conformance "$METRICS_DIR/conformance.json"
 
-  if gsutil -q cp "${prefix}/timings-shard-*.json" "$tmp_dir/" 2>/dev/null; then
+  if [[ -n "$prefix" ]] && gsutil -q cp "${prefix}/timings-shard-*.json" "$tmp_dir/" 2>/dev/null; then
     jq -s '
       {
         summary: {
@@ -1368,7 +1253,7 @@ _check_conformance_regression_allowlist() {
     return 1
   fi
 
-  if ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+  if [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
     echo "error: conformance regression deficit ${expected_deficit}, but per-shard failure lists are unavailable" >&2
     return 1
   fi
@@ -1437,7 +1322,7 @@ _show_conformance_regressions() {
   local snapshot="scripts/conformance/conformance-detail.json"
 
   # Download all per-shard failure lists (best-effort; non-fatal if missing).
-  if ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+  if [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
     echo "(no per-shard failure lists available — upload may have been skipped)" >&2
     return
   fi
