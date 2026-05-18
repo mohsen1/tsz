@@ -138,6 +138,16 @@ FILE_LINE_LIMIT_CHECKS = [
         ROOT / "crates" / "tsz-core" / "src" / "lib.rs",
         500,
     ),
+    (
+        "Checker query boundary: common quarantine must not grow (#8225)",
+        ROOT
+        / "crates"
+        / "tsz-checker"
+        / "src"
+        / "query_boundaries"
+        / "common.rs",
+        1996,
+    ),
 ]
 
 # Pin field counts on giant coordination structs so workstream-4 (Checker

@@ -268,6 +268,34 @@ class ArchGuardCoreLibFacadeSizeBoundaryTests(unittest.TestCase):
             self.assertEqual(hits, [])
 
 
+class ArchGuardQueryBoundaryCommonSizeTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _query_common_size_check(self):
+        for entry in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
+            name, path, limit = entry
+            if name == "Checker query boundary: common quarantine must not grow (#8225)":
+                return path, limit
+        self.fail("query boundary common size check is missing from FILE_LINE_LIMIT_CHECKS")
+
+    def test_rule_exists_with_current_limit(self):
+        path, limit = self._query_common_size_check()
+        self.assertEqual(limit, 1996)
+        self.assertTrue(
+            str(path).endswith("crates/tsz-checker/src/query_boundaries/common.rs")
+        )
+
+    def test_real_common_file_passes_at_pinned_limit(self):
+        path, limit = self._query_common_size_check()
+        hits = self.arch_guard.scan_file_line_limit(path, limit)
+        self.assertEqual(
+            hits,
+            [],
+            "query_boundaries/common.rs cap is too tight for the live file",
+        )
+
+
 class ArchGuardSolverTypeDataQuarantineTests(unittest.TestCase):
     def setUp(self):
         self.arch_guard = load_arch_guard_module()
