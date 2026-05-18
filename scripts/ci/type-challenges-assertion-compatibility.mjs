@@ -539,6 +539,25 @@ for (const [compiler, diagnostics] of [
           `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].file`,
         );
       }
+      if (entry?.codes !== null && entry?.codes !== undefined) {
+        if (!Array.isArray(entry.codes)) {
+          fail(
+            `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].codes must be an array`,
+          );
+        }
+        entry.codes.forEach((code, codeIndex) => {
+          if (typeof code?.key !== "string" || code.key.trim() === "") {
+            fail(
+              `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].codes[${codeIndex}].key must be a non-empty string`,
+            );
+          }
+          if (!Number.isInteger(code.count) || code.count < 0) {
+            fail(
+              `assertion classification ${compiler} candidateDiagnostics.byCandidate[${index}].codes[${codeIndex}].count must be a non-negative integer`,
+            );
+          }
+        });
+      }
     });
     normalizedCandidateExampleFiles[compiler] = exampleFiles;
   }
