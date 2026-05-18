@@ -820,6 +820,68 @@ fn system_recovered_if_initialized_export_var_uses_system_export_binding() {
 }
 
 #[test]
+fn system_recovered_if_empty_export_binding_uses_planned_temp() {
+    let source = "if (true)\nexport const {} = value;\nexport default value;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _a, _b;"),
+        "Recovered exported empty binding should hoist both planned temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"_b\", _b = _a = value);"),
+        "Recovered exported empty binding should use the planned export temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_recovered_if_object_rest_export_uses_planned_temp() {
+    let source =
+        "if (true)\nexport const { x, ...rest } = { x: 'x', y: 'y' };\nexport default x;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ESNext,
+            no_emit_helpers: true,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _a, x, rest;"),
+        "Recovered exported object-rest binding should hoist the planned source temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = { x: 'x', y: 'y' }, exports_1(\"x\", x = _a.x), exports_1(\"rest\", rest = __rest(_a, [\"x\"]));"),
+        "Recovered exported object-rest binding should reuse the planned source temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("{ x, ...rest } ="),
+        "System output should not emit a raw recovered object-rest assignment pattern.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_object_binding_initializer_assigns_hoisted_name() {
     let source = "let { toString } = 1;\n{\n    let { toFixed } = 1;\n}\nexport {};\n";
 

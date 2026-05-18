@@ -809,7 +809,7 @@ impl<'a> Printer<'a> {
     }
 
     fn collect_system_recovered_exported_variable_names(
-        &self,
+        &mut self,
         stmt_idx: NodeIndex,
         names: &mut Vec<String>,
         seen: &mut HashSet<String>,
@@ -846,6 +846,12 @@ impl<'a> Printer<'a> {
             return false;
         };
 
+        self.collect_system_empty_binding_temps_from_variable_statement(
+            variable_node,
+            true,
+            names,
+            seen,
+        );
         for name in self.collect_variable_names_from_node(variable_node) {
             if !name.is_empty() && seen.insert(name.clone()) {
                 names.push(name);
