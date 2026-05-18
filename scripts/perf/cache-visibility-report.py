@@ -37,12 +37,12 @@ CACHE_NAME_PATTERN = (
 FIELD_RE = re.compile(
     r"^\s*(?:(?:pub|pub\(crate\)|pub\(super\)|pub\(in [^)]+\))\s+)?"
     rf"(?P<name>{CACHE_NAME_PATTERN})"
-    r"\s*:\s*(?P<type>.+)$"
+    r"\s*:\s*(?P<type>.*)$"
 )
 TYPE_ALIAS_RE = re.compile(
     r"^\s*(?:(?:pub|pub\(crate\)|pub\(super\)|pub\(in [^)]+\))\s+)?"
     rf"type\s+(?P<name>{CACHE_NAME_PATTERN})"
-    r"\s*=\s*(?P<type>.+)$"
+    r"\s*=\s*(?P<type>.*)$"
 )
 STRUCT_RE = re.compile(
     r"^\s*(?:(?:pub|pub\(crate\)|pub\(super\)|pub\(in [^)]+\))\s+)?"
@@ -174,6 +174,26 @@ def is_cache_type(type_text: str) -> bool:
     return any(map_type in type_text for map_type in MAP_TYPES)
 
 
+def delimiter_balance(text: str) -> int:
+    opens = text.count("<") + text.count("(") + text.count("[")
+    closes = text.count(">") + text.count(")") + text.count("]")
+    return opens - closes
+
+
+def type_text_is_complete(type_text: str) -> bool:
+    stripped = type_text.strip()
+    return delimiter_balance(stripped) <= 0 and (stripped.endswith(",") or stripped.endswith(";"))
+
+
+def collect_type_text(code_lines: list[str], start_index: int, first_type: str) -> tuple[str, int]:
+    parts = [first_type.strip()]
+    end_index = start_index
+    while end_index + 1 < len(code_lines) and not type_text_is_complete(" ".join(parts)):
+        end_index += 1
+        parts.append(code_lines[end_index].strip())
+    return trim_type(" ".join(parts)), end_index
+
+
 def stat_stem(name: str) -> str:
     stem = re.sub(r"(?:_?cache|_?memo)$", "", name, flags=re.IGNORECASE)
     return stem or name
@@ -247,7 +267,10 @@ def scan_file(path: Path) -> list[CacheCandidate]:
     owner = "<module>"
     struct_depth = 0
     candidates: list[CacheCandidate] = []
-    for line_no, line in enumerate(code_lines, start=1):
+    index = 0
+    while index < len(code_lines):
+        line = code_lines[index]
+        line_no = index + 1
         struct_match = STRUCT_RE.search(line)
         if struct_match:
             owner = struct_match.group(1)
@@ -262,14 +285,17 @@ def scan_file(path: Path) -> list[CacheCandidate]:
                 struct_depth += line.count("{") - line.count("}")
                 if struct_depth <= 0:
                     owner = "<module>"
+            index += 1
             continue
         name = match.group("name")
-        type_text = trim_type(match.group("type"))
+        type_text, end_index = collect_type_text(code_lines, index, match.group("type"))
         if not is_cache_type(type_text):
             if struct_depth > 0 and not struct_match:
-                struct_depth += line.count("{") - line.count("}")
+                for depth_line in code_lines[index : end_index + 1]:
+                    struct_depth += depth_line.count("{") - depth_line.count("}")
                 if struct_depth <= 0:
                     owner = "<module>"
+            index = end_index + 1
             continue
         candidates.append(
             CacheCandidate(
@@ -284,9 +310,11 @@ def scan_file(path: Path) -> list[CacheCandidate]:
             )
         )
         if struct_depth > 0 and not struct_match:
-            struct_depth += line.count("{") - line.count("}")
+            for depth_line in code_lines[index : end_index + 1]:
+                struct_depth += depth_line.count("{") - depth_line.count("}")
             if struct_depth <= 0:
                 owner = "<module>"
+        index = end_index + 1
     return candidates
 
 
