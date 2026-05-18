@@ -1254,7 +1254,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         Some(TypeData::Intersection(_)) => true,
                         _ => false,
                     };
-                    let result_is_application_arg = app.args.iter().any(|&arg| arg == result);
+                    let result_is_application_arg = app.args.contains(&result);
                     let skip_type_alias_repaint = matches!(
                         self.interner.lookup(display_origin),
                         Some(TypeData::Application(_))
@@ -1491,7 +1491,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         ) {
             return;
         }
-        if app.args.iter().any(|&arg| arg == evaluated) {
+        if app.args.contains(&evaluated) {
             return;
         }
         // Fast path: all-intrinsic args trivially have no free type
