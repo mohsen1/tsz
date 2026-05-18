@@ -381,6 +381,37 @@ withTempDir((dir) => {
   const pairingPath = path.join(dir, "pairing.json");
   const outputDir = path.join(dir, "assertions");
   const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
+  writeJson(
+    pairingPath,
+    basePairingReport({
+      sources: {
+        templates: { repository: "type", ref: "type-ref" },
+        testCases: { repository: "type", ref: "different-type-ref" },
+        solutions: { repository: "solutions", ref: "solutions-ref" },
+      },
+    }),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, pairingPath, dir, dir, outputDir, manifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /template and test-case sources come from different snapshots/,
+  );
+  assert.equal(fs.existsSync(manifestPath), false);
+});
+
+withTempDir((dir) => {
+  const pairingPath = path.join(dir, "pairing.json");
+  const outputDir = path.join(dir, "assertions");
+  const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
   const report = basePairingReport();
   report.pairedSolutions[0].testCase.challenge = {
     id: "189",
@@ -399,6 +430,28 @@ withTempDir((dir) => {
   );
   assert.equal(result.status, 1);
   assert.match(result.stderr, /testCase challenge id mismatch/);
+  assert.equal(fs.existsSync(manifestPath), false);
+});
+
+withTempDir((dir) => {
+  const pairingPath = path.join(dir, "pairing.json");
+  const outputDir = path.join(dir, "assertions");
+  const manifestPath = path.join(outputDir, "type-challenges-assertions-manifest.json");
+  const report = basePairingReport();
+  report.pairedSolutions[0].testCase.challenge.slug = "renamed-first";
+  writeJson(pairingPath, report);
+
+  const result = spawnSync(
+    process.execPath,
+    [SCRIPT, pairingPath, dir, dir, outputDir, manifestPath],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /paired challenge metadata mismatch/);
+  assert.match(result.stderr, /template\/test-case slug: first vs renamed-first/);
   assert.equal(fs.existsSync(manifestPath), false);
 });
 
