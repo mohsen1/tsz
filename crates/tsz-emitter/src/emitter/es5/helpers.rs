@@ -1321,12 +1321,13 @@ impl<'a> Printer<'a> {
         // marks `this` references with SubstituteThis to emit `_this` instead.
 
         if func.is_async {
-            // Arrow functions don't have their own `this`. In ES5 lowering:
-            // - If body uses `this`: capture with `_this` and pass to __awaiter
-            // - If body doesn't use `this`: pass `void 0` to __awaiter
+            // Arrow functions don't have their own `this`. In ES5 lowering,
+            // the lowering directive asks for `_this` both when the body
+            // spells `this` and when an async arrow needs a lexical thisArg
+            // passed into `__awaiter`.
             let this_expr = if _captures_this { "_this" } else { "void 0" };
             // TSC wraps async arrow→function conversions inline:
-            // function () { return __awaiter(void 0, ..., function () { ... }); };
+            // function () { return __awaiter(<lexical-this>, ..., function () { ... }); };
             self.emit_async_arrow_es5_inline(func, this_expr);
         } else {
             // Emit any leading comments before the arrow function's `(`.
