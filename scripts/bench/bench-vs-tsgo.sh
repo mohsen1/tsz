@@ -1113,6 +1113,7 @@ record_project_compatibility() {
     [ -z "$PROJECT_COMPATIBILITY_JSONL" ] && return
 
     COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
+    COMPAT_FIXTURE_ROOT="$EXTERNAL_BENCH_DIR" \
     COMPAT_NAME="$name" \
     COMPAT_EXIT_CLASS="$exit_class" \
     COMPAT_PHASE="$phase" \
@@ -1123,7 +1124,7 @@ record_project_compatibility() {
     COMPAT_TSC_EXIT_CODES="$tsc_exit_codes" \
     COMPAT_TSZ_EXIT_CODES="$tsz_exit_codes" \
     COMPAT_TSGO_EXIT_CODES="$tsgo_exit_codes" \
-    node scripts/ci/project-compatibility.mjs record
+    node "$PROJECT_ROOT/scripts/ci/project-compatibility.mjs" record
 }
 
 # run_isolated <label> <command...>
