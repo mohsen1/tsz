@@ -352,6 +352,34 @@ for (const [compiler, diagnostics] of [
       `assertion classification ${compiler} totalCandidates (${diagnostics.totalCandidates}) does not match generatedAssertions (${counts.generatedAssertions})`,
     );
   }
+  if (Number.isInteger(diagnostics.totalCandidates)) {
+    for (const field of ["candidatesWithDiagnostics", "candidatesWithoutDiagnostics"]) {
+      const value = diagnostics[field];
+      if (value === null || value === undefined) {
+        continue;
+      }
+      if (!Number.isInteger(value)) {
+        fail(
+          `assertion classification ${compiler} candidateDiagnostics.${field} must be an integer`,
+        );
+      }
+      if (value < 0 || value > diagnostics.totalCandidates) {
+        fail(
+          `assertion classification ${compiler} candidateDiagnostics.${field} (${value}) must be between 0 and totalCandidates (${diagnostics.totalCandidates})`,
+        );
+      }
+    }
+    if (
+      Number.isInteger(diagnostics.candidatesWithDiagnostics) &&
+      Number.isInteger(diagnostics.candidatesWithoutDiagnostics) &&
+      diagnostics.candidatesWithDiagnostics + diagnostics.candidatesWithoutDiagnostics !==
+        diagnostics.totalCandidates
+    ) {
+      fail(
+        `assertion classification ${compiler} candidate diagnostic counts (${diagnostics.candidatesWithDiagnostics} + ${diagnostics.candidatesWithoutDiagnostics}) do not match totalCandidates (${diagnostics.totalCandidates})`,
+      );
+    }
+  }
 }
 const candidateFileComparisonCounts = comparison.candidateFileComparison?.counts || {};
 if (comparison.candidateFileComparison) {

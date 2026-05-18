@@ -551,6 +551,64 @@ withTempDir((dir) => {
     classification: {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(2),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 2,
+            candidatesWithDiagnostics: 0,
+            candidatesWithoutDiagnostics: 3,
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc candidateDiagnostics\.candidatesWithoutDiagnostics \(3\) must be between 0 and totalCandidates \(2\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 2,
+            candidatesWithDiagnostics: 1,
+            candidatesWithoutDiagnostics: 0,
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc candidate diagnostic counts \(1 \+ 0\) do not match totalCandidates \(2\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
       comparison: {
         status: "match",
