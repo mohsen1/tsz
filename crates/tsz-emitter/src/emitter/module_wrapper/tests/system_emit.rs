@@ -10,6 +10,74 @@ fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::pars
 }
 
 #[test]
+fn system_es5_default_class_export_uses_hoisted_assignment_iife() {
+    let source = "export default class A { method() { return 42; } }\n";
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::System,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+    let mut printer = Printer::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("A = /** @class */ (function ()"),
+        "System ES5 default class should assign the lowered IIFE to the hoisted binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("A.prototype.method = function ()"),
+        "System ES5 default class methods should be downleveled onto the prototype.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"default\", A);"),
+        "System default export should publish the lowered class binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("A = class A"),
+        "System ES5 default class must not preserve a native class expression.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_es5_named_and_local_classes_use_assignment_iifes() {
+    let source =
+        "class Local { local() { return 1; } }\nexport class Named { named() { return 2; } }\n";
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::System,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+    let mut printer = Printer::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("Local = /** @class */ (function ()")
+            && output.contains("Named = /** @class */ (function ()"),
+        "System ES5 local and named-export classes should assign lowered IIFEs.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"Named\", Named);"),
+        "System named class export should publish the lowered class binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Local = class Local") && !output.contains("Named = class Named"),
+        "System ES5 classes must not preserve native class expressions.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn umd_dynamic_import_only_file_gets_wrapper_and_loader_branch() {
     let source = r#"class C {
     _path = "./other";
