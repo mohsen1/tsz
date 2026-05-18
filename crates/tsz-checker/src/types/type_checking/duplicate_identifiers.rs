@@ -1195,19 +1195,19 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // Targeted module augmentations are allowed to merge interface
-                    // declarations with an existing interface export surface.
-                    // Also allow function declarations to merge - TypeScript permits
-                    // function overloads to be added via module augmentation.
-                    // Keep the dedicated cross-file interface-member conflict pass
-                    // above responsible for property-vs-method mismatches instead of
-                    // collapsing benign interface merges into TS2300 here.
+                    // Interfaces and functions can merge across module augmentation;
+                    // the cross-file interface-member-conflict pass handles mismatches.
+                    // Re-export specifiers (`export { X [as Y] } from "mod"`) are not
+                    // local declarations — they only appear in the exports table — so
+                    // they cannot duplicate anything in the local scope.
                     if (decl_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation
                         || other_origin == DuplicateDeclarationOrigin::TargetedModuleAugmentation)
                         && (((decl_flags & symbol_flags::INTERFACE) != 0
                             && (other_flags & symbol_flags::INTERFACE) != 0)
                             || ((decl_flags & symbol_flags::FUNCTION) != 0
-                                && (other_flags & symbol_flags::FUNCTION) != 0))
+                                && (other_flags & symbol_flags::FUNCTION) != 0)
+                            || self.is_reexport_specifier(decl_idx)
+                            || self.is_reexport_specifier(other_idx))
                     {
                         continue;
                     }

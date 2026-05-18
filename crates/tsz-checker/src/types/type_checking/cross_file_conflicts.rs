@@ -371,6 +371,26 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            // Re-exports (`export { X } from "mod"`) don't create local declarations —
+            // they forward the source module's symbol. When the current file also augments
+            // that same source module, the re-export forwards the augmented result and must
+            // not be flagged. Pre-resolve the `from` target once for all specifiers.
+            //
+            // Note: a DIFFERENT file augmenting the CURRENT file (where `from` target ≠
+            // augmentation target) is a legitimate conflict and is not skipped here.
+            let from_target_idx = if export_decl.module_specifier.is_none() {
+                None
+            } else {
+                self.ctx
+                    .arena
+                    .get(export_decl.module_specifier)
+                    .and_then(|node| self.ctx.arena.get_literal(node))
+                    .and_then(|lit| {
+                        self.ctx
+                            .resolve_import_target_from_file(self.ctx.current_file_idx, &lit.text)
+                    })
+            };
+
             for &spec_idx in &named_exports.elements.nodes {
                 let Some(spec_node) = self.ctx.arena.get(spec_idx) else {
                     continue;
@@ -393,6 +413,24 @@ impl<'a> CheckerState<'a> {
                 else {
                     continue;
                 };
+
+                if let Some(from_target) = from_target_idx {
+                    let current_file_augments_source =
+                        self.ctx.binder.module_augmentations.iter().any(
+                            |(aug_spec, augmentations)| {
+                                self.ctx
+                                    .resolve_import_target_from_file(
+                                        self.ctx.current_file_idx,
+                                        aug_spec,
+                                    )
+                                    .is_some_and(|t| t == from_target)
+                                    && augmentations.iter().any(|aug| aug.name == export_name)
+                            },
+                        );
+                    if current_file_augments_source {
+                        continue;
+                    }
+                }
 
                 if self
                     .module_augmentation_conflict_declarations_for_current_file(&export_name)
