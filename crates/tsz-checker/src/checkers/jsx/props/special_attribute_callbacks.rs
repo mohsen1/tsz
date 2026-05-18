@@ -4,6 +4,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
+use tsz_solver::computation::ContextualTypeContext;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn check_jsx_special_attribute_function_body(
@@ -25,7 +26,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+        let helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             contextual_function_type,
             self.ctx.compiler_options.no_implicit_any,

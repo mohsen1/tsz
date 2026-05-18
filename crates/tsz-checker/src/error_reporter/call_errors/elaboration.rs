@@ -9,6 +9,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::ContextualTypeContext;
 
 impl<'a> CheckerState<'a> {
     fn present_callable_property_target_display_type(&self, target_type: TypeId) -> TypeId {
@@ -2417,7 +2418,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let ctx_helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+        let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             effective_param_type,
             self.ctx.compiler_options.no_implicit_any,
