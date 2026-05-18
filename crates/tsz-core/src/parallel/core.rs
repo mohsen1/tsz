@@ -49,6 +49,7 @@ use rayon::prelude::{
     IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator, ParallelIterator,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
@@ -1161,14 +1162,13 @@ pub fn clone_lib_files_for_checker(
             .arena
             .get_source_file_at(lib.root_index)
             .unwrap_or_else(|| panic!("missing source text for lib file {}", lib.file_name));
-        parse_and_bind_lib_file(lib.file_name.clone(), source.text.to_string()).unwrap_or_else(
-            |err| {
+        parse_and_bind_lib_file_borrowed(lib.file_name.clone(), source.text.as_ref())
+            .unwrap_or_else(|err| {
                 panic!(
                     "failed to clone lib file {} for checker: {err:#}",
                     lib.file_name
                 )
-            },
-        )
+            })
     };
 
     if should_clone_libs_in_parallel {
@@ -1200,10 +1200,25 @@ fn parse_and_bind_lib_file(
     file_name: String,
     source_text: String,
 ) -> Result<Arc<lib_loader::LibFile>> {
-    if let Some(cached) = super::lib_snapshot::try_load(&file_name, &source_text) {
+    parse_and_bind_lib_file_with_source(file_name, Cow::Owned(source_text))
+}
+
+fn parse_and_bind_lib_file_borrowed(
+    file_name: String,
+    source_text: &str,
+) -> Result<Arc<lib_loader::LibFile>> {
+    parse_and_bind_lib_file_with_source(file_name, Cow::Borrowed(source_text))
+}
+
+fn parse_and_bind_lib_file_with_source(
+    file_name: String,
+    source_text: Cow<'_, str>,
+) -> Result<Arc<lib_loader::LibFile>> {
+    if let Some(cached) = super::lib_snapshot::try_load(&file_name, source_text.as_ref()) {
         return Ok(cached);
     }
 
+    let source_text = source_text.into_owned();
     let mut lib_parser = ParserState::new(file_name.clone(), source_text.clone());
     let source_file_idx = lib_parser.parse_source_file();
     let diagnostics = lib_parser.get_diagnostics();
