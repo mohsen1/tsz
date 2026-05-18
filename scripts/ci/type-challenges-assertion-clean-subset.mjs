@@ -76,7 +76,12 @@ function validateEvidencePath(value, label) {
 }
 
 function validateSourceMetadata(source, label) {
-  if (source?.repository && source?.ref) {
+  if (
+    typeof source?.repository === "string" &&
+    source.repository.trim() !== "" &&
+    typeof source?.ref === "string" &&
+    source.ref.trim() !== ""
+  ) {
     return;
   }
 
@@ -121,7 +126,12 @@ function validateClassificationManifestSources(candidateManifest, classification
   for (const label of ["templates", "testCases", "solutions"]) {
     const candidateSource = candidateManifest.sources[label];
     const classificationSource = classificationManifest.sources[label];
-    if (!classificationSource?.repository || !classificationSource?.ref) {
+    if (
+      typeof classificationSource?.repository !== "string" ||
+      classificationSource.repository.trim() === "" ||
+      typeof classificationSource?.ref !== "string" ||
+      classificationSource.ref.trim() === ""
+    ) {
       fail(
         [
           `classification candidateManifest.sources.${label} is missing source metadata`,
