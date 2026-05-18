@@ -158,12 +158,17 @@ pub struct DeclarationEmitter<'a> {
     /// JS `export = name` assignments already emitted ahead of their declaration.
     pub(super) emitted_js_export_equals_names: FxHashSet<String>,
     /// Top-level JS bindings referenced by an `export default <Identifier>` statement
-    /// where the identifier resolves to a same-file top-level declaration. tsc hoists
-    /// these `export default` lines to the very top of the emitted .d.ts.
+    /// where the identifier resolves to a same-file top-level declaration. The
+    /// default export is emitted at its source statement; the referenced local
+    /// declaration is deferred until after that statement when needed.
     pub(super) js_export_default_names: FxHashSet<String>,
-    /// JS `export default <Identifier>` statements already hoisted ahead of their
-    /// declaration so the original statement is suppressed when the loop reaches it.
+    /// JS `export default <Identifier>` statements already emitted at their source
+    /// statement so later duplicate visits can be suppressed.
     pub(super) emitted_js_export_default_names: FxHashSet<String>,
+    /// True while emitting the local declaration owned by a JS default identifier
+    /// export. This lets the normal statement visitor bypass the source-position
+    /// deferral guard for that one structured declaration.
+    pub(super) emitting_js_default_export_declaration: bool,
     /// Stable aliases for local declarations that shadow a JS export-equals root name.
     pub(super) js_shadowed_export_equals_local_aliases: FxHashMap<String, String>,
     /// JS namespace-like alias exports synthesized from expando assignments such
@@ -189,6 +194,9 @@ pub struct DeclarationEmitter<'a> {
     /// Top-level JS `const Local = require("mod").Export` aliases used by
     /// exported inferred types and emitted as trailing import-equals aliases.
     pub(super) js_require_property_import_aliases: Vec<(String, String, String)>,
+    /// JS destructured bindings elided from a non-exporting `require("mod")`
+    /// declaration, used to elide same-file locals derived only from that import.
+    pub(super) js_elided_bare_require_binding_names: FxHashSet<String>,
     /// Deferred JS CommonJS `Root.prop = function(){}` statements re-emitted as
     /// top-level synthetic function declarations.
     /// The boolean marks whether the synthetic declaration should be exported.

@@ -3695,8 +3695,8 @@ declare namespace foo {
 }
 declare function bar(): void;
 declare namespace bar {
-    export let async: boolean;
-    export let normal: boolean;
+    let async: boolean;
+    let normal: boolean;
 }
 declare function baz(): void;
 declare namespace baz {
@@ -4046,6 +4046,54 @@ exports.K = class K {
     assert!(
         !output.contains("export var K: {"),
         "Did not expect named CommonJS class expression to lower as a constructor object: {output}"
+    );
+}
+
+#[test]
+fn test_exported_class_expression_method_object_types_keep_tsc_indent() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export var circularReference = class C {
+    static getTags(c: C): C { return c }
+    tags(c: C): C { return c }
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "    getTags(c: {\n        tags(c: /*elided*/ any): /*elided*/ any;\n    }): {\n        tags(c: /*elided*/ any): /*elided*/ any;\n    };"
+        ),
+        "Expected method parameter and return object types to use one member-relative indent level: {output}"
+    );
+    assert!(
+        !output.contains("\n                tags(c:"),
+        "Did not expect multiline method object types to be reindented by the declaration writer: {output}"
+    );
+}
+
+#[test]
+fn test_namespaced_class_expression_method_object_types_keep_tsc_indent() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export namespace Boxed {
+    export var circularReference = class C {
+        static getTags(c: C): C { return c }
+        tags(c: C): C { return c }
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "        getTags(c: {\n            tags(c: /*elided*/ any): /*elided*/ any;\n        }): {\n            tags(c: /*elided*/ any): /*elided*/ any;\n        };"
+        ),
+        "Expected namespaced method object types to stay relative to the namespace member indent: {output}"
+    );
+    assert!(
+        !output.contains("\n                    tags(c:"),
+        "Did not expect nested namespace declaration writer indentation to be added twice: {output}"
     );
 }
 
@@ -6324,10 +6372,11 @@ fn test_export_default_identifier() {
 }
 
 #[test]
-fn test_js_export_default_identifier_is_hoisted() {
-    // For JS source files, tsc hoists `export default <Identifier>` to the very
-    // top of the .d.ts when the identifier resolves to a top-level local
-    // declaration. Repro for jsDeclarationEmitDoesNotRenameImport.
+fn test_js_export_default_identifier_emits_before_local_declaration() {
+    // For JS source files, tsc emits `export default <Identifier>` before the
+    // referenced local declaration when the identifier resolves to a top-level
+    // local declaration. With no earlier public declaration, the default export
+    // is the first output line. Repro for jsDeclarationEmitDoesNotRenameImport.
     let output = emit_js_dts(
         r#"
 function validate() {}
@@ -6338,7 +6387,7 @@ export default validate;
     let trimmed = output.trim();
     assert!(
         trimmed.starts_with("export default validate;"),
-        "Expected `export default validate;` to be hoisted to the top: {trimmed}"
+        "Expected `export default validate;` before the local declaration: {trimmed}"
     );
     let count = trimmed.matches("export default validate;").count();
     assert_eq!(
@@ -6386,8 +6435,8 @@ export class B extends Base2 {}
 }
 
 #[test]
-fn test_js_export_default_class_is_hoisted_above_class_body() {
-    // Same hoisting rule as above, but for class declarations. Uses the
+fn test_js_export_default_class_emits_before_local_declaration() {
+    // Same source-position scheduling rule as above, but for class declarations. Uses the
     // usage-analysis variant so the class isn't pruned from the .d.ts.
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -6399,7 +6448,7 @@ export default Test;
     let trimmed = output.trim();
     assert!(
         trimmed.starts_with("export default Test;"),
-        "Expected `export default Test;` to be hoisted to the top: {trimmed}"
+        "Expected `export default Test;` before the local class declaration: {trimmed}"
     );
     let count = trimmed.matches("export default Test;").count();
     assert_eq!(
@@ -6417,6 +6466,77 @@ export default Test;
 }
 
 #[test]
+fn test_js_default_identifier_preserves_preceding_exported_declarations() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @module A */
+class A {}
+
+export const x = 1;
+/**
+ * Target element
+ * @type {module:A}
+ */
+export let el = null;
+
+export default A;
+"#,
+    );
+
+    let expected = r#"export const x: 1;
+/**
+ * Target element
+ * @type {module:A}
+ */
+export let el: any;
+export default A;
+/** @module A */
+declare class A {
+}
+"#;
+
+    assert_eq!(
+        output, expected,
+        "Expected source-position default export scheduling with deferred local class: {output}"
+    );
+}
+
+#[test]
+fn test_js_default_identifier_keeps_exported_target_in_source_order() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export const A = 1;
+export default A;
+"#,
+    );
+
+    let expected = "export const A: 1;\nexport default A;\n";
+    assert_eq!(
+        output, expected,
+        "Expected exported default target to stay in source order without a duplicate declaration"
+    );
+}
+
+#[test]
+fn test_jsdoc_module_reference_variable_type_falls_back_to_any() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @type {module:pkg.Name} */
+export let pkg = null;
+"#,
+    );
+
+    assert!(
+        output.contains("/** @type {module:pkg.Name} */\nexport let pkg: any;"),
+        "Expected `module:` JSDoc references to emit as any: {output}"
+    );
+    assert!(
+        !output.contains("pkg: null"),
+        "JSDoc @type must take precedence over JS null inference: {output}"
+    );
+}
+
+#[test]
 fn test_js_default_typedef_after_default_identifier_export_uses_export_name() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -6430,7 +6550,7 @@ export default Cls;
     let trimmed = output.trim();
     assert!(
         trimmed.starts_with("export type Cls = string | number;\nexport default Cls;"),
-        "Expected default typedef to reuse the default-exported class name before the hoisted default export: {trimmed}"
+        "Expected default typedef to reuse the default-exported class name before the source-position default export: {trimmed}"
     );
     assert!(
         !trimmed.contains("export type Cls_1 = string | number;"),
@@ -6706,6 +6826,25 @@ u.noError();
 }
 
 #[test]
+fn test_js_local_destructured_require_alias_without_exports_is_elided() {
+    let source = r#"
+const { apply } = require("./moduleExportAliasDuplicateAlias");
+const result = apply.toFixed();
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        !output.contains("declare const apply"),
+        "Expected local destructured require alias in a non-exporting JS module to be elided: {output}"
+    );
+    assert!(
+        !output.contains("declare const result"),
+        "Expected locals derived from the elided destructured require alias to be omitted: {output}"
+    );
+    assert_eq!("export {};", output.trim());
+}
+
+#[test]
 fn test_js_local_dynamic_require_alias_without_exports_is_preserved() {
     let source = r#"
 const moduleName = "untyped";
@@ -6806,6 +6945,36 @@ foo.default = 2;
     assert!(
         output.contains("let _default: number;\n    export { _default as default };"),
         "Expected reserved expando property to use local alias plus export specifier: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_static_property_without_alias_omits_member_export() {
+    let output = emit_js_dts(
+        r#"
+function foo() {}
+foo.x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace foo {\n    let x: number;\n}"),
+        "Expected ordinary expando property without alias scheduling to omit member export: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_function_static_property_without_alias_omits_member_export() {
+    let output = emit_js_dts(
+        r#"
+export function foo() {}
+foo.x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("export namespace foo {\n    let x: number;\n}"),
+        "Expected exported function expando namespace to omit member export when no alias is scheduled: {output}"
     );
 }
 

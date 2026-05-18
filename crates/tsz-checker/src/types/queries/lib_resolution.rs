@@ -1240,38 +1240,11 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Re-register type_to_def AND TypeEnvironment after augmentation heritage merge.
-        // merge_interface_types / merge_lib_interface_heritage may have created a new
-        // TypeId, so the initial registration (pre-merge) points to a stale TypeId.
-        // Without updating type_to_def, the formatter expands "Date" into its full
-        // member list.  Without updating the TypeEnvironment, Lazy(DefId) evaluates to
-        // the pre-heritage body, causing false TS2322/TS2719 when the literal path
-        // (e.g., regex literals resolving via resolve_lib_type_by_name) returns the
-        // post-merge TypeId directly.
+        // Finalize after heritage merge — `merge_lib_interface_heritage`
+        // above may have produced a new TypeId; helper rewires type→def
+        // and the DefId body so literal and annotation paths agree.
         if let Some(ty) = lib_type_id {
-            let name_atom = self.ctx.types.intern_string(name);
-            if let Some(defs) = self.ctx.definition_store.find_defs_by_name(name_atom)
-                && let Some(&def_id) = defs.first()
-            {
-                self.ctx.definition_store.register_type_to_def(ty, def_id);
-                // Update the TypeEnvironment so that Lazy(DefId) resolves to the
-                // fully-merged type (post-heritage, post-augmentation).  The initial
-                // register_lib_def_resolved call registered the pre-merge body;
-                // this overwrites it with the final merged result.
-                //
-                // Do not overwrite a generic alias body with `Lazy(def_id)` itself.
-                // For alias paths, `lib_type_id` can be the public lazy wrapper
-                // (`Lazy(def_id)`) while the real structural body was already
-                // registered by `register_lib_def_resolved`. Re-registering with the
-                // wrapper creates a self-lazy cycle (`DefId -> Lazy(DefId)`), which
-                // blocks application instantiation (e.g. `FlatArray<T, D>`).
-                if crate::query_boundaries::common::lazy_def_id(self.ctx.types, ty) != Some(def_id)
-                {
-                    let type_params = self.ctx.get_def_type_params(def_id).unwrap_or_default();
-                    self.ctx
-                        .register_def_auto_params_in_envs(def_id, ty, type_params);
-                }
-            }
+            self.register_finalized_lib_body(name, ty);
             // Update the symbol_types cache for the INTERFACE type position.
             // compute_type_of_symbol may have cached a DIFFERENT TypeId
             // when has_local_interface_decl was a false positive (NodeIndex
