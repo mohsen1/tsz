@@ -868,7 +868,6 @@ jobs:
     name: conformance-aggregate
     needs: [gate, conformance]
     if: needs.gate.outputs.full_run == 'true' && needs.gate.outputs.compiler_checks_required == 'true' && !cancelled() && needs.conformance.result != 'skipped' && needs.conformance.result != 'cancelled'
-    continue-on-error: true
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: 15
     env:
