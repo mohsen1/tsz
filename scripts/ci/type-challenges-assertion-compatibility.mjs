@@ -162,6 +162,12 @@ function validateCompilerExitCode(exitCode, label) {
   }
 }
 
+function validateNonNegativeCount(value, label) {
+  if (Number.isInteger(value) && value < 0) {
+    fail(`${label} must be non-negative`);
+  }
+}
+
 function validateComparisonStatus(status, label) {
   if (typeof status !== "string" || status.trim() === "") {
     fail(`${label} comparison.status must be a non-empty string`);
@@ -306,6 +312,26 @@ if (cleanSubsetManifest) {
   if (!Number.isInteger(totalCandidates)) {
     fail("tsc-clean assertion manifest counts.totalCandidates must be an integer");
   }
+  validateNonNegativeCount(
+    acceptedAssertions,
+    "tsc-clean assertion manifest counts.tscAcceptedAssertions",
+  );
+  validateNonNegativeCount(
+    acceptedReferencingSolutionDeclaration,
+    "tsc-clean assertion manifest counts.tscAcceptedAssertionsReferencingSolutionDeclaration",
+  );
+  validateNonNegativeCount(
+    acceptedMissingSolutionDeclarationReference,
+    "tsc-clean assertion manifest counts.tscAcceptedAssertionsMissingSolutionDeclarationReference",
+  );
+  validateNonNegativeCount(
+    rejectedAssertions,
+    "tsc-clean assertion manifest counts.tscRejectedAssertions",
+  );
+  validateNonNegativeCount(
+    totalCandidates,
+    "tsc-clean assertion manifest counts.totalCandidates",
+  );
   if (
     acceptedReferencingSolutionDeclaration + acceptedMissingSolutionDeclarationReference !==
       acceptedAssertions
@@ -460,12 +486,20 @@ if (!Number.isInteger(counts.pairedSolutions)) {
 if (!Number.isInteger(counts.generatedAssertions)) {
   fail("assertion classification candidateManifest.counts.generatedAssertions must be an integer");
 }
+validateNonNegativeCount(
+  counts.pairedSolutions,
+  "assertion classification candidateManifest.counts.pairedSolutions",
+);
+validateNonNegativeCount(
+  counts.generatedAssertions,
+  "assertion classification candidateManifest.counts.generatedAssertions",
+);
 if (counts.pairedSolutions !== counts.generatedAssertions) {
   fail(
     `assertion classification pairedSolutions (${counts.pairedSolutions}) does not match generatedAssertions (${counts.generatedAssertions})`,
   );
 }
-if (counts.generatedAssertions === 0) {
+if (counts.generatedAssertions <= 0) {
   fail("assertion classification generatedAssertions must be greater than zero");
 }
 const assertionsReferencingSolutionDeclaration =
@@ -482,6 +516,14 @@ if (!Number.isInteger(assertionsMissingSolutionDeclarationReference)) {
     "assertion classification candidateManifest.counts.assertionsMissingSolutionDeclarationReference must be an integer",
   );
 }
+validateNonNegativeCount(
+  assertionsReferencingSolutionDeclaration,
+  "assertion classification candidateManifest.counts.assertionsReferencingSolutionDeclaration",
+);
+validateNonNegativeCount(
+  assertionsMissingSolutionDeclarationReference,
+  "assertion classification candidateManifest.counts.assertionsMissingSolutionDeclarationReference",
+);
 if (
   assertionsReferencingSolutionDeclaration +
     assertionsMissingSolutionDeclarationReference !==
