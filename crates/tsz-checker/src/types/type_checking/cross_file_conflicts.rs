@@ -401,8 +401,7 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Skip function declarations - they can merge across module augmentation.
-                // Check if any of the conflict declarations for this export name are functions.
+                // Skip declarations that can merge across module augmentation.
                 let conflict_decls =
                     self.module_augmentation_conflict_declarations_for_current_file(&export_name);
                 let has_function_merge =
@@ -410,6 +409,16 @@ impl<'a> CheckerState<'a> {
                         (*flags & tsz_binder::symbol_flags::FUNCTION) != 0
                     });
                 if has_function_merge {
+                    continue;
+                }
+                // Interface augmentation merges with existing interface exports — same
+                // structural rule as function overloads.  `export { X as Y } from "M"` plus
+                // `declare module "M" { interface X {...} }` is valid when M already exports
+                // interface X: the augmentation adds members rather than redeclaring.
+                let all_interface = conflict_decls
+                    .iter()
+                    .all(|(_, flags, _, _, _)| (*flags & tsz_binder::symbol_flags::INTERFACE) != 0);
+                if all_interface {
                     continue;
                 }
 
