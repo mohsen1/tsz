@@ -73,6 +73,37 @@ class MigrationCallsiteCountsTests(unittest.TestCase):
             },
         )
 
+    def test_scan_ignores_with_parent_cache_wrapper_delegate(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.write(
+                root,
+                "src/state/state.rs",
+                "\n".join(
+                    [
+                        "pub fn with_parent_cache_attributed(parent: Parent) -> Self {",
+                        "    CheckerState {",
+                        "        ctx: CheckerContext::with_parent_cache(parent),",
+                        "    }",
+                        "}",
+                    ]
+                )
+                + "\n",
+            )
+            self.write(
+                root,
+                "src/types/type_node_query_members.rs",
+                "let child = CheckerContext::with_parent_cache(parent);\n",
+            )
+            summary = self.module.summarize(self.module.scan([root / "src"]))
+
+        self.assertEqual(summary["counts"]["with_parent_cache"], 1)
+        self.assertNotIn("state/state.rs", summary["files"])
+        self.assertEqual(
+            summary["files"]["types/type_node_query_members.rs"]["with_parent_cache"],
+            1,
+        )
+
     def test_cli_json_output_is_machine_readable(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

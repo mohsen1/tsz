@@ -314,6 +314,11 @@ impl<'a> DeclarationEmitter<'a> {
         depth: u32,
     ) -> Option<String> {
         let type_id = self.get_node_type_or_names(&[initializer]);
+        if let Some(function_text) =
+            self.local_function_declaration_identifier_type_text(initializer)
+        {
+            return Some(function_text);
+        }
         if let Some(typeof_text) = self.typeof_prefix_for_value_entity(initializer, true, type_id) {
             return Some(typeof_text);
         }

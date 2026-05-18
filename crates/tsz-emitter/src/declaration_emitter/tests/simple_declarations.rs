@@ -847,6 +847,67 @@ export class Next {}
 }
 
 #[test]
+fn test_returned_object_literal_local_function_declarations_inline() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function foo<T>(v: T) {
+    function a<T>(a: T) { return a; }
+    function b(): T { return v; }
+
+    function c<T>(v: T) {
+        function a<T>(a: T) { return a; }
+        function b(): T { return v; }
+        return { a, b };
+    }
+
+    return { a, b, c };
+}
+"#,
+    );
+
+    let expected = r#"declare function foo<T>(v: T): {
+    a: <T_1>(a: T_1) => T_1;
+    b: () => T;
+    c: <T_1>(v: T_1) => {
+        a: <T_2>(a: T_2) => T_2;
+        b: () => T_1;
+    };
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected returned local function declarations to inline as object member function types: {output}"
+    );
+}
+
+#[test]
+fn test_returned_object_literal_local_function_overloads_preserve_signatures() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function foo() {
+    function a(x: string): string;
+    function a(x: number): number;
+    function a(x: string | number) { return x; }
+
+    return { a };
+}
+"#,
+    );
+
+    let expected = r#"declare function foo(): {
+    a: {
+        (x: string): string;
+        (x: number): number;
+    };
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected returned overloaded local function declarations to preserve every overload signature: {output}"
+    );
+}
+
+#[test]
 fn test_destructured_binding_comments_are_preserved_before_flattened_name() {
     let output = emit_dts(
         r#"
@@ -3032,6 +3093,43 @@ module.exports = a;
 }
 
 #[test]
+fn test_js_module_exports_typed_object_keeps_value_declaration_with_usage_analysis() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @typedef {{x: number}} Item
+ */
+/**
+ * @type {Item}
+ */
+const x = { x: 12 };
+module.exports = x;
+"#,
+    );
+
+    assert!(
+        output.starts_with("export = x;"),
+        "Expected CommonJS export assignment to stay before its value declaration: {output}"
+    );
+    assert!(
+        output.contains("const x: Item;"),
+        "Expected typed export-equals object root to emit as a value declaration: {output}"
+    );
+    assert!(
+        !output.contains("namespace x {\n    let x: number;"),
+        "Did not expect the object-literal namespace shortcut for an export-equals root: {output}"
+    );
+    assert!(
+        output.contains("declare namespace x {\n    export { Item };\n}"),
+        "Expected export-equals root namespace to re-export local typedef aliases: {output}"
+    );
+    assert!(
+        output.contains("type Item = {\n    x: number;\n};"),
+        "Expected local JSDoc typedef dependency to remain available: {output}"
+    );
+}
+
+#[test]
 fn test_js_module_exports_function_with_typedef_members() {
     let output = emit_js_dts(
         r#"
@@ -3890,6 +3988,91 @@ export function Point(x, y) {
     assert!(
         output.contains("x: number | undefined;") && output.contains("y: number | undefined;"),
         "Expected this-assigned properties to be recovered on the companion class: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_class_merge_omits_non_constructor_signature() {
+    let output = emit_js_dts(
+        r#"
+function C1() {
+    /**
+     * @param {number} x
+     * @param {number} y
+     * @returns {number}
+     */
+    this.prop = function (x, y) {
+        return x + y;
+    };
+}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+C1.prototype.method = function (x, y) {
+    return x + y;
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare function C1(): void;\ndeclare class C1 {"),
+        "Expected JS function plus prototype members to merge with a companion class: {output}"
+    );
+    assert!(
+        !output.contains("constructor();"),
+        "Expected companion class not to duplicate the already-emitted function signature as a constructor: {output}"
+    );
+    assert!(
+        output.contains("prop: (x: number, y: number) => number;")
+            && output.contains("method(x: number, y: number): number;"),
+        "Expected constructor-assigned and prototype members to remain in the companion class: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_static_expando_namespace_members_are_ambient_members() {
+    let output = emit_js_dts(
+        r#"
+function C1() {}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+C1.staticProp = function (x, y) {
+    return x + y;
+};
+
+class C2 {}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+C2.staticProp = function (x, y) {
+    return x + y;
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace C1 {\n    /**")
+            && output.contains("    function staticProp(x: number, y: number): number;\n}"),
+        "Expected function static expando to emit as an ambient namespace member: {output}"
+    );
+    assert!(
+        output.contains("declare namespace C2 {\n    /**")
+            && output.contains("    function staticProp(x: number, y: number): number;\n}"),
+        "Expected class static expando to emit as an ambient namespace member: {output}"
+    );
+    assert!(
+        !output.contains("export function staticProp"),
+        "Did not expect explicit export on ambient namespace members: {output}"
     );
 }
 
@@ -7515,8 +7698,8 @@ foo.default = 2;
     );
 
     assert!(
-        output.contains("declare namespace foo {\n    export let x: number;"),
-        "Expected ordinary expando property to be exported from merged namespace: {output}"
+        output.contains("declare namespace foo {\n    let x: number;"),
+        "Expected ordinary expando property to emit as an ambient namespace member: {output}"
     );
     assert!(
         output.contains("let _default: number;\n    export { _default as default };"),
