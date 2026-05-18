@@ -1812,9 +1812,15 @@ impl<'a> CheckerState<'a> {
                 if let Some(node) = self.ctx.arena.get(node_idx)
                     && let Some(ident) = self.ctx.arena.get_identifier(node)
                 {
+                    // A same-arena NodeIndex may resolve to a namespace-local type
+                    // whose bare name collides with a lib global (`Promise`, etc.).
+                    // Only canonicalize to the lib DefId when the resolved symbol
+                    // itself is from a lib context.
                     if !self
                         .ctx
                         .file_local_type_shadow_for_lib_name(&ident.escaped_text)
+                        && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                            || self.ctx.symbol_is_from_lib(sym_id))
                         && let Some(def_id) =
                             self.resolve_actual_lib_name_to_def_id_for_lowering(&ident.escaped_text)
                     {

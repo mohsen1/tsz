@@ -1,6 +1,6 @@
 //! `TypeResolver` trait implementation for `CheckerContext`.
 //!
-//! Implements `tsz_solver::TypeResolver` which enables the solver to resolve
+//! Implements `TypeResolver` which enables the solver to resolve
 //! `TypeData::Lazy(DefId)` references back to cached types during evaluation.
 
 use crate::context::{
@@ -10,6 +10,7 @@ use crate::module_resolution::module_specifier_candidates;
 use crate::query_boundaries::variance::Variance;
 use std::sync::Arc;
 use tsz_parser::parser::base::{NodeIndex, NodeList};
+use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerContext<'a> {
     /// Get the resolution error for a specifier under an explicit resolution-mode override.
@@ -400,7 +401,7 @@ impl<'a> CheckerContext<'a> {
 /// - `resolve_lazy()` is read-only (looks up from cache)
 /// - Cache is populated by `CheckerState::get_type_of_symbol()` before Application evaluation
 /// - This separation keeps the solver layer (`ApplicationEvaluator`) independent of checker logic
-impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
+impl<'a> TypeResolver for CheckerContext<'a> {
     /// Resolve a symbol reference to its cached type (deprecated).
     ///
     /// `TypeData::Ref` is removed, but we keep this for compatibility.
@@ -622,7 +623,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         // (generic lib interfaces like PromiseLike<T>, Map<K,V>, Set<T>, etc.)
         if !is_atomics
             && let Ok(env) = self.type_env.try_borrow()
-            && let Some(body) = tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.types)
+            && let Some(body) = TypeResolver::resolve_lazy(&*env, def_id, self.types)
             && body != tsz_solver::TypeId::UNKNOWN
             && body != tsz_solver::TypeId::ERROR
         {
@@ -814,7 +815,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     /// type environment, avoiding `RefCell` borrow conflicts when the subtype
     /// checker is called from within a mutable borrow of the type environment.
     fn get_array_base_type(&self) -> Option<tsz_solver::TypeId> {
-        tsz_solver::TypeResolver::get_array_base_type(&self.types)
+        TypeResolver::get_array_base_type(&self.types)
     }
 
     /// Get the type parameters for the Array<T> interface.
@@ -822,11 +823,11 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     fn get_array_base_type_params(&self) -> &[tsz_solver::TypeParamInfo] {
         // We can't borrow type_env and return a reference from it (lifetime issue),
         // so we fall back to the interner which stores the same data.
-        tsz_solver::TypeResolver::get_array_base_type_params(&self.types)
+        TypeResolver::get_array_base_type_params(&self.types)
     }
 
     fn get_readonly_array_base_type(&self) -> Option<tsz_solver::TypeId> {
-        tsz_solver::TypeResolver::get_readonly_array_base_type(&self.types)
+        TypeResolver::get_readonly_array_base_type(&self.types)
     }
 
     /// Get the base class type for a class/interface type.
