@@ -16,10 +16,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::TypeId;
 
-use super::{
-    CheckerContext, CrossFileTypeParamsCacheStatistics, LibContext, ResolutionError, TypeCache,
-    cross_file_type_params_cache_statistics,
-};
+use super::{CheckerContext, LibContext, ResolutionError, TypeCache};
 
 impl TypeCache {
     /// Invalidate cached symbol types that depend on the provided roots.
@@ -100,16 +97,6 @@ impl TypeCache {
 }
 
 impl<'a> CheckerContext<'a> {
-    /// Return statistics for the optional shared cross-file type-params cache.
-    #[must_use]
-    pub fn cross_file_type_params_cache_statistics(
-        &self,
-    ) -> Option<CrossFileTypeParamsCacheStatistics> {
-        self.cross_file_type_params_cache
-            .as_ref()
-            .map(cross_file_type_params_cache_statistics)
-    }
-
     /// Resolve a `SymbolId` to its owning file index.
     ///
     /// Checks the layered `cross_file_symbol_targets` overlay first, then falls
