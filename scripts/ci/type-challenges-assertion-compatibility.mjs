@@ -159,7 +159,12 @@ function hasConcreteCandidateDiagnosticFiles(diagnostics) {
   );
 }
 
-function assertSameFileSet(actual, expected, label) {
+function assertSameFileSet(
+  actual,
+  expected,
+  label,
+  expectedDescription = "compiler candidate diagnostic file lists",
+) {
   const sortedActual = [...actual].sort();
   const sortedExpected = [...expected].sort();
   if (
@@ -167,7 +172,7 @@ function assertSameFileSet(actual, expected, label) {
     sortedActual.some((file, index) => file !== sortedExpected[index])
   ) {
     fail(
-      `${label} does not match compiler candidate diagnostic file lists: expected ${sortedExpected.join(", ") || "<none>"}, actual ${sortedActual.join(", ") || "<none>"}`,
+      `${label} does not match ${expectedDescription}: expected ${sortedExpected.join(", ") || "<none>"}, actual ${sortedActual.join(", ") || "<none>"}`,
     );
   }
 }
@@ -513,6 +518,32 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
       `tsc-clean assertion classification tsc candidatesWithoutDiagnostics (${cleanTscDiagnosticFree}) must match manifest tscAcceptedAssertions (${acceptedAssertions})`,
     );
   }
+  const cleanTscDiagnosticFreeFiles =
+    cleanTsc.candidateDiagnostics?.filesWithoutDiagnostics;
+  if (!Array.isArray(cleanTscDiagnosticFreeFiles)) {
+    fail(
+      "tsc-clean assertion classification tsc candidateDiagnostics.filesWithoutDiagnostics must be an array",
+    );
+  }
+  const normalizedCleanTscDiagnosticFreeFiles = cleanTscDiagnosticFreeFiles.map(
+    (file, index) =>
+      validateCandidateOutputPath(
+        file,
+        `tsc-clean assertion classification tsc candidateDiagnostics.filesWithoutDiagnostics[${index}]`,
+      ),
+  );
+  const cleanSubsetOutputs = cleanSubsetManifest.entries.map((entry, index) =>
+    validateCandidateOutputPath(
+      entry?.output,
+      `tsc-clean assertion manifest entries[${index}].output`,
+    ),
+  );
+  assertSameFileSet(
+    normalizedCleanTscDiagnosticFreeFiles,
+    cleanSubsetOutputs,
+    "tsc-clean assertion classification tsc candidateDiagnostics.filesWithoutDiagnostics",
+    "tsc-clean assertion manifest entries",
+  );
 }
 const tsc = report.compilers?.tsc || {};
 const tsz = report.compilers?.tsz || {};
