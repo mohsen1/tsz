@@ -1691,10 +1691,14 @@ impl<'a> Printer<'a> {
             .get(func.body)
             .is_some_and(|n| self.is_single_line(n));
         let promise_ctor = self.extract_awaiter_promise_constructor(func.type_annotation);
-        let (generator_body, hoisted_var_groups) = if body_has_await {
-            let (generator_body, hoisted_var_groups, _) =
+        let (generator_body, hoisted_var_groups, needs_lexical_this_capture) = if body_has_await {
+            let (generator_body, hoisted_var_groups, _, needs_lexical_this_capture) =
                 async_emitter.emit_generator_body_with_await_and_hoisted_var_groups(func.body);
-            (generator_body, hoisted_var_groups)
+            (
+                generator_body,
+                hoisted_var_groups,
+                needs_lexical_this_capture,
+            )
         } else {
             async_emitter.emit_simple_generator_body_with_hoisted_var_groups(func.body)
         };
@@ -1717,8 +1721,7 @@ impl<'a> Printer<'a> {
             self.increase_indent();
             self.emit_async_arrow_hoisted_var_groups(
                 &hoisted_var_groups,
-                &generator_body,
-                this_expr,
+                needs_lexical_this_capture,
             );
             self.emit_param_binding_prologue(&param_transforms);
             self.write(&generator_body);
@@ -1751,8 +1754,7 @@ impl<'a> Printer<'a> {
             self.increase_indent();
             self.emit_async_arrow_hoisted_var_groups(
                 &hoisted_var_groups,
-                &generator_body,
-                this_expr,
+                needs_lexical_this_capture,
             );
             if !generator_mappings.is_empty() && self.writer.has_source_map() {
                 self.writer.write("");
@@ -1782,7 +1784,7 @@ impl<'a> Printer<'a> {
                 let can_inline_wrapper = func.equals_greater_than_token
                     && body_is_single_line
                     && !body_has_await
-                    && !(this_expr != "this" && generator_body.contains("return _this"))
+                    && !needs_lexical_this_capture
                     && generator_mappings.is_empty();
                 if can_inline_wrapper {
                     self.write(", void 0, ");
@@ -1804,8 +1806,7 @@ impl<'a> Printer<'a> {
                 self.increase_indent();
                 self.emit_async_arrow_hoisted_var_groups(
                     &hoisted_var_groups,
-                    &generator_body,
-                    this_expr,
+                    needs_lexical_this_capture,
                 );
                 if !generator_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
@@ -1829,8 +1830,7 @@ impl<'a> Printer<'a> {
                 self.increase_indent();
                 self.emit_async_arrow_hoisted_var_groups(
                     &hoisted_var_groups,
-                    &generator_body,
-                    this_expr,
+                    needs_lexical_this_capture,
                 );
                 if !generator_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
@@ -1871,8 +1871,7 @@ impl<'a> Printer<'a> {
     fn emit_async_arrow_hoisted_var_groups(
         &mut self,
         hoisted_var_groups: &[Vec<String>],
-        generator_body: &str,
-        this_expr: &str,
+        needs_lexical_this_capture: bool,
     ) {
         for group in hoisted_var_groups {
             if group.is_empty() {
@@ -1889,7 +1888,7 @@ impl<'a> Printer<'a> {
             self.write_line();
         }
 
-        if this_expr != "this" && generator_body.contains("return _this") {
+        if needs_lexical_this_capture {
             self.write("var _this = this;");
             self.write_line();
         }

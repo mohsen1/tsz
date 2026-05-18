@@ -3328,6 +3328,7 @@ impl<'a> ES5ClassTransformer<'a> {
             parameters: self.extract_parameters(&arrow.parameters),
             body: vec![IRNode::AwaiterCall {
                 this_arg: Box::new(IRNode::id("_this")),
+                needs_lexical_this_capture: generator_body.contains_captured_this_reference(),
                 generator_body: Box::new(generator_body),
                 hoisted_var_groups,
                 promise_constructor: self.async_method_promise_constructor(arrow.type_annotation),

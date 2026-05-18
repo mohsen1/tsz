@@ -556,6 +556,7 @@ impl<'a> AsyncES5Transformer<'a> {
         // Build the awaiter call
         let awaiter_call = IRNode::AwaiterCall {
             this_arg: Box::new(IRNode::This { captured: false }),
+            needs_lexical_this_capture: generator_body.contains_captured_this_reference(),
             generator_body: Box::new(generator_body),
             hoisted_var_groups,
             promise_constructor,

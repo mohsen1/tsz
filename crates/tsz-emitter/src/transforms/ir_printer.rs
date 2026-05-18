@@ -1574,6 +1574,7 @@ impl<'a> IRPrinter<'a> {
             IRNode::AwaiterCall {
                 this_arg,
                 generator_body,
+                needs_lexical_this_capture,
                 hoisted_var_groups,
                 promise_constructor,
                 multiline_callback,
@@ -1593,7 +1594,10 @@ impl<'a> IRPrinter<'a> {
                 } else {
                     self.write(", void 0, void 0, function () {");
                 }
-                if hoisted_var_groups.is_empty() && !multiline_callback {
+                if hoisted_var_groups.is_empty()
+                    && !multiline_callback
+                    && !*needs_lexical_this_capture
+                {
                     // TSC keeps the generator call on the awaiter callback's
                     // opening line when no hoisted variables are needed.
                     self.write(" ");
@@ -1604,10 +1608,25 @@ impl<'a> IRPrinter<'a> {
                     self.write_line();
                     self.increase_indent();
                     for group in hoisted_var_groups {
+                        if *needs_lexical_this_capture {
+                            for name in group {
+                                self.write_indent();
+                                self.write("var ");
+                                self.write(name);
+                                self.write(";");
+                                self.write_line();
+                            }
+                        } else {
+                            self.write_indent();
+                            self.write("var ");
+                            self.write(&group.join(", "));
+                            self.write(";");
+                            self.write_line();
+                        }
+                    }
+                    if *needs_lexical_this_capture {
                         self.write_indent();
-                        self.write("var ");
-                        self.write(&group.join(", "));
-                        self.write(";");
+                        self.write("var _this = this;");
                         self.write_line();
                     }
                     self.write_indent();
