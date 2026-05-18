@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { REQUIRED_PROJECT_ROWS } from "../../../../scripts/bench/project-rows.mjs";
+import { fmt } from "./loc.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..", "..", "..", "..");
 
@@ -87,10 +88,6 @@ function loadBenchmarks() {
   return [];
 }
 
-function format(n) {
-  return Number(n).toLocaleString("en-US");
-}
-
 function formatDurationMs(value) {
   const ms = Number(value);
   if (!Number.isFinite(ms)) return "";
@@ -158,7 +155,7 @@ function renderMeanChart(results) {
   const perCaseSpeedupLabel = formatPerCaseSpeedupLabel(valid);
 
   return `<section class="benchmark-mean-card">
-  <p class="bench-category-desc">Sum across ${format(valid.length)} successful <a href="/benchmarks/micro/">micro benchmark cases</a>.</p>
+  <p class="bench-category-desc">Sum across ${fmt(valid.length)} successful <a href="/benchmarks/micro/">micro benchmark cases</a>.</p>
   ${perCaseSpeedupLabel ? `<p class="bench-category-desc">${perCaseSpeedupLabel}</p>` : ""}
   <div class="bench-bars">
     <div class="bench-bar-row">
