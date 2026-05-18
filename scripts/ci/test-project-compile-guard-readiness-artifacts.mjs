@@ -467,6 +467,10 @@ withTempDir((dir) => {
   assert.equal(cleanRow.diagnostic_status, "tsc clean subset failed");
   assert.deepEqual(cleanRow.exit_codes.tsc, [1]);
   assert.deepEqual(cleanRow.exit_codes.tsz, []);
+  assert.equal(cleanRow.assertion_clean_subset.total_candidates, 1);
+  assert.equal(cleanRow.assertion_clean_subset.generated_assertions, 1);
+  assert.equal(cleanRow.assertion_clean_subset.tsc_status, "fail");
+  assert.equal(cleanRow.assertion_clean_subset.tsz_status, "pass");
 });
 
 withTempDir((dir) => {
