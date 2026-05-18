@@ -24,6 +24,8 @@ pub struct AstToIr<'a> {
     transforms: Option<TransformContext>,
     /// Current `this` substitution to use when lowering static initializer contexts.
     current_this_substitution: Cell<Option<ThisSubstitution>>,
+    /// Capture alias for lexical `this` inside arrows within the current member body.
+    lexical_this_capture_alias: Cell<Option<ThisSubstitution>>,
     /// Whether we're inside a derived class (has extends clause) — needed for super lowering
     has_super: bool,
     /// Generated super parameter name for the class IIFE.
@@ -53,6 +55,7 @@ impl<'a> AstToIr<'a> {
             this_captured: Cell::new(false),
             transforms: None,
             current_this_substitution: Cell::new(None),
+            lexical_this_capture_alias: Cell::new(None),
             has_super: false,
             super_name: "_super".to_string(),
             is_static: false,
@@ -111,6 +114,13 @@ impl<'a> AstToIr<'a> {
     /// Set the current class alias for `this` substitution
     pub fn with_class_alias(self, alias: Option<String>) -> Self {
         self.current_this_substitution
+            .set(alias.map(ThisSubstitution::Identifier));
+        self
+    }
+
+    /// Set the member-body lexical `this` capture alias for nested arrows.
+    pub fn with_lexical_this_capture_alias(self, alias: Option<String>) -> Self {
+        self.lexical_this_capture_alias
             .set(alias.map(ThisSubstitution::Identifier));
         self
     }
@@ -1938,9 +1948,14 @@ impl<'a> AstToIr<'a> {
             // Save previous state and set captured flag if needed
             let prev_captured = self.this_captured.get();
             let prev_substitution = self.current_this_substitution.take();
+            let lexical_this_capture_alias = self.lexical_this_capture_alias.take();
+            self.lexical_this_capture_alias
+                .set(lexical_this_capture_alias.clone());
             let this_substitution = class_alias.map(ThisSubstitution::Identifier).or_else(|| {
                 if captures_this {
-                    prev_substitution.clone()
+                    prev_substitution
+                        .clone()
+                        .or_else(|| lexical_this_capture_alias.clone())
                 } else {
                     None
                 }

@@ -126,6 +126,56 @@ class Operation {
 }
 
 #[test]
+fn class_accessors_capture_arrow_this_with_collision_safe_alias() {
+    let output = emit_es5(
+        "class C {\n\
+             get value() {\n\
+                 var x = { run: cb => () => { var _this = 1; return cb(this); } };\n\
+                 return 1;\n\
+             }\n\
+             set value(next) {\n\
+                 var _this = 1;\n\
+                 var x = { run: cb => () => cb(this) };\n\
+             }\n\
+         }\n",
+    );
+
+    assert!(
+        output.matches("var _this_1 = this;").count() >= 2,
+        "Accessor arrows should reserve a collision-safe lexical this alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.matches("return cb(_this_1);").count() >= 2,
+        "Nested arrows should reference the reserved accessor this alias.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return cb(_this);"),
+        "User `_this` bindings must not shadow generated accessor this captures.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn class_accessors_capture_arrow_this_with_default_alias_when_available() {
+    let output = emit_es5(
+        "class C {\n\
+             get value() {\n\
+                 var x = { run: cb => () => cb(this) };\n\
+                 return 1;\n\
+             }\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("var _this = this;"),
+        "Accessor arrows should use the standard lexical this alias when it is free.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return cb(_this);"),
+        "Nested arrows should read the standard accessor this alias.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn async_es5_labeled_block_break_after_await_lowers_to_generator_jump() {
     let output = emit_es5(
         "async function f() {\n\
