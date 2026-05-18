@@ -1565,13 +1565,14 @@ impl<'a> CheckerState<'a> {
             // user has local interface declarations that augment/extend the lib
             // type (e.g., `interface Node { forEachChild(...) }`), we must fall
             // through to the full merge path so user-declared members are included.
-            //
-            // Provenance, not spelling, classifies the residue: binder-recorded
-            // lib provenance is required (§25 forbids a name allowlist here).
             let should_suppress_missing_interface_decl_reject =
                 tsz_common::perf_counters::enabled_fast()
-                    && !has_local_interface_decl
-                    && self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id);
+                    && self
+                        .ctx
+                        .simple_object_missing_interface_decl_residue_is_lib_provenance_case(
+                            sym_id,
+                            has_local_interface_decl,
+                        );
             let can_resolve_lib_interface_without_local_decl =
                 !has_local_interface_decl && (has_out_of_arena_decl || is_lib_symbol);
 
