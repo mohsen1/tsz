@@ -47,6 +47,9 @@ function manifest(
     generated: entries.length,
     entries: entries.map(({ id, level = "medium", slug = `case-${id}`, source }) => {
       const extra = extraEntryFields({ id, level, slug, source });
+      const challenge = sourcePath === "en/*.md"
+        ? { id, level, title: slug }
+        : { id, level, slug };
       const defaultDeclarations = sourcePath === "en/*.md" &&
         !Object.prototype.hasOwnProperty.call(extra, "declarations")
         ? { declarations: [`Solution${id}`] }
@@ -54,7 +57,7 @@ function manifest(
       return {
         output: source,
         source,
-        challenge: { id, level, slug },
+        challenge,
         ...defaultDeclarations,
         ...extra,
       };
@@ -493,6 +496,84 @@ withTempDir((dir) => {
   );
   assert.equal(result.status, 1);
   assert.match(result.stderr, /template manifest entry 1 has no source path/);
+  assert.ok(!fs.existsSync(output));
+});
+
+withTempDir((dir) => {
+  const templates = path.join(dir, "templates.json");
+  const testCases = path.join(dir, "test-cases.json");
+  const solutions = path.join(dir, "solutions.json");
+  const output = path.join(dir, "pairing.json");
+
+  writeJson(
+    templates,
+    manifest(
+      "questions/**/template.ts",
+      [{ id: "13", source: "questions/00013-warm-hello-world/template.ts" }],
+      ({ id, level }) => ({ challenge: { id, level } }),
+    ),
+  );
+  writeJson(
+    testCases,
+    manifest("questions/**/test-cases.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/test-cases.ts" },
+    ]),
+  );
+  writeJson(
+    solutions,
+    manifest("en/*.md", [{ id: "13", source: "en/hello-world.md" }]),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, output],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /template manifest entry 1 has no challenge slug/);
+  assert.ok(!fs.existsSync(output));
+});
+
+withTempDir((dir) => {
+  const templates = path.join(dir, "templates.json");
+  const testCases = path.join(dir, "test-cases.json");
+  const solutions = path.join(dir, "solutions.json");
+  const output = path.join(dir, "pairing.json");
+
+  writeJson(
+    templates,
+    manifest("questions/**/template.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/template.ts" },
+    ]),
+  );
+  writeJson(
+    testCases,
+    manifest("questions/**/test-cases.ts", [
+      { id: "13", source: "questions/00013-warm-hello-world/test-cases.ts" },
+    ]),
+  );
+  writeJson(
+    solutions,
+    manifest(
+      "en/*.md",
+      [{ id: "13", source: "en/hello-world.md" }],
+      ({ id, level }) => ({ challenge: { id, level } }),
+    ),
+  );
+
+  const result = spawnSync(
+    process.execPath,
+    [REPORT_SCRIPT, templates, testCases, solutions, output],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /solution manifest entry 1 has no challenge title/);
   assert.ok(!fs.existsSync(output));
 });
 
