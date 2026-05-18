@@ -985,9 +985,9 @@ impl<'a> CheckerState<'a> {
                 checker.ctx.class_constructor_resolution_set.insert(id);
             }
 
-            // Wire up the shared DefinitionStore in the child's TypeEnvironment so
-            // inner DefId→TypeId mappings survive child-checker teardown.
-            checker.ctx.ensure_type_env_has_definition_store();
+            // Wire up the shared DefinitionStore in both of the child's TypeEnvironments
+            // so inner DefId→TypeId mappings survive child-checker teardown.
+            checker.ctx.ensure_both_envs_have_definition_store();
 
             // Use get_type_of_symbol to ensure proper cycle detection.
             let result = checker.get_type_of_symbol(sym_id);
@@ -1264,9 +1264,9 @@ impl<'a> CheckerState<'a> {
             checker.ctx.class_constructor_resolution_set.insert(id);
         }
 
-        // Wire up the shared DefinitionStore in the child's TypeEnvironment so
-        // inner DefId→TypeId mappings survive child-checker teardown.
-        checker.ctx.ensure_type_env_has_definition_store();
+        // Wire up the shared DefinitionStore in both of the child's TypeEnvironments
+        // so inner DefId→TypeId mappings survive child-checker teardown.
+        checker.ctx.ensure_both_envs_have_definition_store();
 
         let result = checker.class_instance_type_with_params_from_symbol(sym_id);
         if self.ctx.share_owner_symbol_type_results
@@ -1428,12 +1428,12 @@ impl<'a> CheckerState<'a> {
         // DefId ↔ SymbolId mappings are resolved via DefinitionStore fallback
         // on cache miss — no parent-to-child copy needed.
 
-        // Wire up the shared DefinitionStore in the child's TypeEnvironment so
-        // that DefId→TypeId mappings for inner types (e.g., IServer inside
+        // Wire up the shared DefinitionStore in both of the child's TypeEnvironments
+        // so that DefId→TypeId mappings for inner types (e.g., IServer inside
         // IConfig's properties) are written through to the shared store. Without
         // this, the parent checker cannot resolve Lazy(DefId) references for
         // types nested inside the cross-file interface after the child is dropped.
-        checker.ctx.ensure_type_env_has_definition_store();
+        checker.ctx.ensure_both_envs_have_definition_store();
 
         // Try compute_interface_type_from_declarations first (more direct),
         // fall back to get_type_of_symbol for non-pure-interface symbols.
