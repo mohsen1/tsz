@@ -235,6 +235,12 @@ impl<'a> DeclarationEmitter<'a> {
         if self.js_skipped_local_export_aliases.contains(&export_idx) {
             return;
         }
+        if self
+            .js_skipped_local_export_interface_exports
+            .contains(&export_idx)
+        {
+            return;
+        }
         if let Some(group) = self.js_grouped_reexports.get(&export_idx).cloned() {
             self.emit_grouped_js_reexports(&group);
             return;
@@ -466,26 +472,20 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("export { ");
         let mut first = true;
-        for export_idx in aliases {
-            let Some(export_node) = self.arena.get(export_idx) else {
+        for spec_idx in aliases {
+            if self
+                .arena
+                .get(spec_idx)
+                .and_then(|spec_node| self.arena.get_specifier(spec_node))
+                .is_none()
+            {
                 continue;
-            };
-            let Some(export) = self.arena.get_export_decl(export_node) else {
-                continue;
-            };
-            let Some(clause_node) = self.arena.get(export.export_clause) else {
-                continue;
-            };
-            let Some(named) = self.arena.get_named_imports(clause_node) else {
-                continue;
-            };
-            for &spec_idx in &named.elements.nodes {
-                if !first {
-                    self.write(", ");
-                }
-                first = false;
-                self.emit_specifier(spec_idx, true);
             }
+            if !first {
+                self.write(", ");
+            }
+            first = false;
+            self.emit_specifier(spec_idx, true);
         }
         self.write(" };");
         self.write_line();
@@ -1089,12 +1089,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
-        for &member_idx in &iface.members.nodes {
-            if let Some(mn) = self.arena.get(member_idx) {
-                self.emit_leading_jsdoc_comments(mn.pos);
-            }
-            self.emit_interface_member(member_idx);
-        }
+        self.emit_interface_members(&iface.members.nodes);
 
         self.decrease_indent();
         self.write_indent();
@@ -1425,22 +1420,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
-        for &member_idx in &iface.members.nodes {
-            let before_jsdoc_len = self.writer.len();
-            let saved_comment_idx = self.comment_emit_idx;
-            if let Some(member_node) = self.arena.get(member_idx) {
-                self.emit_leading_jsdoc_comments(member_node.pos);
-            }
-            let before_member_len = self.writer.len();
-            self.emit_interface_member(member_idx);
-            if self.writer.len() == before_member_len {
-                self.writer.truncate(before_jsdoc_len);
-                self.comment_emit_idx = saved_comment_idx;
-                if let Some(member_node) = self.arena.get(member_idx) {
-                    self.skip_comments_in_node(member_node.pos, member_node.end);
-                }
-            }
-        }
+        self.emit_interface_members(&iface.members.nodes);
 
         self.decrease_indent();
         self.write_indent();
@@ -2037,6 +2017,21 @@ impl<'a> DeclarationEmitter<'a> {
                         decl.initializer,
                         true,
                     ) {
+                        continue;
+                    }
+                    if self.source_is_js_file
+                        && self.emit_js_object_literal_namespace(
+                            decl.name,
+                            decl.initializer,
+                            true,
+                            false,
+                        )
+                    {
+                        if let Some(dn) = self.arena.get(decl_idx) {
+                            let skip_end =
+                                self.arena.get(decl.initializer).map_or(dn.end, |n| n.end);
+                            self.skip_comments_in_node(dn.pos, skip_end);
+                        }
                         continue;
                     }
                 }

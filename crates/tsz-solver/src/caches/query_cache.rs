@@ -14,14 +14,15 @@ use crate::intern::TypeInterner;
 use crate::objects::element_access::ElementAccessResult;
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::compat::CompatChecker;
+use crate::relations::relation_queries::RelationPolicy;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
     ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheConfig, RelationCacheKey,
-    RelationFlags, StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement,
-    TupleListId, TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo,
-    Variance, Visibility,
+    StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId,
+    TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo, Variance,
+    Visibility,
 };
 use crate::visitor::is_error_type;
 use dashmap::DashMap;
@@ -35,31 +36,16 @@ type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool);
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
 
-/// Build a `RelationCacheConfig` from the legacy packed `u16` flags in a way
-/// that matches the defaults a fresh `SubtypeChecker::new().apply_flags(flags)`
-/// would produce.
-///
-/// `SubtypeChecker::new` defaults `assume_related_on_cycle = true` and
-/// `any_propagation = All`, and `apply_flags` does not touch either. Encoding
-/// those defaults into the cache key here ensures that the external
-/// `is_subtype_of_with_flags` write/read path and the internal
-/// `SubtypeChecker::make_cache_key` path address the same cache slot.
+/// Build a subtype cache config from the legacy packed `u16` flags by routing
+/// through the typed relation policy bridge.
 pub const fn subtype_cache_config_from_legacy_flags(flags: u16) -> RelationCacheConfig {
-    let mut bits = RelationFlags::from_bits_truncate(flags as u32);
-    // Matches SubtypeChecker::new() default.
-    bits = bits.union(RelationFlags::ASSUME_RELATED_ON_CYCLE);
-    RelationCacheConfig::from_flags(bits)
+    RelationPolicy::from_flags(flags).cache_config()
 }
 
-/// Build a `RelationCacheConfig` from legacy packed `u16` flags that matches
-/// the effective defaults of `CompatChecker::new().apply_flags(flags)`, so
-/// the assignability write/read paths share a cache slot with the
-/// `CompatChecker`'s internal caching.
+/// Build an assignability cache config from legacy packed `u16` flags by
+/// routing through the typed relation policy bridge.
 pub const fn assignability_cache_config_from_legacy_flags(flags: u16) -> RelationCacheConfig {
-    let mut bits = RelationFlags::from_bits_truncate(flags as u32);
-    // Matches CompatChecker::new() / SubtypeChecker::new() defaults.
-    bits = bits.union(RelationFlags::ASSUME_RELATED_ON_CYCLE);
-    RelationCacheConfig::from_flags(bits)
+    RelationPolicy::from_flags(flags).cache_config()
 }
 
 /// Thread-safe shared query cache for cross-file type checking.

@@ -121,19 +121,23 @@ export function parseBaseline(content: string): BaselineContent {
   }
 
   let match: RegExpExecArray | null;
+  const markerFileMatchesSegment = (markerFile: string, segmentName: string): boolean => {
+    const markerBaseName = markerFile.split(/[\\/]/).pop();
+    return markerFile === segmentName || markerBaseName === segmentName;
+  };
   while ((match = fileMarkerRegex.exec(content)) !== null) {
     const name = match[1];
     const markerStart = match.index;
     const segmentStart = match.index + match[0].length;
     const missingFromOriginalEmitMarker = missingFromOriginalEmitMarkers.find(marker => {
-      if (marker.file !== name || marker.index >= markerStart) return false;
+      if (!markerFileMatchesSegment(marker.file, name) || marker.index >= markerStart) return false;
       const between = content.slice(marker.index, markerStart).trim();
-      return between === `!!!! File ${name} missing from original emit, but present in noCheck emit`;
+      return between === `!!!! File ${marker.file} missing from original emit, but present in noCheck emit`;
     });
     const differsFromOriginalEmitMarker = differsFromOriginalEmitMarkers.find(marker => {
-      if (marker.file !== name || marker.index >= markerStart) return false;
+      if (!markerFileMatchesSegment(marker.file, name) || marker.index >= markerStart) return false;
       const between = content.slice(marker.index, markerStart).trim();
-      return between === `!!!! File ${name} differs from original emit in noCheck emit`;
+      return between === `!!!! File ${marker.file} differs from original emit in noCheck emit`;
     });
     const differsFromOriginalEmit = differsFromOriginalEmitMarker !== undefined;
     segments.push({
@@ -141,7 +145,7 @@ export function parseBaseline(content: string): BaselineContent {
       markerStart,
       start: segmentStart,
       end: content.length, // Will be updated
-      missingFromOriginalEmit: missingFromOriginalEmitFiles.has(name),
+      missingFromOriginalEmit: missingFromOriginalEmitMarker !== undefined,
       missingFromOriginalEmitMarkerStart: missingFromOriginalEmitMarker?.index,
       differsFromOriginalEmit,
       differsFromOriginalEmitMarkerStart: differsFromOriginalEmitMarker?.index,
@@ -192,6 +196,25 @@ export function parseBaseline(content: string): BaselineContent {
   const sourceFileNames: Set<string> = new Set();
   const dtsOutputCandidates: Set<string> = new Set();
   const dtsSourceFiles: Array<{ name: string; content: string }> = [];
+  let missingOriginalDtsOutput: { segment: BaselineSegment; content: string } | null = null;
+  let selectedDtsOutputSegment: BaselineSegment | null = null;
+
+  const segmentContent = (seg: BaselineSegment): string => {
+    return trimSegmentBoundaryNewlines(content.slice(seg.start, seg.end));
+  };
+  const selectDtsOutputSegment = (seg: BaselineSegment, fileContent = segmentContent(seg)): void => {
+    result.dts = fileContent;
+    result.dtsFileName = seg.name.trim();
+    selectedDtsOutputSegment = seg;
+  };
+  const findOriginalDtsOutputSegment = (fileName: string): BaselineSegment | undefined => {
+    return outputSegments.find(seg => {
+      return seg.name.trim() === fileName
+        && seg.name.trim().endsWith('.d.ts')
+        && !seg.missingFromOriginalEmit
+        && !seg.differsFromOriginalEmit;
+    });
+  };
 
   // Pre-pass: find the last auxiliary file (package.json, tsconfig.json).
   // In multi-file baselines with duplicate filenames (e.g., multiple index.js
@@ -422,9 +445,10 @@ export function parseBaseline(content: string): BaselineContent {
     } else if (segIndex >= outputStart && name.endsWith('.d.ts')) {
       // Declaration segment: classify as emitted output when name matches an emitted d.ts path.
       if (dtsOutputCandidates.has(name)) {
-        if (!result.dts || result.dtsFileName === name) {
-          result.dts = fileContent;
-          result.dtsFileName = name;
+        if (seg.missingFromOriginalEmit) {
+          missingOriginalDtsOutput ??= { segment: seg, content: fileContent };
+        } else if (!result.dts || result.dtsFileName === name) {
+          selectDtsOutputSegment(seg, fileContent);
         }
       } else {
         dtsSourceFiles.push({ name, content: fileContent });
@@ -440,9 +464,9 @@ export function parseBaseline(content: string): BaselineContent {
     result.js = result.files.get('out.js') ?? result.js;
     result.jsFileName = 'out.js';
   }
-  if (outputFileNames.has('out.d.ts') && result.files.has('out.d.ts')) {
-    result.dts = result.files.get('out.d.ts') ?? result.dts;
-    result.dtsFileName = 'out.d.ts';
+  const outDtsSegment = findOriginalDtsOutputSegment('out.d.ts');
+  if (outDtsSegment) {
+    selectDtsOutputSegment(outDtsSegment);
   }
 
   // Refine JS/DTS selection by preferring files that match the source basename.
@@ -469,18 +493,28 @@ export function parseBaseline(content: string): BaselineContent {
       }
     }
 
-    if (!result.dts && outputFileNames.has(preferredDtsName) && result.files.has(preferredDtsName)) {
-      result.dts = result.files.get(preferredDtsName) ?? result.dts;
-      result.dtsFileName = preferredDtsName;
+    const preferredDtsSegment = findOriginalDtsOutputSegment(preferredDtsName);
+    if (!result.dts && preferredDtsSegment) {
+      selectDtsOutputSegment(preferredDtsSegment);
     } else if (!result.dts) {
-      for (const [name, fileContent] of result.files) {
-        if (outputFileNames.has(name) && name.endsWith('.d.ts')) {
-          result.dts = fileContent;
-          result.dtsFileName = name;
+      for (const seg of outputSegments) {
+        const name = seg.name.trim();
+        if (!seg.missingFromOriginalEmit && !seg.differsFromOriginalEmit && name.endsWith('.d.ts')) {
+          selectDtsOutputSegment(seg);
           break;
         }
       }
     }
+  }
+
+  if (!result.dts && missingOriginalDtsOutput) {
+    result.dts = missingOriginalDtsOutput.content;
+    result.dtsFileName = missingOriginalDtsOutput.segment.name.trim();
+    selectedDtsOutputSegment = missingOriginalDtsOutput.segment;
+  }
+
+  if (selectedDtsOutputSegment && !selectedDtsOutputSegment.missingFromOriginalEmit) {
+    result.noDtsEmitExpected = false;
   }
 
   // Some scanner baselines intentionally emit text that looks like baseline

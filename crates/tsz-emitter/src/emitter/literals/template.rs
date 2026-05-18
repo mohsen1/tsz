@@ -463,6 +463,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn invalid_no_substitution_template_statement_does_not_duplicate_semicolon() {
+        let output = emit(
+            r"`\u`;
+`\x0`;
+",
+        );
+        assert_eq!(
+            output, "`\\u`;\n`\\x0`;\n",
+            "Invalid no-substitution template statements should use the source statement semicolon once.\nGot: {output}"
+        );
+    }
+
+    #[test]
+    fn invalid_template_expression_statement_does_not_duplicate_semicolon() {
+        let output = emit(
+            r"`\u${0}`;
+`${0}\x`;
+",
+        );
+        assert_eq!(
+            output, "`\\u${0}`;\n`${0}\\x`;\n",
+            "Invalid template expression statements should not synthesize an extra empty statement.\nGot: {output}"
+        );
+    }
+
     /// Tagged template with unterminated no-substitution template.
     #[test]
     fn tagged_unterminated_template() {

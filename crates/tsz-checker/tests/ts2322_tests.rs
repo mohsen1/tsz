@@ -33,6 +33,7 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
         "dom.d.ts",
         "dom.generated.d.ts",
         "dom.iterable.d.ts",
+        "esnext.iterator.d.ts",
         "esnext.d.ts",
     ])
 }
@@ -1541,6 +1542,113 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) =>
             .iter()
             .any(|(code, _)| *code == diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE),
         "mapped type object literal handlers should contextually type callback params, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn mapped_application_generic_indexed_call_preserves_key_correlation() {
+    // Structural rule: indexing a homomorphic mapped alias application with a
+    // generic key preserves the key in the callable template. The return type is
+    // Model[Key], not the union Model[keyof Model].
+    let source = r#"
+type Readers<T> = { [K in keyof T]: (value: T[K]) => T[K] };
+
+type Model = {
+    alpha: { tag: "alpha"; value: number };
+    beta: { tag: "beta"; value: string };
+};
+
+declare const model: Model;
+declare const readers: Readers<Model>;
+
+function read<Key extends keyof Model>(key: Key): Model[Key] {
+    return readers[key](model[key]);
+}
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2322),
+        "homomorphic mapped alias application indexed with a generic key should keep return correlation, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2345),
+        "homomorphic mapped alias application indexed with a generic key should keep argument correlation, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn renamed_mapped_application_generic_indexed_call_preserves_key_correlation() {
+    // Same rule with different type parameter and mapped variable names to guard
+    // against spelling-based fixes.
+    let source = r#"
+type Accessors<Input> = { [Slot in keyof Input]: (item: Input[Slot]) => Input[Slot] };
+
+type Store = {
+    left: { side: "left"; count: number };
+    right: { side: "right"; label: string };
+};
+
+declare const store: Store;
+declare const accessors: Accessors<Store>;
+
+function get<X extends keyof Store>(slot: X): Store[X] {
+    return accessors[slot](store[slot]);
+}
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2322),
+        "renamed homomorphic mapped alias application should keep return correlation, got: {diagnostics:?}"
+    );
+    assert!(
+        !has_diagnostic_code(&diagnostics, 2345),
+        "renamed homomorphic mapped alias application should keep argument correlation, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn concrete_union_callable_still_rejects_uncorrelated_union_argument() {
+    let source = r#"
+declare const fnUnion:
+    ((value: { tag: "alpha"; value: number }) => { tag: "alpha"; value: number })
+    | ((value: { tag: "beta"; value: string }) => { tag: "beta"; value: string });
+declare const value:
+    { tag: "alpha"; value: number }
+    | { tag: "beta"; value: string };
+
+fnUnion(value);
+"#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+
+    assert!(
+        has_diagnostic_code(&diagnostics, 2345),
+        "uncorrelated concrete union calls should still be rejected, got: {diagnostics:?}"
     );
 }
 
@@ -5304,6 +5412,67 @@ const r1: number = map.values().next().value;
     );
 }
 
+#[test]
+fn test_builtin_iterator_helpers_keep_contextual_callback_types() {
+    let source = r#"
+const iterator = Iterator.from([0, 1, 2]);
+
+const mapped: IteratorObject<string> =
+    iterator.map((value, index) => value === index ? "same" : String(value));
+const filtered: IteratorObject<number> =
+    iterator.filter((value, index) => value > index);
+
+function isZero(value: number): value is 0 {
+    return value === 0;
+}
+const zero: IteratorObject<0> = iterator.filter(isZero);
+
+function* gen() {
+    yield 0;
+}
+const mappedGen: IteratorObject<string> =
+    gen().map(value => value === 0 ? "zero" : "other");
+const mappedValues: IteratorObject<string> =
+    [0, 1, 2].values().map(value => value === 0 ? "zero" : "other");
+
+class GoodIterator extends Iterator<number> {
+    next() {
+        return { done: false, value: 0 } as const;
+    }
+}
+
+mapped;
+filtered;
+zero;
+mappedGen;
+mappedValues;
+new GoodIterator();
+"#;
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_builtin_iterator_return: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    for code in [
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+        diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+    ] {
+        assert_eq!(
+            diagnostic_count(&diagnostics, code),
+            0,
+            "builtin iterator helpers should not emit TS{code}, got: {diagnostics:?}"
+        );
+    }
+}
+
 /// When `strictBuiltinIteratorReturn` is false, `BuiltinIteratorReturn` resolves to `any`.
 /// Assigning `any` to `number` is always allowed, so no error.
 #[test]
@@ -7723,6 +7892,41 @@ fn test_ts2322_fbounded_wrong_element_type_errors() {
     assert!(
         ts2322 >= 1,
         "Expected TS2322: number is not assignable to FileEntry: {diags:?}"
+    );
+}
+
+const TREE_BTREE_INTERFACES: &str = r#"
+        interface Tree<T extends Tree<T>> {
+            children: T[];
+        }
+        interface BTree extends Tree<BTree> {
+            value: number;
+        }
+    "#;
+
+#[test]
+fn test_ts2322_fbounded_no_parent_field_empty_array_no_error() {
+    // Minimal F-bounded pattern without a parent field — empty array should
+    // adopt the contextual element type from the heritage clause.
+    let source = format!("{TREE_BTREE_INTERFACES}const bt: BTree = {{ value: 1, children: [] }};");
+    let diags = get_all_diagnostics(&source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322: empty array in minimal F-bounded object literal should adopt contextual type: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_fbounded_no_parent_field_wrong_element_type_errors() {
+    // When the element type is wrong, TS2322 must still fire.
+    let source =
+        format!("{TREE_BTREE_INTERFACES}const bt: BTree = {{ value: 1, children: [42] }};");
+    let diags = get_all_diagnostics(&source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322 >= 1,
+        "Expected TS2322: number is not assignable to BTree: {diags:?}"
     );
 }
 

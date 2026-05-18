@@ -258,6 +258,10 @@ name = "ts2300_tests"
 path = "tests/ts2300_tests.rs"
 
 [[test]]
+name = "ts2300_reexport_augmentation_tests"
+path = "tests/ts2300_reexport_augmentation_tests.rs"
+
+[[test]]
 name = "ts2304_tests"
 path = "tests/ts2304_tests.rs"
 
@@ -566,8 +570,20 @@ name = "nonnull_contextual_type_arg_inference_tests"
 path = "tests/nonnull_contextual_type_arg_inference_tests.rs"
 
 [[test]]
-name = "conformance_issues"
-path = "tests/conformance_issues.rs"
+name = "conformance_issues_errors"
+path = "tests/conformance_issues_errors.rs"
+
+[[test]]
+name = "conformance_issues_features"
+path = "tests/conformance_issues_features.rs"
+
+[[test]]
+name = "conformance_issues_modules"
+path = "tests/conformance_issues_modules.rs"
+
+[[test]]
+name = "conformance_issues_types"
+path = "tests/conformance_issues_types.rs"
 
 [[test]]
 name = "export_equals_display_order_tests"
@@ -686,8 +702,16 @@ name = "typeof_instantiation_expression_tests"
 path = "tests/typeof_instantiation_expression_tests.rs"
 
 [[test]]
-name = "ts2344_class_constructor_constraint"
-path = "tests/ts2344_class_constructor_constraint.rs"
+name = "ts2344_class_constructor_constraint_call"
+path = "tests/ts2344_class_constructor_constraint_call.rs"
+
+[[test]]
+name = "ts2344_class_constructor_constraint_expr"
+path = "tests/ts2344_class_constructor_constraint_expr.rs"
+
+[[test]]
+name = "ts2344_class_constructor_constraint_visibility"
+path = "tests/ts2344_class_constructor_constraint_visibility.rs"
 
 [[test]]
 name = "ts2344_accessor_constraint"
@@ -1174,6 +1198,10 @@ name = "symbol_index_signature_tests"
 path = "tests/symbol_index_signature_tests.rs"
 
 [[test]]
+name = "non_unique_symbol_late_bound_member_tests"
+path = "tests/non_unique_symbol_late_bound_member_tests.rs"
+
+[[test]]
 name = "ts2855_static_super_field_tests"
 path = "tests/ts2855_static_super_field_tests.rs"
 
@@ -1336,6 +1364,10 @@ path = "tests/index_signature_argument_assignability_tests.rs"
 [[test]]
 name = "operator_literal_annotation_display_tests"
 path = "tests/operator_literal_annotation_display_tests.rs"
+
+[[test]]
+name = "public_package_unique_symbol_emit_tests"
+path = "tests/public_package_unique_symbol_emit_tests.rs"
 
 [lints]
 workspace = true

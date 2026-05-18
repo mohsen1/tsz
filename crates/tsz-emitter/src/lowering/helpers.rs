@@ -1764,7 +1764,7 @@ impl<'a> LoweringPass<'a> {
                 || node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             {
                 if let Some(import_decl) = self.arena.get_import_decl(node) {
-                    if !self.import_has_runtime_dependency(import_decl) {
+                    if !self.import_should_schedule_runtime_dependency(node, import_decl) {
                         continue;
                     }
                     if let Some(text) =
@@ -1872,6 +1872,85 @@ impl<'a> LoweringPass<'a> {
         }
 
         false
+    }
+
+    pub(super) fn import_should_schedule_runtime_dependency(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+        import_decl: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        if !self.import_has_runtime_dependency(import_decl) {
+            return false;
+        }
+
+        let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
+            return true;
+        };
+        if clause_node.kind != syntax_kind_ext::IMPORT_CLAUSE {
+            return true;
+        }
+
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return true;
+        };
+        if clause.is_type_only {
+            return false;
+        }
+        if self.ctx.options.verbatim_module_syntax {
+            return true;
+        }
+        if self.import_clause_is_empty_named_import(clause) {
+            return false;
+        }
+        if self.import_clause_is_namespace_only(clause)
+            && self.import_references_type_only_export_equals_module(import_decl)
+        {
+            return false;
+        }
+
+        self.import_has_value_usage_after_node(node, clause)
+    }
+
+    fn import_clause_is_namespace_only(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
+                .is_some_and(|named| named.name.is_some() && named.elements.nodes.is_empty())
+    }
+
+    fn import_clause_is_empty_named_import(
+        &self,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
+                .is_some_and(|named| named.name.is_none() && named.elements.nodes.is_empty())
+    }
+
+    fn import_references_type_only_export_equals_module(
+        &self,
+        import_decl: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        let Some(module_node) = self.arena.get(import_decl.module_specifier) else {
+            return false;
+        };
+        let Some(lit) = self.arena.get_literal(module_node) else {
+            return false;
+        };
+        self.ctx
+            .options
+            .type_only_export_equals_modules
+            .contains(lit.text.as_str())
     }
 
     pub(super) fn import_equals_has_external_module(&self, module_specifier: NodeIndex) -> bool {

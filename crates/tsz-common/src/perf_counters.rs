@@ -806,9 +806,10 @@ pub enum SourceFileSymbolArenaCacheEligibilityOutcome {
     MultipleDeclarations = 10,
     DeclarationArenaMismatch = 11,
     MissingFileIndex = 12,
+    CacheableDeclarationFile = 13,
 }
 
-pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT: usize = 13;
+pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT: usize = 14;
 
 pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_NAMES: [&str;
     SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_COUNT] = [
@@ -825,6 +826,7 @@ pub const SOURCE_FILE_SYMBOL_ARENA_CACHE_ELIGIBILITY_OUTCOME_NAMES: [&str;
     "multiple_declarations",
     "declaration_arena_mismatch",
     "missing_file_index",
+    "cacheable_declaration_file",
 ];
 
 impl SourceFileSymbolArenaCacheEligibilityOutcome {
@@ -3566,6 +3568,7 @@ mod json_tests {
             "by_reason",
             "delegate_miss_classification",
             "delegate_declaration_file_miss_residues",
+            "delegate_source_file_miss_residues",
             "alias_shortcut_outcomes",
             "compute_type_of_symbol_source_outcomes",
             "compute_type_of_symbol_kind_outcomes",

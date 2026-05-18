@@ -232,15 +232,29 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn js_top_level_variable_initializer(&self, name: &str) -> Option<NodeIndex> {
+        self.js_top_level_variable_initializer_info(name)
+            .map(|(initializer, _)| initializer)
+    }
+
+    fn js_top_level_variable_initializer_info(&self, name: &str) -> Option<(NodeIndex, bool)> {
         let root_idx = self.current_source_file_idx?;
         let root_node = self.arena.get(root_idx)?;
         let source_file = self.arena.get_source_file(root_node)?;
         for &stmt_idx in &source_file.statements.nodes {
             let stmt_node = self.arena.get(stmt_idx)?;
-            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            let (var_node, is_exported) = if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                (stmt_node, false)
+            } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let export = self.arena.get_export_decl(stmt_node)?;
+                let export_clause_node = self.arena.get(export.export_clause)?;
+                if export_clause_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                    continue;
+                }
+                (export_clause_node, true)
+            } else {
                 continue;
-            }
-            let var_stmt = self.arena.get_variable(stmt_node)?;
+            };
+            let var_stmt = self.arena.get_variable(var_node)?;
             for &decl_list_idx in &var_stmt.declarations.nodes {
                 let decl_list_node = self.arena.get(decl_list_idx)?;
                 let decl_list = self.arena.get_variable(decl_list_node)?;
@@ -248,7 +262,10 @@ impl<'a> DeclarationEmitter<'a> {
                     let decl_node = self.arena.get(decl_idx)?;
                     let decl = self.arena.get_variable_declaration(decl_node)?;
                     if self.get_identifier_text(decl.name).as_deref() == Some(name) {
-                        return decl.initializer.into_option();
+                        return decl
+                            .initializer
+                            .into_option()
+                            .map(|init| (init, is_exported));
                     }
                 }
             }
@@ -401,6 +418,14 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
+        self.js_object_literal_initializer_has_namespace_shape(initializer, true)
+    }
+
+    fn js_object_literal_initializer_has_namespace_shape(
+        &self,
+        initializer: NodeIndex,
+        allow_property_references: bool,
+    ) -> bool {
         let Some(init_node) = self.arena.get(initializer) else {
             return false;
         };
@@ -427,6 +452,13 @@ impl<'a> DeclarationEmitter<'a> {
                         return false;
                     };
                     if prop_name_node.kind != SyntaxKind::Identifier as u16 {
+                        return false;
+                    }
+                    if !allow_property_references
+                        && self.arena.get(prop.initializer).is_some_and(|node| {
+                            node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        })
+                    {
                         return false;
                     }
                     if !self.js_namespace_object_member_initializer_supported(prop.initializer) {
@@ -490,6 +522,9 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
                 continue;
             };
+            if self.is_js_export_equals_name(decl.name) {
+                continue;
+            }
             if self.is_js_object_literal_namespace_candidate(decl.name, decl.initializer) {
                 return true;
             }
@@ -504,6 +539,9 @@ impl<'a> DeclarationEmitter<'a> {
         initializer: NodeIndex,
         is_exported: bool,
     ) -> bool {
+        if self.is_js_export_equals_name(decl_name) {
+            return false;
+        }
         if !self.is_js_object_literal_namespace_candidate(decl_name, initializer) {
             return false;
         }
@@ -561,6 +599,10 @@ impl<'a> DeclarationEmitter<'a> {
                             func.body,
                             func.type_annotation,
                         );
+                    } else if let Some(reference_text) =
+                        self.js_namespace_property_reference_text(prop.initializer)
+                    {
+                        self.emit_js_namespace_import_alias_member(prop.name, &reference_text);
                     } else if let Some(type_text) =
                         self.js_namespace_value_member_type_text(prop.initializer)
                     {
@@ -2553,6 +2595,10 @@ impl<'a> DeclarationEmitter<'a> {
                             func.body,
                             func.type_annotation,
                         );
+                    } else if let Some(reference_text) =
+                        self.js_namespace_property_reference_text(prop.initializer)
+                    {
+                        self.emit_js_namespace_import_alias_member(prop.name, &reference_text);
                     } else if let Some(type_text) =
                         self.js_namespace_value_member_type_text(prop.initializer)
                     {
@@ -3176,6 +3222,26 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
     }
 
+    pub(in crate::declaration_emitter) fn emit_js_namespace_import_alias_member(
+        &mut self,
+        name_idx: NodeIndex,
+        reference_text: &str,
+    ) {
+        self.write_indent();
+        self.write("import ");
+        self.emit_node(name_idx);
+        self.write(" = ");
+        self.write(reference_text);
+        self.write(";");
+        self.write_line();
+
+        self.write_indent();
+        self.write("export { ");
+        self.emit_node(name_idx);
+        self.write(" };");
+        self.write_line();
+    }
+
     pub(in crate::declaration_emitter) fn emit_js_namespace_value_member(
         &mut self,
         name_idx: NodeIndex,
@@ -3188,6 +3254,70 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(type_text);
         self.write(";");
         self.write_line();
+    }
+
+    pub(in crate::declaration_emitter) fn js_namespace_property_reference_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(initializer);
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        if !self.js_namespace_property_reference_has_namespace_root(initializer) {
+            return None;
+        }
+        self.js_qualified_value_reference_text(initializer)
+    }
+
+    fn js_namespace_property_reference_has_namespace_root(&self, initializer: NodeIndex) -> bool {
+        let Some(root_name) = self.js_qualified_value_reference_root_name(initializer) else {
+            return false;
+        };
+        let Some((root_initializer, is_exported)) =
+            self.js_top_level_variable_initializer_info(&root_name)
+        else {
+            return false;
+        };
+        if !is_exported {
+            return false;
+        }
+        self.js_object_literal_initializer_has_namespace_shape(root_initializer, false)
+    }
+
+    fn js_qualified_value_reference_root_name(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let node = self.arena.get(expr_idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self.get_identifier_text(expr_idx),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.arena.get_access_expr(node)?;
+                self.js_qualified_value_reference_root_name(access.expression)
+            }
+            _ => None,
+        }
+    }
+
+    fn js_qualified_value_reference_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let node = self.arena.get(expr_idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self.get_identifier_text(expr_idx),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.arena.get_access_expr(node)?;
+                let left = self.js_qualified_value_reference_text(access.expression)?;
+                let right = self.get_identifier_text(access.name_or_argument)?;
+                Some(format!("{left}.{right}"))
+            }
+            _ => None,
+        }
     }
 
     pub(in crate::declaration_emitter) fn js_namespace_value_member_type_text(
@@ -3220,6 +3350,49 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     None
                 }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
+                .get_node_type_or_names(&[initializer])
+                .filter(|type_id| *type_id != tsz_solver::types::TypeId::ANY)
+                .map(|type_id| self.print_type_id(type_id))
+                .or_else(|| self.js_namespace_property_access_value_type_text(initializer)),
+            _ => None,
+        }
+    }
+
+    fn js_namespace_property_access_value_type_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(init_node)?;
+        let property_name = self.get_identifier_text(access.name_or_argument)?;
+        if property_name != "length" {
+            return None;
+        }
+
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.expression);
+        let receiver_node = self.arena.get(receiver)?;
+        let receiver_initializer = if receiver_node.kind == SyntaxKind::Identifier as u16 {
+            let receiver_name = self.get_identifier_text(receiver)?;
+            self.js_top_level_variable_initializer(&receiver_name)
+        } else {
+            Some(receiver)
+        }?;
+        let receiver_initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(receiver_initializer);
+        let receiver_init_node = self.arena.get(receiver_initializer)?;
+        match receiver_init_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
+            {
+                Some("number".to_string())
             }
             _ => None,
         }
@@ -4012,6 +4185,7 @@ impl<'a> DeclarationEmitter<'a> {
         &mut self,
         ident_idx: NodeIndex,
         type_id: Option<tsz_solver::types::TypeId>,
+        widened_literal_kind: Option<&'static str>,
     ) {
         let type_id = type_id
             .or_else(|| self.get_symbol_cached_type(ident_idx))
@@ -4019,7 +4193,13 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.get_type_via_symbol(ident_idx));
         self.write(": ");
         if let Some(type_id) = type_id {
-            self.write(&self.print_type_id(type_id));
+            if let Some(kind) = widened_literal_kind
+                && self.literal_type_can_widen_to_primitive_kind(type_id, kind)
+            {
+                self.write(kind);
+            } else {
+                self.write(&self.print_type_id(type_id));
+            }
         } else {
             self.write("any");
         }
@@ -4050,6 +4230,11 @@ impl<'a> DeclarationEmitter<'a> {
                 decl.initializer,
                 &[decl_idx, decl.name, decl.initializer],
             ),
+        );
+        let widened_literal_kinds = self.collect_flattened_array_binding_literal_widening_kinds(
+            decl.name,
+            decl.type_annotation,
+            decl.initializer,
         );
         let annotation_type_texts = self
             .collect_flattened_binding_type_texts_from_annotation(decl.name, decl.type_annotation);
@@ -4088,11 +4273,150 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else {
-                self.emit_flattened_binding_type_annotation(ident_idx, type_id);
+                self.emit_flattened_binding_type_annotation(
+                    ident_idx,
+                    type_id,
+                    widened_literal_kinds
+                        .iter()
+                        .find_map(|(idx, kind)| (*idx == ident_idx).then_some(*kind)),
+                );
             }
         }
         self.write(";");
         self.write_line();
+    }
+
+    fn collect_flattened_array_binding_literal_widening_kinds(
+        &self,
+        pattern_idx: NodeIndex,
+        type_annotation: NodeIndex,
+        initializer: NodeIndex,
+    ) -> Vec<(NodeIndex, &'static str)> {
+        if type_annotation.is_some() {
+            return Vec::new();
+        }
+        if self
+            .arena
+            .get(pattern_idx)
+            .is_none_or(|node| node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN)
+        {
+            return Vec::new();
+        }
+        let Some(pattern_node) = self.arena.get(pattern_idx) else {
+            return Vec::new();
+        };
+        let Some(pattern) = self.arena.get_binding_pattern(pattern_node) else {
+            return Vec::new();
+        };
+        let Some(initializer) = self.skip_parenthesized_expression(initializer) else {
+            return Vec::new();
+        };
+        let Some(initializer_node) = self.arena.get(initializer) else {
+            return Vec::new();
+        };
+        if initializer_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return Vec::new();
+        }
+        let Some(literal) = self.arena.get_literal_expr(initializer_node) else {
+            return Vec::new();
+        };
+
+        let mut kinds = Vec::new();
+        let mut initializer_index = 0usize;
+        let initializer_elements = literal.elements.nodes.clone();
+        for &element_idx in &pattern.elements.nodes {
+            let Some(element_node) = self.arena.get(element_idx) else {
+                continue;
+            };
+            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
+                initializer_index += 1;
+                continue;
+            }
+            if element_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+                continue;
+            }
+            let Some(element) = self.arena.get_binding_element(element_node) else {
+                continue;
+            };
+            if element.dot_dot_dot_token {
+                return Vec::new();
+            }
+            if self
+                .arena
+                .get(element.name)
+                .is_some_and(|node| node.kind == SyntaxKind::Identifier as u16)
+                && let Some(&initializer_element) = initializer_elements.get(initializer_index)
+                && let Some(kind) = self.literal_initializer_primitive_kind(initializer_element)
+            {
+                kinds.push((element.name, kind));
+            }
+            initializer_index += 1;
+        }
+        kinds
+    }
+
+    fn literal_initializer_primitive_kind(&self, expr_idx: NodeIndex) -> Option<&'static str> {
+        let node = self.arena.get(expr_idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
+                .arena
+                .get_parenthesized(node)
+                .and_then(|paren| self.literal_initializer_primitive_kind(paren.expression)),
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                Some("string")
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => Some("number"),
+            k if k == SyntaxKind::BigIntLiteral as u16 => Some("bigint"),
+            k if k == SyntaxKind::TrueKeyword as u16 || k == SyntaxKind::FalseKeyword as u16 => {
+                Some("boolean")
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                let unary = self.arena.get_unary_expr(node)?;
+                let operand = self.arena.get(unary.operand)?;
+                match (unary.operator, operand.kind) {
+                    (op, k)
+                        if (op == SyntaxKind::PlusToken as u16
+                            || op == SyntaxKind::MinusToken as u16)
+                            && k == SyntaxKind::NumericLiteral as u16 =>
+                    {
+                        Some("number")
+                    }
+                    (op, k)
+                        if op == SyntaxKind::MinusToken as u16
+                            && k == SyntaxKind::BigIntLiteral as u16 =>
+                    {
+                        Some("bigint")
+                    }
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn literal_type_can_widen_to_primitive_kind(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        primitive_kind: &str,
+    ) -> bool {
+        let Some(interner) = self.type_interner else {
+            return false;
+        };
+        if let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id) {
+            return Self::literal_primitive_kind_text(&lit) == Some(primitive_kind);
+        }
+        let Some(union_id) = tsz_solver::visitor::union_list_id(interner, type_id) else {
+            return false;
+        };
+        let members = interner.type_list(union_id);
+        !members.is_empty()
+            && members.iter().all(|&member| {
+                tsz_solver::visitor::literal_value(interner, member)
+                    .and_then(|lit| Self::literal_primitive_kind_text(&lit))
+                    == Some(primitive_kind)
+            })
     }
 
     pub(in crate::declaration_emitter) fn emit_parameter_property_modifiers(
@@ -4363,18 +4687,25 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_line();
         self.increase_indent();
 
-        if let Some(jsdoc) = self.function_like_jsdoc_for_node(jsdoc_anchor) {
-            self.emit_multiline_jsdoc_comment(&jsdoc);
-        }
-        self.write_indent();
-        self.write("constructor(");
-        self.emit_parameters_with_body(params, body_idx);
-        self.write(");");
-        self.write_line();
-
         let returns_new = self
             .get_identifier_text(name_idx)
             .is_some_and(|name| self.js_function_body_returns_new_named(body_idx, &name));
+        let is_export_equals_root = self.is_js_export_equals_name(name_idx);
+        let constructor_jsdoc = self.function_like_jsdoc_for_node(jsdoc_anchor);
+        let has_constructor_jsdoc = constructor_jsdoc
+            .as_deref()
+            .is_some_and(|jsdoc| jsdoc.contains("@constructor"));
+        if returns_new || has_constructor_jsdoc || is_export_equals_root {
+            if let Some(jsdoc) = constructor_jsdoc {
+                self.emit_multiline_jsdoc_comment(&jsdoc);
+            }
+            self.write_indent();
+            self.write("constructor(");
+            self.emit_parameters_with_body(params, body_idx);
+            self.write(");");
+            self.write_line();
+        }
+
         let mut declared_names = FxHashSet::default();
         for &member_idx in &prototype_members {
             if let Some(name_idx) = self.get_member_name_idx(member_idx)

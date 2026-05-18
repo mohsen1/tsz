@@ -31,53 +31,54 @@ impl<'a> FlowAnalyzer<'a> {
         }
         visited.push(flow_id);
 
-        let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
-            return 0;
-        };
-        if flow.has_any_flags(flow_flags::UNREACHABLE) {
-            return 0;
-        }
+        let mask =
+            if let Some(flow) = self.binder.flow_nodes.get(flow_id) {
+                if flow.has_any_flags(flow_flags::UNREACHABLE) {
+                    0
+                } else {
+                    let own = if flow.has_any_flags(flow_flags::CONDITION) {
+                        self.typeof_exclusion_for_condition(
+                            flow.node,
+                            target,
+                            flow.has_any_flags(flow_flags::TRUE_CONDITION),
+                        )
+                        .map_or(0, Self::typeof_exclusion_bit)
+                    } else {
+                        0
+                    };
 
-        let own = if flow.has_any_flags(flow_flags::CONDITION) {
-            self.typeof_exclusion_for_condition(
-                flow.node,
-                target,
-                flow.has_any_flags(flow_flags::TRUE_CONDITION),
-            )
-            .map_or(0, Self::typeof_exclusion_bit)
-        } else {
-            0
-        };
+                    if flow.antecedent.is_empty() {
+                        own
+                    } else {
+                        let mut common_antecedent_mask = None;
+                        for &antecedent in &flow.antecedent {
+                            if antecedent.is_none() {
+                                continue;
+                            }
+                            if self.binder.flow_nodes.get(antecedent).is_some_and(
+                                |antecedent_flow| {
+                                    antecedent_flow.has_any_flags(flow_flags::UNREACHABLE)
+                                },
+                            ) {
+                                continue;
+                            }
+                            let mask =
+                                self.antecedent_typeof_exclusion_mask(antecedent, target, visited);
+                            common_antecedent_mask = Some(match common_antecedent_mask {
+                                Some(common) => common & mask,
+                                None => mask,
+                            });
+                        }
 
-        if flow.antecedent.is_empty() {
-            return own;
-        }
+                        own | common_antecedent_mask.unwrap_or(0)
+                    }
+                }
+            } else {
+                0
+            };
 
-        let mut common_antecedent_mask = None;
-        for &antecedent in &flow.antecedent {
-            if antecedent.is_none() {
-                continue;
-            }
-            if self
-                .binder
-                .flow_nodes
-                .get(antecedent)
-                .is_some_and(|antecedent_flow| {
-                    antecedent_flow.has_any_flags(flow_flags::UNREACHABLE)
-                })
-            {
-                continue;
-            }
-            let mut branch_visited = visited.clone();
-            let mask =
-                self.antecedent_typeof_exclusion_mask(antecedent, target, &mut branch_visited);
-            common_antecedent_mask = Some(match common_antecedent_mask {
-                Some(common) => common & mask,
-                None => mask,
-            });
-        }
-
-        own | common_antecedent_mask.unwrap_or(0)
+        visited.pop();
+        mask
     }
 
     pub(crate) fn flow_has_exhaustive_typeof_exclusions(
