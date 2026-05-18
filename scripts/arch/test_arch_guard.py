@@ -272,6 +272,40 @@ class ArchGuardCheckerFileSizeBoundaryTests(unittest.TestCase):
             self.assertEqual(hits, [])
 
 
+class ArchGuardCheckerComputationFileSizeBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _computation_file_size_check(self):
+        for entry in self.arch_guard.LINE_LIMIT_CHECKS:
+            name, base, limit = entry[0], entry[1], entry[2]
+            if name == (
+                "Checker computation boundary: type-computation monoliths "
+                "must stay below 3200 LOC (#8226)"
+            ):
+                return base, limit
+        self.fail(
+            "checker type-computation size boundary check is missing from "
+            "LINE_LIMIT_CHECKS"
+        )
+
+    def test_rule_exists_with_expected_limit(self):
+        base, limit = self._computation_file_size_check()
+        self.assertEqual(limit, 3200)
+        self.assertTrue(
+            str(base).endswith("crates/tsz-checker/src/types/computation")
+        )
+
+    def test_real_type_computation_files_pass_at_pinned_limit(self):
+        base, limit = self._computation_file_size_check()
+        hits = self.arch_guard.scan_line_limits(base, limit)
+        self.assertEqual(
+            hits,
+            [],
+            "type-computation monolith cap is too tight for the live files",
+        )
+
+
 class ArchGuardCoreLibFacadeSizeBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.arch_guard = load_arch_guard_module()
