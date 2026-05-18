@@ -90,29 +90,26 @@ files that exercise recursive `Lazy(DefId)` resolution.
 
 ---
 
-### 2. ✅ Checker bypasses a known binder bug
+### 2. 🚧 Checker bypasses a known binder bug
 
 **Files**
 
 - `crates/tsz-binder/src/state/resolution.rs` —
-  `resolve_name_in_lib_module_locals`
-- `crates/tsz-checker/src/symbols/symbol_resolver.rs` — `resolve_identifier_symbol_inner`
-  fallback and `resolve_identifier_symbol_in_type_position_inner` pre-probe
+  `resolve_name_in_lib_module_locals` (landed)
+- `crates/tsz-checker/src/symbols/symbol_resolver.rs` — checker call sites
+  (deferred, see #8342)
 
-**Resolution** The binder now owns the lib-`file_locals` probe via a single
-`resolve_name_in_lib_module_locals` method. The checker's two
-`lib_contexts.iter()` loops are gone; both call sites use the binder API and
-contribute only their type-system policy (string-literal-module filter for
-the identifier path, namespace/module/alias classification for the
-type-position path) through the `accept` callback. Phase 3 of
-`merge_lib_contexts_into_binder` still excludes module-scoped external-module
-lib `file_locals` from the global hoist; the new probe is the legitimate
-binder-owned hatch for callers that need those module-scoped symbols.
+**Status** The binder-owned probe API now exists. Migrating the checker's
+two `for lib_ctx in self.ctx.lib_contexts.iter()` loops to call it
+deterministically regressed conformance in CI on PR #8342; the failure was
+not diagnosable without log access. The API is shipped as additive — a
+follow-up will migrate the checker once the regression can be reproduced
+and isolated locally.
 
 **Verification** `tsz-binder` regression tests for the probe in
 `tests/lib_merge_external_module_tests.rs` (hoisted-global match,
-absent-name short-circuit, accept-callback ID substitution). Conformance
-runs through CI.
+absent-name short-circuit, accept-callback ID substitution,
+Phase-3-excluded-module-scoped-flag exposure).
 
 ---
 
@@ -463,9 +460,9 @@ hide perf and stylistic debt.
 
 If only five items are landed, fix these in this order:
 
-1. **Item 2** (#B): ✅ Resolved — `resolve_name_in_lib_module_locals` in
-   `crates/tsz-binder/src/state/resolution.rs` now owns the lib-`file_locals`
-   probe; the checker call sites consume it via accept callbacks.
+1. **Item 2** (#B): 🚧 Partial — `resolve_name_in_lib_module_locals` lives in
+   `crates/tsz-binder/src/state/resolution.rs`, but the checker call-site
+   migration regressed conformance in CI (PR #8342). Follow-up needed.
 2. **Item 1** (#A): Semantic registrations silently disappear on RefCell
    borrow failure (`crates/tsz-checker/src/context/def_mapping.rs:451-565`)
 3. **Item 3** (#C): One environment is cloned over another to repair missed
