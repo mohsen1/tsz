@@ -245,6 +245,42 @@ fn legacy_flag_constants_match_typed_bitflags() {
 }
 
 #[test]
+fn policy_cache_config_preserves_packed_extended_bits() {
+    let packed = (RelationFlags::STRICT_SUBTYPE_CHECKING
+        | RelationFlags::STRICT_ANY_PROPAGATION
+        | RelationFlags::SKIP_WEAK_TYPE_CHECKS
+        | RelationFlags::ASSUME_RELATED_ON_CYCLE
+        | RelationFlags::IN_CALLBACK_PARAM_CHECK
+        | RelationFlags::STRICT_READONLY_IDENTITY)
+        .bits() as u16;
+
+    let config = RelationPolicy::from_flags(packed).cache_config();
+
+    assert!(
+        config
+            .flags
+            .contains(RelationFlags::STRICT_SUBTYPE_CHECKING)
+    );
+    assert!(config.flags.contains(RelationFlags::STRICT_ANY_PROPAGATION));
+    assert!(config.flags.contains(RelationFlags::SKIP_WEAK_TYPE_CHECKS));
+    assert!(
+        config
+            .flags
+            .contains(RelationFlags::ASSUME_RELATED_ON_CYCLE)
+    );
+    assert!(
+        config
+            .flags
+            .contains(RelationFlags::IN_CALLBACK_PARAM_CHECK)
+    );
+    assert!(
+        config
+            .flags
+            .contains(RelationFlags::STRICT_READONLY_IDENTITY)
+    );
+}
+
+#[test]
 fn subtype_flags_entrypoint_uses_relation_policy_cache_config() {
     let flags =
         RelationCacheKey::FLAG_STRICT_NULL_CHECKS | RelationCacheKey::FLAG_NO_ERASE_GENERICS;
