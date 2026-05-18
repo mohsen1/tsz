@@ -1576,6 +1576,12 @@ impl<'a> Printer<'a> {
                 if is_es_module_output && is_external {
                     return true;
                 }
+                if !is_external
+                    && self.in_namespace_iife
+                    && !self.import_decl_has_runtime_value(import_data)
+                {
+                    return true;
+                }
                 if self.ctx.is_commonjs() && is_external {
                     // With --verbatimModuleSyntax or in JS files, non-type-only
                     // import-equals declarations are always preserved.
