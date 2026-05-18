@@ -269,6 +269,43 @@ fn apply_to_sets_deprecation_diagnostics() {
 }
 
 #[test]
+fn lib_context_resets_clear_actual_lib_def_id_cache() {
+    let interner = TypeInterner::new();
+    let query_cache = QueryCache::new(&interner);
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let mut checker = make_checker(&arena, &binder, &query_cache);
+
+    checker
+        .ctx
+        .actual_lib_def_id_cache
+        .borrow_mut()
+        .insert("Array".to_string(), None);
+    assert!(!checker.ctx.actual_lib_def_id_cache.borrow().is_empty());
+
+    checker.ctx.set_lib_contexts(Vec::new());
+    assert!(checker.ctx.actual_lib_def_id_cache.borrow().is_empty());
+
+    checker
+        .ctx
+        .actual_lib_def_id_cache
+        .borrow_mut()
+        .insert("Object".to_string(), None);
+    assert!(!checker.ctx.actual_lib_def_id_cache.borrow().is_empty());
+
+    checker.ctx.set_lib_contexts_shared(Arc::new(vec![]));
+    assert!(checker.ctx.actual_lib_def_id_cache.borrow().is_empty());
+
+    checker
+        .ctx
+        .actual_lib_def_id_cache
+        .borrow_mut()
+        .insert("ReadonlyArray".to_string(), None);
+    checker.ctx.set_actual_lib_file_count(1);
+    assert!(checker.ctx.actual_lib_def_id_cache.borrow().is_empty());
+}
+
+#[test]
 fn build_global_indices_if_changed_rebuilds_on_first_call() {
     let mut env = empty_program_context();
     assert!(env.last_skeleton_fingerprint.is_none());

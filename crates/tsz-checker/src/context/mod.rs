@@ -405,6 +405,12 @@ pub struct CheckerContext<'a> {
     /// declaration-file interface/type lowering.
     pub lowering_entity_name_resolution_cache: RefCell<FxHashMap<String, Option<DefId>>>,
 
+    /// Per-checker cache for bare-name actual-lib `DefId` resolution.
+    /// Values depend on the active binder because user declarations can shadow
+    /// lib names, so this cache is intentionally file-local and cleared when a
+    /// context switches files.
+    pub actual_lib_def_id_cache: RefCell<FxHashMap<String, Option<DefId>>>,
+
     /// Per-checker cache for cross-file namespace export resolution.
     /// Keyed by the requesting file and module specifier because relative
     /// specifiers are resolved from the current file.

@@ -228,6 +228,7 @@ impl<'a> CheckerContext<'a> {
                 .collect(),
         );
         self.lib_contexts = Arc::new(lib_contexts);
+        self.actual_lib_def_id_cache.borrow_mut().clear();
     }
 
     /// Set pre-wrapped Arc lib contexts (for O(1) sharing between checkers).
@@ -239,12 +240,16 @@ impl<'a> CheckerContext<'a> {
                 .collect(),
         );
         self.lib_contexts = lib_contexts;
+        self.actual_lib_def_id_cache.borrow_mut().clear();
     }
 
     /// Set the count of actual lib files loaded (not including user files).
     /// This is used by `has_lib_loaded()` to correctly determine if standard library is available.
     /// Also updates the capabilities matrix `has_lib` flag.
-    pub const fn set_actual_lib_file_count(&mut self, count: usize) {
+    pub fn set_actual_lib_file_count(&mut self, count: usize) {
+        if self.actual_lib_file_count != count {
+            self.actual_lib_def_id_cache.borrow_mut().clear();
+        }
         self.actual_lib_file_count = count;
         // Update the precomputed capabilities matrix
         let has_lib = !self.compiler_options.no_lib && count > 0;

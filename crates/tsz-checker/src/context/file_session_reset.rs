@@ -457,6 +457,7 @@ impl<'a> CheckerContext<'a> {
         self.lowering_entity_name_resolution_cache
             .borrow_mut()
             .clear();
+        self.actual_lib_def_id_cache.borrow_mut().clear();
         self.namespace_exports_cache.borrow_mut().clear();
         // `def_type_params` and `def_no_type_params` are keyed by
         // globally-stable `DefId`. The values are program-stable

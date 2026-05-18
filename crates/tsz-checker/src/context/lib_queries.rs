@@ -57,6 +57,22 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
 
+        if !self.has_lib_loaded() {
+            return None;
+        }
+
+        if let Some(cached) = self.actual_lib_def_id_cache.borrow().get(name).copied() {
+            return cached;
+        }
+
+        let result = self.actual_lib_def_id_for_bare_name_uncached(name);
+        self.actual_lib_def_id_cache
+            .borrow_mut()
+            .insert(name.to_string(), result);
+        result
+    }
+
+    fn actual_lib_def_id_for_bare_name_uncached(&self, name: &str) -> Option<tsz_solver::DefId> {
         if let Some(sym_id) = self.actual_lib_symbol_id_for_bare_name(name) {
             return Some(self.get_canonical_lib_def_id(name, sym_id));
         }
