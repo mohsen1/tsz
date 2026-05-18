@@ -730,6 +730,38 @@ fn es5_downlevel_iteration_nested_array_parameter_reads_each_array_pattern() {
 }
 
 #[test]
+fn es5_downlevel_iteration_method_like_array_parameters_mark_read_helper() {
+    let output = emit_es5_downlevel_iteration(
+        "class C {\n\
+             constructor([ctorValue]: Iterable<any>) { }\n\
+             m([methodValue]: Iterable<any>) { }\n\
+             set p([setterValue]: Iterable<any>) { }\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("var __read ="),
+        "Method-like array binding parameters should schedule the __read helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function C(_a) {\n        var _b = __read(_a, 1), ctorValue = _b[0];"),
+        "Constructor array binding parameters should read the iterable source.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "C.prototype.m = function (_a) {\n        var _b = __read(_a, 1), methodValue = _b[0];"
+        ),
+        "Method array binding parameters should read the iterable source.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "set: function (_a) {\n            var _b = __read(_a, 1), setterValue = _b[0];"
+        ),
+        "Accessor array binding parameters should read the iterable source.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es5_class_method_object_rest_parameter_uses_rest_helper() {
     let output = emit_es5(
         "class C {\n\

@@ -1709,6 +1709,9 @@ impl<'a> LoweringPass<'a> {
             }
             self.transforms.helpers_mut().decorate = prev_decorate;
         }
+        if ctor.body.is_some() {
+            self.mark_function_parameter_transform_helpers(&ctor.parameters);
+        }
         for &param_idx in &ctor.parameters.nodes {
             self.visit(param_idx);
         }
