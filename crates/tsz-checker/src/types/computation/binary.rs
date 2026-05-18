@@ -3,6 +3,9 @@
 //! arithmetic, comparison, logical, assignment, nullish coalescing, and comma.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::type_computation::core::{
+    WriteTargetLogicalOperator, WriteTargetLogicalResult,
+};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -186,38 +189,25 @@ impl<'a> CheckerState<'a> {
         {
             let left_type = self.get_type_of_node_with_request(binary.left, &TypingRequest::NONE);
             let right_type = self.get_type_of_node_with_request(binary.right, &TypingRequest::NONE);
-            let ctx = tsz_solver::NarrowingContext::new(self.ctx.types);
-            let members = if binary.operator_token == SyntaxKind::BarBarToken as u16 {
-                let truthy_left = ctx.narrow_by_truthiness(left_type);
-                let falsy_left = ctx.narrow_to_falsy(left_type);
-                if truthy_left == TypeId::NEVER || falsy_left == TypeId::NEVER {
-                    return self.get_type_of_node_with_request(
-                        logical_idx,
-                        &TypingRequest::for_write_context(),
-                    );
-                }
-                vec![truthy_left, right_type]
+            let operator = if binary.operator_token == SyntaxKind::BarBarToken as u16 {
+                WriteTargetLogicalOperator::LogicalOr
             } else {
-                let non_nullish_left =
-                    ctx.narrow_by_nullishness(left_type, tsz_solver::NullishFilter::ExcludeNullish);
-                let nullish_left =
-                    ctx.narrow_by_nullishness(left_type, tsz_solver::NullishFilter::KeepNullish);
-                if non_nullish_left == TypeId::NEVER || nullish_left == TypeId::NEVER {
+                WriteTargetLogicalOperator::NullishCoalescing
+            };
+            match crate::query_boundaries::type_computation::core::write_target_logical_result_type(
+                self.ctx.types,
+                operator,
+                left_type,
+                right_type,
+            ) {
+                Some(WriteTargetLogicalResult::Type(result)) => return result,
+                Some(WriteTargetLogicalResult::FallbackToLogicalExpression) => {
                     return self.get_type_of_node_with_request(
                         logical_idx,
                         &TypingRequest::for_write_context(),
                     );
                 }
-                vec![non_nullish_left, right_type]
-            };
-
-            if let Some(normalized) =
-                crate::query_boundaries::common::normalize_object_union_members_for_write_target(
-                    self.ctx.types,
-                    &members,
-                )
-            {
-                return tsz_solver::utils::union_or_single(self.ctx.types, normalized);
+                None => {}
             }
         }
 
