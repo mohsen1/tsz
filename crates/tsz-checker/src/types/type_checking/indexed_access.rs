@@ -1023,9 +1023,7 @@ impl<'a> CheckerState<'a> {
             }
             if self.keyof_index_valid_for_string_indexed_object(
                 object_type_for_check,
-                index_type,
                 index_type_for_check,
-                index_constraint,
             ) {
                 return;
             }
