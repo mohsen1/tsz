@@ -1811,7 +1811,7 @@ impl<'a> Printer<'a> {
                 || node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             {
                 if let Some(import_decl) = self.arena.get_import_decl(node) {
-                    if !self.import_decl_has_runtime_value(import_decl) {
+                    if !self.import_decl_should_schedule_wrapped_dependency(node, import_decl) {
                         continue;
                     }
                     if let Some(text) =

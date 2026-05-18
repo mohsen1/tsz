@@ -152,6 +152,74 @@ import(path);
 }
 
 #[test]
+fn system_wrapper_elides_unused_value_import_dependency() {
+    let source = r#"import * as a from "a";
+
+const value = 1;
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("System.register([], function (exports_1, context_1) {"),
+        "Unused value imports should not schedule System dependencies.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("setters: [],"),
+        "Unused value imports should not produce System setters.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\"a\""),
+        "Unused value import module specifier should be elided from System output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_wrapper_keeps_used_namespace_import_dependency() {
+    let source = r#"import * as a from "a";
+
+a.run();
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("System.register([\"a\"], function (exports_1, context_1) {"),
+        "Used namespace imports should remain System dependencies.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("a = a_1;"),
+        "Used namespace import should receive the setter argument.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("a.run();"),
+        "Runtime namespace import usage should remain in execute body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_wrapper_inlines_const_enum_member_accesses() {
     let source = r#"declare function use(a: any);
 const enum TopLevelConstEnum { X }
