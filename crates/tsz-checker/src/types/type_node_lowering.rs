@@ -112,8 +112,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 {
                     map.insert(type_ref.type_name, resolved);
                 }
-                // Do not recurse into type arguments — those are handled by TypeLowering's
-                // application lowering after the base type is resolved.
+                let type_arguments = self
+                    .ctx
+                    .arena
+                    .get_type_ref(node)
+                    .and_then(|type_ref| type_ref.type_arguments.as_ref())
+                    .map(|args| args.nodes.clone());
+                if let Some(type_arguments) = type_arguments {
+                    for child_idx in type_arguments {
+                        self.collect_import_types_recursive(child_idx, map, depth + 1);
+                    }
+                }
             }
             _ => {
                 for child_idx in self.ctx.arena.get_children(idx) {
