@@ -229,9 +229,7 @@ impl<'a> CheckerState<'a> {
 
         // No pre-computed outcome available. Build one through the canonical
         // boundary so we never fall back to checker-local property enumeration.
-        use crate::query_boundaries::assignability::RelationRequest;
-        let (ps, pt) = self.prepare_assignability_inputs(source, target);
-        let built_outcome = self.execute_relation_request(&RelationRequest::assign(ps, pt));
+        let built_outcome = self.assign_relation_outcome(source, target);
         if let Some(ref cls) = built_outcome.property_classification {
             if cls.excess_properties.is_empty() {
                 return false;
@@ -324,14 +322,11 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Build a RelationRequest so the weak-union hint is collected alongside
+        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
         {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            let request = RelationRequest::assign(ps, pt);
-            let outcome = self.execute_relation_request(&request);
+            let outcome = self.assign_relation_outcome(source, target);
             if self.should_skip_weak_union_error_with_outcome(
                 source,
                 target,
@@ -810,15 +805,9 @@ impl<'a> CheckerState<'a> {
             }
             return true;
         }
-        // Build a RelationRequest for the Assign kind so the weak-union hint
+        // Use the canonical assign relation outcome so the weak-union hint
         // can be collected alongside the failure reason.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (prepared_source, prepared_target) =
-                self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(prepared_source, prepared_target)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source, target);
 
         // Use the pre-computed RelationOutcome to avoid re-enumerating
         // properties and re-checking assignability inside the skip logic.
@@ -1023,15 +1012,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Build a RelationRequest so the weak-union hint is collected alongside
+        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -1073,15 +1057,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Build a RelationRequest so the weak-union hint is collected alongside
+        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -1121,15 +1100,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Build a RelationRequest so the weak-union hint is collected alongside
+        // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::assign(ps, pt)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.assign_relation_outcome(source, target);
         if self.should_skip_weak_union_error_with_outcome(
             source,
             target,
@@ -1188,15 +1162,9 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Build a CallArg relation request to collect the weak-union hint
+        // Use the canonical call-argument relation outcome to collect the weak-union hint
         // without a separate solver call.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (prepared_source, prepared_target) =
-                self.prepare_assignability_inputs(source, target);
-            RelationRequest::call_arg(prepared_source, prepared_target)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.call_arg_relation_outcome(source, target);
 
         if self.should_skip_weak_union_error_with_outcome(source, target, arg_idx, Some(&outcome)) {
             return true;
@@ -1646,12 +1614,7 @@ impl<'a> CheckerState<'a> {
         // cases. Do not add an outer `!outcome.weak_union_violation` gate here;
         // that guard suppresses TS2416 for non-object-literal sources (e.g.
         // class property declarations) where the skip should NOT fire.
-        let request = {
-            use crate::query_boundaries::assignability::RelationRequest;
-            let (ps, pt) = self.prepare_assignability_inputs(source, target);
-            RelationRequest::bivariant_callbacks(ps, pt)
-        };
-        let outcome = self.execute_relation_request(&request);
+        let outcome = self.bivariant_callbacks_relation_outcome(source, target);
         !self.should_skip_weak_union_error_with_outcome(source, target, source_idx, Some(&outcome))
     }
 

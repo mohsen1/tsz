@@ -1,6 +1,6 @@
 use crate::context::emit::EmitContext;
 use crate::context::plan::{EmitPlan, EmitPlanBuilder};
-use crate::context::transform::{TransformContext, TransformDirective};
+use crate::context::transform::{IdentifierId, TransformContext, TransformDirective};
 use crate::emitter::JsxEmit;
 use crate::jsx_pragmas::{JsxPragmaFacts, JsxRuntimePragma};
 use std::sync::Arc;
@@ -63,6 +63,10 @@ pub struct LoweringPass<'a> {
     /// Used to determine if a namespace/enum IIFE should fold exports into the
     /// closing argument (e.g., `(A || (exports.A = A = {}))`).
     pub(super) re_exported_names: rustc_hash::FxHashSet<String>,
+    /// Export names from local `export { local as exported }` clauses, keyed by
+    /// the local name. Namespace IIFE folding needs the exported name in the
+    /// `exports.<name>` slot while keeping the local namespace binding unchanged.
+    pub(super) re_exported_export_names: rustc_hash::FxHashMap<String, Vec<IdentifierId>>,
     /// Stack of enclosing non-arrow function body node indices.
     /// When an arrow function captures `this`, the top of this stack is the
     /// scope that needs `var _this = this;`.
@@ -98,6 +102,7 @@ impl<'a> LoweringPass<'a> {
             in_assignment_target: false,
             in_es5_class: false,
             re_exported_names: rustc_hash::FxHashSet::default(),
+            re_exported_export_names: rustc_hash::FxHashMap::default(),
             enclosing_function_bodies: Vec::new(),
             enclosing_capture_names: Vec::new(),
             current_source_text: None,
@@ -1455,8 +1460,8 @@ impl<'a> LoweringPass<'a> {
             .is_some_and(|n| self.re_exported_names.contains(n));
 
         // Track this name as declared
-        if namespace_has_runtime_value && let Some(name) = namespace_name {
-            self.declared_names.insert(name);
+        if namespace_has_runtime_value && let Some(ref name) = namespace_name {
+            self.declared_names.insert(name.clone());
         }
         let is_exported = self.is_commonjs()
             && !self.has_export_assignment
@@ -1483,8 +1488,10 @@ impl<'a> LoweringPass<'a> {
 
         let final_directive = if is_exported {
             if let Some(export_name) = module_name {
+                let export_names =
+                    self.commonjs_export_names_for_local(namespace_name.as_deref(), export_name);
                 let export_directive = TransformDirective::CommonJSExport {
-                    names: Arc::from(vec![export_name]),
+                    names: export_names,
                     is_default: false,
                     inner: Box::new(TransformDirective::Identity),
                 };

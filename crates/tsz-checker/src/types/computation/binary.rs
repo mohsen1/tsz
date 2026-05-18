@@ -9,6 +9,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::BinaryOpEvaluator;
 
 /// Result of syntactic nullishness analysis, mirroring tsc's `PredicateSemantics`.
 /// This is a purely syntactic check -- it does NOT look at types.
@@ -2985,7 +2986,7 @@ impl<'a> CheckerState<'a> {
         left: TypeId,
         right: TypeId,
         op: &str,
-        evaluator: &tsz_solver::BinaryOpEvaluator,
+        evaluator: &BinaryOpEvaluator,
     ) -> bool {
         let left_is_index_access =
             crate::query_boundaries::common::is_index_access_type(self.ctx.types, left);

@@ -977,15 +977,16 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         let source = "function decorator() { return (target: any) => {}; }\n@decorator()\nclass Foo {\n    static func(): Foo {\n        return new Foo();\n    }\n}\n";
 
         let (parser, root) = parse_test_source(source);
-        let mut printer = EmitterPrinter::with_options(
-            &parser.arena,
-            PrinterOptions {
-                legacy_decorators: true,
-                emit_decorator_metadata: true,
-                target: ScriptTarget::ES5,
-                ..Default::default()
-            },
-        );
+        let options = PrinterOptions {
+            legacy_decorators: true,
+            emit_decorator_metadata: true,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
         printer.set_source_text(source);
         printer.emit(root);
         let output = printer.get_output().to_string();
@@ -1001,6 +1002,83 @@ class C {\n    @dec\n    accessor #a;\n\n    @dec\n    static accessor #b;\n}\n"
         assert!(
             output.contains("var Foo_1;\n    Foo = Foo_1 = __decorate(["),
             "ES5 decorated class should declare the alias before decorating and update it from __decorate.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn legacy_decorated_es5_block_class_uses_distinct_binding_and_alias() {
+        let source = "function decorator() { return (target: any) => {}; }\ntry {\n    @decorator()\n    class Foo {\n        static func(): Foo {\n            return new Foo();\n        }\n    }\n    Foo.func();\n}\ncatch (e) {}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            legacy_decorators: true,
+            emit_decorator_metadata: true,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("try {\n    var Foo_1 = /** @class */ (function ()"),
+            "Nested ES5 block class should use a synthetic outer binding.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("Foo_2 = Foo;\n        Foo.func = function ()"),
+            "Nested ES5 block class should reserve a separate decorator-stable alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return new Foo_2();"),
+            "Nested ES5 block class body should reference the decorator-stable alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("    Foo_1.func();"),
+            "References in the same block should use the synthetic outer binding.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn legacy_decorated_es5_same_name_block_class_uses_distinct_binding_and_alias() {
+        let source = "function decorator() { return (target: any) => {}; }\n@decorator()\nclass Foo {\n    static func(): Foo {\n        return new Foo();\n    }\n}\ntry {\n    @decorator()\n    class Foo {\n        static func(): Foo {\n            return new Foo();\n        }\n    }\n    Foo.func();\n}\ncatch (e) {}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let mut printer = EmitterPrinter::with_options(
+            &parser.arena,
+            PrinterOptions {
+                legacy_decorators: true,
+                emit_decorator_metadata: true,
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var Foo = /** @class */ (function ()"),
+            "Outer ES5 class should keep its source binding.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("try {\n    var Foo_2 = /** @class */ (function ()"),
+            "Same-name nested block class should use a distinct synthetic binding.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("Foo_3 = Foo;\n        Foo.func = function ()"),
+            "Same-name nested block class should reserve an alias after the outer alias and synthetic binding.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("return new Foo_3();"),
+            "Same-name nested block class body should reference its own alias.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("    Foo_2.func();"),
+            "References after the nested class should use the nested synthetic binding.\nOutput:\n{output}"
         );
     }
 

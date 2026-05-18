@@ -37,12 +37,12 @@ CACHE_NAME_PATTERN = (
 FIELD_RE = re.compile(
     r"^\s*(?:(?:pub|pub\(crate\)|pub\(super\)|pub\(in [^)]+\))\s+)?"
     rf"(?P<name>{CACHE_NAME_PATTERN})"
-    r"\s*:\s*(?P<type>.+)$"
+    r"\s*:\s*(?P<type>.*)$"
 )
 TYPE_ALIAS_RE = re.compile(
     r"^\s*(?:(?:pub|pub\(crate\)|pub\(super\)|pub\(in [^)]+\))\s+)?"
     rf"type\s+(?P<name>{CACHE_NAME_PATTERN})"
-    r"\s*=\s*(?P<type>.+)$"
+    r"\s*=\s*(?P<type>.*)$"
 )
 STRUCT_RE = re.compile(
     r"^\s*(?:(?:pub|pub\(crate\)|pub\(super\)|pub\(in [^)]+\))\s+)?"
@@ -50,6 +50,38 @@ STRUCT_RE = re.compile(
 )
 STATS_RE = re.compile(r"(?:hits?|miss(?:es)?|entries|entry_count|Stats|statistics|total_entries)")
 SIZE_RE = re.compile(r"(?:estimated_size_bytes|size_bytes|memory|Memory|total_entries|entries)")
+
+RETAINED_OWNERS = {
+    "BinderState",
+    "CheckerContext",
+    "LibLoader",
+    "ModuleResolver",
+    "QueryCache",
+    "TypeCache",
+    "TypeInterner",
+}
+OPERATION_LOCAL_OWNERS = {
+    "ApplicationEvaluator",
+    "CallEvaluator",
+    "Canonicalizer",
+    "CompatChecker",
+    "ContainsTypeChecker",
+    "DefaultJudge",
+    "FlowAnalyzer",
+    "FreeInferChecker",
+    "FreeTypeParamChecker",
+    "InferenceContext",
+    "ShallowContainsTypeChecker",
+    "SubtypeChecker",
+    "TypeEvaluator",
+    "TypeFormatter",
+}
+RETAINED_MODULE_PATHS = {
+    "crates/tsz-checker/src/context/aliases.rs",
+    "crates/tsz-checker/src/flow/control_flow/core.rs",
+    "crates/tsz-lsp/src/resolver/core.rs",
+}
+SNAPSHOT_OWNERS = {"CacheSnapshot"}
 
 
 @dataclass(frozen=True)
@@ -59,6 +91,7 @@ class CacheCandidate:
     owner: str
     name: str
     type: str
+    retention: str
     stats_signal: bool
     size_signal: bool
 
@@ -141,6 +174,26 @@ def is_cache_type(type_text: str) -> bool:
     return any(map_type in type_text for map_type in MAP_TYPES)
 
 
+def delimiter_balance(text: str) -> int:
+    opens = text.count("<") + text.count("(") + text.count("[")
+    closes = text.count(">") + text.count(")") + text.count("]")
+    return opens - closes
+
+
+def type_text_is_complete(type_text: str) -> bool:
+    stripped = type_text.strip()
+    return delimiter_balance(stripped) <= 0 and (stripped.endswith(",") or stripped.endswith(";"))
+
+
+def collect_type_text(code_lines: list[str], start_index: int, first_type: str) -> tuple[str, int]:
+    parts = [first_type.strip()]
+    end_index = start_index
+    while end_index + 1 < len(code_lines) and not type_text_is_complete(" ".join(parts)):
+        end_index += 1
+        parts.append(code_lines[end_index].strip())
+    return trim_type(" ".join(parts)), end_index
+
+
 def stat_stem(name: str) -> str:
     stem = re.sub(r"(?:_?cache|_?memo)$", "", name, flags=re.IGNORECASE)
     return stem or name
@@ -188,6 +241,20 @@ def has_size_signal(file_text: str, name: str) -> bool:
     return any(re.search(pattern, file_text, re.IGNORECASE) for pattern in patterns)
 
 
+def classify_retention(path: str, owner: str) -> str:
+    if owner in SNAPSHOT_OWNERS:
+        return "snapshot"
+    if owner in RETAINED_OWNERS:
+        return "retained"
+    if owner in OPERATION_LOCAL_OWNERS:
+        return "operation_local"
+    if owner == "<module>" and path in RETAINED_MODULE_PATHS:
+        return "retained"
+    if owner == "<module>":
+        return "module"
+    return "unknown"
+
+
 def scan_file(path: Path) -> list[CacheCandidate]:
     raw_text = path.read_text(encoding="utf-8")
     code_lines: list[str] = []
@@ -200,7 +267,10 @@ def scan_file(path: Path) -> list[CacheCandidate]:
     owner = "<module>"
     struct_depth = 0
     candidates: list[CacheCandidate] = []
-    for line_no, line in enumerate(code_lines, start=1):
+    index = 0
+    while index < len(code_lines):
+        line = code_lines[index]
+        line_no = index + 1
         struct_match = STRUCT_RE.search(line)
         if struct_match:
             owner = struct_match.group(1)
@@ -215,14 +285,17 @@ def scan_file(path: Path) -> list[CacheCandidate]:
                 struct_depth += line.count("{") - line.count("}")
                 if struct_depth <= 0:
                     owner = "<module>"
+            index += 1
             continue
         name = match.group("name")
-        type_text = trim_type(match.group("type"))
+        type_text, end_index = collect_type_text(code_lines, index, match.group("type"))
         if not is_cache_type(type_text):
             if struct_depth > 0 and not struct_match:
-                struct_depth += line.count("{") - line.count("}")
+                for depth_line in code_lines[index : end_index + 1]:
+                    struct_depth += depth_line.count("{") - depth_line.count("}")
                 if struct_depth <= 0:
                     owner = "<module>"
+            index = end_index + 1
             continue
         candidates.append(
             CacheCandidate(
@@ -231,14 +304,17 @@ def scan_file(path: Path) -> list[CacheCandidate]:
                 owner=owner,
                 name=name,
                 type=type_text,
+                retention=classify_retention(rel, owner),
                 stats_signal=has_stats_signal(file_text, name),
                 size_signal=has_size_signal(file_text, name),
             )
         )
         if struct_depth > 0 and not struct_match:
-            struct_depth += line.count("{") - line.count("}")
+            for depth_line in code_lines[index : end_index + 1]:
+                struct_depth += depth_line.count("{") - depth_line.count("}")
             if struct_depth <= 0:
                 owner = "<module>"
+        index = end_index + 1
     return candidates
 
 
@@ -252,16 +328,19 @@ def scan(roots: Iterable[Path]) -> list[CacheCandidate]:
 def summarize(candidates: list[CacheCandidate]) -> dict[str, object]:
     by_path: dict[str, int] = {}
     by_owner: dict[str, int] = {}
+    by_retention: dict[str, int] = {}
     for candidate in candidates:
+        by_retention[candidate.retention] = by_retention.get(candidate.retention, 0) + 1
         if candidate.needs_review:
             by_path[candidate.path] = by_path.get(candidate.path, 0) + 1
             by_owner[candidate.owner] = by_owner.get(candidate.owner, 0) + 1
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "total_candidates": len(candidates),
         "needs_review": sum(1 for candidate in candidates if candidate.needs_review),
         "with_stats_signal": sum(1 for candidate in candidates if candidate.stats_signal),
         "with_size_signal": sum(1 for candidate in candidates if candidate.size_signal),
+        "candidates_by_retention": dict(sorted(by_retention.items())),
         "needs_review_by_path": dict(sorted(by_path.items())),
         "needs_review_by_owner": dict(sorted(by_owner.items())),
     }
@@ -274,6 +353,7 @@ def print_text(candidates: list[CacheCandidate]) -> None:
     print(f"  needs_review: {summary['needs_review']}")
     print(f"  with_stats_signal: {summary['with_stats_signal']}")
     print(f"  with_size_signal: {summary['with_size_signal']}")
+    print(f"  candidates_by_retention: {summary['candidates_by_retention']}")
     if not candidates:
         return
     print()
@@ -283,6 +363,7 @@ def print_text(candidates: list[CacheCandidate]) -> None:
         print(
             f"  {marker} {candidate.path}:{candidate.line} "
             f"{candidate.owner}.{candidate.name} "
+            f"retention={candidate.retention} "
             f"stats={str(candidate.stats_signal).lower()} "
             f"size={str(candidate.size_signal).lower()} "
             f"type={candidate.type}"
@@ -299,10 +380,17 @@ def main(argv: list[str] | None = None) -> int:
         help="source root to scan; may be repeated",
     )
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    parser.add_argument(
+        "--retained-only",
+        action="store_true",
+        help="only report candidates classified as retained residency surfaces",
+    )
     args = parser.parse_args(argv)
 
     roots = args.root if args.root is not None else [ROOT / root for root in DEFAULT_ROOTS]
     candidates = scan(roots)
+    if args.retained_only:
+        candidates = [candidate for candidate in candidates if candidate.retention == "retained"]
     if args.json:
         print(
             json.dumps(

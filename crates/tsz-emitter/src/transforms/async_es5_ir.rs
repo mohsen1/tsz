@@ -3696,6 +3696,7 @@ impl<'a> AsyncES5Transformer<'a> {
 
         let IRNode::ES5ClassIIFE {
             name,
+            binding_name: _,
             base_class,
             super_param,
             body,
@@ -3766,6 +3767,7 @@ impl<'a> AsyncES5Transformer<'a> {
         let class_ir =
             class_transformer.transform_class_to_ir_with_name(class_idx, Some(class_name))?;
         let IRNode::ES5ClassIIFE {
+            binding_name: _,
             body,
             super_param,
             weakmap_decls,
