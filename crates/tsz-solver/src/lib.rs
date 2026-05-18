@@ -235,7 +235,7 @@ pub use instantiation::instantiate::{
     instantiate_type_with_infer, instantiate_type_with_infer_cached, substitute_this_type,
     substitute_this_type_at_return_position, substitute_this_type_cached,
 };
-pub use intern::type_factory::*;
+pub use intern::type_factory::TypeFactory;
 pub use narrowing::*;
 pub use objects::*;
 pub use operations::compound_assignment;
