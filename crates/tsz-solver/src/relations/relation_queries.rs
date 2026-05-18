@@ -145,10 +145,6 @@ impl RelationPolicy {
         self
     }
 
-    const fn has_packed_flag(self, flag: RelationFlags) -> bool {
-        (self.flags & flag.bits() as u16) != 0
-    }
-
     /// Project this policy to the canonical cache-partitioning configuration.
     ///
     /// This is the single conversion point from the high-level `RelationPolicy`
@@ -156,64 +152,24 @@ impl RelationPolicy {
     /// `config` field of a [`RelationCacheKey`]. Every behavior-affecting field
     /// on `RelationPolicy` must be reflected here.
     pub const fn cache_config(self) -> RelationCacheConfig {
-        let mut bits = RelationFlags::empty();
-        if self.has_packed_flag(RelationFlags::STRICT_NULL_CHECKS) {
-            bits = bits.union(RelationFlags::STRICT_NULL_CHECKS);
-        }
-        if self.has_packed_flag(RelationFlags::STRICT_FUNCTION_TYPES) {
-            bits = bits.union(RelationFlags::STRICT_FUNCTION_TYPES);
-        }
-        if self.has_packed_flag(RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES) {
-            bits = bits.union(RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES);
-        }
-        if self.has_packed_flag(RelationFlags::NO_UNCHECKED_INDEXED_ACCESS) {
-            bits = bits.union(RelationFlags::NO_UNCHECKED_INDEXED_ACCESS);
-        }
-        if self.has_packed_flag(RelationFlags::DISABLE_METHOD_BIVARIANCE) {
-            bits = bits.union(RelationFlags::DISABLE_METHOD_BIVARIANCE);
-        }
-        if self.has_packed_flag(RelationFlags::ALLOW_VOID_RETURN) {
-            bits = bits.union(RelationFlags::ALLOW_VOID_RETURN);
-        }
-        if self.has_packed_flag(RelationFlags::ALLOW_BIVARIANT_REST) {
-            bits = bits.union(RelationFlags::ALLOW_BIVARIANT_REST);
-        }
-        if self.has_packed_flag(RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT) {
-            bits = bits.union(RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT);
-        }
-        if self.has_packed_flag(RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY) {
-            bits = bits.union(RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY);
-        }
-        if self.has_packed_flag(RelationFlags::IN_CALLBACK_PARAM_CHECK) {
-            bits = bits.union(RelationFlags::IN_CALLBACK_PARAM_CHECK);
-        }
-        if self.has_packed_flag(RelationFlags::STRICT_READONLY_IDENTITY) {
-            bits = bits.union(RelationFlags::STRICT_READONLY_IDENTITY);
-        }
-        if self.has_packed_flag(RelationFlags::STRICT_SUBTYPE_CHECKING)
-            || self.strict_subtype_checking
-        {
+        let mut bits = RelationFlags::from_bits_truncate(self.flags as u32);
+        if self.strict_subtype_checking {
             bits = bits.union(RelationFlags::STRICT_SUBTYPE_CHECKING);
         }
-        if self.has_packed_flag(RelationFlags::STRICT_ANY_PROPAGATION)
-            || self.strict_any_propagation
-        {
+        if self.strict_any_propagation {
             bits = bits.union(RelationFlags::STRICT_ANY_PROPAGATION);
         }
-        if self.has_packed_flag(RelationFlags::SKIP_WEAK_TYPE_CHECKS) || self.skip_weak_type_checks
-        {
+        if self.skip_weak_type_checks {
             bits = bits.union(RelationFlags::SKIP_WEAK_TYPE_CHECKS);
         }
-        if self.has_packed_flag(RelationFlags::ASSUME_RELATED_ON_CYCLE)
-            || self.assume_related_on_cycle
-        {
+        if self.assume_related_on_cycle {
             bits = bits.union(RelationFlags::ASSUME_RELATED_ON_CYCLE);
         }
         // `erase_generics=false` maps to NO_ERASE_GENERICS bit. The legacy
         // `flags` field may already carry this bit; merging here keeps the
         // two representations coherent even if a caller sets only the typed
         // field.
-        if self.has_packed_flag(RelationFlags::NO_ERASE_GENERICS) || !self.erase_generics {
+        if !self.erase_generics {
             bits = bits.union(RelationFlags::NO_ERASE_GENERICS);
         }
         let any_mode = match self.any_propagation_mode {
