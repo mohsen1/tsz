@@ -271,6 +271,15 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// against many targets. The default constraint depends only on the
     /// conditional type shape and interner, so cache both `Some` and `None`.
     pub(crate) conditional_constraint_cache: FxHashMap<ConditionalTypeId, Option<TypeId>>,
+    /// Readonly-array bridge shape facts for this relation walk.
+    ///
+    /// The `ReadonlyArray<T>` application shape and `readonly T[]` syntax shape
+    /// are immutable for a `TypeId`. Subtype bridging asks these questions many
+    /// times while comparing generated conditional results, so cache both hits
+    /// and misses per checker.
+    pub(crate) readonly_array_application_element_cache: FxHashMap<TypeId, Option<TypeId>>,
+    pub(crate) readonly_array_syntax_element_cache: FxHashMap<TypeId, Option<TypeId>>,
+    pub(crate) contains_readonly_array_syntax_cache: FxHashMap<TypeId, bool>,
     /// Optional tracer for collecting subtype failure diagnostics.
     /// When `Some`, enables detailed failure reason collection for error messages.
     /// When `None`, disables tracing for maximum performance (default).
@@ -347,6 +356,9 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             computed_variance_cache: FxHashMap::default(),
             conditional_constraint_cache: FxHashMap::default(),
+            readonly_array_application_element_cache: FxHashMap::default(),
+            readonly_array_syntax_element_cache: FxHashMap::default(),
+            contains_readonly_array_syntax_cache: FxHashMap::default(),
             tracer: None,
             type_param_equivalences: Vec::new(),
         }
@@ -397,6 +409,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             apparent_primitive_shapes: std::array::from_fn(|_| None),
             computed_variance_cache: FxHashMap::default(),
             conditional_constraint_cache: FxHashMap::default(),
+            readonly_array_application_element_cache: FxHashMap::default(),
+            readonly_array_syntax_element_cache: FxHashMap::default(),
+            contains_readonly_array_syntax_cache: FxHashMap::default(),
             tracer: None,
             type_param_equivalences: Vec::new(),
         }
@@ -511,6 +526,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.sym_visiting.clear();
         self.eval_cache.clear();
         self.conditional_constraint_cache.clear();
+        self.readonly_array_application_element_cache.clear();
+        self.readonly_array_syntax_element_cache.clear();
+        self.contains_readonly_array_syntax_cache.clear();
     }
 
     /// Whether the recursion depth was exceeded during subtype checking.
@@ -687,28 +705,59 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    pub(crate) fn readonly_array_application_element(&self, type_id: TypeId) -> Option<TypeId> {
+    pub(crate) fn readonly_array_application_element(&mut self, type_id: TypeId) -> Option<TypeId> {
+        if let Some(cached) = self.readonly_array_application_element_cache.get(&type_id) {
+            return *cached;
+        }
+        let element = self.compute_readonly_array_application_element(type_id);
+        self.readonly_array_application_element_cache
+            .insert(type_id, element);
+        element
+    }
+
+    fn compute_readonly_array_application_element(&self, type_id: TypeId) -> Option<TypeId> {
         let app_id = application_id(self.interner, type_id)?;
         let app = self.interner.type_application(app_id);
         (app.args.len() == 1 && self.readonly_array_application_base(app.base))
             .then_some(app.args[0])
     }
 
-    pub(crate) fn readonly_array_syntax_element(&self, type_id: TypeId) -> Option<TypeId> {
+    pub(crate) fn readonly_array_syntax_element(&mut self, type_id: TypeId) -> Option<TypeId> {
+        if let Some(cached) = self.readonly_array_syntax_element_cache.get(&type_id) {
+            return *cached;
+        }
+        let element = self.compute_readonly_array_syntax_element(type_id);
+        self.readonly_array_syntax_element_cache
+            .insert(type_id, element);
+        element
+    }
+
+    fn compute_readonly_array_syntax_element(&self, type_id: TypeId) -> Option<TypeId> {
         let inner = readonly_inner_type(self.interner, type_id)?;
         array_element_type(self.interner, inner)
     }
 
-    pub(crate) fn type_contains_readonly_array_syntax(&self, type_id: TypeId) -> bool {
+    pub(crate) fn type_contains_readonly_array_syntax(&mut self, type_id: TypeId) -> bool {
+        if let Some(&cached) = self.contains_readonly_array_syntax_cache.get(&type_id) {
+            return cached;
+        }
+        let contains = self.compute_type_contains_readonly_array_syntax(type_id);
+        self.contains_readonly_array_syntax_cache
+            .insert(type_id, contains);
+        contains
+    }
+
+    fn compute_type_contains_readonly_array_syntax(&mut self, type_id: TypeId) -> bool {
         if self.readonly_array_syntax_element(type_id).is_some() {
             return true;
         }
-        union_list_id(self.interner, type_id).is_some_and(|members| {
-            self.interner
-                .type_list(members)
-                .iter()
-                .any(|&member| self.type_contains_readonly_array_syntax(member))
-        })
+        let Some(members) = union_list_id(self.interner, type_id) else {
+            return false;
+        };
+        let member_list = self.interner.type_list(members);
+        member_list
+            .iter()
+            .any(|&member| self.type_contains_readonly_array_syntax(member))
     }
 
     fn array_source_satisfies_minimal_indexed_array_target(
