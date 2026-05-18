@@ -66,6 +66,34 @@ class DebugPrintReportTests(unittest.TestCase):
         self.assertIn("crates/tsz-core/src", self.report.DEFAULT_SCAN_DIRS)
         self.assertNotIn("crates/tsz-cli/src", self.report.DEFAULT_SCAN_DIRS)
 
+    def test_trace_resolution_stdout_is_intentional_output(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.write_file(
+                root,
+                "crates/tsz-core/src/module_resolver/mod.rs",
+                "\n".join(
+                    [
+                        "pub fn lookup(&self) {",
+                        "    if self.trace_resolution {",
+                        "        println!(\"======== Resolving module 'x'. ========\");",
+                        "        if true {",
+                        "            println!(\"nested trace output\");",
+                        "        }",
+                        "    }",
+                        "    println!(\"debug output\");",
+                        "}",
+                    ]
+                )
+                + "\n",
+            )
+
+            hits = self.report.scan(root, ("crates/tsz-core/src",))
+
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].line, 8)
+        self.assertEqual(hits[0].macro, "println!")
+
     def test_json_cli_reports_summary_and_hits(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
