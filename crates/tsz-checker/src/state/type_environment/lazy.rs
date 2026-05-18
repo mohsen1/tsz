@@ -1331,17 +1331,24 @@ impl<'a> CheckerState<'a> {
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
         let lib_name = self.ctx.definition_store.get(def_id).and_then(|info| {
-            (info.file_id == Some(u32::MAX)).then(|| self.ctx.types.resolve_atom(info.name))
+            (info.file_id == Some(u32::MAX)
+                && matches!(info.kind, tsz_solver::def::DefKind::Interface))
+            .then(|| self.ctx.types.resolve_atom(info.name))
         });
         if let Some(name) = lib_name
-            && Self::in_cross_arena_interface_delegation()
+            && self
+                .ctx
+                .get_def_type_params(def_id)
+                .is_none_or(|params| params.is_empty())
             && self.ctx.has_lib_loaded()
         {
             if let Some(resolved) = self.resolve_lib_type_by_name(&name) {
                 self.try_insert_def_in_type_env(def_id, resolved);
                 return Some(resolved);
             }
-            return Some(self.ctx.types.lazy(def_id));
+            if Self::in_cross_arena_interface_delegation() {
+                return Some(self.ctx.types.lazy(def_id));
+            }
         }
 
         let (sym_id, owner_file_idx) = self.ctx.def_symbol_identity(def_id)?;

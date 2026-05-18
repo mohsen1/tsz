@@ -69,11 +69,10 @@ fn bare_builtin_dom_interface_reference_stays_lazy_and_recovers_members() {
             "bare actual-lib interface references should preserve Lazy(DefId) identity",
         );
         assert!(
-            state
+            !state
                 .ctx
                 .lib_type_resolution_cache
-                .get("HTMLDivElement")
-                .is_none(),
+                .contains_key("HTMLDivElement"),
             "bare actual-lib interface references should not eagerly materialize the full interface",
         );
 

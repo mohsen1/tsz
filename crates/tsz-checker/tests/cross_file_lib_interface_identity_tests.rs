@@ -25,7 +25,7 @@ fn dom_libs() -> &'static Vec<Arc<LibFile>> {
     })
 }
 
-fn compile_codes(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
+fn compile_codes(files: &[(&str, &str)], entry: &str) -> Vec<(u32, String)> {
     tsz_checker::test_utils::check_multi_file_with_libs(
         files,
         entry,
@@ -41,7 +41,7 @@ fn compile_codes(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
     // TS2318 ("Cannot find global type") is noise from the stripped lib bundle
     // and unrelated to assignability identity.
     .filter(|d| d.code != 2318)
-    .map(|d| d.code)
+    .map(|d| (d.code, d.message_text))
     .collect()
 }
 
