@@ -2,7 +2,7 @@
 
 use crate::query_boundaries::common::{
     collect_type_queries, contains_lazy_or_recursive, enum_def_id, fill_application_defaults,
-    get_type_query_symbol_ref, lazy_def_id,
+    get_type_query_symbol_ref, lazy_def_id, type_id_is_known_to_db,
 };
 use crate::query_boundaries::state::type_environment as query;
 use crate::query_boundaries::type_predicates::contains_conditional_with_application_extends;
@@ -1356,6 +1356,17 @@ impl<'a> CheckerState<'a> {
                 .is_none_or(|params| params.is_empty())
             && self.ctx.has_lib_loaded()
         {
+            // A local lib-type cache entry was produced or validated by
+            // resolve_lib_type_by_name in this checker. Reuse it for the same
+            // actual-lib interface DefId without re-walking its lazy graph.
+            if let Some(&Some(cached)) = self.ctx.lib_type_resolution_cache.get(&name)
+                && !self.ctx.file_local_type_shadow_for_lib_name(&name)
+                && type_id_is_known_to_db(self.ctx.types, cached)
+                && lazy_def_id(self.ctx.types, cached) != Some(def_id)
+            {
+                self.try_insert_def_in_type_env(def_id, cached);
+                return Some(cached);
+            }
             if let Some(resolved) = self.resolve_lib_type_by_name(&name) {
                 self.try_insert_def_in_type_env(def_id, resolved);
                 return Some(resolved);
