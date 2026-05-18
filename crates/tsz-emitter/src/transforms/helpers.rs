@@ -460,7 +460,19 @@ impl HelpersNeeded {
 
     pub fn mark_read(&mut self) {
         self.read = true;
-        self.remember_unprioritized(HelperEmitOrder::Read);
+        if self.unprioritized_order.contains(&HelperEmitOrder::Read) {
+            return;
+        }
+        if let Some(spread_pos) = self
+            .unprioritized_order
+            .iter()
+            .position(|helper| *helper == HelperEmitOrder::SpreadArray)
+        {
+            self.unprioritized_order
+                .insert(spread_pos, HelperEmitOrder::Read);
+        } else {
+            self.unprioritized_order.push(HelperEmitOrder::Read);
+        }
     }
 
     pub fn mark_spread_array(&mut self) {
@@ -1260,6 +1272,19 @@ mod tests {
         let i_get = find_helper(&output, "__classPrivateFieldGet");
         let i_rest = find_helper(&output, "__rest");
         assert!(i_get < i_rest);
+    }
+
+    #[test]
+    fn emit_helpers_read_precedes_spread_array_when_requested_after_spread() {
+        let mut helpers = HelpersNeeded::default();
+        helpers.mark_spread_array();
+        helpers.mark_read();
+
+        let output = emit_helpers(&helpers);
+        let i_read = find_helper(&output, "__read");
+        let i_spread = find_helper(&output, "__spreadArray");
+        assert!(i_read < i_spread);
+        assert_eq!(helpers.needed_names(), vec!["__read", "__spreadArray"]);
     }
 
     #[test]
