@@ -107,9 +107,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1274: Check that variance modifiers (`in`, `out`) are not used on
-    /// function/method type parameters. They are only valid on class, interface,
-    /// and type alias type parameters.
+    /// TS1274: variance modifiers (`in`, `out`) are invalid on function/method type parameters.
     pub(crate) fn check_variance_on_function_type_parameters(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,

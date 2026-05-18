@@ -1270,7 +1270,8 @@ class ArchGuardSnapshotRollbackTests(unittest.TestCase):
     contributors who refactor `scan_snapshot_rollback_file_count` keep the
     invariants:
 
-      - all `CheckerContext::rollback_*` methods are flagged
+      - broad `CheckerContext::rollback_*` methods are flagged
+      - `DiagnosticSpeculationSnapshot` holder rollback methods are ignored
       - snapshot restorers (`restore_ts2454_state`,
         `restore_implicit_any_closures`) are flagged
       - `*guard.rollback(` SpeculationGuard calls are flagged
@@ -1322,6 +1323,28 @@ class ArchGuardSnapshotRollbackTests(unittest.TestCase):
             hits[5],
         )
 
+    def test_flags_split_chain_diagnostics_methods(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/split.rs": (
+                    "self.ctx\n"
+                    "    .rollback_diagnostics_filtered(&snap, |_| true);\n"
+                ),
+                "crates/tsz-checker/src/named_context.rs": (
+                    "checker_context\n"
+                    "    .rollback_diagnostics(&snap);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_snapshot_rollback_file_count([root], (), 0)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertTrue(any("split.rs" in hit for hit in hits), hits)
+        self.assertTrue(any("named_context.rs" in hit for hit in hits), hits)
+        self.assertIn(
+            "total snapshot-rollback caller files outside speculation.rs: 2",
+            hits[2],
+        )
+
     def test_flags_snapshot_restorers(self):
         root = self._make_tree(
             {
@@ -1365,6 +1388,20 @@ class ArchGuardSnapshotRollbackTests(unittest.TestCase):
                 "crates/tsz-checker/src/unrelated.rs": (
                     "transaction.rollback();\n"
                     "db.rollback(&conn);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_snapshot_rollback_file_count([root], (), 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_ignores_diagnostic_speculation_snapshot_holder_methods(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/snapshot_holder.rs": (
+                    "let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);\n"
+                    "snap.rollback(&mut self.ctx.diagnostic_state());\n"
+                    "snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |_| true);\n"
+                    "snap.commit(&mut self.ctx.diagnostic_state());\n"
                 ),
             }
         )
