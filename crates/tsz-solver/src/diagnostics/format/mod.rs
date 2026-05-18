@@ -280,11 +280,13 @@ impl<'a> TypeFormatter<'a> {
 
             let param_names: FxHashSet<Atom> = def.type_params.iter().map(|p| p.name).collect();
             let mut substitution = crate::TypeSubstitution::new();
+            let mut bound_params = FxHashMap::default();
             if !self.collect_alias_param_substitutions(
                 def_body,
                 body,
                 &param_names,
                 &mut substitution,
+                &mut bound_params,
                 0,
             ) {
                 continue;
@@ -312,6 +314,7 @@ impl<'a> TypeFormatter<'a> {
         actual: TypeId,
         param_names: &FxHashSet<Atom>,
         substitution: &mut crate::TypeSubstitution,
+        bound_params: &mut FxHashMap<Atom, Atom>,
         depth: u8,
     ) -> bool {
         const MAX_ALIAS_MATCH_DEPTH: u8 = 32;
@@ -319,51 +322,77 @@ impl<'a> TypeFormatter<'a> {
             return false;
         }
 
-        if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(pattern)
-            && param_names.contains(&info.name)
-        {
-            return match substitution.get(info.name) {
-                Some(existing) => existing == actual,
-                None => {
-                    substitution.insert(info.name, actual);
-                    true
-                }
-            };
+        if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(pattern) {
+            if param_names.contains(&info.name) {
+                return match substitution.get(info.name) {
+                    Some(existing) => existing == actual,
+                    None => {
+                        substitution.insert(info.name, actual);
+                        true
+                    }
+                };
+            }
+
+            if let Some(actual_name) = bound_params.get(&info.name) {
+                return matches!(
+                    self.interner.lookup(actual),
+                    Some(TypeData::TypeParameter(actual_info)) if actual_info.name == *actual_name
+                );
+            }
+        }
+
+        if pattern == actual {
+            return true;
         }
 
         match (self.interner.lookup(pattern), self.interner.lookup(actual)) {
             (Some(TypeData::Mapped(pattern_id)), Some(TypeData::Mapped(actual_id))) => {
                 let pattern_mapped = self.interner.mapped_type(pattern_id);
                 let actual_mapped = self.interner.mapped_type(actual_id);
-                pattern_mapped.type_param.name == actual_mapped.type_param.name
-                    && pattern_mapped.readonly_modifier == actual_mapped.readonly_modifier
-                    && pattern_mapped.optional_modifier == actual_mapped.optional_modifier
-                    && self.collect_alias_param_substitutions(
+                if pattern_mapped.readonly_modifier != actual_mapped.readonly_modifier
+                    || pattern_mapped.optional_modifier != actual_mapped.optional_modifier
+                    || !self.collect_alias_param_substitutions(
                         pattern_mapped.constraint,
                         actual_mapped.constraint,
                         param_names,
                         substitution,
+                        bound_params,
                         depth + 1,
                     )
-                    && self.collect_alias_param_substitutions(
-                        pattern_mapped.template,
-                        actual_mapped.template,
-                        param_names,
-                        substitution,
-                        depth + 1,
-                    )
-                    && match (pattern_mapped.name_type, actual_mapped.name_type) {
-                        (Some(pattern_name), Some(actual_name)) => self
-                            .collect_alias_param_substitutions(
-                                pattern_name,
-                                actual_name,
-                                param_names,
-                                substitution,
-                                depth + 1,
-                            ),
-                        (None, None) => true,
-                        _ => false,
-                    }
+                {
+                    return false;
+                }
+
+                let old_bound = bound_params.insert(
+                    pattern_mapped.type_param.name,
+                    actual_mapped.type_param.name,
+                );
+                let matched = self.collect_alias_param_substitutions(
+                    pattern_mapped.template,
+                    actual_mapped.template,
+                    param_names,
+                    substitution,
+                    bound_params,
+                    depth + 1,
+                ) && match (pattern_mapped.name_type, actual_mapped.name_type) {
+                    (Some(pattern_name), Some(actual_name)) => self
+                        .collect_alias_param_substitutions(
+                            pattern_name,
+                            actual_name,
+                            param_names,
+                            substitution,
+                            bound_params,
+                            depth + 1,
+                        ),
+                    (None, None) => true,
+                    _ => false,
+                };
+                if let Some(old_bound) = old_bound {
+                    bound_params.insert(pattern_mapped.type_param.name, old_bound);
+                } else {
+                    bound_params.remove(&pattern_mapped.type_param.name);
+                }
+                matched
             }
             (
                 Some(TypeData::IndexAccess(p_obj, p_idx)),
@@ -374,12 +403,14 @@ impl<'a> TypeFormatter<'a> {
                     a_obj,
                     param_names,
                     substitution,
+                    bound_params,
                     depth + 1,
                 ) && self.collect_alias_param_substitutions(
                     p_idx,
                     a_idx,
                     param_names,
                     substitution,
+                    bound_params,
                     depth + 1,
                 )
             }
@@ -389,6 +420,7 @@ impl<'a> TypeFormatter<'a> {
                     actual_operand,
                     param_names,
                     substitution,
+                    bound_params,
                     depth + 1,
                 ),
             (
@@ -407,6 +439,7 @@ impl<'a> TypeFormatter<'a> {
                         actual_arg,
                         param_names,
                         substitution,
+                        bound_params,
                         depth + 1,
                     )
             }
@@ -431,6 +464,7 @@ impl<'a> TypeFormatter<'a> {
                                 *a,
                                 param_names,
                                 substitution,
+                                bound_params,
                                 depth + 1,
                             ),
                             _ => false,
@@ -458,11 +492,12 @@ impl<'a> TypeFormatter<'a> {
                                     actual_prop.type_id,
                                     param_names,
                                     substitution,
+                                    bound_params,
                                     depth + 1,
                                 )
                         })
             }
-            _ => pattern == actual,
+            _ => false,
         }
     }
 
