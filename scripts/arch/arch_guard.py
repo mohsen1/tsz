@@ -153,6 +153,17 @@ FILE_LINE_LIMIT_CHECKS = [
         / "common.rs",
         1996,
     ),
+    (
+        "Solver engine boundary: generic call resolver must stay under 3400 LOC (#8209)",
+        ROOT
+        / "crates"
+        / "tsz-solver"
+        / "src"
+        / "operations"
+        / "generic_call"
+        / "resolve.rs",
+        3400,
+    ),
 ]
 
 # Pin field counts on giant coordination structs so workstream-4 (Checker
