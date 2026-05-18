@@ -781,6 +781,16 @@ impl<'a> CheckerContext<'a> {
         });
     }
 
+    /// Register a `DefId` ↔ `SymbolId` bridge in **both** type environments.
+    ///
+    /// This keeps evaluator and flow-analyzer resolution paths aligned for
+    /// `TypeQuery`, inheritance, and solver-side DefId identity lookups.
+    pub fn register_def_symbol_mapping_in_envs(&self, def_id: DefId, sym_id: SymbolId) {
+        self.with_envs_for_register("register_def_symbol_mapping", |env| {
+            env.register_def_symbol_mapping(def_id, sym_id);
+        });
+    }
+
     /// Register an augmented definition body in **both** type environments.
     ///
     /// If the definition is a class (or already has a class-instance entry),
@@ -1290,9 +1300,7 @@ impl<'a> CheckerContext<'a> {
 
             // Register mapping for InheritanceGraph bridge (Phase 3.2)
             // This enables Lazy(DefId) types to use the O(1) InheritanceGraph
-            if let Ok(mut env) = self.type_environment.try_borrow_mut() {
-                env.register_def_symbol_mapping(def_id, sym_id);
-            }
+            self.register_def_symbol_mapping_in_envs(def_id, sym_id);
 
             // Set the body on the DefinitionInfo so the type formatter can
             // find type alias names via find_type_alias_by_body(). Without

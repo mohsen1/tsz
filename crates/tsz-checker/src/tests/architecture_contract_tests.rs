@@ -5,10 +5,11 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::ParserState;
 use tsz_parser::parser::node::NodeArena;
+use tsz_solver::def::resolver::TypeResolver;
 use tsz_solver::def::{DefId, DefinitionStore};
 use tsz_solver::{
-    CompatChecker, FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, TypeId, TypeInterner,
-    TypeParamInfo, Visibility,
+    CompatChecker, FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, SymbolRef, TypeId,
+    TypeInterner, TypeParamInfo, Visibility,
 };
 
 /// Read a checker source path. If the path is a directory, concatenate all .rs files.
@@ -717,6 +718,36 @@ fn test_register_def_in_envs_skips_invalidation_for_unchanged_body() {
         ctx.lookup_env_eval_cache(generic_cache_key).is_none(),
         "changed generic params must invalidate dependent evaluator caches",
     );
+}
+
+#[test]
+fn test_register_def_symbol_mapping_in_envs_writes_both_environments() {
+    let arena = NodeArena::new();
+    let binder = BinderState::new();
+    let types = TypeInterner::new();
+    let ctx = CheckerContext::new(
+        &arena,
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    let def_id = DefId(10_005);
+    let sym_id = tsz_binder::SymbolId(20_005);
+
+    ctx.register_def_symbol_mapping_in_envs(def_id, sym_id);
+
+    {
+        let env = ctx.type_env.borrow();
+        assert_eq!(env.def_to_symbol_id(def_id), Some(sym_id));
+        assert_eq!(env.symbol_to_def_id(SymbolRef(sym_id.0)), Some(def_id));
+    }
+    {
+        let env = ctx.type_environment.borrow();
+        assert_eq!(env.def_to_symbol_id(def_id), Some(sym_id));
+        assert_eq!(env.symbol_to_def_id(SymbolRef(sym_id.0)), Some(def_id));
+    }
 }
 
 #[test]
