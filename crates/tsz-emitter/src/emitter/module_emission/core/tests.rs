@@ -9,6 +9,78 @@ fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::pars
     (parser, root)
 }
 
+#[test]
+fn esmodule_es5_default_class_exports_after_iife() {
+    let source = r#"export default class A {
+    method() { return 1; }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ES2015,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var A = /** @class */ (function ()"),
+        "ES5 default class should be lowered to a local IIFE binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("export default A;"),
+        "Native ESM default export should be scheduled after the ES5 class binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export default var"),
+        "Default export must not prefix the lowered `var` declaration.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn esmodule_es5_anonymous_default_class_gets_synthetic_binding() {
+    let source = r#"export default class {
+    method() { return 1; }
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ES2015,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var default_1 = /** @class */ (function ()"),
+        "Anonymous ES5 default class should receive the tsc-style synthetic binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("export default default_1;"),
+        "Native ESM anonymous default class export should use the synthetic binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("export default \n"),
+        "Default export must not be left without an emitted expression.\nOutput:\n{output}"
+    );
+}
+
 /// When moduleDetection=force, a file without any import/export syntax
 /// should still be treated as a module and get the CJS __esModule preamble.
 #[test]
