@@ -18,6 +18,7 @@ use crate::diagnostics::display_provenance::{
     self, AliasApplicationPriority, AliasApplicationProvenance,
     FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
 };
+use crate::evaluation::request::EvaluationRequest;
 use crate::instantiation::instantiate::instantiate_generic;
 use crate::relations::subtype::{NoopResolver, TypeResolver};
 #[cfg(test)]
@@ -311,6 +312,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.cache.clear();
         self.guard.reset();
         self.def_depth.clear();
+    }
+
+    /// Evaluate a normalized request, applying option-sensitive configuration
+    /// before consulting this evaluator's local cache.
+    pub fn evaluate_request(&mut self, request: EvaluationRequest) -> TypeId {
+        self.set_no_unchecked_indexed_access(request.no_unchecked_indexed_access());
+        self.evaluate(request.type_id())
     }
 
     // =========================================================================
@@ -2750,8 +2758,16 @@ pub fn evaluate_index_access_with_options(
 
 /// Convenience function for full type evaluation
 pub fn evaluate_type(interner: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    evaluate_type_with_request(interner, EvaluationRequest::new(type_id))
+}
+
+/// Convenience function for full type evaluation with explicit request options.
+pub fn evaluate_type_with_request(
+    interner: &dyn TypeDatabase,
+    request: EvaluationRequest,
+) -> TypeId {
     let mut evaluator = TypeEvaluator::new(interner);
-    evaluator.evaluate(type_id)
+    evaluator.evaluate_request(request)
 }
 
 /// Convenience function for evaluating mapped types

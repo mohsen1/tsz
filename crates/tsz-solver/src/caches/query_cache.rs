@@ -9,6 +9,7 @@ use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheK
 use crate::caches::query_trace;
 use crate::caches::subtype_reduction_cache::{SubtypeReductionCache, SubtypeReductionKey};
 use crate::def::DefId;
+use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};
 use crate::intern::TypeInterner;
 use crate::objects::element_access::ElementAccessResult;
 use crate::operations::property::PropertyAccessResult;
@@ -30,7 +31,6 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
-type EvalCacheKey = (TypeId, bool);
 type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool);
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
@@ -79,7 +79,7 @@ pub const fn assignability_cache_config_from_legacy_flags(flags: u16) -> Relatio
 /// - `subtype_cache`: subtype relation results
 /// - `assignability_cache`: assignability relation results
 pub struct SharedQueryCache {
-    eval_cache: DashMap<EvalCacheKey, TypeId>,
+    eval_cache: DashMap<EvaluationCacheKey, TypeId>,
     subtype_cache: DashMap<RelationCacheKey, bool>,
     assignability_cache: DashMap<RelationCacheKey, bool>,
 }
@@ -328,7 +328,7 @@ impl std::fmt::Display for QueryCacheStatistics {
 /// every subtype check, property lookup, and evaluation cache hit.
 pub struct QueryCache<'a> {
     interner: &'a TypeInterner,
-    eval_cache: RefCell<FxHashMap<EvalCacheKey, TypeId>>,
+    eval_cache: RefCell<FxHashMap<EvaluationCacheKey, TypeId>>,
     application_eval_cache: RefCell<FxHashMap<ApplicationEvalCacheKey, TypeId>>,
     element_access_cache: RefCell<FxHashMap<ElementAccessTypeCacheKey, TypeId>>,
     object_spread_properties_cache: RefCell<FxHashMap<TypeId, Vec<PropertyInfo>>>,
@@ -496,7 +496,7 @@ impl<'a> QueryCache<'a> {
             let map = self.eval_cache.borrow();
             size += map.capacity()
                 * (BUCKET_OVERHEAD
-                    + std::mem::size_of::<EvalCacheKey>()
+                    + std::mem::size_of::<EvaluationCacheKey>()
                     + std::mem::size_of::<TypeId>());
         }
 
@@ -1280,7 +1280,9 @@ impl QueryDatabase for QueryCache<'_> {
             return type_id;
         }
 
-        let key = (type_id, no_unchecked_indexed_access);
+        let request = EvaluationRequest::new(type_id)
+            .with_no_unchecked_indexed_access(no_unchecked_indexed_access);
+        let key = request.cache_key();
         let cached = self.eval_cache.borrow().get(&key).copied();
 
         if let Some(result) = cached {
@@ -1335,9 +1337,8 @@ impl QueryDatabase for QueryCache<'_> {
 
         let mut evaluator =
             crate::evaluation::evaluate::TypeEvaluator::new(self.as_type_database());
-        evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator = evaluator.with_query_db(self);
-        let result = evaluator.evaluate(type_id);
+        let result = evaluator.evaluate_request(request);
 
         // PERF: Persist intermediate evaluation results from this session into
         // the long-lived eval_cache. During recursive mapped type expansion
@@ -1354,7 +1355,7 @@ impl QueryDatabase for QueryCache<'_> {
             }
             for (intermediate_id, intermediate_result) in evaluator.drain_cache() {
                 if intermediate_id != intermediate_result && !intermediate_id.is_intrinsic() {
-                    let ikey = (intermediate_id, no_unchecked_indexed_access);
+                    let ikey = request.with_type_id(intermediate_id).cache_key();
                     cache.entry(ikey).or_insert(intermediate_result);
                     if let Some(shared) = self.shared {
                         shared.eval_cache.entry(ikey).or_insert(intermediate_result);
