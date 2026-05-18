@@ -1577,17 +1577,21 @@ run_project_benchmark() {
         proj_max="$MAX_RUNS"
     fi
     local json_file=$(mktemp)
-    local tsz_cmd_prefix=""
-    local tsgo_cmd_prefix=""
+    local tsz_env_prefix=""
+    local tsgo_env_prefix=""
+    local quoted_env_value
     if [ "$name" = "large-ts-repo" ] && [ -n "$LARGE_TS_NODE_OPTIONS" ]; then
-        tsz_cmd_prefix="env NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS "
-        tsgo_cmd_prefix="env NODE_OPTIONS=$LARGE_TS_NODE_OPTIONS "
+        printf -v quoted_env_value "%q" "$LARGE_TS_NODE_OPTIONS"
+        tsz_env_prefix="NODE_OPTIONS=$quoted_env_value "
+        tsgo_env_prefix="NODE_OPTIONS=$quoted_env_value "
     fi
     if [ -n "${TSZ_LIB_DIR:-}" ]; then
-        tsz_cmd_prefix="${tsz_cmd_prefix}env TSZ_LIB_DIR=$TSZ_LIB_DIR "
+        printf -v quoted_env_value "%q" "$TSZ_LIB_DIR"
+        tsz_env_prefix="${tsz_env_prefix}TSZ_LIB_DIR=$quoted_env_value "
     fi
     if [ -n "${TSZ_RUST_MIN_STACK:-}" ]; then
-        tsz_cmd_prefix="${tsz_cmd_prefix}env RUST_MIN_STACK=$TSZ_RUST_MIN_STACK "
+        printf -v quoted_env_value "%q" "$TSZ_RUST_MIN_STACK"
+        tsz_env_prefix="${tsz_env_prefix}RUST_MIN_STACK=$quoted_env_value "
     fi
     local -a hyperfine_prepare_args=()
     if [[ "${BENCH_COLD:-0}" == "1" ]]; then
@@ -1609,7 +1613,7 @@ run_project_benchmark() {
                 --ignore-failure \
                 --export-json "$json_file" \
                 "${hyperfine_prepare_args[@]}" \
-                -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
+                -n "tsgo" "${tsgo_env_prefix}perl -e 'alarm($run_timeout); exec @ARGV' -- $TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
         else
             hyperfine \
                 --warmup "$proj_warmup" \
@@ -1618,7 +1622,7 @@ run_project_benchmark() {
                 --style full \
                 --ignore-failure \
                 --export-json "$json_file" \
-                -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
+                -n "tsgo" "${tsgo_env_prefix}perl -e 'alarm($run_timeout); exec @ARGV' -- $TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
         fi
         if [ "$hyperfine_tsz_unavailable_status" -ne 0 ]; then
             record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing tsgo-only project row" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes"
@@ -1660,8 +1664,8 @@ run_project_benchmark() {
             --ignore-failure \
             --export-json "$json_file" \
             "${hyperfine_prepare_args[@]}" \
-            -n "tsz" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
-            -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
+            -n "tsz" "${tsz_env_prefix}perl -e 'alarm($run_timeout); exec @ARGV' -- $TSZ --noEmit -p $tsconfig 2>/dev/null" \
+            -n "tsgo" "${tsgo_env_prefix}perl -e 'alarm($run_timeout); exec @ARGV' -- $TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
     else
         hyperfine \
             --warmup "$proj_warmup" \
@@ -1670,8 +1674,8 @@ run_project_benchmark() {
             --style full \
             --ignore-failure \
             --export-json "$json_file" \
-            -n "tsz" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
-            -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
+            -n "tsz" "${tsz_env_prefix}perl -e 'alarm($run_timeout); exec @ARGV' -- $TSZ --noEmit -p $tsconfig 2>/dev/null" \
+            -n "tsgo" "${tsgo_env_prefix}perl -e 'alarm($run_timeout); exec @ARGV' -- $TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
     fi
     if [ "$hyperfine_status" -ne 0 ]; then
         local status="hyperfine error"

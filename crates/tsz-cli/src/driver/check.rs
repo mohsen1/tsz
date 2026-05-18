@@ -206,7 +206,7 @@ fn should_apply_duplicate_package_redirect(importing_file: &Path) -> bool {
 /// Build a fresh checker-facing lib set from the already-loaded lib sources so program
 /// binding and checker lib resolution stay isolated without requiring disk reloads.
 pub(super) fn load_checker_libs(lib_files: &[Arc<LibFile>]) -> CheckerLibSet {
-    let files = parallel::clone_lib_files_for_checker(lib_files, false);
+    let files = parallel::clone_lib_files_for_checker(lib_files, lib_files.len() > 1);
     let contexts = files
         .iter()
         .map(|lib| LibContext {
@@ -1489,9 +1489,21 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         program_context.shared_definition_store = Some(shared_store);
     }
 
-    // Prime Array<T> base type with global augmentations before any file checks.
-    // The prime checker uses the shared DefinitionStore (via program_context.apply_to).
-    if !program.files.is_empty() && !checker_libs.contexts.is_empty() {
+    let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
+        Arc::new(dashmap::DashMap::new());
+
+    // Prime Array<T> base type with global augmentations before parallel file
+    // checks. Tiny no-emit batches use the sequential reused-checker path, whose
+    // real checker registers boxed/lib types before statement checking; in that
+    // regime a separate prime checker duplicates the same setup.
+    let boxed_prime_is_covered_by_reused_checker = options.no_emit
+        && !options.emit_declarations
+        && file_session_reuse_requested(program.files.len())
+        && program.files.len() <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES;
+    if !boxed_prime_is_covered_by_reused_checker
+        && !program.files.is_empty()
+        && !checker_libs.contexts.is_empty()
+    {
         let prime_idx = 0;
         let file = &program.files[prime_idx];
         let binder = parallel::create_binder_from_bound_file(file, program, prime_idx);
@@ -1502,6 +1514,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             file.file_name.clone(),
             &options.checker,
         );
+        checker.ctx.shared_lib_type_cache = Some(Arc::clone(&shared_lib_cache));
         program_context.apply_to(&mut checker.ctx);
         checker.prime_boxed_types();
     }
@@ -1663,9 +1676,6 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         // Skip extraction in that case and let per-file state drop as soon
         // as checking finishes.
         let extract_type_cache = !options.no_emit || options.emit_declarations;
-        let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
-            Arc::new(dashmap::DashMap::new());
-
         // Create shared cross-file query cache for multi-file projects.
         // Eliminates redundant type evaluations and relation checks across files.
         let shared_query_cache = if work_items.len() > 1 {
