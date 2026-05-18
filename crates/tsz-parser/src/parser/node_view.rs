@@ -275,7 +275,7 @@ impl NodeAccess for NodeArena {
             return;
         };
 
-        if self.collect_name_children(node, children)
+        let _ = self.collect_name_children(node, children)
             || self.collect_expression_children(node, children)
             || self.collect_statement_children(node, children)
             || self.collect_declaration_children(node, children)
@@ -285,10 +285,7 @@ impl NodeAccess for NodeArena {
             || self.collect_pattern_children(node, children)
             || self.collect_jsx_children(node, children)
             || self.collect_signature_children(node, children)
-            || self.collect_source_children(node, children)
-        {
-            return;
-        }
+            || self.collect_source_children(node, children);
     }
 }
 
