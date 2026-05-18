@@ -838,6 +838,7 @@ build_test_binaries() {
   fi
 
   cargo build --profile dist-fast \
+    --jobs "$CARGO_BUILD_JOBS" \
     -p tsz-cli \
     -p tsz-conformance \
     --bin tsz \
