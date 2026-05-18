@@ -1479,7 +1479,8 @@ impl<'a> Printer<'a> {
             match node.kind {
                 k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => return true,
                 k if k == syntax_kind_ext::TYPE_ASSERTION
-                    || k == syntax_kind_ext::AS_EXPRESSION =>
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
                 {
                     if let Some(ta) = self.arena.get_type_assertion(node) {
                         idx = ta.expression;
@@ -1487,10 +1488,50 @@ impl<'a> Printer<'a> {
                         return false;
                     }
                 }
+                k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+                {
+                    return self.erased_object_literal_access_chain_needs_parens(idx);
+                }
+                k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                    return self.erased_object_literal_access_chain_needs_parens(idx);
+                }
                 // Already parenthesized — the emitter will preserve the parens
                 k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => return false,
                 _ => return false,
             }
+        }
+    }
+
+    fn erased_object_literal_access_chain_needs_parens(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                self.arena.get_access_expr(node).is_some_and(|access| {
+                    self.erased_object_literal_access_chain_needs_parens(access.expression)
+                })
+            }
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                self.arena.get_call_expr(node).is_some_and(|call| {
+                    self.erased_object_literal_access_chain_needs_parens(call.expression)
+                })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                self.arena.get_parenthesized(node).is_some_and(|paren| {
+                    self.erased_object_literal_access_chain_needs_parens(paren.expression)
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                self.type_assertion_wraps_object_literal(idx)
+            }
+            _ => false,
         }
     }
 
