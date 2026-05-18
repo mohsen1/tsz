@@ -1957,26 +1957,66 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().conditional(*cond);
         }
 
-        let mut subst = TypeSubstitution::new();
+        // Pass 1: resolve each property and accumulate inferred types per variable name.
+        // Co-located uses of the same `infer T` union their candidates. Track which
+        // variables received contributions from more than one slot, and the effective
+        // constraint from the first occurrence that declares one.
+        let mut accumulated: FxHashMap<Atom, TypeId> = FxHashMap::default();
+        // Set when ≥2 distinct slots contributed to the same variable.
+        let mut multi_slot: FxHashSet<Atom> = FxHashSet::default();
+        // (constraint, optional) from the first constrained occurrence.
+        let mut effective_constraint: FxHashMap<Atom, (TypeId, bool)> = FxHashMap::default();
+
         for &(prop_name, info, optional) in infer_props {
-            let Some(mut inferred) =
+            let Some(inferred) =
                 self.resolve_conditional_infer_property(check_unwrapped, prop_name, optional)
             else {
                 return self.evaluate(cond.false_type);
             };
 
-            // tsc unions hits for the same infer variable across multiple property slots.
-            if let Some(existing) = subst.get(info.name) {
-                inferred = self.interner().union2(existing, inferred);
+            if let Some(existing) = accumulated.get(&info.name).copied() {
+                // tsc unions co-located infer candidates across property slots.
+                multi_slot.insert(info.name);
+                let merged = self.interner().union2(existing, inferred);
+                accumulated.insert(info.name, merged);
+            } else {
+                accumulated.insert(info.name, inferred);
             }
 
-            subst.insert(info.name, inferred);
-
+            // The constraint declared at the first occurrence is the variable's constraint;
+            // later co-located uses that lack a constraint are just additional candidates.
             if let Some(constraint) = info.constraint {
+                effective_constraint
+                    .entry(info.name)
+                    .or_insert((constraint, optional));
+            }
+        }
+
+        // Pass 2: apply each variable's effective constraint to its fully-accumulated type,
+        // then build the substitution in declaration order.
+        //
+        // Constraint semantics differ by how the union arose:
+        // - Multi-slot accumulation: the whole union must satisfy the constraint (tsc fails
+        //   the conditional when `string | number extends string` is false).
+        // - Single-slot with a union source property: filter per-member and keep matching
+        //   parts (preserving the original `filter_inferred_by_constraint_or_undefined`
+        //   behaviour for non-distributive unions).
+        let mut subst = TypeSubstitution::new();
+        for &(_, info, _) in infer_props {
+            if subst.get(info.name).is_some() {
+                continue; // already processed this variable
+            }
+            let Some(mut inferred) = accumulated.get(&info.name).copied() else {
+                continue;
+            };
+
+            if let Some(&(constraint, opt)) = effective_constraint.get(&info.name) {
                 let mut checker = self.conditional_subtype_checker();
                 checker.allow_bivariant_rest = true;
                 let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
-                if optional {
+                let is_multi = multi_slot.contains(&info.name);
+
+                if opt {
                     let Some(filtered) =
                         self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
                     else {
@@ -1985,7 +2025,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.evaluate(false_inst);
                     };
                     inferred = filtered;
-                } else if is_union && !cond.is_distributive {
+                } else if is_union && !cond.is_distributive && !is_multi {
+                    // Union from a single source property — filter members, keep matching.
                     inferred = self.filter_inferred_by_constraint_or_undefined(
                         inferred,
                         constraint,
@@ -1994,8 +2035,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 } else if !checker.is_subtype_of(inferred, constraint) {
                     return self.evaluate(cond.false_type);
                 }
-                subst.insert(info.name, inferred);
             }
+
+            subst.insert(info.name, inferred);
         }
 
         let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);

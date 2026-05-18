@@ -2623,7 +2623,8 @@ fn test_colocated_infer_two_props_unions_inferred_types() {
     assert_eq!(result, interner.union2(TypeId::STRING, TypeId::NUMBER));
 }
 
-/// Same rule, renamed variable (`K`) — proves the fix is not keyed on spelling.
+/// Same rule, different variable name (`K`, properties `x`/`y`) — confirms the behavior
+/// generalizes across different identifier choices and property names.
 #[test]
 fn test_colocated_infer_two_props_renamed_var_still_unions() {
     let interner = TypeInterner::new();
@@ -2737,4 +2738,143 @@ fn test_separate_infer_vars_not_unioned() {
     let result = evaluate_type(&interner, interner.conditional(cond));
 
     assert_eq!(result, TypeId::STRING);
+}
+
+/// `{ a: string; b: number } extends { a: infer U extends string; b: infer U } ? U : never`
+/// → `never`
+///
+/// When the first occurrence declares a constraint, the final accumulated union must satisfy
+/// it as a whole. `string | number extends string` is false, so the false branch is taken.
+/// The constraint must apply to the accumulated type, not just to the first slot's inferred type.
+#[test]
+fn test_colocated_infer_constrained_first_unconstrained_second_fails() {
+    let interner = TypeInterner::new();
+
+    let u_name = interner.intern_string("U");
+    // First occurrence: infer U extends string (constrained)
+    let infer_u_constrained = interner.infer(TypeParamInfo {
+        name: u_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+    // Second occurrence: infer U (unconstrained, same variable)
+    let infer_u_bare = interner.infer(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let extends_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), infer_u_constrained),
+        PropertyInfo::new(interner.intern_string("b"), infer_u_bare),
+    ]);
+    let check_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), TypeId::STRING),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER),
+    ]);
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_u_constrained,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    // string | number does not satisfy extends string → false branch
+    assert_eq!(result, TypeId::NEVER);
+}
+
+/// `{ a: number; b: string } extends { a: infer U; b: infer U extends string } ? U : never`
+/// → `never` (constraint declared on second occurrence, same result regardless of order)
+#[test]
+fn test_colocated_infer_unconstrained_first_constrained_second_fails() {
+    let interner = TypeInterner::new();
+
+    let u_name = interner.intern_string("U");
+    let infer_u_bare = interner.infer(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let infer_u_constrained = interner.infer(TypeParamInfo {
+        name: u_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+
+    let extends_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), infer_u_bare),
+        PropertyInfo::new(interner.intern_string("b"), infer_u_constrained),
+    ]);
+    let check_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::STRING),
+    ]);
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_u_bare,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    // number | string does not satisfy extends string → false branch
+    assert_eq!(result, TypeId::NEVER);
+}
+
+/// `{ a: "foo"; b: "bar" } extends { a: infer U extends string; b: infer U } ? U : never`
+/// → `"foo" | "bar"`
+///
+/// When all accumulated candidates satisfy the constraint, the union is kept and the
+/// true branch is taken.
+#[test]
+fn test_colocated_infer_constrained_all_satisfy_keeps_union() {
+    let interner = TypeInterner::new();
+
+    let u_name = interner.intern_string("U");
+    let infer_u_constrained = interner.infer(TypeParamInfo {
+        name: u_name,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+    let infer_u_bare = interner.infer(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    let foo = interner.literal_string("foo");
+    let bar = interner.literal_string("bar");
+
+    let extends_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), infer_u_constrained),
+        PropertyInfo::new(interner.intern_string("b"), infer_u_bare),
+    ]);
+    let check_obj = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), foo),
+        PropertyInfo::new(interner.intern_string("b"), bar),
+    ]);
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_u_constrained,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    // "foo" | "bar" satisfies extends string → true branch with U = "foo" | "bar"
+    let expected = interner.union2(foo, bar);
+    assert_eq!(result, expected);
 }
