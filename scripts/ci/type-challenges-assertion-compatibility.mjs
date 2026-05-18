@@ -162,17 +162,30 @@ function validateCompilerExitCode(exitCode, label) {
   }
 }
 
+function validateComparisonStatus(status, label) {
+  if (typeof status !== "string" || status.trim() === "") {
+    fail(`${label} comparison.status must be a non-empty string`);
+  }
+  const allowedStatuses = new Set([
+    "unavailable",
+    "both-nonpassing",
+    "both-pass",
+    "tsz-rejects-tsc-accepted",
+    "tsz-accepts-tsc-rejected",
+  ]);
+  if (!allowedStatuses.has(status)) {
+    fail(
+      `${label} comparison.status must be one of ${[...allowedStatuses].join(", ")}: ${status}`,
+    );
+  }
+}
+
 function validateReport(report) {
   validateClassificationCompilerReport(report);
   if (!report.comparison || typeof report.comparison !== "object") {
     fail("assertion classification report is missing comparison");
   }
-  if (
-    typeof report.comparison.status !== "string" ||
-    report.comparison.status.trim() === ""
-  ) {
-    fail("assertion classification comparison.status must be a non-empty string");
-  }
+  validateComparisonStatus(report.comparison.status, "assertion classification");
   if (!report.candidateManifest || typeof report.candidateManifest !== "object") {
     fail("assertion classification report is missing candidateManifest");
   }
@@ -294,15 +307,10 @@ if (cleanSubsetClassification) {
   ) {
     fail("tsc-clean assertion classification report is missing comparison");
   }
-  const cleanComparisonStatus = cleanSubsetClassification.comparison.status;
-  if (
-    typeof cleanComparisonStatus !== "string" ||
-    cleanComparisonStatus.trim() === ""
-  ) {
-    fail(
-      "tsc-clean assertion classification comparison.status must be a non-empty string",
-    );
-  }
+  validateComparisonStatus(
+    cleanSubsetClassification.comparison.status,
+    "tsc-clean assertion classification",
+  );
 }
 if (cleanSubsetManifest && cleanSubsetClassification) {
   const acceptedAssertions = cleanSubsetManifest.counts.tscAcceptedAssertions;
