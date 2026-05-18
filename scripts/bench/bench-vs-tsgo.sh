@@ -1109,8 +1109,10 @@ record_project_compatibility() {
     local tsc_exit_codes="${8:-}"
     local tsz_exit_codes="${9:-}"
     local tsgo_exit_codes="${10:-}"
+    local fixture_sources
 
     [ -z "$PROJECT_COMPATIBILITY_JSONL" ] && return
+    fixture_sources="$(tsz_project_fixture_sources "$name")"
 
     COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
     COMPAT_FIXTURE_ROOT="$EXTERNAL_BENCH_DIR" \
@@ -1124,6 +1126,7 @@ record_project_compatibility() {
     COMPAT_TSC_EXIT_CODES="$tsc_exit_codes" \
     COMPAT_TSZ_EXIT_CODES="$tsz_exit_codes" \
     COMPAT_TSGO_EXIT_CODES="$tsgo_exit_codes" \
+    COMPAT_FIXTURE_SOURCES="$fixture_sources" \
     node "$PROJECT_ROOT/scripts/ci/project-compatibility.mjs" record
 }
 
