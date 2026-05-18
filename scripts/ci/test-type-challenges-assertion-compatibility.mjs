@@ -2038,6 +2038,70 @@ withTempDir((dir) => {
     dir,
     classification: {
       fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 1,
+            candidatesWithDiagnostics: 1,
+            candidatesWithoutDiagnostics: 0,
+            filesWithDiagnostics: ["C:/tmp/assertions/one.ts"],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "both-pass" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc candidateDiagnostics\.filesWithDiagnostics\[0\] must stay inside the assertion candidate directory/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: {
+        status: "both-pass",
+        candidateFileComparison: {
+          totalCandidates: 1,
+          counts: {
+            bothAccepted: 1,
+            bothRejected: 0,
+            tscAcceptedTszRejected: 0,
+            tscRejectedTszAccepted: 0,
+          },
+          bothAccepted: ["assertions/./one.ts"],
+          bothRejected: [],
+          tscAcceptedTszRejected: [],
+          tscRejectedTszAccepted: [],
+        },
+      },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /candidateFileComparison\.bothAccepted\[0\] must stay inside the assertion candidate directory/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(2),
       compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
       comparison: {
