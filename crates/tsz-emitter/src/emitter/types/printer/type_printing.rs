@@ -2016,6 +2016,15 @@ impl<'a> TypePrinter<'a> {
     }
 
     fn type_reference_base_is_nameable(&self, type_id: TypeId) -> bool {
+        if let Some(def_id) = visitor::lazy_def_id(self.interner, type_id)
+            && let Some(cache) = self.type_cache
+        {
+            if let Some(&sym_id) = cache.def_to_symbol.get(&def_id) {
+                return self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id);
+            }
+            return cache.def_to_name.contains_key(&def_id);
+        }
+
         if let Some(sym_ref) = visitor::type_query_symbol(self.interner, type_id) {
             let sym_id = SymbolId(sym_ref.0);
             return self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id);

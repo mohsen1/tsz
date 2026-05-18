@@ -84,10 +84,12 @@ type MoreState = {
         .get("MoreState")
         .expect("missing MoreState symbol");
     let interner = TypeInterner::new();
-    let module_ref = interner.type_query(SymbolRef(module_sym.0));
+    let module_def = DefId(9119);
+    let module_ref = interner.lazy(module_def);
     let more_state_def = DefId(9120);
     let more_state_ref = interner.lazy(more_state_def);
     let mut type_cache = TypeCacheView::default();
+    type_cache.def_to_symbol.insert(module_def, module_sym);
     type_cache
         .def_to_symbol
         .insert(more_state_def, more_state_sym);
