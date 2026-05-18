@@ -112,12 +112,13 @@ function h(x: 3n) {
 
 // ── Type parameter annotations must still use raw text ──────────────────────
 
-/// `x: T` (generic type param) — raw annotation text `T` must still appear.
+/// `x: T` (generic type param with bigint constraint) — raw type param name
+/// `T` must appear in operator error, not the resolved constraint.
 #[test]
 fn type_param_annotation_preserves_raw_text() {
     let source = r"
-function f<T extends boolean>(x: T) {
-    let _a = x < 1;
+function f<T extends bigint>(x: T) {
+    let _a = false < x;
 }
 ";
     let msgs = operator_messages(source);
@@ -129,12 +130,12 @@ function f<T extends boolean>(x: T) {
     );
 }
 
-/// Same rule under a renamed type parameter.
+/// Same rule under a renamed type parameter — proves the rule is structural.
 #[test]
 fn type_param_annotation_preserves_raw_text_renamed() {
     let source = r"
-function g<K extends boolean>(y: K) {
-    let _b = y < 1;
+function g<K extends bigint>(y: K) {
+    let _b = false < y;
 }
 ";
     let msgs = operator_messages(source);
