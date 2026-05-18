@@ -702,8 +702,16 @@ name = "typeof_instantiation_expression_tests"
 path = "tests/typeof_instantiation_expression_tests.rs"
 
 [[test]]
-name = "ts2344_class_constructor_constraint"
-path = "tests/ts2344_class_constructor_constraint.rs"
+name = "ts2344_class_constructor_constraint_call"
+path = "tests/ts2344_class_constructor_constraint_call.rs"
+
+[[test]]
+name = "ts2344_class_constructor_constraint_expr"
+path = "tests/ts2344_class_constructor_constraint_expr.rs"
+
+[[test]]
+name = "ts2344_class_constructor_constraint_visibility"
+path = "tests/ts2344_class_constructor_constraint_visibility.rs"
 
 [[test]]
 name = "ts2344_accessor_constraint"
