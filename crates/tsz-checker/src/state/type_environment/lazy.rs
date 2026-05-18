@@ -9,6 +9,7 @@ use crate::query_boundaries::type_predicates::contains_conditional_with_applicat
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
 use crate::query_boundaries::state::type_environment::for_each_direct_referenced_type;
 
@@ -792,7 +793,7 @@ impl<'a> CheckerState<'a> {
                 // alias references commonly register their structural body there
                 // even when the current binder cannot re-compute the symbol.
                 let env_resolved = if let Ok(env) = self.ctx.type_env.try_borrow() {
-                    tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                    TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
                 } else {
                     None
                 };
@@ -1053,8 +1054,7 @@ impl<'a> CheckerState<'a> {
             // resolve to the instance type, we must check type_env first.
             {
                 let env = self.ctx.type_env.borrow();
-                if let Some(resolved) =
-                    tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                if let Some(resolved) = TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
                     && resolved != type_id
                 {
                     drop(env);
@@ -1144,7 +1144,7 @@ impl<'a> CheckerState<'a> {
                     // the type_env as a side effect.
                     let env = self.ctx.type_env.borrow();
                     if let Some(resolved) =
-                        tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
+                        TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)
                         && resolved != type_id
                     {
                         drop(env);

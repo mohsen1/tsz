@@ -5,6 +5,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeSubstitution;
 
 mod callable_type_arguments;
 
@@ -149,7 +150,7 @@ impl<'a> CheckerState<'a> {
                             .or(param.constraint)
                             .unwrap_or(TypeId::UNKNOWN)
                     };
-                    let substitution = tsz_solver::TypeSubstitution::from_args(
+                    let substitution = TypeSubstitution::from_args(
                         self.ctx.types,
                         &sig.type_params[..param_index],
                         &args,
@@ -244,7 +245,7 @@ impl<'a> CheckerState<'a> {
                         };
                         // Substitute earlier type params in the default
                         // (e.g., `U = T` → `U = number` when T = number)
-                        let substitution = tsz_solver::TypeSubstitution::from_args(
+                        let substitution = TypeSubstitution::from_args(
                             self.ctx.types,
                             &sig.type_params[..param_index],
                             &args,
@@ -465,7 +466,7 @@ impl<'a> CheckerState<'a> {
                 None => return true, // No default/constraint → treat as resolved (will be UNKNOWN)
             };
             // Substitute the already-resolved args into the default.
-            let substitution = tsz_solver::TypeSubstitution::from_args(
+            let substitution = TypeSubstitution::from_args(
                 self.ctx.types,
                 &sig.type_params[..param_index],
                 supplied_args,
@@ -834,7 +835,7 @@ impl<'a> CheckerState<'a> {
                     .default
                     .or(param.constraint)
                     .unwrap_or(TypeId::UNKNOWN);
-                let substitution = tsz_solver::TypeSubstitution::from_args(
+                let substitution = TypeSubstitution::from_args(
                     self.ctx.types,
                     &base_type_params[..param_index],
                     &type_args,
@@ -853,7 +854,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let substitution =
-            tsz_solver::TypeSubstitution::from_args(self.ctx.types, base_type_params, &type_args);
+            TypeSubstitution::from_args(self.ctx.types, base_type_params, &type_args);
         crate::query_boundaries::common::instantiate_type(
             self.ctx.types,
             base_instance_type,

@@ -638,7 +638,7 @@ impl<'a> CheckerState<'a> {
                             // fall back to the large-index probe heuristic.
                             let at_rest_position =
                                 if let Some(callable_type) = callable_ctx.callable_type {
-                                    let ctx = tsz_solver::ContextualTypeContext::with_expected(
+                                    let ctx = ContextualTypeContext::with_expected(
                                         self.ctx.types,
                                         callable_type,
                                     );
@@ -704,10 +704,8 @@ impl<'a> CheckerState<'a> {
                         let at_rest_position = if let Some(callable_type) =
                             callable_ctx.callable_type
                         {
-                            let ctx = tsz_solver::ContextualTypeContext::with_expected(
-                                self.ctx.types,
-                                callable_type,
-                            );
+                            let ctx =
+                                ContextualTypeContext::with_expected(self.ctx.types, callable_type);
                             ctx.allows_non_tuple_spread_position(effective_index, expanded_count)
                         } else {
                             // No callable type → callee is any/error/unknown; accept spread
@@ -816,7 +814,7 @@ impl<'a> CheckerState<'a> {
             let callable_context_requires_generic_epc_skip =
                 callable_ctx.callable_type.is_some_and(|callable_type| {
                     let ctx =
-                        tsz_solver::ContextualTypeContext::with_expected(self.ctx.types, callable_type);
+                        ContextualTypeContext::with_expected(self.ctx.types, callable_type);
                     ctx.get_parameter_type_for_call(effective_index, expanded_count)
                         .is_some_and(|param_type| {
                             crate::query_boundaries::common::contains_type_parameters(
@@ -925,10 +923,7 @@ impl<'a> CheckerState<'a> {
                 // like tuples, const assertion flows through contextual typing of
                 // each element, not globally at the argument level.
                 if !should_enable_const && let Some(callable_type) = callable_ctx.callable_type {
-                    let ctx = tsz_solver::ContextualTypeContext::with_expected(
-                        self.ctx.types,
-                        callable_type,
-                    );
+                    let ctx = ContextualTypeContext::with_expected(self.ctx.types, callable_type);
                     if let Some(param_type) =
                         ctx.get_parameter_type_for_call(effective_index, expanded_count)
                         && Self::direct_const_type_param_requires_readonly_argument_context(

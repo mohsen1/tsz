@@ -940,7 +940,6 @@ pub fn build_type_only_declaration_names(
                         module.body,
                         preserve_const_enums,
                     )
-                    && !module_body_is_empty(arena, module.body)
                     && let Some(name) = get_identifier_text(arena, module.name)
                 {
                     type_only_names.insert(name);
