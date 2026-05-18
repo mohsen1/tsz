@@ -62,6 +62,60 @@ fn test_intersection_type_in_declaration() {
 }
 
 #[test]
+fn test_type_printer_orders_nameable_applications_before_anonymous_intersection_members() {
+    let source = r#"
+type ModuleWithState<TState> = {
+    state: TState;
+};
+type MoreState = {
+    z: string;
+};
+"#;
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let module_sym = binder
+        .file_locals
+        .get("ModuleWithState")
+        .expect("missing ModuleWithState symbol");
+    let more_state_sym = binder
+        .file_locals
+        .get("MoreState")
+        .expect("missing MoreState symbol");
+    let interner = TypeInterner::new();
+    let module_ref = interner.type_query(SymbolRef(module_sym.0));
+    let more_state_def = DefId(9120);
+    let more_state_ref = interner.lazy(more_state_def);
+    let mut type_cache = TypeCacheView::default();
+    type_cache
+        .def_to_symbol
+        .insert(more_state_def, more_state_sym);
+    let state_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+    let action_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("foo"),
+        TypeId::BOOLEAN_TRUE,
+    )]);
+    let expanded_state = interner.intersection(vec![state_obj, more_state_ref]);
+    let converted_module = interner.application(module_ref, vec![expanded_state]);
+    let original_module = interner.application(module_ref, vec![state_obj]);
+    let result_type = interner.intersection(vec![action_obj, converted_module, original_module]);
+
+    let printed = crate::emitter::type_printer::TypePrinter::new(&interner)
+        .with_symbols(&binder.symbols)
+        .with_type_cache(&type_cache)
+        .print_type(result_type);
+
+    assert_eq!(
+        printed,
+        "ModuleWithState<{ a: number } & MoreState> & ModuleWithState<{ a: number }> & { foo: true }"
+    );
+}
+
+#[test]
 fn test_function_type_in_declaration() {
     let output = emit_dts("export type Callback = (x: number, y: string) => void;");
     assert!(

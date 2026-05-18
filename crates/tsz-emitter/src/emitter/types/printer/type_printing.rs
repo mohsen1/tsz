@@ -1977,6 +1977,14 @@ impl<'a> TypePrinter<'a> {
     }
 
     pub(crate) fn intersection_member_priority(&self, type_id: TypeId) -> u8 {
+        if let Some(app_id) = visitor::application_id(self.interner, type_id) {
+            let app = self.interner.type_application(app_id);
+            if self.type_reference_base_is_nameable(app.base) {
+                return 0;
+            }
+            return 1;
+        }
+
         if visitor::type_param_info(self.interner, type_id).is_some() {
             return 2;
         }
@@ -2001,10 +2009,29 @@ impl<'a> TypePrinter<'a> {
             if let Some(sym_id) = shape.symbol {
                 return u8::from(self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id));
             }
-            return 0;
+            return 1;
         }
 
         1
+    }
+
+    fn type_reference_base_is_nameable(&self, type_id: TypeId) -> bool {
+        if let Some(sym_ref) = visitor::type_query_symbol(self.interner, type_id) {
+            let sym_id = SymbolId(sym_ref.0);
+            return self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id);
+        }
+
+        if let Some(callable_id) = visitor::callable_shape_id(self.interner, type_id) {
+            let callable = self.interner.callable_shape(callable_id);
+            return callable.symbol.is_some_and(|sym_id| {
+                self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id)
+            });
+        }
+
+        visitor::object_shape_id(self.interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(self.interner, type_id))
+            .and_then(|shape_id| self.interner.object_shape(shape_id).symbol)
+            .is_some_and(|sym_id| self.is_symbol_visible(sym_id) || self.symbol_is_nameable(sym_id))
     }
 
     pub(crate) fn print_enum(&self, def_id: tsz_solver::def::DefId, _members_id: TypeId) -> String {
