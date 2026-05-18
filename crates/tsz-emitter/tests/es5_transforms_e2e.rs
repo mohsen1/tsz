@@ -596,6 +596,61 @@ fn es2015_object_rest_parameter_keeps_later_default_in_body() {
 }
 
 #[test]
+fn es2015_object_rest_parameter_prologue_follows_directives() {
+    let output = emit_with_target(
+        "function f({ a = {}, ...rest }: any = {}) {\n\
+             \"use strict\";\n\
+             \"another directive\";\n\
+             rest.value(a);\n\
+         }\n\
+         class C {\n\
+             constructor({ a = {}, ...rest }: any = {}) {\n\
+                 \"use strict\";\n\
+                 \"another directive\";\n\
+                 rest.value(a);\n\
+             }\n\
+         }\n",
+        ScriptTarget::ES2015,
+    );
+
+    let function_directive = output
+        .find("function f(_a = {}) {\n    \"use strict\";\n    \"another directive\";")
+        .unwrap_or_else(|| panic!("function directives should stay first.\nOutput:\n{output}"));
+    let function_prologue = output
+        .find("var { a = {} } = _a, rest = __rest(_a, [\"a\"]);")
+        .unwrap_or_else(|| {
+            panic!("function object-rest parameter prologue should be emitted.\nOutput:\n{output}")
+        });
+    let function_body = output
+        .find("rest.value(a);")
+        .unwrap_or_else(|| panic!("function body should be emitted.\nOutput:\n{output}"));
+
+    assert!(
+        function_directive < function_prologue && function_prologue < function_body,
+        "Function object-rest parameter prologue should follow directives and precede body statements.\nOutput:\n{output}"
+    );
+
+    let constructor_directive = output
+        .find("constructor(_a = {}) {\n        \"use strict\";\n        \"another directive\";")
+        .unwrap_or_else(|| panic!("constructor directives should stay first.\nOutput:\n{output}"));
+    let constructor_prologue = output
+        .rfind("var { a = {} } = _a, rest = __rest(_a, [\"a\"]);")
+        .unwrap_or_else(|| {
+            panic!(
+                "constructor object-rest parameter prologue should be emitted.\nOutput:\n{output}"
+            )
+        });
+    let constructor_body = output
+        .rfind("rest.value(a);")
+        .unwrap_or_else(|| panic!("constructor body should be emitted.\nOutput:\n{output}"));
+
+    assert!(
+        constructor_directive < constructor_prologue && constructor_prologue < constructor_body,
+        "Constructor object-rest parameter prologue should follow directives and precede body statements.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es5_defaulted_object_rest_parameter_uses_parameter_guard() {
     let output = emit_es5(
         "function f({ x: { z = 12, ...nested }, ...rest } = { x: { z: 1, ka: 1 }, y: 'noo' }) {\n\
