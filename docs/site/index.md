@@ -60,4 +60,4 @@ Currently targeting **TypeScript `{{ metrics.ts_version }}`**
   </div>
 </div>
 
-<p class="loc-stat">{{ metrics.total_loc }} lines of Rust across {{ metrics.num_crates }} crates</p>
+<p class="loc-stat">{{ metrics.total_loc }} lines of Rust across {{ metrics.num_crates }} crates <span class="loc-stat-split">({{ metrics.source_loc }} source · {{ metrics.test_loc }} test)</span></p>
