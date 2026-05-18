@@ -1458,7 +1458,10 @@ mod tests {
             has_code(&diagnostics, 2339),
             "expected TS2339 for union with different-class protected (Alpha/Beta/value)"
         );
-        assert!(!has_code(&diagnostics, 2445));
+        assert!(
+            !has_code(&diagnostics, 2445),
+            "should NOT emit TS2445 for union type (Alpha/Beta/value)"
+        );
     }
 
     /// Union of two protected members from the SAME declaring class, accessed
