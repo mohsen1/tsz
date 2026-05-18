@@ -134,6 +134,10 @@ const entries = lines
       console.error(`error: manifest output does not exist: ${output}`);
       process.exit(1);
     }
+    if (!fs.statSync(outputPath).isFile()) {
+      console.error(`error: manifest output is not a file: ${output}`);
+      process.exit(1);
+    }
 
     const declarations = readDeclarationNames(outputPath);
     if (declarations.length === 0) {
