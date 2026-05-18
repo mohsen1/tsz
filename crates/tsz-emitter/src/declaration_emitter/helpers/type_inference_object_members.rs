@@ -352,9 +352,7 @@ impl<'a> DeclarationEmitter<'a> {
             if member_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
                 return None;
             }
-            let Some(shorthand) = self.arena.get_shorthand_property(member_node) else {
-                return None;
-            };
+            let shorthand = self.arena.get_shorthand_property(member_node)?;
             if shorthand.object_assignment_initializer != NodeIndex::NONE {
                 return None;
             }
