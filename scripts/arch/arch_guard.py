@@ -421,10 +421,6 @@ BRANCH_LOCAL_VISITED_CLONE_CHECKS = [
         ],
         (
             (
-                "crates/tsz-checker/src/flow/control_flow/typeof_exclusions.rs",
-                "let mut branch_visited = visited.clone();",
-            ),
-            (
                 "crates/tsz-checker/src/state/type_environment/lazy.rs",
                 "let mut branch_visited = visited.clone();",
             ),
