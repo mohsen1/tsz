@@ -206,7 +206,7 @@ def load_simple_inline_manifest(toml_path: pathlib.Path) -> dict[str, dict[str, 
     """Parse the simple inline-table manifest shape on Python < 3.11.
 
     The checked-in manifest intentionally uses one inline table per field:
-    `field = { lifetime = "...", reason = "..." }`.
+    `field = { lifetime = "...", capability = "...", reason = "..." }`.
     """
     out: dict[str, dict[str, str]] = {}
     lines = toml_path.read_text(encoding="utf-8").splitlines()
@@ -368,7 +368,7 @@ def render_markdown(
         rows = by_class[cls]
         lines.append(f"## {cls} ({len(rows)}) — INVALID CLASS")
         lines.append("")
-        for name, _ty, _reason in sorted(rows):
+        for name, _ty, _capability, _reason in sorted(rows):
             lines.append(f"- `{name}`")
         lines.append("")
 
