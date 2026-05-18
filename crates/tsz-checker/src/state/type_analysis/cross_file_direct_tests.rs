@@ -715,17 +715,16 @@ fn direct_source_file_type_alias_result_for(
 }
 
 #[test]
-fn direct_source_file_type_alias_lowers_alias_applications() {
+fn direct_source_file_type_alias_rejects_local_helper_applications() {
     let source = r#"
                 type Maybe<X> = X | null;
                 export type Box<T> = Maybe<T>;
                 export type Wrapped = Maybe<string>;
             "#;
-    let (box_type, box_params) = direct_source_file_type_alias_result_for(source, "Box")
-        .expect("generic alias applications should lower directly");
-    assert_ne!(box_type, TypeId::UNKNOWN);
-    assert_ne!(box_type, TypeId::ERROR);
-    assert_eq!(box_params.len(), 1);
+    assert!(
+        direct_source_file_type_alias_result_for(source, "Box").is_none(),
+        "generic helper applications stay on the child-checker path",
+    );
 
     assert!(
         direct_source_file_type_alias_result_for(source, "Wrapped").is_none(),
@@ -734,7 +733,7 @@ fn direct_source_file_type_alias_lowers_alias_applications() {
 }
 
 #[test]
-fn direct_source_file_type_alias_lowers_import_backed_helper_applications() {
+fn direct_source_file_type_alias_rejects_import_backed_helper_applications() {
     let (target_arena, target_binder, types) = parse_bound_source(
         r#"
                 import { Helper } from './helper';
@@ -761,16 +760,16 @@ fn direct_source_file_type_alias_lowers_import_backed_helper_applications() {
     ]));
     let box_sym = target_binder.file_locals.get("Box").expect("Box symbol");
 
-    let (box_type, box_params) = state
-        .direct_source_file_type_alias_result(box_sym, Some(1), true)
-        .expect("import-backed helper applications should lower directly");
-    assert_ne!(box_type, TypeId::UNKNOWN);
-    assert_ne!(box_type, TypeId::ERROR);
-    assert_eq!(box_params.len(), 1);
+    assert!(
+        state
+            .direct_source_file_type_alias_result(box_sym, Some(1), true)
+            .is_none(),
+        "import-backed helper applications stay on the child-checker path",
+    );
 }
 
 #[test]
-fn direct_source_file_type_alias_lowers_merged_lib_helper_applications() {
+fn direct_source_file_type_alias_rejects_merged_lib_helper_applications() {
     let lib_files = load_lib_files(&["es5.d.ts"]);
 
     let mut target_parser = ParserState::new(
@@ -825,12 +824,12 @@ fn direct_source_file_type_alias_lowers_merged_lib_helper_applications() {
     ]));
     let box_sym = target_binder.file_locals.get("Box").expect("Box symbol");
 
-    let (box_type, box_params) = state
-        .direct_source_file_type_alias_result(box_sym, Some(1), true)
-        .expect("merged lib helper applications should lower directly");
-    assert_ne!(box_type, TypeId::UNKNOWN);
-    assert_ne!(box_type, TypeId::ERROR);
-    assert_eq!(box_params.len(), 1);
+    assert!(
+        state
+            .direct_source_file_type_alias_result(box_sym, Some(1), true)
+            .is_none(),
+        "merged lib helper applications stay on the child-checker path",
+    );
 }
 
 #[test]

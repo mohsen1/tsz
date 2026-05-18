@@ -116,12 +116,11 @@ pub(super) fn is_generic_direct_lowerable(
                         .as_ref()
                         .is_none_or(|args| args.nodes.is_empty());
                 }
-                type_ref.type_arguments.as_ref().is_none_or(|args| {
-                    args.nodes
-                        .iter()
-                        .copied()
-                        .all(|arg| is_generic_direct_lowerable(arena, arg, type_param_names))
-                })
+                matches!(name, "Array" | "ReadonlyArray")
+                    && type_ref.type_arguments.as_ref().is_some_and(|args| {
+                        args.nodes.len() == 1
+                            && is_generic_direct_lowerable(arena, args.nodes[0], type_param_names)
+                    })
             })
         }
         k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
