@@ -333,7 +333,7 @@ write_type_challenges_config() {
     "noUnusedParameters": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "ignoreDeprecations": "6.0",
+    "ignoreDeprecations": "5.0",
     "baseUrl": ".",
     "paths": {
       "@type-challenges/utils": ["utils/index.d.ts"]

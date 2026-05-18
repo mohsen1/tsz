@@ -109,11 +109,10 @@ tsz_write_ts_toolbelt_config() {
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "esModuleInterop": true,
-    "downlevelIteration": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "ignoreDeprecations": "6.0"
+    "ignoreDeprecations": "5.0"
   },
   "include": ["sources/**/*.ts"],
   "exclude": ["tests/**/*", "scripts/**/*", "node_modules/**/*"]
@@ -288,7 +287,7 @@ tsz_write_nextjs_config() {
     "noEmit": true,
     "noCheck": true,
     "skipLibCheck": true,
-    "ignoreDeprecations": "6.0",
+    "ignoreDeprecations": "5.0",
     "target": "ES2020",
     "lib": ["DOM", "DOM.Iterable", "ES2020"],
     "types": [],
@@ -446,7 +445,7 @@ TYPES
     "noUnusedParameters": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "ignoreDeprecations": "6.0"
+    "ignoreDeprecations": "5.0"
   },
   "include": ["solutions/**/*.ts", "type-challenges-globals.d.ts"]
 }
