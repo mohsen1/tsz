@@ -554,6 +554,28 @@ withTempDir((dir) => {
     classification: {
       fixture: "type-challenges-assertion-classification",
       candidateManifest: candidateManifest(1),
+      compilers: {
+        tsc: { status: "pass", exitCode: "0" },
+        tsz: { status: "pass", exitCode: 0 },
+      },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /assertion classification tsc exitCode must be an integer when present/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(1),
       compilers: { tsc: { status: "passing" }, tsz: { status: "pass" } },
       comparison: { status: "match" },
     },
