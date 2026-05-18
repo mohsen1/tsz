@@ -145,6 +145,21 @@ await fs.writeFile(artifact, `${JSON.stringify({
         peak_memory_bytes: null,
         emit_status: "not in scope (noEmit assertion check)",
         dts_status: "not in scope (noEmit assertion check)",
+        assertion_clean_subset: {
+          manifest_path:
+            "type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-manifest.json",
+          classification_path:
+            "type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-classification.json",
+          total_candidates: 78,
+          generated_assertions: 10,
+          assertions_referencing_solution_declaration: 9,
+          assertions_missing_solution_declaration_reference: 1,
+          rejected_from_full_corpus: 68,
+          tsc_status: "pass",
+          tsz_status: "pass",
+          tsc_diagnostic_free: 10,
+          tsz_diagnostic_free: 10,
+        },
       },
     },
   ],
@@ -278,6 +293,17 @@ try {
   assert.match(compatibilityDashboard, /tsc-clean rejected: 68/);
   assert.match(compatibilityDashboard, /tsc-clean tsc: pass/);
   assert.match(compatibilityDashboard, /tsc-clean tsz: fail/);
+  assert.match(
+    compatibilityDashboard,
+    /clean manifest: type-challenges-assertions-tsc-clean\/type-challenges-assertions-tsc-clean-manifest\.json/,
+  );
+  assert.match(compatibilityDashboard, /clean total candidates: 78/);
+  assert.match(compatibilityDashboard, /clean subset: 10/);
+  assert.match(compatibilityDashboard, /clean references solutions: 9/);
+  assert.match(compatibilityDashboard, /clean rejected from full corpus: 68/);
+  assert.match(compatibilityDashboard, /clean tsc: pass/);
+  assert.match(compatibilityDashboard, /clean tsz: pass/);
+  assert.match(compatibilityDashboard, /clean tsz diagnostic-free: 10/);
   assert.match(compatibilityDashboard, /both accepted: 5/);
   assert.match(compatibilityDashboard, /both rejected: 60/);
   assert.match(compatibilityDashboard, /tsc accepted\/tsz rejected: 3/);
