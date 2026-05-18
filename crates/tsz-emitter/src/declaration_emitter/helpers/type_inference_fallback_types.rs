@@ -3,6 +3,7 @@
 use super::super::DeclarationEmitter;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -369,28 +370,27 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(crate) fn json_require_call_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(crate) fn json_require_call_type_text(&mut self, expr_idx: NodeIndex) -> Option<String> {
         let module_specifier = self.bare_require_call_module_specifier(expr_idx)?;
         if !module_specifier.ends_with(".json") {
             return None;
         }
 
         let json_path = self.resolve_json_require_path(&module_specifier)?;
-        let json_text = std::fs::read_to_string(json_path).ok()?;
-        let json_text = Self::strip_json_comments_and_trailing_commas(&json_text);
-        let value = serde_json::from_str::<Value>(&json_text).ok()?;
+        let value = self.read_json_module_value(json_path)?;
         Some(Self::json_value_declaration_type_text(
             &value,
             self.indent_level,
         ))
     }
 
-    pub(crate) fn json_import_reference_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+    pub(crate) fn json_import_reference_type_text(
+        &mut self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let (binding, access_path) = self.json_import_reference(expr_idx)?;
         let json_path = self.resolve_json_module_path(&binding.module_specifier)?;
-        let json_text = std::fs::read_to_string(json_path).ok()?;
-        let json_text = Self::strip_json_comments_and_trailing_commas(&json_text);
-        let value = serde_json::from_str::<Value>(&json_text).ok()?;
+        let value = self.read_json_module_value(json_path)?;
 
         match binding.kind {
             JsonImportBindingKind::Default => {
@@ -424,6 +424,19 @@ impl<'a> DeclarationEmitter<'a> {
                 None
             }
         }
+    }
+
+    fn read_json_module_value(&mut self, json_path: PathBuf) -> Option<Arc<Value>> {
+        if let Some(value) = self.json_module_value_cache.get(&json_path) {
+            return Some(Arc::clone(value));
+        }
+
+        let json_text = std::fs::read_to_string(&json_path).ok()?;
+        let json_text = Self::strip_json_comments_and_trailing_commas(&json_text);
+        let value = Arc::new(serde_json::from_str::<Value>(&json_text).ok()?);
+        self.json_module_value_cache
+            .insert(json_path, Arc::clone(&value));
+        Some(value)
     }
 
     fn json_import_reference(

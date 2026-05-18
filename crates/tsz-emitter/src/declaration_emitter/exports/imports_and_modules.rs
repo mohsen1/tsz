@@ -221,7 +221,32 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(clause) = self.arena.get_import_clause(clause_node) else {
             return false;
         };
-        !clause.is_type_only
+        if clause.is_type_only {
+            return false;
+        }
+
+        let mut imported_names = Vec::new();
+        if let Some(name) = self.get_identifier_text(clause.name) {
+            imported_names.push(name);
+        }
+
+        if let Some(named_bindings_node) = self.arena.get(clause.named_bindings)
+            && let Some(named_bindings) = self.arena.get_named_imports(named_bindings_node)
+        {
+            if named_bindings.name.is_some() && named_bindings.elements.nodes.is_empty() {
+                if let Some(name) = self.get_identifier_text(named_bindings.name) {
+                    imported_names.push(name);
+                }
+            } else if !named_bindings.elements.nodes.is_empty() {
+                return false;
+            }
+        }
+
+        !imported_names.is_empty()
+            && imported_names.iter().all(|name| {
+                !self.public_api_type_surface_contains_typeof_name(name)
+                    && !self.public_api_export_specifier_exports_name(name)
+            })
     }
 
     /// Emit named imports, filtering out unused specifiers.
