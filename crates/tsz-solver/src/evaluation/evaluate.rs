@@ -19,6 +19,7 @@ use crate::diagnostics::display_provenance::{
     FreshObjectLiteralDisplayProvenance, UnionOriginProvenance,
 };
 use crate::evaluation::request::EvaluationRequest;
+use crate::evaluation::result::EvaluationResult;
 use crate::instantiation::instantiate::instantiate_generic;
 use crate::relations::subtype::{NoopResolver, TypeResolver};
 #[cfg(test)]
@@ -392,8 +393,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Evaluate a normalized request, applying option-sensitive configuration
     /// before consulting this evaluator's local cache.
     pub fn evaluate_request(&mut self, request: EvaluationRequest) -> TypeId {
+        self.evaluate_request_result(request).into_type_id()
+    }
+
+    /// Evaluate a normalized request and return the typed result stage.
+    pub fn evaluate_request_result(&mut self, request: EvaluationRequest) -> EvaluationResult {
         self.set_no_unchecked_indexed_access(request.no_unchecked_indexed_access());
-        self.evaluate(request.type_id())
+        EvaluationResult::new(self.evaluate(request.type_id()))
     }
 
     // =========================================================================
@@ -3049,7 +3055,7 @@ pub fn evaluate_type_with_request(
     request: EvaluationRequest,
 ) -> TypeId {
     let mut evaluator = TypeEvaluator::new(interner);
-    evaluator.evaluate_request(request)
+    evaluator.evaluate_request_result(request).into_type_id()
 }
 
 /// Convenience function for evaluating mapped types

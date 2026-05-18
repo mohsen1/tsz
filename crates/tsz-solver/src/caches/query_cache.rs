@@ -1354,7 +1354,7 @@ impl QueryDatabase for QueryCache<'_> {
         let mut evaluator =
             crate::evaluation::evaluate::TypeEvaluator::new(self.as_type_database());
         evaluator = evaluator.with_query_db(self);
-        let result = evaluator.evaluate_request(request);
+        let result = evaluator.evaluate_request_result(request).into_type_id();
 
         // PERF: Persist intermediate evaluation results from this session into
         // the long-lived eval_cache. During recursive mapped type expansion

@@ -198,6 +198,7 @@ fn read_solver_source(rel: &str) -> String {
 fn evaluation_engine_keeps_request_stage_boundary() {
     let mod_rs = read_solver_source("evaluation/mod.rs");
     let request_rs = read_solver_source("evaluation/request.rs");
+    let result_rs = read_solver_source("evaluation/result.rs");
     let evaluate_rs = read_solver_source("evaluation/evaluate.rs");
     let query_cache_rs = read_solver_source("caches/query_cache.rs");
 
@@ -212,11 +213,21 @@ fn evaluation_engine_keeps_request_stage_boundary() {
         "evaluation/request.rs must own the typed request, options, and cache-key stage"
     );
     assert!(
+        mod_rs.contains("pub mod result;")
+            && result_rs.contains("pub struct EvaluationResult")
+            && result_rs.contains("pub const fn into_type_id"),
+        "evaluation/result.rs must own the typed result stage"
+    );
+    assert!(
         evaluate_rs.contains("use crate::evaluation::request::EvaluationRequest;")
+            && evaluate_rs.contains("use crate::evaluation::result::EvaluationResult;")
             && evaluate_rs.contains("pub fn evaluate_type_with_request")
+            && evaluate_rs.contains(
+                "pub fn evaluate_request_result(&mut self, request: EvaluationRequest) -> EvaluationResult"
+            )
             && evaluate_rs
                 .contains("pub fn evaluate_request(&mut self, request: EvaluationRequest)"),
-        "evaluation/evaluate.rs must consume the typed request stage instead of owning loose request setup"
+        "evaluation/evaluate.rs must consume typed request/result stages instead of owning loose shell setup"
     );
     assert!(
         query_cache_rs
