@@ -16,6 +16,7 @@ const BENCH_RUNNER_EXCLUDED_ROWS = new Set([
   "type-challenges-project",
   "type-challenges-solutions-project",
   "type-challenges-assertion-candidates",
+  "type-challenges-assertions-tsc-clean",
 ]);
 const PROJECT_COMPILE_GUARD_EXCLUDED_ROWS = new Set([
   "large-ts-repo",
