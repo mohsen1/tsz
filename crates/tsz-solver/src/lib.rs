@@ -209,7 +209,7 @@ pub use caches::db::{QueryDatabase, TypeDatabase};
 pub use caches::query_cache::{
     QueryCache, QueryCacheStatistics, RelationCacheProbe, RelationCacheStats, SharedQueryCache,
 };
-pub use canonicalize::*;
+pub use canonicalize::Canonicalizer;
 pub use classes::inheritance::InheritanceGraph;
 pub use contextual::{ContextualTypeContext, apply_contextual_type, rest_argument_element_type};
 pub use def::*;
