@@ -538,6 +538,42 @@ withTempDir((dir) => {
             candidatesWithDiagnostics: 1,
             candidatesWithoutDiagnostics: 1,
             filesWithDiagnostics: ["assertions/one.ts"],
+            byCandidate: [
+              {
+                file: "assertions/one.ts",
+                candidate: { id: "" },
+              },
+            ],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc candidateDiagnostics\.byCandidate\[0\]\.candidate\.id must be a non-empty string/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 2,
+            candidatesWithDiagnostics: 1,
+            candidatesWithoutDiagnostics: 1,
+            filesWithDiagnostics: ["assertions/one.ts"],
             byCandidate: [{ file: "assertions/one.ts", errorCount: -1 }],
           },
         },
