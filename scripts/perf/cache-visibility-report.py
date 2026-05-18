@@ -51,6 +51,38 @@ STRUCT_RE = re.compile(
 STATS_RE = re.compile(r"(?:hits?|miss(?:es)?|entries|entry_count|Stats|statistics|total_entries)")
 SIZE_RE = re.compile(r"(?:estimated_size_bytes|size_bytes|memory|Memory|total_entries|entries)")
 
+RETAINED_OWNERS = {
+    "BinderState",
+    "CheckerContext",
+    "LibLoader",
+    "ModuleResolver",
+    "QueryCache",
+    "TypeCache",
+    "TypeInterner",
+}
+OPERATION_LOCAL_OWNERS = {
+    "ApplicationEvaluator",
+    "CallEvaluator",
+    "Canonicalizer",
+    "CompatChecker",
+    "ContainsTypeChecker",
+    "DefaultJudge",
+    "FlowAnalyzer",
+    "FreeInferChecker",
+    "FreeTypeParamChecker",
+    "InferenceContext",
+    "ShallowContainsTypeChecker",
+    "SubtypeChecker",
+    "TypeEvaluator",
+    "TypeFormatter",
+}
+RETAINED_MODULE_PATHS = {
+    "crates/tsz-checker/src/context/aliases.rs",
+    "crates/tsz-checker/src/flow/control_flow/core.rs",
+    "crates/tsz-lsp/src/resolver/core.rs",
+}
+SNAPSHOT_OWNERS = {"CacheSnapshot"}
+
 
 @dataclass(frozen=True)
 class CacheCandidate:
@@ -59,6 +91,7 @@ class CacheCandidate:
     owner: str
     name: str
     type: str
+    retention: str
     stats_signal: bool
     size_signal: bool
 
@@ -146,26 +179,60 @@ def stat_stem(name: str) -> str:
     return stem or name
 
 
+def camel_to_snake(name: str) -> str:
+    with_boundaries = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+    with_boundaries = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", with_boundaries)
+    return with_boundaries.lower()
+
+
+def stat_stems(name: str) -> tuple[str, ...]:
+    stem = stat_stem(name)
+    snake_stem = camel_to_snake(stem)
+    if snake_stem == stem:
+        return (stem,)
+    return (stem, snake_stem)
+
+
 def has_stats_signal(file_text: str, name: str) -> bool:
-    stem = re.escape(stat_stem(name))
     name_re = re.escape(name)
-    patterns = (
-        rf"{stem}.*(?:hits?|miss(?:es)?|entries)",
-        rf"(?:hits?|miss(?:es)?|entries).*{stem}",
-        rf"{name_re}\.len\s*\(",
-    )
+    patterns = [rf"{name_re}\.len\s*\("]
+    for stem in stat_stems(name):
+        stem_re = re.escape(stem)
+        patterns.extend(
+            (
+                rf"{stem_re}.*(?:hits?|miss(?:es)?|entries)",
+                rf"(?:hits?|miss(?:es)?|entries).*{stem_re}",
+            )
+        )
     return any(re.search(pattern, file_text, re.IGNORECASE) for pattern in patterns)
 
 
 def has_size_signal(file_text: str, name: str) -> bool:
-    stem = re.escape(stat_stem(name))
     name_re = re.escape(name)
-    patterns = (
-        rf"{stem}.*(?:estimated_size_bytes|size_bytes|memory|total_entries|entries)",
-        rf"(?:estimated_size_bytes|size_bytes|memory|total_entries|entries).*{stem}",
-        rf"{name_re}\.len\s*\(",
-    )
+    patterns = [rf"{name_re}\.len\s*\("]
+    for stem in stat_stems(name):
+        stem_re = re.escape(stem)
+        patterns.extend(
+            (
+                rf"{stem_re}.*(?:estimated_size_bytes|size_bytes|memory|total_entries|entries)",
+                rf"(?:estimated_size_bytes|size_bytes|memory|total_entries|entries).*{stem_re}",
+            )
+        )
     return any(re.search(pattern, file_text, re.IGNORECASE) for pattern in patterns)
+
+
+def classify_retention(path: str, owner: str) -> str:
+    if owner in SNAPSHOT_OWNERS:
+        return "snapshot"
+    if owner in RETAINED_OWNERS:
+        return "retained"
+    if owner in OPERATION_LOCAL_OWNERS:
+        return "operation_local"
+    if owner == "<module>" and path in RETAINED_MODULE_PATHS:
+        return "retained"
+    if owner == "<module>":
+        return "module"
+    return "unknown"
 
 
 def scan_file(path: Path) -> list[CacheCandidate]:
@@ -211,6 +278,7 @@ def scan_file(path: Path) -> list[CacheCandidate]:
                 owner=owner,
                 name=name,
                 type=type_text,
+                retention=classify_retention(rel, owner),
                 stats_signal=has_stats_signal(file_text, name),
                 size_signal=has_size_signal(file_text, name),
             )
@@ -232,16 +300,19 @@ def scan(roots: Iterable[Path]) -> list[CacheCandidate]:
 def summarize(candidates: list[CacheCandidate]) -> dict[str, object]:
     by_path: dict[str, int] = {}
     by_owner: dict[str, int] = {}
+    by_retention: dict[str, int] = {}
     for candidate in candidates:
+        by_retention[candidate.retention] = by_retention.get(candidate.retention, 0) + 1
         if candidate.needs_review:
             by_path[candidate.path] = by_path.get(candidate.path, 0) + 1
             by_owner[candidate.owner] = by_owner.get(candidate.owner, 0) + 1
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "total_candidates": len(candidates),
         "needs_review": sum(1 for candidate in candidates if candidate.needs_review),
         "with_stats_signal": sum(1 for candidate in candidates if candidate.stats_signal),
         "with_size_signal": sum(1 for candidate in candidates if candidate.size_signal),
+        "candidates_by_retention": dict(sorted(by_retention.items())),
         "needs_review_by_path": dict(sorted(by_path.items())),
         "needs_review_by_owner": dict(sorted(by_owner.items())),
     }
@@ -254,6 +325,7 @@ def print_text(candidates: list[CacheCandidate]) -> None:
     print(f"  needs_review: {summary['needs_review']}")
     print(f"  with_stats_signal: {summary['with_stats_signal']}")
     print(f"  with_size_signal: {summary['with_size_signal']}")
+    print(f"  candidates_by_retention: {summary['candidates_by_retention']}")
     if not candidates:
         return
     print()
@@ -263,6 +335,7 @@ def print_text(candidates: list[CacheCandidate]) -> None:
         print(
             f"  {marker} {candidate.path}:{candidate.line} "
             f"{candidate.owner}.{candidate.name} "
+            f"retention={candidate.retention} "
             f"stats={str(candidate.stats_signal).lower()} "
             f"size={str(candidate.size_signal).lower()} "
             f"type={candidate.type}"
@@ -279,10 +352,17 @@ def main(argv: list[str] | None = None) -> int:
         help="source root to scan; may be repeated",
     )
     parser.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    parser.add_argument(
+        "--retained-only",
+        action="store_true",
+        help="only report candidates classified as retained residency surfaces",
+    )
     args = parser.parse_args(argv)
 
     roots = args.root if args.root is not None else [ROOT / root for root in DEFAULT_ROOTS]
     candidates = scan(roots)
+    if args.retained_only:
+        candidates = [candidate for candidate in candidates if candidate.retention == "retained"]
     if args.json:
         print(
             json.dumps(
