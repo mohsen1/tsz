@@ -316,7 +316,7 @@ impl<'a> Completions<'a> {
         }
 
         let resolved = checker.resolve_lazy_type(type_id);
-        let evaluated = tsz_solver::evaluate_type(interner, resolved);
+        let evaluated = tsz_solver::computation::evaluate_type(interner, resolved);
         if evaluated != type_id {
             self.collect_properties_for_type_inner(
                 evaluated,

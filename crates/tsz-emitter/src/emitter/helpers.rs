@@ -2,7 +2,7 @@ use super::{JsxEmit, ModuleKind, Printer};
 use crate::output::source_writer::{DelimiterKind, SourcePosition};
 use crate::safe_slice;
 use tsz_parser::parser::node::{Node, NodeAccess};
-use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 fn starts_with_keyword_token(text: &str, keyword: &str) -> bool {
@@ -11,6 +11,10 @@ fn starts_with_keyword_token(text: &str, keyword: &str) -> bool {
             .next()
             .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
     })
+}
+
+const fn is_identifier_continue(byte: u8) -> bool {
+    byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
 }
 
 impl<'a> Printer<'a> {
@@ -180,6 +184,76 @@ impl<'a> Printer<'a> {
             return;
         }
         self.write(name);
+    }
+
+    pub(in crate::emitter) fn should_emit_invalid_namespace_static_modifier(
+        &self,
+        node: &Node,
+        modifiers: &Option<NodeList>,
+    ) -> bool {
+        if !self.in_namespace_iife {
+            return false;
+        }
+        if self.ctx.target_es5 {
+            return false;
+        }
+        self.arena
+            .has_modifier(modifiers, SyntaxKind::StaticKeyword)
+            || self.has_recovered_namespace_static_modifier(node)
+    }
+
+    fn has_recovered_namespace_static_modifier(&self, node: &Node) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let token_start = self.skip_trivia_forward(node.pos, node.end) as usize;
+        if token_start >= bytes.len() {
+            return false;
+        }
+
+        let Some(remaining) = text.get(token_start..(node.end as usize).min(text.len())) else {
+            return false;
+        };
+        if starts_with_keyword_token(remaining, "static") {
+            let after_static = &remaining["static".len()..];
+            let after_static = after_static.trim_start_matches([' ', '\t']);
+            return ["var", "let", "const", "function", "async"]
+                .iter()
+                .any(|keyword| starts_with_keyword_token(after_static, keyword));
+        }
+
+        let mut static_end = token_start;
+        while static_end > 0 && matches!(bytes[static_end - 1], b' ' | b'\t') {
+            static_end -= 1;
+        }
+        if static_end >= "async".len()
+            && text.get(static_end - "async".len()..static_end) == Some("async")
+            && static_end
+                .checked_sub("async".len() + 1)
+                .is_none_or(|idx| !is_identifier_continue(bytes[idx]))
+        {
+            static_end -= "async".len();
+            while static_end > 0 && matches!(bytes[static_end - 1], b' ' | b'\t') {
+                static_end -= 1;
+            }
+        }
+        let static_start = static_end.saturating_sub("static".len());
+        if static_start >= static_end
+            || text.get(static_start..static_end) != Some("static")
+            || static_start
+                .checked_sub(1)
+                .is_some_and(|idx| is_identifier_continue(bytes[idx]))
+        {
+            return false;
+        }
+
+        let Some(leading_token) = text.get(token_start..(node.end as usize).min(text.len())) else {
+            return false;
+        };
+        ["var", "let", "const", "function", "async"]
+            .iter()
+            .any(|keyword| starts_with_keyword_token(leading_token, keyword))
     }
 
     /// Emit an expression, unwrapping `ExpressionWithTypeArguments` without parens.
@@ -693,6 +767,7 @@ impl<'a> Printer<'a> {
             let candidate = format!("{base}_{suffix}");
             if !self.file_identifiers.contains(&candidate)
                 && !self.generated_temp_names.contains(&candidate)
+                && !self.ctx.block_scope_state.is_reserved_name(&candidate)
             {
                 self.generated_temp_names.insert(candidate.clone());
                 self.ctx.block_scope_state.reserve_name(candidate.clone());
@@ -1484,6 +1559,12 @@ impl<'a> Printer<'a> {
                             module_node.kind == SyntaxKind::StringLiteral as u16
                                 || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
                         });
+                if self
+                    .arena
+                    .has_modifier(&import_data.modifiers, SyntaxKind::ExportKeyword)
+                {
+                    return false;
+                }
                 if self.recovered_module_syntax_block_depth > 0 {
                     return !is_external;
                 }
@@ -1499,6 +1580,12 @@ impl<'a> Printer<'a> {
                     return false;
                 }
                 if is_es_module_output && is_external {
+                    return true;
+                }
+                if !is_external
+                    && self.in_namespace_iife
+                    && !self.import_decl_has_runtime_value(import_data)
+                {
                     return true;
                 }
                 if self.ctx.is_commonjs() && is_external {

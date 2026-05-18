@@ -16,7 +16,7 @@ Usage:
   python3 scripts/perf/query-perf-counters.py --json /tmp/post-fix-pc.json
 
   # Per-reason breakdown only, with absolute counts and percent share.
-  python3 scripts/perf/query-perf-counters.py --by-reason
+  python3 scripts/perf/query-perf-counters.py --json /tmp/post-fix-pc.json --by-reason
 
   # Compare two runs (e.g. before vs. after a PR).
   python3 scripts/perf/query-perf-counters.py \\

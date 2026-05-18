@@ -1779,6 +1779,12 @@ impl<'a> Printer<'a> {
             // the synthesized constructor use `this` instead of `void 0` as
             // the __awaiter first argument.
             self.function_scope_depth += 1;
+            let prev_es5_super_home_depth = self.es5_super_home_function_depth;
+            let prev_es5_super_home_static = self.es5_super_home_is_static;
+            if self.ctx.target_es5 {
+                self.es5_super_home_function_depth = Some(self.function_scope_depth);
+                self.es5_super_home_is_static = false;
+            }
             if has_extends && !extends_null {
                 self.write("constructor() {");
                 self.write_line();
@@ -1905,6 +1911,8 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
             self.write("}");
             self.write_line();
+            self.es5_super_home_function_depth = prev_es5_super_home_depth;
+            self.es5_super_home_is_static = prev_es5_super_home_static;
             self.function_scope_depth -= 1;
         }
 
@@ -1964,7 +1972,14 @@ impl<'a> Printer<'a> {
         let mut field_init_comment_idx = 0usize;
         let prev_scoped_class_expression_self_alias =
             self.scoped_class_expression_self_alias.take();
-        if let Some(temp) = class_expr_temp.as_ref() {
+        if let Some(alias) = assignment_alias {
+            if class_name_is_real && !class_name.is_empty() && class_name != alias {
+                self.scoped_class_expression_self_alias = Some((
+                    Arc::<str>::from(class_name.as_str()),
+                    Arc::<str>::from(alias),
+                ));
+            }
+        } else if let Some(temp) = class_expr_temp.as_ref() {
             if class_name_is_real && !class_name.is_empty() && class_name != *temp {
                 self.scoped_class_expression_self_alias = Some((
                     Arc::<str>::from(class_name.as_str()),

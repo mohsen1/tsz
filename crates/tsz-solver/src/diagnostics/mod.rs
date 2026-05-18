@@ -15,6 +15,7 @@
 
 pub mod builders;
 mod core;
+pub(crate) mod display_provenance;
 pub mod format;
 pub mod reduce;
 
