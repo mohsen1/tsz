@@ -77,6 +77,18 @@ await fs.writeFile(artifact, `${JSON.stringify({
         exit_codes: { tsc: [0], tsz: [1], tsgo: [] },
         files_reached: 78,
         peak_memory_bytes: null,
+        fixture_sources: [
+          {
+            name: "type-challenges",
+            repository: "https://github.com/type-challenges/type-challenges.git",
+            ref: "type-ref",
+          },
+          {
+            name: "type-challenges-solutions",
+            repository: "https://github.com/ghaiklor/type-challenges-solutions.git",
+            ref: "solutions-ref",
+          },
+        ],
         emit_status: "not in scope (noEmit assertion check)",
         dts_status: "not in scope (noEmit assertion check)",
         assertion_candidates: {
@@ -152,6 +164,18 @@ await fs.writeFile(artifact, `${JSON.stringify({
         exit_codes: { tsc: [0], tsz: [0], tsgo: [] },
         files_reached: 10,
         peak_memory_bytes: null,
+        fixture_sources: [
+          {
+            name: "type-challenges",
+            repository: "https://github.com/type-challenges/type-challenges.git",
+            ref: "type-ref",
+          },
+          {
+            name: "type-challenges-solutions",
+            repository: "https://github.com/ghaiklor/type-challenges-solutions.git",
+            ref: "solutions-ref",
+          },
+        ],
         emit_status: "not in scope (noEmit assertion check)",
         dts_status: "not in scope (noEmit assertion check)",
         assertion_clean_subset: {
@@ -219,6 +243,106 @@ await fs.writeFile(failedOnlyArtifact, `${JSON.stringify({
         },
         files_reached: 12,
         peak_memory_bytes: 104857600,
+        fixture_sources: [
+          {
+            name: "rxjs",
+            repository: "https://github.com/ReactiveX/rxjs.git",
+            ref: "rxjs-ref",
+          },
+        ],
+        emit_status: "not in scope (noEmit project check)",
+        dts_status: "not in scope (noEmit project check)",
+      },
+    },
+    {
+      name: "utility-types-project",
+      lines: 1000,
+      kb: 80,
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+      status: "compatibility metadata malformed",
+      compatibility: {
+        state: "green",
+        exit_class: "exit success",
+        first_failure_class: null,
+        owner_track: null,
+        phase: "check",
+        last_successful_phase: "check",
+        diagnostic_status: "none",
+        diagnostic_deltas: [],
+        diagnostic_subsystems: [],
+        known_blockers: [],
+        reduced_repro_path: null,
+        repro: {},
+        exit_codes: { tsc: [0], tsz: [0], tsgo: [0] },
+        files_reached: 10,
+        peak_memory_bytes: null,
+        fixture_sources: [],
+        emit_status: "not in scope (noEmit project check)",
+        dts_status: "not in scope (noEmit project check)",
+      },
+    },
+    {
+      name: "type-fest-project",
+      lines: 1000,
+      kb: 80,
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+      status: "compatibility metadata malformed",
+      compatibility: {
+        state: "green",
+        exit_class: "exit success",
+        first_failure_class: null,
+        owner_track: null,
+        phase: "check",
+        last_successful_phase: "check",
+        diagnostic_status: "none",
+        diagnostic_deltas: [],
+        diagnostic_subsystems: [],
+        known_blockers: [],
+        reduced_repro_path: null,
+        repro: {},
+        exit_codes: { tsc: [0], tsz: [0], tsgo: [0] },
+        files_reached: 10,
+        peak_memory_bytes: null,
+        fixture_sources: [{}],
+        emit_status: "not in scope (noEmit project check)",
+        dts_status: "not in scope (noEmit project check)",
+      },
+    },
+    {
+      name: "zod-project",
+      lines: 1000,
+      kb: 80,
+      tsz_ms: null,
+      tsgo_ms: null,
+      winner: "error",
+      status: "compatibility metadata malformed",
+      compatibility: {
+        state: "green",
+        exit_class: "exit success",
+        first_failure_class: null,
+        owner_track: null,
+        phase: "check",
+        last_successful_phase: "check",
+        diagnostic_status: "none",
+        diagnostic_deltas: [],
+        diagnostic_subsystems: [],
+        known_blockers: [],
+        reduced_repro_path: null,
+        repro: {},
+        exit_codes: { tsc: [0], tsz: [0], tsgo: [0] },
+        files_reached: 10,
+        peak_memory_bytes: null,
+        fixture_sources: [
+          {
+            name: "zod",
+            repository: "https://github.com/colinhacks/zod.git",
+            ref: "",
+          },
+        ],
         emit_status: "not in scope (noEmit project check)",
         dts_status: "not in scope (noEmit project check)",
       },
@@ -297,6 +421,8 @@ try {
   assert.match(compatibilityDashboard, /templates ref: type-ref/);
   assert.match(compatibilityDashboard, /test cases ref: type-ref/);
   assert.match(compatibilityDashboard, /solutions ref: solutions-ref/);
+  assert.match(compatibilityDashboard, /source: type-challenges @ type-ref/);
+  assert.match(compatibilityDashboard, /source: type-challenges-solutions @ solutions-ref/);
   assert.match(compatibilityDashboard, /tsc clean: 10/);
   assert.match(compatibilityDashboard, /tsz clean: 7/);
   assert.match(
@@ -355,6 +481,11 @@ try {
   assert.match(failedOnlyCompatibility, /failure: relations-assignability/);
   assert.match(failedOnlyCompatibility, /owner track: Track 4 relation diagnostics\/compatibility/);
   assert.match(failedOnlyCompatibility, /repro: src\/operators\/map\.ts/);
+  assert.match(failedOnlyCompatibility, /source: rxjs @ rxjs-ref/);
+  assert.equal(
+    [...failedOnlyCompatibility.matchAll(/fixture sources missing\/malformed\/unpinned/g)].length,
+    3,
+  );
 
   const slugs = new Map();
   for (const page of pages) {

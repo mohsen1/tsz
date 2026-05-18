@@ -294,6 +294,7 @@ const COMPATIBILITY_METADATA_FIELDS = [
   ["exit_codes", "exit codes"],
   ["files_reached", "files reached"],
   ["peak_memory_bytes", "peak memory"],
+  ["fixture_sources", "fixture sources"],
   ["emit_status", "emit status"],
   ["dts_status", "dts status"],
 ];
@@ -301,9 +302,48 @@ const COMPATIBILITY_METADATA_FIELDS = [
 function missingCompatibilityMetadata(row) {
   const compatibility = row?.compatibility;
   if (!compatibility || typeof compatibility !== "object") return ["compatibility artifact"];
-  return COMPATIBILITY_METADATA_FIELDS
+  const missing = COMPATIBILITY_METADATA_FIELDS
     .filter(([field]) => !Object.prototype.hasOwnProperty.call(compatibility, field))
     .map(([, label]) => label);
+  if (
+    Object.prototype.hasOwnProperty.call(compatibility, "fixture_sources") &&
+    !hasCompleteFixtureSources(compatibility)
+  ) {
+    missing.push("fixture sources missing/malformed/unpinned");
+  }
+  return missing;
+}
+
+function hasCompleteFixtureSources(compatibility) {
+  const sources = Array.isArray(compatibility?.fixture_sources)
+    ? compatibility.fixture_sources
+    : [];
+  return sources.length > 0 && sources.every((source) => (
+    String(source?.name || "").trim() &&
+    String(source?.repository || "").trim() &&
+    String(source?.ref || "").trim()
+  ));
+}
+
+function normalizedFixtureSources(compatibility) {
+  const sources = Array.isArray(compatibility?.fixture_sources)
+    ? compatibility.fixture_sources
+    : [];
+  const seen = new Set();
+  return sources
+    .map((source) => ({
+      name: String(source?.name || "").trim(),
+      repository: String(source?.repository || "").trim(),
+      ref: String(source?.ref || "").trim(),
+    }))
+    .filter((source) => source.name && source.repository && source.ref)
+    .filter((source) => {
+      const key = `${source.name}\0${source.repository}\0${source.ref || ""}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 4);
 }
 
 const TINY_BENCHMARK_MAX_LINES = 200;
@@ -433,6 +473,7 @@ function compatibilityRowFor(definition, allResults) {
     diagnosticCodes: Array.isArray(compatibility.diagnostic_codes) ? compatibility.diagnostic_codes.slice(0, 8) : [],
     diagnosticSubsystems,
     primarySubsystem: compatibility.primary_subsystem || diagnosticSubsystems[0]?.subsystem || null,
+    fixtureSources: normalizedFixtureSources(compatibility),
     assertionCandidates: compatibility.assertion_candidates && typeof compatibility.assertion_candidates === "object"
       ? compatibility.assertion_candidates
       : null,
@@ -2005,6 +2046,13 @@ export function getProjectCompatibilityDashboard() {
       .filter(Boolean);
   };
 
+  const fixtureSourceParts = (row) => {
+    const sources = Array.isArray(row.fixtureSources) ? row.fixtureSources : [];
+    return sources.map((source) => {
+      return `source: ${source.name} @ ${source.ref}`;
+    });
+  };
+
   const renderRowDetails = (row) => {
     const deltas = diagnosticDeltas(row);
     const diagnosticCodes = Array.isArray(row.diagnosticCodes) ? row.diagnosticCodes.filter(Boolean).slice(0, 8) : [];
@@ -2036,6 +2084,7 @@ export function getProjectCompatibilityDashboard() {
       row.emitStatus ? `emit: ${row.emitStatus}` : "",
       row.dtsStatus ? `dts: ${row.dtsStatus}` : "",
       ...measurementParts(row),
+      ...fixtureSourceParts(row),
       ...assertionCandidateParts(row),
       ...exitCodeParts(row),
     ].filter(Boolean);
