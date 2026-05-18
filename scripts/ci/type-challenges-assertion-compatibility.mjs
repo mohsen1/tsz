@@ -254,8 +254,10 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
     );
   }
   for (const field of [
+    "totalCandidates",
     "tscAcceptedAssertionsReferencingSolutionDeclaration",
     "tscAcceptedAssertionsMissingSolutionDeclarationReference",
+    "tscRejectedAssertions",
   ]) {
     if (classificationCounts[field] !== cleanCounts[field]) {
       fail(
