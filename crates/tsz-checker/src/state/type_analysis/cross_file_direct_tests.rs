@@ -684,13 +684,61 @@ fn delegate_explicit_cross_file_source_alias_lowers_generic_conditionals() {
     );
 }
 
+fn direct_source_file_type_alias_result_for(
+    source: &str,
+    alias_name: &str,
+) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+    let (target_arena, target_binder, types) = parse_bound_source(source);
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import { Alias } from './target';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+    let sym = target_binder
+        .file_locals
+        .get(alias_name)
+        .unwrap_or_else(|| panic!("{alias_name} symbol"));
+    state.direct_source_file_type_alias_result(sym, Some(1), true)
+}
+
 #[test]
 fn direct_source_file_type_alias_lowers_alias_applications() {
-    let (generic_arena, generic_binder, types) = parse_bound_source(
-        r#"
+    let source = r#"
                 type Maybe<X> = X | null;
                 export type Box<T> = { value: Maybe<T> };
                 export type Wrapped = Maybe<string>;
+            "#;
+    let (box_type, box_params) = direct_source_file_type_alias_result_for(source, "Box")
+        .expect("generic alias applications should lower directly");
+    assert_ne!(box_type, TypeId::UNKNOWN);
+    assert_ne!(box_type, TypeId::ERROR);
+    assert_eq!(box_params.len(), 1);
+
+    assert!(
+        direct_source_file_type_alias_result_for(source, "Wrapped").is_none(),
+        "non-generic alias applications stay on the child-checker path",
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_import_backed_helper_applications() {
+    let (target_arena, target_binder, types) = parse_bound_source(
+        r#"
+                import { Helper } from './helper';
+                export type Box<T> = Helper<T>;
             "#,
     );
     let (requester_arena, requester_binder, _) =
@@ -705,116 +753,49 @@ fn direct_source_file_type_alias_lowers_alias_applications() {
     let mut state = CheckerState { ctx };
     state.ctx.set_all_arenas(Arc::new(vec![
         Arc::clone(&requester_arena),
-        Arc::clone(&generic_arena),
-    ]));
-    state.ctx.set_all_binders(Arc::new(vec![
-        Arc::clone(&requester_binder),
-        Arc::clone(&generic_binder),
-    ]));
-    let box_sym = generic_binder.file_locals.get("Box").expect("Box symbol");
-    let (box_type, box_params) = state
-        .direct_source_file_type_alias_result(box_sym, Some(1), true)
-        .expect("generic alias applications should lower directly");
-    assert_ne!(box_type, TypeId::UNKNOWN);
-    assert_ne!(box_type, TypeId::ERROR);
-    assert_eq!(box_params.len(), 1);
-
-    let wrapped_sym = generic_binder
-        .file_locals
-        .get("Wrapped")
-        .expect("Wrapped symbol");
-    let (wrapped_type, wrapped_params) = state
-        .direct_source_file_type_alias_result(wrapped_sym, Some(1), true)
-        .expect("concrete alias applications should lower directly");
-    assert_ne!(wrapped_type, TypeId::UNKNOWN);
-    assert_ne!(wrapped_type, TypeId::ERROR);
-    assert!(wrapped_params.is_empty());
-}
-
-#[test]
-fn direct_source_file_type_alias_rejects_unresolved_alias_applications() {
-    let (target_arena, target_binder, types) = parse_bound_source(
-        r#"
-                export type Bad<T> = Missing<T>;
-                const Value = 1;
-                export type FromValue<T> = Value<T>;
-            "#,
-    );
-    let (requester_arena, requester_binder, _) =
-        parse_bound_source("import { Bad } from './target';");
-    let ctx = CheckerContext::new(
-        requester_arena.as_ref(),
-        requester_binder.as_ref(),
-        &types,
-        "requester.ts".to_string(),
-        CheckerOptions::default(),
-    );
-    let mut state = CheckerState { ctx };
-    state.ctx.set_all_arenas(Arc::new(vec![
-        Arc::clone(&requester_arena),
         Arc::clone(&target_arena),
     ]));
     state.ctx.set_all_binders(Arc::new(vec![
         Arc::clone(&requester_binder),
         Arc::clone(&target_binder),
     ]));
+    let box_sym = target_binder.file_locals.get("Box").expect("Box symbol");
 
-    let bad_sym = target_binder.file_locals.get("Bad").expect("Bad symbol");
-    assert!(
-        state
-            .direct_source_file_type_alias_result(bad_sym, Some(1), true)
-            .is_none(),
-        "unresolved generic alias applications need the child-checker path",
-    );
+    let (box_type, box_params) = state
+        .direct_source_file_type_alias_result(box_sym, Some(1), true)
+        .expect("import-backed helper applications should lower directly");
+    assert_ne!(box_type, TypeId::UNKNOWN);
+    assert_ne!(box_type, TypeId::ERROR);
+    assert_eq!(box_params.len(), 1);
+}
 
-    let from_value_sym = target_binder
-        .file_locals
-        .get("FromValue")
-        .expect("FromValue symbol");
-    assert!(
-        state
-            .direct_source_file_type_alias_result(from_value_sym, Some(1), true)
-            .is_none(),
-        "value-only generic-looking references need the child-checker path",
-    );
+#[test]
+fn direct_source_file_type_alias_rejects_unresolved_alias_applications() {
+    let source = r#"
+                export type Bad<T> = Missing<T>;
+                const Value = 1;
+                export type FromValue<T> = Value<T>;
+            "#;
+    for alias_name in ["Bad", "FromValue"] {
+        assert!(
+            direct_source_file_type_alias_result_for(source, alias_name).is_none(),
+            "{alias_name} needs the child-checker path",
+        );
+    }
 }
 
 #[test]
 fn direct_source_file_type_alias_lowers_indexed_type_literal_body() {
-    let (target_arena, target_binder, types) = parse_bound_source(
+    let (ty, params) = direct_source_file_type_alias_result_for(
         r#"
                 export type PickMatch<T, U, Flag extends 'yes' | 'no'> =
                     T extends unknown
                     ? { yes: T & U, no: never }[Flag]
                     : never;
             "#,
-    );
-    let (requester_arena, requester_binder, _) =
-        parse_bound_source("import { PickMatch } from './target';");
-    let ctx = CheckerContext::new(
-        requester_arena.as_ref(),
-        requester_binder.as_ref(),
-        &types,
-        "requester.ts".to_string(),
-        CheckerOptions::default(),
-    );
-    let mut state = CheckerState { ctx };
-    state.ctx.set_all_arenas(Arc::new(vec![
-        Arc::clone(&requester_arena),
-        Arc::clone(&target_arena),
-    ]));
-    state.ctx.set_all_binders(Arc::new(vec![
-        Arc::clone(&requester_binder),
-        Arc::clone(&target_binder),
-    ]));
-    let pick_match = target_binder
-        .file_locals
-        .get("PickMatch")
-        .expect("PickMatch symbol");
-
-    let (ty, params) = state
-        .direct_source_file_type_alias_result(pick_match, Some(1), true)
-        .expect("indexed type-literal aliases should lower directly");
+        "PickMatch",
+    )
+    .expect("indexed type-literal aliases should lower directly");
 
     assert_ne!(ty, TypeId::UNKNOWN);
     assert_ne!(ty, TypeId::ERROR);
@@ -823,7 +804,7 @@ fn direct_source_file_type_alias_lowers_indexed_type_literal_body() {
 
 #[test]
 fn direct_source_file_type_alias_lowers_mapped_type_body() {
-    let (target_arena, target_binder, types) = parse_bound_source(
+    let (ty, params) = direct_source_file_type_alias_result_for(
         r#"
                 type Clean<T> = T;
                 type Cast<A, B> = A & B;
@@ -831,30 +812,9 @@ fn direct_source_file_type_alias_lowers_mapped_type_body() {
                 export type Gaps<L extends LocalList> =
                     Cast<Clean<{ [K in keyof L]?: L[K] | null }>, LocalList>;
             "#,
-    );
-    let (requester_arena, requester_binder, _) =
-        parse_bound_source("import { Gaps } from './target';");
-    let ctx = CheckerContext::new(
-        requester_arena.as_ref(),
-        requester_binder.as_ref(),
-        &types,
-        "requester.ts".to_string(),
-        CheckerOptions::default(),
-    );
-    let mut state = CheckerState { ctx };
-    state.ctx.set_all_arenas(Arc::new(vec![
-        Arc::clone(&requester_arena),
-        Arc::clone(&target_arena),
-    ]));
-    state.ctx.set_all_binders(Arc::new(vec![
-        Arc::clone(&requester_binder),
-        Arc::clone(&target_binder),
-    ]));
-    let gaps = target_binder.file_locals.get("Gaps").expect("Gaps symbol");
-
-    let (ty, params) = state
-        .direct_source_file_type_alias_result(gaps, Some(1), true)
-        .expect("mapped type aliases should lower directly");
+        "Gaps",
+    )
+    .expect("mapped type aliases should lower directly");
 
     assert_ne!(ty, TypeId::UNKNOWN);
     assert_ne!(ty, TypeId::ERROR);

@@ -1178,8 +1178,19 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         let local_type =
             self.source_file_local_name_def_id_for_lowering(delegate_binder, arena, type_name);
-        if delegate_binder.file_locals.get(type_name).is_some() {
-            return local_type.is_some();
+        if let Some(local_sym_id) = delegate_binder.file_locals.get(type_name) {
+            if local_type.is_some() {
+                return true;
+            }
+            if delegate_binder
+                .get_symbol(local_sym_id)
+                .is_some_and(|symbol| {
+                    symbol.flags & symbol_flags::ALIAS != 0 && symbol.import_module.is_some()
+                })
+            {
+                return true;
+            }
+            return false;
         }
 
         local_type.is_some()
@@ -1461,12 +1472,18 @@ impl<'a> CheckerState<'a> {
             symbol_arena,
             type_alias,
         );
-        let body_is_direct_lowerable =
+        let body_is_direct_lowerable = if type_param_names.is_empty() {
+            super::source_file_direct_lowerability::is_scope_independent(
+                symbol_arena,
+                type_alias.type_node,
+            )
+        } else {
             super::source_file_direct_lowerability::is_generic_direct_lowerable(
                 symbol_arena,
                 type_alias.type_node,
                 &type_param_names,
-            );
+            )
+        };
         if !body_is_direct_lowerable {
             record(DirectSourceFileTypeAliasLoweringOutcome::BodyNotDirectLowerable);
             return None;
