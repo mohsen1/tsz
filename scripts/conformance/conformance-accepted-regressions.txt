@@ -18,6 +18,7 @@ TypeScript/tests/cases/compiler/instantiationExpressionErrorNoCrash.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
 TypeScript/tests/cases/compiler/jsxElementType.tsx
 TypeScript/tests/cases/compiler/jsxExcessPropsAndAssignability.tsx
+TypeScript/tests/cases/compiler/mappedTypeInferenceFromApparentType.ts
 TypeScript/tests/cases/compiler/objectFreeze.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx
