@@ -537,46 +537,52 @@ impl<'a> Printer<'a> {
                     false
                 };
 
-            // When a default-exported class has static field initializers that will be
-            // lowered (emitted after the class body), tsc separates the export:
+            // When a default-exported class is lowered to ES5, or has static field
+            // initializers that will be lowered after the class body, tsc separates
+            // the export:
             //   class C { }
             //   C.s = 0;
             //   export default C;
-            // This is needed because static initializers must come after the class body
-            // but before the export statement.
+            // This is needed because ES5 lowering emits `var C = ...`, and static
+            // initializers must come after the class body but before the export
+            // statement.
             let class_needs_separated_export = if !class_has_legacy_class_decorators {
                 if let Some(clause_node) = self.arena.get(export.export_clause)
                     && clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
                     && let Some(class) = self.arena.get_class(clause_node)
                 {
-                    let needs_class_field_lowering = (self.ctx.options.target as u32)
-                        < (ScriptTarget::ES2022 as u32)
-                        || !self.ctx.options.use_define_for_class_fields;
-                    if needs_class_field_lowering {
-                        // Check if the class has any static properties with initializers
-                        class.members.nodes.iter().any(|&member_idx| {
-                            if let Some(member_node) = self.arena.get(member_idx)
-                                && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                                && let Some(prop) = self.arena.get_property_decl(member_node)
-                                && prop.initializer.is_some()
-                                && self.arena.is_static(&prop.modifiers)
-                                && !self
-                                    .arena
-                                    .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
-                                && !self
-                                    .arena
-                                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                                && !self
-                                    .arena
-                                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-                            {
-                                true
-                            } else {
-                                false
-                            }
-                        })
+                    if self.ctx.target_es5 {
+                        true
                     } else {
-                        false
+                        let needs_class_field_lowering = (self.ctx.options.target as u32)
+                            < (ScriptTarget::ES2022 as u32)
+                            || !self.ctx.options.use_define_for_class_fields;
+                        if needs_class_field_lowering {
+                            // Check if the class has any static properties with initializers
+                            class.members.nodes.iter().any(|&member_idx| {
+                                if let Some(member_node) = self.arena.get(member_idx)
+                                    && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                                    && let Some(prop) = self.arena.get_property_decl(member_node)
+                                    && prop.initializer.is_some()
+                                    && self.arena.is_static(&prop.modifiers)
+                                    && !self
+                                        .arena
+                                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                                    && !self
+                                        .arena
+                                        .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                                    && !self
+                                        .arena
+                                        .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                                {
+                                    true
+                                } else {
+                                    false
+                                }
+                            })
+                        } else {
+                            false
+                        }
                     }
                 } else {
                     false
@@ -600,55 +606,61 @@ impl<'a> Printer<'a> {
                 } else {
                     String::new()
                 };
-                if class_has_legacy_class_decorators
-                    && self.ctx.target_es5
+                if self.ctx.target_es5
                     && class_name == "default_1"
                     && let Some(clause_node) = self.arena.get(export.export_clause)
                     && let Some(class) = self.arena.get_class(clause_node)
                 {
-                    let mut es5_emitter = ClassES5Emitter::new(self.arena);
-                    es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
-                    es5_emitter.set_async_generator_inner_name_counts(
-                        self.async_generator_inner_name_counts.clone(),
-                    );
-                    self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
-                    es5_emitter.set_indent_level(self.writer.indent_level());
-                    es5_emitter.set_transforms(self.transforms.clone());
-                    es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
-                    es5_emitter.set_printer_options(self.ctx.options.clone());
-                    es5_emitter.set_module_kind(
-                        self.ctx
-                            .original_module_kind
-                            .unwrap_or(self.ctx.options.module),
-                    );
-                    if let Some(text) = self.source_text_for_map() {
-                        if self.writer.has_source_map() {
-                            es5_emitter
-                                .set_source_map_context(text, self.writer.current_source_index());
-                        } else {
-                            es5_emitter.set_source_text(text);
-                        }
-                    }
-                    es5_emitter.set_use_define_for_class_fields(
-                        self.ctx.options.use_define_for_class_fields,
-                    );
                     let class_decorators = self.collect_class_decorators(&class.modifiers);
-                    es5_emitter.set_decorator_info(ClassDecoratorInfo {
-                        class_decorators,
-                        has_member_decorators: false,
-                        emit_decorator_metadata: self.ctx.options.emit_decorator_metadata,
-                    });
-                    let output =
-                        es5_emitter.emit_class_with_name(export.export_clause, &class_name);
-                    self.sync_es5_class_emitter_state(&mut es5_emitter);
-                    self.write(&output);
-                    if !self.writer.is_at_line_start() {
-                        self.write_line();
+                    let tc39_class_decorators =
+                        !self.ctx.options.legacy_decorators && !class_decorators.is_empty();
+                    if !tc39_class_decorators {
+                        let mut es5_emitter = ClassES5Emitter::new(self.arena);
+                        es5_emitter
+                            .set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+                        es5_emitter.set_async_generator_inner_name_counts(
+                            self.async_generator_inner_name_counts.clone(),
+                        );
+                        self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
+                        es5_emitter.set_indent_level(self.writer.indent_level());
+                        es5_emitter.set_transforms(self.transforms.clone());
+                        es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+                        es5_emitter.set_printer_options(self.ctx.options.clone());
+                        es5_emitter.set_module_kind(
+                            self.ctx
+                                .original_module_kind
+                                .unwrap_or(self.ctx.options.module),
+                        );
+                        if let Some(text) = self.source_text_for_map() {
+                            if self.writer.has_source_map() {
+                                es5_emitter.set_source_map_context(
+                                    text,
+                                    self.writer.current_source_index(),
+                                );
+                            } else {
+                                es5_emitter.set_source_text(text);
+                            }
+                        }
+                        es5_emitter.set_use_define_for_class_fields(
+                            self.ctx.options.use_define_for_class_fields,
+                        );
+                        es5_emitter.set_decorator_info(ClassDecoratorInfo {
+                            class_decorators,
+                            has_member_decorators: false,
+                            emit_decorator_metadata: self.ctx.options.emit_decorator_metadata,
+                        });
+                        let output =
+                            es5_emitter.emit_class_with_name(export.export_clause, &class_name);
+                        self.sync_es5_class_emitter_state(&mut es5_emitter);
+                        self.write(&output);
+                        if !self.writer.is_at_line_start() {
+                            self.write_line();
+                        }
+                        self.write("export default ");
+                        self.write(&class_name);
+                        self.write(";");
+                        return;
                     }
-                    self.write("export default ");
-                    self.write(&class_name);
-                    self.write(";");
-                    return;
                 }
                 // For anonymous classes, set the override name so the class emitter
                 // uses "default_1" as the binding name.

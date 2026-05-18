@@ -30,6 +30,10 @@ dashmap = { workspace = true }
 stacker = "0.1.23"
 
 [[test]]
+name = "extract_alias_distributive_mapped_tests"
+path = "tests/extract_alias_distributive_mapped_tests.rs"
+
+[[test]]
 name = "generic_multi_prop_object_literal_tests"
 path = "tests/generic_multi_prop_object_literal_tests.rs"
 
@@ -464,6 +468,10 @@ path = "tests/ts2353_mapped_template_literal_key_tests.rs"
 [[test]]
 name = "ts2353_generic_constraint_excess_property_tests"
 path = "tests/ts2353_generic_constraint_excess_property_tests.rs"
+
+[[test]]
+name = "relational_operator_type_display_tests"
+path = "tests/relational_operator_type_display_tests.rs"
 
 [[test]]
 name = "ts2677_intersection_predicate_tests"
@@ -1358,12 +1366,20 @@ name = "static_readonly_unique_symbol_tests"
 path = "tests/static_readonly_unique_symbol_tests.rs"
 
 [[test]]
+name = "issue_7681_super_decorator_tests"
+path = "tests/issue_7681_super_decorator_tests.rs"
+
+[[test]]
 name = "index_signature_argument_assignability_tests"
 path = "tests/index_signature_argument_assignability_tests.rs"
 
 [[test]]
 name = "operator_literal_annotation_display_tests"
 path = "tests/operator_literal_annotation_display_tests.rs"
+
+[[test]]
+name = "flow_dp_memoization_tests"
+path = "tests/flow_dp_memoization_tests.rs"
 
 [[test]]
 name = "public_package_unique_symbol_emit_tests"

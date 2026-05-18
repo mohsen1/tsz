@@ -795,7 +795,7 @@ jobs:
         # private-pool build.
         run: |
           set -euo pipefail
-          timeout 25m gcloud builds submit \
+          timeout 25m gcloud beta builds submit \
             --project=tsz-ci \
             --region=us-central1 \
             --config=cloudbuild-unit.yaml \
