@@ -146,25 +146,45 @@ def stat_stem(name: str) -> str:
     return stem or name
 
 
+def camel_to_snake(name: str) -> str:
+    with_boundaries = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", name)
+    with_boundaries = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", with_boundaries)
+    return with_boundaries.lower()
+
+
+def stat_stems(name: str) -> tuple[str, ...]:
+    stem = stat_stem(name)
+    snake_stem = camel_to_snake(stem)
+    if snake_stem == stem:
+        return (stem,)
+    return (stem, snake_stem)
+
+
 def has_stats_signal(file_text: str, name: str) -> bool:
-    stem = re.escape(stat_stem(name))
     name_re = re.escape(name)
-    patterns = (
-        rf"{stem}.*(?:hits?|miss(?:es)?|entries)",
-        rf"(?:hits?|miss(?:es)?|entries).*{stem}",
-        rf"{name_re}\.len\s*\(",
-    )
+    patterns = [rf"{name_re}\.len\s*\("]
+    for stem in stat_stems(name):
+        stem_re = re.escape(stem)
+        patterns.extend(
+            (
+                rf"{stem_re}.*(?:hits?|miss(?:es)?|entries)",
+                rf"(?:hits?|miss(?:es)?|entries).*{stem_re}",
+            )
+        )
     return any(re.search(pattern, file_text, re.IGNORECASE) for pattern in patterns)
 
 
 def has_size_signal(file_text: str, name: str) -> bool:
-    stem = re.escape(stat_stem(name))
     name_re = re.escape(name)
-    patterns = (
-        rf"{stem}.*(?:estimated_size_bytes|size_bytes|memory|total_entries|entries)",
-        rf"(?:estimated_size_bytes|size_bytes|memory|total_entries|entries).*{stem}",
-        rf"{name_re}\.len\s*\(",
-    )
+    patterns = [rf"{name_re}\.len\s*\("]
+    for stem in stat_stems(name):
+        stem_re = re.escape(stem)
+        patterns.extend(
+            (
+                rf"{stem_re}.*(?:estimated_size_bytes|size_bytes|memory|total_entries|entries)",
+                rf"(?:estimated_size_bytes|size_bytes|memory|total_entries|entries).*{stem_re}",
+            )
+        )
     return any(re.search(pattern, file_text, re.IGNORECASE) for pattern in patterns)
 
 

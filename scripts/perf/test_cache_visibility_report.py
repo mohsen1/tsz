@@ -138,6 +138,34 @@ class CacheVisibilityReportTests(unittest.TestCase):
         self.assertEqual(candidates[0].owner, "<module>")
         self.assertEqual(candidates[0].name, "Cache")
 
+    def test_camel_case_alias_matches_snake_case_statistics(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.write(
+                root,
+                "src/lib.rs",
+                "\n".join(
+                    [
+                        "type LibFileCache = FxHashMap<u32, bool>;",
+                        "pub struct LibFileCacheStatistics {",
+                        "    lib_file_cache_entries: usize,",
+                        "    lib_file_cache_hits: u64,",
+                        "    lib_file_cache_misses: u64,",
+                        "}",
+                        "impl LibFileCacheStatistics {",
+                        "    fn estimated_size_bytes(&self) -> usize {",
+                        "        self.lib_file_cache_entries",
+                        "    }",
+                        "}",
+                    ]
+                )
+                + "\n",
+            )
+            candidates = self.module.scan([root / "src"])
+
+        self.assertEqual(len(candidates), 1)
+        self.assertFalse(candidates[0].needs_review)
+
     def test_generic_statistics_method_does_not_cover_unmentioned_cache(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
