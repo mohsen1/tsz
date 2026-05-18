@@ -892,8 +892,14 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                 }
 
+                let selected_type_text = if has_initializer {
+                    self.object_literal_declared_shorthand_type_text(initializer, self.indent_level)
+                        .unwrap_or_else(|| selected_type_text.to_string())
+                } else {
+                    selected_type_text.to_string()
+                };
                 let selected_type_text =
-                    self.qualify_current_namespace_self_type_text(selected_type_text);
+                    self.qualify_current_namespace_self_type_text(&selected_type_text);
                 let selected_type_text = if has_initializer {
                     self.imported_call_public_type_text(initializer, &selected_type_text)
                 } else {
