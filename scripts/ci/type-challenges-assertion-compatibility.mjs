@@ -62,6 +62,25 @@ function validateSourceMetadata(source, label) {
   );
 }
 
+function validateTemplateAndTestCaseSourcesMatch(sources, label) {
+  const templateSource = sources.templates;
+  const testCaseSource = sources.testCases;
+  if (
+    templateSource.repository === testCaseSource.repository &&
+    templateSource.ref === testCaseSource.ref
+  ) {
+    return;
+  }
+
+  fail(
+    [
+      `${label} template and test-case sources come from different snapshots`,
+      `templates: ${templateSource.repository} @ ${templateSource.ref}`,
+      `testCases: ${testCaseSource.repository} @ ${testCaseSource.ref}`,
+    ].join("\n"),
+  );
+}
+
 function validateCandidateManifestSources(manifest) {
   if (!manifest?.sources || typeof manifest.sources !== "object") {
     fail("assertion classification candidateManifest is missing sources");
@@ -70,6 +89,30 @@ function validateCandidateManifestSources(manifest) {
   for (const label of ["templates", "testCases", "solutions"]) {
     validateSourceMetadata(manifest.sources[label], label);
   }
+  validateTemplateAndTestCaseSourcesMatch(
+    manifest.sources,
+    "assertion classification candidateManifest",
+  );
+}
+
+function fixtureSourcesFromCandidateManifest(manifest) {
+  const labelNames = new Map([
+    ["templates", "type-challenges"],
+    ["testCases", "type-challenges"],
+    ["solutions", "type-challenges-solutions"],
+  ]);
+  const sources = [];
+  const seen = new Set();
+  for (const [label, name] of labelNames) {
+    const source = manifest?.sources?.[label];
+    const repository = source?.repository || "";
+    const ref = source?.ref || "";
+    const key = `${name}\0${repository}\0${ref}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    sources.push({ name, repository, ref });
+  }
+  return sources;
 }
 
 function validateCleanManifestSources(manifest) {
@@ -93,6 +136,10 @@ function validateCleanManifestSources(manifest) {
       );
     }
   }
+  validateTemplateAndTestCaseSourcesMatch(
+    manifest.sources,
+    "tsc-clean assertion manifest",
+  );
 }
 
 function validateCleanClassificationSources(cleanManifest, classificationManifest) {
@@ -114,20 +161,21 @@ function validateCandidateOutputPath(value, label) {
   if (typeof value !== "string" || value.trim() === "") {
     fail(`${label} must be a non-empty relative path`);
   }
-  const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
-  const segments = normalized.split("/");
+  const normalizedInput = value.replace(/\\/g, "/").replace(/^\.\//, "");
+  const segments = normalizedInput.split("/");
   if (
     path.isAbsolute(value) ||
-    normalized.startsWith("/") ||
-    /^[A-Za-z]:(?:\/|$)/.test(normalized) ||
-    normalized === "" ||
-    normalized === "." ||
+    normalizedInput.startsWith("/") ||
+    /^[A-Za-z]:(?:\/|$)/.test(normalizedInput) ||
+    normalizedInput === "" ||
+    normalizedInput === "." ||
     segments.includes("") ||
     segments.includes(".") ||
     segments.includes("..")
   ) {
     fail(`${label} must stay inside the assertion candidate directory: ${value}`);
   }
+  const normalized = segments.join("/");
   if (!normalized.startsWith("assertions/")) {
     fail(`${label} must be under assertions/: ${normalized}`);
   }
@@ -1273,6 +1321,7 @@ const row = {
       0,
   ),
   peak_memory_bytes: null,
+  fixture_sources: fixtureSourcesFromCandidateManifest(report.candidateManifest),
   assertion_candidates: {
     sources: report.candidateManifest?.sources ?? null,
     paired_solutions: counts.pairedSolutions ?? null,
