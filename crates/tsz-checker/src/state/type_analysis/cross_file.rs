@@ -1365,7 +1365,7 @@ impl<'a> CheckerState<'a> {
             delegate_binder,
             symbol_arena,
             false,
-            false,
+            true,
         ) {
             let def_id = self.ctx.get_or_create_def_id(sym_id);
             if !direct_params.is_empty() {
