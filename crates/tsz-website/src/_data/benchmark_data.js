@@ -302,9 +302,27 @@ const COMPATIBILITY_METADATA_FIELDS = [
 function missingCompatibilityMetadata(row) {
   const compatibility = row?.compatibility;
   if (!compatibility || typeof compatibility !== "object") return ["compatibility artifact"];
-  return COMPATIBILITY_METADATA_FIELDS
+  const missing = COMPATIBILITY_METADATA_FIELDS
     .filter(([field]) => !Object.prototype.hasOwnProperty.call(compatibility, field))
     .map(([, label]) => label);
+  if (
+    Object.prototype.hasOwnProperty.call(compatibility, "fixture_sources") &&
+    !hasCompleteFixtureSources(compatibility)
+  ) {
+    missing.push("fixture sources missing/malformed/unpinned");
+  }
+  return missing;
+}
+
+function hasCompleteFixtureSources(compatibility) {
+  const sources = Array.isArray(compatibility?.fixture_sources)
+    ? compatibility.fixture_sources
+    : [];
+  return sources.length > 0 && sources.every((source) => (
+    String(source?.name || "").trim() &&
+    String(source?.repository || "").trim() &&
+    String(source?.ref || "").trim()
+  ));
 }
 
 function normalizedFixtureSources(compatibility) {
@@ -316,11 +334,9 @@ function normalizedFixtureSources(compatibility) {
     .map((source) => ({
       name: String(source?.name || "").trim(),
       repository: String(source?.repository || "").trim(),
-      ref: source?.ref === null || source?.ref === undefined
-        ? null
-        : String(source.ref).trim() || null,
+      ref: String(source?.ref || "").trim(),
     }))
-    .filter((source) => source.name && source.repository)
+    .filter((source) => source.name && source.repository && source.ref)
     .filter((source) => {
       const key = `${source.name}\0${source.repository}\0${source.ref || ""}`;
       if (seen.has(key)) return false;
@@ -2033,8 +2049,7 @@ export function getProjectCompatibilityDashboard() {
   const fixtureSourceParts = (row) => {
     const sources = Array.isArray(row.fixtureSources) ? row.fixtureSources : [];
     return sources.map((source) => {
-      const ref = source.ref ? ` @ ${source.ref}` : "";
-      return `source: ${source.name}${ref}`;
+      return `source: ${source.name} @ ${source.ref}`;
     });
   };
 
