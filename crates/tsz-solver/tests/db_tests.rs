@@ -1,8 +1,8 @@
 use crate::relations::relation_queries::RelationPolicy;
 use crate::{
     LiteralValue, ObjectFlags, PropertyInfo, QueryCache, QueryCacheStatistics, QueryDatabase,
-    RelationCacheKey, RelationCacheProbe, TupleElement, TypeData, TypeDatabase, TypeId,
-    TypeInterner, Visibility,
+    RelationCacheConfig, RelationCacheKey, RelationCacheProbe, TupleElement, TypeData,
+    TypeDatabase, TypeId, TypeInterner, Visibility,
 };
 
 impl<'a> QueryCache<'a> {
@@ -361,11 +361,14 @@ fn query_cache_estimated_size_grows_with_entries() {
     cache.evaluate_type(num_type);
 
     // Add subtype cache entries
-    cache.insert_subtype_cache(RelationCacheKey::subtype(str_type, num_type, 0, 0), false);
+    cache.insert_subtype_cache(
+        RelationCacheKey::for_subtype(str_type, num_type, RelationCacheConfig::default()),
+        false,
+    );
 
     // Add assignability cache entries
     cache.insert_assignability_cache(
-        RelationCacheKey::assignability(str_type, num_type, 0, 0),
+        RelationCacheKey::for_assignability(str_type, num_type, RelationCacheConfig::default()),
         false,
     );
 
@@ -392,7 +395,7 @@ fn query_cache_estimated_size_resets_on_clear() {
     let str_type = interner.literal_string("test");
     cache.evaluate_type(str_type);
     cache.insert_subtype_cache(
-        RelationCacheKey::subtype(str_type, TypeId::NUMBER, 0, 0),
+        RelationCacheKey::for_subtype(str_type, TypeId::NUMBER, RelationCacheConfig::default()),
         true,
     );
     cache.insert_intersection_merge(str_type, Some(TypeId::STRING));

@@ -226,26 +226,8 @@ fn strict_function_types_and_strict_any_have_distinct_keys() {
 }
 
 // =============================================================================
-// 3. Constructors route through the typed representation
+// 3. Typed policy projection preserves stable external bits
 // =============================================================================
-
-#[test]
-fn for_subtype_and_legacy_subtype_produce_equal_keys_for_same_config() {
-    // The legacy `subtype(source, target, flags, any_mode)` constructor is
-    // a compatibility shim. Callers still using the legacy protocol must
-    // get exactly the same key as callers using the typed builder for the
-    // same logical configuration.
-    let flags =
-        RelationCacheKey::FLAG_STRICT_NULL_CHECKS | RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
-    let typed = RelationCacheKey::for_subtype(
-        TypeId::STRING,
-        TypeId::NUMBER,
-        RelationCacheConfig::from_flags(RelationFlags::from_bits_truncate(flags as u32)),
-    );
-    let legacy = RelationCacheKey::subtype(TypeId::STRING, TypeId::NUMBER, flags, 0);
-
-    assert_eq!(typed, legacy);
-}
 
 #[test]
 fn legacy_flag_constants_match_typed_bitflags() {
@@ -340,74 +322,4 @@ fn query_cache_relation_misses_insert_policy_shaped_keys() {
         Some(true),
         "assignability miss path must insert under the policy-derived cache key",
     );
-}
-
-// =============================================================================
-// 4. Hardening: lossy legacy helpers assert on invalid input in debug builds
-// =============================================================================
-
-#[test]
-fn from_checker_flags_u16_preserves_every_known_bit_verbatim() {
-    // The `u16`→typed bridge must be a pure widening for any bit the typed
-    // API knows about; it must never silently strip a bit a caller set.
-    let every_bit = RelationFlags::all();
-    assert!(
-        u32::from(u16::MAX) & every_bit.bits() == every_bit.bits(),
-        "all known RelationFlags bits must fit in u16",
-    );
-    let packed = every_bit.bits() as u16;
-    let config = RelationCacheConfig::from_checker_flags_u16(packed);
-    assert_eq!(
-        config.flags, every_bit,
-        "from_checker_flags_u16 must preserve every known bit",
-    );
-    assert_eq!(
-        config.any_mode,
-        CachedAnyMode::All,
-        "from_checker_flags_u16 must default any_mode to All",
-    );
-}
-
-#[test]
-fn from_checker_flags_u16_accepts_strict_readonly_identity_bit() {
-    // Bit 15 is reserved for `STRICT_READONLY_IDENTITY`, used by the
-    // conditional-extends identity check to make the readonly modifier
-    // observable in the `IfEquals` higher-order pattern. The round-trip
-    // through `from_checker_flags_u16` must preserve that bit.
-    let raw = 1u16 << 15;
-    let config = RelationCacheConfig::from_checker_flags_u16(raw);
-    assert!(
-        config
-            .flags
-            .contains(RelationFlags::STRICT_READONLY_IDENTITY),
-        "bit 15 should decode to STRICT_READONLY_IDENTITY"
-    );
-}
-
-#[test]
-#[cfg_attr(
-    not(debug_assertions),
-    ignore = "debug_assert only fires in debug builds"
-)]
-#[should_panic(expected = "out-of-range")]
-fn cached_any_mode_from_legacy_u8_panics_in_debug_on_invalid_value() {
-    // Only 0, 1, 2 are defined. Anything else would previously be silently
-    // mapped to `TopLevelOnlyNested`. Debug builds now assert so tests
-    // catch the miscoded caller.
-    let _ = CachedAnyMode::from_legacy_u8(5);
-}
-
-#[test]
-fn cached_any_mode_legacy_u8_roundtrip() {
-    for mode in [
-        CachedAnyMode::All,
-        CachedAnyMode::TopLevelOnlyAtTop,
-        CachedAnyMode::TopLevelOnlyNested,
-    ] {
-        assert_eq!(
-            CachedAnyMode::from_legacy_u8(mode.to_legacy_u8()),
-            mode,
-            "legacy u8 round-trip must be lossless for every defined variant",
-        );
-    }
 }
