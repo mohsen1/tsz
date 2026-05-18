@@ -648,10 +648,12 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability_group = "CheckerInputs"',
                 'reason = "borrowed current-file arena"',
                 "",
                 "[request_node_types]",
                 'lifetime = "SpeculationScoped"',
+                'capability_group = "SpeculationState"',
                 'reason = "snapshot by speculative return-type inference"',
             ]
         )
@@ -668,11 +670,20 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
         )
         manifest_body = "\n".join(
             [
-                'arena = { lifetime = "FileLocalReset", reason = "current arena" }',
-                'binder = { lifetime = "FileLocalReset", reason = "current binder" }',
+                'arena = { lifetime = "FileLocalReset", capability_group = "CheckerInputs", reason = "current arena" }',
+                'binder = { lifetime = "FileLocalReset", capability_group = "CheckerInputs", reason = "current binder" }',
             ]
         )
         self.assertEqual(self._write_and_scan(struct_body, manifest_body), [])
+
+    def test_legacy_inline_without_capability_group_is_accepted_but_flagged(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = (
+            'arena = { lifetime = "FileLocalReset", reason = "legacy two-field entry" }'
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("[arena] missing capability_group", hits[0])
 
     def test_missing_struct_field_is_reported(self):
         struct_body = "\n".join(
@@ -687,6 +698,7 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability_group = "CheckerInputs"',
                 'reason = "borrowed current-file arena"',
             ]
         )
@@ -706,10 +718,12 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability_group = "CheckerInputs"',
                 'reason = "borrowed current-file arena"',
                 "",
                 "[removed_field]",
                 'lifetime = "FileLocalReset"',
+                'capability_group = "CheckerInputs"',
                 'reason = "old field"',
             ]
         )
@@ -723,6 +737,7 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "Unknown"',
+                'capability_group = "CheckerInputs"',
                 'reason = "unclassified"',
             ]
         )
@@ -736,6 +751,7 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "ForeverCache"',
+                'capability_group = "CheckerInputs"',
                 'reason = "invalid class"',
             ]
         )
@@ -749,11 +765,63 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability_group = "CheckerInputs"',
             ]
         )
         hits = self._write_and_scan(struct_body, manifest_body)
         self.assertEqual(len(hits), 1)
         self.assertIn("[arena] missing reason", hits[0])
+
+    def test_missing_capability_group_is_reported(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+                'reason = "no capability group declared"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("[arena] missing capability_group", hits[0])
+
+    def test_invalid_capability_group_is_reported(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+                'capability_group = "SomeUndefinedGroup"',
+                'reason = "invalid group name"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("invalid capability_group 'SomeUndefinedGroup'", hits[0])
+
+    def test_all_valid_capability_groups_accepted(self):
+        valid_groups = [
+            "CheckerInputs",
+            "ProgramLookup",
+            "FileTypeCache",
+            "SpeculationState",
+            "DiagnosticState",
+            "FlowSession",
+            "RelationSession",
+            "EmitSummary",
+        ]
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        for group in valid_groups:
+            manifest_body = "\n".join(
+                [
+                    "[arena]",
+                    'lifetime = "FileLocalReset"',
+                    f'capability_group = "{group}"',
+                    'reason = "test field"',
+                ]
+            )
+            hits = self._write_and_scan(struct_body, manifest_body)
+            self.assertEqual(hits, [], f"capability_group {group!r} should be valid")
 
     def test_checker_context_lifetime_check_is_registered(self):
         for entry in self.arch_guard.CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS:

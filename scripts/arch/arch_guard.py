@@ -484,14 +484,46 @@ TRAIT_METHOD_COUNT_CHECKS = [
     ),
 ]
 
-VALID_CHECKER_CONTEXT_LIFETIMES = {
+VALID_CHECKER_CONTEXT_LIFETIMES = frozenset({
     "ProgramStable",
     "WorkerReusable",
     "FileLocalReset",
     "SpeculationScoped",
     "DiagnosticsOnly",
     "LspPersistent",
-}
+})
+
+VALID_CHECKER_CONTEXT_CAPABILITY_GROUPS = frozenset({
+    "CheckerInputs",    # core config/input for the current file session
+    "ProgramLookup",    # program-wide shared indices and module-resolution data
+    "FileTypeCache",    # per-file type/symbol/class/namespace/JSX caches
+    "SpeculationState", # rollback-sensitive state for speculative checking
+    "DiagnosticState",  # diagnostic emission, suppression, and accumulation
+    "FlowSession",      # control-flow analysis caches and worklists
+    "RelationSession",  # type relation, evaluation, and instantiation state
+    "EmitSummary",      # declaration-emit output tables
+})
+
+# 3-field inline-table pattern: lifetime, capability_group, reason (canonical order).
+_MANIFEST_INLINE_3_RE = re.compile(
+    r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{\s*'
+    r'lifetime\s*=\s*"([^"]*)"\s*,\s*'
+    r'capability_group\s*=\s*"([^"]*)"\s*,\s*'
+    r'reason\s*=\s*"([^"]*)"\s*'
+    r'\}\s*(?:#.*)?$'
+)
+# Legacy 2-field inline-table pattern: lifetime, reason only.
+# capability_group will be reported as missing by the scanner.
+_MANIFEST_INLINE_2_RE = re.compile(
+    r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{\s*'
+    r'lifetime\s*=\s*"([^"]*)"\s*,\s*'
+    r'reason\s*=\s*"([^"]*)"\s*'
+    r'\}\s*(?:#.*)?$'
+)
+_MANIFEST_SECTION_RE = re.compile(r"^\s*\[([A-Za-z_][A-Za-z0-9_]*)\]\s*(?:#.*)?$")
+_MANIFEST_KEY_VALUE_RE = re.compile(
+    r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"]*)"\s*(?:#.*)?$'
+)
 
 CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS = [
     (
@@ -1895,16 +1927,10 @@ def parse_checker_context_lifetime_manifest(
     entries: dict[str, dict[str, object]] = {}
     errors: list[str] = []
     current = None
-    section_pattern = re.compile(r"^\s*\[([A-Za-z_][A-Za-z0-9_]*)\]\s*(?:#.*)?$")
-    inline_entry_pattern = re.compile(
-        r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{\s*'
-        r'lifetime\s*=\s*"([^"]*)"\s*,\s*'
-        r'reason\s*=\s*"([^"]*)"\s*'
-        r'\}\s*(?:#.*)?$'
-    )
-    key_value_pattern = re.compile(
-        r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"([^"]*)"\s*(?:#.*)?$'
-    )
+    section_pattern = _MANIFEST_SECTION_RE
+    inline_entry_3_pattern = _MANIFEST_INLINE_3_RE
+    inline_entry_2_pattern = _MANIFEST_INLINE_2_RE
+    key_value_pattern = _MANIFEST_KEY_VALUE_RE
 
     for line_no, line in enumerate(
         path.read_text(encoding="utf-8", errors="ignore").splitlines(),
@@ -1914,15 +1940,30 @@ def parse_checker_context_lifetime_manifest(
         if not stripped or stripped.startswith("#"):
             continue
 
-        inline_entry_match = inline_entry_pattern.match(line)
-        if inline_entry_match and current is None:
-            field, lifetime, reason = inline_entry_match.groups()
+        full_match = inline_entry_3_pattern.match(line)
+        if full_match and current is None:
+            field, lifetime, capability_group, reason = full_match.groups()
             if field in entries:
                 errors.append(f"{rel}:{line_no} duplicate manifest entry [{field}]")
             else:
                 entries[field] = {
                     "line": line_no,
                     "lifetime": lifetime,
+                    "capability_group": capability_group,
+                    "reason": reason,
+                }
+            continue
+
+        legacy_match = inline_entry_2_pattern.match(line)
+        if legacy_match and current is None:
+            field, lifetime, reason = legacy_match.groups()
+            if field in entries:
+                errors.append(f"{rel}:{line_no} duplicate manifest entry [{field}]")
+            else:
+                entries[field] = {
+                    "line": line_no,
+                    "lifetime": lifetime,
+                    "capability_group": "",
                     "reason": reason,
                 }
             continue
@@ -1986,6 +2027,7 @@ def scan_checker_context_lifetime_manifest(
     ):
         line = entry.get("line", 0)
         lifetime = entry.get("lifetime")
+        capability_group = entry.get("capability_group") or ""
         reason = entry.get("reason")
         if lifetime is None:
             hits.append(f"{manifest_rel}:{line} [{field}] missing lifetime")
@@ -1997,6 +2039,12 @@ def scan_checker_context_lifetime_manifest(
             )
         if not isinstance(reason, str) or not reason.strip():
             hits.append(f"{manifest_rel}:{line} [{field}] missing reason")
+        if not capability_group:
+            hits.append(f"{manifest_rel}:{line} [{field}] missing capability_group")
+        elif capability_group not in VALID_CHECKER_CONTEXT_CAPABILITY_GROUPS:
+            hits.append(
+                f"{manifest_rel}:{line} [{field}] invalid capability_group {capability_group!r}"
+            )
 
     return hits
 

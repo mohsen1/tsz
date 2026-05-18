@@ -28,7 +28,9 @@ mod cross_file_query;
 mod env_eval_cache;
 mod file_session_reset;
 pub mod lifetime_shells;
-pub use lifetime_shells::{FileSession, LspPersistentCache, SpeculationScope, WorkerContext};
+pub use lifetime_shells::{
+    EmitSummaryState, FileSession, LspPersistentCache, SpeculationScope, WorkerContext,
+};
 mod def_mapping;
 mod import_conflicts;
 mod parse_health;

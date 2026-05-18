@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Checker field-lifetime inventory + CI guard.
+Checker field-lifetime + capability-group inventory CI guard.
 
 Implements `T2.1.A` from `docs/plan/PERFORMANCE_PLAN.md`:
 
@@ -25,11 +25,24 @@ What this script does:
        LspPersistent       — survives requests, invalidated by version
        Unknown             — CI failure (must be classified)
 
+   and to one of the capability groups (§8224):
+
+       CheckerInputs       — core config/input for the current file session
+       ProgramLookup       — program-wide shared indices and module-resolution
+       FileTypeCache       — per-file type/symbol/class/namespace/JSX caches
+       SpeculationState    — rollback-sensitive state for speculative checking
+       DiagnosticState     — diagnostic emission, suppression, and accumulation
+       FlowSession         — control-flow analysis caches and worklists
+       RelationSession     — type relation, evaluation, and instantiation
+       EmitSummary         — declaration-emit output tables
+
 3. Verify every CheckerContext field is present in the manifest with a
-   non-`Unknown` classification. Exit non-zero on:
+   non-`Unknown` lifetime classification and a valid capability group.
+   Exit non-zero on:
    - Field defined in struct but missing from manifest.
    - Field in manifest but no longer in struct (stale entry).
    - Field classified as `Unknown`.
+   - Field missing capability_group or with invalid capability_group.
 
 4. Optionally generate a markdown table of the classification (`--render`).
 
@@ -76,7 +89,34 @@ VALID_LIFETIMES = frozenset(
     }
 )
 
+VALID_CAPABILITY_GROUPS = frozenset(
+    {
+        "CheckerInputs",    # core config/input for the current file session
+        "ProgramLookup",    # program-wide shared indices and module-resolution data
+        "FileTypeCache",    # per-file type/symbol/class/namespace/JSX caches
+        "SpeculationState", # rollback-sensitive state for speculative checking
+        "DiagnosticState",  # diagnostic emission, suppression, and accumulation
+        "FlowSession",      # control-flow analysis caches and worklists
+        "RelationSession",  # type relation, evaluation, and instantiation state
+        "EmitSummary",      # declaration-emit output tables
+    }
+)
+VALID_CAPABILITY_GROUPS_STR = ", ".join(sorted(VALID_CAPABILITY_GROUPS))
+
+# Python < 3.11 fallback: matches the 3-field inline-table format used in the manifest.
+# Field order must be: lifetime, capability_group, reason.
 SIMPLE_INLINE_ENTRY_RE = re.compile(
+    r'^\s*([A-Za-z_][A-Za-z_0-9]*)\s*=\s*\{\s*'
+    r'lifetime\s*=\s*"([^"]*)"\s*,\s*'
+    r'capability_group\s*=\s*"([^"]*)"\s*,\s*'
+    r'reason\s*=\s*"([^"]*)"\s*'
+    r"\}\s*(?:#.*)?$"
+)
+
+# Also accept the legacy 2-field format (lifetime + reason only) for backwards
+# compatibility while manifests are being migrated; capability_group will be
+# reported as missing in check_inventory.
+SIMPLE_INLINE_ENTRY_LEGACY_RE = re.compile(
     r'^\s*([A-Za-z_][A-Za-z_0-9]*)\s*=\s*\{\s*'
     r'lifetime\s*=\s*"([^"]*)"\s*,\s*'
     r'reason\s*=\s*"([^"]*)"\s*'
@@ -149,7 +189,7 @@ def parse_checker_context_fields(rs_path: pathlib.Path) -> list[Field]:
 
 
 def load_manifest(toml_path: pathlib.Path) -> dict[str, dict[str, str]]:
-    """Load the lifetime manifest. Returns `{ field_name: {lifetime, reason} }`.
+    """Load the manifest. Returns `{ field_name: {lifetime, capability_group, reason} }`.
 
     Returns an empty dict if the file does not exist (first-run case before
     the manifest is created in T2.1.A.2).
@@ -166,16 +206,21 @@ def load_manifest(toml_path: pathlib.Path) -> dict[str, dict[str, str]]:
         if not isinstance(entry, dict):
             continue
         lifetime = entry.get("lifetime", "")
+        capability_group = entry.get("capability_group", "")
         reason = entry.get("reason", "")
-        out[field_name] = {"lifetime": lifetime, "reason": reason}
+        out[field_name] = {
+            "lifetime": lifetime,
+            "capability_group": capability_group,
+            "reason": reason,
+        }
     return out
 
 
 def load_simple_inline_manifest(toml_path: pathlib.Path) -> dict[str, dict[str, str]]:
     """Parse the simple inline-table manifest shape on Python < 3.11.
 
-    The checked-in manifest intentionally uses one inline table per field:
-    `field = { lifetime = "...", reason = "..." }`.
+    The checked-in manifest uses one inline table per field:
+    `field = { lifetime = "...", capability_group = "...", reason = "..." }`.
     """
     out: dict[str, dict[str, str]] = {}
     lines = toml_path.read_text(encoding="utf-8").splitlines()
@@ -184,14 +229,25 @@ def load_simple_inline_manifest(toml_path: pathlib.Path) -> dict[str, dict[str, 
         if not stripped or stripped.startswith("#"):
             continue
         match = SIMPLE_INLINE_ENTRY_RE.match(line)
-        if match is None:
-            raise RuntimeError(
-                f"{toml_path.relative_to(ROOT)}:{line_number}: unsupported TOML syntax "
-                "for Python < 3.11 fallback parser; use one inline table with "
-                '`lifetime` and `reason`, or run with Python 3.11+.'
-            )
-        field_name, lifetime, reason = match.groups()
-        out[field_name] = {"lifetime": lifetime, "reason": reason}
+        if match is not None:
+            field_name, lifetime, capability_group, reason = match.groups()
+            out[field_name] = {
+                "lifetime": lifetime,
+                "capability_group": capability_group,
+                "reason": reason,
+            }
+            continue
+        # Accept legacy 2-field format; capability_group will be flagged as missing.
+        legacy_match = SIMPLE_INLINE_ENTRY_LEGACY_RE.match(line)
+        if legacy_match is not None:
+            field_name, lifetime, reason = legacy_match.groups()
+            out[field_name] = {"lifetime": lifetime, "capability_group": "", "reason": reason}
+            continue
+        raise RuntimeError(
+            f"{toml_path.relative_to(ROOT)}:{line_number}: unsupported TOML syntax "
+            "for Python < 3.11 fallback parser; use one inline table with "
+            '`lifetime`, `capability_group`, and `reason`, or run with Python 3.11+.'
+        )
     return out
 
 
@@ -220,28 +276,58 @@ def check_inventory(
         for name in stale:
             failures.append(f"  - {name}")
 
-    bad_class: list[tuple[str, str]] = []
-    unknown: list[str] = []
-    for name in sorted(field_names & manifest.keys()):
-        lifetime = manifest[name]["lifetime"]
-        if lifetime == "Unknown":
-            unknown.append(name)
-        elif lifetime not in VALID_LIFETIMES:
-            bad_class.append((name, lifetime))
+    bad_lifetime: list[tuple[str, str]] = []
+    unknown_lifetime: list[str] = []
+    missing_group: list[str] = []
+    bad_group: list[tuple[str, str]] = []
 
-    if unknown:
+    for name in sorted(field_names & manifest.keys()):
+        entry = manifest[name]
+        lifetime = entry["lifetime"]
+        capability_group = entry.get("capability_group", "")
+
+        if lifetime == "Unknown":
+            unknown_lifetime.append(name)
+        elif lifetime not in VALID_LIFETIMES:
+            bad_lifetime.append((name, lifetime))
+
+        if not capability_group:
+            missing_group.append(name)
+        elif capability_group not in VALID_CAPABILITY_GROUPS:
+            bad_group.append((name, capability_group))
+
+    if unknown_lifetime:
         failures.append(
-            f"{len(unknown)} field(s) classified as `Unknown` (must classify "
+            f"{len(unknown_lifetime)} field(s) classified as `Unknown` (must classify "
             "before merge per PERFORMANCE_PLAN.md §6):"
         )
-        for name in unknown:
+        for name in unknown_lifetime:
             failures.append(f"  - {name}")
 
-    if bad_class:
+    if bad_lifetime:
         valid = ", ".join(sorted(VALID_LIFETIMES)) + ", or `Unknown`"
-        failures.append(f"{len(bad_class)} field(s) with invalid lifetime class (must be one of: {valid}):")
-        for name, cls in bad_class:
+        failures.append(
+            f"{len(bad_lifetime)} field(s) with invalid lifetime class "
+            f"(must be one of: {valid}):"
+        )
+        for name, cls in bad_lifetime:
             failures.append(f"  - {name}: {cls!r}")
+
+    if missing_group:
+        failures.append(
+            f"{len(missing_group)} field(s) missing capability_group "
+            f"(must be one of: {VALID_CAPABILITY_GROUPS_STR}):"
+        )
+        for name in missing_group:
+            failures.append(f"  - {name}")
+
+    if bad_group:
+        failures.append(
+            f"{len(bad_group)} field(s) with invalid capability_group "
+            f"(must be one of: {VALID_CAPABILITY_GROUPS_STR}):"
+        )
+        for name, grp in bad_group:
+            failures.append(f"  - {name}: {grp!r}")
 
     return failures
 
@@ -250,18 +336,21 @@ def render_markdown(
     fields: list[Field],
     manifest: dict[str, dict[str, str]],
 ) -> str:
-    """Render a markdown table grouped by lifetime class for PR review."""
-    by_class: dict[str, list[tuple[str, str, str]]] = {}
+    """Render markdown tables grouped by capability group and lifetime class."""
+    by_group: dict[str, list[tuple[str, str, str]]] = {}
     for f in fields:
-        entry = manifest.get(f.name, {"lifetime": "Unknown", "reason": ""})
-        by_class.setdefault(entry["lifetime"], []).append(
-            (f.name, f.rust_type, entry.get("reason", ""))
+        entry = manifest.get(
+            f.name, {"lifetime": "Unknown", "capability_group": "Unknown", "reason": ""}
+        )
+        group = entry.get("capability_group") or "Unknown"
+        by_group.setdefault(group, []).append(
+            (f.name, entry.get("lifetime", ""), entry.get("reason", ""))
         )
 
     lines = [
-        "# CheckerContext Field Lifetime Inventory",
+        "# CheckerContext Field Inventory",
         "",
-        f"Auto-generated by `scripts/arch/checker_field_inventory.py --render`.",
+        "Auto-generated by `scripts/arch/checker_field_inventory.py --render`.",
         f"Source: `{CHECKER_CONTEXT_RS.relative_to(ROOT)}`",
         f"Manifest: `{MANIFEST_TOML.relative_to(ROOT)}`",
         "",
@@ -269,37 +358,38 @@ def render_markdown(
         "",
     ]
 
-    order = [
-        "ProgramStable",
-        "WorkerReusable",
-        "FileLocalReset",
-        "SpeculationScoped",
-        "DiagnosticsOnly",
-        "LspPersistent",
+    group_order = [
+        "CheckerInputs",
+        "ProgramLookup",
+        "FileTypeCache",
+        "SpeculationState",
+        "DiagnosticState",
+        "FlowSession",
+        "RelationSession",
+        "EmitSummary",
         "Unknown",
     ]
-    seen_classes = set()
-    for cls in order:
-        rows = by_class.get(cls, [])
+    seen_groups: set[str] = set()
+    for grp in group_order:
+        rows = by_group.get(grp, [])
         if not rows:
             continue
-        seen_classes.add(cls)
-        lines.append(f"## {cls} ({len(rows)})")
+        seen_groups.add(grp)
+        label = grp if grp != "Unknown" else f"{grp} — INVALID"
+        lines.append(f"## {label} ({len(rows)})")
         lines.append("")
-        lines.append("| Field | Type | Reason |")
+        lines.append("| Field | Lifetime | Reason |")
         lines.append("| --- | --- | --- |")
-        for name, ty, reason in sorted(rows):
-            ty_md = ty.replace("|", r"\|")
+        for name, lifetime, reason in sorted(rows):
             reason_md = reason.replace("|", r"\|") if reason else ""
-            lines.append(f"| `{name}` | `{ty_md}` | {reason_md} |")
+            lines.append(f"| `{name}` | `{lifetime}` | {reason_md} |")
         lines.append("")
 
-    extra = sorted(set(by_class.keys()) - seen_classes)
-    for cls in extra:
-        rows = by_class[cls]
-        lines.append(f"## {cls} ({len(rows)}) — INVALID CLASS")
+    for grp in sorted(set(by_group.keys()) - seen_groups):
+        rows = by_group[grp]
+        lines.append(f"## {grp} — INVALID GROUP ({len(rows)})")
         lines.append("")
-        for name, _ty, _reason in sorted(rows):
+        for name, _lt, _reason in sorted(rows):
             lines.append(f"- `{name}`")
         lines.append("")
 

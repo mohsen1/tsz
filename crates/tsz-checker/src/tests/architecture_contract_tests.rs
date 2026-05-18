@@ -5309,3 +5309,90 @@ fn test_namespace_checker_no_raw_lazy_construction() {
          Only pure-namespace sub-members may use Lazy(DefId) to avoid recursion."
     );
 }
+
+/// Guard: every `CheckerContext` field must declare both a `lifetime` and a
+/// `capability_group` in `checker_context_lifetimes.toml` (issue #8224).
+///
+/// The capability groups partition `CheckerContext` fields into named
+/// subsystem bundles:
+/// - `CheckerInputs` — core config/input for the current file session
+/// - `ProgramLookup` — program-wide shared indices and module-resolution data
+/// - `FileTypeCache` — per-file type/symbol/class/namespace/JSX caches
+/// - `SpeculationState` — rollback-sensitive state for speculative checking
+/// - `DiagnosticState` — diagnostic emission, suppression, and accumulation
+/// - `FlowSession` — control-flow analysis caches and worklists
+/// - `RelationSession` — type relation, evaluation, and instantiation state
+/// - `EmitSummary` — declaration-emit output tables
+///
+/// This test acts as a compile-time-like gate: adding a new field to
+/// `CheckerContext` without updating the manifest causes this test to fail,
+/// preventing uncategorized fields from accumulating.
+#[test]
+fn test_checker_context_fields_have_capability_group() {
+    let context_src = fs::read_to_string("src/context/mod.rs")
+        .expect("failed to read src/context/mod.rs for capability-group guard");
+
+    let manifest_src = fs::read_to_string("src/context/checker_context_lifetimes.toml").expect(
+        "failed to read src/context/checker_context_lifetimes.toml for capability-group guard",
+    );
+
+    // The manifest must include capability_group for every field.
+    let fields_without_group: Vec<&str> = manifest_src
+        .lines()
+        .filter(|l| l.contains("lifetime") && !l.contains("capability_group"))
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .collect();
+
+    assert!(
+        fields_without_group.is_empty(),
+        "checker_context_lifetimes.toml has {} line(s) with 'lifetime' but without \
+         'capability_group'. Every CheckerContext field must declare both. \
+         First offending line: {:?}",
+        fields_without_group.len(),
+        fields_without_group.first(),
+    );
+
+    // The manifest must use only the 8 canonical group names.
+    let valid_groups = [
+        "CheckerInputs",
+        "ProgramLookup",
+        "FileTypeCache",
+        "SpeculationState",
+        "DiagnosticState",
+        "FlowSession",
+        "RelationSession",
+        "EmitSummary",
+    ];
+    for line in manifest_src
+        .lines()
+        .filter(|l| l.contains("capability_group"))
+    {
+        let ok = valid_groups
+            .iter()
+            .any(|g| line.contains(&format!("\"{g}\"")));
+        assert!(
+            ok,
+            "checker_context_lifetimes.toml line uses an unrecognized capability_group. \
+             Valid groups: {valid_groups:?}. Offending line: {line:?}",
+        );
+    }
+
+    // The `EmitSummaryState` shell must be present in the context module as the
+    // declared destination for `EmitSummary` fields (issue #8224).
+    assert!(
+        context_src.contains("EmitSummaryState"),
+        "src/context/mod.rs must re-export EmitSummaryState; \
+         it is the declared destination for EmitSummary capability-group fields"
+    );
+
+    // The `type_only_nodes` field must be classified as EmitSummary.
+    let type_only_line = manifest_src
+        .lines()
+        .find(|l| l.starts_with("type_only_nodes"))
+        .expect("type_only_nodes must be present in checker_context_lifetimes.toml");
+    assert!(
+        type_only_line.contains(r#"capability_group = "EmitSummary""#),
+        "type_only_nodes must be in the EmitSummary capability group; \
+         got: {type_only_line:?}"
+    );
+}

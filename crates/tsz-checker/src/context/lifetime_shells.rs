@@ -144,6 +144,38 @@ impl LspPersistentCache {
     }
 }
 
+/// Declaration-emit output tables accumulated during a file check.
+///
+/// Future home for `EmitSummary` capability-group fields per issue #8224
+/// ("split `CheckerContext` into explicit capability/session bundles").
+///
+/// Fields that will eventually live here (none yet — see manifest):
+///
+/// - `type_only_nodes` — import specifier nodes that should be elided from
+///   JavaScript output because they reference type-only declarations.
+///
+/// These fields are produced during type checking and consumed exclusively
+/// by the declaration emitter; they do not affect type answers. Grouping
+/// them in a dedicated struct lets the emitter borrow only this sub-state
+/// instead of the full `CheckerContext`, narrowing the capability surface
+/// at the emitter boundary.
+///
+/// **Currently empty.** Populate via a follow-up T2.1.B PR that migrates
+/// `type_only_nodes` out of `CheckerContext` and into this struct.
+#[derive(Debug, Default)]
+pub struct EmitSummaryState {
+    // Reserved. See the module-level comment for the population policy.
+    _reserved: (),
+}
+
+impl EmitSummaryState {
+    /// Create an empty `EmitSummaryState`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self { _reserved: () }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,6 +188,7 @@ mod tests {
         let _ = FileSession::default();
         let _ = SpeculationScope::default();
         let _ = LspPersistentCache::default();
+        let _ = EmitSummaryState::default();
     }
 
     /// `const fn new()` returns the same logical shape as `Default::default()`
@@ -168,5 +201,6 @@ mod tests {
         const _F: FileSession = FileSession::new();
         const _S: SpeculationScope = SpeculationScope::new();
         const _L: LspPersistentCache = LspPersistentCache::new();
+        const _E: EmitSummaryState = EmitSummaryState::new();
     }
 }
