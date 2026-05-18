@@ -1284,12 +1284,14 @@ impl<'a> Printer<'a> {
                             // `export = X` sets module.exports but named exports like
                             // `export enum E` still get their own exports.E binding.
                             self.pending_cjs_namespace_export_fold = true;
+                            self.pending_cjs_namespace_export_name = None;
                         }
                         self.emit_module_declaration(clause_node, export.export_clause);
                         // If the flag was consumed (instantiated namespace),
                         // no separate export needed. If still set, the namespace
                         // was non-instantiated/skipped, clear it.
                         self.pending_cjs_namespace_export_fold = false;
+                        self.pending_cjs_namespace_export_name = None;
                     } else {
                         self.emit_module_declaration(clause_node, export.export_clause);
                     }
@@ -1337,8 +1339,15 @@ impl<'a> Printer<'a> {
                                 if self
                                     .ctx
                                     .module_state
-                                    .iife_exported_names
-                                    .contains(&local_name)
+                                    .iife_exported_bindings
+                                    .get(&local_name)
+                                    .is_some_and(|exports| exports.contains(&export_name))
+                                    || (export_name == local_name
+                                        && self
+                                            .ctx
+                                            .module_state
+                                            .iife_exported_names
+                                            .contains(&local_name))
                                 {
                                     continue;
                                 }
