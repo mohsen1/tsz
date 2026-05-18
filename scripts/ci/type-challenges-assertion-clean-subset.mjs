@@ -56,11 +56,13 @@ function validateEvidencePath(value, label) {
     fail(`${label} must be a non-empty relative path`);
   }
   const normalized = value.split(/[\\/]+/).join("/").replace(/^\.\//, "");
+  const segments = normalized.split("/");
   if (
     path.isAbsolute(value) ||
+    /^[A-Za-z]:\//.test(normalized) ||
     normalized === "" ||
     normalized === "." ||
-    normalized.split("/").includes("..")
+    segments.some((segment) => segment === "." || segment === "..")
   ) {
     fail(`${label} must be a relative source path: ${value}`);
   }
