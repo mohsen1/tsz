@@ -130,6 +130,11 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/utilities/enum_utils.rs",
         },
     ),
+    (
+        "Checker computation boundary: type-computation monoliths must stay below 3200 LOC (#8226)",
+        ROOT / "crates" / "tsz-checker" / "src" / "types" / "computation",
+        3200,
+    ),
 ]
 
 FILE_LINE_LIMIT_CHECKS = [
