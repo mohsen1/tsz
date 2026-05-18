@@ -267,11 +267,16 @@ impl<'a> Printer<'a> {
                 } else {
                     None
                 };
+                let class_binding_name = self.register_es5_class_binding_name(class_node);
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(class_node);
                 if let Some(comment) = leading_comment_text {
                     es5_emitter.set_leading_comment(comment);
                 }
-                let es5_output = es5_emitter.emit_class(class_node);
+                let es5_output = self.emit_es5_class_output(
+                    &mut es5_emitter,
+                    class_node,
+                    class_binding_name.as_deref(),
+                );
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 debug!(
                     "Printer ES5Class end (idx={}, class_node={}, output_len={})",
@@ -419,6 +424,12 @@ impl<'a> Printer<'a> {
                                     .default_exported_func_names
                                     .contains(&n)
                             });
+                        let cjs_export_name = names.first().and_then(|name_id| {
+                            self.arena
+                                .identifiers
+                                .get(*name_id as usize)
+                                .map(|ident| ident.escaped_text.clone())
+                        });
                         if self.ctx.target_es5 {
                             // ES5: use the IR-based ES5 namespace emitter
                             let mut ns_emitter = NamespaceES5Emitter::with_commonjs(
@@ -450,6 +461,7 @@ impl<'a> Printer<'a> {
                             ns_emitter.set_emit_decorator_metadata(
                                 self.ctx.options.emit_decorator_metadata,
                             );
+                            ns_emitter.set_commonjs_export_name(cjs_export_name.clone());
                             ns_emitter.set_transforms(self.transforms.clone());
                             if let Some(text) = self.source_text_for_map() {
                                 ns_emitter.set_source_text(text);
@@ -478,7 +490,18 @@ impl<'a> Printer<'a> {
                             if let Some(module_decl) = self.arena.get_module(node) {
                                 let ns_name = self.get_identifier_text_idx(module_decl.name);
                                 if !ns_name.is_empty() {
-                                    self.ctx.module_state.iife_exported_names.insert(ns_name);
+                                    let folded_export_name =
+                                        cjs_export_name.unwrap_or_else(|| ns_name.clone());
+                                    self.ctx
+                                        .module_state
+                                        .iife_exported_names
+                                        .insert(ns_name.clone());
+                                    self.ctx
+                                        .module_state
+                                        .iife_exported_bindings
+                                        .entry(ns_name)
+                                        .or_default()
+                                        .insert(folded_export_name);
                                 }
                             }
                             let output = if merges_with_default_func {
@@ -494,6 +517,7 @@ impl<'a> Printer<'a> {
                         if !merges_with_default_func {
                             // Set flag so the IIFE tail folds exports.N into the closing.
                             self.pending_cjs_namespace_export_fold = true;
+                            self.pending_cjs_namespace_export_name = cjs_export_name.clone();
                         } else {
                             // Suppress the default_export_merge IIFE pattern —
                             // the exported namespace just augments the local binding.
@@ -504,10 +528,18 @@ impl<'a> Printer<'a> {
                         if let Some(module_decl) = self.arena.get_module(node) {
                             let ns_name = self.get_identifier_text_idx(module_decl.name);
                             if !ns_name.is_empty() {
+                                let folded_export_name =
+                                    cjs_export_name.unwrap_or_else(|| ns_name.clone());
                                 self.ctx
                                     .module_state
                                     .iife_exported_names
                                     .insert(ns_name.clone());
+                                self.ctx
+                                    .module_state
+                                    .iife_exported_bindings
+                                    .entry(ns_name.clone())
+                                    .or_default()
+                                    .insert(folded_export_name);
                             }
                             // Track whether the namespace var was already declared
                             // (merged with class/enum/function).
@@ -872,6 +904,32 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn register_es5_class_binding_name(&mut self, class_node: NodeIndex) -> Option<String> {
+        let class_data = self
+            .arena
+            .get(class_node)
+            .and_then(|node| self.arena.get_class(node))?;
+        let original_name = self.get_identifier_text_opt(class_data.name)?;
+        let emitted_name = self
+            .ctx
+            .block_scope_state
+            .register_block_scoped_class(&original_name);
+        (emitted_name != original_name).then_some(emitted_name)
+    }
+
+    fn emit_es5_class_output(
+        &mut self,
+        es5_emitter: &mut ClassES5Emitter<'a>,
+        class_node: NodeIndex,
+        binding_name: Option<&str>,
+    ) -> String {
+        if let Some(binding_name) = binding_name {
+            es5_emitter.emit_class_with_binding_name(class_node, binding_name)
+        } else {
+            es5_emitter.emit_class(class_node)
+        }
+    }
+
     /// Create an ES5 class emitter pre-configured with decorator info for the given class.
     fn create_es5_class_emitter_with_decorators(
         &mut self,
@@ -949,7 +1007,7 @@ impl<'a> Printer<'a> {
                             &class_data.members.nodes,
                         )
                     })
-                    .map(|class_name| format!("{class_name}_1"))
+                    .map(|class_name| self.make_unique_name_from_base(&class_name))
             } else {
                 None
             };
@@ -1167,8 +1225,13 @@ impl<'a> Printer<'a> {
     ) {
         match inner {
             EmitDirective::ES5Class { class_node } => {
+                let class_binding_name = self.register_es5_class_binding_name(*class_node);
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(*class_node);
-                let es5_output = es5_emitter.emit_class(*class_node);
+                let es5_output = self.emit_es5_class_output(
+                    &mut es5_emitter,
+                    *class_node,
+                    class_binding_name.as_deref(),
+                );
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {
@@ -1380,8 +1443,13 @@ impl<'a> Printer<'a> {
                 self.emit_chained_previous(node, idx, directives, index);
             }
             EmitDirective::ES5Class { class_node } => {
+                let class_binding_name = self.register_es5_class_binding_name(*class_node);
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(*class_node);
-                let es5_output = es5_emitter.emit_class(*class_node);
+                let es5_output = self.emit_es5_class_output(
+                    &mut es5_emitter,
+                    *class_node,
+                    class_binding_name.as_deref(),
+                );
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {
@@ -1465,6 +1533,12 @@ impl<'a> Printer<'a> {
                 inner,
             } => {
                 if node.kind == syntax_kind_ext::MODULE_DECLARATION && !*is_default {
+                    let cjs_export_name = names.first().and_then(|name_id| {
+                        self.arena
+                            .identifiers
+                            .get(*name_id as usize)
+                            .map(|ident| ident.escaped_text.clone())
+                    });
                     let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
                     ns_emitter.set_const_enum_facts(
                         self.const_enum_values.clone(),
@@ -1490,6 +1564,7 @@ impl<'a> Printer<'a> {
                     ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
                     ns_emitter
                         .set_emit_decorator_metadata(self.ctx.options.emit_decorator_metadata);
+                    ns_emitter.set_commonjs_export_name(cjs_export_name.clone());
                     ns_emitter.set_transforms(self.transforms.clone());
                     if let Some(text) = self.source_text_for_map() {
                         ns_emitter.set_source_text(text);
@@ -1505,6 +1580,23 @@ impl<'a> Printer<'a> {
                         ns_emitter.set_should_declare_var(should_declare_var);
                     }
                     let output = ns_emitter.emit_exported_namespace(idx);
+                    if let Some(module_decl) = self.arena.get_module(node) {
+                        let ns_name = self.get_identifier_text_idx(module_decl.name);
+                        if !ns_name.is_empty() {
+                            let folded_export_name =
+                                cjs_export_name.unwrap_or_else(|| ns_name.clone());
+                            self.ctx
+                                .module_state
+                                .iife_exported_names
+                                .insert(ns_name.clone());
+                            self.ctx
+                                .module_state
+                                .iife_exported_bindings
+                                .entry(ns_name)
+                                .or_default()
+                                .insert(folded_export_name);
+                        }
+                    }
                     self.write(output.trim_end_matches('\n'));
                     self.skip_comments_for_erased_node(node);
                     return;

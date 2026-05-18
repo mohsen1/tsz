@@ -2353,6 +2353,7 @@ impl<'a> ES5ClassTransformer<'a> {
             .cloned();
         Some(IRNode::ES5ClassIIFE {
             name: self.class_name.clone().into(),
+            binding_name: None,
             base_class: base_class.map(Box::new),
             super_param: self.has_extends.then(|| self.super_name.clone().into()),
             body,

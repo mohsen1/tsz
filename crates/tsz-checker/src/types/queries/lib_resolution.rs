@@ -10,6 +10,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 use tsz_solver::is_compiler_managed_type;
 
 pub(crate) use super::lib_decls::{
@@ -777,7 +778,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .types
                 .get_array_display_base_type()
-                .or_else(|| tsz_solver::TypeResolver::get_array_base_type(&self.ctx.types))
+                .or_else(|| TypeResolver::get_array_base_type(&self.ctx.types))
         {
             self.ctx
                 .lib_type_resolution_cache
