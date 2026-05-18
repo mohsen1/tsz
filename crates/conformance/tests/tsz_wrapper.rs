@@ -1247,12 +1247,27 @@ test.ts(2,1): error TS2304: Cannot find name 'missing'.";
 }
 
 #[test]
+fn test_parse_batch_output_filters_fingerprints_per_diagnostic_line() {
+    let output = "test.ts(1,1): error TS2430: Interface 'I' incorrectly extends interface 'A'.\n\
+test.ts(2,1): error TS2430: Interface 'Kept' incorrectly extends interface 'Base'.";
+    let root = std::path::Path::new("/tmp/tsz-test");
+
+    let result = parse_batch_output(output, root, HashMap::new());
+
+    assert_eq!(result.error_codes, vec![2430]);
+    assert_eq!(result.diagnostic_fingerprints.len(), 1);
+    assert_eq!(result.diagnostic_fingerprints[0].code, 2430);
+    assert_eq!(result.diagnostic_fingerprints[0].line, 2);
+    assert_eq!(result.diagnostic_fingerprints[0].column, 1);
+}
+
+#[test]
 fn test_retained_diagnostic_fingerprints_keeps_raw_parser_visible() {
     let output = "test.ts(1,1): error TS2430: Interface 'I' incorrectly extends interface 'A'.";
     let root = std::path::Path::new("/tmp/tsz-test");
 
     let raw = parse_diagnostic_fingerprints_from_text(output, root);
-    let retained = retained_diagnostic_fingerprints(output, root, &[]);
+    let retained = retained_diagnostic_fingerprints(output, root);
 
     assert_eq!(raw.len(), 1);
     assert_eq!(raw[0].code, 2430);

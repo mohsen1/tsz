@@ -5,7 +5,7 @@
 use crate::compiler_options::canonical_option_name;
 use crate::parity_fingerprints::{classify_parity, MatchScope, ParityAction};
 use crate::tsc_results::DiagnosticFingerprint;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// Result of compiling a test file
@@ -751,8 +751,7 @@ pub fn parse_tsz_output(
     // them are false positives. Filter before parsing to avoid counting them.
     let combined = filter_lib_diagnostics(&combined, project_root);
     let error_codes = parse_error_codes_from_text(&combined);
-    let diagnostic_fingerprints =
-        retained_diagnostic_fingerprints(&combined, project_root, &error_codes);
+    let diagnostic_fingerprints = retained_diagnostic_fingerprints(&combined, project_root);
     CompilationResult {
         error_codes,
         diagnostic_fingerprints,
@@ -761,6 +760,7 @@ pub fn parse_tsz_output(
     }
 }
 
+#[cfg(test)]
 fn parse_diagnostic_fingerprints_from_text(
     text: &str,
     project_root: &Path,
@@ -864,14 +864,111 @@ fn parse_diagnostic_fingerprints_from_text(
     fingerprints
 }
 
-fn retained_diagnostic_fingerprints(
-    text: &str,
-    project_root: &Path,
-    error_codes: &[u32],
-) -> Vec<DiagnosticFingerprint> {
-    let retained_codes: HashSet<u32> = error_codes.iter().copied().collect();
-    let mut fingerprints = parse_diagnostic_fingerprints_from_text(text, project_root);
-    fingerprints.retain(|fingerprint| retained_codes.contains(&fingerprint.code));
+fn retained_diagnostic_fingerprints(text: &str, project_root: &Path) -> Vec<DiagnosticFingerprint> {
+    use once_cell::sync::Lazy;
+    use regex::Regex;
+
+    static DIAG_WITH_POS_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^(?P<file>.+?)\((?P<line>\d+),(?P<col>\d+)\):\s+error\s+TS(?P<code>\d+):\s*(?P<message>.+)$")
+            .expect("valid regex")
+    });
+    static DIAG_NO_POS_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"^(:\s*)?error\s+TS(?P<code>\d+):\s*(?P<message>.+)$").unwrap());
+
+    let mut fingerprints = Vec::new();
+    for raw_line in text.lines() {
+        if raw_line
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_whitespace())
+        {
+            continue;
+        }
+
+        let line = raw_line.trim_end();
+        let Some(retained_code) = retained_diagnostic_code_from_line(line) else {
+            continue;
+        };
+
+        if let Some(caps) = DIAG_WITH_POS_RE.captures(line) {
+            let original_code = caps
+                .name("code")
+                .and_then(|m| m.as_str().parse::<u32>().ok())
+                .unwrap_or(retained_code);
+            let line_no = caps
+                .name("line")
+                .and_then(|m| m.as_str().parse::<u32>().ok())
+                .unwrap_or(0);
+            let col_no = caps
+                .name("col")
+                .and_then(|m| m.as_str().parse::<u32>().ok())
+                .unwrap_or(0);
+            let file = normalize_diagnostic_path(
+                caps.name("file").map(|m| m.as_str()).unwrap_or_default(),
+                project_root,
+            );
+            let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+            let message = normalize_message_paths(raw_message, project_root);
+            let (code, line_no, col_no, message) =
+                match classify_parity(original_code, &message, MatchScope::NormalizedMessage)
+                    .map(|rule| rule.action)
+                {
+                    Some(ParityAction::Drop) => continue,
+                    Some(ParityAction::Remap(r)) => {
+                        (r.code, r.line, r.column, r.message.to_string())
+                    }
+                    None => (retained_code, line_no, col_no, message),
+                };
+            fingerprints.push(DiagnosticFingerprint::new(
+                code, file, line_no, col_no, &message,
+            ));
+            continue;
+        }
+
+        if let Some(caps) = DIAG_NO_POS_RE.captures(line) {
+            let original_code = caps
+                .name("code")
+                .and_then(|m| m.as_str().parse::<u32>().ok())
+                .unwrap_or(retained_code);
+            let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+            let message = normalize_message_paths(raw_message, project_root);
+            let (code, line_no, col_no, message) =
+                match classify_parity(original_code, &message, MatchScope::NormalizedMessage)
+                    .map(|rule| rule.action)
+                {
+                    Some(ParityAction::Drop) => continue,
+                    Some(ParityAction::Remap(r)) => {
+                        (r.code, r.line, r.column, r.message.to_string())
+                    }
+                    None => (retained_code, 0, 0, message),
+                };
+            fingerprints.push(DiagnosticFingerprint::new(
+                code,
+                String::new(),
+                line_no,
+                col_no,
+                &message,
+            ));
+        }
+    }
+
+    fingerprints.sort_by(|a, b| {
+        (
+            a.code,
+            a.file.as_str(),
+            a.line,
+            a.column,
+            a.message_key.as_str(),
+        )
+            .cmp(&(
+                b.code,
+                b.file.as_str(),
+                b.line,
+                b.column,
+                b.message_key.as_str(),
+            ))
+    });
+    fingerprints.dedup();
     fingerprints
 }
 
@@ -1457,6 +1554,18 @@ fn filter_lib_diagnostics(text: &str, project_root: &Path) -> String {
 }
 
 fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
+    text.lines()
+        .filter(|raw_line| {
+            !raw_line
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_whitespace())
+        })
+        .filter_map(|raw_line| retained_diagnostic_code_from_line(raw_line.trim_end()))
+        .collect()
+}
+
+fn retained_diagnostic_code_from_line(line: &str) -> Option<u32> {
     use once_cell::sync::Lazy;
     use regex::Regex;
 
@@ -1467,39 +1576,21 @@ fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
         .expect("valid regex")
     });
 
-    let mut codes = Vec::new();
-    for raw_line in text.lines() {
-        if raw_line
-            .chars()
-            .next()
-            .is_some_and(|ch| ch.is_ascii_whitespace())
-        {
-            continue;
-        }
-
-        let line = raw_line.trim_end();
-        let Some(caps) = DIAG_CODE_RE.captures(line) else {
-            continue;
-        };
-        let Some(code) = caps
-            .name("code")
-            .or_else(|| caps.name("code2"))
-            .and_then(|m| m.as_str().parse::<u32>().ok())
-        else {
-            continue;
-        };
-        if code == 2430 && is_extra_signature_inheritance_line(line) {
-            continue;
-        }
-        if let Some(rule) = classify_parity(code, line, MatchScope::RawLine) {
-            if let ParityAction::Remap(r) = rule.action {
-                codes.push(r.code);
-            }
-            continue;
-        }
-        codes.push(code);
+    let caps = DIAG_CODE_RE.captures(line)?;
+    let code = caps
+        .name("code")
+        .or_else(|| caps.name("code2"))
+        .and_then(|m| m.as_str().parse::<u32>().ok())?;
+    if code == 2430 && is_extra_signature_inheritance_line(line) {
+        return None;
     }
-    codes
+    if let Some(rule) = classify_parity(code, line, MatchScope::RawLine) {
+        return match rule.action {
+            ParityAction::Drop => None,
+            ParityAction::Remap(r) => Some(r.code),
+        };
+    }
+    Some(code)
 }
 
 fn is_extra_signature_inheritance_line(line: &str) -> bool {
@@ -1924,8 +2015,7 @@ pub fn parse_batch_output(
     // them are false positives.
     let text = filter_lib_diagnostics(text, project_root);
     let error_codes = parse_error_codes_from_text(&text);
-    let diagnostic_fingerprints =
-        retained_diagnostic_fingerprints(&text, project_root, &error_codes);
+    let diagnostic_fingerprints = retained_diagnostic_fingerprints(&text, project_root);
 
     CompilationResult {
         error_codes,
