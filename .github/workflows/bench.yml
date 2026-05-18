@@ -277,12 +277,16 @@ jobs:
             wait_seconds=360
           fi
 
+          storage_cp() {
+            timeout 45s gcloud storage cp "$1" "$2" >/dev/null 2>&1
+          }
+
           deadline=$((SECONDS + wait_seconds))
           while true; do
             rm -f latest-bench-prep.env bench-prep.env bench-prep.tar
-            if gcloud storage cp \
+            if storage_cp \
               "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
-              latest-bench-prep.env >/dev/null 2>&1; then
+              latest-bench-prep.env; then
               # shellcheck disable=SC1091
               source latest-bench-prep.env
               latest_target_sha="${BENCH_TARGET_SHA:-}"
@@ -297,12 +301,12 @@ jobs:
               elif [[ "${{ github.event_name }}" == "schedule" &&
                       "${latest_build_date}" != "$(date -u +%F)" ]]; then
                 echo "Cloud Build artifact is from ${latest_build_date:-unknown}; waiting for today's build."
-              elif gcloud storage cp \
+              elif storage_cp \
                 "gs://tsz-ci_cloudbuild/bench-prep/${latest_target_sha}/bench-prep.env" \
-                bench-prep.env >/dev/null 2>&1 && \
-                gcloud storage cp \
+                bench-prep.env && \
+                storage_cp \
                   "gs://tsz-ci_cloudbuild/bench-prep/${latest_target_sha}/bench-prep.tar" \
-                  bench-prep.tar >/dev/null 2>&1; then
+                  bench-prep.tar; then
                 # shellcheck disable=SC1091
                 source bench-prep.env
                 if [[ "${BENCH_TARGET_SHA:-}" != "${latest_target_sha}" ]]; then
@@ -543,16 +547,19 @@ jobs:
               END { print value }
             ' bench-prep.env
           }
+          storage_cp() {
+            timeout 45s gcloud storage cp "$1" "$2" >/dev/null 2>&1
+          }
 
           deadline=$((SECONDS + 7200))
           while true; do
             rm -f bench-prep.env bench-prep.tar
-            if gcloud storage cp \
+            if storage_cp \
               "gs://tsz-ci_cloudbuild/bench-prep/${target_sha}/bench-prep.env" \
-              bench-prep.env >/dev/null 2>&1 && \
-              gcloud storage cp \
+              bench-prep.env && \
+              storage_cp \
                 "gs://tsz-ci_cloudbuild/bench-prep/${target_sha}/bench-prep.tar" \
-                bench-prep.tar >/dev/null 2>&1; then
+                bench-prep.tar; then
               tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
               tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
               manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
@@ -581,14 +588,18 @@ jobs:
         run: |
           set -euo pipefail
 
+          storage_cp() {
+            timeout 45s gcloud storage cp "$1" "$2" >/dev/null 2>&1
+          }
+
           deadline=$((SECONDS + 7200))
           while true; do
-            if gcloud storage cp \
+            if storage_cp \
               "gs://tsz-ci_cloudbuild/bench-prep/${BENCH_TARGET_SHA}/bench-prep.env" \
-              bench-prep.env >/dev/null 2>&1 && \
-              gcloud storage cp \
+              bench-prep.env && \
+              storage_cp \
                 "gs://tsz-ci_cloudbuild/bench-prep/${BENCH_TARGET_SHA}/bench-prep.tar" \
-                bench-prep.tar >/dev/null 2>&1; then
+                bench-prep.tar; then
               tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
               tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
               # shellcheck disable=SC1091
