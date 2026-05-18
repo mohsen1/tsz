@@ -1,5 +1,5 @@
 use crate::context::CheckerOptions;
-use crate::test_utils::{check_source, check_source_diagnostics};
+use crate::test_utils::{check_source, check_source_diagnostics, check_source_strict};
 
 /// Alias: default options already have `strict_null_checks: true`.
 fn check_source_with_strict_null(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
@@ -357,7 +357,7 @@ declare function takes(value: string): void;
 takes(123);
 "#;
 
-    let diagnostics = check_source_with_strict_null(source);
+    let diagnostics = check_source_strict(source);
     let diag = diagnostics
         .iter()
         .find(|d| d.code == 2345)
@@ -378,7 +378,7 @@ declare let foo: (...args: never) => void;
 foo();
 "#;
 
-    let diagnostics = check_source_with_strict_null(source);
+    let diagnostics = check_source_strict(source);
     let diag = diagnostics
         .iter()
         .find(|d| d.code == 2345)
@@ -545,7 +545,7 @@ f2({ toString: (s: string) => s });
 }
 
 #[test]
-fn ts2345_generic_call_parameter_display_preserves_instantiated_alias_name() {
+fn ts2345_generic_property_argument_display_preserves_source_signature() {
     let source = r#"
 namespace Underscore {
     export interface Iterator<T, U> {
@@ -570,12 +570,43 @@ _.all([true, 1, null, 'yes'], _.identity);
 
     assert!(
         diag.message_text
-            .contains("parameter of type 'Iterator<string | number | boolean | null, boolean>'"),
-        "Expected instantiated alias name in parameter display, got: {diag:?}"
+            .contains("Argument of type '<T>(value: T) => T'"),
+        "Expected generic property argument display to preserve source signature, got: {diag:?}"
     );
     assert!(
-        !diag.message_text.contains("parameter of type '(value:"),
-        "Parameter display should not expand the iterator alias, got: {diag:?}"
+        !diag.message_text.contains("Argument of type '{ <T>"),
+        "Argument display should collapse duplicate recovered generic signatures, got: {diag:?}"
+    );
+}
+
+#[test]
+fn ts2345_generic_property_argument_display_is_not_name_specific() {
+    let source = r#"
+namespace DifferentNames {
+    export interface Callback<Item, Result> {
+        (item: Item): Result;
+    }
+
+    export interface Api {
+        run<Element>(items: Element[], callback?: Callback<Element, false>): void;
+        project<Value>(item: Value): Value;
+    }
+}
+
+declare var api: DifferentNames.Api;
+api.run([0, "x"], api.project);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text
+            .contains("Argument of type '<Value>(item: Value) => Value'"),
+        "Expected renamed generic property argument to preserve source signature, got: {diag:?}"
     );
 }
 

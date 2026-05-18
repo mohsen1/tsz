@@ -1571,6 +1571,10 @@ mod tests {
 }
 
 #[cfg(test)]
+#[path = "lib_resolution_promise_tests.rs"]
+mod promise_tests;
+
+#[cfg(test)]
 mod integration_tests {
     use crate::test_utils::check_source_codes;
 

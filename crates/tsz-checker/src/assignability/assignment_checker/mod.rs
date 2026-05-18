@@ -4,6 +4,7 @@ mod arithmetic_ops;
 mod assignment_ops;
 mod commonjs_assignment;
 mod destructuring;
+mod generic_indexed_write;
 mod js_constructor_provisional;
 mod js_global_fallback;
 

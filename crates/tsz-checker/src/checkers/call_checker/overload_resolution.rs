@@ -3,6 +3,7 @@
 //! Split from the parent `call_checker` module — pure code motion.
 
 mod contextual_retry;
+mod diagnostic_helpers;
 mod literal_fast_path;
 mod return_context;
 
@@ -13,6 +14,7 @@ use crate::query_boundaries::common::{
     CallResult, ContextualTypeContext, FunctionShape, PendingDiagnosticBuilder,
 };
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
@@ -62,6 +64,21 @@ impl<'a> CheckerState<'a> {
         if signatures.is_empty() {
             return None;
         }
+        let mut deduped_signatures = Vec::new();
+        if signatures.len() > 1 {
+            let mut seen = FxHashSet::default();
+            for signature in signatures {
+                if seen.insert(signature.clone()) {
+                    deduped_signatures.push(signature.clone());
+                }
+            }
+        }
+        let signatures =
+            if !deduped_signatures.is_empty() && deduped_signatures.len() != signatures.len() {
+                deduped_signatures.as_slice()
+            } else {
+                signatures
+            };
         if contextual_type.is_none()
             && let Some(resolution) = self.try_resolve_literal_overloaded_call_fast_path(
                 args,
@@ -1487,8 +1504,8 @@ impl<'a> CheckerState<'a> {
                                 Vec::new(),
                             ));
                         }
-                        failures.push(PendingDiagnosticBuilder::argument_not_assignable(
-                            actual, expected,
+                        failures.push(self.argument_not_assignable_for_overload_arg(
+                            args, index, actual, expected,
                         ));
                         self.ctx
                             .rollback_diagnostics_filtered(&candidate_snap, |diag| {
@@ -1715,8 +1732,8 @@ impl<'a> CheckerState<'a> {
                                 ),
                             ));
                         }
-                        failures.push(PendingDiagnosticBuilder::argument_not_assignable(
-                            actual, expected,
+                        failures.push(self.argument_not_assignable_for_overload_arg(
+                            args, index, actual, expected,
                         ));
                     }
                 }

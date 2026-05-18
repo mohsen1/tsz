@@ -1335,10 +1335,20 @@ impl<'a> CheckerState<'a> {
         &mut self,
         def_id: tsz_solver::DefId,
     ) -> Option<TypeId> {
+        let def_kind = self.ctx.definition_store.get(def_id).map(|info| info.kind);
+        let is_class_def = matches!(def_kind, Some(tsz_solver::def::DefKind::Class));
+        let def_identity = self.ctx.def_symbol_identity(def_id);
+        let owner_file_idx_for_body = def_identity.and_then(|(_, owner_file_idx)| owner_file_idx);
+        let is_current_file_def = owner_file_idx_for_body == Some(self.ctx.current_file_idx);
+
         // The shared DefinitionStore is already the resolver fallback for concrete
         // DefId bodies. Reuse that body before rebuilding it through a symbol/lib
-        // lookup, but never cache sentinel values or a direct self-lazy placeholder.
-        if let Some(body) = self.ctx.definition_store.get_body(def_id)
+        // lookup, but never cache sentinel values, a direct self-lazy placeholder,
+        // a class value/constructor body in type position, or a same-file body
+        // whose named alias/class display should be preserved by the normal path.
+        if !is_class_def
+            && !is_current_file_def
+            && let Some(body) = self.ctx.definition_store.get_body(def_id)
             && body != TypeId::ERROR
             && body != TypeId::ANY
             && lazy_def_id(self.ctx.types, body) != Some(def_id)
@@ -1381,7 +1391,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let (sym_id, owner_file_idx) = self.ctx.def_symbol_identity(def_id)?;
+        let (sym_id, owner_file_idx) = def_identity?;
         if let Some(file_idx) = owner_file_idx
             && file_idx != self.ctx.current_file_idx
         {
@@ -1416,7 +1426,9 @@ impl<'a> CheckerState<'a> {
         // fallback and cause the `resolved == type_id` guard in the caller to short-circuit.
         // Prefer the concrete body from DefinitionStore when it is already available.
         if lazy_def_id(self.ctx.types, resolved) == Some(def_id) {
-            if let Some(body) = self.ctx.definition_store.get_body(def_id)
+            if !is_class_def
+                && !is_current_file_def
+                && let Some(body) = self.ctx.definition_store.get_body(def_id)
                 && body != resolved
                 && body != TypeId::ERROR
                 && body != TypeId::ANY

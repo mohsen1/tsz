@@ -1555,18 +1555,11 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
         Arc::new(dashmap::DashMap::new());
 
-    // Prime Array<T> base type with global augmentations before parallel file
-    // checks. Tiny no-emit batches use the sequential reused-checker path, whose
-    // real checker registers boxed/lib types before statement checking; in that
-    // regime a separate prime checker duplicates the same setup.
-    let boxed_prime_is_covered_by_reused_checker = options.no_emit
-        && !options.emit_declarations
-        && file_session_reuse_requested(program.files.len())
-        && program.files.len() <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES;
-    if !boxed_prime_is_covered_by_reused_checker
-        && !program.files.is_empty()
-        && !checker_libs.contexts.is_empty()
-    {
+    // Prime Array<T> base type with global augmentations before any file checks.
+    // The tiny reused-checker path still consults the shared lib cache while
+    // checking the first file, so it needs the same boxed/lib seed as fresh
+    // checkers before property lookup asks for Array members.
+    if !program.files.is_empty() && !checker_libs.contexts.is_empty() {
         let prime_idx = 0;
         let file = &program.files[prime_idx];
         let binder = parallel::create_binder_from_bound_file(file, program, prime_idx);

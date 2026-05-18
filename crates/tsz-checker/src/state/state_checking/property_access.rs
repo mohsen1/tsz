@@ -47,6 +47,11 @@ impl<'a> CheckerState<'a> {
         &self,
         member_types: Vec<TypeId>,
     ) -> Option<TypeId> {
+        let mut seen_member_types = FxHashSet::default();
+        let member_types: Vec<_> = member_types
+            .into_iter()
+            .filter(|member_type| seen_member_types.insert(*member_type))
+            .collect();
         if member_types.is_empty() {
             return None;
         }
@@ -55,16 +60,20 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut call_signatures = Vec::new();
+        let mut seen_call_signatures = FxHashSet::default();
         for member_type in member_types {
             if let Some(shape) = common::function_shape_for_type(self.ctx.types, member_type) {
-                call_signatures.push(tsz_solver::CallSignature {
+                let signature = tsz_solver::CallSignature {
                     type_params: shape.type_params.clone(),
                     params: shape.params.clone(),
                     this_type: shape.this_type,
                     return_type: shape.return_type,
                     type_predicate: shape.type_predicate,
                     is_method: shape.is_method,
-                });
+                };
+                if seen_call_signatures.insert(signature.clone()) {
+                    call_signatures.push(signature);
+                }
                 continue;
             }
 
@@ -76,7 +85,11 @@ impl<'a> CheckerState<'a> {
             {
                 return None;
             }
-            call_signatures.extend(shape.call_signatures.iter().cloned());
+            for signature in &shape.call_signatures {
+                if seen_call_signatures.insert(signature.clone()) {
+                    call_signatures.push(signature.clone());
+                }
+            }
         }
 
         (!call_signatures.is_empty()).then(|| {
@@ -260,7 +273,11 @@ impl<'a> CheckerState<'a> {
 
         let mut own_member_types = Vec::new();
         let mut inherited_bases = Vec::new();
-        for &decl_idx in &declarations {
+        // Recovery rebuilds callable member overloads from interface
+        // declarations when the normal lazy lookup cannot see them. Match the
+        // merged-interface lowerer here: later declaration groups are tried
+        // before earlier ones for overload resolution.
+        for &decl_idx in declarations.iter().rev() {
             if !skip_current_file_shadow
                 && self
                     .ctx
@@ -288,7 +305,7 @@ impl<'a> CheckerState<'a> {
                 .get(&(sym_id, decl_idx))
                 .cloned()
                 .unwrap_or_default();
-            for arena in declaration_arenas {
+            for arena in declaration_arenas.into_iter().rev() {
                 let arena = arena.as_ref();
                 if skip_current_file_shadow && std::ptr::eq(arena, self.ctx.arena) {
                     continue;
@@ -857,15 +874,6 @@ impl<'a> CheckerState<'a> {
         // can't be resolved there. Resolve them here using the checker's environment.
         let object_type = self.resolve_type_query_type(object_type);
         let original_object_type = object_type;
-        if let Some(member_type) =
-            self.recover_non_generic_lazy_interface_member_type(original_object_type, prop_name)
-        {
-            return tsz_solver::operations::property::PropertyAccessResult::Success {
-                type_id: member_type,
-                write_type: None,
-                from_index_signature: false,
-            };
-        }
 
         // Ensure preconditions are ready in the environment for non-trivial
         // property-access inputs. Already-resolved/function-like inputs don't
@@ -902,6 +910,23 @@ impl<'a> CheckerState<'a> {
         // This is especially important for hot paths like repeated `string[].push`
         // checks in class-heavy files.
         let mut result = self.resolve_property_access_via_boundary(object_type, prop_name);
+        if matches!(
+            result,
+            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
+                | tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id: TypeId::ANY,
+                    from_index_signature: false,
+                    ..
+                }
+        ) && let Some(member_type) =
+            self.recover_non_generic_lazy_interface_member_type(original_object_type, prop_name)
+        {
+            result = tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: member_type,
+                write_type: None,
+                from_index_signature: false,
+            };
+        }
         if matches!(
             result,
             tsz_solver::operations::property::PropertyAccessResult::Success {
