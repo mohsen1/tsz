@@ -272,11 +272,11 @@ impl<'a> CheckerState<'a> {
                     .get(&key)
                     .copied();
                 if let Some(cached) = cached_opt {
-                    self.ctx
-                        .narrowing_cache
-                        .resolve_cache
-                        .borrow_mut()
-                        .insert(type_id, cached);
+                    self.ctx.narrowing_cache.cache_resolve_result(
+                        self.ctx.types.as_type_database(),
+                        type_id,
+                        cached,
+                    );
                     return cached;
                 }
             }
@@ -318,12 +318,17 @@ impl<'a> CheckerState<'a> {
             .set(self.ctx.instantiation_depth.get() - 1);
         self.ctx.eval_session.leave_instantiation();
         self.ctx.application_eval_set.remove(&type_id);
-        {
-            let mut cache = self.ctx.narrowing_cache.resolve_cache.borrow_mut();
-            cache.insert(type_id, result);
-            if let Some(key) = canonical_key {
-                cache.insert(key, result);
-            }
+        self.ctx.narrowing_cache.cache_resolve_result(
+            self.ctx.types.as_type_database(),
+            type_id,
+            result,
+        );
+        if let Some(key) = canonical_key {
+            self.ctx.narrowing_cache.cache_resolve_result(
+                self.ctx.types.as_type_database(),
+                key,
+                result,
+            );
         }
 
         // Store reverse mapping for diagnostic display: when the evaluated
@@ -823,11 +828,11 @@ impl<'a> CheckerState<'a> {
             .set(self.ctx.instantiation_depth.get() - 1);
         self.ctx.mapped_eval_set.remove(&type_id);
         if can_cache {
-            self.ctx
-                .narrowing_cache
-                .resolve_cache
-                .borrow_mut()
-                .insert(type_id, result);
+            self.ctx.narrowing_cache.cache_resolve_result(
+                self.ctx.types.as_type_database(),
+                type_id,
+                result,
+            );
         }
         result
     }

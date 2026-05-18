@@ -643,6 +643,16 @@ fn test_env_eval_cache_def_invalidation_is_targeted() {
     ctx.cache_env_eval_result(stale_key, TypeId::STRING, false);
     ctx.cache_env_eval_result(TypeId::NUMBER, stale_result, false);
     ctx.cache_env_eval_result(TypeId::BOOLEAN, unrelated_result, false);
+    ctx.narrowing_cache
+        .cache_resolve_result(&types, stale_key, TypeId::STRING);
+    ctx.narrowing_cache
+        .cache_resolve_result(&types, TypeId::NUMBER, stale_result);
+    ctx.narrowing_cache
+        .cache_resolve_result(&types, TypeId::BOOLEAN, unrelated_result);
+    ctx.narrowing_cache
+        .cache_contextual_resolve_result(&types, TypeId::BIGINT, stale_result);
+    ctx.narrowing_cache
+        .cache_contextual_resolve_result(&types, TypeId::SYMBOL, unrelated_result);
 
     ctx.clear_type_evaluation_caches_for_def(stale_def);
 
@@ -651,6 +661,40 @@ fn test_env_eval_cache_def_invalidation_is_targeted() {
     assert_eq!(
         ctx.lookup_env_eval_cache(TypeId::BOOLEAN)
             .map(|entry| entry.result),
+        Some(unrelated_result)
+    );
+    assert!(
+        !ctx.narrowing_cache
+            .resolve_cache
+            .borrow()
+            .contains_key(&stale_key)
+    );
+    assert!(
+        !ctx.narrowing_cache
+            .resolve_cache
+            .borrow()
+            .contains_key(&TypeId::NUMBER)
+    );
+    assert_eq!(
+        ctx.narrowing_cache
+            .resolve_cache
+            .borrow()
+            .get(&TypeId::BOOLEAN)
+            .copied(),
+        Some(unrelated_result)
+    );
+    assert!(
+        !ctx.narrowing_cache
+            .contextual_resolve_cache
+            .borrow()
+            .contains_key(&TypeId::BIGINT)
+    );
+    assert_eq!(
+        ctx.narrowing_cache
+            .contextual_resolve_cache
+            .borrow()
+            .get(&TypeId::SYMBOL)
+            .copied(),
         Some(unrelated_result)
     );
 }

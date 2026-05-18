@@ -56,11 +56,7 @@ impl<'a> CheckerState<'a> {
     /// This is used before recomputing argument types during generic call
     /// inference rounds so that stale contextual type resolutions are not reused.
     pub(crate) fn clear_contextual_resolution_cache(&mut self) {
-        self.ctx
-            .narrowing_cache
-            .contextual_resolve_cache
-            .borrow_mut()
-            .clear();
+        self.ctx.narrowing_cache.clear_contextual_resolve_cache();
     }
 
     // -----------------------------------------------------------------------

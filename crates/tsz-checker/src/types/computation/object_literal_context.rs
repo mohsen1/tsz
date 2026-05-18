@@ -1050,11 +1050,11 @@ impl<'a> CheckerState<'a> {
             let ct = self.resolve_type_for_property_access(ct);
             let ct = self.resolve_lazy_type(ct);
             let ct = self.evaluate_application_type(ct);
-            self.ctx
-                .narrowing_cache
-                .contextual_resolve_cache
-                .borrow_mut()
-                .insert(original_contextual_type, ct);
+            self.ctx.narrowing_cache.cache_contextual_resolve_result(
+                self.ctx.types.as_type_database(),
+                original_contextual_type,
+                ct,
+            );
             ct
         };
 

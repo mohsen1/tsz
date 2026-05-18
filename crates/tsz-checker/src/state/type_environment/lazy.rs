@@ -707,11 +707,11 @@ impl<'a> CheckerState<'a> {
             query::PropertyAccessResolutionKind::Resolved
                 | query::PropertyAccessResolutionKind::FunctionLike
         ) {
-            self.ctx
-                .narrowing_cache
-                .resolve_cache
-                .borrow_mut()
-                .insert(type_id, type_id);
+            self.ctx.narrowing_cache.cache_resolve_result(
+                self.ctx.types.as_type_database(),
+                type_id,
+                type_id,
+            );
             return type_id;
         }
 
@@ -731,13 +731,11 @@ impl<'a> CheckerState<'a> {
         // tuple while every subsequent caller sees the correct cached union, which
         // makes type-checking results depend on call order. The fix keeps both caller
         // paths in sync with whatever evaluate_application_type pre-populated.
-        *self
-            .ctx
-            .narrowing_cache
-            .resolve_cache
-            .borrow_mut()
-            .entry(type_id)
-            .or_insert(result)
+        self.ctx.narrowing_cache.cache_resolve_result_if_absent(
+            self.ctx.types.as_type_database(),
+            type_id,
+            result,
+        )
     }
 
     pub(crate) fn resolve_type_for_property_access_inner(

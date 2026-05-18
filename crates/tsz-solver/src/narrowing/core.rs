@@ -339,6 +339,10 @@ type RequiredPropertyCache = FxHashMap<PropertyCacheKey, bool>;
 pub struct NarrowingCache {
     /// Cache for type resolution (Lazy/App/Template -> Structural)
     pub resolve_cache: RefCell<FxHashMap<TypeId, TypeId>>,
+    /// Reverse `DefId` dependency index for `resolve_cache`.
+    pub resolve_cache_def_index: RefCell<FxHashMap<DefId, FxHashSet<TypeId>>>,
+    /// Per-entry `DefId` dependency set for `resolve_cache`.
+    pub resolve_cache_entry_deps: RefCell<FxHashMap<TypeId, FxHashSet<DefId>>>,
     /// In-progress type resolution set. `resolve_cache` only records completed
     /// resolutions, so recursive `keyof` / indexed-access / conditional graphs
     /// can re-enter before a cache entry exists. Returning the original deferred
@@ -373,6 +377,10 @@ pub struct NarrowingCache {
     /// evaluate/resolve/lazy/application chain. Avoids repeating the expensive
     /// chain for each property of the same object literal.
     pub contextual_resolve_cache: RefCell<FxHashMap<TypeId, TypeId>>,
+    /// Reverse `DefId` dependency index for `contextual_resolve_cache`.
+    pub contextual_resolve_cache_def_index: RefCell<FxHashMap<DefId, FxHashSet<TypeId>>>,
+    /// Per-entry `DefId` dependency set for `contextual_resolve_cache`.
+    pub contextual_resolve_cache_entry_deps: RefCell<FxHashMap<TypeId, FxHashSet<DefId>>>,
     /// Discriminant index for fast switch-case narrowing.
     /// Key: (`union_type`, `discriminant_property`) → Map of `literal_value` → matching members.
     /// Built once per (union, property) pair, then O(1) lookup per case clause.
@@ -395,6 +403,8 @@ impl NarrowingCache {
                 1024,
                 Default::default(),
             )),
+            resolve_cache_def_index: RefCell::new(FxHashMap::default()),
+            resolve_cache_entry_deps: RefCell::new(FxHashMap::default()),
             resolve_visiting: RefCell::new(FxHashSet::default()),
             property_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 512,
@@ -424,12 +434,177 @@ impl NarrowingCache {
                 256,
                 Default::default(),
             )),
+            contextual_resolve_cache_def_index: RefCell::new(FxHashMap::default()),
+            contextual_resolve_cache_entry_deps: RefCell::new(FxHashMap::default()),
             discriminant_index: RefCell::new(FxHashMap::default()),
             narrow_type_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 1024,
                 Default::default(),
             )),
         }
+    }
+
+    fn cache_entry_deps(db: &dyn TypeDatabase, key: TypeId, result: TypeId) -> FxHashSet<DefId> {
+        let mut deps = FxHashSet::default();
+        deps.extend(crate::visitor::collect_lazy_def_ids(db, key));
+        deps.extend(crate::visitor::collect_lazy_def_ids(db, result));
+        deps
+    }
+
+    fn remove_index_for_key(
+        index: &RefCell<FxHashMap<DefId, FxHashSet<TypeId>>>,
+        entry_deps: &RefCell<FxHashMap<TypeId, FxHashSet<DefId>>>,
+        key: TypeId,
+    ) {
+        let Some(deps) = entry_deps.borrow_mut().remove(&key) else {
+            return;
+        };
+        let mut empty_defs = Vec::new();
+        {
+            let mut index = index.borrow_mut();
+            for def_id in deps {
+                if let Some(keys) = index.get_mut(&def_id) {
+                    keys.remove(&key);
+                    if keys.is_empty() {
+                        empty_defs.push(def_id);
+                    }
+                }
+            }
+            for def_id in empty_defs {
+                index.remove(&def_id);
+            }
+        }
+    }
+
+    fn index_cache_entry(
+        db: &dyn TypeDatabase,
+        index: &RefCell<FxHashMap<DefId, FxHashSet<TypeId>>>,
+        entry_deps: &RefCell<FxHashMap<TypeId, FxHashSet<DefId>>>,
+        key: TypeId,
+        result: TypeId,
+    ) {
+        Self::remove_index_for_key(index, entry_deps, key);
+
+        let deps = Self::cache_entry_deps(db, key, result);
+        if deps.is_empty() {
+            return;
+        }
+
+        {
+            let mut index = index.borrow_mut();
+            for &def_id in &deps {
+                index.entry(def_id).or_default().insert(key);
+            }
+        }
+        entry_deps.borrow_mut().insert(key, deps);
+    }
+
+    fn invalidate_indexed_entries(
+        cache: &RefCell<FxHashMap<TypeId, TypeId>>,
+        index: &RefCell<FxHashMap<DefId, FxHashSet<TypeId>>>,
+        entry_deps: &RefCell<FxHashMap<TypeId, FxHashSet<DefId>>>,
+        def_id: DefId,
+    ) {
+        let keys = index.borrow_mut().remove(&def_id).unwrap_or_default();
+        if keys.is_empty() {
+            return;
+        }
+        {
+            let mut cache = cache.borrow_mut();
+            for key in &keys {
+                cache.remove(key);
+            }
+        }
+        for key in keys {
+            Self::remove_index_for_key(index, entry_deps, key);
+        }
+    }
+
+    /// Store a type-resolution result and index any lazy `DefId` dependencies
+    /// reachable from the cache key or result.
+    pub fn cache_resolve_result(&self, db: &dyn TypeDatabase, key: TypeId, result: TypeId) {
+        self.resolve_cache.borrow_mut().insert(key, result);
+        Self::index_cache_entry(
+            db,
+            &self.resolve_cache_def_index,
+            &self.resolve_cache_entry_deps,
+            key,
+            result,
+        );
+    }
+
+    /// Store a type-resolution result only if no entry exists, returning the
+    /// value that remains in the cache.
+    pub fn cache_resolve_result_if_absent(
+        &self,
+        db: &dyn TypeDatabase,
+        key: TypeId,
+        result: TypeId,
+    ) -> TypeId {
+        {
+            let mut cache = self.resolve_cache.borrow_mut();
+            if let Some(&existing) = cache.get(&key) {
+                return existing;
+            }
+            cache.insert(key, result);
+        }
+        Self::index_cache_entry(
+            db,
+            &self.resolve_cache_def_index,
+            &self.resolve_cache_entry_deps,
+            key,
+            result,
+        );
+        result
+    }
+
+    /// Store a contextual-resolution result and index lazy `DefId`
+    /// dependencies reachable from the cache key or result.
+    pub fn cache_contextual_resolve_result(
+        &self,
+        db: &dyn TypeDatabase,
+        key: TypeId,
+        result: TypeId,
+    ) {
+        self.contextual_resolve_cache
+            .borrow_mut()
+            .insert(key, result);
+        Self::index_cache_entry(
+            db,
+            &self.contextual_resolve_cache_def_index,
+            &self.contextual_resolve_cache_entry_deps,
+            key,
+            result,
+        );
+    }
+
+    /// Clear contextual-resolution entries and their dependency indexes.
+    pub fn clear_contextual_resolve_cache(&self) {
+        self.contextual_resolve_cache.borrow_mut().clear();
+        self.contextual_resolve_cache_def_index.borrow_mut().clear();
+        self.contextual_resolve_cache_entry_deps
+            .borrow_mut()
+            .clear();
+    }
+
+    /// Remove only resolve-cache entries that depend on `def_id`.
+    pub fn invalidate_resolve_cache_for_def(&self, def_id: DefId) {
+        Self::invalidate_indexed_entries(
+            &self.resolve_cache,
+            &self.resolve_cache_def_index,
+            &self.resolve_cache_entry_deps,
+            def_id,
+        );
+    }
+
+    /// Remove only contextual-resolution entries that depend on `def_id`.
+    pub fn invalidate_contextual_resolve_cache_for_def(&self, def_id: DefId) {
+        Self::invalidate_indexed_entries(
+            &self.contextual_resolve_cache,
+            &self.contextual_resolve_cache_def_index,
+            &self.contextual_resolve_cache_entry_deps,
+            def_id,
+        );
     }
 }
 
@@ -529,9 +704,7 @@ impl<'a> NarrowingContext<'a> {
             );
         if !is_unresolved_symbolic {
             self.cache
-                .resolve_cache
-                .borrow_mut()
-                .insert(type_id, result);
+                .cache_resolve_result(self.db.as_type_database(), type_id, result);
         }
         result
     }

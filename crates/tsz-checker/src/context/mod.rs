@@ -260,6 +260,13 @@ pub struct EnvEvalCacheEntry {
     pub(crate) depth_exceeded: bool,
 }
 
+#[derive(Default)]
+pub(crate) struct EnvEvalCacheState {
+    entries: RefCell<FxHashMap<TypeId, EnvEvalCacheEntry>>,
+    def_index: RefCell<FxHashMap<DefId, FxHashSet<TypeId>>>,
+    entry_deps: RefCell<FxHashMap<TypeId, FxHashSet<DefId>>>,
+}
+
 /// Info about a symbol that came from destructuring a union type.
 /// Used for correlated discriminant narrowing: when `const { data, isSuccess } = getResult()`,
 /// narrowing `isSuccess` should also narrow `data`.
@@ -613,14 +620,9 @@ pub struct CheckerContext<'a> {
         FxHashMap<NodeIndex, std::rc::Rc<crate::classes_domain::class_summary::ClassChainSummary>>,
     >,
 
-    /// Shared evaluation cache for `evaluate_type_with_env` results.
-    /// Avoids re-evaluating the same `TypeId` through recursive mapped/conditional
-    /// types on every call (e.g., `DeepPartial<Normalize<T>>` accessed 11k+ times
-    /// in optional-chain-heavy benchmarks). Analogous to `node_types` for nodes.
-    ///
-    /// The cache also preserves whether evaluation exceeded the solver recursion
-    /// limit so follow-up validation passes can still surface TS2589 from a cache hit.
-    pub(crate) env_eval_cache: RefCell<FxHashMap<TypeId, EnvEvalCacheEntry>>,
+    /// Shared evaluation cache for `evaluate_type_with_env` results plus a
+    /// reverse `DefId` dependency index for targeted invalidation.
+    pub(crate) env_eval_cache: EnvEvalCacheState,
 
     /// Cache class symbol -> class declaration node lookups used in inheritance queries.
     /// Stores misses as `None` to avoid repeated declaration scans on hot paths.
