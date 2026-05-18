@@ -902,7 +902,9 @@ impl<'a> DeclarationEmitter<'a> {
                                 self.write("?");
                             }
                             if !is_private {
-                                self.emit_flattened_binding_type_annotation(ident_idx, type_id);
+                                self.emit_flattened_binding_type_annotation(
+                                    ident_idx, type_id, None,
+                                );
                             }
                             self.write(";");
                             self.write_line();
@@ -2543,6 +2545,14 @@ impl<'a> DeclarationEmitter<'a> {
 
                     self.write(";");
                     self.write_line();
+                    for (_, decl_idx, decl_node, decl) in &regular_decls[group_start..group_end] {
+                        self.emit_js_export_equals_type_alias_namespace_for_name(
+                            decl.name,
+                            self.arena
+                                .get(*decl_idx)
+                                .map_or(decl_node.pos, |node| node.pos),
+                        );
+                    }
                     group_start = group_end;
                 }
             }

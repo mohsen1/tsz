@@ -109,6 +109,89 @@ export namespace Outer {
 }
 
 #[test]
+fn test_internal_namespace_does_not_retain_private_module_interface() {
+    let source = r#"
+export var x = 1;
+interface Iterator<T> {
+    value: T;
+}
+
+namespace Query {
+    export function fromDoWhile<T>(doWhile: (test: Iterator<T>) => boolean): Iterator<T> {
+        return null;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert_eq!(
+        "export declare var x: number;",
+        output.trim(),
+        "Expected private namespace dependencies to stay out of module DTS: {output}"
+    );
+}
+
+#[test]
+fn test_exported_namespace_retains_private_module_interface_dependency() {
+    let source = r#"
+export var x = 1;
+interface Iterator<T> {
+    value: T;
+}
+
+export namespace Query {
+    export function fromDoWhile<T>(doWhile: (test: Iterator<T>) => boolean): Iterator<T> {
+        return null;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("interface Iterator<T>"),
+        "Expected private interface to remain when exported namespace references it: {output}"
+    );
+    assert!(
+        output.contains("export declare namespace Query"),
+        "Expected exported namespace to remain public: {output}"
+    );
+    assert!(
+        output.contains("test: Iterator<T>"),
+        "Expected exported namespace member to keep its private dependency reference: {output}"
+    );
+}
+
+#[test]
+fn test_named_exported_namespace_retains_private_module_interface_dependency() {
+    let source = r#"
+export { Query as PublicQuery };
+interface Private {
+    value: string;
+}
+
+namespace Query {
+    export function f(x: Private): Private {
+        return x;
+    }
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export { Query as PublicQuery };"),
+        "Expected aliased named namespace export to remain public: {output}"
+    );
+    assert!(
+        output.contains("interface Private"),
+        "Expected private interface to remain when named-exported namespace references it: {output}"
+    );
+    assert!(
+        output.contains("function f(x: Private): Private;"),
+        "Expected named-exported namespace member to keep its private dependency reference: {output}"
+    );
+}
+
+#[test]
 fn test_throw_only_unannotated_returns_void() {
     let source = r#"
 export function f() {
@@ -555,6 +638,44 @@ export function j() {}
 }
 
 #[test]
+fn test_js_local_renamed_export_function_with_jsdoc_emits_before_alias_group() {
+    let source = r#"
+export function i() {}
+/**
+ * @param {number} x
+ */
+function hh(x) {
+    return x;
+}
+export { hh as h };
+export function j() {}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let i_pos = output
+        .find("export function i(): void;")
+        .unwrap_or_else(|| panic!("missing i declaration: {output}"));
+    let j_pos = output
+        .find("export function j(): void;")
+        .unwrap_or_else(|| panic!("missing j declaration: {output}"));
+    let hh_pos = output
+        .find("declare function hh(x: number): number;")
+        .unwrap_or_else(|| panic!("missing deferred hh declaration: {output}"));
+    let alias_pos = output
+        .find("export { hh as h };")
+        .unwrap_or_else(|| panic!("missing alias group: {output}"));
+
+    assert!(
+        i_pos < j_pos && j_pos < hh_pos && hh_pos < alias_pos,
+        "Expected JSDoc-typed local export alias function to emit before the trailing alias group: {output}"
+    );
+    assert!(
+        output.contains("/**\n * @param {number} x\n */\ndeclare function hh"),
+        "Expected deferred local function to keep its JSDoc comment: {output}"
+    );
+}
+
+#[test]
 fn test_js_local_enum_exports_are_deferred_before_alias_group() {
     let source = r#"
 export enum A {}
@@ -603,6 +724,25 @@ module.exports.j = function j() {}
         output.matches("export {").count(),
         1,
         "Expected exactly one CJS export alias statement: {output}"
+    );
+}
+
+#[test]
+fn test_js_cjs_synthetic_function_export_with_jsdoc_is_not_alias_deferred() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} value
+ */
+module.exports.map = function map(value) {
+    return value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export function map(value: number): number;"),
+        "Expected CJS synthetic function export to emit at its own statement: {output}"
     );
 }
 
@@ -760,6 +900,67 @@ export class Next {}
     assert!(
         !output.contains("*/\nexport declare class Next"),
         "Did not expect returned object member JSDoc to leak to the next declaration: {output}"
+    );
+}
+
+#[test]
+fn test_returned_object_literal_local_function_declarations_inline() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function foo<T>(v: T) {
+    function a<T>(a: T) { return a; }
+    function b(): T { return v; }
+
+    function c<T>(v: T) {
+        function a<T>(a: T) { return a; }
+        function b(): T { return v; }
+        return { a, b };
+    }
+
+    return { a, b, c };
+}
+"#,
+    );
+
+    let expected = r#"declare function foo<T>(v: T): {
+    a: <T_1>(a: T_1) => T_1;
+    b: () => T;
+    c: <T_1>(v: T_1) => {
+        a: <T_2>(a: T_2) => T_2;
+        b: () => T_1;
+    };
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected returned local function declarations to inline as object member function types: {output}"
+    );
+}
+
+#[test]
+fn test_returned_object_literal_local_function_overloads_preserve_signatures() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function foo() {
+    function a(x: string): string;
+    function a(x: number): number;
+    function a(x: string | number) { return x; }
+
+    return { a };
+}
+"#,
+    );
+
+    let expected = r#"declare function foo(): {
+    a: {
+        (x: string): string;
+        (x: number): number;
+    };
+};"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected returned overloaded local function declarations to preserve every overload signature: {output}"
     );
 }
 
@@ -1739,6 +1940,144 @@ declare const j: {
 }
 
 #[test]
+fn test_js_typedef_before_export_equals_function_declaration_stays_local() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | number} Value */
+/**
+ * @param {Value} value
+ * @returns {Value}
+ */
+function make(value) {
+    return value;
+}
+module.exports = make;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = make;")
+        .expect("Expected CommonJS export assignment");
+    let comment_pos = output
+        .find("/** @typedef {string | number} Value */")
+        .expect("Expected source typedef comment before function");
+    let function_pos = output
+        .find("declare function make(value: Value): Value;")
+        .expect("Expected function declaration to use the typedef alias");
+    let alias_pos = output
+        .find("type Value = string | number;")
+        .expect("Expected local typedef alias");
+
+    assert!(
+        comment_pos < export_pos && export_pos < function_pos && function_pos < alias_pos,
+        "Expected commented export= function declaration and local alias after it: {output}"
+    );
+    assert!(
+        !output.contains("export type Value"),
+        "CommonJS export= typedef alias should stay local: {output}"
+    );
+}
+
+#[test]
+fn test_js_typedef_before_export_equals_class_declaration_stays_local() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @typedef {string | number} Whatever
+ */
+class Conn {
+    constructor() {}
+    item = 3;
+    method() {}
+}
+module.exports = Conn;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = Conn;")
+        .expect("Expected CommonJS export assignment");
+    let comment_pos = output
+        .find("/**\n * @typedef {string | number} Whatever\n */")
+        .expect("Expected source typedef comment before class");
+    let class_pos = output
+        .find("declare class Conn")
+        .expect("Expected class declaration");
+    let namespace_pos = output
+        .find("declare namespace Conn")
+        .expect("Expected merged namespace declaration");
+    let alias_pos = output
+        .find("type Whatever = string | number;")
+        .expect("Expected local typedef alias");
+
+    assert!(
+        export_pos < comment_pos
+            && comment_pos < class_pos
+            && class_pos < namespace_pos
+            && namespace_pos < alias_pos,
+        "Expected export=, commented class, namespace, then local alias: {output}"
+    );
+    assert!(
+        output.contains("export { Whatever };"),
+        "Expected namespace to re-export the local typedef alias: {output}"
+    );
+    assert!(
+        !output.contains("export type Whatever"),
+        "CommonJS export= typedef alias should stay local: {output}"
+    );
+}
+
+#[test]
+fn test_js_typedef_before_private_function_in_es_module_stays_exported() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | number} Value */
+function local(value) { return value; }
+export const x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected sibling ES export to stay exported: {output}"
+    );
+    assert!(
+        output.contains("export type Value = string | number;"),
+        "Expected top-level typedef before a private JS function to follow ES module export policy: {output}"
+    );
+    assert!(
+        !output.contains("\ntype Value = string | number;"),
+        "Did not expect ES module typedef to be consumed early as a local alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_typedef_before_private_class_in_es_module_stays_exported() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | number} Value */
+class Local {
+    method() {}
+}
+export const x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("export const x: 1;"),
+        "Expected sibling ES export to stay exported: {output}"
+    );
+    assert!(
+        output.contains("export type Value = string | number;"),
+        "Expected top-level typedef before a private JS class to follow ES module export policy: {output}"
+    );
+    assert!(
+        !output.contains("\ntype Value = string | number;"),
+        "Did not expect ES module typedef to be consumed early as a local alias: {output}"
+    );
+}
+
+#[test]
 fn test_js_function_declaration_uses_jsdoc_signature_types() {
     let source = r#"
 /**
@@ -2266,6 +2605,105 @@ export { x, f };
 }
 
 #[test]
+fn test_js_named_export_interface_folds_into_declaration() {
+    let source = r#"
+interface G {}
+export { G };
+interface HH {}
+export { HH as H };
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("export interface G"),
+        "Expected same-name JS interface export to fold into the declaration: {output}"
+    );
+    assert!(
+        output.contains("interface HH"),
+        "Expected renamed interface alias to keep its local declaration: {output}"
+    );
+    assert!(
+        output.contains("export { HH as H };"),
+        "Expected renamed interface alias to remain in the grouped export aliases: {output}"
+    );
+    assert!(
+        !output.contains("export { G"),
+        "Did not expect a redundant same-name export alias for G: {output}"
+    );
+}
+
+#[test]
+fn test_js_mixed_named_export_partitions_interface_and_value_specifiers() {
+    let source = r#"
+interface G {}
+interface H {}
+const x = 1;
+export { G, H as HH, x };
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let g_pos = output
+        .find("export interface G")
+        .expect("expected same-name interface export to fold into declaration");
+    let h_pos = output
+        .find("interface H")
+        .expect("expected renamed interface to keep a local declaration");
+    let x_pos = output
+        .find("export const x: 1;")
+        .expect("expected same-name value export to fold into declaration");
+    let alias_pos = output
+        .find("export { H as HH };")
+        .expect("expected renamed interface alias to remain in trailing export aliases");
+
+    assert!(
+        g_pos < h_pos && h_pos < x_pos && x_pos < alias_pos,
+        "Expected mixed export specifiers to be partitioned in tsc order: {output}"
+    );
+    assert!(
+        !output.contains("export { G, H as HH, x };"),
+        "Did not expect the original mixed export clause to be emitted: {output}"
+    );
+}
+
+#[test]
+fn test_js_interface_recovery_orders_construct_call_then_members() {
+    let source = r#"
+export interface C<T, U> {
+    field: T & U;
+    (): number;
+    (x: T): U;
+    new (): string;
+    new (x: T): U;
+    method(): number;
+    optMethod?(): number;
+}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    let construct_pos = output
+        .find("new (): string;")
+        .unwrap_or_else(|| panic!("missing construct signature: {output}"));
+    let call_pos = output
+        .find("(): number;")
+        .unwrap_or_else(|| panic!("missing call signature: {output}"));
+    let field_pos = output
+        .find("field: T & U;")
+        .unwrap_or_else(|| panic!("missing field: {output}"));
+    let method_pos = output
+        .find("method(): number;")
+        .unwrap_or_else(|| panic!("missing method: {output}"));
+
+    assert!(
+        construct_pos < call_pos && call_pos < field_pos && field_pos < method_pos,
+        "Expected JS interface recovery to order construct signatures, call signatures, then source-order members: {output}"
+    );
+    assert!(
+        !output.contains("optMethod"),
+        "Expected optional JS recovered interface methods to be omitted like tsc: {output}"
+    );
+}
+
+#[test]
 fn test_js_named_export_function_preserves_jsdoc_signature_at_export_position() {
     let output = emit_js_dts(
         r#"
@@ -2568,6 +3006,56 @@ const Strings = {
 }
 
 #[test]
+fn test_js_exported_object_literal_property_reference_member_emits_import_alias() {
+    let output = emit_js_dts_with_usage_analysis(
+        r##"
+export const colors = {
+    royalBlue: "#6400e4",
+};
+
+export const brandColors = {
+    purple: colors.royalBlue,
+};
+"##,
+    );
+
+    let expected = r##"export namespace colors {
+    let royalBlue: string;
+}
+export namespace brandColors {
+    import purple = colors.royalBlue;
+    export { purple };
+}"##;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected exported object literal property references to stay namespace-shaped: {output}"
+    );
+}
+
+#[test]
+fn test_js_exported_object_literal_ordinary_property_access_member_emits_value() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+const s = "x";
+
+export const ns = {
+    len: s.length,
+};
+"#,
+    );
+
+    let expected = r#"export namespace ns {
+    let len: number;
+}"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected ordinary property accesses to emit typed namespace values, not import aliases: {output}"
+    );
+}
+
+#[test]
 fn test_js_class_zero_arg_constructor_is_omitted() {
     let source = r#"
 export class Preferences {
@@ -2656,6 +3144,75 @@ module.exports = a;
     );
     assert_eq!(
         output.matches("export = a;").count(),
+        1,
+        "Did not expect duplicate JS export= statements: {output}"
+    );
+}
+
+#[test]
+fn test_js_module_exports_typed_object_keeps_value_declaration_with_usage_analysis() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @typedef {{x: number}} Item
+ */
+/**
+ * @type {Item}
+ */
+const x = { x: 12 };
+module.exports = x;
+"#,
+    );
+
+    assert!(
+        output.starts_with("export = x;"),
+        "Expected CommonJS export assignment to stay before its value declaration: {output}"
+    );
+    assert!(
+        output.contains("const x: Item;"),
+        "Expected typed export-equals object root to emit as a value declaration: {output}"
+    );
+    assert!(
+        !output.contains("namespace x {\n    let x: number;"),
+        "Did not expect the object-literal namespace shortcut for an export-equals root: {output}"
+    );
+    assert!(
+        output.contains("declare namespace x {\n    export { Item };\n}"),
+        "Expected export-equals root namespace to re-export local typedef aliases: {output}"
+    );
+    assert!(
+        output.contains("type Item = {\n    x: number;\n};"),
+        "Expected local JSDoc typedef dependency to remain available: {output}"
+    );
+}
+
+#[test]
+fn test_js_module_exports_function_emits_before_hoisted_jsdoc() {
+    let source = r#"
+/**
+ * @param {number} timeout
+ */
+function Timer(timeout) {
+    this.timeout = timeout;
+}
+module.exports = Timer;
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.starts_with("export = Timer;\n/**"),
+        "Expected JS module.exports export= to precede hoisted function JSDoc: {output}"
+    );
+    assert!(
+        output.contains("declare function Timer(timeout: number): void;"),
+        "Expected hoisted function declaration to keep its JSDoc signature: {output}"
+    );
+    assert_eq!(
+        output.matches("export = Timer;").count(),
         1,
         "Did not expect duplicate JS export= statements: {output}"
     );
@@ -2851,6 +3408,75 @@ module.exports = {
 }
 
 #[test]
+fn test_object_shorthand_preserves_declared_identifier_type_after_narrowing() {
+    let source = r#"
+class RoyalGuard {
+    isLeader(): this is LeadGuard {
+        return this instanceof LeadGuard;
+    }
+    isFollower(): this is FollowerGuard {
+        return this instanceof FollowerGuard;
+    }
+}
+
+class LeadGuard extends RoyalGuard {
+    lead(): void {}
+}
+
+class FollowerGuard extends RoyalGuard {
+    follow(): void {}
+}
+
+let guard: RoyalGuard = new FollowerGuard();
+
+if (guard.isLeader()) {
+    guard.lead();
+} else if (guard.isFollower()) {
+    guard.follow();
+}
+
+var holder = { guard };
+
+if (holder.guard.isLeader()) {
+    holder.guard;
+} else {
+    holder.guard;
+}
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output.contains("declare var holder: {\n    guard: RoyalGuard;\n};"),
+        "Expected shorthand object member to use the declared annotation instead of a narrowed flow type: {output}"
+    );
+}
+
+#[test]
+fn test_object_shorthand_mixed_members_keep_resolved_member_types() {
+    let source = r#"
+class RoyalGuard {
+    isLeader(): this is LeadGuard {
+        return this instanceof LeadGuard;
+    }
+}
+
+class LeadGuard extends RoyalGuard {
+    lead(): void {}
+}
+
+let guard: RoyalGuard = new LeadGuard();
+var holder = { guard, generated: 1 };
+"#;
+    let output = emit_dts_with_usage_analysis(source);
+
+    assert!(
+        output
+            .contains("declare var holder: {\n    guard: RoyalGuard;\n    generated: number;\n};"),
+        "Expected mixed object literal to preserve declared shorthand member and resolved generated member: {output}"
+    );
+}
+
+#[test]
 fn test_js_commonjs_bracket_string_exports_emit_named_declarations() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -3035,6 +3661,34 @@ Object.defineProperty(module.exports.fn, "self", { value: module.exports.fn });
     assert!(
         !output.contains("declare function fn"),
         "Did not expect the consumed local function to be emitted separately: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_define_property_function_export_keeps_jsdoc_at_export_site() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+Object.defineProperty(module.exports, "a", { value: function a() {} });
+
+/**
+ * @param {number} value
+ * @return {string}
+ */
+function d(value) { return ""; }
+Object.defineProperty(module.exports, "d", { value: d });
+"#,
+    );
+
+    let expected = r#"export function a(): void;
+/**
+ * @param {number} value
+ * @return {string}
+ */
+export function d(value: number): string;"#;
+    assert_eq!(
+        output.trim(),
+        expected,
+        "Expected defineProperty-exported local function JSDoc to stay with the synthetic export: {output}"
     );
 }
 
@@ -3423,6 +4077,91 @@ export function Point(x, y) {
     assert!(
         output.contains("x: number | undefined;") && output.contains("y: number | undefined;"),
         "Expected this-assigned properties to be recovered on the companion class: {output}"
+    );
+}
+
+#[test]
+fn test_js_function_class_merge_omits_non_constructor_signature() {
+    let output = emit_js_dts(
+        r#"
+function C1() {
+    /**
+     * @param {number} x
+     * @param {number} y
+     * @returns {number}
+     */
+    this.prop = function (x, y) {
+        return x + y;
+    };
+}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+C1.prototype.method = function (x, y) {
+    return x + y;
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare function C1(): void;\ndeclare class C1 {"),
+        "Expected JS function plus prototype members to merge with a companion class: {output}"
+    );
+    assert!(
+        !output.contains("constructor();"),
+        "Expected companion class not to duplicate the already-emitted function signature as a constructor: {output}"
+    );
+    assert!(
+        output.contains("prop: (x: number, y: number) => number;")
+            && output.contains("method(x: number, y: number): number;"),
+        "Expected constructor-assigned and prototype members to remain in the companion class: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_static_expando_namespace_members_are_ambient_members() {
+    let output = emit_js_dts(
+        r#"
+function C1() {}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+C1.staticProp = function (x, y) {
+    return x + y;
+};
+
+class C2 {}
+
+/**
+ * @param {number} x
+ * @param {number} y
+ * @returns {number}
+ */
+C2.staticProp = function (x, y) {
+    return x + y;
+};
+"#,
+    );
+
+    assert!(
+        output.contains("declare namespace C1 {\n    /**")
+            && output.contains("    function staticProp(x: number, y: number): number;\n}"),
+        "Expected function static expando to emit as an ambient namespace member: {output}"
+    );
+    assert!(
+        output.contains("declare namespace C2 {\n    /**")
+            && output.contains("    function staticProp(x: number, y: number): number;\n}"),
+        "Expected class static expando to emit as an ambient namespace member: {output}"
+    );
+    assert!(
+        !output.contains("export function staticProp"),
+        "Did not expect explicit export on ambient namespace members: {output}"
     );
 }
 
@@ -4590,6 +5329,65 @@ module.exports = Timer;
 }
 
 #[test]
+fn test_js_commonjs_export_equals_function_jsdoc_follows_export_assignment() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} timeout
+ */
+function Timer(timeout) {
+    this.timeout = timeout;
+}
+module.exports = Timer;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = Timer;")
+        .expect("Expected CommonJS export assignment");
+    let jsdoc_pos = output
+        .find("/**\n * @param {number} timeout\n */")
+        .expect("Expected Timer JSDoc block");
+    let function_pos = output
+        .find("declare function Timer(timeout: number): void;")
+        .expect("Expected Timer function declaration");
+    assert!(
+        export_pos < jsdoc_pos && jsdoc_pos < function_pos,
+        "Expected export= before the function JSDoc and declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_export_equals_plain_function_jsdoc_follows_export_assignment() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @param {number} value
+ * @returns {string}
+ */
+function format(value) {
+    return String(value);
+}
+module.exports = format;
+"#,
+    );
+
+    let export_pos = output
+        .find("export = format;")
+        .expect("Expected CommonJS export assignment");
+    let jsdoc_pos = output
+        .find("/**\n * @param {number} value\n * @returns {string}\n */")
+        .expect("Expected format JSDoc block");
+    let function_pos = output
+        .find("declare function format(value: number): string;")
+        .expect("Expected format function declaration");
+    assert!(
+        export_pos < jsdoc_pos && jsdoc_pos < function_pos,
+        "Expected export= before the plain function JSDoc and declaration: {output}"
+    );
+}
+
+#[test]
 fn test_js_exported_function_like_class_preserves_constructor_jsdoc_block() {
     let output = emit_js_dts_with_usage_analysis(
         r#"
@@ -5052,6 +5850,56 @@ fn test_jsdoc_property_typedef_preserves_alias_description() {
     assert!(
         output.contains("/**\n     * - Enables bar.\n     */\n    bar: boolean;"),
         "Expected property description to remain on the property: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_typedef_same_line_link_description_is_preserved() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @typedef {Object} D1
+ * @property {1} e Just link to {@link NS.R} this time
+ * @property {1} m Wyatt Earp loved {@link N integers} I bet.
+ */
+
+/** @typedef {number} Attempt {@link https://wat} {@linkcode I think lingcod is better} {@linkplain or lutefisk}*/
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "/**\n * {@link https://wat} {@linkcode I think lingcod is better} {@linkplain or lutefisk}\n */\ntype Attempt = number;"
+        ),
+        "Expected same-line typedef link text to become alias JSDoc: {output}"
+    );
+    assert!(
+        output.contains("/**\n     * Just link to {@link NS.R} this time\n     */\n    e: 1;"),
+        "Expected property link tags to remain on object typedef members: {output}"
+    );
+    assert!(
+        output
+            .contains("/**\n     * Wyatt Earp loved {@link N integers} I bet.\n     */\n    m: 1;"),
+        "Expected renamed-link property text to remain on object typedef members: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_typedef_same_line_plain_description_is_preserved() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * Leading alias sentence.
+ * @typedef {string} RenamedAlias trailing alias sentence.
+ */
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "/**\n * Leading alias sentence.\n * trailing alias sentence.\n */\ntype RenamedAlias = string;"
+        ),
+        "Expected leading and same-line typedef descriptions to be preserved: {output}"
     );
 }
 
@@ -6939,8 +7787,8 @@ foo.default = 2;
     );
 
     assert!(
-        output.contains("declare namespace foo {\n    export let x: number;"),
-        "Expected ordinary expando property to be exported from merged namespace: {output}"
+        output.contains("declare namespace foo {\n    let x: number;"),
+        "Expected ordinary expando property to emit as an ambient namespace member: {output}"
     );
     assert!(
         output.contains("let _default: number;\n    export { _default as default };"),

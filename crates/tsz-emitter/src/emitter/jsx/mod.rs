@@ -563,6 +563,7 @@ pub(super) fn needs_quoting(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::process_jsx_text;
+    use crate::emitter::{JsxEmit, Printer as EmitPrinter, PrinterOptions};
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
@@ -573,6 +574,33 @@ mod tests {
         printer.set_source_text(source);
         printer.print(root);
         printer.finish().code
+    }
+
+    fn emit_jsx_react(source: &str) -> String {
+        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            jsx: JsxEmit::React,
+            ..Default::default()
+        };
+        let mut printer = EmitPrinter::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        printer.get_output().to_string()
+    }
+
+    fn emit_jsx_react_remove_comments(source: &str) -> String {
+        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            jsx: JsxEmit::React,
+            remove_comments: true,
+            ..Default::default()
+        };
+        let mut printer = EmitPrinter::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        printer.get_output().to_string()
     }
 
     #[test]
@@ -696,6 +724,67 @@ mod tests {
         assert!(
             !output.contains("{null}"),
             "Trailing comment should not be dropped from JSX expression.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_classic_nested_element_trailing_line_comment_is_preserved() {
+        let source = "const xs = [1];\nconst x = <ul>{xs.map(x => (<li>{x}</li> // kept\n))}</ul>;";
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains("React.createElement(\"li\", null, x) // kept"),
+            "Classic JSX transform should preserve same-line comments after nested elements.\nOutput: {output}"
+        );
+        let after_comment = &output[output
+            .find("// kept")
+            .expect("nested JSX line comment should be emitted")..];
+        assert!(
+            after_comment.starts_with("// kept\n"),
+            "Classic JSX trailing line comment must keep the source newline.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_classic_self_closing_trailing_line_comment_is_preserved() {
+        let source = "const x = (<Item value={1} /> // kept\n);";
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains("React.createElement(Item, { value: 1 }) // kept"),
+            "Classic JSX transform should preserve same-line comments after self-closing elements.\nOutput: {output}"
+        );
+        let after_comment = &output[output
+            .find("// kept")
+            .expect("self-closing JSX line comment should be emitted")..];
+        assert!(
+            after_comment.starts_with("// kept\n"),
+            "Classic JSX self-closing trailing line comment must keep the source newline.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_classic_fragment_trailing_line_comment_is_preserved() {
+        let source = "const x = (<>{x}</> // kept\n);";
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains("React.createElement(React.Fragment"),
+            "Classic JSX fragment transform should emit a React.Fragment call.\nOutput: {output}"
+        );
+        let after_comment = &output[output
+            .find("// kept")
+            .expect("fragment JSX line comment should be emitted")..];
+        assert!(
+            after_comment.starts_with("// kept\n"),
+            "Classic JSX fragment trailing line comment must keep the source newline.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn jsx_classic_trailing_line_comment_honors_remove_comments() {
+        let source = "const x = (<Item value={1} /> // kept\n);";
+        let output = emit_jsx_react_remove_comments(source);
+        assert!(
+            !output.contains("// kept"),
+            "Classic JSX trailing comments should not be emitted with remove_comments.\nOutput: {output}"
         );
     }
 

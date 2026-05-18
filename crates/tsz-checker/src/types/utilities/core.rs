@@ -9,6 +9,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, node::PropertyDeclData};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::computation::ContextualTypeContext;
 
 /// Result from resolving literal string keys against an object type.
 pub(crate) struct LiteralKeysResult {
@@ -596,7 +597,7 @@ impl<'a> CheckerState<'a> {
                     .flatten()
             })?;
         let contextual_type = self.evaluate_contextual_type(contextual_type);
-        let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+        let helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             contextual_type,
             self.ctx.compiler_options.no_implicit_any,
@@ -654,7 +655,7 @@ impl<'a> CheckerState<'a> {
         {
             return Some(rest_tuple_type);
         }
-        let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+        let helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             expected,
             self.ctx.compiler_options.no_implicit_any,
@@ -925,7 +926,7 @@ impl<'a> CheckerState<'a> {
         ) {
             return None;
         }
-        let helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+        let helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             expected,
             self.ctx.compiler_options.no_implicit_any,

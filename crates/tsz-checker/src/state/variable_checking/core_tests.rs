@@ -1189,6 +1189,81 @@ type T7<S extends 'a'|'b', L extends 'a'> = {[key in AB[S]]: true}[L];
             "Expected no TS2322 when index constraint is within keyof: {ts2322:?}"
         );
     }
+
+    /// Regression: nested mapped type `{ [P in K]: T[P] }` inside `[K in keyof T]`,
+    /// when the inner mapped is passed as a type argument to *any* generic, must
+    /// not surface TS2536 for `T[P]`. The bug was that `check_type_for_missing_names`
+    /// pushed `K` into `type_parameter_scope` as a no-constraint provisional,
+    /// stomping on the proper provisional installed by `check_type_node`. Later
+    /// indexed-access well-formedness then walked the constraint chain
+    /// `P → K → ??` and aborted at the no-constraint K, falsely reporting TS2536.
+    #[test]
+    fn nested_mapped_with_generic_type_argument_no_ts2536() {
+        let source = r#"
+type Wrap<X> = { wrapped: X };
+type Probe<T> = {
+  [K in keyof T]: Wrap<{ [P in K]: T[P] }>;
+};
+        "#;
+        let ts2536 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2536)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2536.len(),
+            0,
+            "TS2536 must not fire for T[P] inside Wrap<{{[P in K]:T[P]}}>: {ts2536:?}"
+        );
+    }
+
+    /// Same shape with renamed iteration variables — the fix must apply to the
+    /// structural rule, not to the literal `K`/`P` spellings.
+    #[test]
+    fn nested_mapped_with_generic_type_argument_renamed_no_ts2536() {
+        let source = r#"
+type Wrap<X> = { wrapped: X };
+type Probe<U> = {
+  [Outer in keyof U]: Wrap<{ [Inner in Outer]: U[Inner] }>;
+};
+        "#;
+        let ts2536 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2536)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2536.len(),
+            0,
+            "TS2536 must not fire for U[Inner] with renamed iteration vars: {ts2536:?}"
+        );
+    }
+
+    /// Higher-order conditional shape from issue #6562. The outer evaluation
+    /// (`Equal2` returning `never`/`true`) is a separate bug; this test asserts
+    /// only that the false TS2536 on `T[P]` does not surface.
+    #[test]
+    fn nested_mapped_in_higher_order_conditional_no_ts2536() {
+        let source = r#"
+type Equal2<X, Y> =
+  (<Z>() => Z extends X ? 1 : 2) extends (<Z>() => Z extends Y ? 1 : 2)
+    ? true
+    : false;
+type MutableKeys<T> = {
+  [K in keyof T]-?: Equal2<
+    { [P in K]: T[P] },
+    { -readonly [P in K]: T[P] }
+  > extends true ? K : never;
+}[keyof T];
+        "#;
+        let ts2536 = check_source_diagnostics(source)
+            .into_iter()
+            .filter(|d| d.code == 2536)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ts2536.len(),
+            0,
+            "TS2536 must not fire for the higher-order MutableKeys pattern: {ts2536:?}"
+        );
+    }
 }
 
 /// Tests for namespace+interface merge typeof resolution.

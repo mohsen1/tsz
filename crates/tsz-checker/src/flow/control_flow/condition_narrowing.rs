@@ -5,81 +5,13 @@ use crate::query_boundaries::flow_analysis::{
     empty_object_type, is_unit_type, is_unknown_narrowing_literal,
 };
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
-use tsz_binder::{FlowNodeId, SymbolId, flow_flags, symbol_flags};
+use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{GuardSense, NarrowingContext, TypeGuard, TypeId, TypeofKind};
 
 impl<'a> FlowAnalyzer<'a> {
-    fn antecedent_chain_excludes_null_for_target(
-        &self,
-        flow_id: FlowNodeId,
-        target: NodeIndex,
-        visited: &mut Vec<FlowNodeId>,
-    ) -> bool {
-        if flow_id.is_none() || visited.contains(&flow_id) {
-            return false;
-        }
-        visited.push(flow_id);
-
-        let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
-            return false;
-        };
-        if flow.has_any_flags(flow_flags::CONDITION)
-            && self.condition_branch_excludes_null_for_target(flow, target)
-        {
-            return true;
-        }
-
-        let mut saw_antecedent = false;
-        for &antecedent in &flow.antecedent {
-            if antecedent.is_none() {
-                continue;
-            }
-            saw_antecedent = true;
-            if !self.antecedent_chain_excludes_null_for_target(antecedent, target, visited) {
-                return false;
-            }
-        }
-        saw_antecedent
-    }
-
-    fn condition_branch_excludes_null_for_target(
-        &self,
-        flow: &tsz_binder::FlowNode,
-        target: NodeIndex,
-    ) -> bool {
-        let Some(node) = self.arena.get(flow.node) else {
-            return false;
-        };
-        let Some(bin) = self.arena.get_binary_expr(node) else {
-            return false;
-        };
-        let (is_equals, is_strict) = match bin.operator_token {
-            k if k == SyntaxKind::EqualsEqualsEqualsToken as u16 => (true, true),
-            k if k == SyntaxKind::ExclamationEqualsEqualsToken as u16 => (false, true),
-            k if k == SyntaxKind::EqualsEqualsToken as u16 => (true, false),
-            k if k == SyntaxKind::ExclamationEqualsToken as u16 => (false, false),
-            _ => return false,
-        };
-        let Some(nullish) = self.nullish_comparison(bin.left, bin.right, target) else {
-            return false;
-        };
-        let is_true_branch = flow.has_any_flags(flow_flags::TRUE_CONDITION);
-        let effective_truth = if is_equals {
-            is_true_branch
-        } else {
-            !is_true_branch
-        };
-
-        if is_strict {
-            nullish == TypeId::NULL && !effective_truth
-        } else {
-            !effective_truth
-        }
-    }
-
     fn union_logical_condition_branches(&self, types: Vec<TypeId>) -> TypeId {
         let mut members = Vec::with_capacity(types.len());
         let mut saw_reachable = false;
@@ -712,8 +644,7 @@ impl<'a> FlowAnalyzer<'a> {
             && let Some(current_exclusion) =
                 self.typeof_exclusion_for_condition(condition_idx, target, is_true_branch)
         {
-            let prior_exclusions =
-                self.antecedent_typeof_exclusion_mask(antecedent_id, target, &mut Vec::new());
+            let prior_exclusions = self.antecedent_typeof_exclusion_mask(antecedent_id, target);
             let exclusions = prior_exclusions | Self::typeof_exclusion_bit(current_exclusion);
             if exclusions == Self::ALL_TYPEOF_EXCLUSIONS {
                 return empty_object_type(self.interner);
@@ -845,7 +776,6 @@ impl<'a> FlowAnalyzer<'a> {
                                 && self.antecedent_chain_excludes_null_for_target(
                                     antecedent_id,
                                     target,
-                                    &mut Vec::new(),
                                 )
                             {
                                 return narrowing.narrow_excluding_type(result, TypeId::NULL);
@@ -984,9 +914,7 @@ impl<'a> FlowAnalyzer<'a> {
                 if self.is_matching_reference(condition_ref, target) {
                     if is_true_branch {
                         // Remove null/undefined (truthy narrowing)
-                        let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                        let narrowed = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
-                        return narrowed;
+                        return flow_boundary::narrow_non_nullish(self.interner, type_id);
                     }
                     // False branch - keep only falsy types (use Solver for NaN handling)
                     return narrowing.narrow_to_falsy(type_id);
@@ -1347,11 +1275,7 @@ impl<'a> FlowAnalyzer<'a> {
                 );
                 if effective_truth
                     && typeof_kind == TypeofKind::Object
-                    && self.antecedent_chain_excludes_null_for_target(
-                        antecedent_id,
-                        target,
-                        &mut Vec::new(),
-                    )
+                    && self.antecedent_chain_excludes_null_for_target(antecedent_id, target)
                 {
                     return narrowing.narrow_excluding_type(narrowed, TypeId::NULL);
                 }
@@ -1797,9 +1721,7 @@ impl<'a> FlowAnalyzer<'a> {
             };
             if is_true_branch {
                 // x holds the truthy result → remove null/undefined
-                let narrowed = narrowing.narrow_excluding_type(type_id, TypeId::NULL);
-                let narrowed = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
-                return Some(narrowed);
+                return Some(flow_boundary::narrow_non_nullish(self.interner, type_id));
             }
             // x holds the falsy result → keep only falsy types
             return Some(narrowing.narrow_to_falsy(type_id));

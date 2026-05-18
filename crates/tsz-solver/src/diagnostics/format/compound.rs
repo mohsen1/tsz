@@ -854,12 +854,10 @@ impl<'a> TypeFormatter<'a> {
             .map(|&part| self.format_intersection_member(part))
             .collect::<Vec<_>>()
             .join(" & ");
-        let remainder_union = self.interner.union(union_remainders);
-        let remainder_display = match self.interner.lookup(remainder_union) {
-            Some(TypeData::Union(list_id)) => self
-                .format_ordered_union_members(self.interner.type_list(list_id).as_ref().to_vec()),
-            _ => self.format(remainder_union).into_owned(),
-        };
+        // Use sorted union_remainders directly rather than round-tripping through
+        // self.interner.union(), which canonically re-sorts by TypeId and discards
+        // the custom numeric sort order above (e.g. `0 | 2 | 1` → `0 | 1 | 2`).
+        let remainder_display = self.format_ordered_union_members(union_remainders);
         Some(format!("{common_display} & ({remainder_display})"))
     }
 

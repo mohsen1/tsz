@@ -148,7 +148,16 @@ pub(crate) struct ReturnTypeSnapshot {
 // CheckerContext snapshot methods
 // ---------------------------------------------------------------------------
 
-impl CheckerContext<'_> {
+impl<'a> CheckerContext<'a> {
+    /// Borrow the diagnostics-only speculation capability.
+    ///
+    /// This gives snapshot holders a narrow state handle instead of the full
+    /// checker context. The underlying methods still live here during the
+    /// first split so existing direct snapshot users keep their behavior.
+    pub(crate) const fn diagnostic_state(&mut self) -> DiagnosticState<'_, 'a> {
+        DiagnosticState { ctx: self }
+    }
+
     /// Lightweight diagnostic-only snapshot.
     ///
     /// Captures `diagnostics.len()` and clones `emitted_diagnostics`. Suitable
@@ -432,6 +441,34 @@ impl CheckerContext<'_> {
     }
 }
 
+/// Narrow capability for diagnostics-only speculation operations.
+///
+/// This is the first explicit capability split for `CheckerContext`: call
+/// sites that own a diagnostic speculation holder only need the ability to
+/// commit or roll back diagnostic state, not access to every checker cache and
+/// semantic helper on the full context.
+pub(crate) struct DiagnosticState<'ctx, 'a> {
+    ctx: &'ctx mut CheckerContext<'a>,
+}
+
+impl DiagnosticState<'_, '_> {
+    fn commit_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
+        self.ctx.commit_diagnostics(snap);
+    }
+
+    fn rollback_diagnostics(&mut self, snap: &DiagnosticSnapshot) {
+        self.ctx.rollback_diagnostics(snap);
+    }
+
+    fn rollback_diagnostics_filtered(
+        &mut self,
+        snap: &DiagnosticSnapshot,
+        keep: impl FnMut(&Diagnostic) -> bool,
+    ) {
+        self.ctx.rollback_diagnostics_filtered(snap, keep);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Snapshot holder for diagnostic speculation
 // ---------------------------------------------------------------------------
@@ -480,26 +517,26 @@ impl DiagnosticSpeculationSnapshot {
 
     /// Commit speculative diagnostics: they survive the snapshot's drop.
     /// Equivalent to dropping the snapshot without calling `rollback`.
-    pub(crate) fn commit(mut self, ctx: &mut CheckerContext) {
-        ctx.commit_diagnostics(&self.snapshot);
+    pub(crate) fn commit(mut self, diagnostics: &mut DiagnosticState<'_, '_>) {
+        diagnostics.commit_diagnostics(&self.snapshot);
         self.committed = true;
     }
 
     /// Roll back to the snapshot — discards every diagnostic produced after
     /// the snapshot was taken. Since `Drop` cannot access `CheckerContext`,
     /// this is the only way to discard speculative diagnostics.
-    pub(crate) fn rollback(mut self, ctx: &mut CheckerContext) {
-        ctx.rollback_diagnostics(&self.snapshot);
+    pub(crate) fn rollback(mut self, diagnostics: &mut DiagnosticState<'_, '_>) {
+        diagnostics.rollback_diagnostics(&self.snapshot);
         self.committed = true; // prevent any future misuse; Drop is a no-op anyway
     }
 
     /// Rollback and apply a filter to keep some speculative diagnostics.
     pub(crate) fn rollback_filtered(
         mut self,
-        ctx: &mut CheckerContext,
+        diagnostics: &mut DiagnosticState<'_, '_>,
         keep: impl FnMut(&Diagnostic) -> bool,
     ) {
-        ctx.rollback_diagnostics_filtered(&self.snapshot, keep);
+        diagnostics.rollback_diagnostics_filtered(&self.snapshot, keep);
         self.committed = true;
     }
 

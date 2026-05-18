@@ -919,11 +919,19 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
                 .checker
                 .index_accesses_have_distinct_type_param_keys(key_type, t_idx)
             {
-                if let Some(tracer) = &mut self.checker.tracer
-                    && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
+                // Surface tsc's full TS2322 + TS5075 chain via a dedicated
+                // failure reason. Falls back to the generic TypeMismatch
+                // shape when the target key is not a type parameter we
+                // can carry constraint info for.
+                let reason = self
+                    .checker
+                    .index_access_distinct_type_param_keys_failure_reason(key_type, t_idx)
+                    .unwrap_or(SubtypeFailureReason::TypeMismatch {
                         source_type: self.source,
                         target_type: self.target,
-                    })
+                    });
+                if let Some(tracer) = &mut self.checker.tracer
+                    && !tracer.on_mismatch_dyn(reason)
                 {
                     return SubtypeResult::False;
                 }
