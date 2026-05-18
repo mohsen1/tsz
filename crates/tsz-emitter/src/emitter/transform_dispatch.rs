@@ -335,6 +335,10 @@ impl<'a> Printer<'a> {
                 }
                 let system_export_fold = self.pending_system_namespace_export_fold.take();
                 let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                ns_emitter.set_const_enum_facts(
+                    self.const_enum_values.clone(),
+                    self.const_enum_import_aliases.clone(),
+                );
                 if let Some(export_names) = system_export_fold.as_deref() {
                     ns_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
                 }
@@ -420,6 +424,10 @@ impl<'a> Printer<'a> {
                             let mut ns_emitter = NamespaceES5Emitter::with_commonjs(
                                 self.arena,
                                 !merges_with_default_func,
+                            );
+                            ns_emitter.set_const_enum_facts(
+                                self.const_enum_values.clone(),
+                                self.const_enum_import_aliases.clone(),
                             );
                             // Cross-block export sharing
                             if let Some(module_decl) = self.arena.get_module(node) {
@@ -563,37 +571,10 @@ impl<'a> Printer<'a> {
                         self.ctx.original_module_kind = prev_original;
                     } else if !is_default
                         && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                        && let Some(inline_decls) = self.try_collect_inline_cjs_exports(idx, node)
+                        && let Some(schedule) = self.collect_cjs_export_variable_schedule(idx, node)
                     {
-                        // Inline form: exports.x = initializer;
-                        let decl_count = inline_decls.len();
-                        for (i, (decoded_name, emit_name, init_idx)) in
-                            inline_decls.iter().enumerate()
-                        {
-                            if i == 0 {
-                                self.emit_comments_before_pos(node.pos);
-                            }
-                            // Track that this variable was inlined (no local declaration).
-                            // Use decoded name for set tracking (matching uses decoded text).
-                            self.ctx
-                                .module_state
-                                .inlined_var_exports
-                                .insert(decoded_name.clone());
-                            self.write("exports.");
-                            // Use emit_name to preserve unicode escapes in output.
-                            self.write(emit_name);
-                            self.write(" = ");
-                            // emit_identifier handles `x → exports.x` substitution
-                            // for inline-exported variable names automatically.
-                            self.emit(*init_idx);
-                            self.write(";");
-                            // Skip write_line() on the last declaration so the
-                            // source_file.rs statement loop can emit trailing
-                            // comments (e.g., `// error`) before the newline.
-                            if i < decl_count - 1 {
-                                self.write_line();
-                            }
-                        }
+                        self.emit_comments_before_pos(node.pos);
+                        self.emit_cjs_export_variable_schedule(&schedule);
                     } else if !is_default
                         && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
                         && self.variable_stmt_has_binding_pattern(node)
@@ -714,6 +695,11 @@ impl<'a> Printer<'a> {
                         String::new()
                     };
 
+                    if self
+                        .should_emit_invalid_namespace_static_modifier(func_node, &func.modifiers)
+                    {
+                        self.write("static ");
+                    }
                     if func.asterisk_token {
                         self.emit_async_generator_lowered(func, &func_name);
                     } else {
@@ -1223,6 +1209,10 @@ impl<'a> Printer<'a> {
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_const_enum_facts(
+                    self.const_enum_values.clone(),
+                    self.const_enum_import_aliases.clone(),
+                );
                 // Collect this block's exported vars and accumulate for cross-block sharing
                 if !ns_name_for_exports.is_empty() {
                     let block_exports = ns_emitter.collect_exported_var_names(*namespace_node);
@@ -1272,17 +1262,41 @@ impl<'a> Printer<'a> {
                         } else {
                             String::new()
                         };
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         self.emit_async_generator_lowered(func, &func_name);
                     } else if func.name.is_some() {
                         let func_name = self.get_identifier_text_idx(func.name);
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         self.emit_async_function_es5(func, &func_name, "this");
                     } else if let Some(export_name) = export_name {
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         if let Some(ident) = self.arena.identifiers.get(export_name as usize) {
                             self.emit_async_function_es5(func, &ident.escaped_text, "this");
                         } else {
                             self.emit_async_function_es5(func, "", "this");
                         }
                     } else {
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         self.emit_async_function_es5(func, "", "this");
                     }
                 }
@@ -1408,6 +1422,10 @@ impl<'a> Printer<'a> {
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_const_enum_facts(
+                    self.const_enum_values.clone(),
+                    self.const_enum_import_aliases.clone(),
+                );
                 // Collect this block's exported vars and accumulate for cross-block sharing
                 if !ns_name_for_exports.is_empty() {
                     let block_exports = ns_emitter.collect_exported_var_names(*namespace_node);
@@ -1448,6 +1466,10 @@ impl<'a> Printer<'a> {
             } => {
                 if node.kind == syntax_kind_ext::MODULE_DECLARATION && !*is_default {
                     let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                    ns_emitter.set_const_enum_facts(
+                        self.const_enum_values.clone(),
+                        self.const_enum_import_aliases.clone(),
+                    );
                     let mut should_declare_namespace_var = None;
                     // Cross-block export sharing
                     if let Some(module_decl) = self.arena.get_module(node) {
@@ -1605,6 +1627,11 @@ impl<'a> Printer<'a> {
                         String::new()
                     };
 
+                    if self
+                        .should_emit_invalid_namespace_static_modifier(func_node, &func.modifiers)
+                    {
+                        self.write("static ");
+                    }
                     if func.asterisk_token {
                         self.emit_async_generator_lowered(func, &func_name);
                     } else {

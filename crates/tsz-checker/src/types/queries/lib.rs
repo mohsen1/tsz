@@ -288,6 +288,7 @@ impl<'a> CheckerState<'a> {
         // Merge global augmentations (declare global { interface X { ... } }).
         if let Some(merged) = self.merge_global_augmentations(name, lib_type_id, &lib_contexts) {
             lib_type_id = Some(merged);
+            self.register_augmented_lib_body(name, merged);
         }
 
         // Mirror into shared cache when safe (no local augmentations).
@@ -340,6 +341,26 @@ impl<'a> CheckerState<'a> {
         stacker::maybe_grow(256 * 1024, 4 * 1024 * 1024, || {
             self.resolve_alias_symbol_inner(sym_id, visited_aliases)
         })
+    }
+
+    /// Look up the `export =` target for a require-style consumer of a module,
+    /// preferring an explicit `"export="` binding and falling back to a
+    /// `"module.exports"` binding when the current file's `require`-style
+    /// import of an ESM module under Node20/NodeNext should treat
+    /// `export { X as "module.exports" }` as the CommonJS `module.exports = X`
+    /// value.
+    fn export_equals_target_for_require_consumer(
+        &self,
+        exports: &tsz_binder::SymbolTable,
+        module_specifier: &str,
+    ) -> Option<tsz_binder::SymbolId> {
+        if let Some(target_sym_id) = exports.get("export=") {
+            return Some(target_sym_id);
+        }
+        if self.current_file_uses_module_exports_require_interop(module_specifier) {
+            return exports.get("module.exports");
+        }
+        None
     }
 
     fn resolve_alias_symbol_inner(
@@ -508,31 +529,33 @@ impl<'a> CheckerState<'a> {
                 return self.resolve_alias_symbol(target_sym_id, visited_aliases);
             }
 
-            // For namespace/require imports (`import X = require("m")`), import_name
-            // is None and the symbol's escaped_name won't match any module export.
-            // Try the module's `export =` value (stored under key "export=").
-            // This handles `declare module "react" { export = __React; }`.
+            // For namespace/require imports (`import X = require("m")` and
+            // `import * as X from "m"`), import_name is `None` or `"*"` and the
+            // symbol's escaped_name won't match any module export. Try the
+            // module's `export =` value (key `"export="`), falling back to
+            // `"module.exports"` for Node20/NodeNext CJS-of-ESM consumers —
+            // see `export_equals_target_for_require_consumer`.
             if symbol.import_name.is_none() {
-                if let Some(exports) = self.ctx.binder.module_exports.get(module_name)
-                    && let Some(target_sym_id) = exports.get("export=")
-                {
+                let lookup = |binder: &tsz_binder::BinderState| {
+                    binder.module_exports.get(module_name).and_then(|exports| {
+                        self.export_equals_target_for_require_consumer(exports, module_name)
+                    })
+                };
+                if let Some(target_sym_id) = lookup(self.ctx.binder) {
                     return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                 }
                 if let Some(all_binders) = &self.ctx.all_binders {
                     if let Some(file_indices) = self.ctx.files_for_module_specifier(module_name) {
                         for &file_idx in file_indices {
                             if let Some(binder) = all_binders.get(file_idx)
-                                && let Some(exports) = binder.module_exports.get(module_name)
-                                && let Some(target_sym_id) = exports.get("export=")
+                                && let Some(target_sym_id) = lookup(binder)
                             {
                                 return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                             }
                         }
                     } else {
                         for binder in all_binders.iter() {
-                            if let Some(exports) = binder.module_exports.get(module_name)
-                                && let Some(target_sym_id) = exports.get("export=")
-                            {
+                            if let Some(target_sym_id) = lookup(binder) {
                                 return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                             }
                         }
@@ -564,7 +587,9 @@ impl<'a> CheckerState<'a> {
                         if let Some(exports) =
                             self.ctx.module_exports_for_module(target_binder, file_name)
                         {
-                            if let Some(export_equals_sym_id) = exports.get("export=") {
+                            if let Some(export_equals_sym_id) =
+                                self.export_equals_target_for_require_consumer(exports, module_name)
+                            {
                                 self.ctx
                                     .register_symbol_file_target(export_equals_sym_id, target_idx);
                                 return Some(export_equals_sym_id);
@@ -591,9 +616,13 @@ impl<'a> CheckerState<'a> {
                                 .register_symbol_file_target(target_sym_id, target_idx);
                             return self.resolve_alias_symbol(target_sym_id, visited_aliases);
                         }
-                        // For require imports, also try "export="
+                        // For require imports, also try "export=" — and the
+                        // Node20/NodeNext CJS-of-ESM `"module.exports"` fallback
+                        // when applicable (see
+                        // `export_equals_target_for_require_consumer`).
                         if symbol.import_name.is_none()
-                            && let Some(target_sym_id) = exports.get("export=")
+                            && let Some(target_sym_id) =
+                                self.export_equals_target_for_require_consumer(exports, module_name)
                         {
                             self.ctx
                                 .register_symbol_file_target(target_sym_id, target_idx);
