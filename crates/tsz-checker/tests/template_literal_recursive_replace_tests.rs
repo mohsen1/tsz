@@ -419,3 +419,72 @@ type B = Bad<"a">;
         "NumberOnly<R> with R: string should emit TS2344; got: {diags:#?}"
     );
 }
+
+// ─── Issue #6748: recursive conditional type result satisfies string constraint ──
+
+/// `CamelCase` with underscore separator — the same structural shape as
+/// `KebabToCamel` but with a different separator. Proves constraint propagation
+/// is not tied to the separator literal.
+///
+/// tsc accepts `Capitalize<CamelCase<Rest>>` because `CamelCase<S extends string>`
+/// is declared with `S extends string`, so `CamelCase<Rest>` (where `Rest` is
+/// inferred from a template literal position) satisfies `string`.
+#[test]
+fn camel_case_underscore_separator_satisfies_capitalize_constraint() {
+    let diags = check(
+        r#"
+type CamelCase<S extends string> =
+  S extends `${infer First}_${infer Rest}`
+    ? `${First}${Capitalize<CamelCase<Rest>>}`
+    : S;
+type T = CamelCase<"foo_bar_baz">;
+const _: T = "fooBarBaz";
+"#,
+    );
+    assert!(
+        error_codes(&diags).is_empty(),
+        "CamelCase<\"foo_bar_baz\"> should be \"fooBarBaz\"; got: {diags:#?}"
+    );
+}
+
+/// Renamed type parameters and separator — proves the fix is structural, not
+/// tied to the identifier names `First`/`Rest` or the specific separator.
+#[test]
+fn camel_case_renamed_params_satisfies_capitalize_constraint() {
+    let diags = check(
+        r#"
+type MyCase<X extends string> =
+  X extends `${infer A}__${infer B}`
+    ? `${A}${Capitalize<MyCase<B>>}`
+    : X;
+type T = MyCase<"hello__world__again">;
+const _: T = "helloWorldAgain";
+"#,
+    );
+    assert!(
+        error_codes(&diags).is_empty(),
+        "MyCase with renamed infer vars should satisfy Capitalize constraint; got: {diags:#?}"
+    );
+}
+
+/// `TrimStart` used as a type argument to another generic that requires
+/// `extends string`. The inferred `Rest` from a template literal pattern
+/// must carry the implicit `string` constraint so `TrimStart<Rest>` satisfies
+/// `TrimStart`'s `S extends string` parameter.
+#[test]
+fn trim_start_nested_in_parse_json_satisfies_string_constraint() {
+    let diags = check(
+        r#"
+type TrimStart<S extends string> = S extends ` ${infer Rest}` ? TrimStart<Rest> : S;
+type ParseJSON<S extends string> = S extends `"${infer Str}"` ? Str : never;
+type ParseArray<S extends string> =
+  S extends `${infer First},${infer Rest}`
+    ? [ParseJSON<TrimStart<First>>, ...ParseArray<Rest>]
+    : [ParseJSON<TrimStart<S>>];
+"#,
+    );
+    assert!(
+        error_codes(&diags).is_empty(),
+        "TrimStart<First> and ParseJSON<TrimStart<First>> should satisfy string constraints; got: {diags:#?}"
+    );
+}
