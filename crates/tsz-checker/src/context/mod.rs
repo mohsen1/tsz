@@ -1596,6 +1596,11 @@ impl ProgramContext {
             self.typescript_dom_replacement_globals.2,
         );
         ctx.set_has_deprecation_diagnostics(self.has_deprecation_diagnostics);
+        // Pre-install global indices before set_all_arenas/set_all_binders so
+        // those methods can skip re-computing indices already provided here.
+        if let Some(ref idx) = self.global_file_name_index {
+            ctx.global_file_name_index = Some(Arc::clone(idx));
+        }
         ctx.set_all_arenas(Arc::clone(&self.all_arenas));
         if let Some(ref dm) = self.skeleton_declared_modules {
             ctx.set_declared_modules_from_skeleton(Arc::clone(dm));
@@ -1603,8 +1608,8 @@ impl ProgramContext {
         if let Some(ref ei) = self.skeleton_expando_index {
             ctx.set_expando_index_from_skeleton(Arc::clone(ei));
         }
-        // Pre-install global indices before set_all_binders so it can skip
-        // re-computing them. This avoids O(N) binder scans per checker.
+        // Pre-install remaining global indices before set_all_binders so it
+        // can skip re-computing them. This avoids O(N) binder scans per checker.
         if let Some(ref idx) = self.global_file_locals_index {
             ctx.global_file_locals_index = Some(Arc::clone(idx));
         }
@@ -1622,9 +1627,6 @@ impl ProgramContext {
         }
         if let Some(ref idx) = self.global_arena_index {
             ctx.global_arena_index = Some(Arc::clone(idx));
-        }
-        if let Some(ref idx) = self.global_file_name_index {
-            ctx.global_file_name_index = Some(Arc::clone(idx));
         }
         if let Some(ref m) = self.program_reexports {
             ctx.program_reexports = Some(Arc::clone(m));

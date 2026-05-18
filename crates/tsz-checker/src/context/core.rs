@@ -9,7 +9,9 @@ use std::sync::Arc;
 
 use crate::control_flow::FlowGraph;
 use crate::diagnostics::{Diagnostic, diagnostic_codes};
-use crate::module_resolution::module_specifier_candidates;
+use crate::module_resolution::{
+    build_file_name_index, module_specifier_candidates, resolve_specifier_via_file_index,
+};
 use tsz_binder::symbols::StableLocation;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_parser::parser::NodeIndex;
@@ -270,6 +272,10 @@ impl<'a> CheckerContext<'a> {
         // This enables import-qualified type display like `import("a").F`.
         self.module_specifiers = Arc::new(Self::build_module_specifiers(&arenas));
         self.module_path_specifiers = Arc::new(Self::build_module_path_specifiers(&arenas));
+        // Build the reverse file-name index lazily when not pre-populated by ProgramContext.
+        if self.global_file_name_index.is_none() && !arenas.is_empty() {
+            self.global_file_name_index = Some(Arc::new(build_file_name_index(&arenas)));
+        }
         self.all_arenas = Some(arenas);
     }
 
@@ -1173,11 +1179,45 @@ impl<'a> CheckerContext<'a> {
 
     /// Resolve an import specifier from a specific file to its target file index.
     /// Like `resolve_import_target` but for any source file, not just the current one.
+    ///
+    /// Stage 1: `global_file_name_index` (always populated by `set_all_arenas`).
+    /// Stage 2: `resolved_module_paths` (driver FS map, fallback for path-mapped imports).
     pub fn resolve_import_target_from_file(
         &self,
         source_file_idx: usize,
         specifier: &str,
     ) -> Option<usize> {
+        if let Some(idx) = self.global_file_name_index.as_ref() {
+            // Absolute paths (both POSIX `/` and Windows `\`): empty src_dir
+            // causes resolve_specifier_via_file_index to use the specifier verbatim.
+            if specifier.starts_with('/') || specifier.starts_with('\\') {
+                if let Some(result) = resolve_specifier_via_file_index("", specifier, idx) {
+                    return Some(result);
+                }
+            } else if let Some(source_file_name) = self
+                .all_arenas
+                .as_ref()
+                .and_then(|a| a.get(source_file_idx))
+                .and_then(|a| a.source_files.first())
+                .map(|sf| sf.file_name.as_str())
+            {
+                if let Some(result) =
+                    resolve_specifier_via_file_index(source_file_name, specifier, idx)
+                {
+                    return Some(result);
+                }
+                // Single-segment bare names can match root-level files that the
+                // relative joiner in resolve_specifier_via_file_index misses when
+                // source is in a subdirectory.
+                if !specifier.contains('/')
+                    && !specifier.contains('\\')
+                    && let Some(&target_idx) = idx.get(specifier)
+                {
+                    return Some(target_idx);
+                }
+            }
+        }
+
         if let Some(paths) = self.resolved_module_paths.as_ref() {
             for candidate in module_specifier_candidates(specifier) {
                 if let Some(target_idx) = paths.get(&(source_file_idx, candidate)) {
@@ -1186,92 +1226,7 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
-        let arenas = self.all_arenas.as_ref()?;
-
-        // Direct-match fast path on the pre-built reverse index when one is
-        // wired in. The previous version of this fast path did an O(N)
-        // linear scan over `all_arenas` allocating a `.replace('\\', "/")`
-        // String per arena per call — which on a 6000-file project with
-        // bare imports like `@shared/foo` showed up as the #1 hot leaf at
-        // 22.46% self-time on a profiled subset. The reverse index keys are
-        // already normalized file names, so a single `get(&specifier)` (and
-        // a backslash-normalized variant if needed) covers the same cases
-        // without per-arena allocation.
-        //
-        // Importantly, this fast path is NOT a substitute for the linear
-        // scan below: the index covers *literal* file-name matches, but
-        // `resolve_specifier_via_file_index` will return `None` for bare
-        // specifiers that contain a slash without a `./` / `../` / `/`
-        // prefix (project-relative paths like `packages/foo/src/bar.ts`).
-        // The linear scan handled those by direct comparison; we preserve
-        // that behavior here without scanning, by trying the index lookup
-        // for both the raw and stripped-extension forms.
-        let normalized_specifier = if specifier.contains('\\') {
-            specifier.replace('\\', "/")
-        } else {
-            specifier.to_string()
-        };
-
-        if let Some(idx) = self.global_file_name_index.as_ref() {
-            // 1. Direct file-name hit (fully-qualified specifier).
-            if let Some(&target_idx) = idx.get(&normalized_specifier) {
-                return Some(target_idx);
-            }
-            // 2. Extension-stem fan-out: the linear scan also matched on
-            //    `strip_ts_extension(spec) == strip_ts_extension(file_name)`,
-            //    which lets a `.js` import resolve to a `.ts` source. Probe
-            //    the index with every TS/JS extension applied to the stem.
-            let stripped = Self::strip_ts_extension(&normalized_specifier);
-            const FAN_OUT_EXTS: &[&str] = &[
-                ".ts", ".tsx", ".d.ts", ".d.tsx", ".mts", ".cts", ".d.mts", ".d.cts", ".js",
-                ".jsx", ".mjs", ".cjs",
-            ];
-            // Reuse a single buffer across the fan-out attempts to avoid
-            // per-extension `String` allocation.
-            let mut buf = String::with_capacity(stripped.len() + 6);
-            for ext in FAN_OUT_EXTS {
-                buf.clear();
-                buf.push_str(stripped);
-                buf.push_str(ext);
-                if let Some(&target_idx) = idx.get(&buf) {
-                    return Some(target_idx);
-                }
-            }
-        }
-
-        let source_file_name = arenas
-            .get(source_file_idx)
-            .and_then(|arena| arena.source_files.first())
-            .map(|sf| sf.file_name.as_str())?;
-
-        if let Some(idx) = self.global_file_name_index.as_ref() {
-            return crate::module_resolution::resolve_specifier_via_file_index(
-                source_file_name,
-                specifier,
-                idx,
-            );
-        }
-
-        // No pre-built index (legacy single-context paths with no ProgramContext
-        // wiring). Use the original linear scan, then build a one-shot
-        // reverse index for richer specifier resolution.
-        let stripped_specifier = Self::strip_ts_extension(&normalized_specifier);
-        if let Some((target_idx, _)) = arenas.iter().enumerate().find(|(_, arena)| {
-            arena.source_files.first().is_some_and(|sf| {
-                let file_name = sf.file_name.replace('\\', "/");
-                file_name == normalized_specifier
-                    || Self::strip_ts_extension(&file_name) == stripped_specifier
-            })
-        }) {
-            return Some(target_idx);
-        }
-
-        let fallback_idx = crate::module_resolution::build_file_name_index(arenas);
-        crate::module_resolution::resolve_specifier_via_file_index(
-            source_file_name,
-            specifier,
-            &fallback_idx,
-        )
+        None
     }
 
     /// Resolve a member exported by the target module of an ALIAS symbol.

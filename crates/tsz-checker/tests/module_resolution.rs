@@ -1234,3 +1234,127 @@ fn test_fast_resolver_arbitrary_ext_decl_matches_legacy_map() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// build_file_name_index — unified resolver parity
+//
+// Verify that `build_file_name_index` produces a FileNameIndex that
+// `resolve_specifier_via_file_index` can use to reproduce every result that
+// `build_module_resolution_maps` would have produced.  This is the core
+// invariant that lets `set_all_arenas` auto-build the index and eliminates
+// the O(N) linear-scan fallback in `resolve_import_target_from_file`.
+// ---------------------------------------------------------------------------
+
+fn make_arenas(file_names: &[&str]) -> Vec<std::sync::Arc<NodeArena>> {
+    use std::sync::Arc;
+    use tsz_parser::parser::ParserState;
+    file_names
+        .iter()
+        .map(|name| {
+            let mut p = ParserState::new((*name).to_string(), String::new());
+            p.parse_source_file();
+            Arc::new(p.get_arena().clone())
+        })
+        .collect()
+}
+
+#[test]
+fn test_build_file_name_index_matches_legacy_for_absolute_paths() {
+    let file_names: Vec<String> = vec![
+        "/proj/src/a.ts".to_string(),
+        "/proj/src/b.ts".to_string(),
+        "/proj/src/nested/c.ts".to_string(),
+        "/proj/src/nested/index.ts".to_string(),
+        "/proj/lib/util.d.ts".to_string(),
+    ];
+    let (legacy, _) = build_module_resolution_maps(&file_names);
+    let arenas = make_arenas(&file_names.iter().map(String::as_str).collect::<Vec<_>>());
+    let idx = build_file_name_index(&arenas);
+
+    // Every entry the legacy map registered must be resolvable by the new index.
+    for ((src_idx, specifier), &tgt) in legacy.iter() {
+        let got = resolve_specifier_via_file_index(&file_names[*src_idx], specifier, &idx);
+        assert_eq!(
+            got,
+            Some(tgt),
+            "build_file_name_index resolution disagreed with legacy map: src={} spec={}",
+            file_names[*src_idx],
+            specifier,
+        );
+    }
+}
+
+#[test]
+fn test_resolve_via_index_absolute_specifier_direct_hit() {
+    // Absolute specifiers (like those the driver passes as full paths) should
+    // resolve via direct lookup in the index, not the relative-path joiner.
+    let files = ["/proj/src/a.ts", "/proj/src/b.ts", "/proj/lib/util.ts"];
+    let arenas = make_arenas(&files);
+    let idx = build_file_name_index(&arenas);
+
+    // Absolute direct hit.
+    assert_eq!(idx.get("/proj/src/b.ts").copied(), Some(1));
+    // Stem lookup via index also available.
+    assert_eq!(idx.get("/proj/lib/util.ts").copied(), Some(2));
+    // Relative lookup still works from the index.
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/src/a.ts", "./b", &idx),
+        Some(1)
+    );
+    assert_eq!(
+        resolve_specifier_via_file_index("/proj/src/a.ts", "../lib/util", &idx),
+        Some(2)
+    );
+}
+
+#[test]
+fn test_build_file_name_index_covers_varied_specifier_names() {
+    // Test with deliberately varied names: underscore, hyphen, camel-case.
+    // The unified resolver must not be coupled to identifier spelling.
+    let file_names: Vec<String> = vec![
+        "/proj/src/myModule.ts".to_string(),
+        "/proj/src/my-util.ts".to_string(),
+        "/proj/src/my_helper.ts".to_string(),
+        "/proj/src/SomeClass.ts".to_string(),
+    ];
+    let (legacy, _) = build_module_resolution_maps(&file_names);
+    let arenas = make_arenas(&file_names.iter().map(String::as_str).collect::<Vec<_>>());
+    let idx = build_file_name_index(&arenas);
+
+    for ((src_idx, specifier), &tgt) in legacy.iter() {
+        let got = resolve_specifier_via_file_index(&file_names[*src_idx], specifier, &idx);
+        assert_eq!(
+            got,
+            Some(tgt),
+            "name-varied parity: src={} spec={}",
+            file_names[*src_idx],
+            specifier,
+        );
+    }
+}
+
+#[test]
+fn test_build_file_name_index_directory_index_resolution() {
+    // Directory-index imports (`./lib` → `./lib/index.ts`) must work via the
+    // unified index as well as via the legacy map.
+    let file_names: Vec<String> = vec![
+        "/proj/main.ts".to_string(),
+        "/proj/lib/index.ts".to_string(),
+        "/proj/utils/index.tsx".to_string(),
+        "/proj/types/index.d.ts".to_string(),
+    ];
+    let (legacy, _) = build_module_resolution_maps(&file_names);
+    let arenas = make_arenas(&file_names.iter().map(String::as_str).collect::<Vec<_>>());
+    let idx = build_file_name_index(&arenas);
+
+    for ((src_idx, specifier), &tgt) in legacy.iter() {
+        let got = resolve_specifier_via_file_index(&file_names[*src_idx], specifier, &idx);
+        assert_eq!(
+            got,
+            Some(tgt),
+            "directory-index parity: src={} spec={}",
+            file_names[*src_idx],
+            specifier,
+        );
+    }
+}

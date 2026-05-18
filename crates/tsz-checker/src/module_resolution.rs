@@ -10,21 +10,30 @@
 //! - Re-exports: `export { x } from "./module"`
 //! - Triple-slash reference directives: `/// <reference path="./module.ts" />`
 //!
-//! # Pipeline
+//! # Resolution pipeline (canonical)
 //!
 //! ```text
-//! raw specifier string ──▶ normalize_import_specifier ──▶ CanonicalSpecifier
-//! project file list    ──▶ build_target_index          ──▶ TargetIndex
-//! (source, canonical, index) ─▶ resolve_from_source    ──▶ Option<file_idx>
+//! arenas  ──▶ build_file_name_index ──▶ FileNameIndex (O(N), set_all_arenas)
+//! (source_file_name, specifier, index) ──▶ resolve_specifier_via_file_index ──▶ Option<file_idx>
 //! ```
 //!
-//! `build_module_resolution_maps` materializes the cross product (source
-//! file × target entry) into a flat `(src_idx, specifier) → tgt_idx` map for
-//! legacy consumers, but the expensive alias fan-out that previously generated
-//! quoted / backslash / extension-stripped / chain variants is gone. Each
-//! target now registers a small, deliberate set of *canonical* specifier
-//! strings (see `register_canonical_forms` below for the exact list and
-//! justifications).
+//! `CheckerContext::resolve_import_target_from_file` is the single public
+//! entry-point for the checker.  It uses `global_file_name_index` (built by
+//! `set_all_arenas` or `ProgramContext`) as the primary resolver, then falls
+//! back to the driver-populated `resolved_module_paths` for path-mapped and
+//! package-exports entries that the structural index cannot compute.
+//!
+//! # Legacy map (`build_module_resolution_maps`)
+//!
+//! `build_module_resolution_maps` materializes the O(N²) cross-product
+//! `(src_idx, specifier) → tgt_idx` map.  It is still used by:
+//! - `tsz-core` driver to build the module dependency graph for topological
+//!   ordering, augmentation walking, and incremental scheduling.
+//! - `ProgramContext.resolved_module_paths` as the driver-computed fallback.
+//!
+//! Checker resolution no longer depends on this map as the primary path.
+//! New checker code should call `resolve_import_target_from_file` instead of
+//! querying `resolved_module_paths` directly.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Component, Path};
@@ -421,9 +430,11 @@ fn directory_specifier(from_dir: &Path, to_dir: &Path) -> Option<DirectorySpecif
 /// Resolve `specifier` as imported from `source_file` against the precomputed
 /// `TargetIndex`.
 ///
-/// Intentionally unused by the legacy map today — it exists as the natural
-/// "do one lookup" API for callers that want to skip the precomputed map.
-/// Callers that already use `build_module_resolution_maps` do not need this.
+/// Used for single-specifier lookups against a `TargetIndex` (returned by
+/// `build_target_index`).  For the canonical checker resolution path use
+/// `resolve_specifier_via_file_index` together with the `FileNameIndex`
+/// returned by `build_file_name_index`; that path avoids the O(N²)
+/// cross-product materialization.
 pub fn resolve_from_source(
     source_file: &str,
     specifier: &CanonicalSpecifier,
@@ -466,10 +477,16 @@ pub fn resolve_from_source(
 /// Build the flat `(source_file_idx, specifier) → target_file_idx` map and
 /// the set of all recognized specifier strings.
 ///
-/// This is the legacy entrypoint consumed by the checker, CLI, server, and a
-/// large number of integration tests. Behavior-compatible with the previous
-/// implementation for intentional cases; accidental cases (quoted-key
-/// variants, extension-stripped variants) are no longer registered.
+/// Primary consumers are the **driver** (module dependency graph for topological
+/// ordering, augmentation resolution, and incremental scheduling) and the
+/// `resolved_modules` set used by checker diagnostics.
+///
+/// **Checker module resolution** should call
+/// `CheckerContext::resolve_import_target_from_file` instead of querying this
+/// map directly.  The checker uses `build_file_name_index` +
+/// `resolve_specifier_via_file_index` as its primary path, falling back to the
+/// driver-populated `resolved_module_paths` only for specifiers the structural
+/// index cannot resolve (path mappings, package exports).
 ///
 /// See `register_canonical_forms` for the exact set of strings registered per
 /// target.
