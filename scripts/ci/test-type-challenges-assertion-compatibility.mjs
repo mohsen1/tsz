@@ -558,6 +558,67 @@ withTempDir((dir) => {
             totalCandidates: 2,
             candidatesWithDiagnostics: 1,
             candidatesWithoutDiagnostics: 1,
+            filesWithDiagnostics: [],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc candidateDiagnostics\.filesWithDiagnostics length \(0\) does not match candidatesWithDiagnostics \(1\)/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 2,
+            candidatesWithDiagnostics: 1,
+            candidatesWithoutDiagnostics: 1,
+            filesWithDiagnostics: ["../outside.ts"],
+          },
+        },
+        tsz: { status: "pass" },
+      },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /tsc candidateDiagnostics\.filesWithDiagnostics\[0\] must stay inside the assertion candidate directory/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: candidateManifest(2),
+      compilers: {
+        tsc: {
+          status: "pass",
+          candidateDiagnostics: {
+            totalCandidates: 2,
+            candidatesWithDiagnostics: 1,
+            candidatesWithoutDiagnostics: 1,
+            filesWithDiagnostics: ["assertions/one.ts"],
           },
         },
         tsz: {
@@ -566,6 +627,7 @@ withTempDir((dir) => {
             totalCandidates: 2,
             candidatesWithDiagnostics: 0,
             candidatesWithoutDiagnostics: 2,
+            filesWithDiagnostics: [],
           },
         },
       },

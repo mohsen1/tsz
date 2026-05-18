@@ -407,6 +407,35 @@ for (const [compiler, diagnostics] of [
         `assertion classification ${compiler} candidate diagnostic counts (${diagnostics.candidatesWithDiagnostics} + ${diagnostics.candidatesWithoutDiagnostics}) do not match totalCandidates (${diagnostics.totalCandidates})`,
       );
     }
+    const filesWithDiagnostics = diagnostics.filesWithDiagnostics;
+    if (filesWithDiagnostics !== null && filesWithDiagnostics !== undefined) {
+      if (!Array.isArray(filesWithDiagnostics)) {
+        fail(
+          `assertion classification ${compiler} candidateDiagnostics.filesWithDiagnostics must be an array`,
+        );
+      }
+      if (
+        Number.isInteger(diagnostics.candidatesWithDiagnostics) &&
+        filesWithDiagnostics.length !== diagnostics.candidatesWithDiagnostics
+      ) {
+        fail(
+          `assertion classification ${compiler} candidateDiagnostics.filesWithDiagnostics length (${filesWithDiagnostics.length}) does not match candidatesWithDiagnostics (${diagnostics.candidatesWithDiagnostics})`,
+        );
+      }
+      filesWithDiagnostics.forEach((file, index) => {
+        validateCandidateOutputPath(
+          file,
+          `assertion classification ${compiler} candidateDiagnostics.filesWithDiagnostics[${index}]`,
+        );
+      });
+    } else if (
+      Number.isInteger(diagnostics.candidatesWithDiagnostics) &&
+      diagnostics.candidatesWithDiagnostics > 0
+    ) {
+      fail(
+        `assertion classification ${compiler} candidateDiagnostics.filesWithDiagnostics must be an array when candidatesWithDiagnostics is nonzero`,
+      );
+    }
   }
 }
 if (
