@@ -597,6 +597,14 @@ impl<'a> ES5ClassTransformer<'a> {
     /// closing brace comment instead of the method's own comment.
     fn extract_trailing_comment_for_method(&self, body_idx: NodeIndex) -> Option<String> {
         let source_text = self.source_text?;
+        let close_brace = self.body_closing_brace_pos(body_idx)?;
+        crate::emitter::get_trailing_comment_ranges(source_text, close_brace + 1)
+            .first()
+            .map(|c| source_text[c.pos as usize..c.end as usize].to_string())
+    }
+
+    fn body_closing_brace_pos(&self, body_idx: NodeIndex) -> Option<usize> {
+        let source_text = self.source_text?;
         let body_node = self.arena.get(body_idx)?;
         let bytes = source_text.as_bytes();
         let start = body_node.pos as usize;
@@ -626,11 +634,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     }
                     b'}' => {
                         if depth == 0 {
-                            // This is the closing brace of the block
-                            let after = i + 1;
-                            return crate::emitter::get_trailing_comment_ranges(source_text, after)
-                                .first()
-                                .map(|c| source_text[c.pos as usize..c.end as usize].to_string());
+                            return Some(i);
                         }
                         depth -= 1;
                     }
@@ -689,8 +693,11 @@ impl<'a> ES5ClassTransformer<'a> {
         is_static: bool,
         class_alias: Option<&str>,
         lexical_this_capture_alias: Option<&str>,
+        trailing_comment_limit: Option<u32>,
     ) -> IRNode {
-        let mut converter = self.make_converter();
+        let mut converter = self
+            .make_converter()
+            .with_trailing_comment_limit(trailing_comment_limit);
         if is_static {
             converter = converter.with_static(true);
         }
@@ -1845,6 +1852,8 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut stmts = if let Some(block_node) = self.arena.get(block_idx)
             && let Some(block) = self.arena.get_block(block_node)
         {
+            let trailing_comment_limit =
+                self.body_closing_brace_pos(block_idx).map(|pos| pos as u32);
             let mut converted = Vec::new();
             for &stmt_idx in &block.statements.nodes {
                 if let Some(stmt_node) = self.arena.get(stmt_idx)
@@ -1857,6 +1866,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     is_static,
                     class_alias.as_deref(),
                     lexical_this_capture_alias.as_deref(),
+                    trailing_comment_limit,
                 ));
             }
             converted
