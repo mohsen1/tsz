@@ -1171,6 +1171,96 @@ class ArchGuardRootSolverComputationImportCountTests(unittest.TestCase):
             )
 
 
+class ArchGuardQueryBoundaryCommonReferenceTests(unittest.TestCase):
+    """Cover the #8225 ratchet for broad query-boundary common callers."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _make_tree(self, files: dict[str, str]):
+        tmp = tempfile.mkdtemp()
+        root = pathlib.Path(tmp)
+        for rel, content in files.items():
+            full = root / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        return root
+
+    def test_flags_direct_common_references_outside_query_boundaries(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/checkers/foo.rs": (
+                    "let shape = crate::query_boundaries::common::object_shape_for_type(db, ty);\n"
+                    "let lazy = query_boundaries::common::lazy_def_id(db, ty);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_query_boundary_common_reference_count(
+            [root], ("crates/tsz-checker/src/query_boundaries/",), 0
+        )
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn("foo.rs:1", hits[0])
+        self.assertIn("foo.rs:2", hits[1])
+        self.assertIn("total direct query_boundaries::common references", hits[2])
+
+    def test_excludes_query_boundaries_tests_and_comment_lines(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/query_boundaries/flow_analysis.rs": (
+                    "let shape = crate::query_boundaries::common::object_shape_for_type(db, ty);\n"
+                ),
+                "crates/tsz-checker/src/foo_tests.rs": (
+                    "let shape = crate::query_boundaries::common::object_shape_for_type(db, ty);\n"
+                ),
+                "crates/tsz-checker/tests/integration.rs": (
+                    "let shape = crate::query_boundaries::common::object_shape_for_type(db, ty);\n"
+                ),
+                "crates/tsz-checker/src/commented.rs": (
+                    "// let shape = crate::query_boundaries::common::object_shape_for_type(db, ty);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_query_boundary_common_reference_count(
+            [root], ("crates/tsz-checker/src/query_boundaries/",), 0
+        )
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_passes_when_at_or_under_cap(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/checkers/a.rs": (
+                    "let shape = crate::query_boundaries::common::object_shape_for_type(db, ty);\n"
+                ),
+                "crates/tsz-checker/src/checkers/b.rs": (
+                    "let lazy = query_boundaries::common::lazy_def_id(db, ty);\n"
+                ),
+            }
+        )
+        scan = self.arch_guard.scan_query_boundary_common_reference_count
+        self.assertEqual(scan([root], (), 2), [])
+        self.assertEqual(scan([root], (), 3), [])
+
+    def test_check_is_registered(self):
+        names = [
+            entry[0]
+            for entry in self.arch_guard.QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS
+        ]
+        self.assertTrue(any("#8225" in name for name in names))
+
+    def test_real_count_passes_at_pinned_cap(self):
+        """The pinned cap must match the live count (no off-by-one)."""
+        for entry in self.arch_guard.QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS:
+            name, search_roots, exclude_path_prefixes, max_references = entry
+            hits = self.arch_guard.scan_query_boundary_common_reference_count(
+                search_roots, exclude_path_prefixes, max_references
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
 class ArchGuardSnapshotRollbackTests(unittest.TestCase):
     """Cover `SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS` +
     `scan_snapshot_rollback_file_count`.
