@@ -20,6 +20,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::NarrowingContext;
 use tsz_solver::TypeId;
+use tsz_solver::computation::TypeResolver;
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn callable_has_own_generic_signatures(&self, type_id: TypeId) -> bool {
@@ -1934,7 +1935,7 @@ impl<'a> CheckerState<'a> {
         let target_resolver_resolved =
             crate::query_boundaries::common::lazy_def_id(self.ctx.types, target)
                 .and_then(|def_id| {
-                    <crate::context::CheckerContext<'_> as tsz_solver::TypeResolver>::resolve_lazy(
+                    <crate::context::CheckerContext<'_> as TypeResolver>::resolve_lazy(
                         &self.ctx,
                         def_id,
                         self.ctx.types,
@@ -2372,9 +2373,8 @@ impl<'a> CheckerState<'a> {
         let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)?;
         let (body_type, type_params) = {
             let env = self.ctx.type_env.borrow();
-            let body_type = tsz_solver::TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)?;
-            let type_params =
-                tsz_solver::TypeResolver::get_lazy_type_params(&*env, def_id).unwrap_or_default();
+            let body_type = TypeResolver::resolve_lazy(&*env, def_id, self.ctx.types)?;
+            let type_params = TypeResolver::get_lazy_type_params(&*env, def_id).unwrap_or_default();
             (body_type, type_params)
         };
         let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
