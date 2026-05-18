@@ -2100,6 +2100,49 @@ impl<'a> CheckerState<'a> {
         outcome
     }
 
+    /// Execute a diagnostic-bearing assignment relation for raw checker types.
+    ///
+    /// This keeps diagnostic code on the `RelationRequest`/`RelationOutcome`
+    /// path without repeating the prepare/build/execute boilerplate at each
+    /// TS2322-family call site.
+    pub(crate) fn assign_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::assign(source, target);
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing call-argument relation for raw checker
+    /// types, preserving the canonical TS2345 relation path.
+    pub(crate) fn call_arg_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request =
+            crate::query_boundaries::assignability::RelationRequest::call_arg(source, target);
+        self.execute_relation_request(&request)
+    }
+
+    /// Execute a diagnostic-bearing bivariant-callback relation for raw
+    /// checker types, preserving the canonical callback relation path.
+    pub(crate) fn bivariant_callbacks_relation_outcome(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> crate::query_boundaries::assignability::RelationOutcome {
+        let (source, target) = self.prepare_assignability_inputs(source, target);
+        let request = crate::query_boundaries::assignability::RelationRequest::bivariant_callbacks(
+            source, target,
+        );
+        self.execute_relation_request(&request)
+    }
+
     /// Check if source type is assignable to target type.
     ///
     /// This is the main entry point for assignability checking, used throughout
