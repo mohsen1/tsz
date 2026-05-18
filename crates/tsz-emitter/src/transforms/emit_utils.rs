@@ -170,6 +170,61 @@ pub(crate) fn identifier_text_or_empty(arena: &NodeArena, idx: NodeIndex) -> Str
     identifier_text(arena, idx).unwrap_or_default()
 }
 
+/// Returns true when a namespace/module block contains declarations that
+/// produce runtime output.
+pub(crate) fn module_body_has_runtime_value_declarations(
+    arena: &NodeArena,
+    body_idx: NodeIndex,
+) -> bool {
+    let Some(body_node) = arena.get(body_idx) else {
+        return false;
+    };
+    let Some(block_data) = arena.get_module_block(body_node) else {
+        return false;
+    };
+    let Some(stmts) = block_data.statements.as_ref() else {
+        return false;
+    };
+
+    stmts.nodes.iter().any(|&stmt_idx| {
+        let Some(stmt_node) = arena.get(stmt_idx) else {
+            return false;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                || k == syntax_kind_ext::FUNCTION_DECLARATION
+                || k == syntax_kind_ext::CLASS_DECLARATION
+                || k == syntax_kind_ext::ENUM_DECLARATION =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => arena
+                .get_module(stmt_node)
+                .is_some_and(|ns| module_body_has_runtime_value_declarations(arena, ns.body)),
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => arena
+                .get_export_decl(stmt_node)
+                .and_then(|export| arena.get(export.export_clause))
+                .is_some_and(|inner| match inner.kind {
+                    k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                        || k == syntax_kind_ext::FUNCTION_DECLARATION
+                        || k == syntax_kind_ext::CLASS_DECLARATION
+                        || k == syntax_kind_ext::ENUM_DECLARATION =>
+                    {
+                        true
+                    }
+                    k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                        arena.get_module(inner).is_some_and(|ns| {
+                            module_body_has_runtime_value_declarations(arena, ns.body)
+                        })
+                    }
+                    _ => false,
+                }),
+            _ => false,
+        }
+    })
+}
+
 pub(crate) fn for_of_using_info(
     arena: &NodeArena,
     initializer: NodeIndex,

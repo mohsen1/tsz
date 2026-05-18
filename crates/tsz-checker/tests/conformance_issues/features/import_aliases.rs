@@ -1149,3 +1149,151 @@ export const ExistingName = 1;
         "TS2305 should not emit when spelling suggestion or default-export hint applies. Got: {diagnostics:?}"
     );
 }
+/// Node20/NodeNext CJS-of-ESM `"module.exports"` interop, require-style alias
+/// shape `import X = require(M)` — `new X()` must check construct signatures
+/// on the `"module.exports"` value (not on the synthesized namespace surface).
+///
+/// Mirrors `esmModuleExports2.ts` (`importer-cts.cts` line 2:
+/// `import Foo = require("./exporter.mjs"); new Foo();`).
+#[test]
+fn test_esm_module_exports_import_equals_require_uses_module_exports_value() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "exporter.mts",
+                r#"export default class Foo {}
+const oops = "oops";
+export { oops as "module.exports" };
+"#,
+            ),
+            (
+                "importer.cts",
+                r#"import Foo = require("./exporter.mjs");
+new Foo();
+"#,
+            ),
+        ],
+        "importer.cts",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::Node20,
+            target: tsz_common::common::ScriptTarget::ES2023,
+            ..Default::default()
+        },
+    );
+    let ts2351 = diagnostics.iter().filter(|(c, _)| *c == 2351).count();
+    assert_eq!(
+        ts2351, 1,
+        "Expected 1 TS2351 for `new Foo()` where Foo resolves through \
+         \"module.exports\" to a non-constructable string. Got: {diagnostics:#?}"
+    );
+}
+
+/// Same rule with the import-equals binding renamed (`Bar` instead of `Foo`).
+/// The fix must not depend on the user-chosen alias name.
+#[test]
+fn test_esm_module_exports_import_equals_require_with_renamed_alias() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "exporter.mts",
+                r#"export default class Foo {}
+const value = 42;
+export { value as "module.exports" };
+"#,
+            ),
+            (
+                "importer.cts",
+                r#"import Bar = require("./exporter.mjs");
+new Bar();
+"#,
+            ),
+        ],
+        "importer.cts",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::Node20,
+            target: tsz_common::common::ScriptTarget::ES2023,
+            ..Default::default()
+        },
+    );
+    let ts2351 = diagnostics.iter().filter(|(c, _)| *c == 2351).count();
+    assert_eq!(
+        ts2351, 1,
+        "Expected 1 TS2351 — fix must apply by structural shape, not by alias \
+         name. Got: {diagnostics:#?}"
+    );
+}
+
+/// Node20/NodeNext CJS-of-ESM `"module.exports"` interop, namespace-import
+/// alias shape `import * as X from M` — `new X()` must check construct
+/// signatures on the `"module.exports"` value (not on the namespace surface).
+///
+/// Mirrors `esmModuleExports2.ts` (`importer-cts.cts` line 8:
+/// `import * as Foo3 from "./exporter.mjs"; new Foo3();`).
+#[test]
+fn test_esm_module_exports_namespace_import_uses_module_exports_value() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "exporter.mts",
+                r#"export default class Foo {}
+const oops = "oops";
+export { oops as "module.exports" };
+"#,
+            ),
+            (
+                "importer.cts",
+                r#"import * as Foo3 from "./exporter.mjs";
+new Foo3();
+"#,
+            ),
+        ],
+        "importer.cts",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::Node20,
+            target: tsz_common::common::ScriptTarget::ES2023,
+            ..Default::default()
+        },
+    );
+    let ts2351 = diagnostics.iter().filter(|(c, _)| *c == 2351).count();
+    assert_eq!(
+        ts2351, 1,
+        "Expected 1 TS2351 for `new Foo3()` where Foo3 resolves through \
+         \"module.exports\" to a non-constructable string. Got: {diagnostics:#?}"
+    );
+}
+
+/// Node20/NodeNext CJS-of-ESM `"module.exports"` interop applies to both
+/// `Node20` and `NodeNext` module modes. Mirrors the same shape under
+/// `NodeNext` to prove the rule is keyed on the module class, not on the
+/// exact `Node20` value.
+#[test]
+fn test_esm_module_exports_namespace_import_uses_module_exports_under_nodenext() {
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &[
+            (
+                "exporter.mts",
+                r#"export default class Foo {}
+const oops = "oops";
+export { oops as "module.exports" };
+"#,
+            ),
+            (
+                "importer.cts",
+                r#"import * as Foo3 from "./exporter.mjs";
+new Foo3();
+"#,
+            ),
+        ],
+        "importer.cts",
+        CheckerOptions {
+            module: tsz_common::ModuleKind::NodeNext,
+            target: tsz_common::common::ScriptTarget::ES2023,
+            ..Default::default()
+        },
+    );
+    let ts2351 = diagnostics.iter().filter(|(c, _)| *c == 2351).count();
+    assert_eq!(
+        ts2351, 1,
+        "Expected 1 TS2351 under NodeNext too. Got: {diagnostics:#?}"
+    );
+}

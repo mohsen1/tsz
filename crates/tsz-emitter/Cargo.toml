@@ -119,6 +119,10 @@ name = "destructuring_es5_array_nested_order_tests"
 path = "tests/destructuring_es5_array_nested_order_tests.rs"
 
 [[test]]
+name = "destructuring_downlevel_iteration_read_tests"
+path = "tests/destructuring_downlevel_iteration_read_tests.rs"
+
+[[test]]
 name = "destructuring_control_flow_recovery_tests"
 path = "tests/destructuring_control_flow_recovery_tests.rs"
 
