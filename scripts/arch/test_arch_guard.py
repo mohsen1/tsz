@@ -366,6 +366,42 @@ class ArchGuardQueryBoundaryCommonSizeTests(unittest.TestCase):
         )
 
 
+class ArchGuardSolverEngineSizeBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _generic_call_resolver_size_check(self):
+        for entry in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
+            name, path, limit = entry
+            if name == (
+                "Solver engine boundary: generic call resolver must stay under "
+                "3400 LOC (#8209)"
+            ):
+                return path, limit
+        self.fail(
+            "generic call resolver size boundary check is missing from "
+            "FILE_LINE_LIMIT_CHECKS"
+        )
+
+    def test_rule_exists_with_current_limit(self):
+        path, limit = self._generic_call_resolver_size_check()
+        self.assertEqual(limit, 3400)
+        self.assertTrue(
+            str(path).endswith(
+                "crates/tsz-solver/src/operations/generic_call/resolve.rs"
+            )
+        )
+
+    def test_real_generic_call_resolver_passes_at_pinned_limit(self):
+        path, limit = self._generic_call_resolver_size_check()
+        hits = self.arch_guard.scan_file_line_limit(path, limit)
+        self.assertEqual(
+            hits,
+            [],
+            "generic call resolver cap is too tight for the live file",
+        )
+
+
 class ArchGuardSolverTypeDataQuarantineTests(unittest.TestCase):
     def setUp(self):
         self.arch_guard = load_arch_guard_module()
