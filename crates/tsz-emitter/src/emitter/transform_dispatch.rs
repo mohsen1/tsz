@@ -267,11 +267,16 @@ impl<'a> Printer<'a> {
                 } else {
                     None
                 };
+                let class_binding_name = self.register_es5_class_binding_name(class_node);
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(class_node);
                 if let Some(comment) = leading_comment_text {
                     es5_emitter.set_leading_comment(comment);
                 }
-                let es5_output = es5_emitter.emit_class(class_node);
+                let es5_output = self.emit_es5_class_output(
+                    &mut es5_emitter,
+                    class_node,
+                    class_binding_name.as_deref(),
+                );
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 debug!(
                     "Printer ES5Class end (idx={}, class_node={}, output_len={})",
@@ -335,6 +340,10 @@ impl<'a> Printer<'a> {
                 }
                 let system_export_fold = self.pending_system_namespace_export_fold.take();
                 let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                ns_emitter.set_const_enum_facts(
+                    self.const_enum_values.clone(),
+                    self.const_enum_import_aliases.clone(),
+                );
                 if let Some(export_names) = system_export_fold.as_deref() {
                     ns_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
                 }
@@ -415,11 +424,21 @@ impl<'a> Printer<'a> {
                                     .default_exported_func_names
                                     .contains(&n)
                             });
+                        let cjs_export_name = names.first().and_then(|name_id| {
+                            self.arena
+                                .identifiers
+                                .get(*name_id as usize)
+                                .map(|ident| ident.escaped_text.clone())
+                        });
                         if self.ctx.target_es5 {
                             // ES5: use the IR-based ES5 namespace emitter
                             let mut ns_emitter = NamespaceES5Emitter::with_commonjs(
                                 self.arena,
                                 !merges_with_default_func,
+                            );
+                            ns_emitter.set_const_enum_facts(
+                                self.const_enum_values.clone(),
+                                self.const_enum_import_aliases.clone(),
                             );
                             // Cross-block export sharing
                             if let Some(module_decl) = self.arena.get_module(node) {
@@ -442,6 +461,7 @@ impl<'a> Printer<'a> {
                             ns_emitter.set_emit_decorator_metadata(
                                 self.ctx.options.emit_decorator_metadata,
                             );
+                            ns_emitter.set_commonjs_export_name(cjs_export_name.clone());
                             ns_emitter.set_transforms(self.transforms.clone());
                             if let Some(text) = self.source_text_for_map() {
                                 ns_emitter.set_source_text(text);
@@ -470,7 +490,18 @@ impl<'a> Printer<'a> {
                             if let Some(module_decl) = self.arena.get_module(node) {
                                 let ns_name = self.get_identifier_text_idx(module_decl.name);
                                 if !ns_name.is_empty() {
-                                    self.ctx.module_state.iife_exported_names.insert(ns_name);
+                                    let folded_export_name =
+                                        cjs_export_name.unwrap_or_else(|| ns_name.clone());
+                                    self.ctx
+                                        .module_state
+                                        .iife_exported_names
+                                        .insert(ns_name.clone());
+                                    self.ctx
+                                        .module_state
+                                        .iife_exported_bindings
+                                        .entry(ns_name)
+                                        .or_default()
+                                        .insert(folded_export_name);
                                 }
                             }
                             let output = if merges_with_default_func {
@@ -486,6 +517,7 @@ impl<'a> Printer<'a> {
                         if !merges_with_default_func {
                             // Set flag so the IIFE tail folds exports.N into the closing.
                             self.pending_cjs_namespace_export_fold = true;
+                            self.pending_cjs_namespace_export_name = cjs_export_name.clone();
                         } else {
                             // Suppress the default_export_merge IIFE pattern —
                             // the exported namespace just augments the local binding.
@@ -496,10 +528,18 @@ impl<'a> Printer<'a> {
                         if let Some(module_decl) = self.arena.get_module(node) {
                             let ns_name = self.get_identifier_text_idx(module_decl.name);
                             if !ns_name.is_empty() {
+                                let folded_export_name =
+                                    cjs_export_name.unwrap_or_else(|| ns_name.clone());
                                 self.ctx
                                     .module_state
                                     .iife_exported_names
                                     .insert(ns_name.clone());
+                                self.ctx
+                                    .module_state
+                                    .iife_exported_bindings
+                                    .entry(ns_name.clone())
+                                    .or_default()
+                                    .insert(folded_export_name);
                             }
                             // Track whether the namespace var was already declared
                             // (merged with class/enum/function).
@@ -563,37 +603,10 @@ impl<'a> Printer<'a> {
                         self.ctx.original_module_kind = prev_original;
                     } else if !is_default
                         && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                        && let Some(inline_decls) = self.try_collect_inline_cjs_exports(idx, node)
+                        && let Some(schedule) = self.collect_cjs_export_variable_schedule(idx, node)
                     {
-                        // Inline form: exports.x = initializer;
-                        let decl_count = inline_decls.len();
-                        for (i, (decoded_name, emit_name, init_idx)) in
-                            inline_decls.iter().enumerate()
-                        {
-                            if i == 0 {
-                                self.emit_comments_before_pos(node.pos);
-                            }
-                            // Track that this variable was inlined (no local declaration).
-                            // Use decoded name for set tracking (matching uses decoded text).
-                            self.ctx
-                                .module_state
-                                .inlined_var_exports
-                                .insert(decoded_name.clone());
-                            self.write("exports.");
-                            // Use emit_name to preserve unicode escapes in output.
-                            self.write(emit_name);
-                            self.write(" = ");
-                            // emit_identifier handles `x → exports.x` substitution
-                            // for inline-exported variable names automatically.
-                            self.emit(*init_idx);
-                            self.write(";");
-                            // Skip write_line() on the last declaration so the
-                            // source_file.rs statement loop can emit trailing
-                            // comments (e.g., `// error`) before the newline.
-                            if i < decl_count - 1 {
-                                self.write_line();
-                            }
-                        }
+                        self.emit_comments_before_pos(node.pos);
+                        self.emit_cjs_export_variable_schedule(&schedule);
                     } else if !is_default
                         && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
                         && self.variable_stmt_has_binding_pattern(node)
@@ -714,6 +727,11 @@ impl<'a> Printer<'a> {
                         String::new()
                     };
 
+                    if self
+                        .should_emit_invalid_namespace_static_modifier(func_node, &func.modifiers)
+                    {
+                        self.write("static ");
+                    }
                     if func.asterisk_token {
                         self.emit_async_generator_lowered(func, &func_name);
                     } else {
@@ -886,6 +904,32 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn register_es5_class_binding_name(&mut self, class_node: NodeIndex) -> Option<String> {
+        let class_data = self
+            .arena
+            .get(class_node)
+            .and_then(|node| self.arena.get_class(node))?;
+        let original_name = self.get_identifier_text_opt(class_data.name)?;
+        let emitted_name = self
+            .ctx
+            .block_scope_state
+            .register_block_scoped_class(&original_name);
+        (emitted_name != original_name).then_some(emitted_name)
+    }
+
+    fn emit_es5_class_output(
+        &mut self,
+        es5_emitter: &mut ClassES5Emitter<'a>,
+        class_node: NodeIndex,
+        binding_name: Option<&str>,
+    ) -> String {
+        if let Some(binding_name) = binding_name {
+            es5_emitter.emit_class_with_binding_name(class_node, binding_name)
+        } else {
+            es5_emitter.emit_class(class_node)
+        }
+    }
+
     /// Create an ES5 class emitter pre-configured with decorator info for the given class.
     fn create_es5_class_emitter_with_decorators(
         &mut self,
@@ -963,7 +1007,7 @@ impl<'a> Printer<'a> {
                             &class_data.members.nodes,
                         )
                     })
-                    .map(|class_name| format!("{class_name}_1"))
+                    .map(|class_name| self.make_unique_name_from_base(&class_name))
             } else {
                 None
             };
@@ -1181,8 +1225,13 @@ impl<'a> Printer<'a> {
     ) {
         match inner {
             EmitDirective::ES5Class { class_node } => {
+                let class_binding_name = self.register_es5_class_binding_name(*class_node);
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(*class_node);
-                let es5_output = es5_emitter.emit_class(*class_node);
+                let es5_output = self.emit_es5_class_output(
+                    &mut es5_emitter,
+                    *class_node,
+                    class_binding_name.as_deref(),
+                );
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {
@@ -1223,6 +1272,10 @@ impl<'a> Printer<'a> {
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_const_enum_facts(
+                    self.const_enum_values.clone(),
+                    self.const_enum_import_aliases.clone(),
+                );
                 // Collect this block's exported vars and accumulate for cross-block sharing
                 if !ns_name_for_exports.is_empty() {
                     let block_exports = ns_emitter.collect_exported_var_names(*namespace_node);
@@ -1272,17 +1325,41 @@ impl<'a> Printer<'a> {
                         } else {
                             String::new()
                         };
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         self.emit_async_generator_lowered(func, &func_name);
                     } else if func.name.is_some() {
                         let func_name = self.get_identifier_text_idx(func.name);
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         self.emit_async_function_es5(func, &func_name, "this");
                     } else if let Some(export_name) = export_name {
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         if let Some(ident) = self.arena.identifiers.get(export_name as usize) {
                             self.emit_async_function_es5(func, &ident.escaped_text, "this");
                         } else {
                             self.emit_async_function_es5(func, "", "this");
                         }
                     } else {
+                        if self.should_emit_invalid_namespace_static_modifier(
+                            func_node,
+                            &func.modifiers,
+                        ) {
+                            self.write("static ");
+                        }
                         self.emit_async_function_es5(func, "", "this");
                     }
                 }
@@ -1366,8 +1443,13 @@ impl<'a> Printer<'a> {
                 self.emit_chained_previous(node, idx, directives, index);
             }
             EmitDirective::ES5Class { class_node } => {
+                let class_binding_name = self.register_es5_class_binding_name(*class_node);
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(*class_node);
-                let es5_output = es5_emitter.emit_class(*class_node);
+                let es5_output = self.emit_es5_class_output(
+                    &mut es5_emitter,
+                    *class_node,
+                    class_binding_name.as_deref(),
+                );
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {
@@ -1408,6 +1490,10 @@ impl<'a> Printer<'a> {
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
+                ns_emitter.set_const_enum_facts(
+                    self.const_enum_values.clone(),
+                    self.const_enum_import_aliases.clone(),
+                );
                 // Collect this block's exported vars and accumulate for cross-block sharing
                 if !ns_name_for_exports.is_empty() {
                     let block_exports = ns_emitter.collect_exported_var_names(*namespace_node);
@@ -1447,7 +1533,17 @@ impl<'a> Printer<'a> {
                 inner,
             } => {
                 if node.kind == syntax_kind_ext::MODULE_DECLARATION && !*is_default {
+                    let cjs_export_name = names.first().and_then(|name_id| {
+                        self.arena
+                            .identifiers
+                            .get(*name_id as usize)
+                            .map(|ident| ident.escaped_text.clone())
+                    });
                     let mut ns_emitter = NamespaceES5Emitter::with_commonjs(self.arena, true);
+                    ns_emitter.set_const_enum_facts(
+                        self.const_enum_values.clone(),
+                        self.const_enum_import_aliases.clone(),
+                    );
                     let mut should_declare_namespace_var = None;
                     // Cross-block export sharing
                     if let Some(module_decl) = self.arena.get_module(node) {
@@ -1468,6 +1564,7 @@ impl<'a> Printer<'a> {
                     ns_emitter.set_legacy_decorators(self.ctx.options.legacy_decorators);
                     ns_emitter
                         .set_emit_decorator_metadata(self.ctx.options.emit_decorator_metadata);
+                    ns_emitter.set_commonjs_export_name(cjs_export_name.clone());
                     ns_emitter.set_transforms(self.transforms.clone());
                     if let Some(text) = self.source_text_for_map() {
                         ns_emitter.set_source_text(text);
@@ -1483,6 +1580,23 @@ impl<'a> Printer<'a> {
                         ns_emitter.set_should_declare_var(should_declare_var);
                     }
                     let output = ns_emitter.emit_exported_namespace(idx);
+                    if let Some(module_decl) = self.arena.get_module(node) {
+                        let ns_name = self.get_identifier_text_idx(module_decl.name);
+                        if !ns_name.is_empty() {
+                            let folded_export_name =
+                                cjs_export_name.unwrap_or_else(|| ns_name.clone());
+                            self.ctx
+                                .module_state
+                                .iife_exported_names
+                                .insert(ns_name.clone());
+                            self.ctx
+                                .module_state
+                                .iife_exported_bindings
+                                .entry(ns_name)
+                                .or_default()
+                                .insert(folded_export_name);
+                        }
+                    }
                     self.write(output.trim_end_matches('\n'));
                     self.skip_comments_for_erased_node(node);
                     return;
@@ -1605,6 +1719,11 @@ impl<'a> Printer<'a> {
                         String::new()
                     };
 
+                    if self
+                        .should_emit_invalid_namespace_static_modifier(func_node, &func.modifiers)
+                    {
+                        self.write("static ");
+                    }
                     if func.asterisk_token {
                         self.emit_async_generator_lowered(func, &func_name);
                     } else {

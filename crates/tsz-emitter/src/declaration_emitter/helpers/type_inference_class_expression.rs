@@ -215,13 +215,18 @@ impl<'a> DeclarationEmitter<'a> {
             params_text = "...args: any[]".to_string();
         }
 
-        let force_object_form = class
+        let is_abstract = self
+            .arena
+            .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
+        let has_static_members = class
             .members
             .nodes
             .iter()
             .copied()
             .any(|member_idx| self.class_member_is_static(member_idx));
-        let instance_indent = if arrow_form && !force_object_form {
+        let force_object_form = !is_abstract && (base_type_text.is_some() || has_static_members);
+        let use_arrow_form = (arrow_form || is_abstract) && !force_object_form;
+        let instance_indent = if use_arrow_form {
             self.indent_level + 1
         } else {
             self.indent_level + 2
@@ -240,7 +245,7 @@ impl<'a> DeclarationEmitter<'a> {
             if self.class_member_is_static(member_idx) {
                 static_scratch.emit_class_member(member_idx);
             } else {
-                instance_scratch.emit_class_member(member_idx);
+                instance_scratch.emit_class_member_for_constructor_instance_type(member_idx);
             }
         }
         if let Some(base_name) = base_instance_name
@@ -257,28 +262,15 @@ impl<'a> DeclarationEmitter<'a> {
             static_members.trim_end(),
         );
 
-        let mut constructor_type = if arrow_form && !force_object_form {
-            let is_abstract = self
-                .arena
-                .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
-            let prefix = if is_abstract { "abstract new " } else { "new " };
-            if members.is_empty() {
-                format!("{prefix}({params_text}) => {{}}")
-            } else {
-                format!("{prefix}({params_text}) => {{\n{members}\n}}")
-            }
-        } else if members.is_empty() {
-            format!("{{\n    new ({params_text}): {{}};\n}}")
+        let constructor_type = if use_arrow_form {
+            let arrow_type = Self::constructor_arrow_type_text(&params_text, members, is_abstract);
+            Self::constructor_static_intersection_type_text(&arrow_type, &static_members)
         } else {
-            format!("{{\n    new ({params_text}): {{\n{members}\n    }};\n}}")
+            Self::constructor_object_type_text(&params_text, members, &static_members)
         };
-        if force_object_form {
-            constructor_type =
-                constructor_type.replacen("\n}", &format!("\n{static_members}\n}}"), 1);
-        }
 
         if let Some(base_type_text) = base_type_text {
-            if arrow_form && !force_object_form {
+            if use_arrow_form {
                 Some(format!("({constructor_type}) & {base_type_text}"))
             } else {
                 Some(format!("{constructor_type} & {base_type_text}"))
@@ -286,6 +278,109 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             Some(constructor_type)
         }
+    }
+
+    fn constructor_arrow_type_text(params_text: &str, members: &str, is_abstract: bool) -> String {
+        let prefix = if is_abstract { "abstract new " } else { "new " };
+        if members.is_empty() {
+            format!("{prefix}({params_text}) => {{}}")
+        } else {
+            format!("{prefix}({params_text}) => {{\n{members}\n}}")
+        }
+    }
+
+    fn constructor_object_type_text(
+        params_text: &str,
+        members: &str,
+        static_members: &str,
+    ) -> String {
+        let mut constructor_type = if members.is_empty() {
+            format!("{{\n    new ({params_text}): {{}};\n")
+        } else {
+            format!("{{\n    new ({params_text}): {{\n{members}\n    }};\n")
+        };
+        if !static_members.is_empty() {
+            constructor_type.push_str(static_members);
+            constructor_type.push('\n');
+        }
+        constructor_type.push('}');
+        constructor_type
+    }
+
+    fn constructor_static_intersection_type_text(
+        constructor_type: &str,
+        static_members: &str,
+    ) -> String {
+        if static_members.is_empty() {
+            return constructor_type.to_string();
+        }
+        format!("({constructor_type}) & {{\n{static_members}\n}}")
+    }
+
+    fn emit_class_member_for_constructor_instance_type(&mut self, member_idx: NodeIndex) {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return;
+        };
+        let Some(prop) = self.arena.get_property_decl(member_node) else {
+            self.emit_class_member(member_idx);
+            return;
+        };
+        if !self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+        {
+            self.emit_class_member(member_idx);
+            return;
+        }
+        if self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+            || self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::PrivateKeyword)
+            || self.member_has_private_identifier_name(member_idx)
+            || self.member_has_non_emittable_computed_name(member_idx)
+        {
+            self.emit_class_member(member_idx);
+            return;
+        }
+
+        let type_text = self
+            .constructor_instance_auto_accessor_type_text(member_idx, prop)
+            .unwrap_or_else(|| "unknown".to_string());
+        self.write_indent();
+        self.write("get ");
+        self.emit_node(prop.name);
+        self.write("(): ");
+        self.write(&type_text);
+        self.write(";");
+        self.write_line();
+        self.write_indent();
+        self.write("set ");
+        self.emit_node(prop.name);
+        self.write("(arg: ");
+        self.write(&type_text);
+        self.write(");");
+        self.write_line();
+    }
+
+    fn constructor_instance_auto_accessor_type_text(
+        &self,
+        prop_idx: NodeIndex,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+    ) -> Option<String> {
+        if prop.type_annotation.is_some() {
+            let mut scratch = self.scratch_declaration_emitter();
+            scratch.emit_type(prop.type_annotation);
+            return Some(scratch.writer.take_output());
+        }
+        if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
+            return Some(self.print_type_id(type_id));
+        }
+        if prop.initializer.is_some() {
+            return self.allowlisted_initializer_type_text(prop.initializer);
+        }
+        None
     }
 
     fn strip_abstract_member_modifiers(members: &str) -> String {
@@ -368,7 +463,7 @@ impl<'a> DeclarationEmitter<'a> {
             if self.class_member_is_static(member_idx) {
                 static_scratch.emit_class_member(member_idx);
             } else {
-                instance_scratch.emit_class_member(member_idx);
+                instance_scratch.emit_class_member_for_constructor_instance_type(member_idx);
             }
         }
         if let Some(base_instance_members) =
@@ -385,10 +480,8 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(self_name) = self.get_identifier_text(class.name) {
             let elided_instance_members =
                 Self::elide_class_expression_self_name(&instance_members, &self_name);
-            let nested_instance = format!(
-                "{{\n{}\n    }}",
-                Self::reindent_multiline_text(&elided_instance_members, 2)
-            );
+            let closing_indent = "    ".repeat((self.indent_level + 1) as usize);
+            let nested_instance = format!("{{\n{elided_instance_members}\n{closing_indent}}}");
             instance_members = elided_instance_members;
             static_members = Self::replace_class_expression_self_name(
                 &static_members,
@@ -397,15 +490,8 @@ impl<'a> DeclarationEmitter<'a> {
             );
         }
 
-        let mut constructor_type = if instance_members.is_empty() {
-            format!("{{\n    new ({params_text}): {{}};\n}}")
-        } else {
-            format!("{{\n    new ({params_text}): {{\n{instance_members}\n    }};\n}}")
-        };
-        if !static_members.is_empty() {
-            constructor_type =
-                constructor_type.replacen("\n}", &format!("\n{static_members}\n}}"), 1);
-        }
+        let constructor_type =
+            Self::constructor_object_type_text(&params_text, &instance_members, &static_members);
 
         if let Some(base_type_text) = extends_parameter_type_text {
             Some(format!("{constructor_type} & {base_type_text}"))
@@ -470,14 +556,6 @@ impl<'a> DeclarationEmitter<'a> {
         let ident = |b: u8| b == b'_' || b == b'$' || b.is_ascii_alphanumeric();
         start.checked_sub(1).is_none_or(|idx| !ident(bytes[idx]))
             && bytes.get(end).is_none_or(|b| !ident(*b))
-    }
-
-    fn reindent_multiline_text(text: &str, extra_levels: usize) -> String {
-        let prefix = "    ".repeat(extra_levels);
-        text.lines()
-            .map(|line| format!("{prefix}{line}"))
-            .collect::<Vec<_>>()
-            .join("\n")
     }
 
     fn class_expression_extends_parameter_instance_members(

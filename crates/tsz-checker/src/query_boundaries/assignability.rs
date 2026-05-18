@@ -227,31 +227,27 @@ pub(crate) use tsz_solver::RelationCacheKey;
 /// this helper funnels it through the solver's typed `RelationCacheConfig`,
 /// so no call site needs to hand-roll the key's internal representation.
 ///
-/// The resulting config sets the same default bits that a freshly-built
-/// `CompatChecker::new().apply_flags(flags)` would have, so that this write
-/// path lands in the same cache slot as the solver's internal write path.
+/// The resulting config is produced by the solver's typed `RelationPolicy`
+/// bridge, so this write path lands in the same cache slot as the solver's
+/// internal write path.
 pub(crate) fn assignability_cache_key(
     source: TypeId,
     target: TypeId,
     flags: u16,
 ) -> RelationCacheKey {
-    let mut bits = tsz_solver::RelationFlags::from_bits_truncate(flags as u32);
-    bits |= tsz_solver::RelationFlags::ASSUME_RELATED_ON_CYCLE;
     RelationCacheKey::for_assignability(
         source,
         target,
-        tsz_solver::RelationCacheConfig::from_flags(bits),
+        tsz_solver::RelationPolicy::from_flags(flags).cache_config(),
     )
 }
 
 /// Build a cache key for a subtype lookup. See [`assignability_cache_key`].
 pub(crate) fn subtype_cache_key(source: TypeId, target: TypeId, flags: u16) -> RelationCacheKey {
-    let mut bits = tsz_solver::RelationFlags::from_bits_truncate(flags as u32);
-    bits |= tsz_solver::RelationFlags::ASSUME_RELATED_ON_CYCLE;
     RelationCacheKey::for_subtype(
         source,
         target,
-        tsz_solver::RelationCacheConfig::from_flags(bits),
+        tsz_solver::RelationPolicy::from_flags(flags).cache_config(),
     )
 }
 pub(crate) use tsz_solver::type_queries::{
