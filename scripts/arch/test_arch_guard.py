@@ -2257,7 +2257,9 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("rendered.rs:2", hits[1])
 
     def test_flags_raw_diagnostic_assignability_predicates(self):
-        pattern, _max_lines = self._check_by_name("#8227")
+        pattern, _max_lines = self._check_by_name(
+            "raw diagnostic assignability predicates"
+        )
         root = self._make_tree(
             {
                 "crates/tsz-checker/src/error_reporter/diagnostic.rs": (
@@ -2272,6 +2274,23 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("diagnostic.rs:1", hits[0])
         self.assertIn("diagnostic.rs:2", hits[1])
         self.assertIn("diagnostic.rs:3", hits[2])
+
+    def test_flags_diagnostic_local_relation_request_constructors(self):
+        pattern, _max_lines = self._check_by_name("diagnostic-local RelationRequest")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/error_reporter/diagnostic.rs": (
+                    "let request = RelationRequest::assign(source, target);\n"
+                    "let request = RelationRequest::call_arg(source, target);\n"
+                    "let outcome = self.assign_relation_outcome(source, target);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn("diagnostic.rs:1", hits[0])
+        self.assertIn("diagnostic.rs:2", hits[1])
+        self.assertIn("total matching lines: 2", hits[2])
 
     def test_flags_root_solver_wildcard_compat_reexports(self):
         pattern, _max_lines = self._check_by_name("#8204")
@@ -2291,7 +2310,9 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("lib.rs:1", hits[0])
 
     def test_scan_regex_line_count_accepts_file_roots(self):
-        pattern, _max_lines = self._check_by_name("#8227")
+        pattern, _max_lines = self._check_by_name(
+            "raw diagnostic assignability predicates"
+        )
         root = self._make_tree(
             {
                 "crates/tsz-checker/src/assignability/assignability_diagnostics.rs": (
@@ -2348,6 +2369,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertTrue(any("file-name/path" in name for name in names))
         self.assertTrue(any("rendered type strings" in name for name in names))
         self.assertTrue(any("#8227" in name for name in names))
+        self.assertTrue(any("diagnostic-local RelationRequest" in name for name in names))
         self.assertTrue(any("#8204" in name for name in names))
 
     def test_real_counts_pass_at_pinned_caps(self):

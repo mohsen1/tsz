@@ -364,6 +364,21 @@ REGEX_LINE_COUNT_CHECKS = [
         ),
         144,
     ),
+    (
+        "Checker relation boundary: diagnostic-local RelationRequest constructors (#8227)",
+        [
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "assignability"
+            / "assignability_diagnostics.rs",
+            ROOT / "crates" / "tsz-checker" / "src" / "error_reporter",
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "jsx",
+        ],
+        re.compile(r"\bRelationRequest::[A-Za-z_][A-Za-z0-9_]*\s*\("),
+        0,
+    ),
 ]
 
 # Track 10 performance guardrail: branch-local `visited.clone()` traversal
