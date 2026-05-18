@@ -2474,3 +2474,114 @@ export {};
         "verbatimModuleSyntax must preserve the original import clause.\nOutput:\n{output}"
     );
 }
+
+fn emit_commonjs_with_target(source: &str, target: ScriptTarget) -> String {
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+#[test]
+fn commonjs_export_clause_namespace_alias_folds_iife_alias() {
+    let source = r#"namespace m {
+    export var x = 10;
+}
+
+export { m as instantiatedModule };
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("})(m || (exports.instantiatedModule = m = {}));"),
+        "Namespace export aliases should fold the exported name into the IIFE tail.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.m ="),
+        "The folded export should use the alias, not the local namespace name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.instantiatedModule = m;"),
+        "The later export clause should not emit a duplicate assignment after IIFE folding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_es5_export_clause_namespace_alias_folds_iife_alias() {
+    let source = r#"namespace m {
+    export var x = 10;
+}
+
+export { m as instantiatedModule };
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES5);
+
+    assert!(
+        output.contains("})(m || (exports.instantiatedModule = m = {}));"),
+        "ES5 namespace transform should carry the export-clause alias into the IIFE tail.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.m ="),
+        "ES5 namespace transform should not fold through the local namespace name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.instantiatedModule = m;"),
+        "ES5 namespace transform should mark the IIFE fold as handling the later export clause.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_export_clause_empty_namespace_is_type_only() {
+    let source = r#"namespace m {
+    export var x = 10;
+}
+
+namespace uninstantiated {}
+
+export { m as instantiatedModule };
+export { uninstantiated };
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("exports.instantiatedModule"),
+        "The instantiated namespace alias should remain a runtime export.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.uninstantiated"),
+        "Empty non-instantiated namespaces should not produce CommonJS runtime exports.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_export_clause_namespace_alias_fold_keeps_other_aliases() {
+    let source = r#"namespace m {
+    export var x = 10;
+}
+
+export { m as firstAlias };
+export { m as secondAlias };
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("})(m || (exports.firstAlias = m = {}));"),
+        "The first namespace alias should be folded into the IIFE tail.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.secondAlias = m;"),
+        "Aliases not folded into the IIFE tail still need a later live export assignment.\nOutput:\n{output}"
+    );
+}

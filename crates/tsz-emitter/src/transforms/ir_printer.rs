@@ -40,6 +40,7 @@ use tsz_parser::syntax_kind_ext;
 struct NamespaceIifeContext<'a> {
     is_exported: bool,
     attach_to_exports: bool,
+    commonjs_export_name: Option<&'a str>,
     system_export_names: &'a [Cow<'static, str>],
     should_declare_var: bool,
     default_export_merge: bool,
@@ -2383,6 +2384,7 @@ impl<'a> IRPrinter<'a> {
                 body,
                 is_exported,
                 attach_to_exports,
+                commonjs_export_name,
                 system_export_names,
                 should_declare_var,
                 parent_name,
@@ -2398,6 +2400,7 @@ impl<'a> IRPrinter<'a> {
                     NamespaceIifeContext {
                         is_exported: *is_exported,
                         attach_to_exports: *attach_to_exports,
+                        commonjs_export_name: commonjs_export_name.as_deref(),
                         system_export_names,
                         should_declare_var: *should_declare_var,
                         default_export_merge: *default_export_merge,
@@ -2602,6 +2605,7 @@ impl<'a> IRPrinter<'a> {
                 NamespaceIifeContext {
                     is_exported: context.is_exported,
                     attach_to_exports: context.attach_to_exports,
+                    commonjs_export_name: context.commonjs_export_name,
                     system_export_names: &[],
                     should_declare_var: true,
                     default_export_merge: false,
@@ -2631,9 +2635,10 @@ impl<'a> IRPrinter<'a> {
                 self.write(current_name);
                 self.write(" = {})");
             } else if context.is_exported && context.attach_to_exports {
+                let export_name = context.commonjs_export_name.unwrap_or(current_name);
                 self.write(current_name);
                 self.write(" || (exports.");
-                self.write(current_name);
+                self.write(export_name);
                 self.write(" = ");
                 self.write(current_name);
                 self.write(" = {})");

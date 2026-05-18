@@ -580,6 +580,9 @@ pub enum IRNode {
         body: Vec<Self>,
         is_exported: bool,
         attach_to_exports: bool,
+        /// CommonJS export property for an exported namespace IIFE. Usually the
+        /// local namespace name, but `export { N as Alias }` folds `Alias`.
+        commonjs_export_name: Option<Cow<'static, str>>,
         /// `SystemJS` export names folded into the namespace IIFE tail:
         /// `N || (exports_1("alias", exports_1("name", N = {})))`.
         system_export_names: Vec<Cow<'static, str>>,
