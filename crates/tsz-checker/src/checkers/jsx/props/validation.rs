@@ -252,7 +252,11 @@ impl<'a> CheckerState<'a> {
                 return;
             }
             let source_retains_explicit_object =
-                self.jsx_type_contains_anonymous_object(attrs_type, &mut Vec::new());
+                crate::query_boundaries::checkers::jsx::contains_anonymous_object_surface(
+                    self.ctx.types,
+                    &self.ctx.definition_store,
+                    attrs_type,
+                );
             if !source_retains_explicit_object && self.is_assignable_to(attrs_type, props_type) {
                 return;
             }
@@ -403,42 +407,6 @@ impl<'a> CheckerState<'a> {
         };
         self.get_jsx_namespace_export_symbol_id("Element")
             .is_some_and(|element_symbol_id| base_symbol_id == element_symbol_id)
-    }
-
-    fn jsx_type_contains_anonymous_object(
-        &self,
-        type_id: TypeId,
-        visited: &mut Vec<TypeId>,
-    ) -> bool {
-        if visited.contains(&type_id) {
-            return false;
-        }
-        visited.push(type_id);
-
-        if crate::query_boundaries::common::object_shape_id(self.ctx.types, type_id).is_some()
-            && self
-                .ctx
-                .definition_store
-                .find_def_for_type(type_id)
-                .is_none()
-        {
-            return true;
-        }
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
-            && members
-                .iter()
-                .any(|&member| self.jsx_type_contains_anonymous_object(member, visited))
-        {
-            return true;
-        }
-        crate::query_boundaries::common::union_members(self.ctx.types, type_id).is_some_and(
-            |members| {
-                members
-                    .iter()
-                    .any(|&member| self.jsx_type_contains_anonymous_object(member, visited))
-            },
-        )
     }
 
     fn instantiate_type_alias_body_from_application(
