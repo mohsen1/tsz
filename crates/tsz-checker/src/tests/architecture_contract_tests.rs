@@ -1,6 +1,6 @@
 use crate::context::{CheckerContext, CheckerOptions};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::ParserState;
@@ -39,6 +39,20 @@ fn read_checker_source_file(path: &str) -> String {
         return read_checker_source_file(dir_path);
     }
     String::new()
+}
+
+fn collect_checker_rs_files(dir: &Path, files: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            collect_checker_rs_files(&path, files);
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
 }
 
 fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
@@ -748,6 +762,35 @@ fn test_register_def_symbol_mapping_in_envs_writes_both_environments() {
         assert_eq!(env.def_to_symbol_id(def_id), Some(sym_id));
         assert_eq!(env.symbol_to_def_id(SymbolRef(sym_id.0)), Some(def_id));
     }
+}
+
+#[test]
+fn test_def_symbol_bridge_writes_route_through_dual_env_helper() {
+    let mut files = Vec::new();
+    collect_checker_rs_files(Path::new("src"), &mut files);
+
+    let helper_path = Path::new("src/context/def_mapping.rs");
+    let method = "register_def_symbol_mapping";
+    let needle = format!(".{method}(");
+    let mut offenders = Vec::new();
+
+    for path in files {
+        if path == helper_path {
+            continue;
+        }
+        let source = fs::read_to_string(&path).unwrap_or_default();
+        for (idx, line) in source.lines().enumerate() {
+            if line.contains(&needle) {
+                offenders.push(format!("{}:{}", path.display(), idx + 1));
+            }
+        }
+    }
+
+    assert!(
+        offenders.is_empty(),
+        "DefId <-> SymbolId bridge writes must use CheckerContext::register_def_symbol_mapping_in_envs; direct writes found at {}",
+        offenders.join(", ")
+    );
 }
 
 #[test]

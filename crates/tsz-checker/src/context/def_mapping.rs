@@ -671,10 +671,10 @@ impl<'a> CheckerContext<'a> {
     //
     // **Visibility on borrow failure.** The two environments are owned through
     // `RefCell`s, so registration can race with another mutable borrow elsewhere
-    // in the checker. The `borrow_envs_for_register` helper unifies the
-    // try_borrow_mut pattern across registration sites and traces every failed
-    // borrow with the registration `name`, so silent disappearance of a
-    // registration becomes observable in logs / structured-error output.
+    // in the checker. The helper unifies the try_borrow_mut pattern across
+    // registration sites and traces every failed borrow with the registration
+    // `name`, so missed per-environment registrations become observable in
+    // logs / structured-error output.
     // See `docs/architecture/ROBUSTNESS_AUDIT_2026-04-26.md` item 1 (PR #A).
     fn with_envs_for_register(
         &self,
@@ -688,7 +688,7 @@ impl<'a> CheckerContext<'a> {
                     register = name,
                     target_env = "type_env",
                     error = ?e,
-                    "register-in-envs: try_borrow_mut failed; registration deferred (DefinitionStore fallback applies)"
+                    "register-in-envs: try_borrow_mut failed; skipped registration for this environment"
                 );
             }
         }
@@ -699,7 +699,7 @@ impl<'a> CheckerContext<'a> {
                     register = name,
                     target_env = "type_environment",
                     error = ?e,
-                    "register-in-envs: try_borrow_mut failed; registration deferred (DefinitionStore fallback applies)"
+                    "register-in-envs: try_borrow_mut failed; skipped registration for this environment"
                 );
             }
         }
