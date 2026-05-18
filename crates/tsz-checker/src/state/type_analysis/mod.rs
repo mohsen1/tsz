@@ -14,6 +14,7 @@ pub(crate) mod cross_file;
 mod cross_file_cache;
 mod cross_file_delegation;
 pub(crate) mod cross_file_direct;
+mod cross_file_direct_actual_lib;
 mod cross_file_direct_files;
 mod cross_file_direct_functions;
 mod cross_file_direct_heritage;

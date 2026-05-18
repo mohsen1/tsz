@@ -142,7 +142,7 @@ impl<'a> CheckerState<'a> {
                                 .default
                                 .or(param.constraint)
                                 .unwrap_or(TypeId::UNKNOWN);
-                            let substitution = tsz_solver::TypeSubstitution::from_args(
+                            let substitution = common::TypeSubstitution::from_args(
                                 self.ctx.types,
                                 &sig.type_params[..param_index],
                                 &args,
@@ -372,7 +372,7 @@ impl<'a> CheckerState<'a> {
                         .default
                         .or(param.constraint)
                         .unwrap_or(TypeId::UNKNOWN);
-                    let substitution = tsz_solver::TypeSubstitution::from_args(
+                    let substitution = common::TypeSubstitution::from_args(
                         self.ctx.types,
                         &sig.type_params[..param_index],
                         &args,
