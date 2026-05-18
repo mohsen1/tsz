@@ -139,6 +139,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
+        if self.import_declaration_is_local_json_value_import(import) {
+            return;
+        }
+
         // Check if we should elide this import based on usage
         let (default_used, named_used) = self.count_used_imports(import);
         if default_used == 0 && named_used == 0 {
@@ -195,6 +199,29 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_declaration_import_attributes(import.attributes);
         self.write(";");
         self.write_line();
+    }
+
+    fn import_declaration_is_local_json_value_import(
+        &self,
+        import: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        let Some(module_node) = self.arena.get(import.module_specifier) else {
+            return false;
+        };
+        if !self
+            .arena
+            .get_literal(module_node)
+            .is_some_and(|literal| literal.text.ends_with(".json"))
+        {
+            return false;
+        }
+        let Some(clause_node) = self.arena.get(import.import_clause) else {
+            return false;
+        };
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return false;
+        };
+        !clause.is_type_only
     }
 
     /// Emit named imports, filtering out unused specifiers.

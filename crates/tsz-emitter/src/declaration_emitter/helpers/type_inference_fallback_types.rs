@@ -7,6 +7,17 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+#[derive(Clone, Copy)]
+enum JsonImportBindingKind {
+    Default,
+    Namespace,
+}
+
+struct JsonImportBinding {
+    module_specifier: String,
+    kind: JsonImportBindingKind,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     /// Get the type of a node from the type cache, if available.
     pub(crate) fn get_node_type(&self, node_id: NodeIndex) -> Option<tsz_solver::types::TypeId> {
@@ -374,7 +385,139 @@ impl<'a> DeclarationEmitter<'a> {
         ))
     }
 
+    pub(crate) fn json_import_reference_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let (binding, access_path) = self.json_import_reference(expr_idx)?;
+        let json_path = self.resolve_json_module_path(&binding.module_specifier)?;
+        let json_text = std::fs::read_to_string(json_path).ok()?;
+        let json_text = Self::strip_json_comments_and_trailing_commas(&json_text);
+        let value = serde_json::from_str::<Value>(&json_text).ok()?;
+
+        match binding.kind {
+            JsonImportBindingKind::Default => {
+                Self::json_value_path_declaration_type_text(&value, &access_path, self.indent_level)
+            }
+            JsonImportBindingKind::Namespace => {
+                if access_path.is_empty() {
+                    return Some(Self::json_namespace_declaration_type_text(
+                        &value,
+                        self.current_file_is_commonjs_node_source(),
+                        self.indent_level,
+                    ));
+                }
+
+                if access_path.first().is_some_and(|name| name == "default") {
+                    return Self::json_value_path_declaration_type_text(
+                        &value,
+                        &access_path[1..],
+                        self.indent_level,
+                    );
+                }
+
+                if self.current_file_is_commonjs_node_source() {
+                    return Self::json_value_path_declaration_type_text(
+                        &value,
+                        &access_path,
+                        self.indent_level,
+                    );
+                }
+
+                None
+            }
+        }
+    }
+
+    fn json_import_reference(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<(JsonImportBinding, Vec<String>)> {
+        let (root_name, access_path) = self.property_access_root_and_path(expr_idx)?;
+        let binding = self.find_json_import_binding(&root_name)?;
+        Some((binding, access_path))
+    }
+
+    fn property_access_root_and_path(&self, expr_idx: NodeIndex) -> Option<(String, Vec<String>)> {
+        let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return self
+                .get_identifier_text(expr_idx)
+                .map(|name| (name, Vec::new()));
+        }
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.arena.get_access_expr(expr_node)?;
+        let (root_name, mut path) = self.property_access_root_and_path(access.expression)?;
+        path.push(self.get_identifier_text(access.name_or_argument)?);
+        Some((root_name, path))
+    }
+
+    fn find_json_import_binding(&self, alias_name: &str) -> Option<JsonImportBinding> {
+        let source_file_idx = self.current_source_file_idx?;
+        let source_file_node = self.arena.get(source_file_idx)?;
+        let source_file = self.arena.get_source_file(source_file_node)?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+            let Some(import) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            let Some(module_specifier) = self
+                .arena
+                .get(import.module_specifier)
+                .and_then(|node| self.arena.get_literal(node))
+                .map(|literal| literal.text.clone())
+                .filter(|specifier| specifier.ends_with(".json"))
+            else {
+                continue;
+            };
+            let Some(clause_node) = self.arena.get(import.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if clause.is_type_only {
+                continue;
+            }
+
+            if self.get_identifier_text(clause.name).as_deref() == Some(alias_name) {
+                return Some(JsonImportBinding {
+                    module_specifier,
+                    kind: JsonImportBindingKind::Default,
+                });
+            }
+
+            let Some(named_bindings_node) = self.arena.get(clause.named_bindings) else {
+                continue;
+            };
+            let Some(named_bindings) = self.arena.get_named_imports(named_bindings_node) else {
+                continue;
+            };
+            if named_bindings.elements.nodes.is_empty()
+                && self.get_identifier_text(named_bindings.name).as_deref() == Some(alias_name)
+            {
+                return Some(JsonImportBinding {
+                    module_specifier,
+                    kind: JsonImportBindingKind::Namespace,
+                });
+            }
+        }
+
+        None
+    }
+
     fn resolve_json_require_path(&self, module_specifier: &str) -> Option<PathBuf> {
+        self.resolve_json_module_path(module_specifier)
+    }
+
+    fn resolve_json_module_path(&self, module_specifier: &str) -> Option<PathBuf> {
         let current_path = Path::new(self.current_file_path.as_deref()?);
         let base_dir = current_path.parent()?;
         let candidate = base_dir.join(module_specifier);
@@ -382,6 +525,59 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(candidate);
         }
         None
+    }
+
+    fn current_file_is_commonjs_node_source(&self) -> bool {
+        self.current_file_path
+            .as_deref()
+            .map(|path| path.to_ascii_lowercase())
+            .is_some_and(|path| path.ends_with(".cts") || path.ends_with(".cjs"))
+    }
+
+    fn json_value_path_declaration_type_text(
+        value: &Value,
+        path: &[String],
+        depth: u32,
+    ) -> Option<String> {
+        if path.is_empty() {
+            return Some(Self::json_value_declaration_type_text(value, depth));
+        }
+        let Value::Object(map) = value else {
+            return None;
+        };
+        let next = map.get(path.first()?)?;
+        Self::json_value_path_declaration_type_text(next, &path[1..], depth)
+    }
+
+    fn json_namespace_declaration_type_text(
+        value: &Value,
+        include_commonjs_named_properties: bool,
+        depth: u32,
+    ) -> String {
+        let member_indent = "    ".repeat((depth + 1) as usize);
+        let closing_indent = "    ".repeat(depth as usize);
+        let mut text = String::from("{\n");
+        text.push_str(&member_indent);
+        text.push_str("default: ");
+        text.push_str(&Self::json_value_declaration_type_text(value, depth + 1));
+        text.push_str(";\n");
+
+        if include_commonjs_named_properties && let Value::Object(map) = value {
+            for (key, value) in map {
+                if key == "default" {
+                    continue;
+                }
+                text.push_str(&member_indent);
+                text.push_str(&Self::json_property_name_text(key));
+                text.push_str(": ");
+                text.push_str(&Self::json_value_declaration_type_text(value, depth + 1));
+                text.push_str(";\n");
+            }
+        }
+
+        text.push_str(&closing_indent);
+        text.push('}');
+        text
     }
 
     fn json_value_declaration_type_text(value: &Value, depth: u32) -> String {
