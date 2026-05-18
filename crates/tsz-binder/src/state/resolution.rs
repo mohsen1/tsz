@@ -337,7 +337,12 @@ impl BinderState {
     /// they cannot pollute the global scope. Callers that legitimately need
     /// to reach those module-scoped lib symbols (type-position resolution,
     /// lib augmentation handlers, last-resort fallbacks) go through this
-    /// method instead of probing `LibContext` directly.
+    /// method instead of iterating `LibContext` themselves.
+    ///
+    /// Takes `&[LibContext]` rather than a flattened `&[Arc<Self>]` because
+    /// several checker call sites mutate `ctx.lib_contexts` directly without
+    /// going through the `lib_binders_cached`-aware setter; consuming the
+    /// canonical `LibContext` slice avoids that staleness window.
     ///
     /// `accept` receives `(file_sym_id, lib_symbol_flags)`. Return
     /// `Some(id)` to accept and stop; return `None` to skip and keep
@@ -346,18 +351,18 @@ impl BinderState {
     pub fn resolve_name_in_lib_module_locals<F>(
         &self,
         name: &str,
-        lib_binders: &[Arc<Self>],
+        lib_contexts: &[super::LibContext],
         mut accept: F,
     ) -> Option<SymbolId>
     where
         F: FnMut(SymbolId, u32) -> Option<SymbolId>,
     {
         let file_sym_id = self.file_locals.get(name)?;
-        for lib_binder in lib_binders {
-            let Some(lib_sym_id) = lib_binder.file_locals.get(name) else {
+        for lib_ctx in lib_contexts {
+            let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) else {
                 continue;
             };
-            let flags = lib_binder.get_symbol(lib_sym_id).map_or(0, |s| s.flags);
+            let flags = lib_ctx.binder.get_symbol(lib_sym_id).map_or(0, |s| s.flags);
             if let Some(resolved) = accept(file_sym_id, flags) {
                 return Some(resolved);
             }

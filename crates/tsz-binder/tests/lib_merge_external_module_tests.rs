@@ -271,12 +271,15 @@ fn resolve_name_in_lib_module_locals_finds_hoisted_global() {
         .get("Iterator")
         .expect("Iterator should be in main file_locals after merge");
 
-    let lib_binders: Vec<Arc<BinderState>> = vec![Arc::new(base_binder), Arc::new(ext_binder)];
+    let probe_contexts: Vec<LibContext> = vec![
+        make_lib_context(&base_arena, &base_binder),
+        make_lib_context(&ext_arena, &ext_binder),
+    ];
 
     let mut visit_count = 0;
     let mut seen_flags = Vec::new();
     let resolved =
-        main_binder.resolve_name_in_lib_module_locals("Iterator", &lib_binders, |id, flags| {
+        main_binder.resolve_name_in_lib_module_locals("Iterator", &probe_contexts, |id, flags| {
             visit_count += 1;
             seen_flags.push(flags);
             Some(id)
@@ -290,15 +293,18 @@ fn resolve_name_in_lib_module_locals_finds_hoisted_global() {
     );
 
     let mut total_visits = 0;
-    let result =
-        main_binder.resolve_name_in_lib_module_locals("Iterator", &lib_binders, |_id, _flags| {
+    let result = main_binder.resolve_name_in_lib_module_locals(
+        "Iterator",
+        &probe_contexts,
+        |_id, _flags| {
             total_visits += 1;
             None
-        });
+        },
+    );
     assert_eq!(result, None);
     assert_eq!(
         total_visits, 2,
-        "reject-all must visit every lib binder that has the name"
+        "reject-all must visit every lib context that has the name"
     );
 }
 
@@ -310,14 +316,13 @@ fn resolve_name_in_lib_module_locals_returns_none_when_name_absent() {
     // that has no current-binder ID).
     let (lib_arena, lib_binder) = bind_source("interface SomeGlobal {}");
     let mut main_binder = BinderState::new();
-    let lib_ctx = make_lib_context(&lib_arena, &lib_binder);
-    main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+    main_binder.merge_lib_contexts_into_binder(&[make_lib_context(&lib_arena, &lib_binder)]);
     assert!(!main_binder.file_locals.has("Nonexistent"));
 
-    let lib_binders: Vec<Arc<BinderState>> = vec![Arc::new(lib_binder)];
+    let probe_contexts: Vec<LibContext> = vec![make_lib_context(&lib_arena, &lib_binder)];
     let mut accept_calls = 0;
     let result =
-        main_binder.resolve_name_in_lib_module_locals("Nonexistent", &lib_binders, |id, _| {
+        main_binder.resolve_name_in_lib_module_locals("Nonexistent", &probe_contexts, |id, _| {
             accept_calls += 1;
             Some(id)
         });
@@ -368,11 +373,14 @@ fn resolve_name_in_lib_module_locals_surfaces_phase3_excluded_module_scoped_flag
         "module-scoped CLASS must NOT leak into the global symbol's flags"
     );
 
-    let lib_binders: Vec<Arc<BinderState>> = vec![Arc::new(base_binder), Arc::new(ext_binder)];
+    let probe_contexts: Vec<LibContext> = vec![
+        make_lib_context(&base_arena, &base_binder),
+        make_lib_context(&ext_arena, &ext_binder),
+    ];
 
     let mut seen_flags = Vec::new();
     let result =
-        main_binder.resolve_name_in_lib_module_locals("Iterator", &lib_binders, |id, flags| {
+        main_binder.resolve_name_in_lib_module_locals("Iterator", &probe_contexts, |id, flags| {
             seen_flags.push(flags);
             (flags & symbol_flags::CLASS != 0).then_some(id)
         });
@@ -385,7 +393,7 @@ fn resolve_name_in_lib_module_locals_surfaces_phase3_excluded_module_scoped_flag
     assert_eq!(
         seen_flags.len(),
         2,
-        "probe must visit both lib binders (rejected interface + accepted class)"
+        "probe must visit both lib contexts (rejected interface + accepted class)"
     );
     assert!(
         seen_flags[0] & symbol_flags::INTERFACE != 0,
@@ -411,8 +419,7 @@ fn resolve_name_in_lib_module_locals_callback_can_substitute_sym_id() {
          interface Substitute {}",
     );
     let mut main_binder = BinderState::new();
-    let lib_ctx = make_lib_context(&lib_arena, &lib_binder);
-    main_binder.merge_lib_contexts_into_binder(&[lib_ctx]);
+    main_binder.merge_lib_contexts_into_binder(&[make_lib_context(&lib_arena, &lib_binder)]);
 
     let anchor_id = main_binder.file_locals.get("Anchor").expect("Anchor");
     let substitute_id = main_binder
@@ -421,9 +428,9 @@ fn resolve_name_in_lib_module_locals_callback_can_substitute_sym_id() {
         .expect("Substitute");
     assert_ne!(anchor_id, substitute_id);
 
-    let lib_binders: Vec<Arc<BinderState>> = vec![Arc::new(lib_binder)];
+    let probe_contexts: Vec<LibContext> = vec![make_lib_context(&lib_arena, &lib_binder)];
     let result =
-        main_binder.resolve_name_in_lib_module_locals("Anchor", &lib_binders, |_id, _flags| {
+        main_binder.resolve_name_in_lib_module_locals("Anchor", &probe_contexts, |_id, _flags| {
             Some(substitute_id)
         });
     assert_eq!(result, Some(substitute_id));
