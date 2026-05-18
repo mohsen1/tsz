@@ -95,6 +95,7 @@ fn module_detection_force_emits_esmodule_marker() {
         ..Default::default()
     };
     let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_auto_detect_module(true);
     printer.set_source_text(source);
     printer.emit(root);
     let output = printer.get_output().to_string();
@@ -369,6 +370,7 @@ for ({ x: xx, ...rrestOff } of array ) {
 
     let options = PrinterOptions {
         target: ScriptTarget::ES2015,
+        always_strict: true,
         ..Default::default()
     };
     let mut printer = Printer::with_options(&parser.arena, options);
@@ -2217,6 +2219,25 @@ var b: a;
         module: ModuleKind::ES2015,
         target: ScriptTarget::ES2015,
         always_strict: true,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert_eq!(output.trim_end(), "export var a = x.c;\nvar b;");
+}
+
+#[test]
+fn namespace_export_import_alias_stays_es_export_var_in_module_none() {
+    let source =
+        "namespace x {\n    interface c {}\n}\ndeclare export import a = x.c;\nvar b: a;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
         ..Default::default()
     };
     let mut printer = Printer::with_options(&parser.arena, options);

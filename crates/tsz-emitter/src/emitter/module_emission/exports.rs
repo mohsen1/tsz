@@ -857,7 +857,8 @@ impl<'a> Printer<'a> {
                 if self.writer.len() == before_len {
                     return;
                 }
-                if !self.ctx.module_state.has_export_assignment
+                if self.ctx.is_commonjs()
+                    && !self.ctx.module_state.has_export_assignment
                     && let Some(import_decl) = self.arena.get_import_decl(clause_node)
                 {
                     let name = self.get_identifier_text_idx(import_decl.import_clause);

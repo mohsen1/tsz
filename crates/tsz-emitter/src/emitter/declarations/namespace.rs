@@ -593,7 +593,8 @@ impl<'a> Printer<'a> {
             return false;
         }
         if let Some(text) = self.source_text {
-            let declare_ranges = self.collect_declare_statement_ranges(body_node);
+            let mut masked_ranges = self.collect_declare_statement_ranges(body_node);
+            masked_ranges.extend(self.collect_exported_import_alias_ranges(body_node));
             return match crate::safe_slice::slice(
                 text,
                 body_node.pos as usize,
@@ -601,7 +602,7 @@ impl<'a> Printer<'a> {
             ) {
                 Ok(body_text) => {
                     let body_pos = body_node.pos as usize;
-                    let masked = Self::mask_ranges_static(body_text, body_pos, &declare_ranges);
+                    let masked = Self::mask_ranges_static(body_text, body_pos, &masked_ranges);
                     Self::text_has_non_namespace_binding_named(&masked, ns_name)
                 }
                 Err(_) => false,
@@ -776,7 +777,8 @@ impl<'a> Printer<'a> {
             // decisions and emit incorrectly. Surface span errors instead of
             // returning a false-negative; fall back to false only when source
             // text is literally unavailable.
-            let declare_ranges = self.collect_declare_statement_ranges(body_node);
+            let mut masked_ranges = self.collect_declare_statement_ranges(body_node);
+            masked_ranges.extend(self.collect_exported_import_alias_ranges(body_node));
             return match crate::safe_slice::slice(
                 text,
                 body_node.pos as usize,
@@ -784,7 +786,7 @@ impl<'a> Printer<'a> {
             ) {
                 Ok(body_text) => {
                     let body_pos = body_node.pos as usize;
-                    let masked = Self::mask_ranges_static(body_text, body_pos, &declare_ranges);
+                    let masked = Self::mask_ranges_static(body_text, body_pos, &masked_ranges);
                     Self::text_has_non_namespace_binding_named(&masked, ns_name)
                 }
                 Err(_) => false,
@@ -910,6 +912,43 @@ impl<'a> Printer<'a> {
                 ranges.push((decl_pos, decl_end));
             }
         }
+        ranges
+    }
+
+    fn collect_exported_import_alias_ranges(
+        &self,
+        body_node: &tsz_parser::parser::node::Node,
+    ) -> Vec<(usize, usize)> {
+        let mut ranges = Vec::new();
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return ranges;
+        };
+        let Some(stmts) = &block.statements else {
+            return ranges;
+        };
+
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export) = self.arena.get_export_decl(stmt_node)
+                && let Some(inner) = self.arena.get(export.export_clause)
+                && inner.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            {
+                ranges.push((stmt_node.pos as usize, stmt_node.end as usize));
+                continue;
+            }
+            if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && let Some(import_decl) = self.arena.get_import_decl(stmt_node)
+                && self
+                    .arena
+                    .has_modifier(&import_decl.modifiers, SyntaxKind::ExportKeyword)
+            {
+                ranges.push((stmt_node.pos as usize, stmt_node.end as usize));
+            }
+        }
+
         ranges
     }
 
