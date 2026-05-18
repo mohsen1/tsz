@@ -1021,6 +1021,14 @@ impl<'a> CheckerState<'a> {
             ) {
                 return;
             }
+            if self.keyof_index_valid_for_string_indexed_object(
+                object_type_for_check,
+                index_type,
+                index_type_for_check,
+                index_constraint,
+            ) {
+                return;
+            }
             if let Some(object_type_node) = self.ctx.arena.get(data.object_type)
                 && let Some(nested_indexed_access) =
                     self.ctx.arena.get_indexed_access_type(object_type_node)
@@ -1195,17 +1203,10 @@ impl<'a> CheckerState<'a> {
                 index_type_for_check,
             )
             .is_some();
-            // Suppress TS2536 when the index type is deferred — i.e., it involves
-            // a conditional, application, keyof, or error type that can't be fully
-            // resolved at the generic level. TSC defers these checks to instantiation
-            // time.
-            // Example: { 0: X; 1: Y }[HasTail<T> extends true ? 0 : 1]
-            // KeyOf types remain deferred when wrapping type parameters (e.g.,
-            // `keyof T` where T extends object) because the constraint has no
-            // useful keys. This is valid for `K extends keyof T` patterns.
-            // Check BOTH the evaluated type AND the original (pre-evaluation) type,
-            // because evaluation may partially resolve an Application into a
-            // Conditional, or may produce ERROR.
+            // Suppress TS2536 when the index is deferred (conditional, application,
+            // keyof, or error) — tsc defers generic-level checks to instantiation time.
+            // Check both evaluated and original types since evaluation can partially
+            // resolve to ERROR or Conditional.
             let is_deferred_object_type = |ty: TypeId| -> bool {
                 ty == TypeId::ERROR
                     || crate::query_boundaries::common::is_conditional_type(self.ctx.types, ty)

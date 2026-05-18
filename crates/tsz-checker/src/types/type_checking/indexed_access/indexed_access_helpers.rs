@@ -822,4 +822,73 @@ impl<'a> CheckerState<'a> {
                     .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_PARAMETER))
             })
     }
+
+    /// Returns true if `ty` is a `keyof T` expression or a type parameter whose
+    /// constraint chain (up to 5 levels) leads to a `keyof T` expression.
+    fn type_is_or_constrains_to_keyof(&self, ty: TypeId) -> bool {
+        if crate::query_boundaries::state::checking::keyof_target(self.ctx.types, ty).is_some() {
+            return true;
+        }
+        let mut current = ty;
+        for _ in 0..5 {
+            let Some(next) =
+                crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, current)
+            else {
+                break;
+            };
+            if crate::query_boundaries::state::checking::keyof_target(self.ctx.types, next)
+                .is_some()
+            {
+                return true;
+            }
+            if current == next {
+                break;
+            }
+            current = next;
+        }
+        false
+    }
+
+    /// Structural rule: when the index type is (or constrains to) a `keyof T` expression
+    /// and the object has a string index signature, suppress TS2536.
+    ///
+    /// String index signatures `[s: string]: V` accept both string and number keys per
+    /// JavaScript semantics. `keyof T` always produces a subset of `string | number | symbol`.
+    /// tsc accepts `Obj[keyof T]` without TS2536 in both concrete and generic contexts.
+    pub(super) fn keyof_index_valid_for_string_indexed_object(
+        &mut self,
+        object_type: TypeId,
+        index_type: TypeId,
+        index_type_for_check: TypeId,
+        index_constraint: Option<TypeId>,
+    ) -> bool {
+        if self
+            .ctx
+            .types
+            .get_index_signatures(object_type)
+            .string_index
+            .is_none()
+        {
+            return false;
+        }
+        if self.type_is_or_constrains_to_keyof(index_type) {
+            return true;
+        }
+        if index_type != index_type_for_check
+            && self.type_is_or_constrains_to_keyof(index_type_for_check)
+        {
+            return true;
+        }
+        if let Some(constraint) = index_constraint {
+            if self.type_is_or_constrains_to_keyof(constraint) {
+                return true;
+            }
+            let constraint_eval = self.evaluate_type_with_env(constraint);
+            if constraint != constraint_eval && self.type_is_or_constrains_to_keyof(constraint_eval)
+            {
+                return true;
+            }
+        }
+        false
+    }
 }

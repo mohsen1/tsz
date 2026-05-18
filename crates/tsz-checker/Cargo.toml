@@ -1349,5 +1349,9 @@ path = "tests/operator_literal_annotation_display_tests.rs"
 name = "public_package_unique_symbol_emit_tests"
 path = "tests/public_package_unique_symbol_emit_tests.rs"
 
+[[test]]
+name = "ts2536_keyof_string_index_signature_tests"
+path = "tests/ts2536_keyof_string_index_signature_tests.rs"
+
 [lints]
 workspace = true
