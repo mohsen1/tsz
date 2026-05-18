@@ -38,7 +38,10 @@ pub(super) enum JsxAttrValue {
     /// String literal attribute -- carries the node index for quote-preserving emission
     StringNode(NodeIndex),
     Bool(bool),
-    Expr(NodeIndex),
+    Expr {
+        expr: NodeIndex,
+        trailing_comment_scope: Option<NodeIndex>,
+    },
     EmptyExpression,
 }
 
