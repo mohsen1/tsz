@@ -1051,62 +1051,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         resolved
                     };
 
-                    if let Some(TypeData::Mapped(mapped_id)) = self.interner.lookup(effective_body)
-                    {
-                        let mapped = self.interner.get_mapped(mapped_id);
-                        if let Some(TypeData::KeyOf(source)) =
-                            self.interner.lookup(mapped.constraint)
-                            && let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(source)
-                            && let Some(idx) = type_params.iter().position(|p| p.name == tp.name)
-                            && idx < expanded_args.len()
-                        {
-                            let arg = expanded_args[idx];
-                            let resolved_arg = self.evaluate(arg);
-                            if let Some(TypeData::Union(list_id)) =
-                                self.interner.lookup(resolved_arg)
-                                && !matches!(
-                                    self.interner.lookup(resolved_arg),
-                                    Some(TypeData::Array(_) | TypeData::Tuple(_))
-                                )
-                            {
-                                let members = self.interner.type_list(list_id).to_vec();
-                                let mut distributed = Vec::with_capacity(members.len());
-                                for member in members {
-                                    if crate::visitors::visitor_predicates::is_primitive_type(
-                                        self.interner,
-                                        member,
-                                    ) {
-                                        distributed.push(member);
-                                        continue;
-                                    }
-                                    let mut member_args = expanded_args.to_vec();
-                                    member_args[idx] = member;
-                                    let instantiated = instantiate_generic(
-                                        self.interner,
-                                        effective_body,
-                                        &type_params,
-                                        &member_args,
-                                    );
-                                    distributed.push(self.evaluate(instantiated));
-                                }
-                                let evaluated = self.interner.union(distributed);
-                                if let Some(db) = self.query_db {
-                                    db.insert_application_eval_cache(
-                                        def_id,
-                                        &expanded_args,
-                                        no_unchecked_indexed_access,
-                                        evaluated,
-                                    );
-                                }
-                                if let Some(d) = self.def_depth.get_mut(&def_id) {
-                                    *d = d.saturating_sub(1);
-                                }
-                                return evaluated;
-                            }
-                        }
-                    }
-
                     // Instantiate the resolved type with the type arguments.
+                    // Homomorphic union distribution (e.g. `ReplaceKeys<A|B, ...>`) is handled
+                    // inside `instantiate_generic`: when the body is a mapped type with a
+                    // `keyof T` constraint and T's substituted argument evaluates to a
+                    // concrete union, the instantiator distributes over union members via
+                    // one cheap substitution pass per member and returns
+                    // `Union(MappedA, MappedB, ...)` for evaluate to expand.
+                    // Distributing at this layer instead would call `instantiate_generic`
+                    // N times (one per union member) — N times more expensive.
+                    //
                     // Then rebind polymorphic `this` to the concrete application
                     // so interface bodies like `constraint: Constraint<this>`
                     // preserve their receiver-specific invariance.
