@@ -267,11 +267,16 @@ impl<'a> Printer<'a> {
                 } else {
                     None
                 };
+                let class_binding_name = self.register_es5_class_binding_name(class_node);
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(class_node);
                 if let Some(comment) = leading_comment_text {
                     es5_emitter.set_leading_comment(comment);
                 }
-                let es5_output = es5_emitter.emit_class(class_node);
+                let es5_output = self.emit_es5_class_output(
+                    &mut es5_emitter,
+                    class_node,
+                    class_binding_name.as_deref(),
+                );
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 debug!(
                     "Printer ES5Class end (idx={}, class_node={}, output_len={})",
@@ -899,6 +904,32 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn register_es5_class_binding_name(&mut self, class_node: NodeIndex) -> Option<String> {
+        let class_data = self
+            .arena
+            .get(class_node)
+            .and_then(|node| self.arena.get_class(node))?;
+        let original_name = self.get_identifier_text_opt(class_data.name)?;
+        let emitted_name = self
+            .ctx
+            .block_scope_state
+            .register_block_scoped_class(&original_name);
+        (emitted_name != original_name).then_some(emitted_name)
+    }
+
+    fn emit_es5_class_output(
+        &mut self,
+        es5_emitter: &mut ClassES5Emitter<'a>,
+        class_node: NodeIndex,
+        binding_name: Option<&str>,
+    ) -> String {
+        if let Some(binding_name) = binding_name {
+            es5_emitter.emit_class_with_binding_name(class_node, binding_name)
+        } else {
+            es5_emitter.emit_class(class_node)
+        }
+    }
+
     /// Create an ES5 class emitter pre-configured with decorator info for the given class.
     fn create_es5_class_emitter_with_decorators(
         &mut self,
@@ -976,7 +1007,7 @@ impl<'a> Printer<'a> {
                             &class_data.members.nodes,
                         )
                     })
-                    .map(|class_name| format!("{class_name}_1"))
+                    .map(|class_name| self.make_unique_name_from_base(&class_name))
             } else {
                 None
             };
@@ -1194,8 +1225,13 @@ impl<'a> Printer<'a> {
     ) {
         match inner {
             EmitDirective::ES5Class { class_node } => {
+                let class_binding_name = self.register_es5_class_binding_name(*class_node);
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(*class_node);
-                let es5_output = es5_emitter.emit_class(*class_node);
+                let es5_output = self.emit_es5_class_output(
+                    &mut es5_emitter,
+                    *class_node,
+                    class_binding_name.as_deref(),
+                );
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {
@@ -1407,8 +1443,13 @@ impl<'a> Printer<'a> {
                 self.emit_chained_previous(node, idx, directives, index);
             }
             EmitDirective::ES5Class { class_node } => {
+                let class_binding_name = self.register_es5_class_binding_name(*class_node);
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(*class_node);
-                let es5_output = es5_emitter.emit_class(*class_node);
+                let es5_output = self.emit_es5_class_output(
+                    &mut es5_emitter,
+                    *class_node,
+                    class_binding_name.as_deref(),
+                );
                 self.sync_es5_class_emitter_state(&mut es5_emitter);
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {

@@ -277,6 +277,10 @@ pub enum IRNode {
     /// `var ClassName = /** @class */ (function (_super) { ... }(BaseClass));`
     ES5ClassIIFE {
         name: Cow<'static, str>,
+        /// Optional outer binding name when block-scoped class lowering must
+        /// avoid colliding with an outer declaration while preserving the
+        /// class's own lexical name inside the IIFE.
+        binding_name: Option<Cow<'static, str>>,
         base_class: Option<Box<Self>>,
         super_param: Option<Cow<'static, str>>,
         body: Vec<Self>,

@@ -1223,6 +1223,7 @@ impl<'a> IRPrinter<'a> {
             // ES5 Class Transform Specific
             IRNode::ES5ClassIIFE {
                 name,
+                binding_name,
                 base_class,
                 super_param,
                 body,
@@ -1264,8 +1265,9 @@ impl<'a> IRPrinter<'a> {
                 }
 
                 // var ClassName = /** @class */ (function (_super) { ... }(BaseClass));
+                let class_binding_name = binding_name.as_ref().unwrap_or(name);
                 self.write("var ");
-                self.write(name);
+                self.write(class_binding_name);
                 self.write(" = ");
                 self.emit_es5_class_expression(
                     name,
@@ -1295,7 +1297,7 @@ impl<'a> IRPrinter<'a> {
                     self.write_indent();
                     self.write(alias);
                     self.write(" = ");
-                    self.write(name);
+                    self.write(class_binding_name);
                     self.write(";");
                 }
                 // Emit deferred static block IIFEs after the class IIFE
