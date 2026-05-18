@@ -98,6 +98,11 @@ await fs.writeFile(artifact, `${JSON.stringify({
           tsc_accepted_tsz_rejected: 3,
           tsc_rejected_tsz_accepted: 2,
           tsc_clean_subset: {
+            manifest_path:
+              "type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-manifest.json",
+            classification_path:
+              "type-challenges-assertions-tsc-clean/type-challenges-assertions-tsc-clean-classification.json",
+            tsconfig_path: "type-challenges-assertions-tsc-clean/tsconfig.tsz-guard.json",
             generated_assertions: 10,
             assertions_referencing_solution_declaration: 9,
             assertions_missing_solution_declaration_reference: 1,
@@ -105,6 +110,8 @@ await fs.writeFile(artifact, `${JSON.stringify({
             tsc_status: "pass",
             tsz_status: "fail",
             comparison_status: "tsz-rejects-tsc-accepted",
+            tsc_diagnostic_free: 10,
+            tsz_diagnostic_free: 7,
           },
           file_comparison: {
             counts: {
@@ -291,11 +298,25 @@ try {
   assert.match(compatibilityDashboard, /solutions ref: solutions-ref/);
   assert.match(compatibilityDashboard, /tsc clean: 10/);
   assert.match(compatibilityDashboard, /tsz clean: 7/);
+  assert.match(
+    compatibilityDashboard,
+    /tsc-clean manifest: type-challenges-assertions-tsc-clean\/type-challenges-assertions-tsc-clean-manifest\.json/,
+  );
+  assert.match(
+    compatibilityDashboard,
+    /tsc-clean classification: type-challenges-assertions-tsc-clean\/type-challenges-assertions-tsc-clean-classification\.json/,
+  );
+  assert.match(
+    compatibilityDashboard,
+    /tsc-clean tsconfig: type-challenges-assertions-tsc-clean\/tsconfig\.tsz-guard\.json/,
+  );
   assert.match(compatibilityDashboard, /tsc-clean subset: 10/);
   assert.match(compatibilityDashboard, /tsc-clean rejected: 68/);
   assert.match(compatibilityDashboard, /tsc-clean tsc: pass/);
   assert.match(compatibilityDashboard, /tsc-clean tsz: fail/);
   assert.match(compatibilityDashboard, /tsc-clean comparison: tsz-rejects-tsc-accepted/);
+  assert.match(compatibilityDashboard, /tsc-clean tsc diagnostic-free: 10/);
+  assert.match(compatibilityDashboard, /tsc-clean tsz diagnostic-free: 7/);
   assert.match(
     compatibilityDashboard,
     /clean manifest: type-challenges-assertions-tsc-clean\/type-challenges-assertions-tsc-clean-manifest\.json/,
