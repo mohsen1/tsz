@@ -1,5 +1,8 @@
 use super::type_node::TypeNodeChecker;
+use rustc_hash::FxHashMap;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
@@ -56,6 +59,85 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         idx: NodeIndex,
         use_extended_value_resolver: bool,
         use_qualified_names: bool,
+    ) -> TypeId {
+        self.lower_with_resolvers_impl(idx, use_extended_value_resolver, use_qualified_names, None)
+    }
+
+    /// Walk the AST subtree rooted at `idx`, resolve all `TYPE_REFERENCE` nodes
+    /// whose `type_name` is or starts with an `import()` `CALL_EXPRESSION`, and
+    /// return the results keyed by `type_name` `NodeIndex`.
+    ///
+    /// This pre-pass runs with `&mut self` (required for module resolution) before
+    /// the immutable `lower_with_resolvers` closure context is created. The caller
+    /// passes the resulting map so that `TypeLowering` can pick up the pre-resolved
+    /// types via the `import_type_resolver` callback.
+    pub(crate) fn collect_import_type_overrides(
+        &mut self,
+        idx: NodeIndex,
+    ) -> FxHashMap<NodeIndex, TypeId> {
+        // Skip the subtree walk for leaf-only nodes that structurally cannot contain
+        // TYPE_REFERENCE nodes (and therefore cannot have import() type refs).
+        if let Some(node) = self.ctx.arena.get(idx)
+            && (node.kind == syntax_kind_ext::INFER_TYPE
+                || node.kind == syntax_kind_ext::LITERAL_TYPE)
+        {
+            return FxHashMap::default();
+        }
+        let mut map = FxHashMap::default();
+        self.collect_import_types_recursive(idx, &mut map, 0);
+        map
+    }
+
+    fn collect_import_types_recursive(
+        &mut self,
+        idx: NodeIndex,
+        map: &mut FxHashMap<NodeIndex, TypeId>,
+        depth: u32,
+    ) {
+        // Guard against adversarially deep nesting (matches codebase consensus of 64
+        // for AST recursive walkers).
+        if depth > 64 {
+            return;
+        }
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return;
+        };
+        match node.kind {
+            // These node kinds structurally cannot contain a TYPE_REFERENCE whose
+            // type_name roots in an import() call.
+            k if k == syntax_kind_ext::INFER_TYPE || k == syntax_kind_ext::LITERAL_TYPE => {}
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+                    && let Some(resolved) = self.import_call_type_reference(type_ref.type_name)
+                {
+                    map.insert(type_ref.type_name, resolved);
+                }
+                let type_arguments = self
+                    .ctx
+                    .arena
+                    .get_type_ref(node)
+                    .and_then(|type_ref| type_ref.type_arguments.as_ref())
+                    .map(|args| args.nodes.clone());
+                if let Some(type_arguments) = type_arguments {
+                    for child_idx in type_arguments {
+                        self.collect_import_types_recursive(child_idx, map, depth + 1);
+                    }
+                }
+            }
+            _ => {
+                for child_idx in self.ctx.arena.get_children(idx) {
+                    self.collect_import_types_recursive(child_idx, map, depth + 1);
+                }
+            }
+        }
+    }
+
+    pub(crate) fn lower_with_resolvers_impl(
+        &self,
+        idx: NodeIndex,
+        use_extended_value_resolver: bool,
+        use_qualified_names: bool,
+        import_overrides: Option<&FxHashMap<NodeIndex, TypeId>>,
     ) -> TypeId {
         use tsz_lowering::TypeLowering;
 
@@ -209,6 +291,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
         if !type_param_bindings.is_empty() {
             lowering = lowering.with_type_param_bindings(type_param_bindings);
+        }
+        // Wire in pre-resolved import type references. The closure is declared here
+        // so its lifetime covers `lowering.lower_type(idx)`.
+        let import_type_resolver = import_overrides.filter(|m| !m.is_empty()).map(|overrides| {
+            move |type_name_idx: NodeIndex| -> Option<TypeId> {
+                overrides.get(&type_name_idx).copied()
+            }
+        });
+        if let Some(ref resolver) = import_type_resolver {
+            lowering = lowering.with_import_type_resolver(resolver);
         }
         lowering.lower_type(idx)
     }

@@ -117,6 +117,12 @@ impl Parser {
         self.type_cache = None;
     }
 
+    /// Return global parsed-lib cache statistics as JSON.
+    #[wasm_bindgen(js_name = getLibFileCacheStatisticsJson)]
+    pub fn get_lib_file_cache_statistics_json(&self) -> String {
+        crate::api::wasm::lib_cache::lib_file_cache_statistics_json()
+    }
+
     /// Parse the source file and return the root node index.
     #[wasm_bindgen(js_name = parseSourceFile)]
     pub fn parse_source_file(&mut self) -> u32 {

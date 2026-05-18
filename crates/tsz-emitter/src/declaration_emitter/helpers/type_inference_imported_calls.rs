@@ -4,6 +4,134 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn call_initializer_types_versions_self_reference_falls_back_to_any(
+        &self,
+        initializer: NodeIndex,
+        type_text: &str,
+    ) -> bool {
+        let Some((import_specifier, _)) = self.parse_import_type_text(type_text) else {
+            return false;
+        };
+        if import_specifier != Self::bare_package_specifier(&import_specifier) {
+            return false;
+        }
+
+        let Some(call_module_specifier) =
+            self.call_expression_imported_module_specifier(initializer)
+        else {
+            return false;
+        };
+        if call_module_specifier != import_specifier {
+            return false;
+        }
+
+        let Some(package_root) = self.find_package_root_for_name(&import_specifier) else {
+            return false;
+        };
+
+        Self::package_root_has_types_versions_self_back_reference(std::path::Path::new(
+            &package_root,
+        ))
+    }
+
+    fn call_expression_imported_module_specifier(&self, initializer: NodeIndex) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(init_node)?;
+        self.imported_value_module_specifier_from_syntax(call.expression)
+            .or_else(|| {
+                let binder = self.binder?;
+                let sym_id = self.value_reference_symbol(call.expression)?;
+                self.imported_value_module_specifier(sym_id, binder)
+            })
+            .filter(|specifier| !specifier.starts_with('.') && !specifier.starts_with('/'))
+    }
+
+    pub(in crate::declaration_emitter) fn package_root_has_types_versions_self_back_reference(
+        package_root: &std::path::Path,
+    ) -> bool {
+        let pkg_json_path = package_root.join("package.json");
+        let Ok(pkg_content) = std::fs::read_to_string(pkg_json_path) else {
+            return false;
+        };
+        let Ok(pkg_json) = serde_json::from_str::<serde_json::Value>(&pkg_content) else {
+            return false;
+        };
+        let Some(types_versions) = pkg_json
+            .get("typesVersions")
+            .and_then(|value| value.as_object())
+        else {
+            return false;
+        };
+
+        for mappings in types_versions.values() {
+            let Some(mappings) = mappings.as_object() else {
+                continue;
+            };
+            for (mapping_key, targets) in mappings {
+                if mapping_key != "*" {
+                    continue;
+                }
+                let Some(targets) = targets.as_array() else {
+                    continue;
+                };
+                for target in targets {
+                    let Some(target_str) = target.as_str() else {
+                        continue;
+                    };
+                    if Self::types_versions_target_reexports_package_root(package_root, target_str)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    fn types_versions_target_reexports_package_root(
+        package_root: &std::path::Path,
+        target: &str,
+    ) -> bool {
+        let target_prefix = target.trim_end_matches('*').trim_end_matches('/');
+        if target_prefix.is_empty() {
+            return false;
+        }
+
+        let candidates = if target_prefix.ends_with(".d.ts") || target_prefix.ends_with(".ts") {
+            vec![package_root.join(target_prefix)]
+        } else {
+            vec![
+                package_root.join(target_prefix).join("index.d.ts"),
+                package_root.join(target_prefix).join("index.ts"),
+                package_root.join(format!("{target_prefix}.d.ts")),
+                package_root.join(format!("{target_prefix}.ts")),
+            ]
+        };
+
+        candidates.iter().any(|candidate| {
+            std::fs::read_to_string(candidate)
+                .is_ok_and(|content| Self::module_text_reexports_parent_root(&content))
+        })
+    }
+
+    fn module_text_reexports_parent_root(content: &str) -> bool {
+        content.lines().any(|line| {
+            let trimmed = line.trim().trim_end_matches(';').trim();
+            if !trimmed.starts_with("export ") {
+                return false;
+            }
+            let Some((_, module_specifier)) = trimmed.rsplit_once(" from ") else {
+                return false;
+            };
+            let module_specifier = module_specifier.trim().trim_matches('"').trim_matches('\'');
+            module_specifier == ".." || module_specifier == "../"
+        })
+    }
+
     pub(in crate::declaration_emitter) fn imported_call_public_type_text(
         &self,
         initializer: NodeIndex,

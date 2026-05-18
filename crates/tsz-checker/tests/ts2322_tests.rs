@@ -33,6 +33,7 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
         "dom.d.ts",
         "dom.generated.d.ts",
         "dom.iterable.d.ts",
+        "esnext.iterator.d.ts",
         "esnext.d.ts",
     ])
 }
@@ -5411,6 +5412,67 @@ const r1: number = map.values().next().value;
     );
 }
 
+#[test]
+fn test_builtin_iterator_helpers_keep_contextual_callback_types() {
+    let source = r#"
+const iterator = Iterator.from([0, 1, 2]);
+
+const mapped: IteratorObject<string> =
+    iterator.map((value, index) => value === index ? "same" : String(value));
+const filtered: IteratorObject<number> =
+    iterator.filter((value, index) => value > index);
+
+function isZero(value: number): value is 0 {
+    return value === 0;
+}
+const zero: IteratorObject<0> = iterator.filter(isZero);
+
+function* gen() {
+    yield 0;
+}
+const mappedGen: IteratorObject<string> =
+    gen().map(value => value === 0 ? "zero" : "other");
+const mappedValues: IteratorObject<string> =
+    [0, 1, 2].values().map(value => value === 0 ? "zero" : "other");
+
+class GoodIterator extends Iterator<number> {
+    next() {
+        return { done: false, value: 0 } as const;
+    }
+}
+
+mapped;
+filtered;
+zero;
+mappedGen;
+mappedValues;
+new GoodIterator();
+"#;
+    let diagnostics = compile_with_libs_for_ts(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_builtin_iterator_return: true,
+            strict_null_checks: true,
+            target: ScriptTarget::ESNext,
+            ..CheckerOptions::default()
+        },
+    );
+
+    for code in [
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+        diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+    ] {
+        assert_eq!(
+            diagnostic_count(&diagnostics, code),
+            0,
+            "builtin iterator helpers should not emit TS{code}, got: {diagnostics:?}"
+        );
+    }
+}
+
 /// When `strictBuiltinIteratorReturn` is false, `BuiltinIteratorReturn` resolves to `any`.
 /// Assigning `any` to `number` is always allowed, so no error.
 #[test]
@@ -7830,6 +7892,41 @@ fn test_ts2322_fbounded_wrong_element_type_errors() {
     assert!(
         ts2322 >= 1,
         "Expected TS2322: number is not assignable to FileEntry: {diags:?}"
+    );
+}
+
+const TREE_BTREE_INTERFACES: &str = r#"
+        interface Tree<T extends Tree<T>> {
+            children: T[];
+        }
+        interface BTree extends Tree<BTree> {
+            value: number;
+        }
+    "#;
+
+#[test]
+fn test_ts2322_fbounded_no_parent_field_empty_array_no_error() {
+    // Minimal F-bounded pattern without a parent field — empty array should
+    // adopt the contextual element type from the heritage clause.
+    let source = format!("{TREE_BTREE_INTERFACES}const bt: BTree = {{ value: 1, children: [] }};");
+    let diags = get_all_diagnostics(&source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert_eq!(
+        ts2322, 0,
+        "Expected no TS2322: empty array in minimal F-bounded object literal should adopt contextual type: {diags:?}"
+    );
+}
+
+#[test]
+fn test_ts2322_fbounded_no_parent_field_wrong_element_type_errors() {
+    // When the element type is wrong, TS2322 must still fire.
+    let source =
+        format!("{TREE_BTREE_INTERFACES}const bt: BTree = {{ value: 1, children: [42] }};");
+    let diags = get_all_diagnostics(&source);
+    let ts2322 = diagnostic_count(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        ts2322 >= 1,
+        "Expected TS2322: number is not assignable to BTree: {diags:?}"
     );
 }
 
