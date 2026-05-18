@@ -611,27 +611,41 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         Option<tsz::module_resolver::ImportingModuleKind>,
     );
 
-    // AST traversal is pure read-only and embarrassingly parallel: each file
-    // independently scans its own arena. Doing this up-front in parallel lets
-    // the subsequent (sequential) module-resolution loop iterate over a
-    // pre-built `Vec<Vec<...>>` instead of interleaving the AST scan with
-    // the resolution-cache mutation. On large repos this turns N sequential
-    // AST passes into one N-way parallel pass.
+    // AST traversal is pure read-only: each file independently scans its own
+    // arena. Doing this up-front lets the subsequent (sequential)
+    // module-resolution loop iterate over a pre-built `Vec<Vec<...>>` instead
+    // of interleaving the AST scan with resolution-cache mutation. Tiny
+    // projects stay sequential because there is less work than Rayon scheduler
+    // overhead; larger repos keep the N-way parallel pass.
     let cached_module_specifiers: Vec<Vec<CachedModuleSpecifier>> = {
-        use rayon::prelude::*;
         let _span =
             tracing::info_span!("collect_module_specifiers", files = program.files.len()).entered();
-        program
-            .files
-            .par_iter()
-            .map(|file| {
-                collect_module_specifiers_for_check(
-                    &file.arena,
-                    file.source_file,
-                    file.is_external_module,
-                )
-            })
-            .collect()
+        if program.files.len() <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES {
+            program
+                .files
+                .iter()
+                .map(|file| {
+                    collect_module_specifiers_for_check(
+                        &file.arena,
+                        file.source_file,
+                        file.is_external_module,
+                    )
+                })
+                .collect()
+        } else {
+            use rayon::prelude::*;
+            program
+                .files
+                .par_iter()
+                .map(|file| {
+                    collect_module_specifiers_for_check(
+                        &file.arena,
+                        file.source_file,
+                        file.is_external_module,
+                    )
+                })
+                .collect()
+        }
     };
 
     // Duplicate package redirect map
@@ -1254,24 +1268,42 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
 
     // Pre-create all binders for cross-file resolution.
     let all_binders: Arc<Vec<Arc<BinderState>>> = {
-        use rayon::prelude::*;
         let _span =
             tracing::info_span!("build_cross_file_binders", files = program.files.len()).entered();
-        Arc::new(
-            program
-                .files
-                .par_iter()
-                .enumerate()
-                .map(|(file_idx, file)| {
-                    Arc::new(create_cross_file_lookup_binder_with_augmentations(
-                        file,
-                        program,
-                        file_idx,
-                        &merged_augmentations,
-                    ))
-                })
-                .collect(),
-        )
+        if program.files.len() <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES {
+            Arc::new(
+                program
+                    .files
+                    .iter()
+                    .enumerate()
+                    .map(|(file_idx, file)| {
+                        Arc::new(create_cross_file_lookup_binder_with_augmentations(
+                            file,
+                            program,
+                            file_idx,
+                            &merged_augmentations,
+                        ))
+                    })
+                    .collect(),
+            )
+        } else {
+            use rayon::prelude::*;
+            Arc::new(
+                program
+                    .files
+                    .par_iter()
+                    .enumerate()
+                    .map(|(file_idx, file)| {
+                        Arc::new(create_cross_file_lookup_binder_with_augmentations(
+                            file,
+                            program,
+                            file_idx,
+                            &merged_augmentations,
+                        ))
+                    })
+                    .collect(),
+            )
+        }
     };
 
     // Extract is_external_module from BoundFile to preserve state across file bindings.
