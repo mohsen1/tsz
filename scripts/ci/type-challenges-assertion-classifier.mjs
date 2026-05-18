@@ -263,6 +263,9 @@ function validateCandidateManifest(manifest) {
     ) {
       fail(`manifest assertion candidate does not exist inside candidate directory: ${output}`);
     }
+    if (!fs.statSync(outputPath).isFile()) {
+      fail(`manifest assertion candidate is not a file inside candidate directory: ${output}`);
+    }
 
     return {
       ...entry,
@@ -694,6 +697,10 @@ const manifest = validateCandidateManifest(readJson(candidateManifestPath));
 const tsconfig = path.join(candidateDir, "tsconfig.tsz-guard.json");
 if (!fs.existsSync(tsconfig)) {
   console.error(`error: assertion candidate tsconfig does not exist: ${tsconfig}`);
+  process.exit(1);
+}
+if (!fs.statSync(tsconfig).isFile()) {
+  console.error(`error: assertion candidate tsconfig is not a file: ${tsconfig}`);
   process.exit(1);
 }
 
