@@ -54,7 +54,6 @@ withTempDir((dir) => {
     COMPAT_FIXTURE_SOURCES: [
       "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
       "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
-      "malformed",
     ].join("\n"),
   });
 
@@ -86,6 +85,39 @@ withTempDir((dir) => {
   ]);
   assert.equal(row.diagnostic_subsystems[0].subsystem, "evaluation-inference-instantiation");
   assert.equal(row.diagnostic_subsystems[1].subsystem, "uncoded diagnostic");
+});
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const cases = [
+    {
+      source: "malformed",
+      message: "line 1 must be name|repository|ref",
+    },
+    {
+      source: "fixture|https://example.invalid/repo.git|",
+      message: "line 1 must be name|repository|ref",
+    },
+    {
+      source: "fixture|https://example.invalid/repo.git|abc123|extra",
+      message: "line 1 must be name|repository|ref",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = runProjectCompatibility(["record"], {
+      COMPAT_JSONL_FILE: jsonl,
+      COMPAT_NAME: "type-fest-project",
+      COMPAT_EXIT_CLASS: "exit success",
+      COMPAT_PHASE: "check",
+      COMPAT_DIAGNOSTIC_STATUS: "none",
+      COMPAT_FIXTURE_SOURCES: testCase.source,
+    });
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, new RegExp(testCase.message));
+  }
+  assert.equal(fs.existsSync(jsonl), false);
 });
 
 withTempDir((dir) => {

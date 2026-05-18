@@ -70,18 +70,24 @@ function toExitCodes(value) {
 function fixtureSourcesFrom(value) {
   const sources = [];
   const seen = new Set();
-  for (const rawLine of String(value || "").split(/\r?\n/)) {
+  const lines = String(value || "").split(/\r?\n/);
+  for (const [index, rawLine] of lines.entries()) {
     const line = rawLine.trim();
     if (!line) continue;
-    const [name, repository, ref = ""] = line.split("|");
-    if (!name || !repository) continue;
+    const parts = line.split("|").map((part) => part.trim());
+    if (parts.length !== 3 || parts.some((part) => part === "")) {
+      throw new Error(
+        `COMPAT_FIXTURE_SOURCES line ${index + 1} must be name|repository|ref: ${line}`,
+      );
+    }
+    const [name, repository, ref] = parts;
     const key = `${name}\0${repository}\0${ref}`;
     if (seen.has(key)) continue;
     seen.add(key);
     sources.push({
       name,
       repository,
-      ref: ref || null,
+      ref,
     });
   }
   return sources;
@@ -448,6 +454,14 @@ function record() {
     diagnosticSubsystems,
     diagnosticCodes,
   });
+  let fixtureSources;
+  try {
+    fixtureSources = fixtureSourcesFrom(process.env.COMPAT_FIXTURE_SOURCES);
+  } catch (error) {
+    console.error(`error: ${error.message}`);
+    process.exit(1);
+  }
+
   const row = {
     name: projectName,
     state,
@@ -473,7 +487,7 @@ function record() {
     },
     files_reached: toNumber(process.env.COMPAT_FILES_REACHED),
     peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
-    fixture_sources: fixtureSourcesFrom(process.env.COMPAT_FIXTURE_SOURCES),
+    fixture_sources: fixtureSources,
   };
   const assertionMetadata = typeChallengesCleanAssertionMetadata(projectName);
   if (assertionMetadata) {
