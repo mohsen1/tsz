@@ -45,7 +45,14 @@ function validateClassificationCompilerReport(report) {
 }
 
 function validateSourceMetadata(source, label) {
-  if (source?.repository && source?.ref) return;
+  if (
+    typeof source?.repository === "string" &&
+    source.repository.trim() !== "" &&
+    typeof source?.ref === "string" &&
+    source.ref.trim() !== ""
+  ) {
+    return;
+  }
 
   fail(
     [
@@ -72,7 +79,12 @@ function validateCleanManifestSources(manifest) {
 
   for (const label of ["templates", "testCases", "solutions"]) {
     const source = manifest.sources[label];
-    if (!source?.repository || !source?.ref) {
+    if (
+      typeof source?.repository !== "string" ||
+      source.repository.trim() === "" ||
+      typeof source?.ref !== "string" ||
+      source.ref.trim() === ""
+    ) {
       fail(
         [
           `tsc-clean assertion manifest.sources.${label} is missing source metadata`,

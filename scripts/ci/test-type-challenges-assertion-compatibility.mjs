@@ -525,6 +525,30 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
+  const sources = candidateSources();
+  sources.solutions = { repository: "solutions", ref: 123 };
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: {
+      fixture: "type-challenges-assertion-classification",
+      candidateManifest: {
+        sources,
+        counts: candidateCounts(1),
+      },
+      compilers: { tsc: { status: "pass" }, tsz: { status: "pass" } },
+      comparison: { status: "match" },
+    },
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /candidateManifest\.sources\.solutions is missing source metadata/,
+  );
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
   const { result, outFile } = runCompatibilityRaw({
     dir,
     classification: {
