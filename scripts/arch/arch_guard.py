@@ -4,6 +4,7 @@ import re
 import argparse
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Optional
 
@@ -614,6 +615,47 @@ REGEX_LINE_COUNT_CHECKS = [
     ),
 ]
 
+# Track 10 performance guardrail: branch-local `visited.clone()` traversal
+# clones are a known scale-cliff risk for graph predicates.  Existing sites are
+# pinned by file plus statement text so normal line movement does not churn the
+# guard, while new clone sites must either replace an existing one with a
+# memoized/worklist traversal or extend this allowlist intentionally.
+BRANCH_LOCAL_VISITED_CLONE_CHECKS = [
+    (
+        "Performance boundary: branch-local visited.clone() graph traversal sites (Track 10)",
+        [
+            ROOT / "crates" / "tsz-checker" / "src",
+            ROOT / "crates" / "tsz-lsp" / "src",
+        ],
+        (
+            (
+                "crates/tsz-checker/src/flow/control_flow/typeof_exclusions.rs",
+                "let mut branch_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-checker/src/state/type_environment/lazy.rs",
+                "let mut branch_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-checker/src/state/type_resolution/module.rs",
+                "let mut inner_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-checker/src/types/queries/type_only.rs",
+                "let mut exists_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-checker/src/types/queries/type_only.rs",
+                "let mut type_only_visited = visited.clone();",
+            ),
+            (
+                "crates/tsz-lsp/src/completions/member.rs",
+                "let mut member_visited = visited.clone();",
+            ),
+        ),
+    ),
+]
+
 # Pin the count of LSP feature-dispatch methods in
 # `crates/tsz-lsp/src/project/features.rs` (architecture health metric 7
 # in `docs/plan/ROADMAP.md` — "LSP/WASM semantic features implemented
@@ -1198,6 +1240,62 @@ def scan_regex_line_count(
     return []
 
 
+VISITED_CLONE_PATTERN = re.compile(r"\bvisited\.clone\s*\(")
+
+
+def scan_branch_local_visited_clones(
+    search_roots: list[pathlib.Path],
+    allowlist: tuple[tuple[str, str], ...],
+) -> list[str]:
+    """Report new branch-local `visited.clone()` traversal sites.
+
+    The allowlist key is `(relative path, stripped line)`, counted with
+    multiplicity.  That keeps this guard stable across nearby line edits while
+    still catching duplicate clone branches in an existing file.
+    """
+    allowed_counts = Counter(allowlist)
+    seen_counts: Counter[tuple[str, str]] = Counter()
+    hits: list[str] = []
+
+    for base in search_roots:
+        if not base.exists():
+            continue
+        for path in base.rglob("*.rs"):
+            try:
+                rel_to_root = path.relative_to(ROOT).as_posix()
+            except ValueError:
+                rel_to_root = path.relative_to(base).as_posix()
+            parts = set(rel_to_root.split("/"))
+            if EXCLUDE_DIRS.intersection(parts):
+                continue
+            if "tests" in parts or "benches" in parts:
+                continue
+            if is_test_file(rel_to_root):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            for line_no, line in enumerate(text.splitlines(), start=1):
+                stripped = line.strip()
+                if stripped.startswith("//"):
+                    continue
+                if not VISITED_CLONE_PATTERN.search(stripped):
+                    continue
+
+                key = (rel_to_root, stripped)
+                seen_counts[key] += 1
+                if seen_counts[key] <= allowed_counts[key]:
+                    continue
+                hits.append(
+                    f"{rel_to_root}:{line_no} new branch-local visited.clone() "
+                    "traversal site; use memoized DP/worklists/SCCs/bitsets "
+                    "or extend the Track 10 allowlist intentionally"
+                )
+
+    return hits
+
+
 def scan_struct_field_count(
     path: pathlib.Path, struct_name: str, max_fields: int
 ) -> list[str]:
@@ -1759,6 +1857,12 @@ def main() -> int:
 
     for name, search_roots, pattern, max_lines in REGEX_LINE_COUNT_CHECKS:
         hits = scan_regex_line_count(search_roots, pattern, max_lines)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, search_roots, allowlist in BRANCH_LOCAL_VISITED_CLONE_CHECKS:
+        hits = scan_branch_local_visited_clones(search_roots, allowlist)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
