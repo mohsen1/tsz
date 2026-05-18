@@ -634,12 +634,17 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            let (generator_body, hoisted_var_groups, directive_prologue) = if body_has_await {
+            let (generator_body, hoisted_var_groups, directive_prologue, _) = if body_has_await {
                 async_emitter.emit_generator_body_with_await_and_hoisted_var_groups(body)
             } else {
-                let (generator_body, hoisted_var_groups) =
+                let (generator_body, hoisted_var_groups, needs_lexical_this_capture) =
                     async_emitter.emit_simple_generator_body_with_hoisted_var_groups(body);
-                (generator_body, hoisted_var_groups, Vec::new())
+                (
+                    generator_body,
+                    hoisted_var_groups,
+                    Vec::new(),
+                    needs_lexical_this_capture,
+                )
             };
             let generator_mappings = async_emitter.take_mappings();
             self.next_disposable_env_id = async_emitter.disposable_env_counter();

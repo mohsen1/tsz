@@ -136,6 +136,26 @@ fn async_es5_nested_regular_function_arrow_owns_this_capture() {
 }
 
 #[test]
+fn async_es5_user_this_alias_identifier_does_not_trigger_capture() {
+    let output = emit_es5(
+        "async function f() {\n\
+             const _this = \"sentinel\";\n\
+             await Promise.resolve();\n\
+             return _this;\n\
+         }\n",
+    );
+
+    assert!(
+        !output.contains("var _this = this;"),
+        "User identifier `_this` should not be mistaken for generated lexical-this capture.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _this;"),
+        "The user `_this` local should still be hoisted as an ordinary async local.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn class_method_for_of_delegates_es5_statement_lowering() {
     let output = emit_es5_with_comments(
         r#"

@@ -6,7 +6,7 @@
 
 use crate::transforms::ir::{IRNode, IRParam};
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
+use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -645,6 +645,11 @@ impl<'a> AsyncES5Transformer<'a> {
             k if k == syntax_kind_ext::ARROW_FUNCTION => {
                 tsz_parser::syntax::transform_utils::contains_this_reference(self.arena, idx)
             }
+            k if k == syntax_kind_ext::FUNCTION_EXPRESSION
+                && self.is_recovered_arrow_function_expression(node) =>
+            {
+                self.function_body_contains_this_reference(node)
+            }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION
                 || k == syntax_kind_ext::CLASS_DECLARATION
@@ -719,7 +724,11 @@ impl<'a> AsyncES5Transformer<'a> {
 
         let previous_this_capture = self.captures_this_references();
         let captures_generator_this = self.captures_lexical_this()
-            || tsz_parser::syntax::transform_utils::contains_this_reference(self.arena, idx);
+            || if self.is_recovered_arrow_function_expression(node) {
+                self.function_body_contains_this_reference(node)
+            } else {
+                tsz_parser::syntax::transform_utils::contains_this_reference(self.arena, idx)
+            };
         if captures_generator_this {
             self.set_capture_this_references(true);
         }
@@ -748,6 +757,22 @@ impl<'a> AsyncES5Transformer<'a> {
 
         self.set_capture_this_references(previous_this_capture);
         result
+    }
+
+    fn is_recovered_arrow_function_expression(&self, node: &Node) -> bool {
+        node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            && self
+                .arena
+                .get_function(node)
+                .is_some_and(|func| func.equals_greater_than_token)
+    }
+
+    fn function_body_contains_this_reference(&self, node: &Node) -> bool {
+        self.arena.get_function(node).is_some_and(|func| {
+            self.arena.get_children(func.body).into_iter().any(|child| {
+                tsz_parser::syntax::transform_utils::contains_this_reference(self.arena, child)
+            })
+        })
     }
 
     /// Convert function parameters to `IRParam` vec

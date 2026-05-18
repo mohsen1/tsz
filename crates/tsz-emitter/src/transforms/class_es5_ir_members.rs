@@ -432,6 +432,8 @@ impl<'a> ES5ClassTransformer<'a> {
                             );
                         vec![IRNode::AwaiterCall {
                             this_arg: Box::new(IRNode::this()),
+                            needs_lexical_this_capture: generator_body
+                                .contains_captured_this_reference(),
                             generator_body: Box::new(generator_body),
                             hoisted_var_groups,
                             promise_constructor: self
@@ -562,6 +564,8 @@ impl<'a> ES5ClassTransformer<'a> {
                             );
                         vec![IRNode::AwaiterCall {
                             this_arg: Box::new(IRNode::this()),
+                            needs_lexical_this_capture: generator_body
+                                .contains_captured_this_reference(),
                             generator_body: Box::new(generator_body),
                             hoisted_var_groups,
                             promise_constructor: self

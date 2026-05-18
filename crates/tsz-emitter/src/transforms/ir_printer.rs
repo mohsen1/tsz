@@ -1564,6 +1564,7 @@ impl<'a> IRPrinter<'a> {
             IRNode::AwaiterCall {
                 this_arg,
                 generator_body,
+                needs_lexical_this_capture,
                 hoisted_var_groups,
                 promise_constructor,
                 multiline_callback,
@@ -1573,7 +1574,6 @@ impl<'a> IRPrinter<'a> {
                     .iter()
                     .flat_map(|group| group.iter().map(String::as_str))
                     .collect();
-                let needs_lexical_this_capture = generator_body.contains_identifier("_this");
                 self.generator_state_name = Self::generator_state_name_for_hoisted(&hoisted_vars);
                 self.write("return __awaiter(");
                 self.emit_node(this_arg);
@@ -1586,7 +1586,7 @@ impl<'a> IRPrinter<'a> {
                 }
                 if hoisted_var_groups.is_empty()
                     && !multiline_callback
-                    && !needs_lexical_this_capture
+                    && !*needs_lexical_this_capture
                 {
                     // TSC keeps the generator call on the awaiter callback's
                     // opening line when no hoisted variables are needed.
@@ -1598,7 +1598,7 @@ impl<'a> IRPrinter<'a> {
                     self.write_line();
                     self.increase_indent();
                     for group in hoisted_var_groups {
-                        if needs_lexical_this_capture {
+                        if *needs_lexical_this_capture {
                             for name in group {
                                 self.write_indent();
                                 self.write("var ");
@@ -1614,7 +1614,7 @@ impl<'a> IRPrinter<'a> {
                             self.write_line();
                         }
                     }
-                    if needs_lexical_this_capture {
+                    if *needs_lexical_this_capture {
                         self.write_indent();
                         self.write("var _this = this;");
                         self.write_line();
