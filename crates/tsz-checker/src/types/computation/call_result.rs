@@ -10,6 +10,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::TypeResolver;
 use tsz_solver::{ParamInfo, TupleElement, TypeId};
 
 pub(super) struct CallResultContext<'a> {
@@ -1777,7 +1778,7 @@ impl<'a> CheckerState<'a> {
             let app = db.type_application(app_id);
             let def_id = lazy_def_id(db, app.base)?;
             matches!(
-                tsz_solver::TypeResolver::get_def_kind(&self.ctx, def_id),
+                TypeResolver::get_def_kind(&self.ctx, def_id),
                 Some(tsz_solver::def::DefKind::Class)
             )
             .then_some(def_id)

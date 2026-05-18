@@ -681,6 +681,13 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        // Check symbol flags first: the binder sets ABSTRACT on methods declared with
+        // the `abstract` keyword. This correctly handles lib-defined abstract members
+        // whose declaration nodes live in a different arena (e.g. esnext.iterator.d.ts).
+        if member_sym.has_any_flags(tsz_binder::symbol_flags::ABSTRACT) {
+            return true;
+        }
+
         member_sym
             .declarations
             .iter()

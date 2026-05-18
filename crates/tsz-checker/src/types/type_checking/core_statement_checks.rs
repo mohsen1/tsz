@@ -232,7 +232,7 @@ impl<'a> CheckerState<'a> {
                 let mut raw_return_type = self
                     .get_type_of_node_with_request(return_data.expression, &TypingRequest::NONE);
                 raw_return_type = self.unwrap_async_return_type_for_body(raw_return_type);
-                return_expr_diag_snap.rollback(&mut self.ctx);
+                return_expr_diag_snap.rollback(&mut self.ctx.diagnostic_state());
                 let source_str = self
                     .object_literal_source_type_display(return_data.expression, Some(expected_type))
                     .unwrap_or_else(|| self.format_type_diagnostic_widened(raw_return_type));

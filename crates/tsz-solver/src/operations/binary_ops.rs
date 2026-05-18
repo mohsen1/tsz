@@ -19,6 +19,7 @@ use crate::types::TypeListId;
 use crate::visitor::TypeVisitor;
 use crate::{IntrinsicKind, LiteralValue, QueryDatabase, TypeData, TypeDatabase, TypeId};
 use rustc_hash::FxHashSet;
+use smallvec::SmallVec;
 
 /// Result of a binary operation.
 #[derive(Clone, Debug, PartialEq)]
@@ -459,7 +460,7 @@ impl<'a> BinaryOpEvaluator<'a> {
                 .any(|&m| self.is_unconstrained_type_parameter(m));
             if has_unconstrained {
                 let empty_obj = self.interner.object(vec![]);
-                let transformed: Vec<TypeId> = members
+                let transformed: SmallVec<[TypeId; 4]> = members
                     .iter()
                     .map(|&m| {
                         if self.is_unconstrained_type_parameter(m) {
@@ -469,7 +470,7 @@ impl<'a> BinaryOpEvaluator<'a> {
                         }
                     })
                     .collect();
-                return self.interner.union(transformed);
+                return self.interner.union(transformed.into_vec());
             }
         }
 
