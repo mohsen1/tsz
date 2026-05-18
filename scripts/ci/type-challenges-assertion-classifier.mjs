@@ -76,6 +76,13 @@ function requiredRelativeManifestPath(value, label) {
   return normalized;
 }
 
+function requiredManifestString(value, label) {
+  if (typeof value !== "string" || value.trim() === "") {
+    fail(`manifest ${label} must be a non-empty string`);
+  }
+  return value;
+}
+
 function requiredCount(value, label) {
   if (!Number.isInteger(value) || value < 0) {
     fail(`manifest counts.${label} must be a non-negative integer`);
@@ -216,7 +223,14 @@ function validateCandidateManifest(manifest) {
   }
 
   const seenOutputs = new Set();
+  const seenIds = new Set();
   const entries = manifest.entries.map((entry, index) => {
+    const id = requiredManifestString(entry?.id, `entries[${index}].id`);
+    if (seenIds.has(id)) {
+      fail(`duplicate assertion candidate id in manifest: ${id}`);
+    }
+    seenIds.add(id);
+
     const output = requiredRelativeManifestPath(entry?.output, `entries[${index}].output`);
     if (!output.startsWith("assertions/")) {
       fail(`manifest entries[${index}].output must be under assertions/: ${output}`);
@@ -237,6 +251,7 @@ function validateCandidateManifest(manifest) {
 
     return {
       ...entry,
+      id,
       output,
     };
   });
