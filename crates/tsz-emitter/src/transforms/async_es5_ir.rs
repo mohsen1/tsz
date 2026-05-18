@@ -3823,16 +3823,27 @@ impl<'a> AsyncES5Transformer<'a> {
                 .get(if_stmt.else_statement)
                 .is_some_and(|n| n.kind != syntax_kind_ext::EMPTY_STATEMENT);
 
-        // Reserve labels for else branch and end
-        let else_label = self.state.next_label();
-        let end_label = if has_else {
-            self.state.next_label()
+        // When the then branch suspends, its resume case must claim the next
+        // label before the else branch is scheduled. Use a placeholder for the
+        // initial branch target, then patch it once the then branch has been
+        // lowered.
+        let delayed_else_label = has_else && then_has_await;
+        let else_placeholder = delayed_else_label.then(|| self.next_loop_exit_placeholder());
+        let (mut else_label, mut end_label) = if delayed_else_label {
+            (0, 0)
         } else {
-            else_label
+            let else_label = self.state.next_label();
+            let end_label = if has_else {
+                self.state.next_label()
+            } else {
+                else_label
+            };
+            (else_label, end_label)
         };
 
         // Emit: if (!(condition)) return [3 /*break*/, else_label];
-        let target_label = if has_else { else_label } else { end_label };
+        let target_label =
+            else_placeholder.unwrap_or(if has_else { else_label } else { end_label });
         let cond_ir = self.expression_to_ir(if_stmt.expression);
         current_statements.push(IRNode::IfBreak {
             condition: Box::new(IRNode::PrefixUnaryExpr {
@@ -3851,6 +3862,16 @@ impl<'a> AsyncES5Transformer<'a> {
         );
 
         if has_else {
+            if let Some(placeholder) = else_placeholder {
+                else_label = self.state.next_label();
+                end_label = self.state.next_label();
+                Self::patch_if_break_target(cases, placeholder, else_label);
+                Self::patch_if_break_target_in_statements(
+                    current_statements,
+                    placeholder,
+                    else_label,
+                );
+            }
             // Emit: return [3 /*break*/, end_label]; at end of then branch
             current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                 IRNode::GeneratorOp {
@@ -4254,6 +4275,16 @@ impl<'a> AsyncES5Transformer<'a> {
             for statement in &mut case.statements {
                 Self::patch_if_break_target_in_node(statement, placeholder_label, target_label);
             }
+        }
+    }
+
+    fn patch_if_break_target_in_statements(
+        statements: &mut [IRNode],
+        placeholder_label: u32,
+        target_label: u32,
+    ) {
+        for statement in statements {
+            Self::patch_if_break_target_in_node(statement, placeholder_label, target_label);
         }
     }
 

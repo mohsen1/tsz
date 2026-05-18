@@ -91,6 +91,25 @@ impl<'a> AsyncES5Transformer<'a> {
         result
     }
 
+    fn source_string_literal_token(&self, node: &tsz_parser::parser::node::Node) -> Option<String> {
+        let text = self.source_text?;
+        let start = crate::transforms::emit_utils::skip_trivia_forward(
+            self.source_text,
+            node.pos,
+            node.end,
+        ) as usize;
+        let end = (node.end as usize).min(text.len());
+        if start >= end {
+            return None;
+        }
+        let raw = text[start..end].trim_end();
+        let quote = raw.as_bytes().first().copied()?;
+        if !matches!(quote, b'\'' | b'"') || raw.as_bytes().last().copied() != Some(quote) {
+            return None;
+        }
+        Some(raw.to_string())
+    }
+
     /// Convert an AST expression to IR
     pub fn expression_to_ir(&self, idx: NodeIndex) -> IRNode {
         let Some(node) = self.arena.get(idx) else {
@@ -107,6 +126,9 @@ impl<'a> AsyncES5Transformer<'a> {
             }
 
             k if k == SyntaxKind::StringLiteral as u16 => {
+                if let Some(raw) = self.source_string_literal_token(node) {
+                    return IRNode::Raw(raw.into());
+                }
                 if let Some(lit) = self.arena.get_literal(node) {
                     IRNode::StringLiteral(lit.text.clone().into())
                 } else {
