@@ -196,6 +196,33 @@ function validateComparisonCompilerStatuses(comparison, compilers, label) {
   }
 }
 
+function expectedComparisonStatus(compilers) {
+  const tscStatus = compilers?.tsc?.status;
+  const tszStatus = compilers?.tsz?.status;
+  if (tscStatus === "unavailable" || tszStatus === "unavailable") {
+    return "unavailable";
+  }
+  if (tscStatus === "pass" && tszStatus === "pass") {
+    return "both-pass";
+  }
+  if (tscStatus === "pass") {
+    return "tsz-rejects-tsc-accepted";
+  }
+  if (tszStatus === "pass") {
+    return "tsz-accepts-tsc-rejected";
+  }
+  return "both-nonpassing";
+}
+
+function validateComparisonStatusConsistency(comparison, compilers, label) {
+  const expected = expectedComparisonStatus(compilers);
+  if (comparison.status !== expected) {
+    fail(
+      `${label} comparison.status (${comparison.status}) does not match compiler statuses (${expected})`,
+    );
+  }
+}
+
 function validateReport(report) {
   validateClassificationCompilerReport(report);
   if (!report.comparison || typeof report.comparison !== "object") {
@@ -400,6 +427,11 @@ if (cleanSubsetManifest && cleanSubsetClassification) {
     cleanSubsetClassification.compilers,
     "tsc-clean assertion classification",
   );
+  validateComparisonStatusConsistency(
+    cleanSubsetClassification.comparison,
+    cleanSubsetClassification.compilers,
+    "tsc-clean assertion classification",
+  );
 }
 const tsc = report.compilers?.tsc || {};
 const tsz = report.compilers?.tsz || {};
@@ -413,6 +445,11 @@ for (const [compiler, result] of [
   validateCompilerExitCode(result.exitCode, `assertion classification ${compiler}`);
 }
 validateComparisonCompilerStatuses(
+  comparison,
+  report.compilers,
+  "assertion classification",
+);
+validateComparisonStatusConsistency(
   comparison,
   report.compilers,
   "assertion classification",
