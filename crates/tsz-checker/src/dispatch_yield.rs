@@ -195,14 +195,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
             });
         if !is_in_generator {
-            // Recorded as a typed recovery site so relation/diagnostic
-            // paths can distinguish this from a declared `: any`. The
-            // parser already emitted TS1163.
-            return crate::recovery::recovery_any(
-                &self.checker.ctx.recovery_sites,
-                idx,
-                crate::recovery::RecoveryReason::YieldOutsideGenerator,
-            );
+            // TS1163 already emitted by the parser.
+            return self
+                .checker
+                .ctx
+                .recover_any(idx, crate::recovery::RecoveryReason::YieldOutsideGenerator);
         }
 
         // TS2523: 'yield' expressions cannot be used in a parameter initializer.
@@ -692,10 +689,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 self.checker.ctx.generator_had_ts7057 = true;
             }
         }
-        // Recorded as a typed recovery site so relation/diagnostic
-        // paths can distinguish this from a declared `: any`.
-        crate::recovery::recovery_any(
-            &self.checker.ctx.recovery_sites,
+        self.checker.ctx.recover_any(
             idx,
             crate::recovery::RecoveryReason::YieldExpressionNoGeneratorContext,
         )

@@ -357,11 +357,10 @@ pub struct CheckerContext<'a> {
     pub types_extending_array: FxHashSet<TypeId>,
 
     /// Typed registry of nodes whose `TypeId::ANY` came from a recovery
-    /// fallback rather than from a real `: any` annotation or genuine type
-    /// evaluation. Populated by [`crate::recovery::recovery_any`] and
-    /// queried by relation/diagnostic paths that want to distinguish a
-    /// recovered ANY from a declared `any`. See `crates/tsz-checker/src/recovery.rs`.
-    pub recovery_sites: RefCell<crate::recovery::RecoverySites>,
+    /// fallback rather than a real `: any` annotation. Write via
+    /// `CheckerContext::recover_any`; read via `get_recovery_reason` /
+    /// `recovery_sites_snapshot`. See `crates/tsz-checker/src/recovery.rs`.
+    pub(crate) recovery_sites: RefCell<crate::recovery::RecoverySites>,
 
     // --- Caches ---
     /// Cached types for symbols (dense flat-vec, O(1) lookup by symbol index).

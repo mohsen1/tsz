@@ -23,38 +23,23 @@ pub fn check_source(source: &str, file_name: &str, options: CheckerOptions) -> V
 }
 
 /// Parse, bind, and type-check a TypeScript source string, returning every
-/// recovery fallback site recorded by [`crate::recovery::recovery_any`] during
-/// the check. Each entry is `(node_index, reason)`.
-///
-/// Used by tests that need to assert which nodes the checker recovered to
-/// `TypeId::ANY` and why, without inspecting diagnostic strings.
+/// recovery fallback site recorded by [`crate::context::CheckerContext::recover_any`]
+/// during the check. Each entry is `(node_index, reason)`, sorted by node index.
 pub fn check_source_recovery_sites(
     source: &str,
     file_name: &str,
     options: CheckerOptions,
 ) -> Vec<(u32, crate::recovery::RecoveryReason)> {
-    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
-    let source_file = parser.parse_source_file();
-
-    let mut binder = BinderState::new();
-    binder.bind_source_file(parser.get_arena(), source_file);
-
-    let types = TypeInterner::new();
-    let mut checker = CheckerState::new(
-        parser.get_arena(),
-        &binder,
-        &types,
-        file_name.to_string(),
-        options,
-    );
-    checker.enable_source_file_test_pragmas();
-    checker.ctx.set_lib_contexts(Vec::new());
-    checker.check_source_file(source_file);
-
-    let sites = checker.ctx.recovery_sites.borrow();
-    let mut snapshot: Vec<_> = sites.iter().map(|(idx, reason)| (idx.0, reason)).collect();
-    snapshot.sort_by_key(|(idx, _)| *idx);
-    snapshot
+    with_checked_source(source, file_name, options, None, |checker| {
+        let mut snapshot: Vec<_> = checker
+            .ctx
+            .recovery_sites_snapshot()
+            .into_iter()
+            .map(|(idx, reason)| (idx.0, reason))
+            .collect();
+        snapshot.sort_by_key(|(idx, _)| *idx);
+        snapshot
+    })
 }
 
 /// Parse, bind, and type-check a source string with no lib contexts, source
@@ -66,6 +51,22 @@ pub fn check_source_with_file_is_esm(
     options: CheckerOptions,
     file_is_esm: Option<bool>,
 ) -> Vec<Diagnostic> {
+    with_checked_source(source, file_name, options, file_is_esm, |checker| {
+        checker.ctx.diagnostics.clone()
+    })
+}
+
+/// Run the canonical test parse → bind → check pipeline and hand the
+/// post-check `CheckerState` to `extract`. Used by the public test helpers
+/// to share one pipeline body so any change to setup (default options,
+/// pragmas, lib contexts) applies uniformly.
+fn with_checked_source<R>(
+    source: &str,
+    file_name: &str,
+    options: CheckerOptions,
+    file_is_esm: Option<bool>,
+    extract: impl FnOnce(&CheckerState<'_>) -> R,
+) -> R {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let source_file = parser.parse_source_file();
 
@@ -81,11 +82,10 @@ pub fn check_source_with_file_is_esm(
         options,
     );
     checker.enable_source_file_test_pragmas();
-
     checker.ctx.set_lib_contexts(Vec::new());
     checker.ctx.file_is_esm = file_is_esm;
     checker.check_source_file(source_file);
-    checker.ctx.diagnostics.clone()
+    extract(&checker)
 }
 
 /// Parse, bind, and type-check a TypeScript source string with default options.

@@ -297,11 +297,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 {
                     // `this` in a class or object literal member but enclosing_class
                     // not yet set. Suppress TS2683 - `this` is contextually typed.
-                    //
-                    // Recorded as a typed recovery site so relation/diagnostic
-                    // paths can distinguish this from a declared `: any`.
-                    crate::recovery::recovery_any(
-                        &self.checker.ctx.recovery_sites,
+                    self.checker.ctx.recover_any(
                         idx,
                         crate::recovery::RecoveryReason::ThisUnresolvedClassOrObjectLiteralMember,
                     )
@@ -490,11 +486,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             .get_class_constructor_type_with_request(idx, &class, request)
                     }
                 } else {
-                    // Return ANY to prevent cascading TS2571 errors. Recorded as a
-                    // typed recovery site so relation/diagnostic paths can
-                    // distinguish this from a declared `: any`.
-                    crate::recovery::recovery_any(
-                        &self.checker.ctx.recovery_sites,
+                    // Suppress cascading TS2571 errors.
+                    self.checker.ctx.recover_any(
                         idx,
                         crate::recovery::RecoveryReason::ClassConstructorTargetUnresolved,
                     )
