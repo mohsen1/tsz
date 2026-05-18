@@ -149,7 +149,13 @@ pub struct DeclarationEmitter<'a> {
     /// are emitted near the trailing alias group to match declaration transform
     /// ordering for JS enum syntax.
     pub(super) js_deferred_local_export_enum_statements: FxHashSet<NodeIndex>,
-    /// JS local renamed export declarations emitted as one trailing alias group.
+    /// JS interface declarations exported by local `export { ... }` clauses.
+    /// These are emitted near the trailing alias group to match declaration
+    /// transform ordering for JS-recovered interface syntax.
+    pub(super) js_deferred_local_export_interface_statements: FxHashSet<NodeIndex>,
+    /// Local `export { ... }` clauses consumed by deferred JS interface emit.
+    pub(super) js_skipped_local_export_interface_exports: FxHashSet<NodeIndex>,
+    /// JS local renamed export specifiers emitted as one trailing alias group.
     pub(super) js_local_export_aliases: Vec<NodeIndex>,
     /// JS local renamed export declarations skipped at their source position.
     pub(super) js_skipped_local_export_aliases: FxHashSet<NodeIndex>,
@@ -158,17 +164,27 @@ pub struct DeclarationEmitter<'a> {
     /// JS `export = name` assignments already emitted ahead of their declaration.
     pub(super) emitted_js_export_equals_names: FxHashSet<String>,
     /// Top-level JS bindings referenced by an `export default <Identifier>` statement
-    /// where the identifier resolves to a same-file top-level declaration. tsc hoists
-    /// these `export default` lines to the very top of the emitted .d.ts.
+    /// where the identifier resolves to a same-file top-level declaration. The
+    /// default export is emitted at its source statement; the referenced local
+    /// declaration is deferred until after that statement when needed.
     pub(super) js_export_default_names: FxHashSet<String>,
-    /// JS `export default <Identifier>` statements already hoisted ahead of their
-    /// declaration so the original statement is suppressed when the loop reaches it.
+    /// JS `export default <Identifier>` statements already emitted at their source
+    /// statement so later duplicate visits can be suppressed.
     pub(super) emitted_js_export_default_names: FxHashSet<String>,
+    /// True while emitting the local declaration owned by a JS default identifier
+    /// export. This lets the normal statement visitor bypass the source-position
+    /// deferral guard for that one structured declaration.
+    pub(super) emitting_js_default_export_declaration: bool,
     /// Stable aliases for local declarations that shadow a JS export-equals root name.
     pub(super) js_shadowed_export_equals_local_aliases: FxHashMap<String, String>,
     /// JS namespace-like alias exports synthesized from expando assignments such
     /// as `foo.default = foo` and `module.exports.Bar = Bar`.
     pub(super) js_namespace_export_aliases: FxHashMap<String, Vec<JsNamespaceExportAlias>>,
+    /// Top-level JS declarations whose value is exported through a namespace
+    /// alias schedule, e.g. `Root.Member = Member`.
+    pub(super) js_deferred_namespace_alias_declarations: FxHashMap<String, Vec<NodeIndex>>,
+    /// Fast lookup for statements owned by `js_deferred_namespace_alias_declarations`.
+    pub(super) js_deferred_namespace_alias_declaration_stmts: FxHashSet<NodeIndex>,
     /// CJS export aliases for `exports.X = Y` / `module.exports.X = Y`.
     pub(super) js_cjs_export_aliases: Vec<(String, String)>,
     /// CJS export aliases that also need a value declaration because the same
@@ -184,6 +200,9 @@ pub struct DeclarationEmitter<'a> {
     /// Top-level JS `const Local = require("mod").Export` aliases used by
     /// exported inferred types and emitted as trailing import-equals aliases.
     pub(super) js_require_property_import_aliases: Vec<(String, String, String)>,
+    /// JS destructured bindings elided from a non-exporting `require("mod")`
+    /// declaration, used to elide same-file locals derived only from that import.
+    pub(super) js_elided_bare_require_binding_names: FxHashSet<String>,
     /// Deferred JS CommonJS `Root.prop = function(){}` statements re-emitted as
     /// top-level synthetic function declarations.
     /// The boolean marks whether the synthetic declaration should be exported.

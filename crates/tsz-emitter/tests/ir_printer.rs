@@ -197,6 +197,7 @@ fn test_emit_generator_body_simple() {
 fn test_emit_awaiter_call() {
     let awaiter = IRNode::AwaiterCall {
         this_arg: Box::new(IRNode::this()),
+        needs_lexical_this_capture: false,
         hoisted_var_groups: vec![],
         promise_constructor: None,
         multiline_callback: false,

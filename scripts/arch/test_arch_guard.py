@@ -522,6 +522,102 @@ class ArchGuardStructFieldCountTests(unittest.TestCase):
             )
 
 
+class ArchGuardTraitMethodCountTests(unittest.TestCase):
+    """Cover `TRAIT_METHOD_COUNT_CHECKS` + `scan_trait_method_count`.
+
+    The `TypeDatabase` check is the #8205 solver boundary ratchet: the current
+    broad trait is tolerated as baseline debt, but its capability surface must
+    not grow while narrower storage/config/provenance traits are extracted.
+    """
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _write_and_scan(self, body: str, trait_name: str, max_methods: int):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "trait.rs"
+            path.write_text(body, encoding="utf-8")
+            return self.arch_guard.scan_trait_method_count(
+                path, trait_name, max_methods
+            )
+
+    def test_counts_required_and_default_methods(self):
+        body = "\n".join(
+            [
+                "pub trait Sample {",
+                "    fn lookup(&self);",
+                "    fn construct(&self) {}",
+                "    unsafe fn raw(&self);",
+                "}",
+            ]
+        )
+        hits = self._write_and_scan(body, "Sample", 2)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("3 methods", hits[0])
+        self.assertIn("cap 2", hits[0])
+
+    def test_passes_when_at_or_under_cap(self):
+        body = "\n".join(
+            [
+                "pub trait Sample {",
+                "    fn a(&self);",
+                "    fn b(&self) {}",
+                "}",
+            ]
+        )
+        self.assertEqual(self._write_and_scan(body, "Sample", 2), [])
+        self.assertEqual(self._write_and_scan(body, "Sample", 3), [])
+
+    def test_strips_comments_and_handles_nested_default_body(self):
+        body = "\n".join(
+            [
+                "pub trait Sample {",
+                "    fn a(&self) {",
+                "        if true {",
+                "            let _x = 1;",
+                "        }",
+                "    }",
+                "    // fn b(&self);",
+                "    /* fn c(&self); */",
+                "}",
+            ]
+        )
+        self.assertEqual(self._write_and_scan(body, "Sample", 1), [])
+
+    def test_reports_trait_not_found(self):
+        body = "pub trait Other { fn a(&self); }"
+        hits = self._write_and_scan(body, "Sample", 10)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("not found", hits[0])
+
+    def test_typedatabase_method_count_check_is_registered(self):
+        for entry in self.arch_guard.TRAIT_METHOD_COUNT_CHECKS:
+            name, path, trait_name, _max = entry
+            if trait_name == "TypeDatabase":
+                self.assertTrue(
+                    path.exists(),
+                    f"TypeDatabase check points at missing path: {path}",
+                )
+                self.assertIn("#8205", name)
+                return
+        self.fail(
+            "TypeDatabase method-count check is missing from TRAIT_METHOD_COUNT_CHECKS"
+        )
+
+    def test_real_typedatabase_passes_at_pinned_cap(self):
+        """The pinned cap must match the live count (no off-by-one)."""
+        for entry in self.arch_guard.TRAIT_METHOD_COUNT_CHECKS:
+            name, path, trait_name, max_methods = entry
+            hits = self.arch_guard.scan_trait_method_count(
+                path, trait_name, max_methods
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
 class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
     """Cover the T2.1.A CheckerContext lifetime inventory guard."""
 
@@ -813,7 +909,7 @@ class ArchGuardIndependentPipelineTests(unittest.TestCase):
 class ArchGuardSolverImportCountTests(unittest.TestCase):
     """Cover `SOLVER_IMPORT_COUNT_CHECKS` + `scan_solver_import_count`.
 
-    Architecture health metric 3 anchor — workstream 3 ("Compiler Service
+    Architecture health metric 7 anchor — workstream 3 ("Compiler Service
     Front Door") wants frontends and emitter/lowering crates to converge
     through one compiler service. These tests pin the detection semantics
     so future contributors who refactor `scan_solver_import_count` keep
@@ -937,7 +1033,7 @@ class ArchGuardSolverImportCountTests(unittest.TestCase):
     def test_check_is_registered(self):
         names = [entry[0] for entry in self.arch_guard.SOLVER_IMPORT_COUNT_CHECKS]
         self.assertTrue(
-            any("metric 3" in name for name in names),
+            any("metric 7" in name for name in names),
             "Solver-import-count guard is missing from SOLVER_IMPORT_COUNT_CHECKS",
         )
 
@@ -947,6 +1043,98 @@ class ArchGuardSolverImportCountTests(unittest.TestCase):
             name, search_roots, exclude_path_prefixes, max_imports = entry
             hits = self.arch_guard.scan_solver_import_count(
                 search_roots, exclude_path_prefixes, max_imports
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
+
+class ArchGuardRootSolverComputationImportCountTests(unittest.TestCase):
+    """Cover the #8204 ratchet for flat root solver computation APIs."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _make_tree(self, files: dict[str, str]):
+        tmp = tempfile.mkdtemp()
+        root = pathlib.Path(tmp)
+        for rel, content in files.items():
+            full = root / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        return root
+
+    def test_flags_direct_and_grouped_flat_computation_imports(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-lsp/src/member.rs": (
+                    "let ty = tsz_solver::evaluate_type(interner, ty);\n"
+                ),
+                "crates/tsz-emitter/src/declaration.rs": (
+                    "use tsz_solver::{TypeId, TypeSubstitution};\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_root_solver_computation_import_count(
+            [root], (), 0
+        )
+        self.assertEqual(len(hits), 3, f"unexpected hits: {hits!r}")
+        self.assertIn("declaration.rs:1", hits[0])
+        self.assertIn("member.rs:1", hits[1])
+        self.assertIn("total flat root solver computation API references", hits[2])
+
+    def test_excludes_query_boundaries_tests_and_comment_lines(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/query_boundaries/assignability.rs": (
+                    "let checker = tsz_solver::CompatChecker::new(db);\n"
+                ),
+                "crates/tsz-lsp/src/foo_tests.rs": (
+                    "let ty = tsz_solver::evaluate_type(interner, ty);\n"
+                ),
+                "crates/tsz-emitter/tests/declaration.rs": (
+                    "use tsz_solver::TypeSubstitution;\n"
+                ),
+                "crates/tsz-cli/src/commented.rs": (
+                    "// let ty = tsz_solver::evaluate_type(interner, ty);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_root_solver_computation_import_count(
+            [root], ("crates/tsz-checker/src/query_boundaries/",), 0
+        )
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_passes_when_at_or_under_cap(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-lsp/src/member.rs": (
+                    "let ty = tsz_solver::evaluate_type(interner, ty);\n"
+                ),
+                "crates/tsz-emitter/src/declaration.rs": (
+                    "let sub = tsz_solver::TypeSubstitution::new();\n"
+                ),
+            }
+        )
+        scan = self.arch_guard.scan_root_solver_computation_import_count
+        self.assertEqual(scan([root], (), 2), [])
+        self.assertEqual(scan([root], (), 3), [])
+
+    def test_check_is_registered(self):
+        names = [
+            entry[0]
+            for entry in self.arch_guard.ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS
+        ]
+        self.assertTrue(any("#8204" in name for name in names))
+
+    def test_real_count_passes_at_pinned_cap(self):
+        """The pinned cap must match the live count (no off-by-one)."""
+        for entry in self.arch_guard.ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS:
+            name, search_roots, exclude_path_prefixes, max_references = entry
+            hits = self.arch_guard.scan_root_solver_computation_import_count(
+                search_roots, exclude_path_prefixes, max_references
             )
             self.assertEqual(
                 hits,
@@ -1474,6 +1662,383 @@ export const COMPATIBILITY_CORPUS_ROWS = [
             self.assertEqual(hits, [], f"{name}: {hits[:5]}")
 
 
+class ArchGuardProjectFixtureSourceTests(unittest.TestCase):
+    """Cover Track 1 fixture source/ref metadata checks."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _write_and_scan(self, rows_body: str, fixtures_body: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            row_path = root / "project-rows.mjs"
+            fixture_path = root / "project-fixtures.sh"
+            row_path.write_text(rows_body, encoding="utf-8")
+            fixture_path.write_text(fixtures_body, encoding="utf-8")
+            return self.arch_guard.scan_project_fixture_sources(row_path, fixture_path)
+
+    def test_pinned_project_rows_with_sources_pass(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project", "vite-vanilla-ts-app"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-assertions-tsc-clean"];
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|repo|ref\\n'
+      ;;
+    type-challenges-assertions-tsc-clean)
+      printf 'type-challenges|repo|ref\\n'
+      printf 'type-challenges-solutions|repo|ref\\n'
+      ;;
+  esac
+}
+"""
+        self.assertEqual(self._write_and_scan(rows, fixtures), [])
+
+    def test_missing_source_metadata_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-project"];
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|repo|ref\\n'
+      ;;
+  esac
+}
+"""
+        hits = self._write_and_scan(rows, fixtures)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("missing fixture source metadata for type-challenges-project", hits[0])
+
+    def test_stale_source_metadata_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|repo|ref\\n'
+      ;;
+    removed-project)
+      printf 'removed|repo|ref\\n'
+      ;;
+  esac
+}
+"""
+        hits = self._write_and_scan(rows, fixtures)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("stale fixture source metadata for removed-project", hits[0])
+
+    def test_duplicate_source_metadata_case_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|repo|ref\\n'
+      ;;
+    utility-types-project)
+      printf 'utility-types|repo|ref\\n'
+      ;;
+  esac
+}
+"""
+        hits = self._write_and_scan(rows, fixtures)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("duplicate fixture source metadata for utility-types-project", hits[0])
+
+    def test_empty_source_metadata_case_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      ;;
+  esac
+}
+"""
+        hits = self._write_and_scan(rows, fixtures)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("empty fixture source metadata for utility-types-project", hits[0])
+
+    def test_malformed_source_metadata_line_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-project"];
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|repo\\n'
+      ;;
+    type-challenges-project)
+      printf 'type-challenges|repo|\\n'
+      ;;
+  esac
+}
+"""
+        hits = self._write_and_scan(rows, fixtures)
+        self.assertEqual(len(hits), 2)
+        self.assertTrue(
+            any("malformed fixture source metadata for utility-types-project" in hit for hit in hits),
+            hits,
+        )
+        self.assertTrue(
+            any("malformed fixture source metadata for type-challenges-project" in hit for hit in hits),
+            hits,
+        )
+
+    def test_check_is_registered(self):
+        names = [entry[0] for entry in self.arch_guard.PROJECT_FIXTURE_SOURCE_CHECKS]
+        self.assertTrue(
+            any("Track 1" in name for name in names),
+            "Project fixture source check missing from PROJECT_FIXTURE_SOURCE_CHECKS",
+        )
+
+    def test_real_project_fixture_sources_cover_expected_rows(self):
+        for name, row_path, fixture_path in self.arch_guard.PROJECT_FIXTURE_SOURCE_CHECKS:
+            hits = self.arch_guard.scan_project_fixture_sources(row_path, fixture_path)
+            self.assertEqual(hits, [], f"{name}: {hits[:5]}")
+
+
+class ArchGuardProjectInclusionPolicyTests(unittest.TestCase):
+    """Cover Track 1 project row inclusion-policy drift checks."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _write_and_scan(self, rows_body: str, compile_body: str, bench_body: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            row_path = root / "project-rows.mjs"
+            compile_path = root / "project-compile-guard.sh"
+            bench_path = root / "bench-vs-tsgo.sh"
+            row_path.write_text(rows_body, encoding="utf-8")
+            compile_path.write_text(compile_body, encoding="utf-8")
+            bench_path.write_text(bench_body, encoding="utf-8")
+            return self.arch_guard.scan_project_inclusion_policy(
+                row_path,
+                compile_path,
+                bench_path,
+            )
+
+    def test_matching_compile_and_benchmark_inclusions_pass(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project", "vite-vanilla-ts-app"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-assertion-candidates"];
+"""
+        compile_guard = """
+if should_check_project "utility-types-project"; then :; fi
+if should_check_project "vite-vanilla-ts-app"; then :; fi
+if should_check_project "type-challenges-assertion-candidates"; then :; fi
+"""
+        bench = """
+run_isolated "utility-types-project" run_utility_types_project_benchmarks
+run_isolated "vite-vanilla-ts-app" run_vite_app_project_benchmarks
+"""
+        self.assertEqual(self._write_and_scan(rows, compile_guard, bench), [])
+
+    def test_missing_compile_guard_inclusion_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["zod-project"];
+"""
+        compile_guard = 'if should_check_project "utility-types-project"; then :; fi'
+        bench = """
+run_isolated "utility-types-project" run_utility_types_project_benchmarks
+run_isolated "zod-project" run_zod_project_benchmarks
+"""
+        hits = self._write_and_scan(rows, compile_guard, bench)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("missing project compile guard inclusion for zod-project", hits[0])
+
+    def test_stale_compile_guard_inclusion_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+"""
+        compile_guard = """
+if should_check_project "utility-types-project"; then :; fi
+if should_check_project "removed-project"; then :; fi
+"""
+        bench = 'run_isolated "utility-types-project" run_utility_types_project_benchmarks'
+        hits = self._write_and_scan(rows, compile_guard, bench)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("stale project compile guard inclusion for removed-project", hits[0])
+
+    def test_missing_benchmark_inclusion_is_reported(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project", "type-fest-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+"""
+        compile_guard = """
+if should_check_project "utility-types-project"; then :; fi
+if should_check_project "type-fest-project"; then :; fi
+"""
+        bench = 'run_isolated "utility-types-project" run_utility_types_project_benchmarks'
+        hits = self._write_and_scan(rows, compile_guard, bench)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("missing project benchmark inclusion for type-fest-project", hits[0])
+
+    def test_compile_guard_only_rows_do_not_require_benchmark_inclusion(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = [];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-assertions-tsc-clean"];
+"""
+        compile_guard = 'if should_check_project "type-challenges-assertions-tsc-clean"; then :; fi'
+        bench = ""
+        self.assertEqual(self._write_and_scan(rows, compile_guard, bench), [])
+
+    def test_benchmark_only_rows_do_not_require_compile_guard_inclusion(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["large-ts-repo", "nextjs"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+"""
+        compile_guard = ""
+        bench = """
+run_isolated "large-ts-repo" run_large_ts_repo_benchmarks
+run_isolated "nextjs" run_nextjs_benchmarks
+"""
+        self.assertEqual(self._write_and_scan(rows, compile_guard, bench), [])
+
+    def test_check_is_registered(self):
+        names = [entry[0] for entry in self.arch_guard.PROJECT_INCLUSION_POLICY_CHECKS]
+        self.assertTrue(
+            any("Track 1" in name for name in names),
+            "Project inclusion policy check missing from PROJECT_INCLUSION_POLICY_CHECKS",
+        )
+
+    def test_real_project_inclusion_policy_matches_manifest(self):
+        for name, row_path, compile_path, bench_path in self.arch_guard.PROJECT_INCLUSION_POLICY_CHECKS:
+            hits = self.arch_guard.scan_project_inclusion_policy(
+                row_path,
+                compile_path,
+                bench_path,
+            )
+            self.assertEqual(hits, [], f"{name}: {hits[:5]}")
+
+
+class ArchGuardProjectConfigWriterTests(unittest.TestCase):
+    """Cover Track 1 shared project config writer drift checks."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _write_and_scan(self, fixture_body: str, compile_body: str, bench_body: str):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            fixture_path = root / "project-fixtures.sh"
+            compile_path = root / "project-compile-guard.sh"
+            bench_path = root / "bench-vs-tsgo.sh"
+            fixture_path.write_text(fixture_body, encoding="utf-8")
+            compile_path.write_text(compile_body, encoding="utf-8")
+            bench_path.write_text(bench_body, encoding="utf-8")
+
+            original = self.arch_guard.PROJECT_CONFIG_WRITERS
+            try:
+                self.arch_guard.PROJECT_CONFIG_WRITERS = {
+                    "utility-types-project": "tsz_write_utility_types_config",
+                    "nextjs": "tsz_write_nextjs_config",
+                }
+                return self.arch_guard.scan_project_config_writers(
+                    fixture_path,
+                    compile_path,
+                    bench_path,
+                )
+            finally:
+                self.arch_guard.PROJECT_CONFIG_WRITERS = original
+
+    def test_shared_config_writer_usage_passes(self):
+        fixtures = """
+tsz_write_utility_types_config() { :; }
+tsz_write_nextjs_config() { :; }
+"""
+        compile_guard = "tsz_write_utility_types_config \"$out\""
+        bench = """
+tsz_write_utility_types_config "$out"
+tsz_write_nextjs_config "$out"
+"""
+        self.assertEqual(self._write_and_scan(fixtures, compile_guard, bench), [])
+
+    def test_missing_shared_writer_is_reported(self):
+        fixtures = 'tsz_write_nextjs_config() { :; }'
+        compile_guard = "tsz_write_utility_types_config \"$out\""
+        bench = """
+tsz_write_utility_types_config "$out"
+tsz_write_nextjs_config "$out"
+"""
+        hits = self._write_and_scan(fixtures, compile_guard, bench)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("missing shared config writer tsz_write_utility_types_config", hits[0])
+
+    def test_compile_guard_missing_writer_use_is_reported(self):
+        fixtures = """
+tsz_write_utility_types_config() { :; }
+tsz_write_nextjs_config() { :; }
+"""
+        compile_guard = ""
+        bench = """
+tsz_write_utility_types_config "$out"
+tsz_write_nextjs_config "$out"
+"""
+        hits = self._write_and_scan(fixtures, compile_guard, bench)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("utility-types-project does not use shared config writer", hits[0])
+
+    def test_benchmark_missing_writer_use_is_reported(self):
+        fixtures = """
+tsz_write_utility_types_config() { :; }
+tsz_write_nextjs_config() { :; }
+"""
+        compile_guard = "tsz_write_utility_types_config \"$out\""
+        bench = 'tsz_write_nextjs_config "$out"'
+        hits = self._write_and_scan(fixtures, compile_guard, bench)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("utility-types-project does not use shared config writer", hits[0])
+
+    def test_benchmark_only_row_does_not_require_compile_guard_writer_use(self):
+        fixtures = """
+tsz_write_utility_types_config() { :; }
+tsz_write_nextjs_config() { :; }
+"""
+        compile_guard = 'tsz_write_utility_types_config "$out"'
+        bench = """
+tsz_write_utility_types_config "$out"
+tsz_write_nextjs_config "$out"
+"""
+        self.assertEqual(self._write_and_scan(fixtures, compile_guard, bench), [])
+
+    def test_check_is_registered(self):
+        names = [entry[0] for entry in self.arch_guard.PROJECT_CONFIG_WRITER_CHECKS]
+        self.assertTrue(
+            any("Track 1" in name for name in names),
+            "Project config writer check missing from PROJECT_CONFIG_WRITER_CHECKS",
+        )
+
+    def test_real_project_config_writers_are_shared(self):
+        for name, fixture_path, compile_path, bench_path in self.arch_guard.PROJECT_CONFIG_WRITER_CHECKS:
+            hits = self.arch_guard.scan_project_config_writers(
+                fixture_path,
+                compile_path,
+                bench_path,
+            )
+            self.assertEqual(hits, [], f"{name}: {hits[:5]}")
+
+
 class ArchGuardRegexLineCountTests(unittest.TestCase):
     """Cover Track 10 count ratchets in `REGEX_LINE_COUNT_CHECKS`.
 
@@ -1624,6 +2189,109 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
                 [],
                 f"{name}: cap is too tight — guard fires at the live count.",
             )
+
+
+class ArchGuardVisitedCloneTests(unittest.TestCase):
+    """Cover Track 10 branch-local `visited.clone()` traversal guardrails."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _make_tree(self, files: dict[str, str]):
+        tmp = tempfile.mkdtemp()
+        root = pathlib.Path(tmp)
+        for rel, content in files.items():
+            full = root / rel
+            full.parent.mkdir(parents=True, exist_ok=True)
+            full.write_text(content, encoding="utf-8")
+        return root
+
+    def _registered_check(self):
+        for entry in self.arch_guard.BRANCH_LOCAL_VISITED_CLONE_CHECKS:
+            name, search_roots, allowlist = entry
+            if "visited.clone()" in name:
+                return name, search_roots, allowlist
+        self.fail("visited.clone() performance guard is missing")
+
+    def test_flags_new_branch_local_clone_site(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/flow/new_predicate.rs": (
+                    "fn walk(visited: Vec<u32>) {\n"
+                    "    let mut branch_visited = visited.clone();\n"
+                    "}\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_branch_local_visited_clones([root], ())
+        self.assertEqual(len(hits), 1, f"unexpected hits: {hits!r}")
+        self.assertIn("new_predicate.rs:2", hits[0])
+        self.assertIn("memoized DP", hits[0])
+
+    def test_allows_pinned_site_by_file_and_statement_text(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/flow/control_flow/typeof_exclusions.rs": (
+                    "fn walk(visited: Vec<u32>) {\n"
+                    "\n"
+                    "    let mut branch_visited = visited.clone();\n"
+                    "}\n"
+                ),
+            }
+        )
+        allowlist = (
+            (
+                "crates/tsz-checker/src/flow/control_flow/typeof_exclusions.rs",
+                "let mut branch_visited = visited.clone();",
+            ),
+        )
+        hits = self.arch_guard.scan_branch_local_visited_clones([root], allowlist)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_duplicate_allowed_statement_still_flags_extra_site(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/flow/control_flow/typeof_exclusions.rs": (
+                    "fn walk(visited: Vec<u32>) {\n"
+                    "    let mut branch_visited = visited.clone();\n"
+                    "    let mut branch_visited = visited.clone();\n"
+                    "}\n"
+                ),
+            }
+        )
+        allowlist = (
+            (
+                "crates/tsz-checker/src/flow/control_flow/typeof_exclusions.rs",
+                "let mut branch_visited = visited.clone();",
+            ),
+        )
+        hits = self.arch_guard.scan_branch_local_visited_clones([root], allowlist)
+        self.assertEqual(len(hits), 1, f"unexpected hits: {hits!r}")
+        self.assertIn("typeof_exclusions.rs:3", hits[0])
+
+    def test_excludes_tests_and_comment_lines(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/foo_tests.rs": (
+                    "let mut branch_visited = visited.clone();\n"
+                ),
+                "crates/tsz-checker/tests/integration.rs": (
+                    "let mut branch_visited = visited.clone();\n"
+                ),
+                "crates/tsz-checker/src/commented.rs": (
+                    "// let mut branch_visited = visited.clone();\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_branch_local_visited_clones([root], ())
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
+    def test_registered_real_sites_pass(self):
+        _name, search_roots, allowlist = self._registered_check()
+        hits = self.arch_guard.scan_branch_local_visited_clones(
+            search_roots, allowlist
+        )
+        self.assertEqual(hits, [], f"live visited.clone() allowlist is stale: {hits!r}")
 
 
 if __name__ == "__main__":

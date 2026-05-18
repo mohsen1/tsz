@@ -40,6 +40,8 @@ const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS: &[&str] = &[
     "NumberFormatOptionsSignDisplay",
     "NumberFormatOptionsStyle",
     "NumberFormatOptionsUseGrouping",
+    "NumberFormatPartTypes",
+    "NumberFormatRangePartTypes",
     "Omit",
     "Partial",
     "Pick",
@@ -58,12 +60,12 @@ fn is_direct_actual_lib_alias_body_admitted(name: &str) -> bool {
     DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS.contains(&name)
 }
 
-pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
-    let basename = std::path::Path::new(file_name)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(file_name);
+fn file_basename(file_name: &str) -> &str {
+    file_name.rsplit(['/', '\\']).next().unwrap_or(file_name)
+}
 
+pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
+    let basename = file_basename(file_name);
     if basename.starts_with("lib.") && basename.ends_with(".d.ts") {
         return true;
     }
@@ -96,10 +98,7 @@ fn is_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
 }
 
 fn is_dom_like_builtin_lib_file_name(file_name: &str) -> bool {
-    let basename = std::path::Path::new(file_name)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(file_name);
+    let basename = file_basename(file_name);
     let stem = basename
         .strip_suffix(".generated.d.ts")
         .or_else(|| basename.strip_suffix(".d.ts"))
@@ -122,11 +121,45 @@ pub(crate) fn is_direct_actual_lib_declaration_arena(arena: &NodeArena) -> bool 
     })
 }
 
-fn is_external_package_declaration_file_name(file_name: &str) -> bool {
+pub(crate) fn is_external_package_declaration_file_name(file_name: &str) -> bool {
     file_name.starts_with("node_modules/")
         || file_name.starts_with("node_modules\\")
         || file_name.contains("/node_modules/")
         || file_name.contains("\\node_modules\\")
+}
+
+/// Classification of a delegated arena's first source file for the
+/// cross-arena symbol-type cache eligibility decision. All file-name
+/// string matching that the cache layer relies on lives in this module.
+/// See `cross_file_cache.rs` for the per-variant cache routing.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub(crate) enum DeclarationFileCacheClass {
+    UserSource,
+    DomOrExternalPackage,
+    /// Excluded from the symbol-id-keyed cache because the name-keyed
+    /// `shared_actual_lib_delegation_cache` already owns dedup for these
+    /// symbols across virtual programs.
+    NonDomBuiltinLib,
+}
+
+pub(crate) fn classify_declaration_file_for_cache(
+    file_name: &str,
+    is_declaration_file: bool,
+) -> DeclarationFileCacheClass {
+    if !is_declaration_file {
+        return DeclarationFileCacheClass::UserSource;
+    }
+    if is_builtin_lib_file_name(file_name) {
+        return if is_dom_like_builtin_lib_file_name(file_name) {
+            DeclarationFileCacheClass::DomOrExternalPackage
+        } else {
+            DeclarationFileCacheClass::NonDomBuiltinLib
+        };
+    }
+    if is_external_package_declaration_file_name(file_name) {
+        return DeclarationFileCacheClass::DomOrExternalPackage;
+    }
+    DeclarationFileCacheClass::NonDomBuiltinLib
 }
 
 fn is_direct_lowering_declaration_arena(arena: &NodeArena) -> bool {
@@ -185,6 +218,8 @@ fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
             | "NumberFormatOptionsSignDisplayRegistry"
             | "NumberFormatOptionsStyleRegistry"
             | "NumberFormatOptionsUseGroupingRegistry"
+            | "NumberFormatPartTypeRegistry"
+            | "NumberFormatRangePartTypeRegistry"
             | "Object"
             | "Promise"
             | "RegExp"

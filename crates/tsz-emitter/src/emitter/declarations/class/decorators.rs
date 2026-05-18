@@ -17,6 +17,11 @@ enum LegacyMemberDecoratorScopeFilter {
     DoesNotRequirePrivateNameScope,
 }
 
+struct MetadataFallbackEntity {
+    check: String,
+    value: String,
+}
+
 impl LegacyMemberDecoratorScopeFilter {
     const fn matches(self, requires_private_name_scope: bool) -> bool {
         match self {
@@ -393,7 +398,6 @@ impl<'a> Printer<'a> {
     /// Uses `self.metadata_class_type_params` for in-scope type parameters; references
     /// to these are serialized as `"Object"` (matching tsc behavior).
     fn serialize_type_for_metadata(&mut self, type_idx: NodeIndex) -> String {
-        let type_param_names = self.metadata_class_type_params.as_deref().unwrap_or(&[]);
         let Some(type_node) = self.arena.get(type_idx) else {
             return "Object".to_string();
         };
@@ -416,48 +420,12 @@ impl<'a> Printer<'a> {
             k if k == sk(SyntaxKind::UnknownKeyword) => "Object".to_string(),
             k if k == sk(SyntaxKind::ObjectKeyword) => "Object".to_string(),
 
-            // Type reference → emit the type name (class/enum reference).
-            // If the referenced name is a type parameter, emit "Object" instead.
-            // If it's a built-in keyword type name (string, number, etc.) used as
-            // a type reference, map to the wrapper constructor.
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
                 if let Some(type_ref) = self.arena.get_type_ref(type_node) {
-                    let name = self.get_identifier_text_idx(type_ref.type_name);
-                    if !name.is_empty() {
-                        if type_param_names.iter().any(|tp| tp == &name) {
-                            return "Object".to_string();
-                        }
-                        // Map keyword type names to their wrapper constructors
-                        match name.as_str() {
-                            "string" => return "String".to_string(),
-                            "number" => return "Number".to_string(),
-                            "boolean" => return "Boolean".to_string(),
-                            "symbol" => return "Symbol".to_string(),
-                            "bigint" => return "BigInt".to_string(),
-                            "void" | "undefined" | "null" | "never" => return "void 0".to_string(),
-                            "any" | "unknown" | "object" => return "Object".to_string(),
-                            _ => {}
-                        }
-                        // Apply CJS named-import substitution (e.g., `Observable` →
-                        // `observable_1.Observable`). The metadata callsite is a
-                        // *value* position; without substitution the emitted name
-                        // would be undefined at runtime.
-                        if !self.suppress_commonjs_named_import_substitution
-                            && let Some(substituted) =
-                                self.commonjs_named_import_substitutions.get(&name)
-                        {
-                            return substituted.clone();
-                        }
-                        if self.metadata_type_reference_requires_guard(&name) {
-                            let temp = self.make_unique_name_hoisted_assignment();
-                            return format!(
-                                "typeof ({temp} = typeof {name} !== \"undefined\" && {name}) === \"function\" ? {temp} : Object"
-                            );
-                        }
-                        return name;
-                    }
+                    self.serialize_type_reference_for_metadata(type_ref.type_name)
+                } else {
+                    "Object".to_string()
                 }
-                "Object".to_string()
             }
 
             // Array types → Array
@@ -624,6 +592,151 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn serialize_type_reference_for_metadata(&mut self, type_name: NodeIndex) -> String {
+        if type_name.is_none() {
+            return "Object".to_string();
+        }
+
+        let type_param_names = self
+            .metadata_class_type_params
+            .as_deref()
+            .map_or_else(Vec::new, |names| names.to_vec());
+        let Some(parts) = self.metadata_entity_name_parts(type_name) else {
+            return "Object".to_string();
+        };
+        let Some(root) = parts.first() else {
+            return "Object".to_string();
+        };
+
+        if parts.len() == 1 {
+            return self.serialize_identifier_type_reference_for_metadata(root, &type_param_names);
+        }
+
+        if type_param_names.iter().any(|tp| tp == root) {
+            return "Object".to_string();
+        }
+
+        let expr_parts = self.metadata_entity_expression_parts(&parts);
+        if self.metadata_qualified_type_reference_requires_guard(root, &expr_parts) {
+            return self.serialize_metadata_fallback_entity(&expr_parts);
+        }
+
+        expr_parts.join(".")
+    }
+
+    fn serialize_identifier_type_reference_for_metadata(
+        &mut self,
+        name: &str,
+        type_param_names: &[String],
+    ) -> String {
+        if type_param_names.iter().any(|tp| tp == name) {
+            return "Object".to_string();
+        }
+        match name {
+            "string" => return "String".to_string(),
+            "number" => return "Number".to_string(),
+            "boolean" => return "Boolean".to_string(),
+            "symbol" => return "Symbol".to_string(),
+            "bigint" => return "BigInt".to_string(),
+            "void" | "undefined" | "null" | "never" => return "void 0".to_string(),
+            "any" | "unknown" | "object" => return "Object".to_string(),
+            _ => {}
+        }
+        if !self.suppress_commonjs_named_import_substitution
+            && let Some(substituted) = self.commonjs_named_import_substitutions.get(name)
+        {
+            return substituted.clone();
+        }
+        if self.metadata_type_reference_requires_guard(name) {
+            return self.serialize_metadata_fallback_entity(&[name.to_string()]);
+        }
+        name.to_string()
+    }
+
+    fn metadata_entity_name_parts(&self, idx: NodeIndex) -> Option<Vec<String>> {
+        let node = self.arena.get(idx)?;
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qualified = self.arena.get_qualified_name(node)?;
+            let mut parts = self.metadata_entity_name_parts(qualified.left)?;
+            let right = self.get_identifier_text_idx(qualified.right);
+            if right.is_empty() {
+                return None;
+            }
+            parts.push(right);
+            return Some(parts);
+        }
+
+        let name = self.get_identifier_text_idx(idx);
+        (!name.is_empty()).then_some(vec![name])
+    }
+
+    fn metadata_entity_expression_parts(&self, parts: &[String]) -> Vec<String> {
+        let mut expr_parts = parts.to_vec();
+        if !self.suppress_commonjs_named_import_substitution
+            && let Some(root) = expr_parts.first_mut()
+            && let Some(substituted) = self.commonjs_named_import_substitutions.get(root)
+        {
+            *root = substituted.clone();
+        }
+        expr_parts
+    }
+
+    fn metadata_qualified_type_reference_requires_guard(
+        &self,
+        root_name: &str,
+        expr_parts: &[String],
+    ) -> bool {
+        if !self.suppress_commonjs_named_import_substitution
+            && self
+                .commonjs_named_import_substitutions
+                .contains_key(root_name)
+        {
+            return false;
+        }
+
+        expr_parts
+            .first()
+            .is_some_and(|root_expr| root_expr != root_name)
+            || !self
+                .ctx
+                .module_state
+                .value_declaration_names
+                .contains(root_name)
+    }
+
+    fn serialize_metadata_fallback_entity(&mut self, parts: &[String]) -> String {
+        let Some(fallback) = self.metadata_fallback_entity(parts) else {
+            return "Object".to_string();
+        };
+        let temp = self.make_unique_name_hoisted_assignment();
+        format!(
+            "typeof ({temp} = {} && {}) === \"function\" ? {temp} : Object",
+            fallback.check, fallback.value
+        )
+    }
+
+    fn metadata_fallback_entity(&mut self, parts: &[String]) -> Option<MetadataFallbackEntity> {
+        let root = parts.first()?;
+        match parts.len() {
+            1 => Some(MetadataFallbackEntity {
+                check: format!("typeof {root} !== \"undefined\""),
+                value: root.clone(),
+            }),
+            2 => Some(MetadataFallbackEntity {
+                check: format!("typeof {root} !== \"undefined\""),
+                value: format!("{}.{}", root, parts[1]),
+            }),
+            _ => {
+                let left = self.metadata_fallback_entity(&parts[..parts.len() - 1])?;
+                let temp = self.make_unique_name_hoisted_assignment();
+                Some(MetadataFallbackEntity {
+                    check: format!("{} && ({temp} = {}) !== void 0", left.check, left.value),
+                    value: format!("{temp}.{}", parts.last()?),
+                })
+            }
+        }
+    }
+
     fn metadata_type_reference_requires_guard(&self, name: &str) -> bool {
         self.ctx.options.no_lib
             && self.ctx.options.isolated_modules
@@ -646,7 +759,12 @@ impl<'a> Printer<'a> {
 
     /// Emit metadata calls for a method: design:type, design:paramtypes, design:returntype.
     /// Caller must have already emitted a trailing comma+newline after decorators.
-    fn emit_metadata_for_method(&mut self, parameters: &NodeList, return_type: NodeIndex) {
+    fn emit_metadata_for_method(
+        &mut self,
+        parameters: &NodeList,
+        return_type: NodeIndex,
+        async_returns_promise: bool,
+    ) {
         // design:type is always Function for methods
         self.write_helper("__metadata");
         self.write("(\"design:type\", Function),");
@@ -666,6 +784,9 @@ impl<'a> Printer<'a> {
             self.write("(\"design:returntype\", ");
             self.write(&serialized);
             self.write(")");
+        } else if async_returns_promise {
+            self.write_helper("__metadata");
+            self.write("(\"design:returntype\", Promise)");
         } else {
             self.write_helper("__metadata");
             self.write("(\"design:returntype\", void 0)");
@@ -1026,6 +1147,7 @@ impl<'a> Printer<'a> {
             Method {
                 parameters: NodeList,
                 return_type: NodeIndex,
+                async_returns_promise: bool,
             },
             Accessor {
                 name: NodeIndex,
@@ -1048,9 +1170,21 @@ impl<'a> Printer<'a> {
                     if !method.body.is_some() {
                         continue;
                     }
+                    let has_async_modifier = self
+                        .arena
+                        .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
+                    let has_generator_asterisk = method.asterisk_token
+                        || crate::transforms::emit_utils::source_header_has_async_generator_asterisk(
+                            self.source_text,
+                            member_node.pos,
+                            self.arena
+                                .get(method.body)
+                                .map_or(member_node.end, |body| body.pos),
+                        );
                     let meta = MemberMetadata::Method {
                         parameters: method.parameters.clone(),
                         return_type: method.type_annotation,
+                        async_returns_promise: has_async_modifier && !has_generator_asterisk,
                     };
                     (&method.modifiers, method.name, false, false, meta)
                 }
@@ -1196,8 +1330,13 @@ impl<'a> Printer<'a> {
                     MemberMetadata::Method {
                         ref parameters,
                         return_type,
+                        async_returns_promise,
                     } => {
-                        self.emit_metadata_for_method(parameters, return_type);
+                        self.emit_metadata_for_method(
+                            parameters,
+                            return_type,
+                            async_returns_promise,
+                        );
                         self.write_line();
                     }
                     MemberMetadata::Accessor { name, is_static } => {

@@ -67,10 +67,6 @@ impl<'a> LoweringPass<'a> {
                                     if let Some(decl) =
                                         self.arena.get_variable_declaration(decl_node)
                                     {
-                                        if decl.initializer.is_none() {
-                                            return false;
-                                        }
-
                                         self.arena.get(decl.name).is_some_and(|name_node| {
                                             name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
                                         })
@@ -134,6 +130,16 @@ impl<'a> LoweringPass<'a> {
                             n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                                 || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                         });
+                    if is_destructuring_assignment
+                        && self.ctx.target_es5
+                        && self.ctx.options.downlevel_iteration
+                        && self
+                            .arena
+                            .get(bin.left)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+                    {
+                        self.transforms.helpers_mut().mark_read();
+                    }
                     if is_destructuring_assignment
                         && self.ctx.needs_es2018_lowering
                         && self.arena.get(bin.left).is_some_and(|n| {

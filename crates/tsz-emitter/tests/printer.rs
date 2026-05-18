@@ -640,6 +640,10 @@ fn test_es5_class_expression_uses_variable_declaration_name() {
         output.contains("var C = /** @class */"),
         "Expected class expression to use surrounding variable name.\nOutput: {output}"
     );
+    assert!(
+        !output.contains("var C = (function ()"),
+        "Variable-initializer class expression should not be wrapped in an extra IIFE.\nOutput: {output}"
+    );
 }
 
 #[test]
@@ -654,8 +658,35 @@ fn test_es5_class_expression_uses_assignment_lhs_name() {
     );
 
     assert!(
-        output.contains("var C = /** @class */"),
+        output.contains("C = /** @class */"),
         "Expected class expression to use assignment lhs name.\nOutput: {output}"
+    );
+    assert!(
+        !output.contains("C = (function ()"),
+        "Assignment class expression should not be wrapped in an extra IIFE.\nOutput: {output}"
+    );
+}
+
+#[test]
+fn test_es5_class_expression_instance_field_uses_synthetic_name() {
+    let source = "const C = class { a = 1; };";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var C = /** @class */")
+            && output.contains("function class_1()")
+            && output.contains("this.a = 1;"),
+        "Anonymous class expression with instance fields should emit as a direct IIFE with a synthetic constructor name.\nOutput: {output}"
+    );
+    assert!(
+        !output.contains("var C = (function ()"),
+        "Instance-field class expression should not be wrapped in an extra IIFE.\nOutput: {output}"
     );
 }
 
@@ -1115,6 +1146,44 @@ fn static_field_class_expression_in_binding_key_uses_es5_comma_alias() {
 }
 
 #[test]
+fn nested_static_field_class_expression_uses_statement_depth_indent() {
+    let source = "function outer() {\n    function inner() {\n        var y = class { static a = x };\n    }\n}";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(
+            "        var y = (_a = /** @class */ (function () {\n                function class_1() {"
+        ),
+        "Nested ES5 static class expression should indent the generated class IIFE by statement depth, not current visual indent width.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn static_field_class_expression_in_case_body_uses_case_body_indent() {
+    let source = "function f(x) {\n    switch (x) {\n        case 0:\n            var y = class { static a = x };\n    }\n}";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(
+            "            var y = (_a = /** @class */ (function () {\n                    function class_1() {"
+        ),
+        "Static-field class expression IIFE should indent from the case-body statement level.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn legacy_decorated_anonymous_default_class_static_field_sets_default_name() {
     use crate::context::emit::EmitContext;
     use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
@@ -1385,6 +1454,32 @@ fn test_invalid_interface_without_name_recovers_body_text() {
     assert!(
         !output.contains("interface interface"),
         "invalid identifier named interface should stay erased.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_invalid_predefined_interface_names_recover_tsc_runtime_tokens() {
+    let source =
+        "interface any { }\ninterface string { }\ninterface void {}\ninterface number<T> {}\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("interface;\n"),
+        "Invalid `interface any` should recover the runtime interface token statement.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("void {};"),
+        "Invalid `interface void` should recover as a void object statement.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("interface string") && !output.contains("interface number"),
+        "Other predefined type-name interfaces should stay erased here.\nOutput:\n{output}"
     );
 }
 
@@ -2051,6 +2146,80 @@ fn test_cjs_exported_namespace_uses_var_at_es5() {
 }
 
 #[test]
+fn invalid_namespace_static_var_and_function_modifiers_are_preserved() {
+    let source = r#"namespace N {
+    public var publicValue: number = 0;
+    static var staticValue: number = 1;
+    private function privateFn(x: string) { }
+    static function staticFn(x: string) { }
+}"#;
+    let output = parse_lower_print(source, PrintOptions::default());
+
+    assert!(
+        output.contains("var publicValue = 0;"),
+        "Invalid access modifier on namespace var should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static var staticValue = 1;"),
+        "Invalid static modifier on namespace var should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function privateFn(x) { }"),
+        "Invalid access modifier on namespace function should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static function staticFn(x) { }"),
+        "Invalid static modifier on namespace function should be preserved.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn invalid_namespace_static_modifiers_are_erased_for_es5() {
+    let source = r#"namespace N {
+    static var staticValue: number = 1;
+    static function staticFn(x: string) { }
+}"#;
+    let output = parse_lower_print(source, PrintOptions::es5());
+
+    assert!(
+        output.contains("var staticValue = 1;"),
+        "ES5 namespace var recovery should erase invalid static.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function staticFn(x) { }"),
+        "ES5 namespace function recovery should erase invalid static.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("static var") && !output.contains("static function"),
+        "ES5 namespace output must not preserve invalid static modifiers.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn invalid_namespace_static_async_function_modifier_is_preserved_before_lowering() {
+    let source = r#"namespace N {
+    static async function staticAsync() { }
+    static async function* staticAsyncGen() { }
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("static function staticAsync()"),
+        "Invalid static modifier should be preserved on lowered async namespace functions.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static function staticAsyncGen()"),
+        "Invalid static modifier should be preserved on lowered async generator namespace functions.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_cjs_exported_namespace_reopen_declares_var_once_es5() {
     let source = r#"export namespace N {
     export class A {}
@@ -2466,6 +2635,58 @@ function elem(key: string) {
 }
 
 #[test]
+fn erased_object_literal_access_wraps_arrow_concise_body() {
+    let source = r#"
+const prop = (x: string) => ({ "1": "one", "2": "two" } as { [key: string]: string }).x;
+const elem = (x: string) => ({ "1": "one", "2": "two" } as { [key: string]: string })[x];
+const nested = () => ({ a: { b: 1 } } as any).a.b;
+const bracket = () => ({ a: { b: 1 } } as any)["a"].b;
+const call = () => ({ f() { return 1; } } as any).f();
+const plain = () => ({ a: 1 }).a;
+"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("const prop = (x) => ({ \"1\": \"one\", \"2\": \"two\" }.x);"),
+        "Arrow property access must be grouped so the object literal is not parsed as a block.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const elem = (x) => ({ \"1\": \"one\", \"2\": \"two\" }[x]);"),
+        "Arrow element access must be grouped so the object literal is not parsed as a block.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const nested = () => ({ a: { b: 1 } }.a.b);"),
+        "Nested property access rooted at an erased object assertion must be grouped.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const bracket = () => ({ a: { b: 1 } }[\"a\"].b);"),
+        "Nested element access rooted at an erased object assertion must be grouped.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const call = () => (({ f() { return 1; } }.f()));"),
+        "Call chains rooted at an erased object assertion must be grouped.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const plain = () => ({ a: 1 }).a;"),
+        "Already-parenthesized plain object access must not be double-wrapped.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("const plain = () => (({ a: 1 }).a);"),
+        "Plain parenthesized access should not be treated as erased assertion output.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("=> { \"1\": \"one\", \"2\": \"two\" }"),
+        "Arrow concise bodies must not start with a bare object literal after type erasure.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn erased_object_literal_access_wraps_statement_expression() {
     let source = r#"
 ({ a: 1 } as { a: number }).a;
@@ -2624,6 +2845,38 @@ fn legacy_member_decorator_private_name_uses_native_static_block_scope() {
     assert!(
         !output.contains("}\n__decorate([\n    decorator((x) => x.#x),"),
         "Private-name decorator calls must not be emitted after the class body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn legacy_async_generator_decorator_metadata_without_annotation_stays_void() {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer as EmitterPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
+
+    let source = "declare const dec: MethodDecorator;\nclass A {\n    @dec async inferred() {}\n    @dec async *stream() { yield 1; }\n}\n";
+    let opts = PrinterOptions {
+        target: ScriptTarget::ES2018,
+        legacy_decorators: true,
+        emit_decorator_metadata: true,
+        ..Default::default()
+    };
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let ctx = EmitContext::with_options(opts.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, opts);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("__metadata(\"design:returntype\", Promise)"),
+        "Unannotated async non-generator method metadata should use Promise.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__metadata(\"design:returntype\", void 0)"),
+        "Unannotated async generator method metadata should stay void 0.\nOutput:\n{output}"
     );
 }
 

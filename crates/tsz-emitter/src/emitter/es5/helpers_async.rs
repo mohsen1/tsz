@@ -169,6 +169,33 @@ impl<'a> Printer<'a> {
         inits
     }
 
+    fn es5_class_expression_has_instance_fields(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        class_data.members.nodes.iter().copied().any(|member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                return false;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                return false;
+            };
+            !self.has_effective_static_modifier_js(&prop.modifiers)
+                && !self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                && !self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                && !self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+        })
+    }
+
     fn static_block_inner_comment_index(&self, member_node: &Node) -> usize {
         let brace_pos = if let Some(text) = self.source_text_for_map() {
             let bytes = text.as_bytes();
@@ -196,30 +223,49 @@ impl<'a> Printer<'a> {
         output.strip_prefix(&prefix).map(str::to_string)
     }
 
-    fn write_multiline_fragment(&mut self, text: &str) {
-        let extra_indent = if self.writer.indent_level() > 0 {
-            " ".repeat((self.writer.indent_width() * (self.writer.indent_level() + 2)) as usize)
-        } else {
-            String::new()
-        };
+    fn write_multiline_fragment_preserving_indent(&mut self, text: &str) {
         let mut lines = text.lines();
         if let Some(first) = lines.next() {
             self.write(first);
         }
-        let lines: Vec<&str> = lines.collect();
-        let strip_indent = lines
-            .iter()
-            .filter(|line| !line.is_empty())
-            .map(|line| line.len() - line.trim_start_matches(' ').len())
-            .min()
-            .unwrap_or(0);
         for line in lines {
             self.write_line();
             if !line.is_empty() {
-                self.write(&extra_indent);
-                self.write(line.get(strip_indent..).unwrap_or(line));
+                self.write(line);
             }
         }
+    }
+
+    fn write_multiline_fragment_with_continuation_indent(
+        &mut self,
+        text: &str,
+        continuation_indent_level: u32,
+    ) {
+        let mut lines = text.lines();
+        if let Some(first) = lines.next() {
+            self.write(first);
+        }
+        for line in lines {
+            self.write_line();
+            if !line.is_empty() {
+                let trimmed = line.trim_start_matches(' ');
+                if trimmed.starts_with("}())") {
+                    let closing_indent_level = continuation_indent_level.saturating_sub(1);
+                    self.write_line_with_absolute_indent(closing_indent_level, trimmed);
+                } else {
+                    self.write_line_with_absolute_indent(continuation_indent_level, trimmed);
+                }
+            }
+        }
+    }
+
+    fn write_line_with_absolute_indent(&mut self, indent_level: u32, text: &str) {
+        let original_indent_level = self.writer.indent_level();
+        let indent = " ".repeat((self.writer.indent_unit_width() * indent_level) as usize);
+        self.writer.set_indent_level(0);
+        self.writer.write_raw_text(&indent);
+        self.write(text);
+        self.writer.set_indent_level(original_indent_level);
     }
 
     fn class_expression_static_comma_needs_parens(&self, class_node: NodeIndex) -> bool {
@@ -246,6 +292,13 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn current_statement_continuation_indent_level(&self) -> u32 {
+        self.writer
+            .indent_level()
+            .max(self.writer.current_line_visual_indent_level())
+            + 2
+    }
+
     fn emit_es5_static_class_expression_comma(
         &mut self,
         class_node: NodeIndex,
@@ -262,13 +315,17 @@ impl<'a> Printer<'a> {
         } else {
             self.make_unique_name_hoisted()
         };
+        let continuation_indent_level = self.current_statement_continuation_indent_level();
 
         if needs_parens {
             self.write("(");
         }
         self.write(&temp);
         self.write(" = ");
-        self.write_multiline_fragment(class_iife_expr);
+        self.write_multiline_fragment_with_continuation_indent(
+            class_iife_expr,
+            continuation_indent_level,
+        );
 
         if let Some(name) = set_function_name {
             self.emit_class_expr_set_function_name_comma_item(&temp, name);
@@ -634,12 +691,17 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            let (generator_body, hoisted_var_groups, directive_prologue) = if body_has_await {
+            let (generator_body, hoisted_var_groups, directive_prologue, _) = if body_has_await {
                 async_emitter.emit_generator_body_with_await_and_hoisted_var_groups(body)
             } else {
-                let (generator_body, hoisted_var_groups) =
+                let (generator_body, hoisted_var_groups, needs_lexical_this_capture) =
                     async_emitter.emit_simple_generator_body_with_hoisted_var_groups(body);
-                (generator_body, hoisted_var_groups, Vec::new())
+                (
+                    generator_body,
+                    hoisted_var_groups,
+                    Vec::new(),
+                    needs_lexical_this_capture,
+                )
             };
             let generator_mappings = async_emitter.take_mappings();
             self.next_disposable_env_id = async_emitter.disposable_env_counter();
@@ -1316,7 +1378,7 @@ impl<'a> Printer<'a> {
                 let output = es5_emitter.emit_class(class_node);
                 (candidate, output)
             }
-        } else if use_static_comma {
+        } else if use_static_comma || self.es5_class_expression_has_instance_fields(class_data) {
             let temp_name = self.make_unique_name_from_base("class");
             let output = es5_emitter.emit_class_with_name(class_node, &temp_name);
             (temp_name, output)
@@ -1344,11 +1406,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if class_data.name.is_some()
+        if (class_data.name.is_some() || class_expr_set_function_name.is_some())
             && let Some(class_iife_expr) =
                 Self::es5_class_iife_expression_from_var(&es5_output, &class_name)
         {
-            self.write_multiline_fragment(&class_iife_expr);
+            self.write_multiline_fragment_preserving_indent(&class_iife_expr);
             return;
         }
 

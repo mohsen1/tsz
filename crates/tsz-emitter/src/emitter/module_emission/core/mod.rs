@@ -4,11 +4,49 @@ mod export_default_parens;
 use super::super::{JsxEmit, ModuleKind, Printer, ScriptTarget};
 use crate::context::transform::IdentifierId;
 use crate::transforms::emit_utils;
+use crate::transforms::private_fields_es5::is_private_identifier;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::node::{Node, NodeAccess};
+use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
+
+#[derive(Default)]
+pub(in crate::emitter) struct CjsExportVariableSchedule {
+    pub local_groups: Vec<CjsExportLocalDeclGroup>,
+    pub assignments: Vec<CjsExportAssignment>,
+}
+
+pub(in crate::emitter) struct CjsExportLocalDeclGroup {
+    pub keyword: &'static str,
+    pub declarations: Vec<NodeIndex>,
+}
+
+pub(in crate::emitter) struct CjsExportAssignment {
+    pub decoded_name: String,
+    pub emit_name: String,
+    pub value: CjsExportAssignmentValue,
+}
+
+pub(in crate::emitter) enum CjsExportAssignmentValue {
+    Initializer(NodeIndex),
+    LocalName(String),
+}
+
+const fn cjs_export_decl_list_keyword(node: &Node) -> Option<&'static str> {
+    let flags = node.flags as u32;
+    if flags & node_flags::USING != 0 {
+        return None;
+    }
+    if flags & node_flags::CONST != 0 {
+        Some("const")
+    } else if flags & node_flags::LET != 0 {
+        Some("let")
+    } else {
+        Some("var")
+    }
+}
 
 impl<'a> Printer<'a> {
     /// Emit a module specifier, rewriting extension if rewriteRelativeImportExtensions is set.
@@ -670,22 +708,20 @@ impl<'a> Printer<'a> {
                                     self.write(";");
                                     return;
                                 }
-                            } else {
-                                if let Some(expr) = self.capture_tc39_decorated_class_expression(
-                                    export.export_clause,
-                                    &class_name,
-                                ) {
-                                    self.write("let ");
-                                    self.write(&class_name);
-                                    self.write(" = ");
-                                    self.write(&expr);
-                                    self.write(";");
-                                    self.write_line();
-                                    self.write("export default ");
-                                    self.write(&class_name);
-                                    self.write(";");
-                                    return;
-                                }
+                            } else if let Some(expr) = self.capture_tc39_decorated_class_expression(
+                                export.export_clause,
+                                &class_name,
+                            ) {
+                                self.write("let ");
+                                self.write(&class_name);
+                                self.write(" = ");
+                                self.write(&expr);
+                                self.write(";");
+                                self.write_line();
+                                self.write("export default ");
+                                self.write(&class_name);
+                                self.write(";");
+                                return;
                             }
                         }
                         if class.name.is_none() {
@@ -701,16 +737,14 @@ impl<'a> Printer<'a> {
                                     self.write("export default default_1;");
                                     return;
                                 }
-                            } else {
-                                if let Some(expr) = self.capture_tc39_decorated_class_expression(
-                                    export.export_clause,
-                                    "default",
-                                ) {
-                                    self.write("export default ");
-                                    self.write(&expr);
-                                    self.write(";");
-                                    return;
-                                }
+                            } else if let Some(expr) = self.capture_tc39_decorated_class_expression(
+                                export.export_clause,
+                                "default",
+                            ) {
+                                self.write("export default ");
+                                self.write(&expr);
+                                self.write(";");
+                                return;
                             }
                         }
 
@@ -971,6 +1005,14 @@ impl<'a> Printer<'a> {
         // checking if the name is already in `declared_namespace_names`, which
         // means a prior declaration already emitted the `var`/`export` prefix.
         let is_merged_subsequent = self.is_merged_subsequent_declaration(clause_node);
+        let es5_namespace_should_declare_var =
+            if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION && self.ctx.target_es5 {
+                self.transforms
+                    .get(export.export_clause)
+                    .and_then(|directive| directive.es5_namespace_should_declare_var())
+            } else {
+                None
+            };
 
         // When a class has ES (non-legacy) decorators and is exported, tsc emits
         // decorators BEFORE the `export` keyword:
@@ -1013,7 +1055,12 @@ impl<'a> Printer<'a> {
                 false,
             );
         } else {
-            if !is_merged_subsequent && !clause_emits_export_prefix {
+            let namespace_iife_supplies_no_binding =
+                es5_namespace_should_declare_var == Some(false);
+            if !is_merged_subsequent
+                && !clause_emits_export_prefix
+                && !namespace_iife_supplies_no_binding
+            {
                 self.write("export ");
             }
             self.emit(export.export_clause);
@@ -1146,27 +1193,27 @@ impl<'a> Printer<'a> {
         names
     }
 
-    /// Try to collect inline CJS export info for a variable statement.
-    /// Returns `Some(vec of (decoded_name, emit_name, initializer_idx))` if all
-    /// declarators are simple identifier bindings and at least one initializer can
-    /// be emitted inline. Initializer-less declarations are skipped because the
-    /// CJS preamble already emits their `exports.x = void 0` forward declaration.
-    /// Returns None for destructuring or non-inlineable initializers, which fall
-    /// back to split form.
-    ///
-    /// `decoded_name` is the semantic name (for set tracking/matching).
-    /// `emit_name` preserves unicode escapes from the source to match tsc output.
-    pub(in crate::emitter) fn try_collect_inline_cjs_exports(
+    /// Build a `CommonJS` export schedule for a variable statement whose declarators
+    /// can be lowered structurally. Initializer-less declarations are skipped
+    /// because the `CJS` preamble already emits their `exports.x = void 0` forward
+    /// declaration. Destructuring and unsupported declaration-list kinds return
+    /// `None` so callers can use the existing fallback paths.
+    pub(in crate::emitter) fn collect_cjs_export_variable_schedule(
         &self,
-        node_idx: NodeIndex,
+        _node_idx: NodeIndex,
         node: &Node,
-    ) -> Option<Vec<(String, String, NodeIndex)>> {
+    ) -> Option<CjsExportVariableSchedule> {
         let var_stmt = self.arena.get_variable(node)?;
-        let mut result = Vec::new();
+        let mut schedule = CjsExportVariableSchedule::default();
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let decl_list_node = self.arena.get(decl_list_idx)?;
             let decl_list = self.arena.get_variable(decl_list_node)?;
+            let keyword = cjs_export_decl_list_keyword(decl_list_node)?;
+            let mut local_group = CjsExportLocalDeclGroup {
+                keyword,
+                declarations: Vec::new(),
+            };
 
             for &decl_idx in &decl_list.declarations.nodes {
                 let decl_node = self.arena.get(decl_idx)?;
@@ -1192,31 +1239,166 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
-                // tsc uses split form (const x = val; exports.x = x;) for
-                // arrow functions, function expressions, and plain class
-                // expressions. Transformed class expressions can lower to a
-                // comma expression, and tsc emits that directly into
-                // `exports.x = (...)`.
-                if let Some(init_node) = self.arena.get(decl.initializer) {
-                    let k = init_node.kind;
-                    if k == syntax_kind_ext::ARROW_FUNCTION
-                        || k == syntax_kind_ext::FUNCTION_EXPRESSION
-                        || (k == syntax_kind_ext::CLASS_EXPRESSION
-                            && !self.transforms.has_transform(decl.initializer)
-                            && !self.transforms.has_transform(node_idx))
-                    {
-                        return None;
-                    }
+                let initializer = decl.initializer;
+                if self.cjs_export_initializer_needs_local_binding(initializer) {
+                    local_group.declarations.push(decl_idx);
+                    schedule.assignments.push(CjsExportAssignment {
+                        decoded_name,
+                        emit_name: emit_name.clone(),
+                        value: CjsExportAssignmentValue::LocalName(emit_name),
+                    });
+                } else {
+                    schedule.assignments.push(CjsExportAssignment {
+                        decoded_name,
+                        emit_name,
+                        value: CjsExportAssignmentValue::Initializer(initializer),
+                    });
                 }
+            }
 
-                result.push((decoded_name, emit_name, decl.initializer));
+            if !local_group.declarations.is_empty() {
+                schedule.local_groups.push(local_group);
             }
         }
 
-        if result.is_empty() {
+        if schedule.assignments.is_empty() {
             return None;
         }
-        Some(result)
+        Some(schedule)
+    }
+
+    fn cjs_export_initializer_needs_local_binding(&self, initializer: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        let k = init_node.kind;
+        let is_class_initializer = self.arena.get_class(init_node).is_some();
+        k == syntax_kind_ext::ARROW_FUNCTION
+            || k == syntax_kind_ext::FUNCTION_EXPRESSION
+            || (is_class_initializer
+                && !self.class_expression_export_initializer_can_inline(initializer))
+    }
+
+    fn class_expression_export_initializer_can_inline(&self, class_idx: NodeIndex) -> bool {
+        let Some(class_node) = self.arena.get(class_idx) else {
+            return false;
+        };
+        let Some(class) = self.arena.get_class(class_node) else {
+            return false;
+        };
+
+        let needs_private_lowering = !self.ctx.options.target.supports_es2022();
+        let target_needs_field_lowering = (self.ctx.options.target as u32)
+            < (ScriptTarget::ES2022 as u32)
+            || !self.ctx.options.use_define_for_class_fields;
+        let target_needs_static_block_lowering =
+            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+
+        let has_private_lowering = needs_private_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena
+                    .get(member_idx)
+                    .is_some_and(|member| match member.kind {
+                        k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                            .arena
+                            .get_property_decl(member)
+                            .is_some_and(|prop| is_private_identifier(self.arena, prop.name)),
+                        k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                            .arena
+                            .get_method_decl(member)
+                            .is_some_and(|method| is_private_identifier(self.arena, method.name)),
+                        k if k == syntax_kind_ext::GET_ACCESSOR
+                            || k == syntax_kind_ext::SET_ACCESSOR =>
+                        {
+                            self.arena.get_accessor(member).is_some_and(|accessor| {
+                                is_private_identifier(self.arena, accessor.name)
+                            })
+                        }
+                        _ => false,
+                    })
+            });
+
+        let has_static_field_comma_expr = target_needs_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member| {
+                    member.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self.arena.get_property_decl(member).is_some_and(|prop| {
+                            self.arena.is_static(&prop.modifiers)
+                                && !self
+                                    .arena
+                                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                                && !self
+                                    .arena
+                                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                                && self.class_property_initializer_has_runtime_equals(member, prop)
+                                && !(needs_private_lowering
+                                    && is_private_identifier(self.arena, prop.name))
+                        })
+                })
+            });
+
+        let has_static_block_comma_expr = target_needs_static_block_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|member| {
+                    member.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+                })
+            });
+
+        let has_static_computed_method_or_accessor =
+            class.members.nodes.iter().any(|&member_idx| {
+                self.arena
+                    .get(member_idx)
+                    .is_some_and(|member| match member.kind {
+                        k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                            self.arena.get_method_decl(member).is_some_and(|method| {
+                                self.arena.is_static(&method.modifiers)
+                                    && self.arena.get(method.name).is_some_and(|name| {
+                                        name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                                    })
+                            })
+                        }
+                        k if k == syntax_kind_ext::GET_ACCESSOR
+                            || k == syntax_kind_ext::SET_ACCESSOR =>
+                        {
+                            self.arena.get_accessor(member).is_some_and(|accessor| {
+                                self.arena.is_static(&accessor.modifiers)
+                                    && self.arena.get(accessor.name).is_some_and(|name| {
+                                        name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                                    })
+                            })
+                        }
+                        _ => false,
+                    })
+            });
+
+        has_private_lowering
+            || has_static_field_comma_expr
+            || has_static_block_comma_expr
+            || has_static_computed_method_or_accessor
+    }
+
+    fn class_property_initializer_has_runtime_equals(
+        &self,
+        member_node: &Node,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(prop.initializer) else {
+            return false;
+        };
+        let Some(text) = self.source_text else {
+            return true;
+        };
+        let start = member_node.pos as usize;
+        let end = (init_node.pos as usize).min(text.len());
+        if start >= end {
+            return false;
+        }
+        let segment = &text.as_bytes()[start..end];
+        let search_from = segment
+            .iter()
+            .rposition(|&byte| byte == b':')
+            .map_or(0, |idx| idx + 1);
+        segment[search_from..].contains(&b'=')
     }
 
     /// Get identifier text from optional node index
@@ -1708,6 +1890,12 @@ impl<'a> Printer<'a> {
                         .has_modifier(&t.modifiers, SyntaxKind::ExportKeyword)
                 })
             }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                self.arena.get_import_decl(node).is_some_and(|i| {
+                    self.arena
+                        .has_modifier(&i.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
             _ => false,
         }
     }
@@ -1743,6 +1931,12 @@ impl<'a> Printer<'a> {
                     // (namespace alias, not a module indicator)
                     k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                         if let Some(import_data) = self.arena.get_import_decl(node) {
+                            if self
+                                .arena
+                                .has_modifier(&import_data.modifiers, SyntaxKind::ExportKeyword)
+                            {
+                                return true;
+                            }
                             if import_data.module_specifier.is_none() {
                                 // require(nonStringLiteral) — specifier failed to parse
                                 // as string literal, but the `import` keyword still
@@ -1815,7 +2009,7 @@ impl<'a> Printer<'a> {
                 || node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             {
                 if let Some(import_decl) = self.arena.get_import_decl(node) {
-                    if !self.import_decl_has_runtime_value(import_decl) {
+                    if !self.import_decl_should_schedule_wrapped_dependency(node, import_decl) {
                         continue;
                     }
                     if let Some(text) =

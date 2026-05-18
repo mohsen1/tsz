@@ -499,7 +499,7 @@ impl<'a> LoweringPass<'a> {
         )
     }
 
-    fn import_has_value_usage_after_node(
+    pub(super) fn import_has_value_usage_after_node(
         &self,
         node: &Node,
         clause: &tsz_parser::parser::node::ImportClauseData,
@@ -691,8 +691,11 @@ impl<'a> LoweringPass<'a> {
             return;
         }
 
+        let is_top_level_export = self.namespace_depth == 0;
+
         // Detect CommonJS helpers: export * from "mod"
-        if self.is_commonjs()
+        if is_top_level_export
+            && self.is_commonjs()
             && export_decl.module_specifier.is_some()
             && export_decl.export_clause.is_none()
         {
@@ -703,7 +706,8 @@ impl<'a> LoweringPass<'a> {
 
         // Detect CommonJS helpers: export * as ns from "mod"
         // In CJS with esModuleInterop, this needs __importStar + __createBinding.
-        if self.is_commonjs()
+        if is_top_level_export
+            && self.is_commonjs()
             && self.ctx.options.es_module_interop
             && export_decl.module_specifier.is_some()
             && export_decl.export_clause.is_some()
@@ -720,7 +724,8 @@ impl<'a> LoweringPass<'a> {
 
         // Detect CommonJS helpers: export { default } from "mod" or export { default as X } from "mod"
         // In CJS with esModuleInterop, re-exporting `default` needs __importDefault.
-        if self.is_commonjs()
+        if is_top_level_export
+            && self.is_commonjs()
             && self.ctx.options.es_module_interop
             && export_decl.module_specifier.is_some()
             && let Some(clause_node) = self.arena.get(export_decl.export_clause)
@@ -1445,6 +1450,8 @@ impl<'a> LoweringPass<'a> {
 
         // Get the namespace root name for merging detection
         let namespace_name = self.get_module_root_name_text(module_decl.name);
+        let namespace_has_runtime_value =
+            emit_utils::module_body_has_runtime_value_declarations(self.arena, module_decl.body);
 
         // Check if this name has already been declared (class/enum/function/namespace)
         // If so, we should NOT emit 'var' for this namespace
@@ -1460,7 +1467,7 @@ impl<'a> LoweringPass<'a> {
             .is_some_and(|n| self.re_exported_names.contains(n));
 
         // Track this name as declared
-        if let Some(name) = namespace_name {
+        if namespace_has_runtime_value && let Some(name) = namespace_name {
             self.declared_names.insert(name);
         }
         let is_exported = self.is_commonjs()
@@ -1552,6 +1559,9 @@ impl<'a> LoweringPass<'a> {
             return;
         };
 
+        let mut es5_captures_this = false;
+        let mut es5_captures_arguments = false;
+
         if self.ctx.target_es5 {
             let malformed_return_type = arrow.type_annotation.is_some()
                 && self
@@ -1569,11 +1579,16 @@ impl<'a> LoweringPass<'a> {
                 return;
             }
 
-            let captures_this = contains_this_reference(self.arena, idx);
+            let contains_this = contains_this_reference(self.arena, idx);
+            let async_arrow_needs_awaiter_this =
+                arrow.is_async && self.enclosing_function_bodies.len() > 1;
+            let captures_this = contains_this || async_arrow_needs_awaiter_this;
             let captures_arguments = contains_arguments_reference(self.arena, idx);
+            es5_captures_this = captures_this;
+            es5_captures_arguments = captures_arguments;
 
             tracing::debug!(
-                "[lowering][arrow] idx={} captures_this={captures_this} is_async={}",
+                "[lowering][arrow] idx={} contains_this={contains_this} captures_this={captures_this} is_async={}",
                 idx.0,
                 arrow.is_async
             );
@@ -1599,10 +1614,12 @@ impl<'a> LoweringPass<'a> {
                 self.mark_async_helpers();
             }
 
-            // If this arrow function captures 'this', increment the capture level
-            // so that nested 'this' references get substituted.
+            // If this arrow function captures lexical `this`, increment the
+            // capture level so that nested `this` references get substituted.
             // Also mark the enclosing function body so the emitter inserts
             // `var _this = this;` at the start of that scope.
+            // Async arrows need the lexical thisArg passed to `__awaiter` even
+            // when the generator body does not spell `this`.
             // But NOT when inside an ES5 class — class_es5_ir handles _this
             // capture independently within constructor/method bodies.
             if captures_this {
@@ -1650,13 +1667,11 @@ impl<'a> LoweringPass<'a> {
 
         // Restore capture level after visiting the arrow function body
         if self.ctx.target_es5 {
-            let captures_this = contains_this_reference(self.arena, idx);
-            if captures_this {
+            if es5_captures_this {
                 self.this_capture_level -= 1;
             }
 
-            let captures_arguments = contains_arguments_reference(self.arena, idx);
-            if captures_arguments {
+            if es5_captures_arguments {
                 self.arguments_capture_level -= 1;
             }
         }

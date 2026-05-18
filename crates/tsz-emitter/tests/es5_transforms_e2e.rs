@@ -3,7 +3,9 @@
 //! These tests verify that the complete chain (parse -> lower -> print) produces
 //! correct ES5 output for destructuring, class, and async transforms.
 
-use crate::emitter::ModuleKind;
+use crate::context::emit::EmitContext;
+use crate::emitter::{ModuleKind, Printer as EmitPrinter, PrinterOptions};
+use crate::lowering::LoweringPass;
 use crate::output::printer::{PrintOptions, lower_and_print};
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
@@ -38,12 +40,21 @@ fn emit_es5_with_module(source: &str, module: ModuleKind) -> String {
 fn emit_es5_with_comments(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    lower_and_print(&parser.arena, root, PrintOptions::es5()).code
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+    let mut printer = EmitPrinter::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
 }
 
 #[test]
 fn async_es5_for_loop_captured_let_with_await_uses_loop_generator() {
-    let output = emit_es5(
+    let output = emit_es5_with_comments(
         "async function f() {\n\
              var ar = [];\n\
              for (let i = 0; i < 1; i++) {\n\
@@ -88,6 +99,74 @@ fn async_es5_uses_ambient_value_for_custom_promise_constructor() {
 }
 
 #[test]
+fn async_es5_arrow_computed_object_value_arrow_captures_generator_this() {
+    let output = emit_es5(
+        "class A {\n\
+             b = async (...args: any[]) => {\n\
+                 await Promise.resolve();\n\
+                 const obj = { [\"a\"]: () => this };\n\
+             };\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("return __awaiter(_this,"),
+        "Class field async arrow should pass the captured instance to __awaiter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var obj;\n                var _a;\n                var _this = this;"),
+        "Nested arrow after await should get a generator-callback lexical this capture.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a[\"a\"] = function () { return _this; }"),
+        "Computed object value arrow should return the generator callback capture.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_nested_regular_function_arrow_owns_this_capture() {
+    let output = emit_es5(
+        "class A {\n\
+             b = async () => {\n\
+                 await Promise.resolve();\n\
+                 const f = function () { return () => this; };\n\
+             };\n\
+         }\n",
+    );
+
+    assert!(
+        !output.contains("var f;\n                var _this = this;"),
+        "Async generator callback should not capture `this` for arrows inside a nested regular function.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "f = function () {\n                            var _this = this;\n                            return function () { return _this; };\n                        };"
+        ),
+        "Nested regular function should own the `_this` capture for its lowered arrow.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_es5_user_this_alias_identifier_does_not_trigger_capture() {
+    let output = emit_es5(
+        "async function f() {\n\
+             const _this = \"sentinel\";\n\
+             await Promise.resolve();\n\
+             return _this;\n\
+         }\n",
+    );
+
+    assert!(
+        !output.contains("var _this = this;"),
+        "User identifier `_this` should not be mistaken for generated lexical-this capture.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _this;"),
+        "The user `_this` local should still be hoisted as an ordinary async local.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn class_method_for_of_delegates_es5_statement_lowering() {
     let output = emit_es5_with_comments(
         r#"
@@ -122,6 +201,56 @@ class Operation {
         !output.contains(" of Object.keys(parameterValues)")
             && !output.contains("(this).getParameter()"),
         "Class method for-of must not leak raw for-of syntax or redundant type-erasure parens.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn class_accessors_capture_arrow_this_with_collision_safe_alias() {
+    let output = emit_es5(
+        "class C {\n\
+             get value() {\n\
+                 var x = { run: cb => () => { var _this = 1; return cb(this); } };\n\
+                 return 1;\n\
+             }\n\
+             set value(next) {\n\
+                 var _this = 1;\n\
+                 var x = { run: cb => () => cb(this) };\n\
+             }\n\
+         }\n",
+    );
+
+    assert!(
+        output.matches("var _this_1 = this;").count() >= 2,
+        "Accessor arrows should reserve a collision-safe lexical this alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.matches("return cb(_this_1);").count() >= 2,
+        "Nested arrows should reference the reserved accessor this alias.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return cb(_this);"),
+        "User `_this` bindings must not shadow generated accessor this captures.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn class_accessors_capture_arrow_this_with_default_alias_when_available() {
+    let output = emit_es5(
+        "class C {\n\
+             get value() {\n\
+                 var x = { run: cb => () => cb(this) };\n\
+                 return 1;\n\
+             }\n\
+         }\n",
+    );
+
+    assert!(
+        output.contains("var _this = this;"),
+        "Accessor arrows should use the standard lexical this alias when it is free.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return cb(_this);"),
+        "Nested arrows should read the standard accessor this alias.\nOutput:\n{output}"
     );
 }
 
@@ -467,6 +596,61 @@ fn es2015_object_rest_parameter_keeps_later_default_in_body() {
 }
 
 #[test]
+fn es2015_object_rest_parameter_prologue_follows_directives() {
+    let output = emit_with_target(
+        "function f({ a = {}, ...rest }: any = {}) {\n\
+             \"use strict\";\n\
+             \"another directive\";\n\
+             rest.value(a);\n\
+         }\n\
+         class C {\n\
+             constructor({ a = {}, ...rest }: any = {}) {\n\
+                 \"use strict\";\n\
+                 \"another directive\";\n\
+                 rest.value(a);\n\
+             }\n\
+         }\n",
+        ScriptTarget::ES2015,
+    );
+
+    let function_directive = output
+        .find("function f(_a = {}) {\n    \"use strict\";\n    \"another directive\";")
+        .unwrap_or_else(|| panic!("function directives should stay first.\nOutput:\n{output}"));
+    let function_prologue = output
+        .find("var { a = {} } = _a, rest = __rest(_a, [\"a\"]);")
+        .unwrap_or_else(|| {
+            panic!("function object-rest parameter prologue should be emitted.\nOutput:\n{output}")
+        });
+    let function_body = output
+        .find("rest.value(a);")
+        .unwrap_or_else(|| panic!("function body should be emitted.\nOutput:\n{output}"));
+
+    assert!(
+        function_directive < function_prologue && function_prologue < function_body,
+        "Function object-rest parameter prologue should follow directives and precede body statements.\nOutput:\n{output}"
+    );
+
+    let constructor_directive = output
+        .find("constructor(_a = {}) {\n        \"use strict\";\n        \"another directive\";")
+        .unwrap_or_else(|| panic!("constructor directives should stay first.\nOutput:\n{output}"));
+    let constructor_prologue = output
+        .rfind("var { a = {} } = _a, rest = __rest(_a, [\"a\"]);")
+        .unwrap_or_else(|| {
+            panic!(
+                "constructor object-rest parameter prologue should be emitted.\nOutput:\n{output}"
+            )
+        });
+    let constructor_body = output
+        .rfind("rest.value(a);")
+        .unwrap_or_else(|| panic!("constructor body should be emitted.\nOutput:\n{output}"));
+
+    assert!(
+        constructor_directive < constructor_prologue && constructor_prologue < constructor_body,
+        "Constructor object-rest parameter prologue should follow directives and precede body statements.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es5_defaulted_object_rest_parameter_uses_parameter_guard() {
     let output = emit_es5(
         "function f({ x: { z = 12, ...nested }, ...rest } = { x: { z: 1, ka: 1 }, y: 'noo' }) {\n\
@@ -506,6 +690,90 @@ fn es5_class_method_object_rest_parameter_uses_rest_helper() {
             "set: function (_a) {\n            var a = _a.a, clone = __rest(_a, [\"a\"]);"
         ),
         "ES5 class accessors should lower object-rest parameters through the class IR prologue.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_param_nested_array_patterns_inline_simple_sources() {
+    let output = emit_es5(
+        "function f0(a: any, [a, [b]]: any, { b }: any) { }\n\
+         function f3([c, [c], [[c]]]: any) { }\n",
+    );
+
+    assert!(
+        output.contains("var a = _a[0], b = _a[1][0];"),
+        "Nested array parameter bindings without defaults should read through the source chain.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var c = _a[0], c = _a[1][0], c = _a[2][0][0];"),
+        "Deep nested array parameter bindings should not allocate intermediary value temps.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_c = _a[1]") && !output.contains("_d = _c[0]"),
+        "Simple nested array parameter bindings should not create temp-only source aliases.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_param_nested_object_patterns_inline_simple_sources() {
+    let output = emit_es5(
+        "function f4({ d, d: { d } }: any) { }\n\
+         function f5({ e, e: { e } }: any, { e }: any, [d, e, [[e]]]: any, ...e: any[]) { }\n",
+    );
+
+    assert!(
+        output.contains("var d = _a.d, d = _a.d.d;"),
+        "Nested object parameter bindings without defaults should read through the source chain.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var e = _a.e, e = _a.e.e;"),
+        "Repeated object parameter bindings should keep tsc's direct chained source reads.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var d = _c[0], e = _c[1], e = _c[2][0][0];"),
+        "Object and array parameter prologues should share the same inline nested-source policy.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_b = _a.d") && !output.contains("_d = _a.e"),
+        "Simple nested object parameter bindings should not create temp-only source aliases.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_param_string_literal_nested_object_patterns_keep_temp_path() {
+    let output = emit_es5(
+        "function f({ \"not-ident\": { value } }: any) { }\n\
+         function g({ \"not-ident\": [first] }: any) { }\n",
+    );
+
+    assert!(
+        output.contains("var _b = _a[\"not-ident\"], value = _b.value;"),
+        "String-literal nested object parameter sources should keep the temp path.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _b = _a[\"not-ident\"], first = _b[0];"),
+        "String-literal nested array parameter sources should keep the temp path.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_a[\"not-ident\"].value") && !output.contains("_a[\"not-ident\"][0]"),
+        "String-literal nested parameter sources should not use direct chained reads.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_param_empty_nested_patterns_keep_source_reads() {
+    let output = emit_es5(
+        "function f0([[]]: any) { }\n\
+         function f1({ a: {} }: any) { }\n",
+    );
+
+    assert!(
+        output.contains("var _b = _a[0];"),
+        "Empty nested array parameter patterns should still read the nested source.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _b = _a.a;"),
+        "Empty nested object parameter patterns should still read the nested source.\nOutput:\n{output}"
     );
 }
 
@@ -653,6 +921,124 @@ fn test_class_extends_to_iife() {
 }
 
 #[test]
+fn es5_invalid_super_property_access_uses_recovery_base() {
+    let output = emit_es5(
+        r#"
+class NoBase {
+    constructor() {
+        var a = super.prototype;
+        var b = super.hasOwnProperty("");
+    }
+
+    fn() {
+        var a = super.prototype;
+        var b = super.hasOwnProperty("");
+    }
+
+    m = super.prototype;
+    n = super.hasOwnProperty("");
+
+    static static1() {
+        super.hasOwnProperty("");
+    }
+}
+
+var obj = { n: super.wat, p: super.foo() };
+"#,
+    );
+
+    assert!(
+        output.contains("this.m = _super.prototype.prototype;"),
+        "Instance field super property access in an invalid no-base class should lower through _super.prototype.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("this.n = _super.prototype.hasOwnProperty.call(this, \"\");"),
+        "Instance field super calls in an invalid no-base class should bind this through _super.prototype.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var a = _super.prototype.prototype;")
+            && output.contains("var b = _super.prototype.hasOwnProperty.call(this, \"\");"),
+        "Constructor and instance method super access should use the instance home-object base.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "NoBase.static1 = function () {\n        _super.hasOwnProperty.call(this, \"\");"
+        ),
+        "Static method super calls should lower through the static _super base.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var obj = { n: _super.wat, p: _super.foo.call(this) };"),
+        "Top-level invalid super in an object literal should use tsc's recovery _super base.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_nested_non_arrow_functions_use_super_recovery_base() {
+    let output = emit_es5(
+        r#"
+class Base {
+    publicFunc() { }
+}
+class Derived extends Base {
+    fn() {
+        super.publicFunc();
+        function inner() {
+            super.publicFunc();
+        }
+        var x = {
+            test: function () { return super.publicFunc(); }
+        };
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("_super.prototype.publicFunc.call(this);"),
+        "Immediate instance method super calls should use _super.prototype.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function inner() {\n            _super.publicFunc.call(this);"),
+        "Nested function declarations should use tsc's invalid-super recovery base.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("test: function () { return _super.publicFunc.call(this); }"),
+        "Nested function expressions should use tsc's invalid-super recovery base.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("function inner() {\n            _super.prototype.publicFunc.call(this);")
+            && !output.contains("return _super.prototype.publicFunc.call(this); }"),
+        "Nested non-arrow functions must not inherit the enclosing method's instance super base.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_class_super_assignment_function_comment_stays_after_assignment() {
+    let output = emit_es5(
+        r#"
+class Base {
+    m1(a) { return ""; }
+}
+class Derived extends Base {
+    fn() {
+        super.m1 = function (a) { return ""; }; // kept
+        super.value = 0;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("_super.prototype.m1 = function (a) { return \"\"; };"),
+        "Super function assignment should keep the nested function body compact.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return \"\"; // kept"),
+        "Trailing comment after the assignment must not be attached to the nested return.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_class_static_method() {
     let output = emit_es5("class Counter {\n    static count() { return 0; }\n}\n");
     assert!(
@@ -733,6 +1119,36 @@ fn test_arrow_function_this_capture() {
     assert!(
         output.contains("_this"),
         "Expected _this capture for arrow function using this.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_arrow_in_function_passes_lexical_this_to_awaiter() {
+    let output = emit_es5(
+        "function f() {\n    const promise = (async () => {\n        await null;\n    })();\n}\n",
+    );
+
+    assert!(
+        output.contains("var _this = this;"),
+        "Async arrow inside a function should capture lexical this in ES5.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__awaiter(_this, void 0, void 0"),
+        "Async arrow inside a function should pass lexical this to __awaiter.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_top_level_async_arrow_still_passes_void_0_to_awaiter() {
+    let output = emit_es5("const f = async () => {\n    await null;\n};\n");
+
+    assert!(
+        output.contains("__awaiter(void 0, void 0, void 0"),
+        "Top-level async arrow should not synthesize a lexical this capture.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _this = this;"),
+        "Top-level async arrow should not emit a file-level _this capture.\nOutput:\n{output}"
     );
 }
 
@@ -861,6 +1277,33 @@ fn system_import_meta_file_is_wrapped_as_module() {
     assert!(
         output.contains("var response, blob, size, image;"),
         "System async arrow hoisted locals should share one var statement.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_import_meta_preserves_import_property_lookalikes() {
+    let output = emit_es5_with_module(
+        "export let x = import.meta;\n\
+         export let y = import.metal;\n\
+         export let z = import.import.import.malkovich;\n",
+        ModuleKind::System,
+    );
+
+    assert!(
+        output.contains("exports_1(\"x\", x = context_1.meta);"),
+        "System should lower only real import.meta.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"y\", y = import.metal);"),
+        "System should preserve import.metal lookalikes.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"z\", z = import.import.import.malkovich);"),
+        "System should preserve nested import property lookalikes.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("context_1.metal") && !output.contains("context_1.import"),
+        "System import.meta lowering must not rewrite non-meta import properties.\nOutput:\n{output}"
     );
 }
 

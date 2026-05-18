@@ -152,6 +152,74 @@ import(path);
 }
 
 #[test]
+fn system_wrapper_elides_unused_value_import_dependency() {
+    let source = r#"import * as a from "a";
+
+const value = 1;
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("System.register([], function (exports_1, context_1) {"),
+        "Unused value imports should not schedule System dependencies.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("setters: [],"),
+        "Unused value imports should not produce System setters.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\"a\""),
+        "Unused value import module specifier should be elided from System output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_wrapper_keeps_used_namespace_import_dependency() {
+    let source = r#"import * as a from "a";
+
+a.run();
+"#;
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("System.register([\"a\"], function (exports_1, context_1) {"),
+        "Used namespace imports should remain System dependencies.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("a = a_1;"),
+        "Used namespace import should receive the setter argument.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("a.run();"),
+        "Runtime namespace import usage should remain in execute body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_wrapper_inlines_const_enum_member_accesses() {
     let source = r#"declare function use(a: any);
 const enum TopLevelConstEnum { X }
@@ -607,6 +675,51 @@ fn system_exported_legacy_decorated_class_aliases_static_self_references() {
 }
 
 #[test]
+fn system_same_name_legacy_decorated_classes_use_distinct_self_aliases() {
+    let source = "declare var Something: any;\n@Something({ v: () => Foo })\nexport class Foo {\n    static prop0: string;\n    static prop1 = Foo.prop0;\n}\ntry {\n    @Something({ v: () => Foo })\n    class Foo {\n        static prop0: string;\n        static prop1 = Foo.prop0;\n    }\n    Foo.prop1;\n}\ncatch (e) {}\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            legacy_decorators: true,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var Foo_1, Foo_2, Foo;"),
+        "System wrapper should hoist distinct decorated class self-reference aliases before the class binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Foo = Foo_1 = class Foo"),
+        "Exported decorated class should use the first alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Foo.prop1 = Foo_1.prop0;"),
+        "Exported decorated class static self-reference should use the first alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("let Foo = Foo_2 = class Foo"),
+        "Block-scoped same-name decorated class should use the second alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Foo.prop1 = Foo_2.prop0;"),
+        "Block-scoped decorated class static self-reference should use the second alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Foo = Foo_2 = __decorate(["),
+        "Block-scoped decorator assignment should update the second alias.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_nested_legacy_decorated_class_emits_decorate_helper() {
     let source = "declare var dec: any;\nexport function make() {\n    @dec\n    class Nested {}\n    return Nested;\n}\n";
 
@@ -720,6 +833,42 @@ fn system_top_level_using_env_hoists_before_later_nested_var() {
 }
 
 #[test]
+fn system_nested_top_level_var_declarations_emit_assignments() {
+    let source = "export function read() { return v; }\nfor (let x of []) {\n    let local = x;\n    var v = local;\n}\nfunction keepFunctionVar() {\n    if (true) {\n        var inner = 1;\n    }\n    return inner;\n}\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var v;"),
+        "System wrapper should hoist nested top-level var declarations to the module closure.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("let local = x;\n                v = local;"),
+        "Nested top-level var initializers should emit as assignments inside execute().\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var v = local;"),
+        "Nested top-level var declarations must not redeclare inside execute().\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var inner = 1;"),
+        "Var declarations inside nested function scopes should remain declarations.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_exported_object_binding_initializer_assigns_and_exports_hoisted_name() {
     let source = "export let { toString } = 1;\n{\n    let { toFixed } = 1;\n}\n";
 
@@ -748,6 +897,136 @@ fn system_exported_object_binding_initializer_assigns_and_exports_hoisted_name()
     assert!(
         output.contains("let { toFixed } = 1;"),
         "Nested block-scoped destructuring should remain a declaration.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_recovered_if_initializerless_export_var_hoists_and_erases_body() {
+    let source = "if (true)\nexport const cssExports: CssExports;\nexport default cssExports;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var cssExports;"),
+        "System wrapper should hoist the recovered exported binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (true) { }"),
+        "Initializerless recovered export body should erase to an empty block.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"default\", cssExports);"),
+        "Default export should read the hoisted local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.cssExports = ;"),
+        "System output should not fall through to invalid CommonJS assignment syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_recovered_if_initialized_export_var_uses_system_export_binding() {
+    let source = "if (true)\nexport var value = 1;\nexport default value;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var value;"),
+        "System wrapper should hoist the recovered initialized export binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"value\", value = 1);"),
+        "Recovered initialized export should use the System live-binding writer.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.value = 1"),
+        "System execute output should not use the CommonJS export object.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_recovered_if_empty_export_binding_uses_planned_temp() {
+    let source = "if (true)\nexport const {} = value;\nexport default value;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _a, _b;"),
+        "Recovered exported empty binding should hoist both planned temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"_b\", _b = _a = value);"),
+        "Recovered exported empty binding should use the planned export temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_recovered_if_object_rest_export_uses_planned_temp() {
+    let source =
+        "if (true)\nexport const { x, ...rest } = { x: 'x', y: 'y' };\nexport default x;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ESNext,
+            no_emit_helpers: true,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var _a, x, rest;"),
+        "Recovered exported object-rest binding should hoist the planned source temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = { x: 'x', y: 'y' }, exports_1(\"x\", x = _a.x), exports_1(\"rest\", rest = __rest(_a, [\"x\"]));"),
+        "Recovered exported object-rest binding should reuse the planned source temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("{ x, ...rest } ="),
+        "System output should not emit a raw recovered object-rest assignment pattern.\nOutput:\n{output}"
     );
 }
 

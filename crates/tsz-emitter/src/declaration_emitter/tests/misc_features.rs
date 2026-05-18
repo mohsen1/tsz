@@ -237,6 +237,69 @@ fn test_type_predicate_in_function() {
     );
 }
 
+#[test]
+fn test_exported_function_returning_declared_conditional_call_preserves_return_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export declare function pick<T>(value: T): T extends () => infer R ? R : never;
+export function wrap<T>(value: T) {
+    return pick(value);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare function wrap<T>(value: T): T extends () => infer R ? R : never;"
+        ),
+        "Expected exported function to reuse declared helper conditional return type: {output}"
+    );
+}
+
+#[test]
+fn test_exported_function_returning_mapped_infer_call_expands_alias_return_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export type Boxed<T> = { value: T extends number ? T : string };
+export declare function read<T>(value: T): T extends { [K in keyof Boxed<infer U>]: Boxed<infer U>[K] } ? U : never;
+export function unwrap<T>(value: T) {
+    return read(value);
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare function unwrap<T>(value: T): T extends {\n    value: infer U extends number ? infer U : string;\n} ? U : never;"
+        ),
+        "Expected mapped alias helper return type to expand in declaration scope: {output}"
+    );
+}
+
+#[test]
+fn test_exported_function_returning_shadowed_helper_does_not_borrow_top_level_return_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export declare function pick<T>(value: T): T extends () => infer R ? R : never;
+export function wrap<T>(value: T) {
+    function pick(value: T) {
+        return pick(value);
+    }
+    return pick(value);
+}
+"#,
+    );
+
+    let wrap_decl = output
+        .lines()
+        .find(|line| line.starts_with("export declare function wrap"))
+        .unwrap_or_else(|| panic!("Expected exported wrap declaration: {output}"));
+    assert!(
+        !wrap_decl.contains("infer R"),
+        "Expected shadowed local helper call not to reuse top-level pick return type: {output}"
+    );
+}
+
 // =============================================================================
 // 19. Default Parameter Values (stripped)
 // =============================================================================
@@ -1396,6 +1459,201 @@ function rawr(dino: RexOrRaptor) {
         output.contains("declare function rawr(dino: RexOrRaptor): \"ROAAAAR!\" | \"yip yip!\";"),
         "Expected string literal returns from guarded branches to emit as a union: {output}"
     );
+}
+
+#[test]
+fn test_mutable_array_literal_binding_widens_homogeneous_literals() {
+    let source = r#"
+let [hello, brave] = ["Hello", "Brave"];
+let [one, two] = [1, 2];
+let [yes, no] = [true, false];
+export let [ma, mb] = ["A", 1];
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let tuple_types = [
+        interner.tuple(vec![
+            TupleElement {
+                type_id: interner.literal_string("Hello"),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.literal_string("Brave"),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]),
+        interner.tuple(vec![
+            TupleElement {
+                type_id: interner.literal_number(1.0),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.literal_number(2.0),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]),
+        interner.tuple(vec![
+            TupleElement {
+                type_id: interner.literal_boolean(true),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.literal_boolean(false),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]),
+        interner.tuple(vec![
+            TupleElement {
+                type_id: interner.literal_string("A"),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+            TupleElement {
+                type_id: interner.literal_number(1.0),
+                name: None,
+                optional: false,
+                rest: false,
+            },
+        ]),
+    ];
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    for (decl_idx, tuple_type) in variable_declarations_from_source(&parser, root)
+        .into_iter()
+        .zip(tuple_types)
+    {
+        let decl = parser
+            .arena
+            .get(decl_idx)
+            .and_then(|node| parser.arena.get_variable_declaration(node))
+            .expect("missing variable declaration");
+        type_cache.node_types.insert(decl.initializer.0, tuple_type);
+    }
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare let hello: string, brave: string;"),
+        "Expected mutable string array binding literals to widen: {output}"
+    );
+    assert!(
+        output.contains("declare let one: number, two: number;"),
+        "Expected mutable number array binding literals to widen: {output}"
+    );
+    assert!(
+        output.contains("declare let yes: boolean, no: boolean;"),
+        "Expected mutable boolean array binding literals to widen: {output}"
+    );
+    assert!(
+        output.contains("export declare let ma: string, mb: number;"),
+        "Expected mutable mixed array binding literals to widen per binding: {output}"
+    );
+}
+
+#[test]
+fn test_const_asserted_array_literal_binding_preserves_literals() {
+    let source = r#"let [hello, brave] = ["Hello", "Brave"] as const;"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let tuple_type = interner.tuple(vec![
+        TupleElement {
+            type_id: interner.literal_string("Hello"),
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: interner.literal_string("Brave"),
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let decl_idx = variable_declarations_from_source(&parser, root)
+        .into_iter()
+        .next()
+        .expect("missing variable declaration");
+    let decl = parser
+        .arena
+        .get(decl_idx)
+        .and_then(|node| parser.arena.get_variable_declaration(node))
+        .expect("missing variable declaration");
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(decl.initializer.0, tuple_type);
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare let hello: \"Hello\", brave: \"Brave\";"),
+        "Expected const-asserted array binding literals to stay literal: {output}"
+    );
+}
+
+fn variable_declarations_from_source(parser: &ParserState, root: NodeIndex) -> Vec<NodeIndex> {
+    let root_node = parser.arena.get(root).expect("missing root node");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("missing source file");
+    let mut declarations = Vec::new();
+    for &stmt_idx in &source_file.statements.nodes {
+        let Some(stmt_node) = parser.arena.get(stmt_idx) else {
+            continue;
+        };
+        let variable_stmt_idx =
+            if stmt_node.kind == tsz_parser::parser::syntax_kind_ext::EXPORT_DECLARATION {
+                parser
+                    .arena
+                    .get_export_decl(stmt_node)
+                    .map(|export| export.export_clause)
+                    .unwrap_or(stmt_idx)
+            } else {
+                stmt_idx
+            };
+        let Some(stmt) = parser
+            .arena
+            .get(variable_stmt_idx)
+            .and_then(|node| parser.arena.get_variable(node))
+        else {
+            continue;
+        };
+        for &decl_list_idx in &stmt.declarations.nodes {
+            let Some(decl_list) = parser
+                .arena
+                .get(decl_list_idx)
+                .and_then(|node| parser.arena.get_variable(node))
+            else {
+                continue;
+            };
+            declarations.extend(decl_list.declarations.nodes.iter().copied());
+        }
+    }
+    declarations
 }
 
 #[test]
