@@ -656,7 +656,10 @@ impl<'a> CheckerState<'a> {
         (!declarations.is_empty()).then_some(declarations)
     }
 
-    fn source_file_type_node_is_scope_independent(arena: &NodeArena, node_idx: NodeIndex) -> bool {
+    pub(super) fn source_file_type_node_is_scope_independent(
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+    ) -> bool {
         if node_idx.is_none() {
             return false;
         }
@@ -739,7 +742,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_type_node_is_option_bag_lowerable<'b>(
+    pub(super) fn source_file_type_node_is_option_bag_lowerable<'b>(
         arena: &'b NodeArena,
         delegate_binder: &BinderState,
         node_idx: NodeIndex,
@@ -941,6 +944,9 @@ impl<'a> CheckerState<'a> {
             .iter()
             .any(|&decl_idx| Self::lib_declaration_name_matches(symbol_arena, decl_idx, type_name))
         {
+            if let Some(file_idx) = self.ctx.get_file_idx_for_arena(symbol_arena) {
+                self.ctx.register_symbol_file_target(sym_id, file_idx);
+            }
             Some(self.ctx.get_or_create_def_id(sym_id))
         } else {
             None
@@ -1223,7 +1229,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn source_file_interface_declarations_are_direct_lowerable(
+    pub(super) fn source_file_interface_declarations_are_direct_lowerable(
         declarations: &[(NodeIndex, &NodeArena)],
         delegate_binder: &BinderState,
     ) -> bool {
@@ -1270,7 +1276,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    fn source_file_interface_members_are_direct_lowerable(
+    pub(super) fn source_file_interface_members_are_direct_lowerable(
         arena: &NodeArena,
         delegate_binder: &BinderState,
         member_indices: &[NodeIndex],
@@ -1284,7 +1290,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn direct_lower_source_file_annotation_type(
+    pub(super) fn direct_lower_source_file_annotation_type(
         &mut self,
         annotation: NodeIndex,
         delegate_binder: &BinderState,
@@ -1673,16 +1679,23 @@ impl<'a> CheckerState<'a> {
         let has_unsupported_computed_names =
             Self::interface_declarations_have_unsupported_computed_names(&declarations);
         let builtin_lib_declaration_arena = is_builtin_lib_declaration_arena(symbol_arena);
+        let mut source_type_query_overrides = rustc_hash::FxHashMap::default();
         if direct_source_file_arena {
-            if has_computed_names
-                || !Self::source_file_interface_declarations_are_direct_lowerable(
-                    &declarations,
-                    delegate_binder,
-                )
-            {
+            if has_computed_names {
                 record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
                 return None;
             }
+            let Some(overrides) = self
+                .prepare_direct_source_file_interface_declarations_for_lowering(
+                    &declarations,
+                    delegate_binder,
+                    symbol_arena,
+                )
+            else {
+                record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
+                return None;
+            };
+            source_type_query_overrides = overrides;
         } else {
             let unsupported_shape = !allow_complex_declarations
                 && (has_unsupported_computed_names
@@ -1702,7 +1715,7 @@ impl<'a> CheckerState<'a> {
         let def_id = self.ctx.get_or_create_def_id(sym_id);
         let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
             if direct_source_file_arena {
-                return self.source_file_local_name_def_id_for_lowering(
+                return self.source_file_name_def_id_for_cross_file_lowering(
                     delegate_binder,
                     symbol_arena,
                     type_name,
@@ -1718,6 +1731,9 @@ impl<'a> CheckerState<'a> {
         let no_value_symbol = |_node_idx: NodeIndex| -> Option<u32> { None };
         let lazy_type_params_resolver =
             |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
+        let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+            source_type_query_overrides.get(&expr_name_idx).copied()
+        };
 
         let lowering = TypeLowering::with_hybrid_resolver(
             symbol_arena,
@@ -1729,6 +1745,7 @@ impl<'a> CheckerState<'a> {
         .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
         .with_name_def_id_resolver(&name_resolver)
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
+        .with_type_query_override(&type_query_override)
         .with_preferred_self_reference(symbol.escaped_name.clone(), def_id)
         .prefer_name_def_id_resolution();
 
@@ -1784,18 +1801,18 @@ impl<'a> CheckerState<'a> {
         if direct_member_arena {
             let direct_source_file_arena =
                 allow_source_file_arena && is_direct_lowering_source_file_arena(interface_arena);
-            if direct_source_file_arena
-                && !Self::source_file_interface_members_are_direct_lowerable(
-                    interface_arena,
-                    delegate_binder,
-                    member_indices,
-                )
-            {
-                return None;
+            let mut source_type_query_overrides = rustc_hash::FxHashMap::default();
+            if direct_source_file_arena {
+                source_type_query_overrides = self
+                    .prepare_direct_source_file_interface_members_for_lowering(
+                        interface_arena,
+                        delegate_binder,
+                        member_indices,
+                    )?;
             }
             let name_resolver = |type_name: &str| -> Option<tsz_solver::def::DefId> {
                 if direct_source_file_arena {
-                    return self.source_file_local_name_def_id_for_lowering(
+                    return self.source_file_name_def_id_for_cross_file_lowering(
                         delegate_binder,
                         interface_arena,
                         type_name,
@@ -1811,6 +1828,9 @@ impl<'a> CheckerState<'a> {
             let no_value_symbol = |_node_idx: NodeIndex| -> Option<u32> { None };
             let lazy_type_params_resolver =
                 |def_id: tsz_solver::def::DefId| self.ctx.get_def_type_params(def_id);
+            let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+                source_type_query_overrides.get(&expr_name_idx).copied()
+            };
             let lowering = TypeLowering::with_hybrid_resolver(
                 interface_arena,
                 self.ctx.types,
@@ -1821,6 +1841,7 @@ impl<'a> CheckerState<'a> {
             .with_builtin_iterator_return_type(self.builtin_iterator_return_intrinsic_type())
             .with_name_def_id_resolver(&name_resolver)
             .with_lazy_type_params_resolver(&lazy_type_params_resolver)
+            .with_type_query_override(&type_query_override)
             .prefer_name_def_id_resolution();
             let (params, lowered_members) =
                 lowering.lower_interface_members_simple_types(interface_idx, member_indices)?;
