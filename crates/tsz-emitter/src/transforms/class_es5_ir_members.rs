@@ -130,17 +130,21 @@ impl<'a> ES5ClassTransformer<'a> {
         let body = if accessor_data.body.is_none() {
             vec![]
         } else {
+            let this_capture_alias = self.this_capture_alias_for_body(accessor_data.body, None);
             let mut body = if is_static {
-                self.convert_block_body_static(accessor_data.body)
+                self.convert_block_body_static_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
             } else {
-                self.convert_block_body(accessor_data.body)
+                self.convert_block_body_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
             };
 
-            // Check if getter needs `var _this = this;` capture
-            let needs_this_capture = self.constructor_needs_this_capture(accessor_data.body);
-            if needs_this_capture {
-                // Insert `var _this = this;` at the start of getter body
-                body.insert(0, IRNode::var_decl("_this", Some(IRNode::this())));
+            if let Some(alias) = this_capture_alias {
+                body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
             }
 
             body
@@ -187,16 +191,22 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut body = if accessor_data.body.is_none() {
             vec![]
         } else {
+            let this_capture_alias = self
+                .this_capture_alias_for_body(accessor_data.body, Some(&accessor_data.parameters));
             let mut body = if is_static {
-                self.convert_block_body_static(accessor_data.body)
+                self.convert_block_body_static_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
             } else {
-                self.convert_block_body(accessor_data.body)
+                self.convert_block_body_with_this_capture_alias(
+                    accessor_data.body,
+                    this_capture_alias.clone(),
+                )
             };
 
-            // Check if setter needs `var _this = this;` capture
-            let needs_this_capture = self.constructor_needs_this_capture(accessor_data.body);
-            if needs_this_capture {
-                body.insert(0, IRNode::var_decl("_this", Some(IRNode::this())));
+            if let Some(alias) = this_capture_alias {
+                body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
             }
 
             // Prepend destructuring prologue
@@ -579,16 +589,21 @@ impl<'a> ES5ClassTransformer<'a> {
                             method_data.body,
                         )
                     } else {
-                        let mut method_body = self.convert_block_body(method_data.body);
+                        let this_capture_alias = self.this_capture_alias_for_body(
+                            method_data.body,
+                            Some(&method_data.parameters),
+                        );
+                        let mut method_body = self.convert_block_body_with_this_capture_alias(
+                            method_data.body,
+                            this_capture_alias.clone(),
+                        );
                         if !destructuring_prologue.is_empty() {
                             let mut full_body = destructuring_prologue;
                             full_body.append(&mut method_body);
                             method_body = full_body;
                         }
-                        let needs_this_capture =
-                            self.constructor_needs_this_capture(method_data.body);
-                        if needs_this_capture {
-                            method_body.insert(0, IRNode::var_decl("_this", Some(IRNode::this())));
+                        if let Some(alias) = this_capture_alias {
+                            method_body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
                         }
                         method_body
                     };
