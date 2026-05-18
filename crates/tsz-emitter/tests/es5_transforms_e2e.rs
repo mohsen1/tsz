@@ -3,7 +3,9 @@
 //! These tests verify that the complete chain (parse -> lower -> print) produces
 //! correct ES5 output for destructuring, class, and async transforms.
 
-use crate::emitter::ModuleKind;
+use crate::context::emit::EmitContext;
+use crate::emitter::{ModuleKind, Printer as EmitPrinter, PrinterOptions};
+use crate::lowering::LoweringPass;
 use crate::output::printer::{PrintOptions, lower_and_print};
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
@@ -38,12 +40,21 @@ fn emit_es5_with_module(source: &str, module: ModuleKind) -> String {
 fn emit_es5_with_comments(source: &str) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    lower_and_print(&parser.arena, root, PrintOptions::es5()).code
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+    let mut printer = EmitPrinter::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
 }
 
 #[test]
 fn async_es5_for_loop_captured_let_with_await_uses_loop_generator() {
-    let output = emit_es5(
+    let output = emit_es5_with_comments(
         "async function f() {\n\
              var ar = [];\n\
              for (let i = 0; i < 1; i++) {\n\
@@ -649,6 +660,124 @@ fn test_class_extends_to_iife() {
     assert!(
         output.contains("_super"),
         "Expected _super parameter.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_invalid_super_property_access_uses_recovery_base() {
+    let output = emit_es5(
+        r#"
+class NoBase {
+    constructor() {
+        var a = super.prototype;
+        var b = super.hasOwnProperty("");
+    }
+
+    fn() {
+        var a = super.prototype;
+        var b = super.hasOwnProperty("");
+    }
+
+    m = super.prototype;
+    n = super.hasOwnProperty("");
+
+    static static1() {
+        super.hasOwnProperty("");
+    }
+}
+
+var obj = { n: super.wat, p: super.foo() };
+"#,
+    );
+
+    assert!(
+        output.contains("this.m = _super.prototype.prototype;"),
+        "Instance field super property access in an invalid no-base class should lower through _super.prototype.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("this.n = _super.prototype.hasOwnProperty.call(this, \"\");"),
+        "Instance field super calls in an invalid no-base class should bind this through _super.prototype.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var a = _super.prototype.prototype;")
+            && output.contains("var b = _super.prototype.hasOwnProperty.call(this, \"\");"),
+        "Constructor and instance method super access should use the instance home-object base.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "NoBase.static1 = function () {\n        _super.hasOwnProperty.call(this, \"\");"
+        ),
+        "Static method super calls should lower through the static _super base.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var obj = { n: _super.wat, p: _super.foo.call(this) };"),
+        "Top-level invalid super in an object literal should use tsc's recovery _super base.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_nested_non_arrow_functions_use_super_recovery_base() {
+    let output = emit_es5(
+        r#"
+class Base {
+    publicFunc() { }
+}
+class Derived extends Base {
+    fn() {
+        super.publicFunc();
+        function inner() {
+            super.publicFunc();
+        }
+        var x = {
+            test: function () { return super.publicFunc(); }
+        };
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("_super.prototype.publicFunc.call(this);"),
+        "Immediate instance method super calls should use _super.prototype.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function inner() {\n            _super.publicFunc.call(this);"),
+        "Nested function declarations should use tsc's invalid-super recovery base.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("test: function () { return _super.publicFunc.call(this); }"),
+        "Nested function expressions should use tsc's invalid-super recovery base.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("function inner() {\n            _super.prototype.publicFunc.call(this);")
+            && !output.contains("return _super.prototype.publicFunc.call(this); }"),
+        "Nested non-arrow functions must not inherit the enclosing method's instance super base.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_class_super_assignment_function_comment_stays_after_assignment() {
+    let output = emit_es5(
+        r#"
+class Base {
+    m1(a) { return ""; }
+}
+class Derived extends Base {
+    fn() {
+        super.m1 = function (a) { return ""; }; // kept
+        super.value = 0;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("_super.prototype.m1 = function (a) { return \"\"; };"),
+        "Super function assignment should keep the nested function body compact.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return \"\"; // kept"),
+        "Trailing comment after the assignment must not be attached to the nested return.\nOutput:\n{output}"
     );
 }
 

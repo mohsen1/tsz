@@ -28,8 +28,10 @@ pub struct AstToIr<'a> {
     has_super: bool,
     /// Generated super parameter name for the class IIFE.
     super_name: String,
-    /// Whether we're inside a static member — super access uses `_super.X` (no .prototype)
-    is_static: bool,
+    /// Whether super access should use `_super.X` instead of `_super.prototype.X`.
+    /// This is also enabled while converting nested non-arrow functions, where
+    /// invalid `super` references follow tsc's recovery emit path.
+    is_static: Cell<bool>,
     /// Optional identifier substitution for class self-references in decorated class bodies.
     identifier_substitution: Option<(String, String)>,
     /// Counter for generating unique temp variable names (shared with caller)
@@ -55,7 +57,7 @@ impl<'a> AstToIr<'a> {
             current_this_substitution: Cell::new(None),
             has_super: false,
             super_name: "_super".to_string(),
-            is_static: false,
+            is_static: Cell::new(false),
             identifier_substitution: None,
             temp_var_counter: Cell::new(0),
             hoisted_temps: RefCell::new(Vec::new()),
@@ -77,8 +79,8 @@ impl<'a> AstToIr<'a> {
     }
 
     /// Set whether we're inside a static member (affects super property access)
-    pub const fn with_static(mut self, is_static: bool) -> Self {
-        self.is_static = is_static;
+    pub fn with_static(self, is_static: bool) -> Self {
+        self.is_static.set(is_static);
         self
     }
 
@@ -239,12 +241,26 @@ impl<'a> AstToIr<'a> {
                 ]);
             }
         }
+        if node.kind == syntax_kind_ext::RETURN_STATEMENT {
+            return statement;
+        }
         let line_start = (node.pos as usize).min(source_text.len());
         let line_end = source_text[line_start..]
             .find(['\n', '\r'])
             .map_or(source_text.len(), |offset| line_start + offset);
         let line = &source_text[line_start..line_end];
         if let Some(comment_start) = Self::line_comment_start(line) {
+            let comment_abs = line_start + comment_start;
+            let gap_start = (node.end as usize).min(comment_abs);
+            let gap = &source_text[gap_start..comment_abs];
+            let gap_belongs_to_statement = if node.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+                Self::expression_statement_trailing_comment_gap(gap)
+            } else {
+                gap.bytes().all(|byte| matches!(byte, b' ' | b'\t' | b';'))
+            };
+            if !gap_belongs_to_statement {
+                return statement;
+            }
             let comment_text = &line[comment_start..];
             return IRNode::Sequence(vec![
                 statement,
@@ -252,6 +268,11 @@ impl<'a> AstToIr<'a> {
             ]);
         }
         statement
+    }
+
+    fn expression_statement_trailing_comment_gap(gap: &str) -> bool {
+        gap.bytes()
+            .all(|byte| matches!(byte, b' ' | b'\t' | b';' | b')' | b']' | b'}'))
     }
 
     fn line_comment_start(line: &str) -> Option<usize> {
@@ -591,6 +612,7 @@ impl<'a> AstToIr<'a> {
         // Function declarations have their own `this`; class/static-block
         // substitutions must not leak into their bodies.
         let prev_substitution = self.current_this_substitution.take();
+        let prev_static = self.is_static.replace(true);
         let body = if func.body.is_none() {
             vec![]
         } else if let Some(body_node) = self.arena.get(func.body)
@@ -605,6 +627,7 @@ impl<'a> AstToIr<'a> {
         } else {
             vec![]
         };
+        self.is_static.set(prev_static);
         self.current_this_substitution.set(prev_substitution);
         self.temp_var_counter.set(saved_temp_counter);
 
@@ -998,35 +1021,31 @@ impl<'a> AstToIr<'a> {
 
             // Check for bare super(args) → _this = _super.call(this, args) || this
             // This handles super() in expression contexts (e.g. computed property names).
-            if self.has_super {
-                let callee_node = self.arena.get(call.expression);
-                if let Some(cn) = callee_node
-                    && cn.kind == SyntaxKind::SuperKeyword as u16
-                {
-                    let mut call_args = vec![IRNode::this()];
-                    call_args.extend(args);
-                    // _this = _super.call(this, args...) || this
-                    return IRNode::assign(
-                        IRNode::id("_this"),
-                        IRNode::logical_or(
-                            IRNode::call(
-                                IRNode::prop(IRNode::id(self.super_name.clone()), "call"),
-                                call_args,
-                            ),
-                            IRNode::this(),
+            if self.has_super
+                && let Some(cn) = self.arena.get(call.expression)
+                && cn.kind == SyntaxKind::SuperKeyword as u16
+            {
+                let mut call_args = vec![IRNode::this()];
+                call_args.extend(args);
+                // _this = _super.call(this, args...) || this
+                return IRNode::assign(
+                    IRNode::id("_this"),
+                    IRNode::logical_or(
+                        IRNode::call(
+                            IRNode::prop(IRNode::id(self.super_name.clone()), "call"),
+                            call_args,
                         ),
-                    );
-                }
+                        IRNode::this(),
+                    ),
+                );
             }
 
             // Check for super.method(args) or super[expr](args) → _super.prototype.method.call(this, args)
-            if self.has_super
-                && let Some(super_call) = self.try_convert_super_method_call(
-                    call.expression,
-                    args.clone(),
-                    node.is_optional_chain(),
-                )
-            {
+            if let Some(super_call) = self.try_convert_super_method_call(
+                call.expression,
+                args.clone(),
+                node.is_optional_chain(),
+            ) {
                 return super_call;
             }
 
@@ -1149,7 +1168,7 @@ impl<'a> AstToIr<'a> {
             let obj_node = self.arena.get(access.expression)?;
             if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
                 let method_name = get_identifier_text(self.arena, access.name_or_argument)?;
-                let super_proto_method = if self.is_static {
+                let super_proto_method = if self.is_static.get() {
                     // Static: _super.method
                     IRNode::PropertyAccess {
                         object: Box::new(IRNode::id(self.super_name.clone())),
@@ -1190,7 +1209,7 @@ impl<'a> AstToIr<'a> {
             let obj_node = self.arena.get(access.expression)?;
             if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
                 let index_expr = self.convert_expression(access.name_or_argument);
-                let super_base = if self.is_static {
+                let super_base = if self.is_static.get() {
                     IRNode::id(self.super_name.clone())
                 } else {
                     IRNode::PropertyAccess {
@@ -1286,12 +1305,11 @@ impl<'a> AstToIr<'a> {
         // PropertyAccessExpression uses AccessExprData
         if let Some(access) = self.arena.get_access_expr(node) {
             // Check for super.property → _super.prototype.property (instance) or _super.property (static)
-            if self.has_super
-                && let Some(obj_node) = self.arena.get(access.expression)
+            if let Some(obj_node) = self.arena.get(access.expression)
                 && obj_node.kind == SyntaxKind::SuperKeyword as u16
                 && let Some(name) = get_identifier_text(self.arena, access.name_or_argument)
             {
-                return if self.is_static {
+                return if self.is_static.get() {
                     IRNode::PropertyAccess {
                         object: Box::new(IRNode::id(self.super_name.clone())),
                         property: name.into(),
@@ -1326,12 +1344,11 @@ impl<'a> AstToIr<'a> {
         // ElementAccessExpression uses AccessExprData
         if let Some(access) = self.arena.get_access_expr(node) {
             // Check for super[expr] → _super.prototype[expr] (instance) or _super[expr] (static)
-            if self.has_super
-                && let Some(obj_node) = self.arena.get(access.expression)
+            if let Some(obj_node) = self.arena.get(access.expression)
                 && obj_node.kind == SyntaxKind::SuperKeyword as u16
             {
                 let index = self.convert_expression(access.name_or_argument);
-                let super_base = if self.is_static {
+                let super_base = if self.is_static.get() {
                     IRNode::id(self.super_name.clone())
                 } else {
                     IRNode::PropertyAccess {
@@ -1855,6 +1872,7 @@ impl<'a> AstToIr<'a> {
             // Regular function expressions have their own `this`, so we must
             // clear the class alias (it should NOT substitute `this` inside).
             let prev_substitution = self.current_this_substitution.take();
+            let prev_static = self.is_static.replace(true);
 
             let body = if func.body.is_none() {
                 vec![]
@@ -1872,6 +1890,7 @@ impl<'a> AstToIr<'a> {
             };
 
             // Restore previous alias
+            self.is_static.set(prev_static);
             self.current_this_substitution.set(prev_substitution);
             self.temp_var_counter.set(saved_temp_counter);
             let mut body = body;
