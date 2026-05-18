@@ -1349,6 +1349,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn invalid_new_optional_chain_lowers_as_optional_access_on_new_base() {
+        let source = "class A { b(x?: number) {} }\nnew A?.b();\nnew A?.b(1);\nnew A()?.b();\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let opts = PrintOptions {
+            target: tsz_common::common::ScriptTarget::ES2019,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("(_a = new A) === null || _a === void 0 ? void 0 : _a.b();"),
+            "Invalid `new A?.b()` should lower as optional access on `new A`.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_b = new A) === null || _b === void 0 ? void 0 : _b.b(1);"),
+            "Invalid `new A?.b(1)` should keep call arguments on the optional tail.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_c = new A()) === null || _c === void 0 ? void 0 : _c.b();"),
+            "Valid `new A()?.b()` should keep the constructed base expression.\nOutput:\n{output}"
+        );
+    }
+
     /// Optional method call on a simple identifier should NOT use a temp variable.
     /// `o?.b()` → `o === null || o === void 0 ? void 0 : o.b()` (no `_a`).
     #[test]

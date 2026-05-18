@@ -1,6 +1,6 @@
 use super::super::super::{Printer, get_operator_text};
 use crate::transforms::private_fields_es5::get_private_field_name;
-use tsz_parser::parser::{NodeIndex, node::Node, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, NodeList, node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 /// Result of extracting a private field access from a (possibly parenthesized) node.
@@ -1076,6 +1076,12 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if !self.ctx.options.target.supports_es2020()
+            && self.emit_invalid_new_optional_chain(call.expression, call.arguments.as_ref())
+        {
+            return;
+        }
+
         // Private field new: `new this.#C()` → `new (__classPrivateFieldGet(this, _C_C, "f"))()`
         let needs_private_parens = !self.private_field_weakmaps.is_empty()
             && self.arena.get(call.expression).is_some_and(|expr_node| {
@@ -1131,6 +1137,53 @@ impl<'a> Printer<'a> {
         if self.new_expression_has_explicit_parens(node, call.expression) {
             self.write("()");
         }
+    }
+
+    fn emit_invalid_new_optional_chain(
+        &mut self,
+        callee: NodeIndex,
+        args: Option<&NodeList>,
+    ) -> bool {
+        let Some(callee_node) = self.arena.get(callee) else {
+            return false;
+        };
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && callee_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.arena.get_access_expr(callee_node) else {
+            return false;
+        };
+        if !access.question_dot_token {
+            return false;
+        }
+
+        let temp = self.make_unique_name_hoisted();
+        self.open_paren();
+        self.write(&temp);
+        self.write(" = new ");
+        self.emit(access.expression);
+        self.close_paren();
+        self.write(" === null || ");
+        self.write(&temp);
+        self.write(" === void 0 ? void 0 : ");
+        self.write(&temp);
+        if callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            self.write(".");
+            self.emit_property_name_without_import_substitution(access.name_or_argument);
+        } else {
+            self.open_bracket();
+            self.emit(access.name_or_argument);
+            self.close_bracket();
+        }
+        if let Some(args) = args {
+            self.open_paren();
+            let valid_args: Vec<_> = args.nodes.iter().copied().filter(|n| n.is_some()).collect();
+            self.emit_comma_separated(&valid_args);
+            self.close_paren();
+        }
+        true
     }
 
     fn emit_invalid_new_type_assertion_callee(&mut self, expression: NodeIndex) -> bool {
