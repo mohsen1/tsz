@@ -518,7 +518,8 @@ impl<'a> Printer<'a> {
         let suppress_recovered_declare_export_import_strict = self
             .source_has_top_level_declare_modifier_artifact(&source.statements)
             && self.file_contains_namespace_export_import_alias(&source.statements)
-            || self.source_has_top_level_declare_export_import_alias(&source.statements);
+            || (preserves_es_namespace_import_export
+                && self.source_has_top_level_declare_export_import_alias(&source.statements));
 
         let should_emit_use_strict = !source_has_use_strict
             && !self.ctx.options.suppress_use_strict
