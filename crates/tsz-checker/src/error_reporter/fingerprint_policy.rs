@@ -177,92 +177,6 @@ impl DiagnosticRenderRequest {
 }
 
 impl<'a> CheckerState<'a> {
-    /// Widen object property literal types for use in a diagnostic display context.
-    ///
-    /// The type system uses a two-layer display model for fresh object literals:
-    /// - Structural shape: widened properties used for type-checking (`{ x: number }`)
-    /// - `display_properties` side-table: literal properties used by the formatter (`{ x: 3 }`)
-    ///
-    /// This function widens whichever layer the formatter will actually use:
-    /// 1. Types with `display_properties`: widen those display props, then project
-    ///    them as the structural shape of a new plain object for the formatter.
-    /// 2. Fresh object literals with literal structural props: widen in place.
-    /// 3. Anonymous structural objects (no symbol, no display alias): widen in place.
-    ///
-    /// In all cases, literal types are widened to primitives
-    /// (`"hello"` → `string`, `42` → `number`, `true`/`false` → `boolean`).
-    /// Nested anonymous object shapes are widened recursively up to a fixed depth.
-    fn widen_object_properties_for_diagnostic_display(&mut self, type_id: TypeId) -> TypeId {
-        self.widen_object_properties_for_diagnostic_display_depth(type_id, 0)
-    }
-
-    fn widen_object_properties_for_diagnostic_display_depth(
-        &mut self,
-        type_id: TypeId,
-        depth: usize,
-    ) -> TypeId {
-        if depth > 8 {
-            return type_id;
-        }
-
-        // Types with display_properties carry the literal-form props for the formatter;
-        // the structural shape is already widened and is not what gets displayed.
-        if let Some(display_props) = self.ctx.types.get_display_properties(type_id) {
-            let mut widened = display_props.as_ref().clone();
-            if self.widen_props_in_place(&mut widened, depth) {
-                // Preserve index signatures / flags from the structural shape,
-                // but replace properties with the widened display props.
-                let Some(base) = query_common::object_shape_for_type(self.ctx.types, type_id)
-                else {
-                    return type_id;
-                };
-                let mut new_shape = base.as_ref().clone();
-                new_shape.properties = widened;
-                return self.ctx.types.factory().object_with_index(new_shape);
-            }
-            return type_id;
-        }
-
-        let Some(shape) = query_common::object_shape_for_type(self.ctx.types, type_id) else {
-            return type_id;
-        };
-        let should_widen = shape.is_fresh_literal()
-            || (shape.symbol.is_none() && self.ctx.types.get_display_alias(type_id).is_none());
-        if !should_widen {
-            return type_id;
-        }
-        let mut widened_shape = shape.as_ref().clone();
-        if self.widen_props_in_place(&mut widened_shape.properties, depth) {
-            self.ctx.types.factory().object_with_index(widened_shape)
-        } else {
-            type_id
-        }
-    }
-
-    fn widen_props_in_place(
-        &mut self,
-        props: &mut [tsz_solver::PropertyInfo],
-        depth: usize,
-    ) -> bool {
-        let mut changed = false;
-        for prop in props.iter_mut() {
-            let wr = self.widen_prop_literal_or_anonymous_object(prop.type_id, depth + 1);
-            let ww = self.widen_prop_literal_or_anonymous_object(prop.write_type, depth + 1);
-            changed |= wr != prop.type_id || ww != prop.write_type;
-            prop.type_id = wr;
-            prop.write_type = ww;
-        }
-        changed
-    }
-
-    fn widen_prop_literal_or_anonymous_object(&mut self, type_id: TypeId, depth: usize) -> TypeId {
-        let widened = query_common::widen_literal_type(self.ctx.types, type_id);
-        if widened != type_id {
-            return widened;
-        }
-        self.widen_object_properties_for_diagnostic_display_depth(type_id, depth)
-    }
-
     pub(crate) fn resolve_diagnostic_anchor(
         &self,
         idx: NodeIndex,
@@ -361,15 +275,24 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 let source_display_type =
-                    self.widen_object_properties_for_diagnostic_display(source);
+                    query_common::widen_object_properties_for_diagnostic_display(
+                        self.ctx.types,
+                        source,
+                    );
                 let source_display_type = query_common::widen_argument_type_for_display(
                     self.ctx.types,
                     source_display_type,
                 );
                 let source_display_type =
-                    self.widen_object_properties_for_diagnostic_display(source_display_type);
+                    query_common::widen_object_properties_for_diagnostic_display(
+                        self.ctx.types,
+                        source_display_type,
+                    );
                 let target_display_type =
-                    self.widen_object_properties_for_diagnostic_display(target);
+                    query_common::widen_object_properties_for_diagnostic_display(
+                        self.ctx.types,
+                        target,
+                    );
                 let src_str = self.format_type_for_diagnostic_role(
                     source_display_type,
                     DiagnosticTypeDisplayRole::DefaultDiagnostic,
