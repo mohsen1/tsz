@@ -1350,3 +1350,68 @@ const pages = pluck(book, "pages", (n) => n.toFixed());
         "Expected callback parameter for key \"age\" to be number, not T[keyof T]. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+// TS2536 false positive: keyof T indexing a string index signature (issue #8172)
+
+#[test]
+fn test_mapped_key_keyof_unconstrained_indexes_string_indexed_object_no_ts2536() {
+    // Structural rule: when K is a mapped-type key constrained to `keyof U` (generic U),
+    // and the object Obj has a string index signature, tsc defers TS2536 to instantiation.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Obj = { [s: string]: number };
+type bar<U> = (source: { [K in keyof U]: Obj[K] }) => void;
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Should not emit TS2536: mapped key `K` from `keyof U` (generic U) is deferred for string-indexed Obj.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_mapped_key_keyof_unconstrained_renamed_vars_no_ts2536() {
+    // Same rule with renamed iteration variable (P/V) — proves the fix is structural.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type X = { [s: string]: number };
+type baz<V> = (source: { [P in keyof V]: X[P] }) => void;
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Should not emit TS2536 with renamed variables P/V.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_mapped_key_keyof_constrained_to_array_indexes_string_indexed_object_no_ts2536() {
+    // `U extends string[]` → `K` constrained to `keyof string[]` (number + string literals).
+    // All members are assignable to string|number, so no TS2536.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Obj = { [s: string]: number };
+type bar<U extends string[]> = (source: { [K in keyof U]: Obj[K] }) => void;
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Should not emit TS2536 when U extends string[].\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_mapped_key_keyof_generic_does_not_suppress_ts2536_for_non_string_indexed_object() {
+    // Negative case: Obj has no string index signature, so TS2536 must still fire when
+    // K cannot be proven to be in keyof Obj.
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type Obj = { a: number; b: string };
+type bar<U> = { [K in keyof U]: Obj[K] };
+        ",
+    );
+    assert!(
+        has_error(&diagnostics, 2536),
+        "Should emit TS2536: Obj has no string index signature, so keyof U may not be a valid index.\nActual: {diagnostics:#?}"
+    );
+}

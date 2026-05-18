@@ -129,6 +129,13 @@ pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -
     tsz_solver::visitor::contains_type_parameters(db, type_id)
 }
 
+/// Returns `true` when `type_id` is a `keyof X` type and `X` (or `keyof X` itself)
+/// contains type parameters. tsc cannot evaluate such types at the generic definition
+/// site and defers indexed-access validity checks to instantiation time.
+pub(crate) fn is_generic_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    is_keyof_type(db, type_id) && contains_type_parameters(db, type_id)
+}
+
 pub(crate) fn contains_generic_indexed_access_surface(
     db: &dyn TypeDatabase,
     type_id: TypeId,

@@ -1068,6 +1068,9 @@ impl<'a> CheckerState<'a> {
         {
             return;
         }
+        // Deferred check: if the object has a string index signature, tsc suppresses TS2536
+        // for generic `keyof X` keys because validity can only be verified at instantiation.
+        let object_has_string_index = self.is_element_indexable(object_type_for_check, true, false);
         // When the solver TypeData doesn't carry the constraint (common for type
         // parameters in generic signatures), use the AST-resolved constraint.
         // E.g. `emit<Event extends keyof M>(...args: M[Event])` — Event's
@@ -1075,6 +1078,12 @@ impl<'a> CheckerState<'a> {
         if let Some(constraint) = index_constraint {
             let constraint_eval = self.evaluate_type_with_env(constraint);
             if self.is_assignable_to(constraint_eval, keyof_object) {
+                return;
+            }
+            if (self.is_generic_keyof_type(constraint)
+                || self.is_generic_keyof_type(constraint_eval))
+                && object_has_string_index
+            {
                 return;
             }
         }
@@ -1175,6 +1184,12 @@ impl<'a> CheckerState<'a> {
             }
         }
         if !self.is_assignable_to(index_type_for_check, keyof_object) {
+            if (self.is_generic_keyof_type(index_type_for_check)
+                || self.is_generic_keyof_type(index_type))
+                && object_has_string_index
+            {
+                return;
+            }
             if let Some((wants_string, wants_number)) =
                 self.get_index_key_kind(index_type_for_check)
                 && self.is_element_indexable(object_type_for_check, wants_string, wants_number)
@@ -1993,5 +2008,9 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn is_generic_keyof_type(&self, ty: TypeId) -> bool {
+        crate::query_boundaries::common::is_generic_keyof_type(self.ctx.types, ty)
     }
 }
