@@ -361,6 +361,8 @@ impl<'a> CheckerState<'a> {
             let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) else {
                 continue;
             };
+            // Copy the module-specifier node index before other borrows accumulate.
+            let module_spec_node_idx = export_decl.module_specifier;
             let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause) else {
                 continue;
             };
@@ -369,6 +371,21 @@ impl<'a> CheckerState<'a> {
             }
             let Some(named_exports) = self.ctx.arena.get_named_imports(clause_node) else {
                 continue;
+            };
+
+            // Resolve the `from` clause once per export declaration so each specifier
+            // can check module identity without re-parsing the literal.
+            let from_file_idx: Option<usize> = if module_spec_node_idx.is_none() {
+                None
+            } else {
+                self.ctx
+                    .arena
+                    .get(module_spec_node_idx)
+                    .and_then(|node| self.ctx.arena.get_literal(node))
+                    .and_then(|lit| {
+                        self.ctx
+                            .resolve_import_target_from_file(self.ctx.current_file_idx, &lit.text)
+                    })
             };
 
             for &spec_idx in &named_exports.elements.nodes {
@@ -394,31 +411,20 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                if self
-                    .module_augmentation_conflict_declarations_for_current_file(&export_name)
-                    .is_empty()
-                {
+                let conflict_decls =
+                    self.module_augmentation_conflict_declarations_for_current_file(&export_name);
+                if conflict_decls.is_empty() {
                     continue;
                 }
 
-                // Skip declarations that can merge across module augmentation.
-                let conflict_decls =
-                    self.module_augmentation_conflict_declarations_for_current_file(&export_name);
-                let has_function_merge =
-                    conflict_decls.iter().any(|(_decl_idx, flags, _, _, _)| {
-                        (*flags & tsz_binder::symbol_flags::FUNCTION) != 0
-                    });
-                if has_function_merge {
-                    continue;
-                }
-                // Interface augmentation merges with existing interface exports — same
-                // structural rule as function overloads.  `export { X as Y } from "M"` plus
-                // `declare module "M" { interface X {...} }` is valid when M already exports
-                // interface X: the augmentation adds members rather than redeclaring.
-                let all_interface = conflict_decls
-                    .iter()
-                    .all(|(_, flags, _, _, _)| (*flags & tsz_binder::symbol_flags::INTERFACE) != 0);
-                if all_interface {
+                // `export { X [as Y] } from "M"` forwards M's export; it is not a local
+                // declaration of X. Suppress the conflict only when the current file's own
+                // augmentation targets exactly the same module M (verified via from_file_idx)
+                // AND every declaration of X in M is mergeable (all interface or function).
+                // A module mismatch or a non-mergeable declaration (e.g. const) must still error.
+                if from_file_idx.is_some_and(|from_idx| {
+                    self.reexport_suppressed_by_same_module_augmentation(from_idx, &export_name)
+                }) {
                     continue;
                 }
 
@@ -434,6 +440,49 @@ impl<'a> CheckerState<'a> {
         }
 
         self.check_target_file_commonjs_object_exports_conflicting_with_module_augmentations();
+    }
+
+    fn reexport_suppressed_by_same_module_augmentation(
+        &self,
+        from_file_idx: usize,
+        name: &str,
+    ) -> bool {
+        // The current file must have an augmentation that targets exactly from_file_idx
+        // for this name. Augmentations by the current file live in self.ctx.binder.
+        let has_matching_aug =
+            self.ctx
+                .binder
+                .module_augmentations
+                .iter()
+                .any(|(module_spec, augmentations)| {
+                    augmentations.iter().any(|aug| {
+                        if aug.name != name {
+                            return false;
+                        }
+                        let augmenting_file = aug
+                            .arena
+                            .as_deref()
+                            .and_then(|a| self.ctx.get_file_idx_for_arena(a))
+                            .unwrap_or(self.ctx.current_file_idx);
+                        if augmenting_file != self.ctx.current_file_idx {
+                            return false;
+                        }
+                        self.ctx
+                            .resolve_import_target_from_file(self.ctx.current_file_idx, module_spec)
+                            .is_some_and(|t| t == from_file_idx)
+                    })
+                });
+        if !has_matching_aug {
+            return false;
+        }
+        // Every declaration of `name` in the target file must be mergeable (interface
+        // or function). A single non-mergeable declaration (e.g. const) still errors.
+        let target_decls = self.export_surface_declarations_in_file(from_file_idx, name);
+        !target_decls.is_empty()
+            && target_decls.iter().all(|(_, flags, _)| {
+                (*flags & tsz_binder::symbol_flags::FUNCTION) != 0
+                    || (*flags & tsz_binder::symbol_flags::INTERFACE) != 0
+            })
     }
 
     fn target_file_has_direct_export_named(&self, file_idx: usize, export_name: &str) -> bool {

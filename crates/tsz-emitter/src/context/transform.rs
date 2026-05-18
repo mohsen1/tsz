@@ -339,6 +339,21 @@ pub enum TransformDirective {
     Chain(Vec<Self>),
 }
 
+impl TransformDirective {
+    pub(crate) fn es5_namespace_should_declare_var(&self) -> Option<bool> {
+        match self {
+            Self::ES5Namespace {
+                should_declare_var, ..
+            } => Some(*should_declare_var),
+            Self::Chain(items) => items
+                .iter()
+                .find_map(Self::es5_namespace_should_declare_var),
+            Self::CommonJSExport { inner, .. } => inner.es5_namespace_should_declare_var(),
+            _ => None,
+        }
+    }
+}
+
 /// Module formats that require wrapping transforms
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModuleFormat {

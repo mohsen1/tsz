@@ -521,7 +521,7 @@ impl<'a> CheckerState<'a> {
                     },
                 );
             } else {
-                synthesis_diag_snap.rollback_filtered(&mut self.ctx, |diag| {
+                synthesis_diag_snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
                     diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
                         && !prototype_concretized_implicit_any.contains(&diag.message_text)
                 });
@@ -562,14 +562,14 @@ impl<'a> CheckerState<'a> {
                 &effective_type_params,
                 &type_args,
             );
-            synthesis_diag_snap.rollback_filtered(&mut self.ctx, |diag| {
+            synthesis_diag_snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
                 diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
                     && !prototype_concretized_implicit_any.contains(&diag.message_text)
             });
             return Some(instantiated);
         }
 
-        synthesis_diag_snap.rollback_filtered(&mut self.ctx, |diag| {
+        synthesis_diag_snap.rollback_filtered(&mut self.ctx.diagnostic_state(), |diag| {
             diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
                 && !prototype_concretized_implicit_any.contains(&diag.message_text)
         });

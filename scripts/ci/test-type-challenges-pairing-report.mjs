@@ -351,7 +351,7 @@ withTempDir((dir) => {
       "en/*.md",
       [{ id: "13", source: "en/hello-world.md" }],
       () => ({}),
-      { repository: "" },
+      { repository: "   " },
     ),
   );
 

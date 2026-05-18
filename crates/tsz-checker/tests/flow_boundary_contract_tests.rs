@@ -29,3 +29,22 @@ fn control_flow_assignability_helpers_use_flow_query_boundary() {
         "FlowAnalyzer strict-null assignability should route through query_boundaries::flow_analysis"
     );
 }
+
+#[test]
+fn assignment_reduction_uses_flow_query_boundary() {
+    let src = fs::read_to_string("src/flow/control_flow/assignment.rs")
+        .expect("failed to read src/flow/control_flow/assignment.rs for architecture guard");
+
+    assert!(
+        src.contains("query_boundaries::flow_analysis::narrow_assignment("),
+        "FlowAnalyzer assignment reduction should delegate type algebra to query_boundaries::flow_analysis"
+    );
+    assert!(
+        !src.contains("fn resolve_assignment_reduction_type("),
+        "assignment reduction type resolution belongs in query_boundaries::flow_analysis"
+    );
+    assert!(
+        !src.contains("fn assignment_source_assignable_to_member("),
+        "assignment member filtering belongs in query_boundaries::flow_analysis"
+    );
+}
