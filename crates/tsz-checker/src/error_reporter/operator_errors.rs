@@ -334,15 +334,15 @@ impl<'a> CheckerState<'a> {
             });
             if let Some((_parameter_idx, type_annotation)) = parameter_declaration
                 && let Some(annotation_node) = self.ctx.arena.get(type_annotation)
-                && let annotation_name = self
-                    .ctx
-                    .arena
-                    .get_type_ref(annotation_node)
-                    .map_or(type_annotation, |type_ref| type_ref.type_name)
                 && let Some(type_name) = self
                     .ctx
                     .arena
-                    .get_identifier_at(annotation_name)
+                    .get_identifier_at(
+                        self.ctx
+                            .arena
+                            .get_type_ref(annotation_node)
+                            .map_or(type_annotation, |type_ref| type_ref.type_name),
+                    )
                     .map(|identifier| identifier.escaped_text.as_str())
             {
                 let annotated_surface =
@@ -918,7 +918,7 @@ impl<'a> CheckerState<'a> {
         if let Some(info) =
             crate::query_boundaries::common::type_param_info(self.ctx.types, display_type)
         {
-            return self.ctx.types.resolve_atom(info.name).to_string();
+            return self.ctx.types.resolve_atom(info.name);
         }
         if self.operator_operand_may_include_bigint(display_type)
             && let Some(members) =
