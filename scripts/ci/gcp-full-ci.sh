@@ -1249,6 +1249,12 @@ run_conformance_aggregate() {
   local expected_shards="${_TSZ_CI_CONFORMANCE_SHARD_COUNT:-${TSZ_CI_CONFORMANCE_SHARDS:-32}}"
   local tmp_dir
   tmp_dir="$(mktemp -d)"
+  local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
+  local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
+  local prefix=""
+  if [[ -n "$bucket" && "$run_key" != "unknown" ]]; then
+    prefix="${bucket%/}/conformance-runs/${run_key}"
+  fi
 
   # Prefer GitHub Actions artifacts (downloaded by the workflow's download-artifact step)
   # over GCS, which requires SA key permissions that may not be available.
@@ -1280,13 +1286,10 @@ run_conformance_aggregate() {
   fi
 
   if [[ "$using_artifacts" -eq 0 ]]; then
-    local bucket="${_TSZ_CI_CACHE_BUCKET:-${TSZ_CI_CACHE_BUCKET:-}}"
-    local run_key="${GITHUB_SHA:-${REVISION_ID:-$(git rev-parse HEAD 2>/dev/null || echo unknown)}}"
-    if [[ -z "$bucket" || "$run_key" == "unknown" ]]; then
+    if [[ -z "$prefix" ]]; then
       echo "error: cannot aggregate — no artifact dir and no GCS bucket/run key available" >&2
       return 1
     fi
-    local prefix="${bucket%/}/conformance-runs/${run_key}"
     ensure_gcs_auth
     echo "Downloading shard results from ${prefix}/shard-*.json ..."
     local dl_attempt dl_rc=1
@@ -1376,7 +1379,7 @@ run_conformance_aggregate() {
     > "$METRICS_DIR/conformance.json"
   publish_latest_metric conformance "$METRICS_DIR/conformance.json"
 
-  if gsutil -q cp "${prefix}/timings-shard-*.json" "$tmp_dir/" 2>/dev/null; then
+  if [[ -n "$prefix" ]] && gsutil -q cp "${prefix}/timings-shard-*.json" "$tmp_dir/" 2>/dev/null; then
     jq -s '
       {
         summary: {
@@ -1404,7 +1407,7 @@ _check_conformance_regression_allowlist() {
     return 1
   fi
 
-  if ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+  if [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
     echo "error: conformance regression deficit ${expected_deficit}, but per-shard failure lists are unavailable" >&2
     return 1
   fi
@@ -1473,7 +1476,7 @@ _show_conformance_regressions() {
   local snapshot="scripts/conformance/conformance-detail.json"
 
   # Download all per-shard failure lists (best-effort; non-fatal if missing).
-  if ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
+  if [[ -z "$prefix" ]] || ! gsutil -q -m cp "${prefix}/failures-shard-*.txt" "$tmp_dir/" 2>/dev/null; then
     echo "(no per-shard failure lists available — upload may have been skipped)" >&2
     return
   fi
