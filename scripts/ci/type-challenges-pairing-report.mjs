@@ -133,6 +133,10 @@ function normalizeManifestPath(value) {
 }
 
 function validateRelativeManifestPath(value, label) {
+  if (typeof value !== "string" || value.trim() === "") {
+    console.error(`error: Type Challenges ${label} must be a non-empty relative path`);
+    process.exit(1);
+  }
   const normalized = normalizeManifestPath(value);
   if (
     path.isAbsolute(value) ||
