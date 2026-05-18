@@ -166,6 +166,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         Some(IRNode::ES5ClassIIFE {
             name: class_name.into(),
+            binding_name: None,
             base_class: base_class.map(Box::new),
             super_param: has_extends.then(|| "_super".into()),
             body,
@@ -959,6 +960,7 @@ impl<'a> ES5AsyncTransformer<'a> {
 
         IRNode::AwaiterCall {
             this_arg: Box::new(this_arg),
+            needs_lexical_this_capture: generator_body.contains_captured_this_reference(),
             generator_body: Box::new(generator_body),
             hoisted_var_groups: Vec::new(),
             promise_constructor: None,

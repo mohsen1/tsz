@@ -548,7 +548,12 @@ impl<'a> Printer<'a> {
         let block_scoped_temp_line = self.writer.current_line();
 
         // Emit the body statements inside the IIFE
+        let prev_loop_body_missing_initializer_function_depth =
+            self.loop_body_missing_initializer_function_depth;
+        self.loop_body_missing_initializer_function_depth = Some(self.function_scope_depth);
         self.emit_loop_body_for_iife(body_idx, body_info, captured_vars, _init_vars);
+        self.loop_body_missing_initializer_function_depth =
+            prev_loop_body_missing_initializer_function_depth;
 
         if !self.block_scoped_private_temps.is_empty() {
             let indent = " ".repeat(self.writer.indent_width() as usize);
@@ -906,7 +911,11 @@ impl<'a> Printer<'a> {
             if i > 0 {
                 self.write(", ");
             }
-            self.write(var);
+            if let Some(emitted) = self.ctx.block_scope_state.get_emitted_name(var) {
+                self.write(&emitted);
+            } else {
+                self.write(var);
+            }
         }
     }
 
@@ -930,7 +939,19 @@ impl<'a> Printer<'a> {
                             self.write(", ");
                         }
                         first = false;
+                        let initializer_is_missing = self
+                            .arena
+                            .get(decl_idx)
+                            .and_then(|decl_node| self.arena.get_variable_declaration(decl_node))
+                            .is_some_and(|decl| decl.initializer.is_none());
+                        let prev_emit_missing_initializer_as_void_0 =
+                            self.emit_missing_initializer_as_void_0;
+                        if initializer_is_missing {
+                            self.emit_missing_initializer_as_void_0 = true;
+                        }
                         self.emit(decl_idx);
+                        self.emit_missing_initializer_as_void_0 =
+                            prev_emit_missing_initializer_as_void_0;
                     }
                 }
             } else {
@@ -1036,6 +1057,88 @@ function foo(x: number) {\n\
         assert!(
             output.contains("(function () { return i; })();"),
             "Single-line arrow block should keep the compact ES5 function body.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn captured_initializerless_for_let_uses_void0_without_leaking_scope() {
+        let source = "declare function use(a: any);\n\
+var x;\n\
+for (let x = 10; ;) {\n\
+    use(x);\n\
+}\n\
+use(x);\n\
+for (; ;) {\n\
+    let x;\n\
+    use(x);\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains("for (var x_1 = 10;;) {\n    use(x_1);\n}\nuse(x);"),
+            "For-header lexical scope should not leak to the following statement.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var x_2 = void 0;\n    use(x_2);"),
+            "Initializerless block-scoped body declarations downlevel to `void 0`.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn initializerless_lexical_declarations_only_reset_in_loop_bodies() {
+        let source = "function plain() {\n\
+    let x;\n\
+    { let y; }\n\
+}\n\
+while (true) {\n\
+    let z;\n\
+    function nested() { let w; }\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains("function plain() {\n    var x;\n    {\n        var y;\n    }\n}"),
+            "Initializerless lexical declarations outside loop bodies should stay bare declarations.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("while (true) {\n    var z = void 0;"),
+            "Initializerless lexical declarations in loop bodies should reset each iteration.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("function nested() { var w; }"),
+            "Nested function bodies should not inherit the outer loop reset policy.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn object_literal_methods_capture_for_initializer_let() {
+        let source = "for (let x; ;) {\n\
+    ({ foo() { x } });\n\
+}\n\
+for (let x; ;) {\n\
+    ({ get foo() { return x } });\n\
+}\n\
+for (let x; ;) {\n\
+    ({ set foo(v) { x } });\n\
+}\n";
+
+        let output = emit_es5(source);
+
+        assert!(
+            output.contains(
+                "var _loop_1 = function (x) {\n    ({ foo: function () { x; } });\n};\nfor (var x = void 0;;) {\n    _loop_1(x);\n}"
+            ),
+            "Object literal methods should trigger loop capture and initialize the loop binding.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var _loop_2 = function (x) {\n    ({ get foo() { return x; } });\n};"),
+            "Object literal getters should trigger loop capture.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("var _loop_3 = function (x) {\n    ({ set foo(v) { x; } });\n};"),
+            "Object literal setters should trigger loop capture.\nOutput:\n{output}"
         );
     }
 }
