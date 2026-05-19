@@ -1574,6 +1574,67 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    pub(super) fn direct_builtin_lib_variable_annotation_type(
+        &self,
+        sym_id: SymbolId,
+        delegate_binder: &BinderState,
+        symbol_arena: &NodeArena,
+    ) -> Option<TypeId> {
+        if !is_builtin_lib_declaration_arena(symbol_arena) {
+            return None;
+        }
+        let symbol = delegate_binder
+            .get_symbol(sym_id)
+            .or_else(|| self.get_cross_file_symbol(sym_id))?;
+        if symbol.flags & symbol_flags::VARIABLE == 0 {
+            return None;
+        }
+        if symbol.flags & (symbol_flags::MODULE | symbol_flags::ALIAS) != 0 {
+            return None;
+        }
+        if symbol.declarations.len() != 1 {
+            return None;
+        }
+
+        let decl_idx = symbol.value_declaration.into_option()?;
+        let decl_node = symbol_arena.get(decl_idx)?;
+        let variable = symbol_arena.get_variable_declaration(decl_node)?;
+        let annotation = variable.type_annotation.into_option()?;
+        let annotation_node = symbol_arena.get(annotation)?;
+        if annotation_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = symbol_arena.get_type_ref(annotation_node)?;
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+        let type_name = symbol_arena
+            .get(type_ref.type_name)
+            .and_then(|name_node| symbol_arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.as_str())?;
+        if self.ctx.file_local_type_shadow_for_lib_name(type_name) {
+            return None;
+        }
+        let def_id = self
+            .resolve_actual_lib_name_to_def_id_for_lowering(type_name)
+            .or_else(|| self.resolve_entity_name_text_to_def_id_for_lowering(type_name))?;
+        if self.ctx.definition_store.get_kind(def_id)? != DefKind::Interface {
+            return None;
+        }
+        if self
+            .ctx
+            .get_def_type_params(def_id)
+            .is_some_and(|params| !params.is_empty())
+        {
+            return None;
+        }
+        Some(self.ctx.types.lazy(def_id))
+    }
+
     pub(crate) fn direct_source_file_type_alias_result(
         &mut self,
         sym_id: SymbolId,
@@ -1989,3 +2050,7 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 #[path = "cross_file_direct_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "cross_file_direct_variable_tests.rs"]
+mod variable_tests;
