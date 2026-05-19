@@ -1,6 +1,6 @@
 //! Node16 Modes tests for `module_resolver`.
 //!
-//! Tests for Node16 / NodeNext / Node10 specific resolution rules:
+//! Tests for `Node16` / `NodeNext` / `Node10` specific resolution rules:
 //!
 //! - ESM vs CJS package subpath / directory index behavior
 //! - Extension-aware diagnostic upgrades
