@@ -282,6 +282,7 @@ impl<'a> CheckerState<'a> {
         }
 
         self.is_simple_local_interface_primitive_type_reference(node)
+            || self.is_simple_local_interface_lib_alias_application(node)
     }
 
     fn is_simple_local_interface_primitive_type_reference(
@@ -321,6 +322,58 @@ impl<'a> CheckerState<'a> {
                 | "unknown"
                 | "void"
         )
+    }
+
+    fn is_simple_local_interface_lib_alias_application(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        let Some(type_args) = type_ref.type_arguments.as_ref() else {
+            return false;
+        };
+        if type_args.nodes.is_empty()
+            || !type_args
+                .nodes
+                .iter()
+                .copied()
+                .all(|arg| self.is_simple_local_interface_fastpath_type(arg))
+        {
+            return false;
+        }
+
+        let Some(type_name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return false;
+        };
+        if type_name_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(ident) = self.ctx.arena.get_identifier(type_name_node) else {
+            return false;
+        };
+        let name = ident.escaped_text.as_str();
+        if self.lookup_type_parameter(name).is_some()
+            || self.ctx.file_local_type_shadow_for_lib_name(name)
+        {
+            return false;
+        }
+
+        let TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return false;
+        };
+        self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+            && self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::TYPE_ALIAS))
     }
 
     fn classify_simple_local_interface_non_primitive_annotation_kind(
