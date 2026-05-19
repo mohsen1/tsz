@@ -248,3 +248,53 @@ type R2 = Requires<Wrapped>;
         "TS2589 must not fire for renamed non-callable chain."
     );
 }
+
+// ---------------------------------------------------------------------------
+// 7. Primitive intersections do not satisfy callable constraints
+// ---------------------------------------------------------------------------
+
+#[test]
+fn primitive_intersection_with_callable_member_still_fails_callable_constraint() {
+    let codes = check_source_codes(&with_prelude(
+        r#"
+type CallableBrand = string & ((props: any) => any);
+type Result = Requires<CallableBrand>;
+"#,
+    ));
+    assert_code!(
+        codes,
+        2344,
+        "primitive intersection with callable member must not satisfy callable constraint."
+    );
+}
+
+#[test]
+fn primitive_intersection_union_fails_callable_constraint_for_each_member() {
+    let codes = check_source_codes(&with_prelude(
+        r#"
+type StyledA = string & ((props: any) => any) & { displayName?: string };
+type StyledB = string & (new (props: any) => any) & { kind?: "b" };
+type Result = Requires<StyledA | StyledB>;
+"#,
+    ));
+    assert_code!(
+        codes,
+        2344,
+        "union of primitive-callable intersections must not satisfy callable constraint."
+    );
+}
+
+#[test]
+fn object_intersection_with_callable_member_still_satisfies_callable_constraint() {
+    let codes = check_source_codes(&with_prelude(
+        r#"
+type CallableObject = ((props: any) => any) & { displayName?: string };
+type Result = Requires<CallableObject>;
+"#,
+    ));
+    assert_no_code!(
+        codes,
+        2344,
+        "object-callable intersections should continue to satisfy callable constraints."
+    );
+}

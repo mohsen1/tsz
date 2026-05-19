@@ -931,21 +931,31 @@ impl<'a> CheckerState<'a> {
                             let base_for_check = self.resolve_lazy_members_in_union(base);
                             let base_for_check =
                                 self.evaluate_type_for_assignability(base_for_check);
-                            let mut is_satisfied = self
-                                .is_assignable_to(base_for_check, inst_constraint)
-                                || self.base_union_members_satisfy_constraint(
+                            let primitive_intersection_blocks = self
+                                .primitive_intersection_blocks_callable_constraint(
                                     base_for_check,
-                                    inst_constraint,
-                                )
-                                || self.satisfies_array_like_constraint(
-                                    base_for_check,
-                                    inst_constraint,
-                                )
-                                || self.infer_result_satisfies_via_referenced_constraints(
-                                    type_arg,
                                     inst_constraint,
                                 );
-                            if !is_satisfied {
+                            let mut is_satisfied = if primitive_intersection_blocks {
+                                false
+                            } else {
+                                {
+                                    self.is_assignable_to(base_for_check, inst_constraint)
+                                        || self.base_union_members_satisfy_constraint(
+                                            base_for_check,
+                                            inst_constraint,
+                                        )
+                                        || self.satisfies_array_like_constraint(
+                                            base_for_check,
+                                            inst_constraint,
+                                        )
+                                        || self.infer_result_satisfies_via_referenced_constraints(
+                                            type_arg,
+                                            inst_constraint,
+                                        )
+                                }
+                            };
+                            if !is_satisfied && !primitive_intersection_blocks {
                                 // When the constraint is a function type (e.g., `(...args: any) => any`),
                                 // accept any callable base type. For type parameters with callable
                                 // constraints (e.g., `F extends Function`), check the constraint.
@@ -1476,23 +1486,35 @@ impl<'a> CheckerState<'a> {
                         self.ensure_refs_resolved(base);
                         let base_for_check = self.resolve_lazy_members_in_union(base);
                         let base_for_check = self.evaluate_type_for_assignability(base_for_check);
-                        let mut is_satisfied = self
-                            .is_assignable_to(base_for_check, inst_constraint)
-                            || self.base_union_members_satisfy_constraint(
+                        let primitive_intersection_blocks = self
+                            .primitive_intersection_blocks_callable_constraint(
                                 base_for_check,
                                 inst_constraint,
-                            )
-                            || self
-                                .satisfies_array_like_constraint(base_for_check, inst_constraint)
-                            || self.infer_result_satisfies_via_referenced_constraints(
-                                type_arg,
-                                inst_constraint,
-                            )
-                            || self.array_element_infer_alias_satisfies_constraint(
-                                type_arg,
-                                inst_constraint,
                             );
-                        if !is_satisfied {
+                        let mut is_satisfied = if primitive_intersection_blocks {
+                            false
+                        } else {
+                            {
+                                self.is_assignable_to(base_for_check, inst_constraint)
+                                    || self.base_union_members_satisfy_constraint(
+                                        base_for_check,
+                                        inst_constraint,
+                                    )
+                                    || self.satisfies_array_like_constraint(
+                                        base_for_check,
+                                        inst_constraint,
+                                    )
+                                    || self.infer_result_satisfies_via_referenced_constraints(
+                                        type_arg,
+                                        inst_constraint,
+                                    )
+                                    || self.array_element_infer_alias_satisfies_constraint(
+                                        type_arg,
+                                        inst_constraint,
+                                    )
+                            }
+                        };
+                        if !is_satisfied && !primitive_intersection_blocks {
                             // When the constraint is a function type, accept callable bases.
                             // The `Function` interface may be lowered as an Object type
                             // (without call signatures), so also check for the structural

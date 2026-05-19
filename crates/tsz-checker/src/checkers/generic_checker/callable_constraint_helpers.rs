@@ -2,6 +2,7 @@
 
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -80,6 +81,90 @@ impl<'a> CheckerState<'a> {
                 || self.is_function_constraint(constraint);
         }
         false
+    }
+
+    /// Return true when a candidate is an intersection (or union containing an
+    /// intersection) with a primitive/literal constituent and the required
+    /// constraint is callable.
+    ///
+    /// Tsc does not let branded primitive intersections such as
+    /// `string & Callable` satisfy component/function constraints solely via the
+    /// callable member. This shows up in styled-components types where the
+    /// exported component type is intentionally also a `string` so it can be used
+    /// as an object key.
+    pub(super) fn primitive_intersection_blocks_callable_constraint(
+        &mut self,
+        candidate: TypeId,
+        constraint: TypeId,
+    ) -> bool {
+        let constraint_resolved = self.resolve_lazy_type(constraint);
+        let constraint_evaluated = self.evaluate_type_for_assignability(constraint_resolved);
+        let constraint_is_callable = {
+            let db = self.ctx.types.as_type_database();
+            query::is_callable_type(db, constraint_resolved)
+                || query::is_callable_type(db, constraint_evaluated)
+                || self.is_function_constraint(constraint)
+                || self.is_function_constraint(constraint_resolved)
+                || self.is_function_constraint(constraint_evaluated)
+        };
+        if !constraint_is_callable {
+            return false;
+        }
+
+        let mut seen = FxHashSet::default();
+        self.contains_primitive_or_literal_intersection(candidate, &mut seen)
+    }
+
+    fn contains_primitive_or_literal_intersection(
+        &mut self,
+        type_id: TypeId,
+        seen: &mut FxHashSet<TypeId>,
+    ) -> bool {
+        if !seen.insert(type_id) {
+            return false;
+        }
+
+        let result = {
+            let resolved = self.resolve_lazy_type(type_id);
+            if resolved != type_id
+                && self.contains_primitive_or_literal_intersection(resolved, seen)
+            {
+                true
+            } else {
+                let evaluated = self.evaluate_type_for_assignability(resolved);
+                if evaluated != resolved
+                    && self.contains_primitive_or_literal_intersection(evaluated, seen)
+                {
+                    true
+                } else {
+                    let intersection_members = {
+                        let db = self.ctx.types.as_type_database();
+                        crate::query_boundaries::common::intersection_members(db, evaluated)
+                    };
+                    if let Some(members) = intersection_members {
+                        members.iter().any(|&member| {
+                            let member = self.resolve_lazy_type(member);
+                            let member = self.evaluate_type_for_assignability(member);
+                            let db = self.ctx.types.as_type_database();
+                            query::is_primitive_type(db, member)
+                                || crate::query_boundaries::common::is_unit_type(db, member)
+                        })
+                    } else if let Some(members) = {
+                        let db = self.ctx.types.as_type_database();
+                        crate::query_boundaries::common::union_members(db, evaluated)
+                    } {
+                        members.iter().any(|&member| {
+                            self.contains_primitive_or_literal_intersection(member, seen)
+                        })
+                    } else {
+                        false
+                    }
+                }
+            }
+        };
+
+        seen.remove(&type_id);
+        result
     }
 
     /// Check if an indexed access still depends on a free type parameter.
