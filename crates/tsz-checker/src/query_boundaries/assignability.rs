@@ -19,7 +19,7 @@ pub(crate) fn are_types_structurally_identical<R: TypeResolver>(
 /// Check structural identity with an outer type-parameter scope visible to
 /// both sides. Used by declaration-merge compatibility to compare type-param
 /// constraints across declarations whose own `T`s resolve to distinct
-/// `TypeId`s — see [`tsz_solver::are_types_structurally_identical_in_param_scope`].
+/// `TypeId`s.
 pub(crate) fn are_types_structurally_identical_in_param_scope<R: TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
@@ -27,7 +27,7 @@ pub(crate) fn are_types_structurally_identical_in_param_scope<R: TypeResolver>(
     right: TypeId,
     param_names: &[Atom],
 ) -> bool {
-    tsz_solver::are_types_structurally_identical_in_param_scope(
+    tsz_solver::computation::are_types_structurally_identical_in_param_scope(
         db,
         resolver,
         left,
