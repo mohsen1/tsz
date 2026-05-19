@@ -157,7 +157,7 @@ function oracleClassificationFrom({ tscExitCodes, tszExitCodes, tscDiagnosticCod
 
   if (!tscSignaled && !tszSignaled) return "unknown";
   if (!tszSignaled) return tscFailed ? "tsc-fails-only" : "unknown";
-  if (!tscSignaled) return tszFailed ? "tsz-fails-only" : "unknown";
+  if (!tscSignaled) return "unknown";
 
   if (!tscFailed && !tszFailed) return "both-pass";
   if (tscFailed && !tszFailed) return "tsc-fails-only";
