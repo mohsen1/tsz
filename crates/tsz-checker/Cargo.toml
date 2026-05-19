@@ -1425,5 +1425,9 @@ path = "tests/arbitrary_ext_decl_module_resolution_tests.rs"
 name = "mixin_any_base_index_sig_tests"
 path = "tests/mixin_any_base_index_sig_tests.rs"
 
+[[test]]
+name = "stage3_lib_namespace_resolution_tests"
+path = "tests/stage3_lib_namespace_resolution_tests.rs"
+
 [lints]
 workspace = true
