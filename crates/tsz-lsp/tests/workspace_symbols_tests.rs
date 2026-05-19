@@ -1830,6 +1830,147 @@ fn case_insensitive_acronym_below_case_sensitive_acronym() {
 }
 
 #[test]
+fn unicode_case_insensitive_exact_match() {
+    // Non-ASCII identifiers must fold like JS `.toLowerCase()` does:
+    // tsserver matches `ångström` against `Ångström` case-insensitively.
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "Ångström",
+        make_location("phys.ts", 0, 0, 8),
+        SymbolKind::Class,
+    );
+
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("ångström");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "Ångström");
+}
+
+#[test]
+fn unicode_case_insensitive_prefix_match() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "ÅngströmCalculator",
+        make_location("phys.ts", 0, 0, 18),
+        SymbolKind::Class,
+    );
+
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("ångström");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "ÅngströmCalculator");
+}
+
+#[test]
+fn unicode_case_insensitive_substring_match() {
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "buildÅngströmTable",
+        make_location("phys.ts", 0, 0, 18),
+        SymbolKind::Function,
+    );
+
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("ångström");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "buildÅngströmTable");
+}
+
+#[test]
+fn unicode_camel_case_acronym_match() {
+    // `ÅngströmCalculator` exposes humps at Å(0) and C(8).
+    // Query "åc" (lowercase) should match as a Unicode-aware acronym.
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "ÅngströmCalculator",
+        make_location("phys.ts", 0, 0, 18),
+        SymbolKind::Class,
+    );
+
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("åc");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].name, "ÅngströmCalculator");
+}
+
+#[test]
+fn unicode_name_length_counted_in_chars_not_bytes() {
+    // Both names contain `name` and tie on match tier. `Ångström` has the
+    // *same* number of Unicode scalar values as `nameTest` (8), so the
+    // tie-break falls through to alphabetical order. If we had counted
+    // bytes, `Ångström` (10 bytes UTF-8) would rank below `nameTest`
+    // (8 bytes) on length alone.
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "Ångström",
+        make_location("a.ts", 0, 0, 8),
+        SymbolKind::Class,
+    );
+    index.add_definition_with_kind(
+        "ÅngOther",
+        make_location("b.ts", 0, 0, 8),
+        SymbolKind::Class,
+    );
+
+    let provider = WorkspaceSymbolsProvider::new(&index);
+    let results = provider.find_symbols("ång");
+    assert_eq!(results.len(), 2);
+    // Both prefix matches (case-insensitive), both 8 chars. The order is
+    // then alphabetical (lowercased): "ångother" < "ångström".
+    assert_eq!(results[0].name, "ÅngOther");
+    assert_eq!(results[1].name, "Ångström");
+}
+
+#[test]
+fn path_distance_no_underflow_when_active_is_segment_prefix() {
+    // If the active file's name is a segment of the candidate's path
+    // (an unusual but valid shape under TS extension-stripping), the
+    // path-distance computation must not underflow.
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "WidgetA",
+        make_location("src/index.ts/generated/widget.ts", 0, 0, 7),
+        SymbolKind::Class,
+    );
+    index.add_definition_with_kind(
+        "WidgetA",
+        make_location("vendor/lib/widget.ts", 0, 0, 7),
+        SymbolKind::Class,
+    );
+
+    let provider = WorkspaceSymbolsProvider::with_active_file(&index, Some("src/index.ts"));
+    let results = provider.find_symbols("WidgetA");
+    assert_eq!(results.len(), 2, "computation should not panic");
+    // The path under `src/` should rank above the unrelated `vendor/` tree.
+    assert_eq!(
+        results[0].location.file_path,
+        "src/index.ts/generated/widget.ts"
+    );
+}
+
+#[test]
+fn path_distance_sibling_files_under_same_active_directory() {
+    // Active file is itself a peer of the candidate (same directory).
+    // Distance should equal "same directory" (1), not zero (which is
+    // reserved for the exact same file).
+    let mut index = SymbolIndex::new();
+    index.add_definition_with_kind(
+        "Widget",
+        make_location("src/ui/widget.ts", 0, 0, 6),
+        SymbolKind::Class,
+    );
+    index.add_definition_with_kind(
+        "Widget",
+        make_location("src/api/widget.ts", 0, 0, 6),
+        SymbolKind::Class,
+    );
+
+    let provider = WorkspaceSymbolsProvider::with_active_file(&index, Some("src/ui/index.ts"));
+    let results = provider.find_symbols("Widget");
+    assert_eq!(results[0].location.file_path, "src/ui/widget.ts");
+}
+
+#[test]
 fn proximity_workspace_root_does_not_count_as_shared() {
     // Files share root path segments but live in completely different
     // subtrees. They should not be considered "close" just because they
