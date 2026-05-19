@@ -1841,12 +1841,6 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Try to extract a discriminant guard for an aliased condition.
-    ///
-    /// Handles:
-    /// - `const alias = target.prop` → `alias === literal` narrows `target` by `prop`
-    /// - `const { prop: alias } = target` → `alias === literal` narrows `target` by `prop`
-    ///
-    /// Returns `(path, literal_type, is_optional, base)` where `base = target`.
     fn aliased_discriminant(
         &self,
         alias_node: NodeIndex,
@@ -1860,8 +1854,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         let literal = self.literal_type_from_node(literal_node)?;
 
-        // Case 1: Simple const alias `const alias = target.prop` (or deeper: target.a.b)
-        // Resolve alias to its property access initializer, then compute relative path.
+        // Simple const alias `const alias = target.prop` (or deeper: target.a.b).
         if let Some((_, initializer)) = self.const_condition_initializer(alias_node) {
             let init_expr = self.skip_parenthesized(initializer);
             let init_node = self.arena.get(init_expr)?;
@@ -1877,15 +1870,11 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
-        // Case 2: Destructuring alias `const { prop: alias } = target`
-        // Also handles nested patterns: `const { s: { kind } } = outer` where
-        // `kind === "a"` narrows `outer` (full path) or `outer.s` (remaining path).
+        // Destructuring alias, including nested `const { s: { kind } } = outer`.
         if let Some((base, prop_names)) = self.binding_element_property_alias(alias_node) {
             if self.is_matching_reference(base, target) {
                 return Some((prop_names, literal, false, target));
             }
-            // Sub-expression match: target is a proper prefix of base.prop_names.
-            // E.g. base=outer, prop_names=["s","kind"], target=outer.s → remaining=["kind"].
             if prop_names.len() > 1
                 && let Some((prefix, is_optional)) = self.relative_discriminant_path(target, base)
                 && !prefix.is_empty()
@@ -1900,13 +1889,7 @@ impl<'a> FlowAnalyzer<'a> {
         None
     }
 
-    /// Given a property access `prop_access` (e.g. `this.test.type`) and a target node
-    /// (e.g. `this.test`), walk backwards collecting property names until we reach `target`.
-    ///
-    /// Returns `(relative_path, is_optional)` where `relative_path` is the list of property
-    /// names from `target` to `prop_access` (e.g. `["type"]`).
-    ///
-    /// Returns `None` if `target` is not found in the access chain.
+    /// Walk backwards from a property access, collecting property names until `target`.
     pub(super) fn relative_discriminant_path(
         &self,
         prop_access: NodeIndex,
