@@ -1022,6 +1022,20 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // TS2589: A homomorphic self-referential mapped-type alias applied to a tuple
+        // argument and checked against a tuple target causes infinite instantiation.
+        // tsc detects the depth limit during instantiation and emits TS2589 here
+        // instead of letting the structural check fall through to TS2322.
+        if self.source_is_homomorphic_self_mapped_tuple_arg_vs_tuple_target(source, target) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                source_idx,
+                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            );
+            return false;
+        }
+
         // Use the canonical assign relation outcome so the weak-union hint is collected alongside
         // the failure reason, avoiding a redundant solver round-trip in
         // should_skip_weak_union_error's fallback path.
