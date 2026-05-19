@@ -2,9 +2,9 @@ use tsz_solver::{NullishFilter, PropertyInfo, TypeDatabase, TypeId, TypeResolver
 
 /// Re-export of the solver's binary operation result type.
 ///
-/// Wraps `tsz_solver::BinaryOpResult`.
+/// Wraps `tsz_solver::operations::BinaryOpResult`.
 /// This is the result enum returned by binary operation evaluation.
-pub(crate) use tsz_solver::BinaryOpResult;
+pub(crate) use tsz_solver::operations::BinaryOpResult;
 
 pub(crate) fn evaluate_contextual_structure_with(
     db: &dyn tsz_solver::QueryDatabase,
@@ -18,15 +18,15 @@ pub(crate) fn evaluate_plus_chain(
     db: &dyn tsz_solver::QueryDatabase,
     operand_types: &[TypeId],
 ) -> Option<TypeId> {
-    tsz_solver::BinaryOpEvaluator::new(db).evaluate_plus_chain(operand_types)
+    tsz_solver::operations::BinaryOpEvaluator::new(db).evaluate_plus_chain(operand_types)
 }
 
 pub(crate) fn is_arithmetic_operand(db: &dyn tsz_solver::QueryDatabase, type_id: TypeId) -> bool {
-    tsz_solver::BinaryOpEvaluator::new(db).is_arithmetic_operand(type_id)
+    tsz_solver::operations::BinaryOpEvaluator::new(db).is_arithmetic_operand(type_id)
 }
 
 pub(crate) fn is_bigint_like(db: &dyn tsz_solver::QueryDatabase, type_id: TypeId) -> bool {
-    tsz_solver::BinaryOpEvaluator::new(db).is_bigint_like(type_id)
+    tsz_solver::operations::BinaryOpEvaluator::new(db).is_bigint_like(type_id)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
