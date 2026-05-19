@@ -1938,6 +1938,7 @@ fn compile_inner(
             program: &program,
             options: &resolved,
             base_dir: &base_dir,
+            root_file_paths: &root_file_paths,
             root_dir: root_dir.as_deref(),
             out_dir: out_dir.as_deref(),
             declaration_dir: declaration_dir.as_deref(),

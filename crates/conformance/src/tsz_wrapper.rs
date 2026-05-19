@@ -269,6 +269,12 @@ pub fn prepare_test_dir_with_lib_dir(
                 if normalized.ends_with("tsconfig.json") {
                     return None;
                 }
+                if normalized.ends_with(".d.ts")
+                    || normalized.ends_with(".d.mts")
+                    || normalized.ends_with(".d.cts")
+                {
+                    return None;
+                }
                 // When types is set, @types files are discovered via that
                 // mechanism — don't also add them as explicit root files.
                 // tsc's harness only adds non-node_modules files as roots.
