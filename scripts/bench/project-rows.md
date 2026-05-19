@@ -72,8 +72,8 @@ rows may not.
 `scripts/bench/project-fixtures.sh` loads pins from `project-rows.mjs` at
 runtime and uses these lists in both benchmark and compile-guard flows.
 Its `tsz_project_fixture_sources` cases must stay aligned with rows that carry
-`repo` / `ref` pins, plus generated rows that intentionally report source
-fixtures such as the Type Challenges assertion rows.
+`repo` / `ref` pins, plus any generated rows that intentionally report source
+fixtures.
 
 To add a new row:
 

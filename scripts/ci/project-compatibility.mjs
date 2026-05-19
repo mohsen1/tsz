@@ -101,6 +101,10 @@ function artifactMetadata(env, prefix, generatedAt) {
   };
 }
 
+function isProjectRowName(value) {
+  return typeof value === "string" && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
+}
+
 function fixtureSourcesFrom(value) {
   const sources = [];
   const seen = new Set();
@@ -472,6 +476,11 @@ function record() {
     .slice(0, 20);
 
   const projectName = process.env.COMPAT_NAME || "";
+  if (!isProjectRowName(projectName)) {
+    console.error("error: COMPAT_NAME must be a lowercase hyphenated project row slug");
+    process.exit(1);
+  }
+
   const diagnosticSubsystems = diagnosticSubsystemsForProject(projectName, diagnosticDeltas);
   const diagnosticCodes = diagnosticCodesFrom(diagnosticDeltas);
   const exitClass = process.env.COMPAT_EXIT_CLASS || "unknown";

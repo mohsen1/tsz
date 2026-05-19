@@ -20,10 +20,7 @@ const PROJECT_COMPILE_GUARD_EXCLUDED_ROWS = new Set([
   "large-ts-repo",
   "nextjs",
 ]);
-const GENERATED_ROWS_WITH_FIXTURE_SOURCES = new Set([
-  "type-challenges-assertion-candidates",
-  "type-challenges-assertions-tsc-clean",
-]);
+const GENERATED_ROWS_WITH_FIXTURE_SOURCES = new Set();
 const ROADMAP_REQUIRED_PROJECT_ROW_BY_LABEL = new Map([
   ["utility-types", "utility-types-project"],
   ["rxjs", "rxjs-project"],
