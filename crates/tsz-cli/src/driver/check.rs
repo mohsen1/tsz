@@ -724,10 +724,11 @@ pub(super) fn collect_diagnostics(
                     );
                 }
 
-                // Map resolved path to file index
-                // NOTE: Only mark as resolved if there's NO error. When there's a resolution
-                // error (TS2307, etc.), the module should NOT be in resolved_module_specifiers
-                // so that the checker will emit the appropriate error.
+                // Map resolved path to file index.
+                // Only mark as resolved when there is no error. When there is a
+                // resolution error (TS2307, TS6263, etc.) the module should NOT
+                // be in resolved_module_specifiers so that the checker emits the
+                // appropriate diagnostic without triggering additional member checks.
                 if outcome.error.is_none() {
                     if let Some(ref resolved_path) = outcome.resolved_path {
                         resolved_module_specifiers.insert((file_idx, specifier.clone()));
