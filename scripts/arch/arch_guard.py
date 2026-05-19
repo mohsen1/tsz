@@ -300,7 +300,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "query_boundaries"
         / "common.rs",
-        1926,
+        1920,
     ),
     (
         "Solver engine boundary: generic call resolver must stay at current 3381 LOC baseline (#8209)",
