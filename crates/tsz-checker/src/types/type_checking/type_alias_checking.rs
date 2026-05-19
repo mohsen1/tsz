@@ -913,14 +913,32 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };
-        if node.kind == syntax_kind_ext::INFER_TYPE
-            && let Some(infer_data) = self.ctx.arena.get_infer_type(node)
-            && let Some(type_param_node) = self.ctx.arena.get(infer_data.type_parameter)
-            && let Some(type_param) = self.ctx.arena.get_type_parameter(type_param_node)
-            && let Some(name_node) = self.ctx.arena.get(type_param.name)
-            && let Some(identifier) = self.ctx.arena.get_identifier(name_node)
+        if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE_SPAN {
+            return self.ctx.arena.get_template_span(node).is_some_and(|span| {
+                self.type_node_contains_infer_binding_named(span.expression, name)
+            });
+        }
+        if node.kind == syntax_kind_ext::INFER_TYPE {
+            let Some(infer_data) = self.ctx.arena.get_infer_type(node) else {
+                return false;
+            };
+            if let Some(type_param_node) = self.ctx.arena.get(infer_data.type_parameter)
+                && let Some(type_param) = self.ctx.arena.get_type_parameter(type_param_node)
+                && let Some(name_node) = self.ctx.arena.get(type_param.name)
+                && let Some(identifier) = self.ctx.arena.get_identifier(name_node)
+                && identifier.escaped_text == name
+            {
+                return true;
+            }
+            return self.type_node_contains_infer_binding_named(infer_data.type_parameter, name);
+        }
+        if node.kind == syntax_kind_ext::TYPE_PARAMETER
+            && let Some(type_param) = self.ctx.arena.get_type_parameter(node)
         {
-            return identifier.escaped_text == name;
+            return (type_param.constraint != NodeIndex::NONE
+                && self.type_node_contains_infer_binding_named(type_param.constraint, name))
+                || (type_param.default != NodeIndex::NONE
+                    && self.type_node_contains_infer_binding_named(type_param.default, name));
         }
 
         self.ctx
@@ -947,7 +965,15 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(idx) else {
                 continue;
             };
-            if node.kind == syntax_kind_ext::INFER_TYPE {
+            if node.kind == syntax_kind_ext::TEMPLATE_LITERAL_TYPE_SPAN {
+                // `get_children` does not currently expose the expression of a
+                // template literal type span, but `${infer X}` stores the
+                // binding there.
+                if let Some(span) = self.ctx.arena.get_template_span(node) {
+                    stack.push(span.expression);
+                }
+                continue;
+            } else if node.kind == syntax_kind_ext::INFER_TYPE {
                 if let Some(infer_data) = self.ctx.arena.get_infer_type(node) {
                     if let Some(tp_node) = self.ctx.arena.get(infer_data.type_parameter)
                         && let Some(tp_data) = self.ctx.arena.get_type_parameter(tp_node)
@@ -964,6 +990,16 @@ impl<'a> CheckerState<'a> {
                     // in the true branch too. Descend into the type-parameter
                     // subtree to pick them up.
                     stack.push(infer_data.type_parameter);
+                }
+                continue;
+            } else if node.kind == syntax_kind_ext::TYPE_PARAMETER {
+                if let Some(type_param) = self.ctx.arena.get_type_parameter(node) {
+                    if type_param.constraint != NodeIndex::NONE {
+                        stack.push(type_param.constraint);
+                    }
+                    if type_param.default != NodeIndex::NONE {
+                        stack.push(type_param.default);
+                    }
                 }
                 continue;
             }

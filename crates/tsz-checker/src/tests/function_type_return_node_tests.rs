@@ -97,3 +97,20 @@ type Ok<T> = {
         "outer mapped key should not produce TS2322, got: {codes:?}"
     );
 }
+
+#[test]
+fn template_literal_infer_bindings_scope_mapped_true_branch() {
+    let codes = diagnostic_codes(
+        r#"
+type PathParts = "a.b" extends `${infer Key}.${infer Rest}`
+    ? { [P in Key]: Rest }
+    : never;
+"#,
+    );
+
+    assert_eq!(
+        count_code(&codes, 2304),
+        0,
+        "template literal infer bindings should be visible in the true branch, got: {codes:?}"
+    );
+}
