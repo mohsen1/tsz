@@ -9,7 +9,7 @@ import sys
 import tomllib
 from collections import Counter
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 POLICY_PATH = pathlib.Path(__file__).resolve().parent / "arch_guard_policy.toml"
@@ -306,6 +306,35 @@ ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS = [
     ),
 ]
 
+# Pin the producer-side compatibility surface that still re-exports solver
+# computation/construction APIs from the crate root. The zero wildcard guard
+# below prevents broad `pub use module::*` growth; this count makes explicit
+# root re-export growth visible too.
+#
+# Each entry:
+#   (description, file_path, root_module_prefixes, max_reexports).
+ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
+    (
+        "Solver API boundary: flat root explicit computation re-exports (#8204)",
+        ROOT / "crates" / "tsz-solver" / "src" / "lib.rs",
+        (
+            "caches",
+            "canonicalize",
+            "classes",
+            "contextual",
+            "evaluation",
+            "instantiation",
+            "intern",
+            "narrowing",
+            "objects",
+            "operations",
+            "relations",
+            "widening",
+        ),
+        147,
+    ),
+]
+
 # Pin direct checker call sites into `query_boundaries::common`, the broad
 # compatibility/quarantine barrel tracked by #8225. Existing sites are
 # tolerated as migration debt; new checker code should prefer a narrower
@@ -458,7 +487,7 @@ REGEX_LINE_COUNT_CHECKS = [
             r"RelationFlags::from_bits_truncate\s*\(|"
             r"CachedAnyMode::from_legacy_u8\s*\()"
         ),
-        1,
+        0,
     ),
 ]
 
@@ -916,6 +945,99 @@ def scan_root_solver_computation_import_count(
             f"query boundaries: {len(matching_lines)} (cap {max_references}; "
             f"bump cap intentionally, or route the new site through a named "
             f"solver facade / checker query-boundary helper — #8204)"
+        )
+        return hits
+    return []
+
+
+def _iter_root_pub_use_statements(text: str) -> Iterable[tuple[int, str]]:
+    """Yield top-level `pub use` statements from a Rust module text.
+
+    The solver `lib.rs` compatibility exports are plain top-level statements.
+    Nested tiered-module re-exports are intentionally ignored because their
+    lines are indented and represent the preferred facade modules.
+    """
+    lines = text.splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if not line.startswith("pub use "):
+            index += 1
+            continue
+
+        start_line = index + 1
+        statement_lines = [line.strip()]
+        while ";" not in lines[index] and index + 1 < len(lines):
+            index += 1
+            statement_lines.append(lines[index].strip())
+        yield start_line, " ".join(statement_lines)
+        index += 1
+
+
+def _root_pub_use_export_names(statement: str) -> list[str]:
+    """Return exported leaf names from a top-level `pub use` statement."""
+    body = statement.removeprefix("pub use ").removesuffix(";").strip()
+    if "*" in body:
+        return ["*"]
+
+    if "{" not in body:
+        return [body.rsplit("::", 1)[-1].strip()]
+
+    inner = body.split("{", 1)[1].rsplit("}", 1)[0]
+    names: list[str] = []
+    for part in inner.split(","):
+        item = part.strip()
+        if not item:
+            continue
+        item = item.split(" as ", 1)[0].strip()
+        names.append(item.rsplit("::", 1)[-1])
+    return names
+
+
+def scan_solver_root_explicit_reexport_count(
+    file_path: pathlib.Path,
+    root_module_prefixes: tuple[str, ...],
+    max_reexports: int,
+) -> list[str]:
+    """Count explicit high-risk solver root compatibility re-exports.
+
+    #8204 is retiring the flat `tsz_solver` root surface in favor of tiered
+    facades. Wildcard exports are already forbidden; this guard pins the
+    remaining explicit root exports from computation/construction-heavy
+    modules so new compatibility surface must be an intentional cap change.
+    """
+    if not file_path.exists():
+        return []
+
+    try:
+        text = file_path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return []
+
+    prefix_set = set(root_module_prefixes)
+    matches: list[tuple[int, str]] = []
+    for line_no, statement in _iter_root_pub_use_statements(text):
+        body = statement.removeprefix("pub use ").strip()
+        root_prefix = body.split("::", 1)[0]
+        if root_prefix not in prefix_set:
+            continue
+        for name in _root_pub_use_export_names(statement):
+            matches.append((line_no, name))
+
+    if len(matches) > max_reexports:
+        try:
+            rel_path = file_path.relative_to(ROOT).as_posix()
+        except ValueError:
+            rel_path = str(file_path)
+        hits = [
+            f"flat solver root explicit re-export #{i + 1}: {rel_path}:{line_no} {name}"
+            for i, (line_no, name) in enumerate(matches)
+        ]
+        hits.append(
+            f"total flat solver root explicit computation re-exports: "
+            f"{len(matches)} (cap {max_reexports}; bump cap intentionally, "
+            f"or move the API behind a named facade / checker query-boundary "
+            f"helper — #8204)"
         )
         return hits
     return []
@@ -2302,6 +2424,19 @@ def main() -> int:
     ) in ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS:
         hits = scan_root_solver_computation_import_count(
             search_roots, exclude_path_prefixes, max_references
+        )
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for (
+        name,
+        file_path,
+        root_module_prefixes,
+        max_reexports,
+    ) in ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS:
+        hits = scan_solver_root_explicit_reexport_count(
+            file_path, root_module_prefixes, max_reexports
         )
         total_hits += len(hits)
         if hits:

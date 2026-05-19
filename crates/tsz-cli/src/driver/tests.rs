@@ -2120,6 +2120,130 @@ export default validate;
     );
 }
 
+#[test]
+fn jsdoc_bare_module_imports_inline_commonjs_callable_static_surface_in_declaration_emit() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("base.js"),
+        r#"class Base {}
+function couldntThinkOfAny() {
+    return {};
+}
+couldntThinkOfAny.Base = Base;
+module.exports = couldntThinkOfAny;
+"#,
+    )
+    .expect("write base");
+    fs::write(
+        dir.path().join("maker.js"),
+        r#"class Widget {}
+function makeThing() {
+    return {};
+}
+makeThing.Widget = Widget;
+module.exports = makeThing;
+"#,
+    )
+    .expect("write maker");
+    fs::write(
+        dir.path().join("file.js"),
+        r#"/** @typedef {import('./base')} BaseFactory */
+/** @callback BaseFactoryFactory
+ * @param {import('./base')} factory
+ */
+/** @enum {import('./base')} */
+const couldntThinkOfAny = {};
+
+/** @typedef {import('./maker')} MakerAlias */
+/** @callback MakerConsumer
+ * @param {import('./maker')} renamed
+ */
+function use() {}
+"#,
+    )
+    .expect("write file");
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--declaration",
+        "--allowJs",
+        "--checkJs",
+        "--lib",
+        "es6",
+        "--outDir",
+        "out",
+        "--target",
+        "es2015",
+        "--module",
+        "commonjs",
+        "base.js",
+        "maker.js",
+        "file.js",
+    ])
+    .expect("parse args");
+    let result = compile(&args, dir.path()).expect("compile");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "did not expect diagnostics, got: {:?}",
+        result.diagnostics
+    );
+
+    let dts = fs::read_to_string(dir.path().join("out/file.d.ts")).expect("read file.d.ts");
+    assert!(
+        dts.contains(
+            r#"type BaseFactory = {
+    (): {};
+    Base: {
+        new (): {};
+    };
+};"#
+        ),
+        "expected BaseFactory to inline callable/static import surface: {dts}"
+    );
+    assert!(
+        dts.contains(
+            r#"type BaseFactoryFactory = (factory: {
+    (): {};
+    Base: {
+        new (): {};
+    };
+}) => any;"#
+        ),
+        "expected callback parameter import to inline callable/static surface: {dts}"
+    );
+    assert!(
+        dts.contains("declare const couldntThinkOfAny: {};"),
+        "expected JSDoc enum bare import expansion to emit const fallback: {dts}"
+    );
+    assert!(
+        !dts.contains("declare namespace couldntThinkOfAny"),
+        "did not expect enum bare import expansion to synthesize an empty namespace: {dts}"
+    );
+    assert!(
+        dts.contains(
+            r#"type MakerAlias = {
+    (): {};
+    Widget: {
+        new (): {};
+    };
+};"#
+        ),
+        "expected renamed typedef import to inline callable/static surface: {dts}"
+    );
+    assert!(
+        dts.contains(
+            r#"type MakerConsumer = (renamed: {
+    (): {};
+    Widget: {
+        new (): {};
+    };
+}) => any;"#
+        ),
+        "expected renamed callback import to inline callable/static surface: {dts}"
+    );
+}
+
 /// Regression: `export { } from "./missing"` (and the type-only variant)
 /// must not emit TS2307. The export clause binds nothing from the module,
 /// so tsc skips module resolution entirely. The rule is structural: a

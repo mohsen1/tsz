@@ -1374,6 +1374,67 @@ class ArchGuardRootSolverComputationImportCountTests(unittest.TestCase):
                 f"{name}: cap is too tight — guard fires at the live count.",
             )
 
+    def test_flags_root_solver_explicit_computation_reexports(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/lib.rs": (
+                    "pub use evaluation::evaluate::{evaluate_type, TypeEvaluator};\n"
+                    "pub use operations::widening;\n"
+                    "pub use diagnostics::DiagnosticArg;\n"
+                    "pub mod computation {\n"
+                    "    pub use crate::evaluation::evaluate::evaluate_type;\n"
+                    "}\n"
+                    "// pub use instantiation::instantiate::TypeSubstitution;\n"
+                ),
+            }
+        )
+        lib_rs = root / "crates" / "tsz-solver" / "src" / "lib.rs"
+        hits = self.arch_guard.scan_solver_root_explicit_reexport_count(
+            lib_rs,
+            ("evaluation", "operations", "instantiation"),
+            0,
+        )
+        self.assertEqual(len(hits), 4, f"unexpected hits: {hits!r}")
+        self.assertIn("lib.rs:1 evaluate_type", hits[0])
+        self.assertIn("lib.rs:1 TypeEvaluator", hits[1])
+        self.assertIn("lib.rs:2 widening", hits[2])
+        self.assertIn("total flat solver root explicit computation re-exports", hits[3])
+
+    def test_root_solver_explicit_reexport_count_passes_at_cap(self):
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/lib.rs": (
+                    "pub use evaluation::evaluate::{evaluate_type, TypeEvaluator};\n"
+                    "pub use diagnostics::DiagnosticArg;\n"
+                ),
+            }
+        )
+        lib_rs = root / "crates" / "tsz-solver" / "src" / "lib.rs"
+        scan = self.arch_guard.scan_solver_root_explicit_reexport_count
+        prefixes = ("evaluation",)
+        self.assertEqual(scan(lib_rs, prefixes, 2), [])
+        self.assertEqual(scan(lib_rs, prefixes, 3), [])
+
+    def test_root_solver_explicit_reexport_check_is_registered(self):
+        names = [
+            entry[0]
+            for entry in self.arch_guard.ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS
+        ]
+        self.assertTrue(any("#8204" in name for name in names))
+
+    def test_root_solver_explicit_reexport_real_count_passes_at_pinned_cap(self):
+        """The explicit export cap must match the live count."""
+        for entry in self.arch_guard.ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS:
+            name, file_path, prefixes, max_reexports = entry
+            hits = self.arch_guard.scan_solver_root_explicit_reexport_count(
+                file_path, prefixes, max_reexports
+            )
+            self.assertEqual(
+                hits,
+                [],
+                f"{name}: cap is too tight — guard fires at the live count.",
+            )
+
 
 class ArchGuardQueryBoundaryCommonReferenceTests(unittest.TestCase):
     """Cover the #8225 ratchet for broad query-boundary common callers."""

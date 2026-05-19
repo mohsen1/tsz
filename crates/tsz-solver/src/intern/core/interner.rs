@@ -252,7 +252,7 @@ pub(crate) struct InternedTypeLimitContext {
 /// interner instance. They have no invalidation hook because their keys are
 /// stable only inside the owning `TypeInterner`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct TypeInternerCacheStatistics {
+pub(crate) struct TypeInternerCacheStatistics {
     /// Memoized `is_identity_comparable_type` answers.
     pub identity_comparable_entries: usize,
     /// Memoized `contains_this_type` answers.
@@ -744,7 +744,7 @@ impl TypeInterner {
     /// Snapshot retained predicate-cache entry counts for diagnostics and
     /// memory-accounting reports.
     #[must_use]
-    pub fn cache_statistics(&self) -> TypeInternerCacheStatistics {
+    pub(crate) fn cache_statistics(&self) -> TypeInternerCacheStatistics {
         TypeInternerCacheStatistics {
             identity_comparable_entries: self.identity_comparable_cache.len(),
             contains_this_entries: self.contains_this_cache.len(),
