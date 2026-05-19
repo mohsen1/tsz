@@ -393,6 +393,41 @@ function readOptionalJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+function isInside(root, file) {
+  const relative = path.relative(root, file);
+  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function resolveWritableFile({ value, label, root, forbidden = [] }) {
+  if (!value) {
+    throw new Error(`${label} is required`);
+  }
+
+  const resolved = path.resolve(value);
+  if (root) {
+    const resolvedRoot = path.resolve(root);
+    if (!isInside(resolvedRoot, resolved)) {
+      throw new Error(`${label} must stay inside output root`);
+    }
+  }
+
+  for (const blocked of forbidden) {
+    if (blocked && path.resolve(blocked) === resolved) {
+      throw new Error(`${label} must not overwrite an input artifact`);
+    }
+  }
+
+  const parent = path.dirname(resolved);
+  if (!fs.existsSync(parent) || !fs.statSync(parent).isDirectory()) {
+    throw new Error(`${label} parent directory does not exist`);
+  }
+  if (fs.existsSync(resolved) && !fs.statSync(resolved).isFile()) {
+    throw new Error(`${label} path is not a file`);
+  }
+
+  return resolved;
+}
+
 function typeChallengesCleanAssertionMetadata(projectName) {
   if (projectName !== "type-challenges-assertions-tsc-clean") return null;
 
@@ -455,8 +490,14 @@ function record() {
     diagnosticSubsystems,
     diagnosticCodes,
   });
+  let outputFile;
   let fixtureSources;
   try {
+    outputFile = resolveWritableFile({
+      value: process.env.COMPAT_JSONL_FILE,
+      label: "project compatibility JSONL",
+      root: process.env.COMPAT_OUTPUT_ROOT,
+    });
     fixtureSources = fixtureSourcesFrom(process.env.COMPAT_FIXTURE_SOURCES);
   } catch (error) {
     console.error(`error: ${error.message}`);
@@ -495,11 +536,23 @@ function record() {
     row.assertion_clean_subset = assertionMetadata;
   }
 
-  fs.appendFileSync(process.env.COMPAT_JSONL_FILE, `${JSON.stringify(row)}\n`, "utf8");
+  fs.appendFileSync(outputFile, `${JSON.stringify(row)}\n`, "utf8");
 }
 
 function summarize() {
   const { rows, malformedLineCount, malformedExamples } = readRows(process.env.SUMMARY_JSONL_FILE || "");
+  let outputFile;
+  try {
+    outputFile = resolveWritableFile({
+      value: process.env.SUMMARY_OUTPUT_FILE,
+      label: "project compatibility summary",
+      root: process.env.SUMMARY_OUTPUT_ROOT,
+      forbidden: [process.env.SUMMARY_JSONL_FILE],
+    });
+  } catch (error) {
+    console.error(`error: ${error.message}`);
+    process.exit(1);
+  }
   const byState = rows.reduce((counts, row) => {
     const key = row.state || rowStateFrom({
       exitClass: row.exit_class,
@@ -522,7 +575,7 @@ function summarize() {
     rows,
   };
 
-  fs.writeFileSync(process.env.SUMMARY_OUTPUT_FILE, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+  fs.writeFileSync(outputFile, `${JSON.stringify(summary, null, 2)}\n`, "utf8");
 }
 
 const command = process.argv[2];
