@@ -381,8 +381,9 @@ impl<'a> CheckerState<'a> {
     /// (e.g., inside `if (kind === "a")`), the source binding `s` should be narrowed to
     /// the union variant where `kind` matches.
     ///
-    /// Handles simple, renamed (`{ kind: k }`), and nested (`{ inner: { kind } }`)
-    /// destructuring.
+    /// Handles simple (`{ kind }`) and renamed (`{ kind: k }`) top-level destructuring.
+    /// Nested destructuring (`{ inner: { kind } }`) is intentionally excluded — tsc does
+    /// not narrow the source binding for nested paths.
     fn narrow_source_via_destructured_bindings(
         &self,
         analyzer: &FlowAnalyzer<'_>,
@@ -425,6 +426,13 @@ impl<'a> CheckerState<'a> {
         let mut remaining = union_members;
 
         for (binding_sym, prop_name) in &bound_from_source {
+            // tsc only correlates top-level single-property destructuring.
+            // Nested paths like `inner.kind` (from `const { inner: { kind } } = s`)
+            // do NOT narrow the source binding in tsc — skip them.
+            if prop_name.contains('.') {
+                continue;
+            }
+
             let Some(&binding_initial) = self.ctx.symbol_types.get(binding_sym) else {
                 continue;
             };
@@ -465,14 +473,11 @@ impl<'a> CheckerState<'a> {
 
             // Keep only members whose discriminant property overlaps with the narrowed binding.
             remaining.retain(|&member| {
-                let mut current = member;
-                for segment in prop_name.split('.') {
-                    match find_property_in_object_by_str(self.ctx.types, current, segment) {
-                        Some(prop) => current = prop.type_id,
+                let member_prop_ty =
+                    match find_property_in_object_by_str(self.ctx.types, member, prop_name) {
+                        Some(prop) => prop.type_id,
                         None => return true, // Property absent — keep member.
-                    }
-                }
-                let member_prop_ty = current;
+                    };
                 member_prop_ty == binding_narrowed || {
                     let env = self.ctx.type_env.borrow();
                     are_types_mutually_subtype_with_env(

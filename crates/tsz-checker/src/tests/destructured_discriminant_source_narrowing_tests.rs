@@ -89,6 +89,32 @@ function f(s: S) {
     );
 }
 
+// ── tsc parity: nested destructuring does NOT narrow source ───────────────
+
+#[test]
+fn nested_destructuring_does_not_narrow_source() {
+    // tsc does NOT narrow `s` via nested `const { inner: { kind } } = s`.
+    // The source should remain the full union, so `s.inner.a` errors.
+    let diags = diags(
+        r#"
+type S =
+  | { inner: { kind: "a"; a: number } }
+  | { inner: { kind: "b"; b: string } };
+function f(s: S) {
+  const { inner: { kind } } = s;
+  if (kind === "a") {
+    s.inner.a;
+  }
+}
+"#,
+    );
+    let cs = codes(&diags);
+    assert!(
+        cs.contains(&2339),
+        "Expected TS2339 for nested destructuring — tsc does not narrow source; got: {diags:?}"
+    );
+}
+
 // ── No false positives ─────────────────────────────────────────────────────
 
 #[test]
