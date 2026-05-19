@@ -1233,4 +1233,73 @@ mod tests {
         env.insert_def(DefId(2), TypeId::NUMBER);
         assert!(env.resolver_generation() > before_local_write);
     }
+
+    /// Pins the idempotency invariant introduced in #8269:
+    /// repeated `set_definition_store` calls with the same `Arc` pointer must
+    /// not bump the environment generation, while a subsequent store mutation
+    /// must still be visible.
+    #[test]
+    fn set_definition_store_same_arc_is_generation_idempotent() {
+        let store = Arc::new(DefinitionStore::new());
+        let mut env = TypeEnvironment::new();
+
+        // First install bumps generation.
+        let gen_before_first = env.resolver_generation();
+        env.set_definition_store(Arc::clone(&store));
+        let gen_after_first = env.resolver_generation();
+        assert!(
+            gen_after_first > gen_before_first,
+            "first set_definition_store must bump generation"
+        );
+
+        // Second install with the same Arc pointer must NOT bump generation.
+        env.set_definition_store(Arc::clone(&store));
+        assert_eq!(
+            env.resolver_generation(),
+            gen_after_first,
+            "repeated set_definition_store with the same Arc must not bump generation"
+        );
+
+        // A subsequent store mutation is still visible through the generation sum.
+        let gen_before_mutation = env.resolver_generation();
+        store.set_body(DefId(99), TypeId::STRING);
+        assert!(
+            env.resolver_generation() > gen_before_mutation,
+            "store mutation must still be visible after idempotent reinstall"
+        );
+    }
+
+    /// Pins the `get_def_kind` store-fallback path:
+    /// an entry registered only in the `DefinitionStore` (not the local map)
+    /// must be found once `set_definition_store` is called.
+    #[test]
+    fn get_def_kind_falls_back_to_definition_store() {
+        use crate::TypeId;
+        use crate::def::DefKind;
+        use crate::def::core::DefinitionInfo;
+        use tsz_common::interner::Atom;
+
+        let store = Arc::new(DefinitionStore::new());
+        let def_id = store.register(DefinitionInfo::type_alias(
+            Atom::default(),
+            vec![],
+            TypeId::UNKNOWN,
+        ));
+
+        let mut env = TypeEnvironment::new();
+        // No store wired → fallback returns None.
+        assert_eq!(
+            env.get_def_kind(def_id),
+            None,
+            "get_def_kind must return None when no store is wired"
+        );
+
+        // Wire the store → fallback finds the kind.
+        env.set_definition_store(Arc::clone(&store));
+        assert_eq!(
+            env.get_def_kind(def_id),
+            Some(DefKind::TypeAlias),
+            "get_def_kind must find kind via store fallback after set_definition_store"
+        );
+    }
 }
