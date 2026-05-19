@@ -362,19 +362,18 @@ impl<'a> TypeVisitor for ThisTypeMarkerExtractor<'a> {
     }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
-        // For unions, we distribute over members
-        // (A & ThisType<X>) | (B & ThisType<Y>) should try each member
+        // Mirrors tsc's `getThisTypeFromContextualType` over `mapType`: every
+        // member contributes its `ThisType<T>` argument (or nothing) and the
+        // per-member results are unioned. The returned `TypeId` is therefore
+        // identical under any permutation of the source union — `db.union`
+        // canonicalizes member order — which keeps downstream caches keyed
+        // on this result stable.
         let members = self.db.type_list(TypeListId(list_id));
-
-        // TODO: This blindly picks the first ThisType.
-        // Correct behavior requires narrowing the contextual type based on
-        // the object literal shape BEFORE determining which this type to use.
-        // Example: If context is (A & ThisType<X>) | (B & ThisType<Y>) and
-        // the literal is { type: 'b' }, we should pick ThisType<Y>, not ThisType<X>.
-        // This is a conservative heuristic and could be improved.
-        members
+        let this_types: Vec<TypeId> = members
             .iter()
-            .find_map(|&member_id| self.visit_type(self.db, member_id))
+            .filter_map(|&member_id| self.visit_type(self.db, member_id))
+            .collect();
+        collect_single_or_union(self.db, this_types)
     }
 
     fn default_output() -> Self::Output {

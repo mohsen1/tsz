@@ -1257,7 +1257,7 @@ impl<'a> CheckerState<'a> {
             && self.jsdoc_type_annotation_for_node(value_decl).is_none()
             && !self.has_satisfies_jsdoc_comment(expr_idx)
         {
-            let snap = self.ctx.snapshot_diagnostics();
+            let snap = crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
             let wrapped_type =
                 if let Some(val_type) = self.resolve_property_access_value_type(expr_idx) {
                     val_type
@@ -1284,7 +1284,7 @@ impl<'a> CheckerState<'a> {
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
-                self.suppress_circular_initializer_relation_diagnostics(&snap, expr_idx);
+                self.suppress_circular_initializer_relation_diagnostics(snap, expr_idx);
                 let message = format_message(
                     diagnostic_messages::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
                     &["default"],

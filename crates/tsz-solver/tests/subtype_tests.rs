@@ -33,6 +33,36 @@ fn test_intrinsic_subtyping() {
 }
 
 #[test]
+fn subtype_checker_cache_statistics_account_for_eval_entries() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let empty = checker.cache_statistics();
+    assert_eq!(empty.eval_entries, 0);
+    assert_eq!(empty.estimated_size_bytes(), 0);
+
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    assert_eq!(checker.evaluate_type(union), union);
+    let populated = checker.cache_statistics();
+    assert_eq!(populated.eval_entries, 1);
+    assert!(
+        populated.estimated_size_bytes() > empty.estimated_size_bytes(),
+        "populated subtype eval cache should report nonzero estimated residency"
+    );
+
+    assert_eq!(checker.evaluate_type(union), union);
+    let repeated = checker.cache_statistics();
+    assert_eq!(repeated.eval_entries, populated.eval_entries);
+    assert_eq!(
+        repeated.estimated_size_bytes(),
+        populated.estimated_size_bytes()
+    );
+
+    checker.reset();
+    assert_eq!(checker.cache_statistics().eval_entries, 0);
+}
+
+#[test]
 fn test_any_top_bottom_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
@@ -6884,7 +6914,7 @@ fn test_mapped_type_key_remap_optional_remove_subtyping() {
     let required_b = interner.object(vec![PropertyInfo::new(prop_b.name, TypeId::NUMBER)]);
     let optional_b = interner.object(vec![PropertyInfo::opt(prop_b.name, TypeId::NUMBER)]);
 
-    assert!(!checker.is_subtype_of(mapped, required_b));
+    assert!(checker.is_subtype_of(mapped, required_b));
     assert!(checker.is_subtype_of(mapped, optional_b));
 }
 
@@ -7011,7 +7041,7 @@ fn test_mapped_type_key_remap_optional_readonly_remove_subtyping() {
         interner.object(vec![PropertyInfo::new(prop_b.name, number_or_undefined)]);
     let optional_mutable_b = interner.object(vec![PropertyInfo::opt(prop_b.name, TypeId::NUMBER)]);
 
-    assert!(!checker.is_subtype_of(mapped, required_mutable_b));
+    assert!(checker.is_subtype_of(mapped, required_mutable_b));
     assert!(checker.is_subtype_of(mapped, required_mutable_b_with_undef));
     assert!(checker.is_subtype_of(mapped, optional_mutable_b));
     assert!(!checker.is_subtype_of(optional_mutable_b, mapped));

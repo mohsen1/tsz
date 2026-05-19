@@ -118,6 +118,35 @@ fn test_any_assignability() {
 }
 
 #[test]
+fn compat_checker_cache_statistics_account_for_relation_entries() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let empty = checker.cache_statistics();
+    assert_eq!(empty.relation_entries, 0);
+    assert_eq!(empty.estimated_size_bytes(), 0);
+
+    assert!(!checker.is_assignable(TypeId::STRING, TypeId::NUMBER));
+    let populated = checker.cache_statistics();
+    assert_eq!(populated.relation_entries, 1);
+    assert!(
+        populated.estimated_size_bytes() > empty.estimated_size_bytes(),
+        "populated compatibility cache should report nonzero estimated residency"
+    );
+
+    assert!(!checker.is_assignable(TypeId::STRING, TypeId::NUMBER));
+    let repeated = checker.cache_statistics();
+    assert_eq!(repeated.relation_entries, populated.relation_entries);
+    assert_eq!(
+        repeated.estimated_size_bytes(),
+        populated.estimated_size_bytes()
+    );
+
+    checker.set_strict_function_types(true);
+    assert_eq!(checker.cache_statistics().relation_entries, 0);
+}
+
+#[test]
 fn test_unknown_assignability() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);

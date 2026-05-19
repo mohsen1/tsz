@@ -1399,7 +1399,10 @@ impl<'a> CheckerState<'a> {
         // Normalize `{prop: type}` to `{ prop: type; }` — tsc always adds
         // spaces inside braces and trailing semicolons for inline object types.
         // Handle both standalone `{...}` and intersection parts `& {...}`.
-        formatted = Self::normalize_annotation_literal_property_display_text(&formatted);
+        formatted = Self::normalize_single_quoted_string_literal_types(&formatted);
+        if !self.ctx.compiler_options.exact_optional_property_types {
+            formatted = Self::add_undefined_to_optional_object_property_display(&formatted);
+        }
         formatted = Self::normalize_inline_object_braces(&formatted);
         // Prefer Array<T> shorthand conversion in annotation text, but preserve
         // generic constraint surface syntax (`<T extends Array<U>>`) where tsc
@@ -1682,23 +1685,14 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut parts = Vec::new();
-        if let Some(idx) = &shape.string_index {
+        for idx in shape.string_index.iter().chain(shape.number_index.iter()) {
             let key_name = idx
                 .param_name
                 .map(|a| self.ctx.types.resolve_atom_ref(a).to_string())
                 .unwrap_or_else(|| "x".to_string());
+            let key_kind = self.format_type(idx.key_type);
             parts.push(format!(
-                "[{key_name}: string]: {}",
-                self.format_type(idx.value_type)
-            ));
-        }
-        if let Some(idx) = &shape.number_index {
-            let key_name = idx
-                .param_name
-                .map(|a| self.ctx.types.resolve_atom_ref(a).to_string())
-                .unwrap_or_else(|| "x".to_string());
-            parts.push(format!(
-                "[{key_name}: number]: {}",
+                "[{key_name}: {key_kind}]: {}",
                 self.format_type(idx.value_type)
             ));
         }

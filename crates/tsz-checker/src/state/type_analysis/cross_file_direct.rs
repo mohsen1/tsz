@@ -124,10 +124,15 @@ pub(crate) fn is_direct_actual_lib_declaration_arena(arena: &NodeArena) -> bool 
 }
 
 pub(crate) fn is_external_package_declaration_file_name(file_name: &str) -> bool {
-    file_name.starts_with("node_modules/")
-        || file_name.starts_with("node_modules\\")
-        || file_name.contains("/node_modules/")
-        || file_name.contains("\\node_modules\\")
+    let mut components = file_name
+        .split(['/', '\\'])
+        .filter(|component| !component.is_empty());
+    while let Some(component) = components.next() {
+        if component == "node_modules" {
+            return components.next().is_some();
+        }
+    }
+    false
 }
 
 /// Classification of a delegated arena's first source file for the
@@ -750,6 +755,7 @@ impl<'a> CheckerState<'a> {
             && !protocol_method_interface
             && !allow_generic_actual_lib_direct_fallback(&name)
             && name == "IteratorObject"
+            && iterator_object_has_global_augmentations(&self.ctx)
         {
             return None;
         }

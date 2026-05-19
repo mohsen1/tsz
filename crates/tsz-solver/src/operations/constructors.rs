@@ -380,8 +380,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // Phase 2: Per-member resolution to collect return types and failures.
-        let mut return_types = Vec::new();
-        let mut failures = Vec::new();
+        let mut return_types = Vec::with_capacity(members.len());
+        let mut failures = Vec::with_capacity(members.len());
 
         for &member in members.iter() {
             match self.resolve_new(member, arg_types) {
@@ -504,8 +504,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         arg_types: &[TypeId],
     ) -> CallResult {
         let members = self.interner.type_list(list_id);
-        let mut return_types = Vec::new();
-        let mut failures = Vec::new();
+        let mut return_types = Vec::with_capacity(members.len());
+        let mut failures = Vec::with_capacity(members.len());
 
         for &member in members.iter() {
             // Try to resolve new on each member

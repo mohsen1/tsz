@@ -1005,7 +1005,7 @@ impl Server {
         {
             let actions = self.missing_member_codefix_actions(file_path, &content, &prop_name);
             if actions.is_empty() {
-                return self.stub_response(seq, request, Some(serde_json::json!([])));
+                return self.success_response(seq, request, Some(serde_json::json!([])));
             }
             return TsServerResponse {
                 seq,
@@ -1018,7 +1018,7 @@ impl Server {
             };
         }
 
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        self.success_response(seq, request, Some(serde_json::json!([])))
     }
 
     fn find_property_access_name_for_missing_member_fallback(content: &str) -> Option<String> {
@@ -3908,7 +3908,7 @@ impl Server {
             };
         }
 
-        self.stub_response(seq, request, Some(serde_json::json!({"changes": []})))
+        self.success_response(seq, request, Some(serde_json::json!({"changes": []})))
     }
 }
 

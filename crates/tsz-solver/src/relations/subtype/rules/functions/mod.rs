@@ -17,6 +17,7 @@ use crate::types::{
     CallSignature, FunctionShape, InferencePriority, ParamInfo, TypeData, TypeId, TypeParamInfo,
     TypePredicate,
 };
+use crate::visitor::contains_any_type;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
@@ -765,6 +766,42 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        if let (
+            Some(TypeData::Conditional(source_cond_id)),
+            Some(TypeData::Conditional(target_cond_id)),
+        ) = (
+            self.interner.lookup(source_return),
+            self.interner.lookup(target_return),
+        ) {
+            let source_cond = self.interner.get_conditional(source_cond_id);
+            let target_cond = self.interner.get_conditional(target_cond_id);
+            if source_cond.is_distributive == target_cond.is_distributive
+                && source_cond.check_type == target_cond.check_type
+                && source_cond.true_type == target_cond.true_type
+                && source_cond.false_type == target_cond.false_type
+            {
+                if source_cond.extends_type == target_cond.extends_type {
+                    return SubtypeResult::True;
+                }
+                if self.conditional_extends_difference_is_definitely_distinct(
+                    source_cond.extends_type,
+                    target_cond.extends_type,
+                ) {
+                    return SubtypeResult::False;
+                }
+                let source_extends_eval = self.evaluate_type(source_cond.extends_type);
+                let target_extends_eval = self.evaluate_type(target_cond.extends_type);
+                if (source_extends_eval == TypeId::ANY) != (target_extends_eval == TypeId::ANY) {
+                    return SubtypeResult::False;
+                }
+                if source_extends_eval == target_extends_eval
+                    || self.same_evaluated_union_members(source_extends_eval, target_extends_eval)
+                {
+                    return SubtypeResult::True;
+                }
+            }
+        }
+
         let source_needs_raw_fallback = matches!(
             self.interner.lookup(source_return),
             Some(TypeData::Application(_) | TypeData::Lazy(_))
@@ -793,6 +830,184 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             self.check_subtype(source_return, target_return)
         }
+    }
+
+    fn conditional_extends_difference_is_definitely_distinct(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if self.conditional_extends_raw_structures_equivalent(source, target) {
+            return false;
+        }
+
+        if contains_any_type(self.interner, source) || contains_any_type(self.interner, target) {
+            return true;
+        }
+
+        matches!(
+            (self.interner.lookup(source), self.interner.lookup(target)),
+            (
+                Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)),
+                Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_))
+            ) | (Some(TypeData::Array(_)), Some(TypeData::Array(_)))
+        )
+    }
+
+    fn conditional_extends_raw_structures_equivalent(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if source == target {
+            return true;
+        }
+
+        match (self.interner.lookup(source), self.interner.lookup(target)) {
+            (Some(TypeData::Array(source_elem)), Some(TypeData::Array(target_elem))) => {
+                self.conditional_extends_property_types_equivalent(source_elem, target_elem)
+            }
+            (
+                Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)),
+                Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)),
+            ) => self.object_members_equivalent_for_conditional_extends(source, target),
+            (Some(TypeData::Union(source_list)), Some(TypeData::Union(target_list))) => {
+                let source_members: Vec<_> = self.interner.type_list(source_list).to_vec();
+                let target_members: Vec<_> = self.interner.type_list(target_list).to_vec();
+                if source_members.len() != target_members.len() {
+                    return false;
+                }
+
+                let mut unmatched = target_members;
+                for source_member in source_members {
+                    let Some(index) = unmatched.iter().position(|&target_member| {
+                        self.conditional_extends_raw_structures_equivalent(
+                            source_member,
+                            target_member,
+                        )
+                    }) else {
+                        return false;
+                    };
+                    unmatched.swap_remove(index);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn same_evaluated_union_members(&mut self, source: TypeId, target: TypeId) -> bool {
+        let Some(TypeData::Union(source_list)) = self.interner.lookup(source) else {
+            return false;
+        };
+        let Some(TypeData::Union(target_list)) = self.interner.lookup(target) else {
+            return false;
+        };
+        let source_members: Vec<_> = self.interner.type_list(source_list).to_vec();
+        let target_members: Vec<_> = self.interner.type_list(target_list).to_vec();
+        if source_members.len() != target_members.len() {
+            return false;
+        }
+
+        let source_evaluated: Vec<_> = source_members
+            .iter()
+            .map(|&member| self.evaluate_type(member))
+            .collect();
+        let mut unmatched: Vec<_> = target_members
+            .iter()
+            .map(|&member| self.evaluate_type(member))
+            .collect();
+        for source_member in source_evaluated {
+            let Some(index) = unmatched.iter().position(|&target_member| {
+                source_member == target_member
+                    || self.object_members_equivalent_for_conditional_extends(
+                        source_member,
+                        target_member,
+                    )
+                    || {
+                        let mut fallback =
+                            SubtypeChecker::with_resolver(self.interner, self.resolver);
+                        fallback
+                            .check_subtype(source_member, target_member)
+                            .is_true()
+                            && fallback
+                                .check_subtype(target_member, source_member)
+                                .is_true()
+                    }
+            }) else {
+                return false;
+            };
+            unmatched.swap_remove(index);
+        }
+        true
+    }
+
+    fn object_members_equivalent_for_conditional_extends(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let source_shape_id = match self.interner.lookup(source) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
+            _ => return false,
+        };
+        let target_shape_id = match self.interner.lookup(target) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => shape_id,
+            _ => return false,
+        };
+        let source_shape = self.interner.object_shape(source_shape_id);
+        let target_shape = self.interner.object_shape(target_shape_id);
+        if source_shape.string_index != target_shape.string_index
+            || source_shape.number_index != target_shape.number_index
+            || source_shape.properties.len() != target_shape.properties.len()
+        {
+            return false;
+        }
+
+        let source_properties = source_shape.properties.clone();
+        let target_properties = target_shape.properties.clone();
+        for source_prop in source_properties {
+            let Some(target_prop) = target_properties.iter().find(|target_prop| {
+                source_prop.name == target_prop.name
+                    && source_prop.is_string_named == target_prop.is_string_named
+                    && source_prop.is_symbol_named == target_prop.is_symbol_named
+            }) else {
+                return false;
+            };
+
+            if source_prop.optional != target_prop.optional
+                || source_prop.readonly != target_prop.readonly
+                || source_prop.is_method != target_prop.is_method
+                || source_prop.visibility != target_prop.visibility
+                || (source_prop.visibility != tsz_common::Visibility::Public
+                    && source_prop.parent_id != target_prop.parent_id)
+                || !self.conditional_extends_property_types_equivalent(
+                    source_prop.type_id,
+                    target_prop.type_id,
+                )
+                || !self.conditional_extends_property_types_equivalent(
+                    source_prop.write_type,
+                    target_prop.write_type,
+                )
+            {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn conditional_extends_property_types_equivalent(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        if source == target {
+            return true;
+        }
+        if contains_any_type(self.interner, source) || contains_any_type(self.interner, target) {
+            return false;
+        }
+        self.evaluate_type(source) == self.evaluate_type(target)
     }
 
     pub(crate) fn instantiate_function_shape(

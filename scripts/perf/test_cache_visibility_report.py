@@ -323,6 +323,40 @@ class CacheVisibilityReportTests(unittest.TestCase):
         self.assertFalse(by_name["eval_cache"].needs_review)
         self.assertTrue(by_name["intersection_merge_cache"].needs_review)
 
+    def test_statistics_in_separate_module_cover_cache_field(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            self.write(
+                root,
+                "src/context/mod.rs",
+                "\n".join(
+                    [
+                        "pub struct CheckerContext {",
+                        "    lib_type_resolution_cache: FxHashMap<String, bool>,",
+                        "}",
+                    ]
+                )
+                + "\n",
+            )
+            self.write(
+                root,
+                "src/context/cache_statistics.rs",
+                "\n".join(
+                    [
+                        "pub struct CheckerContextCacheStatistics {",
+                        "    lib_type_resolution_cache_entries: usize,",
+                        "    lib_type_resolution_cache_estimated_size_bytes: usize,",
+                        "}",
+                    ]
+                )
+                + "\n",
+            )
+
+            candidates = self.module.scan([root / "src"])
+
+        self.assertEqual(len(candidates), 1)
+        self.assertFalse(candidates[0].needs_review)
+
     def test_default_roots_include_binder_cache_surfaces(self):
         self.assertIn("crates/tsz-binder/src", self.module.DEFAULT_ROOTS)
 

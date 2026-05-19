@@ -19,6 +19,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.reserved_names.clear();
         self.symbol_module_specifier_cache.clear();
         self.import_plan = ImportPlan::default();
+        self.local_namespace_alias_targets.clear();
 
         self.reset_writer();
         self.indent_level = 0;
@@ -760,6 +761,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.jsdoc_overload_function_node_for_statement(stmt_idx);
         let has_jsdoc_overload_signatures = jsdoc_overload_function_node
             .is_some_and(|func_idx| !self.jsdoc_overload_signatures_for_node(func_idx).is_empty());
+        let should_join_single_line_jsdoc_type_comment = self.source_is_js_file
+            && kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && self.emitted_leading_single_line_jsdoc_type_comment_for_pos(stmt_node.pos);
         if has_jsdoc_overload_signatures {
             // JSDoc overload comments are emitted once per structured signature
             // by `emit_function_declaration`.
@@ -774,11 +778,23 @@ impl<'a> DeclarationEmitter<'a> {
             if suppress_jsdoc_type_alias_comments {
                 filtered.retain(|jsdoc| !Self::jsdoc_contains_type_alias_tag(jsdoc));
             }
-            if !self.emit_jsdoc_comment_chain_preserving_source_for_pos(stmt_node.pos, &filtered) {
+            if has_jsdoc_type_function_signature {
+                if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
+                    stmt_node.pos,
+                    &filtered,
+                ) {
+                    self.emit_jsdoc_comment_chain(&filtered);
+                }
+            } else if !self
+                .emit_jsdoc_comment_chain_preserving_source_for_pos(stmt_node.pos, &filtered)
+            {
                 self.emit_jsdoc_comment_chain(&filtered);
             }
         } else {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
+        }
+        if should_join_single_line_jsdoc_type_comment {
+            self.join_last_emitted_jsdoc_comment_to_next_declaration();
         }
         let before_len = self.writer.len();
         self.queue_source_mapping(stmt_node);
@@ -946,12 +962,22 @@ impl<'a> DeclarationEmitter<'a> {
             // JSDoc overload comments are emitted with each overload signature.
         } else if has_jsdoc_type_function_signature {
             let filtered = Self::jsdoc_chain_without_type_tags(&jsdoc_chain);
-            self.emit_jsdoc_comment_chain(&filtered);
+            if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
+                stmt_node.pos,
+                &filtered,
+            ) {
+                self.emit_jsdoc_comment_chain(&filtered);
+            }
         } else if jsdoc_chain.len() == 1
             && Self::jsdoc_has_function_signature_tags(jsdoc_chain[0].as_str())
             && self.hoisted_jsdoc_source_comment_is_multiline(stmt_node.pos)
         {
-            self.emit_multiline_jsdoc_comment(&jsdoc_chain[0]);
+            if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
+                stmt_node.pos,
+                &jsdoc_chain,
+            ) {
+                self.emit_multiline_jsdoc_comment(&jsdoc_chain[0]);
+            }
         } else {
             self.emit_jsdoc_comment_chain(&jsdoc_chain);
         }
@@ -1625,6 +1651,10 @@ impl<'a> DeclarationEmitter<'a> {
             })
         });
         self.method_names_with_overloads = FxHashSet::default();
+        let prev_class_type_params = std::mem::replace(
+            &mut self.current_class_type_params,
+            class.type_parameters.clone(),
+        );
 
         // Suppress method implementations that share a computed name with
         // an accessor (tsc emits only the accessor in .d.ts).
@@ -1669,6 +1699,7 @@ impl<'a> DeclarationEmitter<'a> {
         if shadow_alias.is_none() {
             self.emit_js_namespace_export_aliases_for_name(class.name, is_exported);
         }
+        self.current_class_type_params = prev_class_type_params;
     }
 
     pub(in crate::declaration_emitter) fn emit_class_member(&mut self, member_idx: NodeIndex) {

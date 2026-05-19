@@ -29,6 +29,7 @@ use crate::types::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
+use std::mem::size_of;
 use std::sync::Arc;
 use tracing::trace;
 use tsz_binder::SymbolId;
@@ -60,6 +61,15 @@ fn needs_property_name_quotes(name: &str) -> bool {
         }
         _ => true,
     }
+}
+
+/// Operation-local cache accounting for `TypeFormatter`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TypeFormatterCacheStatistics {
+    /// Cached atom-to-string display entries.
+    pub atom_cache_entries: usize,
+    /// Approximate heap and struct residency owned by the formatter.
+    pub estimated_size_bytes: usize,
 }
 
 /// Context for generating type strings.
@@ -388,6 +398,24 @@ impl<'a> TypeFormatter<'a> {
             expand_primitive_key_union: false,
             ignore_union_origins: false,
         }
+    }
+
+    /// Return cache entry and residency accounting for this formatter.
+    pub fn cache_statistics(&self) -> TypeFormatterCacheStatistics {
+        TypeFormatterCacheStatistics {
+            atom_cache_entries: self.atom_cache.len(),
+            estimated_size_bytes: self.estimated_size_bytes(),
+        }
+    }
+
+    /// Estimate memory retained by this operation-local formatter.
+    pub fn estimated_size_bytes(&self) -> usize {
+        size_of::<Self>()
+            + self.atom_cache.capacity() * size_of::<(Atom, Arc<str>)>()
+            + self.display_alias_visiting.capacity() * size_of::<TypeId>()
+            + self.format_visiting.capacity() * size_of::<TypeId>()
+            + self.skip_type_alias_def_ids.capacity() * size_of::<DefId>()
+            + self.skipped_type_alias_expansion_visiting.capacity() * size_of::<DefId>()
     }
 
     fn distributed_conditional_application_display(

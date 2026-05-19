@@ -214,7 +214,7 @@ impl<'a> Printer<'a> {
         };
 
         let capture_context = if using_info.is_none() {
-            let init_vars = self.collect_for_of_iteration_var_names(for_in_of.initializer);
+            let init_vars = self.collect_for_initializer_let_const_vars(for_in_of.initializer);
             let body_info =
                 super::loop_capture::collect_loop_body_vars(self.arena, for_in_of.statement);
             if (!init_vars.is_empty() || !body_info.block_scoped_vars.is_empty())
