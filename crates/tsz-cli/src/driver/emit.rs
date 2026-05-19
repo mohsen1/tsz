@@ -431,6 +431,21 @@ pub(crate) fn emit_outputs(
             if let Some(dts_path) =
                 declaration_output_path(context.base_dir, context.root_dir, decl_base, &input_path)
             {
+                // JSON modules get a synthetic declaration file rather than running
+                // through the full DeclarationEmitter (which expects an AST).
+                if input_path.extension().and_then(|e| e.to_str()) == Some("json") {
+                    if let Some(contents) = json_module_dts(&input_path, new_line)
+                        && declaration_bundle_path.is_none()
+                    {
+                        outputs.push(OutputFile {
+                            path: dts_path,
+                            contents,
+                            source_path: Some(input_path.clone()),
+                        });
+                    }
+                    continue;
+                }
+
                 // Get type cache for this file if available
                 let file_path = PathBuf::from(&file.file_name);
                 let type_cache = context.type_caches.get(&file_path).cloned();
@@ -2063,6 +2078,9 @@ fn declaration_file_name(file_name: &str) -> Option<String> {
         };
         return Some(file_name.trim_end_matches(suffix).to_string() + ".d.ts");
     }
+    if let Some(stem) = file_name.strip_suffix(".json") {
+        return Some(stem.to_string() + ".d.ts");
+    }
 
     None
 }
@@ -2424,6 +2442,81 @@ const fn config_jsx_to_emitter_jsx(jsx: JsxEmit) -> tsz::emitter::JsxEmit {
         JsxEmit::ReactJsx => tsz::emitter::JsxEmit::ReactJsx,
         JsxEmit::ReactJsxDev => tsz::emitter::JsxEmit::ReactJsxDev,
         JsxEmit::ReactNative => tsz::emitter::JsxEmit::ReactNative,
+    }
+}
+
+/// Generates a synthetic `.d.ts` declaration for a JSON module file.
+///
+/// tsc emits `declare const _default: <type>; export default _default;` for every
+/// JSON file that enters the program via `resolveJsonModule: true`. This function
+/// replicates that output from the JSON source on disk.
+fn json_module_dts(input_path: &Path, new_line: &str) -> Option<String> {
+    let text = std::fs::read_to_string(input_path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    let type_text = json_value_type_text(&value, 0);
+    let mut out = String::new();
+    out.push_str("declare const _default: ");
+    out.push_str(&type_text);
+    out.push(';');
+    out.push_str(new_line);
+    out.push_str("export default _default;");
+    Some(out)
+}
+
+fn json_value_type_text(value: &serde_json::Value, depth: u32) -> String {
+    match value {
+        serde_json::Value::Null => "null".to_string(),
+        serde_json::Value::Bool(_) => "boolean".to_string(),
+        serde_json::Value::Number(_) => "number".to_string(),
+        serde_json::Value::String(_) => "string".to_string(),
+        serde_json::Value::Array(items) => {
+            let mut element_types: Vec<String> = Vec::new();
+            for item in items {
+                let item_type = json_value_type_text(item, depth);
+                if !element_types.iter().any(|e| e == &item_type) {
+                    element_types.push(item_type);
+                }
+            }
+            if element_types.is_empty() {
+                "never[]".to_string()
+            } else if element_types.len() == 1 {
+                format!("{}[]", element_types[0])
+            } else {
+                format!("({})[]", element_types.join(" | "))
+            }
+        }
+        serde_json::Value::Object(map) => {
+            if map.is_empty() {
+                return "{}".to_string();
+            }
+            let member_indent = "    ".repeat((depth + 1) as usize);
+            let closing_indent = "    ".repeat(depth as usize);
+            let mut text = String::from("{\n");
+            for (key, val) in map {
+                text.push_str(&member_indent);
+                text.push_str(&json_property_name(key));
+                text.push_str(": ");
+                text.push_str(&json_value_type_text(val, depth + 1));
+                text.push_str(";\n");
+            }
+            text.push_str(&closing_indent);
+            text.push('}');
+            text
+        }
+    }
+}
+
+fn json_property_name(key: &str) -> String {
+    let mut chars = key.chars();
+    let Some(first) = chars.next() else {
+        return "\"\"".to_string();
+    };
+    let valid_start = first == '_' || first == '$' || first.is_ascii_alphabetic();
+    let valid_rest = chars.all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric());
+    if valid_start && valid_rest {
+        key.to_string()
+    } else {
+        serde_json::to_string(key).unwrap_or_else(|_| "\"\"".to_string())
     }
 }
 

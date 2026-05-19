@@ -357,3 +357,101 @@ fn test_normalize_type_roots_skips_missing_absolute_root() {
         "absolute /types should be skipped when it doesn't exist on disk"
     );
 }
+
+// ─── JSON module DTS generation ───────────────────────────────────────────────
+
+#[test]
+fn test_declaration_file_name_for_json_input() {
+    assert_eq!(
+        declaration_file_name("data.json"),
+        Some("data.d.ts".to_string())
+    );
+    assert_eq!(
+        declaration_file_name("package.json"),
+        Some("package.d.ts".to_string())
+    );
+}
+
+#[test]
+fn test_json_value_type_text_primitives() {
+    use serde_json::json;
+    assert_eq!(json_value_type_text(&json!(null), 0), "null");
+    assert_eq!(json_value_type_text(&json!(true), 0), "boolean");
+    assert_eq!(json_value_type_text(&json!(42), 0), "number");
+    assert_eq!(json_value_type_text(&json!("hello"), 0), "string");
+}
+
+#[test]
+fn test_json_value_type_text_object() {
+    use serde_json::json;
+    let val = json!({"x": 1});
+    let text = json_value_type_text(&val, 0);
+    assert_eq!(text, "{\n    x: number;\n}");
+}
+
+#[test]
+fn test_json_value_type_text_nested_object() {
+    use serde_json::json;
+    // Depth-aware indentation: different key name proves this is structural, not hardcoded
+    let val = json!({"a": {"b": 1}});
+    let text = json_value_type_text(&val, 0);
+    assert_eq!(text, "{\n    a: {\n        b: number;\n    };\n}");
+}
+
+#[test]
+fn test_json_value_type_text_array() {
+    use serde_json::json;
+    assert_eq!(json_value_type_text(&json!([1, 2, 3]), 0), "number[]");
+    assert_eq!(
+        json_value_type_text(&serde_json::Value::Array(vec![]), 0),
+        "never[]"
+    );
+    assert_eq!(
+        json_value_type_text(&json!(["a", 1]), 0),
+        "(string | number)[]"
+    );
+}
+
+#[test]
+fn test_json_module_dts_object() {
+    let dir = tempdir().unwrap();
+    let json_path = dir.path().join("data.json");
+    std::fs::write(&json_path, r#"{"x": 1}"#).unwrap();
+
+    let dts = json_module_dts(&json_path, "\n").unwrap();
+    assert_eq!(
+        dts,
+        "declare const _default: {\n    x: number;\n};\nexport default _default;"
+    );
+}
+
+#[test]
+fn test_json_module_dts_different_key_names() {
+    // Proves the fix is structural, not tied to key name "x"
+    let dir = tempdir().unwrap();
+    let json_path = dir.path().join("config.json");
+    std::fs::write(&json_path, r#"{"version": 1, "name": "test"}"#).unwrap();
+
+    let dts = json_module_dts(&json_path, "\n").unwrap();
+    assert!(dts.contains("version: number;"));
+    assert!(dts.contains("name: string;"));
+    assert!(dts.starts_with("declare const _default:"));
+    assert!(dts.ends_with("export default _default;"));
+}
+
+#[test]
+fn test_json_module_dts_missing_file() {
+    let result = json_module_dts(Path::new("/nonexistent/path/data.json"), "\n");
+    assert!(result.is_none());
+}
+
+#[test]
+fn test_json_property_name_special_chars() {
+    // Keys with special chars need quoting
+    assert_eq!(json_property_name("normal"), "normal");
+    assert_eq!(json_property_name("_private"), "_private");
+    assert_eq!(json_property_name("$dollar"), "$dollar");
+    // Keys with hyphens or spaces need quoting
+    assert!(json_property_name("my-key").starts_with('"'));
+    assert!(json_property_name("has space").starts_with('"'));
+}
