@@ -481,7 +481,9 @@ impl<'a> DeclarationEmitter<'a> {
                         "collect_import_metadata: storing local alias target"
                     );
                     self.local_namespace_alias_targets
-                        .insert((parent_sym_id, leftmost), alias_name);
+                        .entry((parent_sym_id, leftmost))
+                        .or_default()
+                        .insert(alias_name);
                 }
             } else if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
                 self.recurse_module_body(binder, stmt_node);

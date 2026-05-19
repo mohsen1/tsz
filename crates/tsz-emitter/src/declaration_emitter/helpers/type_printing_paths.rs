@@ -459,7 +459,21 @@ impl<'a> DeclarationEmitter<'a> {
         // may assign different IDs to the same namespace in exports vs parent-chain.
         if let Some(sym) = binder.symbols.get(sym_id) {
             let key = (sym.parent, sym.escaped_name.clone());
-            if let Some(alias_name) = self.local_namespace_alias_targets.get(&key) {
+            if let Some(alias_names) = self.local_namespace_alias_targets.get(&key) {
+                if alias_names.len() != 1 {
+                    tracing::debug!(
+                        sym_id = sym_id.0,
+                        parent = sym.parent.0,
+                        name = %sym.escaped_name,
+                        alias_count = alias_names.len(),
+                        "resolve_namespace_import_alias: ambiguous local alias target"
+                    );
+                    return None;
+                }
+                let alias_name = alias_names
+                    .iter()
+                    .next()
+                    .expect("checked alias set has exactly one entry");
                 tracing::debug!(
                     sym_id = sym_id.0,
                     parent = sym.parent.0,

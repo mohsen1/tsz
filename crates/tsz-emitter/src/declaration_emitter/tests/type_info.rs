@@ -1609,7 +1609,7 @@ export namespace m1 {
          got nothing (EXPORT_DECLARATION wrapper was likely not traversed)"
     );
 
-    // The alias `import alias = inner` should map (m1_sym.parent, "inner") -> "alias"
+    // The alias `import alias = inner` should be listed for (m1_sym.parent, "inner").
     let m1_id = binder.file_locals.get("m1").expect("Expected 'm1' symbol");
     let inner_sym_id = binder
         .symbols
@@ -1624,12 +1624,11 @@ export namespace m1 {
         .expect("Expected 'inner' symbol to exist");
 
     let key = (inner_sym.parent, "inner".to_string());
-    let alias_name = emitter.local_namespace_alias_targets.get(&key);
+    let alias_names = emitter.local_namespace_alias_targets.get(&key);
 
-    assert_eq!(
-        alias_name.map(String::as_str),
-        Some("alias"),
-        "Expected (inner.parent, 'inner') -> 'alias' in local_namespace_alias_targets. \
+    assert!(
+        alias_names.is_some_and(|names| names.contains("alias")),
+        "Expected (inner.parent, 'inner') to include 'alias' in local_namespace_alias_targets. \
          stored keys: {stored:?}, inner_sym.parent = {:?}",
         inner_sym.parent
     );
@@ -1673,13 +1672,55 @@ import glo_im1_private = glo_M1_public;
         .expect("Expected 'glo_M1_public' symbol to exist");
 
     let key = (glo_sym.parent, "glo_M1_public".to_string());
-    let alias_name = emitter.local_namespace_alias_targets.get(&key);
+    let alias_names = emitter.local_namespace_alias_targets.get(&key);
 
-    assert_eq!(
-        alias_name.map(String::as_str),
-        Some("glo_im1_private"),
-        "Expected (glo_M1_public.parent={:?}, 'glo_M1_public') -> 'glo_im1_private'. \
+    assert!(
+        alias_names.is_some_and(|names| names.contains("glo_im1_private")),
+        "Expected (glo_M1_public.parent={:?}, 'glo_M1_public') to include 'glo_im1_private'. \
          stored: {stored:?}",
         glo_sym.parent
+    );
+}
+
+#[test]
+fn test_duplicate_namespace_import_equals_alias_targets_are_ambiguous() {
+    let source = r#"
+namespace N {
+    export class C {}
+}
+import A = N;
+import B = N;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    emitter.prepare_import_metadata(root);
+
+    let n_sym_id = binder.file_locals.get("N").expect("Expected 'N' symbol");
+    let n_sym = binder
+        .symbols
+        .get(n_sym_id)
+        .expect("Expected 'N' symbol to exist");
+    let key = (n_sym.parent, "N".to_string());
+    let alias_names = emitter
+        .local_namespace_alias_targets
+        .get(&key)
+        .expect("Expected aliases for namespace N");
+
+    assert!(
+        alias_names.contains("A") && alias_names.contains("B"),
+        "Expected both duplicate aliases to be tracked. aliases: {alias_names:?}"
+    );
+    assert_eq!(
+        emitter.resolve_namespace_import_alias(n_sym_id),
+        None,
+        "Expected duplicate local aliases for the same namespace target to be ambiguous"
     );
 }
