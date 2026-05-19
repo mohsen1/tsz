@@ -115,6 +115,10 @@ name = "cjs_destructuring_export_inline_tests"
 path = "tests/cjs_destructuring_export_inline_tests.rs"
 
 [[test]]
+name = "cjs_clause_export_live_binding_tests"
+path = "tests/cjs_clause_export_live_binding_tests.rs"
+
+[[test]]
 name = "destructuring_es5_array_nested_order_tests"
 path = "tests/destructuring_es5_array_nested_order_tests.rs"
 
