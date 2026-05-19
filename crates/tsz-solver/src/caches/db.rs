@@ -1010,7 +1010,10 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     fn set_exact_optional_property_types(&self, _enabled: bool) {}
 
     fn contextual_property_type(&self, expected: TypeId, prop_name: &str) -> Option<TypeId> {
-        let ctx = crate::ContextualTypeContext::with_expected(self.as_type_database(), expected);
+        let ctx = crate::computation::ContextualTypeContext::with_expected(
+            self.as_type_database(),
+            expected,
+        );
         ctx.get_property_type(prop_name)
     }
 

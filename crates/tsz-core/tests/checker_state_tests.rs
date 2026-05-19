@@ -5675,7 +5675,7 @@ c.ro = "error: lhs of assignment can't be readonly";
 
 #[test]
 fn test_contextual_typing_for_function_parameters() {
-    use tsz_solver::ContextualTypeContext;
+    use tsz_solver::computation::ContextualTypeContext;
 
     // Test that ContextualTypeContext can extract parameter types from function types
     let types = TypeInterner::new();
@@ -5862,7 +5862,7 @@ register((x) => {
 
 #[test]
 fn test_contextual_typing_for_object_properties() {
-    use tsz_solver::ContextualTypeContext;
+    use tsz_solver::computation::ContextualTypeContext;
 
     // Test that ContextualTypeContext can extract property types from object types
     let types = TypeInterner::new();
