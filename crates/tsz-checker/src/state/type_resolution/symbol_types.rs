@@ -1012,18 +1012,39 @@ impl<'a> CheckerState<'a> {
             return merged;
         }
 
+        // When delegating across lib arenas, every pre-lowering step that calls
+        // self.ctx.arena.get(decl_idx) is using the wrong arena: each lib file has its
+        // own NodeArena with an independent NodeIndex space, so a NodeIndex from one lib
+        // arena silently addresses an unrelated node (or None) in self.ctx.arena. For
+        // the cross-arena merged-lib path, lower_merged_interface_declarations_with_symbol
+        // traverses each declaration with its own arena and resolves Symbol.* names via
+        // get_well_known_symbol_name without relying on these pre-computed maps.
+        // prewarm_member_type_reference_params already returns early for declaration files.
+        let is_cross_arena_lib =
+            Self::in_cross_arena_interface_delegation() && !self.ctx.lib_contexts.is_empty();
+
         // Pre-compute computed property names that the lowering can't resolve from AST alone.
         // This handles cases like `[k]` where k is a `const` unique symbol variable.
-        let computed_names = self.precompute_computed_property_names(&declarations);
-        let computed_symbol_names =
-            self.precompute_symbol_named_computed_property_names(&declarations);
+        let computed_names = if is_cross_arena_lib {
+            Default::default()
+        } else {
+            self.precompute_computed_property_names(&declarations)
+        };
+        let computed_symbol_names = if is_cross_arena_lib {
+            Default::default()
+        } else {
+            self.precompute_symbol_named_computed_property_names(&declarations)
+        };
         let prewarmed_type_params = self.prewarm_member_type_reference_params(&declarations);
 
-        // Get type parameters from the first interface declaration
+        // Get type parameters from the first interface declaration.
+        // Skipped for the cross-arena merged-lib path: lower_merged_interface_declarations_with_symbol
+        // collects and pushes type parameters per-declaration with the correct arena.
         let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
         let mut params = Vec::new();
         let mut updates = Vec::new();
-        if first_decl.is_some()
+        if !is_cross_arena_lib
+            && first_decl.is_some()
             && let Some(node) = self.ctx.arena.get(first_decl)
             && let Some(interface) = self.ctx.arena.get_interface(node)
         {
@@ -1082,31 +1103,22 @@ impl<'a> CheckerState<'a> {
         } else {
             lowering
         };
-        // When resolving a multi-lib built-in (e.g., Map<K,V> spans
-        // es2015.collection, es2015.iterable, and esnext.collection), each lib
-        // file has its own NodeArena with an independent NodeIndex space. Using
-        // self.ctx.arena for every declaration causes `arena.get(N)` to silently
-        // fetch an unrelated AST node when N happens to be valid in the current
-        // arena but belongs to a declaration from another lib arena. The wrong
-        // node (often an Iterable interface member) gets merged into the resolved
-        // type and later surfaces as a false-positive TS2416 or TS2322.
-        let interface_type =
-            if Self::in_cross_arena_interface_delegation() && !self.ctx.lib_contexts.is_empty() {
-                let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
-                    self.ctx.binder,
-                    sym_id,
-                    &declarations,
-                    self.ctx.arena,
-                    &self.ctx.lib_contexts,
-                    None,
-                );
-                let deduped = dedup_decl_arenas(&decls_with_arenas);
-                lowering
-                    .lower_merged_interface_declarations_with_symbol(&deduped, Some(sym_id))
-                    .0
-            } else {
-                lowering.lower_interface_declarations_with_symbol(&declarations, sym_id)
-            };
+        let interface_type = if is_cross_arena_lib {
+            let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
+                self.ctx.binder,
+                sym_id,
+                &declarations,
+                self.ctx.arena,
+                &self.ctx.lib_contexts,
+                None,
+            );
+            let deduped = dedup_decl_arenas(&decls_with_arenas);
+            lowering
+                .lower_merged_interface_declarations_with_symbol(&deduped, Some(sym_id))
+                .0
+        } else {
+            lowering.lower_interface_declarations_with_symbol(&declarations, sym_id)
+        };
         // Seed a partial structural interface type before heritage merging so
         // recursive interface/namespace resolution can reuse the current shape
         // instead of re-entering the full lowering + heritage pipeline.
