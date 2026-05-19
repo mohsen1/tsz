@@ -3,7 +3,7 @@
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::common::CallResult;
 use crate::state::CheckerState;
-use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 /// Decorator-type sentinels that short-circuit signature validation. `ERROR`
@@ -50,17 +50,12 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let this_type = if self.decorator_callee_has_explicit_this(resolved) {
-            self.decorator_node_receiver_type(decorator_node)
-        } else {
-            None
-        };
         let (result, _, _) = self.resolve_call_with_checker_adapter(
             resolved,
             &[first_arg, TypeId::ANY],
             false,
             None,
-            this_type,
+            None,
         );
 
         if !matches!(result, CallResult::Success(_)) {
@@ -230,13 +225,8 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or_else(|| vec![TypeId::ANY, TypeId::OBJECT])
         };
 
-        let this_type = if self.decorator_callee_has_explicit_this(resolved) {
-            self.decorator_expression_receiver_type(decorator_expr)
-        } else {
-            None
-        };
         let (result, _, _) =
-            self.resolve_call_with_checker_adapter(resolved, &arg_types, false, None, this_type);
+            self.resolve_call_with_checker_adapter(resolved, &arg_types, false, None, None);
 
         let return_type = match result {
             CallResult::Success(return_type) => Some(return_type),
@@ -614,13 +604,8 @@ impl<'a> CheckerState<'a> {
         } else {
             &[TypeId::ANY, TypeId::STRING]
         };
-        let this_type = if self.decorator_callee_has_explicit_this(resolved) {
-            self.decorator_node_receiver_type(decorator_node)
-        } else {
-            None
-        };
         let (result, _, _) =
-            self.resolve_call_with_checker_adapter(resolved, arg_types, false, None, this_type);
+            self.resolve_call_with_checker_adapter(resolved, arg_types, false, None, None);
 
         let return_type = match result {
             CallResult::Success(return_type) => Some(return_type),
@@ -742,17 +727,12 @@ impl<'a> CheckerState<'a> {
             TypeId::STRING
         };
 
-        let this_type = if self.decorator_callee_has_explicit_this(resolved) {
-            self.decorator_node_receiver_type(decorator_node)
-        } else {
-            None
-        };
         let (result, _, _) = self.resolve_call_with_checker_adapter(
             resolved,
             &[TypeId::ANY, key_arg, TypeId::NUMBER],
             false,
             None,
-            this_type,
+            None,
         );
 
         if !matches!(result, CallResult::Success(_)) {
@@ -771,79 +751,5 @@ impl<'a> CheckerState<'a> {
             return ident.escaped_text.to_string();
         }
         "decorator".to_string()
-    }
-
-    /// Receiver `this`-type for a decorator expression, used when validating
-    /// the decorator's call signature.
-    ///
-    /// tsc's `resolveDecorator` resolves the decorator as if it were called
-    /// with the synthetic argument list and the receiver of the decorator
-    /// expression bound to `this`. When the expression is
-    /// `<receiver>.<name>` or `<receiver>[<arg>]` (modulo parentheses), the
-    /// receiver's type is the implicit `this` of the call. Decorator
-    /// signatures whose method declarations include an explicit
-    /// `this: T` parameter type-check against that receiver — without this
-    /// binding, the call resolution wrongly rejects every `@<recv>.<method>`
-    /// decorator whose declaration carries an explicit `this` constraint
-    /// (TS1241 + TS1270).
-    ///
-    /// Returns `None` when the decorator expression is not a property /
-    /// element access (e.g. a bare identifier, call expression, or arrow
-    /// function literal) — in those shapes there is no syntactic receiver,
-    /// and the existing no-`this`-binding behavior is correct.
-    pub(crate) fn decorator_expression_receiver_type(
-        &mut self,
-        decorator_expr: NodeIndex,
-    ) -> Option<TypeId> {
-        let unwrapped = self.ctx.arena.skip_parenthesized(decorator_expr);
-        let node = self.ctx.arena.get(unwrapped)?;
-        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            return None;
-        }
-        let access = self.ctx.arena.get_access_expr(node)?;
-        let receiver_type = self.compute_type_of_node(access.expression);
-        // Skip permissive / unresolved receivers — they over-permit the call
-        // signature check (and may mask genuine TS1241 cascades elsewhere).
-        if decorator_type_is_unchecked(receiver_type) {
-            return None;
-        }
-        Some(receiver_type)
-    }
-
-    /// [`Self::decorator_expression_receiver_type`] addressed by the
-    /// decorator `Modifier` node instead of its expression.
-    fn decorator_node_receiver_type(&mut self, decorator_node: NodeIndex) -> Option<TypeId> {
-        let expr = self.ctx.arena.get_decorator_at(decorator_node)?.expression;
-        self.decorator_expression_receiver_type(expr)
-    }
-
-    /// `true` when the resolved decorator callee carries an explicit
-    /// `this: T` parameter on any call signature.
-    ///
-    /// Used to gate the receiver-binding helpers so that
-    /// `decorator_node_receiver_type` / `decorator_expression_receiver_type`
-    /// only contribute an `actual_this_type` when the call-resolution path
-    /// would otherwise reject the receiver mismatch. Decorators without an
-    /// explicit `this:` constraint continue to use the prior
-    /// no-`this`-binding behavior — preserving conformance and project-corpus
-    /// rows that previously type-checked without receiver propagation.
-    fn decorator_callee_has_explicit_this(&self, decorator_type: TypeId) -> bool {
-        let db = self.ctx.types;
-        if let Some(shape) = crate::query_boundaries::class_type::function_shape(db, decorator_type)
-            && shape.this_type.is_some()
-        {
-            return true;
-        }
-        if let Some(callable) =
-            crate::query_boundaries::class_type::callable_shape_for_type(db, decorator_type)
-        {
-            return callable
-                .call_signatures
-                .iter()
-                .any(|sig| sig.this_type.is_some());
-        }
-        false
     }
 }
