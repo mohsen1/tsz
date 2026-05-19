@@ -6,91 +6,13 @@ use crate::query_boundaries::flow_analysis::{
 };
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use rustc_hash::FxHashMap;
-use tsz_binder::{FlowNodeId, SymbolId, flow_flags, symbol_flags};
+use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_parser::parser::node::BinaryExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{GuardSense, NarrowingContext, TypeGuard, TypeId, TypeofKind};
 
 impl<'a> FlowAnalyzer<'a> {
-    fn antecedent_chain_excludes_null_for_target(
-        &self,
-        flow_id: FlowNodeId,
-        target: NodeIndex,
-        memo: &mut FxHashMap<FlowNodeId, bool>,
-    ) -> bool {
-        if flow_id.is_none() {
-            return false;
-        }
-        if let Some(&cached) = memo.get(&flow_id) {
-            return cached;
-        }
-
-        // Sentinel false (doesn't exclude null) inserted before recursion: a back-edge
-        // returning to this node means the cycle contributes no null exclusion, which is
-        // the correct conservative answer for an "all paths" query.
-        memo.insert(flow_id, false);
-
-        let Some(flow) = self.binder.flow_nodes.get(flow_id) else {
-            return false;
-        };
-        if flow.has_any_flags(flow_flags::CONDITION)
-            && self.condition_branch_excludes_null_for_target(flow, target)
-        {
-            memo.insert(flow_id, true);
-            return true;
-        }
-
-        let mut saw_antecedent = false;
-        for &antecedent in &flow.antecedent {
-            if antecedent.is_none() {
-                continue;
-            }
-            saw_antecedent = true;
-            if !self.antecedent_chain_excludes_null_for_target(antecedent, target, memo) {
-                memo.insert(flow_id, false);
-                return false;
-            }
-        }
-        memo.insert(flow_id, saw_antecedent);
-        saw_antecedent
-    }
-
-    fn condition_branch_excludes_null_for_target(
-        &self,
-        flow: &tsz_binder::FlowNode,
-        target: NodeIndex,
-    ) -> bool {
-        let Some(node) = self.arena.get(flow.node) else {
-            return false;
-        };
-        let Some(bin) = self.arena.get_binary_expr(node) else {
-            return false;
-        };
-        let (is_equals, is_strict) = match bin.operator_token {
-            k if k == SyntaxKind::EqualsEqualsEqualsToken as u16 => (true, true),
-            k if k == SyntaxKind::ExclamationEqualsEqualsToken as u16 => (false, true),
-            k if k == SyntaxKind::EqualsEqualsToken as u16 => (true, false),
-            k if k == SyntaxKind::ExclamationEqualsToken as u16 => (false, false),
-            _ => return false,
-        };
-        let Some(nullish) = self.nullish_comparison(bin.left, bin.right, target) else {
-            return false;
-        };
-        let is_true_branch = flow.has_any_flags(flow_flags::TRUE_CONDITION);
-        let effective_truth = if is_equals {
-            is_true_branch
-        } else {
-            !is_true_branch
-        };
-
-        if is_strict {
-            nullish == TypeId::NULL && !effective_truth
-        } else {
-            !effective_truth
-        }
-    }
-
     fn union_logical_condition_branches(&self, types: Vec<TypeId>) -> TypeId {
         let mut members = Vec::with_capacity(types.len());
         let mut saw_reachable = false;
@@ -859,7 +781,6 @@ impl<'a> FlowAnalyzer<'a> {
                                 && self.antecedent_chain_excludes_null_for_target(
                                     antecedent_id,
                                     target,
-                                    &mut FxHashMap::default(),
                                 )
                             {
                                 return narrowing.narrow_excluding_type(result, TypeId::NULL);
@@ -1361,11 +1282,7 @@ impl<'a> FlowAnalyzer<'a> {
                 );
                 if effective_truth
                     && typeof_kind == TypeofKind::Object
-                    && self.antecedent_chain_excludes_null_for_target(
-                        antecedent_id,
-                        target,
-                        &mut FxHashMap::default(),
-                    )
+                    && self.antecedent_chain_excludes_null_for_target(antecedent_id, target)
                 {
                     return narrowing.narrow_excluding_type(narrowed, TypeId::NULL);
                 }
