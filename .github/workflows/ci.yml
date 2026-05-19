@@ -938,10 +938,40 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - name: Wait for shard artifact uploads to be indexed
+      - name: Wait for conformance shard artifacts to be indexed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
         run: |
-          echo "Waiting 30s for conformance shard artifact uploads to be indexed by GHA before downloading..."
-          sleep 30
+          EXPECTED=6
+          MAX_WAIT=180
+          INTERVAL=10
+          elapsed=0
+          count=0
+          echo "Polling for all ${EXPECTED} conformance-shard-* artifacts (max ${MAX_WAIT}s)..."
+          while [ "$elapsed" -lt "$MAX_WAIT" ]; do
+            count=$(curl -sf \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${REPO}/actions/runs/${RUN_ID}/artifacts?per_page=100" \
+              2>/dev/null | python3 -c "
+          import sys, json
+          data = json.load(sys.stdin)
+          c = sum(1 for a in data.get('artifacts', []) if a['name'].startswith('conformance-shard-'))
+          print(c)
+          " 2>/dev/null || echo 0)
+            echo "  ${count}/${EXPECTED} shard artifacts indexed (${elapsed}s elapsed)"
+            if [ "${count}" -ge "${EXPECTED}" ]; then
+              echo "All ${EXPECTED} shard artifacts indexed after ${elapsed}s."
+              break
+            fi
+            sleep "${INTERVAL}"
+            elapsed=$(( elapsed + INTERVAL ))
+          done
+          if [ "${count}" -lt "${EXPECTED}" ]; then
+            echo "warning: only ${count}/${EXPECTED} shard artifacts indexed after ${MAX_WAIT}s; proceeding" >&2
+          fi
       - name: Download conformance shard results
         uses: actions/download-artifact@v4
         with:
