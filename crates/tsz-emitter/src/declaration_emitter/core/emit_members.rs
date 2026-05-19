@@ -275,6 +275,21 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.get_type_via_symbol_for_func(method_idx, method_name))
                 .or_else(|| cache.node_types.get(&method_idx.0).copied());
 
+            // With type params in scope, the body-text fallback lacks outer-param context and
+            // would produce `unknown` for every type parameter.
+            let all_param_nodes: Vec<NodeIndex> = self
+                .current_class_type_params
+                .iter()
+                .flat_map(|p| p.nodes.iter().copied())
+                .chain(
+                    method
+                        .type_parameters
+                        .iter()
+                        .flat_map(|p| p.nodes.iter().copied()),
+                )
+                .collect();
+            let has_type_params = !all_param_nodes.is_empty();
+
             if let Some(method_type_id) = method_type_id {
                 if let Some(predicate_text) = self
                     .function_type_predicate_text(method_type_id, method.type_parameters.as_ref())
@@ -290,6 +305,13 @@ impl<'a> DeclarationEmitter<'a> {
                         && self.body_returns_void(method_body)
                     {
                         self.write(": void");
+                    } else if has_type_params {
+                        self.write(": ");
+                        let text = self.print_type_id_with_outer_type_param_nodes(
+                            return_type_id,
+                            &all_param_nodes,
+                        );
+                        self.write(&text);
                     } else if method_body.is_some()
                         && let Some(type_text) =
                             self.function_body_preferred_return_type_text(method_body)
@@ -306,6 +328,20 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": ");
                         self.write(&self.print_type_id(return_type_id));
                     }
+                } else if has_type_params
+                    && method_type_id != tsz_solver::types::TypeId::ANY
+                    && method_type_id != tsz_solver::types::TypeId::UNKNOWN
+                {
+                    // `get_return_type` returned None: the checker stored the inferred return
+                    // type (e.g. IndexAccess, Conditional) directly as the method's node type
+                    // rather than wrapping it in a function type.  `method_type_id` IS the
+                    // return type here.
+                    self.write(": ");
+                    let text = self.print_type_id_with_outer_type_param_nodes(
+                        method_type_id,
+                        &all_param_nodes,
+                    );
+                    self.write(&text);
                 } else if method_body.is_some() {
                     if self.body_returns_void(method_body) {
                         self.write(": void");
