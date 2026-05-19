@@ -154,7 +154,7 @@ FILE_LINE_LIMIT_CHECKS = [
         1996,
     ),
     (
-        "Solver engine boundary: generic call resolver must stay under 3400 LOC (#8209)",
+        "Solver engine boundary: generic call resolver must stay at current 3381 LOC baseline (#8209)",
         ROOT
         / "crates"
         / "tsz-solver"
@@ -162,7 +162,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "operations"
         / "generic_call"
         / "resolve.rs",
-        3400,
+        3381,
     ),
 ]
 
