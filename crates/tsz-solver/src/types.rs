@@ -1043,7 +1043,7 @@ impl PropertyInfo {
     }
 
     /// Returns true when getter and setter have distinct types (TypeScript 4.3+
-    /// split accessor). A non-NONE write_type that differs from the read type
+    /// split accessor). A non-NONE `write_type` that differs from the read type
     /// is the canonical encoding: `write_type == NONE` means readonly (lowering
     /// pass), and `write_type == type_id` means a uniform read/write property.
     pub fn has_split_accessor(&self) -> bool {
