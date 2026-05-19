@@ -1,16 +1,15 @@
 //! Checker Context
 //!
 //! Holds the shared state used throughout the type checking process.
-//! This separates state from logic, allowing specialized checkers (expressions, statements)
-//! to borrow the context mutably.
+//! This separates state from logic so specialized checkers can borrow the context mutably.
 mod aliases;
 mod caches;
 mod compiler_options;
 mod cross_file_delegation_cache;
 mod cross_file_type_params_cache;
 pub use caches::{
-    EnvEvalCache, NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache,
-    TypeReferenceValidationCaches,
+    EnvEvalCache, NarrowableIdentifierCache, NodeTypeCache, SymbolNameCandidatesCache,
+    SymbolTypeCache, TypeReferenceValidationCaches,
 };
 pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;
@@ -390,9 +389,8 @@ pub struct CheckerContext<'a> {
     /// different members from the same nested namespace.
     pub nested_namespace_candidates_cache: RefCell<NestedNamespaceCandidatesCache>,
 
-    /// Per-checker cache for same-name symbol candidates across the current binder
-    /// and all cross-file binders.
-    pub symbol_name_candidates_cache: RefCell<FxHashMap<String, Vec<SymbolId>>>,
+    /// Per-checker caches for name lookups tied to the active binder/arena.
+    pub symbol_name_candidates_cache: RefCell<SymbolNameCandidatesCache>,
 
     /// True once `nested_namespace_candidates_cache` has been populated for every
     /// nested namespace export name visible across all binders.
