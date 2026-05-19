@@ -245,6 +245,64 @@ function cleanCandidateManifest({
   };
 }
 
+function passingClassification(generatedAssertions = 1) {
+  return {
+    fixture: "type-challenges-assertion-classification",
+    candidateManifest: candidateManifest(generatedAssertions),
+    compilers: {
+      tsc: {
+        status: "pass",
+        exitCode: 0,
+        diagnostics: { firstErrors: [], byCode: [] },
+        candidateDiagnostics: {
+          totalCandidates: generatedAssertions,
+          candidatesWithDiagnostics: 0,
+          candidatesWithoutDiagnostics: generatedAssertions,
+          filesWithDiagnostics: [],
+          filesWithoutDiagnostics: Array.from(
+            { length: generatedAssertions },
+            (_, index) => `assertions/${index + 1}.ts`,
+          ),
+        },
+      },
+      tsz: {
+        status: "pass",
+        exitCode: 0,
+        candidateDiagnostics: {
+          totalCandidates: generatedAssertions,
+          candidatesWithDiagnostics: 0,
+          candidatesWithoutDiagnostics: generatedAssertions,
+          filesWithDiagnostics: [],
+          filesWithoutDiagnostics: Array.from(
+            { length: generatedAssertions },
+            (_, index) => `assertions/${index + 1}.ts`,
+          ),
+        },
+      },
+    },
+    comparison: {
+      status: "both-pass",
+      diagnosticFreeCandidateDelta: 0,
+      candidateFileComparison: {
+        totalCandidates: generatedAssertions,
+        counts: {
+          bothAccepted: generatedAssertions,
+          bothRejected: 0,
+          tscAcceptedTszRejected: 0,
+          tscRejectedTszAccepted: 0,
+        },
+        bothAccepted: Array.from(
+          { length: generatedAssertions },
+          (_, index) => `assertions/${index + 1}.ts`,
+        ),
+        bothRejected: [],
+        tscAcceptedTszRejected: [],
+        tscRejectedTszAccepted: [],
+      },
+    },
+  };
+}
+
 function runCompatibility({ dir, classification, cleanSubsetManifest = null, cleanSubsetClassification = null }) {
   const candidateDir = path.join(dir, "type-challenges-assertions");
   const classificationPath = path.join(candidateDir, "classification.json");
@@ -292,13 +350,14 @@ function runCompatibilityRaw({
   classification,
   cleanSubsetManifest = null,
   cleanSubsetClassification = null,
+  outFilePath = null,
 }) {
   const candidateDir = path.join(dir, "type-challenges-assertions");
   const classificationPath = path.join(candidateDir, "classification.json");
   const cleanSubsetDir = path.join(dir, "type-challenges-assertions-tsc-clean");
   const cleanSubsetManifestPath = path.join(cleanSubsetDir, "manifest.json");
   const cleanSubsetClassificationPath = path.join(cleanSubsetDir, "classification.json");
-  const outFile = path.join(dir, "project-compatibility.jsonl");
+  const outFile = outFilePath || path.join(dir, "project-compatibility.jsonl");
   writeJson(classificationPath, withComparisonCompilerStatuses(classification));
   if (cleanSubsetManifest) {
     writeJson(cleanSubsetManifestPath, cleanSubsetManifest);
@@ -656,6 +715,64 @@ withTempDir((dir) => {
   assert.equal(row.diagnostic_status, "none");
   assert.equal(row.first_failure_class, null);
   assert.deepEqual(row.known_blockers, []);
+});
+
+withTempDir((dir) => {
+  const outsideOutput = path.join(
+    path.dirname(dir),
+    `${path.basename(dir)}-outside.jsonl`,
+  );
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: passingClassification(),
+    outFilePath: outsideOutput,
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /assertion compatibility output must stay inside the fixture root/,
+  );
+  assert.equal(outFile, outsideOutput);
+  assert.equal(fs.existsSync(outFile), false);
+});
+
+withTempDir((dir) => {
+  const classificationPath = path.join(
+    dir,
+    "type-challenges-assertions",
+    "classification.json",
+  );
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: passingClassification(),
+    outFilePath: classificationPath,
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /assertion compatibility output must not overwrite an input artifact/,
+  );
+  assert.equal(outFile, classificationPath);
+  JSON.parse(fs.readFileSync(classificationPath, "utf8"));
+});
+
+withTempDir((dir) => {
+  const directoryOutput = path.join(dir, "project-compatibility-output");
+  fs.mkdirSync(directoryOutput);
+  const { result, outFile } = runCompatibilityRaw({
+    dir,
+    classification: passingClassification(),
+    outFilePath: directoryOutput,
+  });
+
+  assert.equal(result.status, 1);
+  assert.match(
+    result.stderr,
+    /assertion compatibility output path is not a file/,
+  );
+  assert.equal(outFile, directoryOutput);
 });
 
 withTempDir((dir) => {
