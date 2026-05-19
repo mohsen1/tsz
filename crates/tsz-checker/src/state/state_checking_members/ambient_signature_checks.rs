@@ -1918,7 +1918,6 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
                 diagnostic_codes::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
             );
-            return;
         }
     }
 
@@ -1985,7 +1984,6 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
                 diagnostic_codes::A_GET_ACCESSOR_MUST_BE_AT_LEAST_AS_ACCESSIBLE_AS_THE_SETTER,
             );
-            return;
         }
     }
 
