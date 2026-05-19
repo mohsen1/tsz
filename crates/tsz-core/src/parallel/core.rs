@@ -363,11 +363,6 @@ fn resolve_default_lib_files(_target: ScriptTarget) -> anyhow::Result<Vec<PathBu
 #[cfg(not(target_arch = "wasm32"))]
 static RAYON_POOL_INIT: Once = Once::new();
 
-#[cfg(not(target_arch = "wasm32"))]
-const SMALL_WORKLOAD_RAYON_MAX_ITEMS: usize = 32;
-#[cfg(not(target_arch = "wasm32"))]
-const SMALL_WORKLOAD_RAYON_THREADS: usize = 4;
-
 /// Ensure Rayon global pool is configured once with stack size suitable for checker recursion.
 ///
 /// We initialize lazily to avoid paying global pool startup cost for single-file sequential paths.
@@ -379,59 +374,16 @@ const SMALL_WORKLOAD_RAYON_THREADS: usize = 4;
 /// instantiate -> evaluate` cycle still consumes real stack frames.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn ensure_rayon_global_pool() {
-    ensure_rayon_global_pool_with_threads(None);
-}
-
-/// Ensure the Rayon global pool is initialized for a known source workload.
-///
-/// Tiny generated app projects have enough independent parse/bind work to benefit from
-/// Rayon, but on high-core machines a full-width pool spends disproportionate time in
-/// worker startup and scheduler/system overhead. Cap only this small-workload regime;
-/// larger projects keep Rayon's default width.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn ensure_rayon_global_pool_for_work_items(work_item_count: usize) {
-    let worker_count = rayon_worker_count_for_work_items(
-        work_item_count,
-        std::thread::available_parallelism()
-            .map(std::num::NonZeroUsize::get)
-            .unwrap_or(1),
-        std::env::var_os("RAYON_NUM_THREADS").is_some(),
-    );
-    ensure_rayon_global_pool_with_threads(worker_count);
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn ensure_rayon_global_pool_with_threads(worker_count: Option<usize>) {
     RAYON_POOL_INIT.call_once(|| {
         // If the pool was already initialized through another rayon call, keep going.
-        let mut builder =
+        let builder =
             rayon::ThreadPoolBuilder::new().stack_size(tsz_common::limits::THREAD_STACK_SIZE_BYTES);
-        if let Some(worker_count) = worker_count {
-            builder = builder.num_threads(worker_count);
-        }
         let _ = builder.build_global();
     });
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn rayon_worker_count_for_work_items(
-    work_item_count: usize,
-    available_parallelism: usize,
-    env_override_set: bool,
-) -> Option<usize> {
-    if env_override_set || work_item_count == 0 || work_item_count > SMALL_WORKLOAD_RAYON_MAX_ITEMS
-    {
-        return None;
-    }
-
-    Some(available_parallelism.clamp(1, SMALL_WORKLOAD_RAYON_THREADS))
-}
-
 #[cfg(target_arch = "wasm32")]
 pub fn ensure_rayon_global_pool() {}
-
-#[cfg(target_arch = "wasm32")]
-pub fn ensure_rayon_global_pool_for_work_items(_work_item_count: usize) {}
 
 /// Conditionally use parallel or sequential iteration based on target.
 /// For WASM, Rayon parallelism creates oversubscription when combined with

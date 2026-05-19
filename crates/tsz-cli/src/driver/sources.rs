@@ -609,7 +609,7 @@ pub(super) fn read_source_files(
     changed_paths: Option<&FxHashSet<PathBuf>>,
 ) -> Result<SourceReadResult> {
     #[cfg(not(target_arch = "wasm32"))]
-    tsz::parallel::ensure_rayon_global_pool_for_work_items(paths.len());
+    tsz::parallel::ensure_rayon_global_pool();
 
     let mut sources: FxHashMap<PathBuf, (Option<String>, bool, bool)> = FxHashMap::default(); // (text, is_binary, suppress_parser_diagnostics)
     let mut dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>> = FxHashMap::default();
