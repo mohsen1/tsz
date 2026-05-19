@@ -5,6 +5,7 @@
 
 use std::sync::Arc;
 
+use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::node::NodeAccess;
 
@@ -99,6 +100,9 @@ impl<'a> CheckerContext<'a> {
         }
 
         if self.current_file_type_shadow_for_name(name) {
+            return true;
+        }
+        if self.same_file_type_declaration_exists(name) {
             return true;
         }
 
@@ -216,11 +220,48 @@ impl<'a> CheckerContext<'a> {
             return false;
         }
 
-        self.arena.nodes.iter().enumerate().any(|(idx, _)| {
-            let decl_idx = tsz_parser::NodeIndex(idx as u32);
-            !self.is_global_augmentation_declaration(name, self.arena, decl_idx)
-                && self.type_declaration_name_matches(self.arena, decl_idx, name)
-        })
+        if let Some(cached_names) = self
+            .symbol_name_candidates_cache
+            .borrow()
+            .same_file_type_declaration_names
+            .as_ref()
+        {
+            return cached_names.contains(name);
+        }
+
+        let names: FxHashSet<String> = self
+            .arena
+            .nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, _)| {
+                let decl_idx = tsz_parser::NodeIndex(idx as u32);
+                let decl_name = self.type_declaration_name_text(self.arena, decl_idx)?;
+                (!self.is_global_augmentation_declaration(decl_name, self.arena, decl_idx))
+                    .then(|| decl_name.to_string())
+            })
+            .collect();
+        let exists = names.contains(name);
+
+        self.symbol_name_candidates_cache
+            .borrow_mut()
+            .same_file_type_declaration_names = Some(names);
+        exists
+    }
+
+    fn type_declaration_name_text<'arena>(
+        &self,
+        arena: &'arena tsz_parser::parser::NodeArena,
+        decl_idx: tsz_parser::parser::NodeIndex,
+    ) -> Option<&'arena str> {
+        let node = arena.get(decl_idx)?;
+        let name_node = arena
+            .get_interface(node)
+            .map(|decl| decl.name)
+            .or_else(|| arena.get_type_alias(node).map(|decl| decl.name))
+            .or_else(|| arena.get_class(node).map(|decl| decl.name))
+            .or_else(|| arena.get_enum(node).map(|decl| decl.name))?;
+        arena.get_identifier_text(name_node)
     }
 
     fn type_declaration_name_matches(
@@ -229,16 +270,7 @@ impl<'a> CheckerContext<'a> {
         decl_idx: tsz_parser::parser::NodeIndex,
         name: &str,
     ) -> bool {
-        let Some(node) = arena.get(decl_idx) else {
-            return false;
-        };
-        let name_node = arena
-            .get_interface(node)
-            .map(|decl| decl.name)
-            .or_else(|| arena.get_type_alias(node).map(|decl| decl.name))
-            .or_else(|| arena.get_class(node).map(|decl| decl.name))
-            .or_else(|| arena.get_enum(node).map(|decl| decl.name));
-        name_node.is_some_and(|name_node| arena.get_identifier_text(name_node) == Some(name))
+        self.type_declaration_name_text(arena, decl_idx) == Some(name)
     }
 
     /// Check if the Promise constructor VALUE is available.
@@ -418,5 +450,104 @@ impl<'a> CheckerContext<'a> {
         }
 
         self.get_file_idx_for_arena(symbol_arena.as_ref()).is_none()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{CheckerOptions, LibContext, SymbolNameCandidatesCache};
+    use crate::query_boundaries::type_construction::TypeInterner;
+    use crate::state::CheckerState;
+    use crate::test_utils::load_lib_files;
+    use rustc_hash::FxHashSet;
+    use std::sync::Arc;
+    use tsz_binder::BinderState;
+    use tsz_parser::parser::ParserState;
+
+    #[test]
+    fn same_file_type_declaration_cache_tracks_module_type_declarations() {
+        let source = r#"
+export {};
+interface Array { localArray: string; }
+type RegExp = { localRegExp: string };
+class Boolean {}
+enum Number { One }
+declare global {
+    interface Date { globalOnly: string; }
+}
+"#;
+        let lib_files = load_lib_files(&["es5.d.ts"]);
+        let mut parser = ParserState::new("fixture.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+        let arena = Arc::new(parser.get_arena().clone());
+        let binder = Arc::new(binder);
+        let types = TypeInterner::new();
+        let mut checker = CheckerState::new(
+            arena.as_ref(),
+            binder.as_ref(),
+            &types,
+            "fixture.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+        checker.ctx.set_actual_lib_file_count(lib_files.len());
+
+        for name in ["Array", "RegExp", "Boolean", "Number"] {
+            assert!(
+                checker.ctx.same_file_type_declaration_exists(name),
+                "{name} should be collected from the module's type declarations"
+            );
+            assert!(
+                checker.ctx.file_local_type_shadow_for_lib_name(name),
+                "{name} should shadow the same-named lib type in this module"
+            );
+        }
+        assert!(
+            !checker.ctx.same_file_type_declaration_exists("Date"),
+            "declare global interface Date is an augmentation, not a module-local shadow"
+        );
+        assert!(
+            !checker.ctx.same_file_type_declaration_exists("Missing"),
+            "unmentioned names should miss the cached declaration set"
+        );
+
+        let cache = checker.ctx.symbol_name_candidates_cache.borrow();
+        let names = cache
+            .same_file_type_declaration_names
+            .as_ref()
+            .expect("same-file declaration names should be cached after the first lookup");
+        for name in ["Array", "RegExp", "Boolean", "Number"] {
+            assert!(names.contains(name), "cache should contain {name}");
+        }
+        assert!(
+            !names.contains("Date"),
+            "global augmentation declarations should stay out of the shadow cache"
+        );
+    }
+
+    #[test]
+    fn symbol_name_candidates_cache_clear_resets_all_name_indexes() {
+        let mut cache = SymbolNameCandidatesCache::default();
+        cache
+            .candidates
+            .insert("Foo".to_string(), vec![SymbolId(1)]);
+        let mut type_names = FxHashSet::default();
+        type_names.insert("Array".to_string());
+        cache.same_file_type_declaration_names = Some(type_names);
+
+        cache.clear();
+
+        assert!(cache.candidates.is_empty());
+        assert!(cache.same_file_type_declaration_names.is_none());
     }
 }

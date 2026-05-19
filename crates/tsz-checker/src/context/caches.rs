@@ -82,6 +82,20 @@ impl EnvEvalCache {
     }
 }
 
+/// File-local name lookup caches used by cross-file/module resolution.
+#[derive(Debug, Default)]
+pub struct SymbolNameCandidatesCache {
+    pub candidates: FxHashMap<String, Vec<SymbolId>>,
+    pub same_file_type_declaration_names: Option<FxHashSet<String>>,
+}
+
+impl SymbolNameCandidatesCache {
+    pub fn clear(&mut self) {
+        self.candidates.clear();
+        self.same_file_type_declaration_names = None;
+    }
+}
+
 /// Checker-local memos for type-reference argument validation.
 #[derive(Debug, Default)]
 pub struct TypeReferenceValidationCaches {
