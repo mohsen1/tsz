@@ -1,6 +1,6 @@
 //! Direct cross-file query fast paths that avoid constructing child checkers.
 
-use super::source_alias_attribution::record_source_file_type_alias_body_rejection_kind;
+use super::source_alias_attribution::record_source_alias_rejection_kinds;
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
@@ -24,7 +24,6 @@ struct DirectActualLibAliasBodyProof {
     def_id: DefId,
     outcome: DirectActualLibAliasBodyOutcome,
 }
-
 // Track 7 transitional allowlist; prefer stable lib identity over additions.
 const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS: &[&str] = &[
     "Capitalize",
@@ -1675,8 +1674,9 @@ impl<'a> CheckerState<'a> {
                 &type_param_names,
             )
         };
+        let record_rejection = record_source_alias_rejection_kinds;
         if !body_is_direct_lowerable {
-            record_source_file_type_alias_body_rejection_kind(symbol_arena, type_alias.type_node);
+            record_rejection(symbol_arena, delegate_binder, type_alias, &type_param_names);
             record(DirectSourceFileTypeAliasLoweringOutcome::BodyNotDirectLowerable);
             return None;
         }
