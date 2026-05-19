@@ -808,7 +808,9 @@ fn parse_diagnostic_fingerprints_from_text(
                 );
                 let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
                 let message = normalize_message_paths(raw_message, project_root);
-                let Some(retained_code) = retained_diagnostic_code_from_line(line) else {
+                let Some(retained_code) =
+                    retained_diagnostic_code_from_line(line, DiagnosticLineMode::Fingerprint)
+                else {
                     continue;
                 };
                 let (code, line_no, col_no, message) =
@@ -835,7 +837,9 @@ fn parse_diagnostic_fingerprints_from_text(
             {
                 let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
                 let message = normalize_message_paths(raw_message, project_root);
-                let Some(retained_code) = retained_diagnostic_code_from_line(line) else {
+                let Some(retained_code) =
+                    retained_diagnostic_code_from_line(line, DiagnosticLineMode::Fingerprint)
+                else {
                     continue;
                 };
                 let (code, line_no, col_no, message) =
@@ -1468,11 +1472,19 @@ fn parse_error_codes_from_text(text: &str) -> Vec<u32> {
                 .next()
                 .is_some_and(|ch| ch.is_ascii_whitespace())
         })
-        .filter_map(|raw_line| retained_diagnostic_code_from_line(raw_line.trim_end()))
+        .filter_map(|raw_line| {
+            retained_diagnostic_code_from_line(raw_line.trim_end(), DiagnosticLineMode::CodeList)
+        })
         .collect()
 }
 
-fn retained_diagnostic_code_from_line(line: &str) -> Option<u32> {
+#[derive(Clone, Copy)]
+enum DiagnosticLineMode {
+    CodeList,
+    Fingerprint,
+}
+
+fn retained_diagnostic_code_from_line(line: &str, mode: DiagnosticLineMode) -> Option<u32> {
     use once_cell::sync::Lazy;
     use regex::Regex;
 
@@ -1484,6 +1496,9 @@ fn retained_diagnostic_code_from_line(line: &str) -> Option<u32> {
     });
 
     let caps = DIAG_CODE_RE.captures(line)?;
+    if caps.name("code3").is_some() && matches!(mode, DiagnosticLineMode::CodeList) {
+        return None;
+    }
     let code = caps
         .name("code")
         .or_else(|| caps.name("code2"))

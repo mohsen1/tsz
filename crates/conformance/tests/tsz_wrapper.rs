@@ -1194,6 +1194,15 @@ fn test_parse_error_codes_ignores_indented_related_diagnostics() {
 }
 
 #[test]
+fn test_parse_error_codes_ignores_bare_no_pos_diagnostics() {
+    let output = "error TS2468: Cannot find global value 'Promise'.\n\
+: error TS5057: Cannot find a tsconfig.json file at the specified directory: ''.\n\
+test.ts(1,1): error TS2304: Cannot find name 'missing'.";
+
+    assert_eq!(parse_error_codes_from_text(output), vec![5057, 2304]);
+}
+
+#[test]
 fn test_parse_batch_output_does_not_synthesize_ts5110() {
     let output = "test.ts(1,1): error TS2304: Cannot find name 'missing'.";
     let options = HashMap::from([
@@ -1340,7 +1349,10 @@ fn test_parse_batch_output_retains_bare_no_pos_diagnostics() {
 
     let result = parse_batch_output(output, root, HashMap::new());
 
-    assert_eq!(result.error_codes, vec![2468]);
+    assert!(
+        result.error_codes.is_empty(),
+        "bare program-level diagnostics are compared as fingerprints, not code-list entries",
+    );
     assert_eq!(result.diagnostic_fingerprints.len(), 1);
     let fp = &result.diagnostic_fingerprints[0];
     assert_eq!(fp.code, 2468);
