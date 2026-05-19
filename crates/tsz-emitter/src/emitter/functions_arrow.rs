@@ -1459,7 +1459,7 @@ impl<'a> Printer<'a> {
         self.write("})");
     }
 
-    fn begin_async_arrow_generator_hoists(&self) -> AsyncArrowGeneratorHoistStart {
+    const fn begin_async_arrow_generator_hoists(&self) -> AsyncArrowGeneratorHoistStart {
         AsyncArrowGeneratorHoistStart {
             anchor: self.capture_hoist_anchor(),
             assignment_start: self.hoisted_assignment_temps.len(),

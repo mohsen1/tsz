@@ -20,7 +20,7 @@ pub(in crate::emitter) struct HoistAnchor {
 }
 
 impl<'a> Printer<'a> {
-    pub(in crate::emitter) fn capture_hoist_anchor(&self) -> HoistAnchor {
+    pub(in crate::emitter) const fn capture_hoist_anchor(&self) -> HoistAnchor {
         HoistAnchor {
             byte_offset: self.writer.len(),
             line_no: self.writer.current_line(),
