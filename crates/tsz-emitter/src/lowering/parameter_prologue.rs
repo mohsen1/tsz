@@ -83,107 +83,11 @@ impl<'a> LoweringPass<'a> {
             return self.class_expression_parameter_needs_function_temp(class);
         }
 
-        if let Some(computed) = self.arena.get_computed_property(node) {
-            return self.parameter_expression_generates_function_temp(computed.expression);
-        }
-
-        if let Some(paren) = self.arena.get_parenthesized(node) {
-            return self.parameter_expression_generates_function_temp(paren.expression);
-        }
-
-        if let Some(assertion) = self.arena.get_type_assertion(node) {
-            return self.parameter_expression_generates_function_temp(assertion.expression);
-        }
-
-        if let Some(binary) = self.arena.get_binary_expr(node) {
-            if self.ctx.needs_es2020_lowering
-                && binary.operator_token == SyntaxKind::QuestionQuestionToken as u16
-                && !self.parameter_expression_is_simple_copiable(binary.left)
-            {
-                return true;
-            }
-            return self.parameter_expression_generates_function_temp(binary.left)
-                || self.parameter_expression_generates_function_temp(binary.right);
-        }
-
-        if let Some(access) = self.arena.get_access_expr(node) {
-            if self.ctx.needs_es2020_lowering
-                && access.question_dot_token
-                && !self.parameter_expression_is_simple_copiable(access.expression)
-            {
-                return true;
-            }
-            return self.parameter_expression_generates_function_temp(access.expression)
-                || self.parameter_expression_generates_function_temp(access.name_or_argument);
-        }
-
-        if let Some(call) = self.arena.get_call_expr(node) {
-            if self.ctx.needs_es2020_lowering
-                && node.is_optional_chain()
-                && !self.optional_chain_call_uses_simple_receiver(call.expression)
-                && !self.parameter_expression_is_simple_copiable(call.expression)
-            {
-                return true;
-            }
-            if self.parameter_expression_generates_function_temp(call.expression) {
-                return true;
-            }
-            return call.arguments.as_ref().is_some_and(|args| {
-                args.nodes
-                    .iter()
-                    .copied()
-                    .any(|arg| self.parameter_expression_generates_function_temp(arg))
-            });
-        }
-
-        if let Some(cond) = self.arena.get_conditional_expr(node) {
-            return self.parameter_expression_generates_function_temp(cond.condition)
-                || self.parameter_expression_generates_function_temp(cond.when_true)
-                || self.parameter_expression_generates_function_temp(cond.when_false);
-        }
-
-        if let Some(unary) = self.arena.get_unary_expr(node) {
-            return self.parameter_expression_generates_function_temp(unary.operand);
-        }
-
-        if let Some(unary) = self.arena.get_unary_expr_ex(node) {
-            return self.parameter_expression_generates_function_temp(unary.expression);
-        }
-
-        if let Some(literal) = self.arena.get_literal_expr(node) {
-            return literal
-                .elements
-                .nodes
-                .iter()
-                .copied()
-                .any(|element| self.parameter_expression_generates_function_temp(element));
-        }
-
-        false
-    }
-
-    fn parameter_expression_is_simple_copiable(&self, idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-
-        node.is_identifier()
-            || (node.kind >= SyntaxKind::BreakKeyword as u16
-                && node.kind <= SyntaxKind::DeferKeyword as u16)
-            || node.is_numeric_literal()
-            || node.is_string_literal()
-            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-    }
-
-    fn optional_chain_call_uses_simple_receiver(&self, callee: NodeIndex) -> bool {
-        let Some(callee_node) = self.arena.get(callee) else {
-            return false;
-        };
-        let Some(access) = self.arena.get_access_expr(callee_node) else {
-            return false;
-        };
-
-        access.question_dot_token && self.parameter_expression_is_simple_copiable(access.expression)
+        emit_utils::parameter_expression_generates_downlevel_temp(
+            self.arena,
+            self.ctx.needs_es2020_lowering,
+            idx,
+        )
     }
 
     fn function_parameters_need_downlevel_read_helper(&self, params: &NodeList) -> bool {

@@ -1,6 +1,7 @@
 //! ES5 destructuring - binding element patterns and parameter bindings.
 
 use super::super::{ParamTransformPlan, Printer};
+use crate::transforms::emit_utils;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{BindingElementData, ForInOfData, Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
@@ -1551,62 +1552,11 @@ impl<'a> Printer<'a> {
     }
 
     fn computed_key_expression_generates_downlevel_temp(&self, idx: NodeIndex) -> bool {
-        if !self.ctx.needs_es2020_lowering {
-            return false;
-        }
-
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-
-        if let Some(binary) = self.arena.get_binary_expr(node) {
-            if binary.operator_token == SyntaxKind::QuestionQuestionToken as u16
-                && !self.is_simple_nullish_expression(binary.left)
-            {
-                return true;
-            }
-            return self.computed_key_expression_generates_downlevel_temp(binary.left)
-                || self.computed_key_expression_generates_downlevel_temp(binary.right);
-        }
-
-        if let Some(access) = self.arena.get_access_expr(node) {
-            if access.question_dot_token && !self.is_simple_nullish_expression(access.expression) {
-                return true;
-            }
-            return self.computed_key_expression_generates_downlevel_temp(access.expression)
-                || self.computed_key_expression_generates_downlevel_temp(access.name_or_argument);
-        }
-
-        if let Some(call) = self.arena.get_call_expr(node) {
-            if node.is_optional_chain() && !self.is_simple_nullish_expression(call.expression) {
-                return true;
-            }
-            if self.computed_key_expression_generates_downlevel_temp(call.expression) {
-                return true;
-            }
-            return call.arguments.as_ref().is_some_and(|args| {
-                args.nodes
-                    .iter()
-                    .copied()
-                    .any(|arg| self.computed_key_expression_generates_downlevel_temp(arg))
-            });
-        }
-
-        if let Some(paren) = self.arena.get_parenthesized(node) {
-            return self.computed_key_expression_generates_downlevel_temp(paren.expression);
-        }
-
-        if let Some(assertion) = self.arena.get_type_assertion(node) {
-            return self.computed_key_expression_generates_downlevel_temp(assertion.expression);
-        }
-
-        if let Some(cond) = self.arena.get_conditional_expr(node) {
-            return self.computed_key_expression_generates_downlevel_temp(cond.condition)
-                || self.computed_key_expression_generates_downlevel_temp(cond.when_true)
-                || self.computed_key_expression_generates_downlevel_temp(cond.when_false);
-        }
-
-        false
+        emit_utils::parameter_expression_generates_downlevel_temp(
+            self.arena,
+            self.ctx.needs_es2020_lowering,
+            idx,
+        )
     }
 
     pub(in crate::emitter) fn emit_param_array_binding_element(

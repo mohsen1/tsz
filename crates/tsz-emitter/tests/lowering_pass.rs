@@ -179,6 +179,20 @@ fn test_lowering_pass_es2015_arrow_param_binding_nullish_key_uses_body_prologue(
 }
 
 #[test]
+fn test_lowering_pass_es2015_arrow_param_binding_wrapped_nullish_keys_use_body_prologue() {
+    for source in [
+        "const a = () => undefined; (({ [+(a() ?? \"d\")]: c = \"\" }) => {})();",
+        "const a = () => undefined; (({ [[a() ?? \"d\"][0]]: c = \"\" }) => {})();",
+        "const a = () => undefined; (({ [{ value: a() ?? \"d\" }.value]: c = \"\" }) => {})();",
+    ] {
+        assert_es2015_arrow_param_binding_key_uses_body_prologue(
+            source,
+            "ES2015 arrow binding parameters with wrapped downlevel computed keys should use a body prologue",
+        );
+    }
+}
+
+#[test]
 fn test_lowering_pass_es2015_arrow_param_binding_optional_chain_key_uses_body_prologue() {
     assert_es2015_arrow_param_binding_key_uses_body_prologue(
         "const a = () => undefined; (({ [a()?.d]: c = \"\" }) => {})();",
