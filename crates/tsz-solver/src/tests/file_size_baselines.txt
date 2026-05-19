@@ -14,11 +14,30 @@
 # Manual edits are also fine, but the env-var path keeps the comments below
 # in sync with the actual values.
 
-solver_max_loc        8374
-solver_oversized    19
+solver_max_loc      3381
+solver_oversized    20
+solver_file_generic_call_resolve 3381
+solver_file_eval_conditional 2977
+solver_file_evaluate 3083
+solver_file_instantiate 2853
+solver_file_subtype_core 2860
+solver_file_type_queries_flow 2815
+solver_file_diag_format_compound 2763
+solver_file_eval_infer_pattern_helpers 2552
+solver_file_narrowing_core 2474
+solver_file_relations_compat 2559
+solver_file_constraints_walker 2331
+solver_file_diag_format_mod 2312
+solver_file_eval_mapped 2344
+solver_file_subtype_generics 2125
+solver_file_call_args 2122
+solver_file_eval_index_access 2077
+solver_file_def_core 2064
+solver_file_visitor_predicates 2063
+solver_file_types 2018
 
 binder_max_loc        2890
 binder_oversized      1
 
-emitter_max_loc     5722
-emitter_oversized   32
+emitter_max_loc     5724
+emitter_oversized   33

@@ -2817,7 +2817,14 @@ impl<'a> DeclarationEmitter<'a> {
                 .unwrap_or_else(|| "any".to_string());
 
             if let Some(jsdoc) = jsdoc {
-                self.emit_multiline_jsdoc_comment(&jsdoc);
+                let stmt_pos = self.arena.get(stmt_idx).map(|stmt_node| stmt_node.pos);
+                let emitted_verbatim = stmt_pos.is_some_and(|pos| {
+                    self.emitted_leading_single_line_jsdoc_type_comment_for_pos(pos)
+                        && self.emit_jsdoc_comment_verbatim_for_pos(pos, &jsdoc)
+                });
+                if !emitted_verbatim {
+                    self.emit_multiline_jsdoc_comment(&jsdoc);
+                }
             }
             self.write_indent();
             self.emit_node(name_idx);

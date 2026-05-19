@@ -2,12 +2,12 @@ use crate::output::source_writer::SourceWriter;
 use crate::type_cache_view::TypeCacheView;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
-use tracing::debug;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeInterner;
 
 use super::{DeclarationEmitter, ImportPlan, SourceMapState};
@@ -118,6 +118,7 @@ impl<'a> DeclarationEmitter<'a> {
             strict_null_checks: false,
             isolated_declarations: false,
             all_enum_values: FxHashMap::default(),
+            local_namespace_alias_targets: FxHashMap::default(),
         }
     }
 
@@ -231,6 +232,7 @@ impl<'a> DeclarationEmitter<'a> {
             strict_null_checks: false,
             isolated_declarations: false,
             all_enum_values: FxHashMap::default(),
+            local_namespace_alias_targets: FxHashMap::default(),
         }
     }
 
@@ -386,7 +388,21 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // Walk all statements to find import declarations
-        for &stmt_idx in &source_file.statements.nodes {
+        let stmts = source_file.statements.nodes.to_vec();
+        self.collect_import_metadata_from_statements(binder, &stmts);
+    }
+
+    /// Recursively collect import metadata from a list of statements.
+    ///
+    /// Handles `ImportDeclaration`, `ImportEqualsDeclaration` (both require-style
+    /// and local-namespace-alias style), and `ModuleDeclaration`/`NamespaceDeclaration`
+    /// bodies (to collect inner import-equals aliases like `import x = Ns.Member`).
+    fn collect_import_metadata_from_statements(
+        &mut self,
+        binder: &BinderState,
+        stmts: &[NodeIndex],
+    ) {
+        for &stmt_idx in stmts {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
@@ -409,47 +425,97 @@ impl<'a> DeclarationEmitter<'a> {
 
                 // Walk import clause to extract imported symbols
                 if import.import_clause.is_some() {
-                    // Collect symbols to insert after binder is dropped
                     let symbols = self.collect_imported_symbols_from_clause(
                         self.arena,
                         binder,
                         import.import_clause,
                     );
                     for (name, sym_id) in symbols {
-                        debug!(
-                            "[DEBUG] prepare_import_metadata: inserting {} -> SymbolId({:?}) -> '{}'",
-                            name, sym_id, module_specifier
-                        );
-                        self.import_name_map.insert(name.clone(), sym_id);
+                        self.import_name_map.insert(name, sym_id);
                         self.import_symbol_map
                             .insert(sym_id, module_specifier.clone());
                     }
                 }
-            }
-            // Handle import equals declarations (import x = require('y'))
-            else if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            } else if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
                 let Some(import_eq) = self.arena.get_import_decl(stmt_node) else {
                     continue;
                 };
 
-                // Extract module specifier
-                let module_specifier =
-                    if let Some(spec) = self.arena.get(import_eq.module_specifier) {
-                        match self.arena.get_literal(spec) {
-                            Some(lit) => lit.text.clone(),
-                            None => continue,
-                        }
-                    } else {
-                        continue;
+                let spec_node_opt = self.arena.get(import_eq.module_specifier);
+                if spec_node_opt.is_some_and(|n| n.kind == SyntaxKind::StringLiteral as u16) {
+                    let module_specifier = match spec_node_opt
+                        .and_then(|n| self.arena.get_literal(n))
+                        .map(|lit| lit.text.clone())
+                    {
+                        Some(s) => s,
+                        None => continue,
                     };
-
-                // Get the imported symbol from the import clause name
-                // For ImportEqualsDeclaration, import_clause points directly to Identifier node
-                if import_eq.import_clause.is_some() {
-                    // For ImportEquals, the 'import_clause' field points directly to the Identifier node.
-                    // We just need its SymbolId from the binder using the NodeIndex's raw u32 (.0).
                     if let Some(&sym_id) = binder.node_symbols.get(&import_eq.import_clause.0) {
                         self.import_symbol_map.insert(sym_id, module_specifier);
+                    }
+                } else {
+                    let Some(alias_name) = self
+                        .arena
+                        .get(import_eq.import_clause)
+                        .and_then(|n| self.arena.get_identifier(n))
+                        .map(|id| id.escaped_text.clone())
+                    else {
+                        continue;
+                    };
+                    let Some(&alias_sym_id) = binder.node_symbols.get(&stmt_idx.0) else {
+                        continue;
+                    };
+                    let Some(alias_sym) = binder.symbols.get(alias_sym_id) else {
+                        continue;
+                    };
+                    let parent_sym_id = alias_sym.parent;
+                    let Some(leftmost) =
+                        self.leftmost_qualified_name_ident(import_eq.module_specifier)
+                    else {
+                        continue;
+                    };
+                    tracing::debug!(
+                        alias = %alias_name,
+                        parent_sym_id = parent_sym_id.0,
+                        target_name = %leftmost,
+                        "collect_import_metadata: storing local alias target"
+                    );
+                    self.local_namespace_alias_targets
+                        .entry((parent_sym_id, leftmost))
+                        .or_default()
+                        .insert(alias_name);
+                }
+            } else if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                self.recurse_module_body(binder, stmt_node);
+            }
+            // The TSZ parser wraps `export namespace/import-equals` in EXPORT_DECLARATION;
+            // unwrap to process the inner declaration.
+            else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                    continue;
+                };
+                let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+                    continue;
+                };
+                if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    self.recurse_module_body(binder, clause_node);
+                } else if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                    self.collect_import_metadata_from_statements(
+                        binder,
+                        &[export_decl.export_clause],
+                    );
+                }
+            }
+        }
+    }
+
+    fn recurse_module_body(&mut self, binder: &BinderState, module_node: &Node) {
+        if let Some(module_decl) = self.arena.get_module(module_node) {
+            if let Some(body_node) = self.arena.get(module_decl.body) {
+                if let Some(block) = self.arena.get_module_block(body_node) {
+                    if let Some(stmts) = &block.statements {
+                        let inner_stmts = stmts.nodes.to_vec();
+                        self.collect_import_metadata_from_statements(binder, &inner_stmts);
                     }
                 }
             }

@@ -7,6 +7,7 @@ mod cache;
 mod cli;
 mod compiler_options;
 mod options_convert;
+mod parity_fingerprints;
 mod process_rss;
 mod runner;
 mod server_pool;

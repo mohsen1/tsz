@@ -23,6 +23,29 @@ export TSZ_CI_SKIP_HOST_APT="${TSZ_CI_SKIP_HOST_APT:-1}"
 
 mkdir -p "$TSZ_CI_METRICS_DIR" "$TSZ_CI_LOG_DIR" .ci-status
 
+suite_heartbeat_pid=""
+start_suite_heartbeat() {
+  local interval="${TSZ_CI_GITHUB_SUITE_HEARTBEAT_SECONDS:-60}"
+  (
+    while true; do
+      sleep "$interval"
+      echo "github-suite ${suite} still running at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    done
+  ) &
+  suite_heartbeat_pid="$!"
+}
+
+stop_suite_heartbeat() {
+  if [[ -n "$suite_heartbeat_pid" ]]; then
+    kill "$suite_heartbeat_pid" >/dev/null 2>&1 || true
+    wait "$suite_heartbeat_pid" 2>/dev/null || true
+    suite_heartbeat_pid=""
+  fi
+}
+
+trap stop_suite_heartbeat EXIT
+start_suite_heartbeat
+
 restore_rc=0
 if [[ "${TSZ_CI_CACHE_RESTORE:-1}" == "1" ]]; then
   if command -v gsutil >/dev/null 2>&1; then

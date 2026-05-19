@@ -345,7 +345,11 @@ impl<'a> DeclarationEmitter<'a> {
             if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                 && self.arena.get_function(node).is_some()
             {
-                return Some(current);
+                let func = self.arena.get_function(node)?;
+                if current == decl_idx || func.name == decl_idx {
+                    return Some(current);
+                }
+                return None;
             }
             current = self.arena.parent_of(current)?;
         }

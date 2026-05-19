@@ -39,9 +39,81 @@ use crate::emitter::ModuleKind;
 use crate::module_resolver_helpers::PackageJson;
 use crate::span::Span;
 use rustc_hash::FxHashMap;
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 
 type ResolutionCacheKey = (PathBuf, String, ImportingModuleKind, ImportKind);
+const HASH_BUCKET_OVERHEAD_BYTES: usize = 16;
+
+/// Entry counts and size estimates for module resolver-owned caches.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ModuleResolverCacheStatistics {
+    /// Number of cached module resolution results.
+    pub resolution_cache_entries: usize,
+    /// Number of module resolution cache hits.
+    pub resolution_cache_hits: u64,
+    /// Number of module resolution cache misses.
+    pub resolution_cache_misses: u64,
+    /// Number of cached package type lookups.
+    pub package_type_cache_entries: usize,
+    /// Number of package type cache hits.
+    pub package_type_cache_hits: u64,
+    /// Number of package type cache misses.
+    pub package_type_cache_misses: u64,
+    /// Number of cached `package.json` parse results.
+    pub package_json_cache_entries: usize,
+    /// Number of `package.json` cache hits.
+    pub package_json_cache_hits: u64,
+    /// Number of `package.json` cache misses.
+    pub package_json_cache_misses: u64,
+    /// Number of cached fallback-skip decisions.
+    pub skip_fallback_cache_entries: usize,
+    /// Number of fallback-skip cache hits.
+    pub skip_fallback_cache_hits: u64,
+    /// Number of fallback-skip cache misses.
+    pub skip_fallback_cache_misses: u64,
+    /// Number of cached `node_modules` directory probes.
+    pub node_modules_dir_cache_entries: usize,
+    /// Number of `node_modules` directory cache hits.
+    pub node_modules_dir_cache_hits: u64,
+    /// Number of `node_modules` directory cache misses.
+    pub node_modules_dir_cache_misses: u64,
+}
+
+impl ModuleResolverCacheStatistics {
+    /// Total entries across module resolver-owned caches.
+    pub const fn total_entries(self) -> usize {
+        self.resolution_cache_entries
+            + self.package_type_cache_entries
+            + self.package_json_cache_entries
+            + self.skip_fallback_cache_entries
+            + self.node_modules_dir_cache_entries
+    }
+
+    /// Approximate bytes retained by cache buckets and inline entry payloads.
+    pub fn estimated_size_bytes(self) -> usize {
+        self.resolution_cache_entries
+            * (HASH_BUCKET_OVERHEAD_BYTES
+                + std::mem::size_of::<ResolutionCacheKey>()
+                + std::mem::size_of::<Result<ResolvedModule, ResolutionFailure>>())
+            + self.package_type_cache_entries
+                * (HASH_BUCKET_OVERHEAD_BYTES
+                    + std::mem::size_of::<PathBuf>()
+                    + std::mem::size_of::<Option<PackageType>>())
+            + self.package_json_cache_entries
+                * (HASH_BUCKET_OVERHEAD_BYTES
+                    + std::mem::size_of::<PathBuf>()
+                    + std::mem::size_of::<Result<PackageJson, String>>())
+            + self.skip_fallback_cache_entries
+                * (HASH_BUCKET_OVERHEAD_BYTES
+                    + std::mem::size_of::<(PathBuf, String, ImportingModuleKind)>()
+                    + std::mem::size_of::<bool>())
+            + self.node_modules_dir_cache_entries
+                * (HASH_BUCKET_OVERHEAD_BYTES
+                    + std::mem::size_of::<PathBuf>()
+                    + std::mem::size_of::<bool>())
+    }
+}
 
 fn explicit_ts_extension(specifier: &str) -> Option<String> {
     if specifier.ends_with(".d.ts")
@@ -90,6 +162,16 @@ pub struct ModuleResolver {
     rewrite_relative_import_extensions: bool,
     /// Whether to print TypeScript-style module resolution traces.
     trace_resolution: bool,
+    resolution_cache_hits: Cell<u64>,
+    resolution_cache_misses: Cell<u64>,
+    package_type_cache_hits: Cell<u64>,
+    package_type_cache_misses: Cell<u64>,
+    package_json_cache_hits: Cell<u64>,
+    package_json_cache_misses: Cell<u64>,
+    skip_fallback_cache_hits: Cell<u64>,
+    skip_fallback_cache_misses: Cell<u64>,
+    node_modules_dir_cache_hits: Cell<u64>,
+    node_modules_dir_cache_misses: Cell<u64>,
     /// Cache for package.json package type lookups
     package_type_cache: std::cell::RefCell<FxHashMap<PathBuf, Option<PackageType>>>,
     /// Cache of parsed package.json contents keyed by canonical path.
@@ -135,6 +217,10 @@ pub struct ModuleResolver {
 }
 
 impl ModuleResolver {
+    fn increment_counter(counter: &Cell<u64>) {
+        counter.set(counter.get().saturating_add(1));
+    }
+
     /// Create a new module resolver with the given options
     pub fn new(options: &ResolvedCompilerOptions) -> Self {
         let resolution_kind = options.effective_module_resolution();
@@ -165,6 +251,16 @@ impl ModuleResolver {
             allow_js: options.allow_js,
             rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
             trace_resolution: options.trace_resolution,
+            resolution_cache_hits: Cell::new(0),
+            resolution_cache_misses: Cell::new(0),
+            package_type_cache_hits: Cell::new(0),
+            package_type_cache_misses: Cell::new(0),
+            package_json_cache_hits: Cell::new(0),
+            package_json_cache_misses: Cell::new(0),
+            skip_fallback_cache_hits: Cell::new(0),
+            skip_fallback_cache_misses: Cell::new(0),
+            node_modules_dir_cache_hits: Cell::new(0),
+            node_modules_dir_cache_misses: Cell::new(0),
             package_type_cache: std::cell::RefCell::new(FxHashMap::default()),
             package_json_cache: std::cell::RefCell::new(FxHashMap::default()),
             skip_fallback_cache: std::cell::RefCell::new(FxHashMap::default()),
@@ -197,6 +293,16 @@ impl ModuleResolver {
             allow_js: false,
             rewrite_relative_import_extensions: false,
             trace_resolution: false,
+            resolution_cache_hits: Cell::new(0),
+            resolution_cache_misses: Cell::new(0),
+            package_type_cache_hits: Cell::new(0),
+            package_type_cache_misses: Cell::new(0),
+            package_json_cache_hits: Cell::new(0),
+            package_json_cache_misses: Cell::new(0),
+            skip_fallback_cache_hits: Cell::new(0),
+            skip_fallback_cache_misses: Cell::new(0),
+            node_modules_dir_cache_hits: Cell::new(0),
+            node_modules_dir_cache_misses: Cell::new(0),
             package_type_cache: std::cell::RefCell::new(FxHashMap::default()),
             package_json_cache: std::cell::RefCell::new(FxHashMap::default()),
             skip_fallback_cache: std::cell::RefCell::new(FxHashMap::default()),
@@ -291,8 +397,10 @@ impl ModuleResolver {
             import_kind,
         );
         if let Some(cached) = self.resolution_cache.get(&cache_key) {
+            Self::increment_counter(&self.resolution_cache_hits);
             return cached.clone();
         }
+        Self::increment_counter(&self.resolution_cache_misses);
 
         let (mut result, path_mapping_attempted) = self.resolve_uncached(
             specifier,
@@ -951,7 +1059,60 @@ impl ModuleResolver {
         self.package_json_cache.borrow_mut().clear();
         self.skip_fallback_cache.borrow_mut().clear();
         self.node_modules_dir_cache.borrow_mut().clear();
+        self.resolution_cache_hits.set(0);
+        self.resolution_cache_misses.set(0);
+        self.package_type_cache_hits.set(0);
+        self.package_type_cache_misses.set(0);
+        self.package_json_cache_hits.set(0);
+        self.package_json_cache_misses.set(0);
+        self.skip_fallback_cache_hits.set(0);
+        self.skip_fallback_cache_misses.set(0);
+        self.node_modules_dir_cache_hits.set(0);
+        self.node_modules_dir_cache_misses.set(0);
         crate::resolution::helpers::clear_file_exists_cache();
+    }
+
+    /// Return entry counts for module resolver-owned caches.
+    pub fn cache_statistics(&self) -> ModuleResolverCacheStatistics {
+        ModuleResolverCacheStatistics {
+            resolution_cache_entries: self.resolution_cache.len(),
+            resolution_cache_hits: self.resolution_cache_hits.get(),
+            resolution_cache_misses: self.resolution_cache_misses.get(),
+            package_type_cache_entries: self.package_type_cache.borrow().len(),
+            package_type_cache_hits: self.package_type_cache_hits.get(),
+            package_type_cache_misses: self.package_type_cache_misses.get(),
+            package_json_cache_entries: self.package_json_cache.borrow().len(),
+            package_json_cache_hits: self.package_json_cache_hits.get(),
+            package_json_cache_misses: self.package_json_cache_misses.get(),
+            skip_fallback_cache_entries: self.skip_fallback_cache.borrow().len(),
+            skip_fallback_cache_hits: self.skip_fallback_cache_hits.get(),
+            skip_fallback_cache_misses: self.skip_fallback_cache_misses.get(),
+            node_modules_dir_cache_entries: self.node_modules_dir_cache.borrow().len(),
+            node_modules_dir_cache_hits: self.node_modules_dir_cache_hits.get(),
+            node_modules_dir_cache_misses: self.node_modules_dir_cache_misses.get(),
+        }
+    }
+
+    /// Approximate bytes retained by module resolver-owned cache entries.
+    pub fn cache_estimated_size_bytes(&self) -> usize {
+        let stats = ModuleResolverCacheStatistics {
+            resolution_cache_entries: self.resolution_cache.capacity(),
+            resolution_cache_hits: self.resolution_cache_hits.get(),
+            resolution_cache_misses: self.resolution_cache_misses.get(),
+            package_type_cache_entries: self.package_type_cache.borrow().capacity(),
+            package_type_cache_hits: self.package_type_cache_hits.get(),
+            package_type_cache_misses: self.package_type_cache_misses.get(),
+            package_json_cache_entries: self.package_json_cache.borrow().capacity(),
+            package_json_cache_hits: self.package_json_cache_hits.get(),
+            package_json_cache_misses: self.package_json_cache_misses.get(),
+            skip_fallback_cache_entries: self.skip_fallback_cache.borrow().capacity(),
+            skip_fallback_cache_hits: self.skip_fallback_cache_hits.get(),
+            skip_fallback_cache_misses: self.skip_fallback_cache_misses.get(),
+            node_modules_dir_cache_entries: self.node_modules_dir_cache.borrow().capacity(),
+            node_modules_dir_cache_hits: self.node_modules_dir_cache_hits.get(),
+            node_modules_dir_cache_misses: self.node_modules_dir_cache_misses.get(),
+        };
+        stats.estimated_size_bytes()
     }
 
     /// Get the current resolution kind

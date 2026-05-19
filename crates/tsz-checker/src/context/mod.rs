@@ -3,18 +3,11 @@
 //! Holds the shared state used throughout the type checking process.
 //! This separates state from logic, allowing specialized checkers (expressions, statements)
 //! to borrow the context mutably.
-//!
-//! Sub-modules:
-//! - `constructors` - `CheckerContext` constructor methods
-//! - `resolver` - `TypeResolver` trait implementation
-//! - `def_mapping` - DefId migration helpers
-//! - `compiler_options` - Compiler option accessors and solver config derivation
-//! - `lib_queries` - Library/global type availability queries
-//! - `module_entity` - Module entity resolution (`module_resolves_to_non_module_entity`)
 mod aliases;
 mod caches;
 mod compiler_options;
 mod cross_file_delegation_cache;
+mod cross_file_type_params_cache;
 pub use caches::{
     NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache, TypeReferenceValidationCaches,
 };
@@ -22,6 +15,9 @@ pub(crate) use compiler_options::is_declaration_file_name;
 pub(crate) use compiler_options::is_js_file_name;
 pub(crate) use compiler_options::should_resolve_jsdoc_for_file;
 pub use cross_file_delegation_cache::CrossFileDelegationCache;
+pub use cross_file_type_params_cache::{
+    CrossFileTypeParamsCacheStatistics, cross_file_type_params_cache_statistics,
+};
 mod constructors;
 mod core;
 mod cross_file_query;
@@ -79,7 +75,6 @@ use tsz_parser::parser::node::NodeArena;
 /// caller sees the first caller's work.
 pub type CrossFileTypeParamsCache =
     Arc<dashmap::DashMap<(u32, NodeIndex), Vec<tsz_solver::TypeParamInfo>>>;
-
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular
@@ -352,6 +347,9 @@ pub struct CheckerContext<'a> {
     /// Used to suppress false TS2559 (weak type) violations for these types,
     /// since they inherit non-optional members from Array.prototype.
     pub types_extending_array: FxHashSet<TypeId>,
+
+    /// Recovery sites; see `crate::recovery`.
+    pub(crate) recovery_sites: RefCell<crate::recovery::RecoverySites>,
 
     // --- Caches ---
     /// Cached types for symbols (dense flat-vec, O(1) lookup by symbol index).

@@ -140,11 +140,45 @@ function validateProjectCompatibilityRows(rows) {
   }
 }
 
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const normalized = String(value ?? "").trim();
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function githubRunUrl(runId) {
+  if (!runId || runId === "local") return null;
+  const serverUrl = firstNonEmpty(process.env.GITHUB_SERVER_URL, "https://github.com");
+  const repository = firstNonEmpty(process.env.GITHUB_REPOSITORY);
+  if (!repository) return null;
+  return `${serverUrl}/${repository}/actions/runs/${runId}`;
+}
+
+function mergedArtifactMetadata(generatedAt) {
+  const payloadMetadata = payloads.map(({ payload }) => payload).find((payload) => payload?.source_commit);
+  const runId = firstNonEmpty(payloadMetadata?.workflow_run_id, process.env.GITHUB_RUN_ID, "local");
+  return {
+    generated_at: generatedAt,
+    source_commit: firstNonEmpty(payloadMetadata?.source_commit, process.env.BENCH_TARGET_SHA, process.env.GITHUB_SHA, "local"),
+    workflow_name: firstNonEmpty(payloadMetadata?.workflow_name, process.env.GITHUB_WORKFLOW, "local"),
+    workflow_run_id: runId,
+    workflow_run_url: firstNonEmpty(payloadMetadata?.workflow_run_url, githubRunUrl(runId)),
+    workflow_run_attempt: firstNonEmpty(payloadMetadata?.workflow_run_attempt, process.env.GITHUB_RUN_ATTEMPT),
+    run_status: firstNonEmpty(
+      payloadMetadata?.run_status,
+      process.env.GITHUB_ACTIONS === "true" ? "completed" : "local",
+    ),
+  };
+}
+
 validateProjectCompatibilityRows(results);
 const projectCompatibilityRequiredFields = hasProjectCompatibilityRows(results);
+const generatedAt = new Date().toISOString();
 
 const merged = {
-  generated_at: new Date().toISOString(),
+  ...mergedArtifactMetadata(generatedAt),
   benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
   merged_from: payloads.map(({ file }) => path.basename(file)).sort(),
   validation: {

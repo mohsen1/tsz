@@ -213,6 +213,65 @@ fn test_cjs_exported_enum_iife_tail_folding() {
 }
 
 #[test]
+fn test_enum_preserves_leading_line_comments_inside_body() {
+    // tsc preserves `// ...` comments that appear between enum members in the
+    // emitted IIFE body. tsz used to drop them because the comment extractor
+    // only handled trailing block comments.
+    let source =
+        "enum E1 {\n    // illegal case\n    // forward reference\n    X = 1,\n    Y = 2,\n}";
+    let output = emit_enum_legacy_with_source(source);
+    assert!(
+        output.contains("// illegal case"),
+        "First leading line comment should be preserved, got: {output}"
+    );
+    assert!(
+        output.contains("// forward reference"),
+        "Second leading line comment should be preserved, got: {output}"
+    );
+}
+
+#[test]
+fn test_enum_preserves_leading_line_comments_between_members() {
+    // Comments after the comma on the previous member but before the next
+    // member's name must attach to the next member, not the previous one.
+    let source = "enum E1 {\n    X = 1,\n    // about Y\n    Y = 2,\n}";
+    let output = emit_enum_legacy_with_source(source);
+    assert!(
+        output.contains("// about Y"),
+        "Mid-body line comment should attach to the following member, got: {output}"
+    );
+}
+
+#[test]
+fn test_cjs_exported_enum_iife_tail_folds_multiple_aliases_in_source_order() {
+    // For `export enum E {}` followed by `export { E as EE }`, tsc folds both
+    // aliases into the IIFE tail with the source-later alias outermost:
+    //   (E || (exports.EE = exports.E = E = {}))
+    let folded = emit_enum_legacy_configured("enum E { A }", |emitter| {
+        emitter.set_commonjs_export_folds(["E", "EE"]);
+    });
+
+    assert!(
+        folded.contains("(E || (exports.EE = exports.E = E = {}))"),
+        "Multi-alias fold should chain aliases with the source-later alias outermost, got: {folded}"
+    );
+}
+
+#[test]
+fn test_cjs_exported_enum_iife_tail_folds_reexport_first_then_direct() {
+    // For `export { F as FF }` preceding `export enum F {}`, the source-later
+    // alias (F) is outermost: (F || (exports.F = exports.FF = F = {}))
+    let folded = emit_enum_legacy_configured("enum F { A }", |emitter| {
+        emitter.set_commonjs_export_folds(["FF", "F"]);
+    });
+
+    assert!(
+        folded.contains("(F || (exports.F = exports.FF = F = {}))"),
+        "Re-export-then-direct fold should keep the direct alias outermost, got: {folded}"
+    );
+}
+
+#[test]
 fn test_cjs_exported_enum_iife_tail_folding_uses_bracket_access_for_string_export_name() {
     let folded = emit_enum_legacy_configured("enum E { A }", |emitter| {
         emitter.set_commonjs_export_fold("not-valid");

@@ -20,10 +20,9 @@ use crate::relations::subtype::{NoopResolver, TypeResolver};
 use crate::types::{
     CallableShape, CallableShapeId, ConditionalType, ConditionalTypeId, FunctionShape,
     FunctionShapeId, IndexInfo, IntrinsicKind, MappedType, MappedTypeId, ObjectFlags, ObjectShape,
-    ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheConfig, RelationCacheKey,
-    StringIntrinsicKind, SymbolRef, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId,
-    TypeApplication, TypeApplicationId, TypeData, TypeId, TypeListId, TypeParamInfo, Variance,
-    Visibility,
+    ObjectShapeId, PropertyInfo, PropertyLookup, RelationCacheKey, StringIntrinsicKind, SymbolRef,
+    TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplication, TypeApplicationId,
+    TypeData, TypeId, TypeListId, TypeParamInfo, Variance, Visibility,
 };
 use crate::visitor::is_error_type;
 use dashmap::DashMap;
@@ -36,18 +35,6 @@ use tsz_common::interner::Atom;
 type ApplicationEvalCacheKey = (DefId, smallvec::SmallVec<[TypeId; 4]>, bool);
 type ElementAccessTypeCacheKey = (TypeId, TypeId, Option<u32>, bool);
 type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
-
-/// Build a subtype cache config from the legacy packed `u16` flags by routing
-/// through the typed relation policy bridge.
-pub const fn subtype_cache_config_from_legacy_flags(flags: u16) -> RelationCacheConfig {
-    RelationPolicy::from_flags(flags).cache_config()
-}
-
-/// Build an assignability cache config from legacy packed `u16` flags by
-/// routing through the typed relation policy bridge.
-pub const fn assignability_cache_config_from_legacy_flags(flags: u16) -> RelationCacheConfig {
-    RelationPolicy::from_flags(flags).cache_config()
-}
 
 /// Thread-safe shared query cache for cross-file type checking.
 ///
@@ -194,7 +181,7 @@ impl QueryCacheStatistics {
         // We use 64 bytes as a conservative per-bucket overhead constant.
         const BUCKET_OVERHEAD: usize = 64;
 
-        // eval_cache: (TypeId, bool) -> TypeId  ≈ 8 + 1 + 4 = 13 bytes key+value
+        // eval_cache: EvaluationCacheKey -> TypeId  ≈ 8 + 1 + 4 = 13 bytes key+value
         let eval = self.eval_cache_entries * (BUCKET_OVERHEAD + 13);
 
         // application_eval_cache: (DefId, SmallVec<[TypeId;4]>, bool) -> TypeId
@@ -1367,7 +1354,7 @@ impl QueryDatabase for QueryCache<'_> {
         let mut evaluator =
             crate::evaluation::evaluate::TypeEvaluator::new(self.as_type_database());
         evaluator = evaluator.with_query_db(self);
-        let result = evaluator.evaluate_request(request);
+        let result = evaluator.evaluate_request_result(request).into_type_id();
 
         // PERF: Persist intermediate evaluation results from this session into
         // the long-lived eval_cache. During recursive mapped type expansion
@@ -1521,7 +1508,7 @@ impl QueryDatabase for QueryCache<'_> {
         let key = RelationCacheKey::for_subtype(
             source,
             target,
-            subtype_cache_config_from_legacy_flags(flags),
+            RelationPolicy::from_flags(flags).cache_config(),
         );
         let cached = self.subtype_cache.borrow().get(&key).copied();
 
@@ -1614,7 +1601,7 @@ impl QueryDatabase for QueryCache<'_> {
         let key = RelationCacheKey::for_assignability(
             source,
             target,
-            assignability_cache_config_from_legacy_flags(flags),
+            RelationPolicy::from_flags(flags).cache_config(),
         );
 
         if let Some(result) = self.check_cache(&self.assignability_cache, key) {
