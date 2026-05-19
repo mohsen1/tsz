@@ -47,7 +47,7 @@ JS_FAMILY_RULES = [
     ("resource-management lowering", ("using", "dispose", "resource")),
     (
         "async/await/generator lowering",
-        ("async", "await", "generator", "yield", "forawait"),
+        ("async", "await", "generator", "yield", "forawait", "promise"),
     ),
     (
         "class/private/accessor/decorator lowering",
@@ -55,34 +55,57 @@ JS_FAMILY_RULES = [
     ),
     (
         "module/import/export emit",
-        ("module", "import", "export", "commonjs", "amd", "umd", "esmodule"),
+        ("module", "import", "export", "commonjs", "amd", "umd", "esmodule", "system"),
     ),
     (
         "block-scoping/hoisting emit",
-        ("blockscoped", "capturedlet", "let", "const", "tdz", "usebeforedef"),
+        ("blockscoped", "capturedlet", "let", "const", "tdz", "usebeforedef", "usebeforedecl"),
     ),
     ("destructuring/spread/rest emit", ("destruct", "spread", "rest", "bindingpattern")),
     ("enum/namespace emit", ("enum", "namespace", "internalmodule", "declarationmerging")),
-    ("jsx/react emit", ("jsx", "react")),
+    # "tsx" test names do not contain "jsx", so the needle must be explicit.
+    ("jsx/react emit", ("jsx", "react", "tsx")),
     (
         "loop/control-flow emit",
-        ("forof", "forin", "switch", "try", "catch", "break", "continue", "label"),
+        ("forof", "forin", "switch", "try", "catch", "break", "continue", "label", "loop"),
     ),
     ("literal/template emit", ("template", "literal", "regexp", "numericseparator")),
     ("comments/source-map emit", ("comment", "sourcemap", "source map", "source-map")),
+    (
+        "parser/syntax recovery emit",
+        ("parser", "parseerror", "parsebigint", "parseinvalid", "parseassert"),
+    ),
+    ("optional-chain/nullish lowering", ("optionalchain", "accesschain", "nullishcoalesc")),
+    ("arrow-function emit", ("arrowfunc", "arrow")),
+    ("type-guard/narrowing emit", ("typeguard",)),
+    ("unicode/reserved-word identifier emit", ("unicode", "reservedword", "reservednames")),
+    ("jsdoc/js-file emit", ("jsfile", "jsdeclarations", "plainjsgram", "jsdoc")),
+    (
+        "parameter-init/captured-var emit",
+        ("capturedparam", "parameterinitializer", "parameterdeclaration"),
+    ),
+    ("nested-function/local-scope emit", ("localfunction", "nestedfunction", "localscope")),
+    (
+        "type-assertion/instanceof emit",
+        ("typeassert", "instanceof", "isolateddeclaration", "ts-expect"),
+    ),
+    ("tslib/helper-import emit", ("tslib",)),
+    # new.target requires an ES5 _newTarget helper variable; distinct from class lowering.
+    ("new.target emit", ("newtarget",)),
+    ("unused-symbol/visibility emit", ("unusedlocal", "unusedparam", "isdeclarationvisible")),
 ]
 
 
 DTS_FAMILY_RULES = [
     (
         "module/declaration merging",
-        ("moduleaugmentation", "augmentation", "declarationmerging", "ambientmodule"),
+        ("moduleaugmentation", "augmentation", "declarationmerging", "ambientmodule", "moduledecl"),
     ),
     (
         "import/export/nameability",
-        ("import", "export", "alias", "qualified", "externalmodules", "specifier"),
+        ("import", "export", "alias", "qualified", "externalmodules", "specifier", "nodemodule"),
     ),
-    ("jsdoc/javascript declarations", ("jsdoc", "javascript", "salsa", "typedef", "checkjs")),
+    ("jsdoc/javascript declarations", ("jsdoc", "javascript", "salsa", "typedef", "checkjs", "jsfile")),
     (
         "class/private/accessor declarations",
         ("class", "private", "accessor", "constructor", "extends", "implements"),
@@ -101,6 +124,10 @@ DTS_FAMILY_RULES = [
             "indexed",
             "indexsignature",
             "signature",
+            "tuple",
+            "template",
+            "literal",
+            "stringliteral",
         ),
     ),
     (
@@ -108,8 +135,16 @@ DTS_FAMILY_RULES = [
         ("isolateddeclaration", "isolated declaration"),
     ),
     ("enum/namespace declarations", ("enum", "namespace", "internalmodule", "declarationmerging")),
-    ("jsx/react declarations", ("jsx", "react")),
+    ("jsx/react declarations", ("jsx", "react", "tsx")),
     ("ambient/lib declarations", ("ambient", "global", "lib", "defaultlib")),
+    (
+        "spread/destructuring/variadic declarations",
+        ("spread", "destruct", "variadic", "bindingpattern"),
+    ),
+    ("type-guard declarations", ("typeguard", "narrowing")),
+    # Symlinked dependencies affect the relative-path shape of generated DTS references.
+    ("symlink/workspace-resolution declarations", ("symlink", "workspace")),
+    ("privacy/access-modifier declarations", ("privacy",)),
 ]
 
 
