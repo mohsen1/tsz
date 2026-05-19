@@ -534,11 +534,11 @@ fn emit_enum_preserves_single_quoted_string_member_initializer() {
 //
 // Structural rule under test:
 //
-//   When lowering `enum E { /* leading */ X, /* leading-2 */ Y }` to its IIFE
-//   form, every leading comment (line `//` or block `/* */`) that sits between
-//   the previous boundary (the enum body's `{` or the preceding member's `,`)
-//   and the start of an enum member must be emitted on its own indented line
-//   ahead of the synthesized `E[E["X"] = N] = "X";` member assignment.
+//   When lowering `enum E { X, /* trailing */ Y }` to its IIFE form, comments
+//   attach to the next member only after a line break from the previous boundary
+//   (the enum body's `{` or the preceding member's `,`). Same-line block
+//   comments after a boundary are trailing trivia in tsc and must not be emitted
+//   before the next synthesized `E[E["X"] = N] = "X";` member assignment.
 //
 // The rule is structural over comment placement, not over identifier spelling,
 // so each scenario below repeats with a different enum/member identifier set
@@ -618,6 +618,38 @@ fn block_comment_before_enum_member_preserved() {
     assert!(
         output.contains("/* leading block */"),
         "block comment before member must be preserved, got:\n{output}"
+    );
+}
+
+#[test]
+fn same_line_block_comments_after_boundaries_are_not_leading() {
+    let output = emit_enum_legacy_with_source("enum E { /* c1 */ A = 0, /* c2 */ B = 1 }");
+
+    assert!(
+        !output.contains("/* c1 */"),
+        "same-line block comment after enum body open is trailing trivia, got:\n{output}"
+    );
+    assert!(
+        !output.contains("/* c2 */"),
+        "same-line block comment after member comma is trailing trivia, got:\n{output}"
+    );
+}
+
+#[test]
+fn newline_block_comments_after_boundaries_are_leading() {
+    let output = emit_enum_legacy_with_source("enum F {\n  /* c3 */ C = 0,\n  /* c4 */ D = 1\n}");
+
+    let idx_c3 = output.find("/* c3 */").expect("c3 should be preserved");
+    let idx_c = output.find("F[\"C\"] = 0").expect("C member emitted");
+    let idx_c4 = output.find("/* c4 */").expect("c4 should be preserved");
+    let idx_d = output.find("F[\"D\"] = 1").expect("D member emitted");
+    assert!(
+        idx_c3 < idx_c,
+        "newline-separated block comment before C must be leading, got:\n{output}"
+    );
+    assert!(
+        idx_c4 < idx_d,
+        "newline-separated block comment before D must be leading, got:\n{output}"
     );
 }
 
