@@ -6,7 +6,7 @@ use crate::query_boundaries::common::{
     TypeInterner, function_shape_for_type, object_shape_for_type,
 };
 use crate::state::{CheckerOverrideProvider, CheckerState};
-use crate::test_utils::{check_js_source_diagnostics, check_source};
+use crate::test_utils::{check_js_source_diagnostics, check_source, check_source_strict};
 use tsz_binder::BinderState;
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
@@ -82,6 +82,85 @@ arr_Int8Array = arr_Uint8Array;
             "Type 'Uint8Array<ArrayBuffer>' is not assignable to type 'Int8Array<ArrayBuffer>'."
         ),
         "typed array TS2322 should preserve generic type arguments, got: {diag:?}"
+    );
+}
+
+#[test]
+fn generic_mapped_intersection_element_write_preserves_alias_display() {
+    let diagnostics = check_source_strict(
+        r#"
+type Errors<T> = { [P in keyof T]: string | undefined } & { all: string | undefined };
+
+function foo<T>() {
+    let obj!: Errors<T>;
+    let x!: keyof T;
+    obj[x] = undefined;
+}
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for generic mapped-intersection element write");
+    assert!(
+        diag.message_text
+            .contains("Type 'undefined' is not assignable to type 'Errors<T>[keyof T]'."),
+        "TS2322 should preserve the indexed alias target, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("{ [P in keyof T]"),
+        "TS2322 should not expand the alias body, got: {diag:?}"
+    );
+}
+
+#[test]
+fn generic_mapped_intersection_element_write_is_not_name_specific() {
+    let diagnostics = check_source_strict(
+        r#"
+type Bag<U> = { all: number | undefined } & { [X in keyof U]: number | undefined };
+
+function foo<U>() {
+    let target!: Bag<U>;
+    let key!: keyof U;
+    target[key] = 1;
+}
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for renamed generic mapped-intersection element write");
+    assert!(
+        diag.message_text
+            .contains("Type 'number' is not assignable to type 'Bag<U>[keyof U]'."),
+        "TS2322 should preserve the renamed indexed alias target, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("{ [X in keyof U]"),
+        "TS2322 should not depend on the mapped variable spelling, got: {diag:?}"
+    );
+}
+
+#[test]
+fn plain_generic_mapped_element_write_stays_assignable() {
+    let diagnostics = check_source_strict(
+        r#"
+type Plain<T> = { [K in keyof T]: string | undefined };
+
+function foo<T>() {
+    let plain!: Plain<T>;
+    let key!: keyof T;
+    plain[key] = undefined;
+    plain[key] = "ok";
+}
+"#,
+    );
+
+    assert!(
+        !diagnostics.iter().any(|diag| diag.code == 2322),
+        "plain generic mapped writes should remain assignable, got: {diagnostics:?}"
     );
 }
 

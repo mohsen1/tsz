@@ -1806,22 +1806,38 @@ impl<'a> CheckerState<'a> {
         }
 
         let access = self.ctx.arena.get_access_expr(node)?;
-        let object_type = self
+        let declared_object_type = self
             .resolve_identifier_symbol(access.expression)
             .and_then(|sym_id| self.assignment_target_declared_type(sym_id))
             .filter(|declared| {
-                crate::query_boundaries::common::is_type_parameter(self.ctx.types, *declared)
-                    || crate::query_boundaries::common::is_this_type(self.ctx.types, *declared)
-            })
-            .unwrap_or_else(|| self.get_type_of_node(access.expression));
-        if !crate::query_boundaries::common::is_type_parameter(self.ctx.types, object_type) {
-            return None;
-        }
+                crate::query_boundaries::common::contains_type_parameters(self.ctx.types, *declared)
+            });
+        let object_type =
+            declared_object_type.unwrap_or_else(|| self.get_type_of_node(access.expression));
 
         let prev_preserve = self.ctx.preserve_literal_types;
         self.ctx.preserve_literal_types = true;
         let index_type = self.get_type_of_node(access.name_or_argument);
         self.ctx.preserve_literal_types = prev_preserve;
+
+        if let Some(alias_object) = declared_object_type
+            && crate::query_boundaries::assignability::generic_mapped_intersection_alias_write_target(
+                self,
+                alias_object,
+                index_type,
+            )
+        {
+            return Some(
+                self.ctx
+                    .types
+                    .factory()
+                    .index_access(alias_object, index_type),
+            );
+        }
+
+        if !crate::query_boundaries::common::is_type_parameter(self.ctx.types, object_type) {
+            return None;
+        }
 
         if let Some(write_target) =
             self.constraint_keyof_write_target_for_type_param(index_type, object_type)

@@ -1,3 +1,4 @@
+use crate::state::CheckerState;
 use tsz_common::Atom;
 use tsz_solver::{
     ObjectShape, PropertyInfo, QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId,
@@ -86,6 +87,120 @@ pub(crate) fn homomorphic_mapped_projection_target<R: TypeResolver>(
     } else {
         None
     }
+}
+
+/// Return whether a declared generic alias application should stay as the
+/// element-write target for `Alias<T>[K]` diagnostics.
+///
+/// The TypeScript compiler preserves the alias-indexed write surface when the
+/// declared object is a generic type-alias application whose evaluated body is
+/// a mapped intersection and the index key refers to the alias type arguments.
+/// Keeping the alias target avoids degrading the write to a bare type-parameter
+/// path and preserves the deferred indexed-access surface for the shared
+/// assignability gate.
+pub(crate) fn generic_mapped_intersection_alias_write_target(
+    checker: &mut CheckerState<'_>,
+    alias_object: TypeId,
+    index_type: TypeId,
+) -> bool {
+    let Some((base, args)) =
+        crate::query_boundaries::common::application_info(checker.ctx.types, alias_object)
+    else {
+        return false;
+    };
+    if args.is_empty()
+        || !index_refers_to_alias_type_argument(checker, index_type, &args)
+        || !crate::query_boundaries::common::contains_type_parameters(
+            checker.ctx.types,
+            alias_object,
+        )
+    {
+        return false;
+    }
+
+    let Some(def_id) = crate::query_boundaries::common::lazy_def_id(checker.ctx.types, base) else {
+        return false;
+    };
+    if !checker
+        .ctx
+        .definition_store
+        .get(def_id)
+        .is_some_and(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
+    {
+        return false;
+    }
+
+    let evaluated = checker.evaluate_type_with_env(alias_object);
+    intersection_contains_mapped_type(checker, evaluated)
+}
+
+fn index_refers_to_alias_type_argument(
+    checker: &mut CheckerState<'_>,
+    index_type: TypeId,
+    args: &[TypeId],
+) -> bool {
+    if let Some(members) =
+        crate::query_boundaries::common::intersection_members(checker.ctx.types, index_type)
+    {
+        return members
+            .iter()
+            .copied()
+            .any(|member| index_refers_to_alias_type_argument(checker, member, args));
+    }
+
+    if let Some(keyof_inner) =
+        crate::query_boundaries::common::keyof_inner_type(checker.ctx.types, index_type)
+    {
+        return args.iter().copied().any(|arg| {
+            same_type_param_identity(checker.ctx.types, keyof_inner, arg)
+                || checker.evaluate_type_with_env(keyof_inner)
+                    == checker.evaluate_type_with_env(arg)
+        });
+    }
+
+    if let Some(param_info) =
+        crate::query_boundaries::common::type_param_info(checker.ctx.types, index_type)
+        && let Some(constraint) = param_info.constraint
+        && let Some(keyof_inner) =
+            crate::query_boundaries::common::keyof_inner_type(checker.ctx.types, constraint)
+    {
+        return args.iter().copied().any(|arg| {
+            same_type_param_identity(checker.ctx.types, keyof_inner, arg)
+                || checker.evaluate_type_with_env(keyof_inner)
+                    == checker.evaluate_type_with_env(arg)
+        });
+    }
+
+    false
+}
+
+fn intersection_contains_mapped_type(checker: &mut CheckerState<'_>, type_id: TypeId) -> bool {
+    let Some(members) =
+        crate::query_boundaries::common::intersection_members(checker.ctx.types, type_id)
+    else {
+        return false;
+    };
+    members
+        .iter()
+        .copied()
+        .any(|member| type_is_or_resolves_to_mapped(checker, member))
+}
+
+fn type_is_or_resolves_to_mapped(checker: &mut CheckerState<'_>, type_id: TypeId) -> bool {
+    if crate::query_boundaries::common::mapped_type_id(checker.ctx.types, type_id).is_some() {
+        return true;
+    }
+
+    let resolved = checker.resolve_lazy_type(type_id);
+    resolved != type_id
+        && crate::query_boundaries::common::mapped_type_id(checker.ctx.types, resolved).is_some()
+}
+
+fn same_type_param_identity(db: &dyn TypeDatabase, left: TypeId, right: TypeId) -> bool {
+    left == right
+        || crate::query_boundaries::common::type_param_info(db, left)
+            .zip(crate::query_boundaries::common::type_param_info(db, right))
+            .is_some_and(|(left, right)| left.name == right.name)
 }
 
 // ---------------------------------------------------------------------------
