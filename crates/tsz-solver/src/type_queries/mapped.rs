@@ -665,7 +665,7 @@ pub fn get_finite_mapped_property_type_with_evaluator(
         let instantiated = super::data::instantiate_mapped_template_for_property(
             db,
             mapped.template,
-            mapped.type_param.name,
+            mapped.type_param,
             key_literal,
         );
         let value_type =
@@ -718,7 +718,7 @@ pub fn get_finite_mapped_property_display_type(
         let mut display_type = super::data::instantiate_mapped_template_for_property(
             db,
             mapped.template,
-            mapped.type_param.name,
+            mapped.type_param,
             key_literal,
         );
         let has_optional_property = crate::type_queries::get_index_access_types(db, display_type)

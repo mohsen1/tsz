@@ -298,6 +298,13 @@ pub struct TypeInstantiator<'a> {
     visiting: FxHashMap<TypeId, TypeId>,
     /// Type parameter names that are shadowed in the current scope.
     shadowed: Vec<Atom>,
+    /// When set, restricts name-based substitution to `TypeParameter`
+    /// occurrences whose full `TypeParamInfo` matches this binder. Same-name
+    /// outer-scope parameters with different `TypeParamInfo` are left
+    /// untouched. Used by mapped-binder substitution to avoid colliding with
+    /// a source type parameter that happens to share the iteration variable's
+    /// name (e.g. `Readonly<P>` instantiated with `P` from outer scope).
+    binder_filter: Option<TypeParamInfo>,
     /// Freshly-instantiated local type parameters for the current nested generic scope.
     local_type_params: Vec<(Atom, TypeId)>,
     substitute_infer: bool,
@@ -334,6 +341,7 @@ impl<'a> TypeInstantiator<'a> {
             substitution,
             visiting: FxHashMap::default(),
             shadowed: Vec::new(),
+            binder_filter: None,
             local_type_params: Vec::new(),
             substitute_infer: false,
             preserve_meta_types: false,
@@ -765,6 +773,17 @@ impl<'a> TypeInstantiator<'a> {
                         shadowed = ?self.shadowed.iter().map(|a| self.interner.resolve_atom_ref(*a)).collect::<Vec<_>>(),
                         "instantiate TypeParameter: SHADOWED"
                     );
+                    return self.interner.intern(*key);
+                }
+                // Binder filter: when active, only substitute occurrences whose
+                // full `TypeParamInfo` matches the binder. A same-named outer
+                // parameter (different constraint/default/is_const) is not the
+                // binder and must be preserved verbatim — otherwise name-based
+                // substitution would corrupt `(v: Outer<P>[P_inner]) => void`
+                // into `(v: Outer<key_literal>[key_literal]) => void`.
+                if let Some(filter) = self.binder_filter
+                    && *info != filter
+                {
                     return self.interner.intern(*key);
                 }
                 if let Some(substituted) = self.substitution.get(info.name) {
@@ -2033,6 +2052,32 @@ pub(crate) fn instantiate_type_with_shadowed(
     let mut instantiator = TypeInstantiator::new(interner, substitution);
     instantiator.shadowed.extend_from_slice(shadowed_params);
     let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        return TypeId::ERROR;
+    }
+    result
+}
+
+/// Substitute references to a specific mapped binder (identified by full
+/// `TypeParamInfo`) with `replacement`, leaving same-name outer-scope type
+/// parameters untouched. This is the binder-aware counterpart to plain
+/// [`instantiate_type`] with a single name binding, used when a mapped's
+/// iteration variable shares a name with a surrounding type parameter
+/// (e.g. `Readonly<P>` where the lib defines `Readonly<T> = { [P in keyof T]: T[P] }`
+/// and a same-named outer `P` appears inside the template).
+pub fn instantiate_mapped_binder(
+    interner: &dyn TypeDatabase,
+    template: TypeId,
+    binder: TypeParamInfo,
+    replacement: TypeId,
+) -> TypeId {
+    if template.is_intrinsic() {
+        return template;
+    }
+    let subst = TypeSubstitution::single(binder.name, replacement);
+    let mut instantiator = TypeInstantiator::new(interner, &subst);
+    instantiator.binder_filter = Some(binder);
+    let result = instantiator.instantiate(template);
     if instantiator.depth_exceeded {
         return TypeId::ERROR;
     }

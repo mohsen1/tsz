@@ -72,13 +72,13 @@ pub(crate) fn type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) 
 pub(crate) fn instantiate_mapped_template_for_property(
     db: &dyn TypeDatabase,
     template: TypeId,
-    type_param_name: Atom,
+    key_param: tsz_solver::types::TypeParamInfo,
     key_literal: TypeId,
 ) -> TypeId {
     tsz_solver::type_queries::instantiate_mapped_template_for_property(
         db,
         template,
-        type_param_name,
+        key_param,
         key_literal,
     )
 }

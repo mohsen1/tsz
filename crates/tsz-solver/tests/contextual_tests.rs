@@ -2405,3 +2405,148 @@ fn test_homomorphic_mapped_per_index_contextual_skips_finite_literal_keys() {
         "literal-key constraint should not trigger positional substitution"
     );
 }
+
+/// Regression for the name-collision hazard surfaced in the PR review:
+///
+/// ```text
+/// type Consumers<T> = { [P in keyof T]: (v: T[P]) => void };
+/// declare function f<P extends [string, number]>(x: Consumers<P>): void;
+/// ```
+///
+/// After `Consumers<P>` is alias-instantiated with the outer `P`, the mapped
+/// template is the nested shape `(v: Outer<P>[Inner<P>]) => void`. The outer
+/// and inner `P` share a name atom but have different `TypeParamInfo`
+/// (different constraints). Name-only substitution would replace both. The
+/// binder-aware substitution must preserve the outer `P` and replace only the
+/// inner mapped binder with the index literal.
+#[test]
+fn test_homomorphic_mapped_per_index_contextual_same_name_outer_param_collision() {
+    let interner = TypeInterner::new();
+
+    // Outer source parameter: `<P extends [string, number]>` — has a tuple
+    // constraint, which gives it a different `TypeParamInfo` from the inner
+    // mapped binder so the substitution can tell them apart.
+    let outer_constraint = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    let outer_p_info = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: Some(outer_constraint),
+        default: None,
+        is_const: false,
+    };
+    let outer_p = interner.intern(TypeData::TypeParameter(outer_p_info));
+
+    // Inner mapped binder: `[P in keyof <outer P>]` — same name atom, no
+    // constraint, so a distinct `TypeParamInfo`.
+    let inner_p_info = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let inner_p = interner.intern(TypeData::TypeParameter(inner_p_info));
+
+    // Template: `(v: <outer P>[<inner P>]) => void` — nested so the top-level
+    // IndexAccess shortcut in instantiate_mapped_template_for_property is NOT
+    // hit; the substitution walk has to recognize the binder by full info.
+    let template = build_consumer_fn(&interner, interner.index_access(outer_p, inner_p));
+
+    let mapped = interner.mapped(MappedType {
+        type_param: inner_p_info,
+        constraint: interner.keyof(outer_p),
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let ctx = ContextualTypeContext::with_expected(&interner, mapped);
+    let elem0 = ctx
+        .get_tuple_element_type_with_count(0, 2)
+        .expect("collision case should still substitute the binder");
+    let elem1 = ctx
+        .get_tuple_element_type_with_count(1, 2)
+        .expect("collision case should still substitute the binder");
+
+    // Expected at index 0: `(v: <outer P>[0]) => void` — outer P preserved,
+    // inner P replaced with the index literal.
+    let zero_lit = interner.literal_number(0.0);
+    let one_lit = interner.literal_number(1.0);
+    let expected0 = build_consumer_fn(&interner, interner.index_access(outer_p, zero_lit));
+    let expected1 = build_consumer_fn(&interner, interner.index_access(outer_p, one_lit));
+    assert_eq!(
+        elem0, expected0,
+        "outer same-name `P` must be preserved at index 0"
+    );
+    assert_eq!(
+        elem1, expected1,
+        "outer same-name `P` must be preserved at index 1"
+    );
+}
+
+/// Same collision shape as above but `idx_obj` is the inner binder and
+/// `idx_key` is the outer same-name parameter — verifies that the order
+/// doesn't matter and the top-level IndexAccess shortcut also uses full info
+/// equality. Substitution should replace only the binder.
+#[test]
+fn test_homomorphic_mapped_per_index_contextual_same_name_outer_param_in_key_position() {
+    let interner = TypeInterner::new();
+
+    let outer_constraint = interner.tuple(vec![TupleElement {
+        type_id: TypeId::STRING,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    let outer_p_info = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: Some(outer_constraint),
+        default: None,
+        is_const: false,
+    };
+    let outer_p = interner.intern(TypeData::TypeParameter(outer_p_info));
+
+    let inner_p_info = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let inner_p = interner.intern(TypeData::TypeParameter(inner_p_info));
+
+    // Template: `<inner P>[<outer P>]` directly — top-level IndexAccess.
+    // The shortcut must recognise the binder by full info, not by name.
+    let template = interner.index_access(inner_p, outer_p);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: inner_p_info,
+        constraint: interner.keyof(outer_p),
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let ctx = ContextualTypeContext::with_expected(&interner, mapped);
+    let elem0 = ctx
+        .get_tuple_element_type_with_count(0, 1)
+        .expect("substitution must succeed");
+
+    // The inner binder appears at the object position. Substituting it
+    // yields `<index_literal>[<outer P>]` — outer P stays untouched.
+    let zero_lit = interner.literal_number(0.0);
+    let expected = interner.index_access(zero_lit, outer_p);
+    assert_eq!(elem0, expected);
+}
