@@ -141,19 +141,36 @@ impl<'a> Printer<'a> {
             .get_literal(node)
             .map(|lit| lit.text.clone())
             .unwrap_or_default();
-        self.write(open);
+        // Synthetic recovery literals (the parser inserts a TemplateTail with
+        // empty cooked text when the closing `}` is missing) live at a node
+        // position that may NOT begin with `open` in source. Mirror the prior
+        // span-owned delimiter check so we never fabricate a `}` or backtick
+        // that was not lexed.
+        if self.template_part_has_leading_open(node, open) {
+            self.write(open);
+        }
         self.write(&cooked);
         if self.template_part_has_terminated_close(node, close) {
             self.write(close);
         }
     }
 
-    /// Fallback delimiter detection when the parser did not record a raw
-    /// token slice (synthetic recovery literals). We check whether the node
-    /// range itself ends with the expected closing delimiter. When the
-    /// printer has no `source_text` reference we have no signal either way —
-    /// preserve the prior behavior of assuming the literal is terminated so
-    /// non-emit consumers don't observe truncated output.
+    /// Fallback leading-delimiter detection for synthetic recovery literals.
+    /// When the printer has no `source_text` reference we have no signal
+    /// either way — preserve the prior behavior of assuming the delimiter is
+    /// present so non-emit consumers do not observe a missing opening byte.
+    fn template_part_has_leading_open(&self, node: &Node, open: &str) -> bool {
+        let Some(text) = self.source_text else {
+            return true;
+        };
+        let start = node.pos as usize;
+        text.get(start..).is_some_and(|tail| tail.starts_with(open))
+    }
+
+    /// Fallback closing-delimiter detection for synthetic recovery literals.
+    /// When the printer has no `source_text` reference we have no signal
+    /// either way — preserve the prior behavior of assuming the literal is
+    /// terminated so non-emit consumers don't observe truncated output.
     fn template_part_has_terminated_close(&self, node: &Node, close: &str) -> bool {
         let Some(text) = self.source_text else {
             return true;
@@ -401,6 +418,44 @@ mod tests {
         assert!(
             output.contains("f `abc;") && !output.contains("f `abc`;"),
             "tagged unterminated template should not add closing backtick\nGot: {output}"
+        );
+    }
+
+    /// Template substitution missing its closing `}` at EOF: the parser
+    /// synthesizes a `TemplateTail` with `raw_text: None` whose node
+    /// position does NOT begin with `}`. The fallback path must not
+    /// fabricate the `}` (or the closing backtick) that was never lexed.
+    #[test]
+    fn template_span_missing_closing_brace_at_eof() {
+        let output = emit("`head${0");
+        assert!(
+            !output.contains("`head${0}"),
+            "synthetic recovery TemplateTail must not synthesize a `}}`\nGot: {output}"
+        );
+        assert!(
+            !output.contains("`head${0`"),
+            "synthetic recovery TemplateTail must not synthesize a closing backtick\nGot: {output}"
+        );
+        assert!(
+            output.contains("`head${0"),
+            "recovered template head/expression bytes should still be emitted\nGot: {output}"
+        );
+    }
+
+    /// Template substitution where the expression is followed by a
+    /// non-template token (instead of `}`). The parser stops the template
+    /// expression with a synthetic `TemplateTail` whose position is at the
+    /// non-`}` token; the emitter must not write a fake `}`.
+    #[test]
+    fn template_span_missing_closing_brace_before_non_template_token() {
+        let output = emit("`head${0 foo;");
+        assert!(
+            !output.contains("`head${0}"),
+            "synthetic recovery TemplateTail before a non-`}}` token must not synthesize `}}`\nGot: {output}"
+        );
+        assert!(
+            output.contains("`head${0"),
+            "recovered template head and expression bytes should still be emitted\nGot: {output}"
         );
     }
 }
