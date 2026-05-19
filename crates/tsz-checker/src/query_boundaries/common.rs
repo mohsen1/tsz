@@ -14,8 +14,7 @@ pub(crate) use tsz_solver::{
     FunctionShape, IndexKind, IndexSignatureResolver, IntrinsicKind, MappedType, ObjectFlags,
     OptionalPropertyChainKey, ParamInfo, PendingDiagnostic, PendingDiagnosticBuilder,
     QueryDatabase, SourceLocation, SubtypeFailureReason, TypeEnvironment, TypeFormatter,
-    TypeResolver, TypeSubstitution, computation::ContextualTypeContext, fill_application_defaults,
-    instantiate_generic,
+    TypeResolver, TypeSubstitution, computation::ContextualTypeContext, instantiate_generic,
 };
 #[allow(unused_imports)]
 pub(crate) use tsz_solver::{TypeInstantiator, TypeInterner};
