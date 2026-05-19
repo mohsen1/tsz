@@ -250,6 +250,13 @@ export const PROJECT_ROWS_BY_NAME = Object.fromEntries(
 );
 
 export const REQUIRED_COMPATIBILITY_FIELDS = [
+  "generated_at",
+  "source_commit",
+  "workflow_name",
+  "workflow_run_id",
+  "workflow_run_url",
+  "workflow_run_attempt",
+  "run_status",
   "state",
   "exit_class",
   "first_failure_class",
