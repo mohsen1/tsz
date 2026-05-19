@@ -5734,16 +5734,26 @@ fn test_best_common_type_reuses_subtype_cache() {
     let interner = TypeInterner::new();
     let ctx = InferenceContext::new(&interner);
 
-    assert!(ctx.subtype_cache.borrow().is_empty());
+    let empty_stats = ctx.cache_statistics();
+    assert_eq!(empty_stats.subtype_entries, 0);
+    assert_eq!(empty_stats.estimated_size_bytes(), 0);
 
     let input = [TypeId::STRING, TypeId::NUMBER, TypeId::STRING];
     let _ = ctx.best_common_type(&input);
-    let first_cache_size = ctx.subtype_cache.borrow().len();
-    assert!(first_cache_size > 0);
+    let first_stats = ctx.cache_statistics();
+    assert!(first_stats.subtype_entries > 0);
+    assert!(
+        first_stats.estimated_size_bytes() > empty_stats.estimated_size_bytes(),
+        "populated inference subtype cache should report nonzero estimated residency"
+    );
 
     let _ = ctx.best_common_type(&input);
-    let second_cache_size = ctx.subtype_cache.borrow().len();
-    assert_eq!(second_cache_size, first_cache_size);
+    let second_stats = ctx.cache_statistics();
+    assert_eq!(second_stats.subtype_entries, first_stats.subtype_entries);
+    assert_eq!(
+        second_stats.estimated_size_bytes(),
+        first_stats.estimated_size_bytes()
+    );
 }
 
 #[test]
