@@ -240,7 +240,7 @@ pub(crate) use evaluation::evaluate::{
     evaluate_keyof, evaluate_mapped, evaluate_type, evaluate_type_with_request,
 };
 pub use instantiation::instantiate::{
-    MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
+    MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution,
     instantiate_function_with_type_args, instantiate_generic, instantiate_type,
     instantiate_type_cached, instantiate_type_params_to_constraints, instantiate_type_preserving,
     instantiate_type_preserving_cached, instantiate_type_preserving_meta,
