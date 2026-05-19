@@ -100,6 +100,26 @@ fn type_reference_rejection_kind(
         };
     }
 
+    if let Some(sym_id) = delegate_binder.file_locals.get(name) {
+        let Some(symbol) = delegate_binder.get_symbol(sym_id) else {
+            return Kind::UnresolvedIdentifier;
+        };
+        if symbol.flags & symbol_flags::ALIAS != 0 {
+            if let Some(resolved_sym_id) = delegate_binder.resolve_import_symbol(sym_id)
+                && resolved_sym_id != sym_id
+                && let Some(resolved_symbol) = delegate_binder.get_symbol(resolved_sym_id)
+            {
+                return classify_type_reference_rejection_symbol(
+                    resolved_symbol,
+                    has_type_arguments,
+                );
+            }
+            return Kind::LocalAliasSymbol;
+        }
+
+        return classify_type_reference_rejection_symbol(symbol, has_type_arguments);
+    }
+
     if matches!(name, "Array" | "ReadonlyArray") {
         let Some(args) = type_ref.type_arguments.as_ref() else {
             return Kind::BuiltinArrayWrongArity;
@@ -111,23 +131,7 @@ fn type_reference_rejection_kind(
         };
     }
 
-    let Some(sym_id) = delegate_binder.file_locals.get(name) else {
-        return Kind::UnresolvedIdentifier;
-    };
-    let Some(symbol) = delegate_binder.get_symbol(sym_id) else {
-        return Kind::UnresolvedIdentifier;
-    };
-    if symbol.flags & symbol_flags::ALIAS != 0 {
-        if let Some(resolved_sym_id) = delegate_binder.resolve_import_symbol(sym_id)
-            && resolved_sym_id != sym_id
-            && let Some(resolved_symbol) = delegate_binder.get_symbol(resolved_sym_id)
-        {
-            return classify_type_reference_rejection_symbol(resolved_symbol, has_type_arguments);
-        }
-        return Kind::LocalAliasSymbol;
-    }
-
-    classify_type_reference_rejection_symbol(symbol, has_type_arguments)
+    Kind::UnresolvedIdentifier
 }
 
 const fn classify_type_reference_rejection_symbol(
@@ -221,6 +225,93 @@ mod tests {
             kind,
             DirectSourceFileTypeAliasTypeReferenceRejectionKind::LocalTypeAliasNoArguments,
             "import aliases should be bucketed by resolved type target shape",
+        );
+    }
+
+    #[test]
+    fn source_file_alias_type_reference_attribution_prefers_shadowing_array_symbol() {
+        let mut parser = ParserState::new(
+            "fixture.ts".to_string(),
+            "type Box = Array<string>;".to_string(),
+        );
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena().clone();
+        let source_file = arena
+            .get_source_file_at(root)
+            .expect("source file should parse");
+        let alias_body = source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .find_map(|idx| {
+                arena
+                    .get(idx)
+                    .and_then(|node| arena.get_type_alias(node))
+                    .map(|alias| alias.type_node)
+            })
+            .expect("type alias body");
+
+        let mut binder = BinderState::new();
+        let array_sym = binder
+            .symbols
+            .alloc(symbol_flags::TYPE_ALIAS, "Array".to_string());
+        binder.file_locals.set("Array".to_string(), array_sym);
+
+        let kind = type_reference_rejection_kind(&arena, &binder, alias_body, &[]);
+
+        assert_eq!(
+            kind,
+            DirectSourceFileTypeAliasTypeReferenceRejectionKind::LocalTypeAliasWithArguments,
+            "a local Array symbol should be bucketed by symbol shape, not builtin name",
+        );
+    }
+
+    #[test]
+    fn source_file_alias_type_reference_attribution_resolves_imported_array_symbol() {
+        let mut parser = ParserState::new(
+            "fixture.ts".to_string(),
+            "type Box = Array<string>;".to_string(),
+        );
+        let root = parser.parse_source_file();
+        let arena = parser.get_arena().clone();
+        let source_file = arena
+            .get_source_file_at(root)
+            .expect("source file should parse");
+        let alias_body = source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .find_map(|idx| {
+                arena
+                    .get(idx)
+                    .and_then(|node| arena.get_type_alias(node))
+                    .map(|alias| alias.type_node)
+            })
+            .expect("type alias body");
+
+        let mut binder = BinderState::new();
+        let target_sym = binder
+            .symbols
+            .alloc(symbol_flags::INTERFACE, "Array".to_string());
+        let alias_sym = binder
+            .symbols
+            .alloc(symbol_flags::ALIAS, "Array".to_string());
+        let alias_symbol = binder.symbols.get_mut(alias_sym).expect("alias symbol");
+        alias_symbol.import_module = Some("./target".to_string());
+        alias_symbol.import_name = Some("Array".to_string());
+        binder.file_locals.set("Array".to_string(), alias_sym);
+        let mut exports = SymbolTable::new();
+        exports.set("Array".to_string(), target_sym);
+        Arc::make_mut(&mut binder.module_exports).insert("./target".to_string(), exports);
+
+        let kind = type_reference_rejection_kind(&arena, &binder, alias_body, &[]);
+
+        assert_eq!(
+            kind,
+            DirectSourceFileTypeAliasTypeReferenceRejectionKind::LocalInterfaceWithArguments,
+            "an imported Array symbol should resolve before builtin name buckets",
         );
     }
 }
