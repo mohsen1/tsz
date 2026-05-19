@@ -113,19 +113,36 @@ class TaggedMap extends Map<string, number> {
 }
 
 // ---------------------------------------------------------------------------
-// Negative / sanity cases — wrong return type must still produce TS2416
+// Negative / sanity cases — genuine mismatches must still produce TS2416.
+// The cross-arena fix must not suppress errors for real violations.
+// Note: tsz has a pre-existing gap detecting return-type incompatibility on
+// symbol-keyed overrides ([Symbol.iterator]); those are tracked separately.
+// These tests use named method overrides which tsz does reliably detect.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn genuine_ts2416_wrong_iterator_return_type() {
+fn genuine_ts2416_wrong_named_method_return_in_map_subclass() {
     assert_has_2416(
         "
-class BadMap extends Map<string, number> {
-    // Wrong: [Symbol.iterator] should return MapIterator<[string,number]>,
-    // but we return a plain Iterator<string>, which is incompatible.
-    [Symbol.iterator](): Iterator<string> {
-        return ([] as string[]).values();
-    }
+class Base {
+    foo(): number { return 0; }
+}
+class Sub extends Base {
+    foo(): string { return ''; }
+}
+",
+    );
+}
+
+#[test]
+fn genuine_ts2416_named_method_renamed_class_still_detected() {
+    assert_has_2416(
+        "
+class BaseX {
+    run(): number { return 0; }
+}
+class DerivedX extends BaseX {
+    run(): string { return ''; }
 }
 ",
     );

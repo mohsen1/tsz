@@ -250,12 +250,9 @@ impl<'a> CheckerState<'a> {
             expr_type,
         ) {
             Some(self.ctx.types.resolve_atom_ref(name).to_string())
-        } else if let Some(sym_ref) =
-            crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
-        {
-            Some(format!("__unique_{}", sym_ref.0))
         } else {
-            None
+            crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
+                .map(|sym_ref| format!("__unique_{}", sym_ref.0))
         }
     }
 
