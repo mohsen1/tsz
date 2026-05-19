@@ -70,7 +70,8 @@ def _make_index(**overrides) -> "helper.SnapshotIndex":
         "failures": set(),
         "accepted": set(),
         "baseline_pass": set(),
-        "basename_to_path": {},
+        "baseline_fail": set(),
+        "basename_to_paths": {},
     }
     defaults.update(overrides)
     return helper.SnapshotIndex(**defaults)
@@ -97,10 +98,40 @@ class TestSnapshotIndex(unittest.TestCase):
             self.assertIn(
                 "TypeScript/tests/cases/compiler/passingExampleAlpha.ts", index.baseline_pass
             )
-            self.assertIn("passingExampleAlpha", index.basename_to_path)
-            self.assertIn("failingExampleBeta", index.basename_to_path)
+            self.assertIn(
+                "TypeScript/tests/cases/compiler/failingExampleBeta.tsx", index.baseline_fail
+            )
+            self.assertIn("passingExampleAlpha", index.basename_to_paths)
+            self.assertIn("failingExampleBeta", index.basename_to_paths)
             self.assertIn(
                 "TypeScript/tests/cases/compiler/failingExampleBeta.tsx", index.failures
+            )
+
+    def test_duplicate_basenames_keep_every_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = _build_fake_conformance_dir(
+                Path(tmp),
+                baseline_lines=[
+                    "PASS TypeScript/tests/cases/projects/Alpha/sharedNameSpec.ts",
+                    "PASS TypeScript/tests/cases/projects/Beta/sharedNameSpec.ts",
+                    "FAIL TypeScript/tests/cases/projects/Gamma/sharedNameSpec.ts | expected:[TS2322] actual:[]",
+                ],
+                accepted_lines=[],
+                failures={
+                    "TypeScript/tests/cases/projects/Gamma/sharedNameSpec.ts": {
+                        "e": ["TS2322"],
+                        "a": [],
+                    }
+                },
+            )
+            index = helper.load_snapshot_index(base)
+            self.assertEqual(
+                sorted(index.basename_to_paths["sharedNameSpec"]),
+                [
+                    "TypeScript/tests/cases/projects/Alpha/sharedNameSpec.ts",
+                    "TypeScript/tests/cases/projects/Beta/sharedNameSpec.ts",
+                    "TypeScript/tests/cases/projects/Gamma/sharedNameSpec.ts",
+                ],
             )
 
     def test_accepted_strips_comments_and_blanks(self) -> None:
@@ -145,6 +176,13 @@ class TestClassifyPath(unittest.TestCase):
         index = _make_index(baseline_pass={"path/a.ts"})
         self.assertEqual(helper._classify_path("path/a.ts", index), "passing")
 
+    def test_failing_when_in_baseline_fail_only(self) -> None:
+        # A baseline-FAIL line is the structural answer for full-path lookups
+        # when the test failed in the snapshot but is not separately listed in
+        # detail.failures — e.g. paths recovered from older review threads.
+        index = _make_index(baseline_fail={"path/a.ts"})
+        self.assertEqual(helper._classify_path("path/a.ts", index), "failing")
+
     def test_unknown_when_no_artifact_mentions_it(self) -> None:
         self.assertEqual(helper._classify_path("path/x.ts", _make_index()), "unknown")
 
@@ -182,17 +220,26 @@ class TestResolveInputs(unittest.TestCase):
             },
             baseline_pass={
                 "TypeScript/tests/cases/compiler/passingGenericExample.ts",
+                "TypeScript/tests/cases/projects/Alpha/sharedNameSpec.ts",
             },
-            basename_to_path={
-                "tsxGenericAttributesType6": (
+            baseline_fail={
+                "TypeScript/tests/cases/compiler/failingGenericExample.ts",
+                "TypeScript/tests/cases/projects/Gamma/sharedNameSpec.ts",
+            },
+            basename_to_paths={
+                "tsxGenericAttributesType6": [
                     "TypeScript/tests/cases/conformance/jsx/tsxGenericAttributesType6.tsx"
-                ),
-                "passingGenericExample": (
+                ],
+                "passingGenericExample": [
                     "TypeScript/tests/cases/compiler/passingGenericExample.ts"
-                ),
-                "failingGenericExample": (
+                ],
+                "failingGenericExample": [
                     "TypeScript/tests/cases/compiler/failingGenericExample.ts"
-                ),
+                ],
+                "sharedNameSpec": [
+                    "TypeScript/tests/cases/projects/Alpha/sharedNameSpec.ts",
+                    "TypeScript/tests/cases/projects/Gamma/sharedNameSpec.ts",
+                ],
             },
         )
 
@@ -242,14 +289,46 @@ class TestResolveInputs(unittest.TestCase):
         # literal. Renaming both ends preserves resolution.
         index = _make_index(
             baseline_pass={"TypeScript/tests/cases/compiler/freshlyRenamedToken.ts"},
-            basename_to_path={
-                "freshlyRenamedToken": (
+            basename_to_paths={
+                "freshlyRenamedToken": [
                     "TypeScript/tests/cases/compiler/freshlyRenamedToken.ts"
-                ),
+                ],
             },
         )
         results = helper.resolve_inputs(["freshlyRenamedToken"], index)
         self.assertEqual(results[0].resolved[0].status, "passing")
+
+    def test_duplicate_basename_returns_every_match(self) -> None:
+        # Bare basename `sharedNameSpec` lives under Alpha (passing) and Gamma
+        # (failing). The helper must report both rows rather than silently
+        # collapsing to the first one.
+        results = helper.resolve_inputs(["sharedNameSpec"], self.index)
+        statuses = sorted(r.status for r in results[0].resolved)
+        paths = sorted(r.path for r in results[0].resolved)
+        self.assertEqual(statuses, ["failing", "passing"])
+        self.assertEqual(
+            paths,
+            [
+                "TypeScript/tests/cases/projects/Alpha/sharedNameSpec.ts",
+                "TypeScript/tests/cases/projects/Gamma/sharedNameSpec.ts",
+            ],
+        )
+
+    def test_full_path_to_failing_test_is_exact(self) -> None:
+        # Full path matching must not fall back through basename when the
+        # exact path is failing — that fallback was the latent bug that
+        # could pick a sibling row with the same basename.
+        results = helper.resolve_inputs(
+            ["TypeScript/tests/cases/projects/Gamma/sharedNameSpec.ts"],
+            self.index,
+        )
+        self.assertEqual(len(results[0].resolved), 1)
+        resolved = results[0].resolved[0]
+        self.assertEqual(
+            resolved.path,
+            "TypeScript/tests/cases/projects/Gamma/sharedNameSpec.ts",
+        )
+        self.assertEqual(resolved.status, "failing")
 
 
 class TestRendering(unittest.TestCase):
@@ -263,11 +342,19 @@ class TestRendering(unittest.TestCase):
             accepted={
                 "TypeScript/tests/cases/conformance/jsx/tsxGenericAttributesType6.tsx"
             },
-            baseline_pass=set(),
-            basename_to_path={
-                "tsxGenericAttributesType6": (
+            baseline_pass={
+                "TypeScript/tests/cases/projects/Alpha/sharedNameSpec.ts",
+                "TypeScript/tests/cases/projects/Beta/sharedNameSpec.ts",
+            },
+            baseline_fail=set(),
+            basename_to_paths={
+                "tsxGenericAttributesType6": [
                     "TypeScript/tests/cases/conformance/jsx/tsxGenericAttributesType6.tsx"
-                ),
+                ],
+                "sharedNameSpec": [
+                    "TypeScript/tests/cases/projects/Alpha/sharedNameSpec.ts",
+                    "TypeScript/tests/cases/projects/Beta/sharedNameSpec.ts",
+                ],
             },
         )
 
@@ -305,6 +392,22 @@ class TestRendering(unittest.TestCase):
         self.assertIn("Closure pattern for stale regression issues", md)
         for label, _ in helper.STATUSES.values():
             self.assertIn(label, md)
+
+    def test_markdown_flags_ambiguous_basename(self) -> None:
+        results = helper.resolve_inputs(["sharedNameSpec"], self.index)
+        md = helper.render_markdown(results, self.index)
+        self.assertIn("ambiguous basename", md)
+        self.assertIn(
+            "TypeScript/tests/cases/projects/Alpha/sharedNameSpec.ts", md
+        )
+        self.assertIn(
+            "TypeScript/tests/cases/projects/Beta/sharedNameSpec.ts", md
+        )
+
+    def test_markdown_does_not_flag_single_match(self) -> None:
+        results = helper.resolve_inputs(["tsxGenericAttributesType6"], self.index)
+        md = helper.render_markdown(results, self.index)
+        self.assertNotIn("ambiguous basename", md)
 
     def test_json_render_payload_shape(self) -> None:
         results = helper.resolve_inputs(

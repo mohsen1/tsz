@@ -154,7 +154,12 @@ class SnapshotIndex:
     failures: set[str]
     accepted: set[str]
     baseline_pass: set[str]
-    basename_to_path: dict[str, str]
+    baseline_fail: set[str]
+    # Basename → every path with that basename. Duplicate camelCase basenames
+    # do occur (`useModule` lives under nine `projects/` directories, and
+    # `parserReturnStatement4` has both a `.js` and a `.ts` variant), so
+    # collapsing to a single representative would silently misreport ambiguity.
+    basename_to_paths: dict[str, list[str]]
 
 
 def _strip_test_ext(name: str) -> str:
@@ -181,15 +186,20 @@ def load_snapshot_index(conformance_dir: Path) -> SnapshotIndex:
     }
 
     baseline_pass: set[str] = set()
-    basename_to_path: dict[str, str] = {}
+    baseline_fail: set[str] = set()
+    basename_to_paths: dict[str, list[str]] = {}
     for line in baseline_path.read_text(encoding="utf-8").splitlines():
         head, _, rest = line.partition(" ")
         path = rest.split(" |", 1)[0].strip()
-        if not path or head not in ("PASS", "FAIL"):
+        if not path:
             continue
         if head == "PASS":
             baseline_pass.add(path)
-        basename_to_path.setdefault(_strip_test_ext(basename(path)), path)
+        elif head == "FAIL":
+            baseline_fail.add(path)
+        else:
+            continue
+        basename_to_paths.setdefault(_strip_test_ext(basename(path)), []).append(path)
 
     return SnapshotIndex(
         timestamp=str(snapshot.get("timestamp", "")),
@@ -198,7 +208,8 @@ def load_snapshot_index(conformance_dir: Path) -> SnapshotIndex:
         failures=set(detail.get("failures", {}).keys()),
         accepted=accepted,
         baseline_pass=baseline_pass,
-        basename_to_path=basename_to_path,
+        baseline_fail=baseline_fail,
+        basename_to_paths=basename_to_paths,
     )
 
 
@@ -209,6 +220,8 @@ def _classify_path(path: str, index: SnapshotIndex) -> str:
         return "stale-accepted"
     if path in index.baseline_pass:
         return "passing"
+    if path in index.baseline_fail:
+        return "failing"
     return "unknown"
 
 
@@ -231,14 +244,25 @@ def _looks_like_test_token(token: str) -> bool:
     return has_lower and has_upper
 
 
-def _lookup_token(token: str, index: SnapshotIndex) -> str | None:
+def _lookup_token(token: str, index: SnapshotIndex) -> list[str]:
+    """Return every snapshot path that ``token`` could refer to.
+
+    A bare basename can be ambiguous (e.g. `useModule` lives under nine
+    `projects/` directories) — every match is returned so the caller can
+    render one row per candidate instead of fabricating a single row.
+    """
     if not _looks_like_test_token(token):
-        return None
+        return []
     if "TypeScript/tests/cases" in token:
         candidate = token.lstrip("<").rstrip(">")
-        if candidate in index.baseline_pass:
-            return candidate
-    return index.basename_to_path.get(_strip_test_ext(basename(token)))
+        if (
+            candidate in index.baseline_pass
+            or candidate in index.baseline_fail
+            or candidate in index.accepted
+        ):
+            return [candidate]
+        return []
+    return list(index.basename_to_paths.get(_strip_test_ext(basename(token)), []))
 
 
 def resolve_inputs(inputs: Iterable[str], index: SnapshotIndex) -> list[InputResult]:
@@ -247,17 +271,17 @@ def resolve_inputs(inputs: Iterable[str], index: SnapshotIndex) -> list[InputRes
         result = InputResult(raw=raw)
         seen: set[str] = set()
         for token in _candidate_tokens(raw):
-            path = _lookup_token(token, index)
-            if path is None or path in seen:
-                continue
-            seen.add(path)
-            result.resolved.append(
-                ResolvedTest(
-                    name=basename(path),
-                    path=path,
-                    status=_classify_path(path, index),
+            for path in _lookup_token(token, index):
+                if path in seen:
+                    continue
+                seen.add(path)
+                result.resolved.append(
+                    ResolvedTest(
+                        name=basename(path),
+                        path=path,
+                        status=_classify_path(path, index),
+                    )
                 )
-            )
         results.append(result)
     return results
 
@@ -287,9 +311,11 @@ def render_markdown(results: list[InputResult], index: SnapshotIndex) -> str:
                 f"{STATUSES['aggregate'][0]} |"
             )
             continue
+        ambiguous = len(result.resolved) > 1
         for resolved in result.resolved:
+            marker = " _(ambiguous basename — one row per match)_" if ambiguous else ""
             lines.append(
-                f"| `{raw}` | `{resolved.name}` (`{resolved.path}`) | "
+                f"| `{raw}` | `{resolved.name}` (`{resolved.path}`){marker} | "
                 f"{STATUSES[resolved.status][0]} |"
             )
     lines.append("")
