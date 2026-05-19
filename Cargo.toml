@@ -41,7 +41,7 @@ fixedbitset = "0.4"
 globset = "0.4"
 indexmap = "2.6"
 memchr = "2.7"
-notify = "6.1"
+notify = { version = "6.1", default-features = false, features = ["crossbeam-channel", "macos_kqueue"] }
 once_cell = "1.19"
 rayon = "1.10"
 regex = "1.11"
