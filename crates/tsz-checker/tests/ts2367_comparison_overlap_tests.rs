@@ -179,8 +179,6 @@ if (a === b) {}
 
 #[test]
 fn test_conditional_type_all_never_no_ts2367() {
-    // When ALL branches evaluate to `never`, the top-level NEVER guard in
-    // binary.rs fires, and TS2367 is correctly suppressed (unreachable code).
     assert!(
         !has_ts2367(
             r#"
@@ -216,8 +214,6 @@ if (a === b) {}
 
 #[test]
 fn test_narrowed_union_vs_disjoint_type() {
-    // After typeof narrowing, the numeric literal union must not overlap
-    // with string literals.
     assert!(
         has_ts2367(
             r#"

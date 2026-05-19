@@ -675,7 +675,7 @@ path = "tests/enum_nominality_tests.rs"
 
 [[test]]
 name = "ts2367_comparison_overlap_tests"
-path = "tests/ts2367_investigation_tests.rs"
+path = "tests/ts2367_comparison_overlap_tests.rs"
 
 [[test]]
 name = "enum_indexed_access_tests"
