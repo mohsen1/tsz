@@ -927,27 +927,13 @@ impl<'a> CheckerState<'a> {
                         if !sensitive_args.get(i).copied().unwrap_or(false) {
                             continue;
                         }
-                        let Some(arg_node) = self.ctx.arena.get(args[i]) else {
-                            continue;
-                        };
                         if !self.is_callback_like_argument(args[i]) {
                             continue;
                         }
-                        if self
-                            .ctx
-                            .arena
-                            .get_function(arg_node)
-                            .and_then(|func| func.type_parameters.as_ref())
-                            .is_some_and(|params| !params.nodes.is_empty())
+                        if let Some(seeded) = self.generic_callback_round1_seeded_arg_type(args[i])
                         {
-                            let raw_arg_type =
-                                self.get_type_of_node_with_request(args[i], &TypingRequest::NONE);
-                            let seeded =
-                                self.sanitize_generic_inference_arg_type(args[i], raw_arg_type);
-                            if seeded != TypeId::UNKNOWN && seeded != TypeId::ERROR {
-                                *arg_type = seeded;
-                                continue;
-                            }
+                            *arg_type = seeded;
+                            continue;
                         }
                         let Some(param_type) =
                             shape.params.get(i).map(|p| p.type_id).or_else(|| {
@@ -960,22 +946,10 @@ impl<'a> CheckerState<'a> {
                         if extracted_round1_partials.get(i).copied().unwrap_or(false) {
                             continue;
                         }
-                        if self.sensitive_callback_placeholder_should_skip_round1_inference(
-                            &shape, param_type,
-                        ) {
-                            if let Some(func) = self.ctx.arena.get_function(arg_node)
-                                && func.parameters.nodes.is_empty()
-                            {
-                                let raw_arg_type = self
-                                    .get_type_of_node_with_request(args[i], &TypingRequest::NONE);
-                                let seeded =
-                                    self.sanitize_generic_inference_arg_type(args[i], raw_arg_type);
-                                if seeded != TypeId::UNKNOWN && seeded != TypeId::ERROR {
-                                    *arg_type = seeded;
-                                }
-                            } else {
-                                *arg_type = TypeId::UNKNOWN;
-                            }
+                        if let Some(replacement) =
+                            self.sensitive_callback_round1_replacement(args[i], &shape, param_type)
+                        {
+                            *arg_type = replacement;
                         }
                     }
                     // Nested calls whose outer contextual type was intentionally skipped in

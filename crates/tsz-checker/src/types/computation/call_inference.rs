@@ -1716,6 +1716,51 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn generic_callback_round1_seeded_arg_type(
+        &mut self,
+        arg_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let arg_node = self
+            .callback_function_index(arg_idx)
+            .and_then(|idx| self.ctx.arena.get(idx))?;
+        let func = self.ctx.arena.get_function(arg_node)?;
+        let has_type_params = func
+            .type_parameters
+            .as_ref()
+            .is_some_and(|params| !params.nodes.is_empty());
+        has_type_params
+            .then(|| self.round1_seeded_callback_arg_type(arg_idx))
+            .flatten()
+    }
+
+    pub(crate) fn sensitive_callback_round1_replacement(
+        &mut self,
+        arg_idx: NodeIndex,
+        shape: &FunctionShape,
+        param_type: TypeId,
+    ) -> Option<TypeId> {
+        if !self.sensitive_callback_placeholder_should_skip_round1_inference(shape, param_type) {
+            return None;
+        }
+        let arg_node = self
+            .callback_function_index(arg_idx)
+            .and_then(|idx| self.ctx.arena.get(idx))?;
+        let func = self.ctx.arena.get_function(arg_node)?;
+        if func.parameters.nodes.is_empty() {
+            self.round1_seeded_callback_arg_type(arg_idx)
+        } else {
+            Some(TypeId::UNKNOWN)
+        }
+    }
+
+    fn round1_seeded_callback_arg_type(&mut self, arg_idx: NodeIndex) -> Option<TypeId> {
+        let raw_arg_type = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
+        match self.sanitize_generic_inference_arg_type(arg_idx, raw_arg_type) {
+            TypeId::UNKNOWN | TypeId::ERROR => None,
+            seeded => Some(seeded),
+        }
+    }
+
     pub(crate) fn inference_type_is_anyish(&self, ty: TypeId) -> bool {
         common::is_type_deeply_any(self.ctx.types, ty)
     }
