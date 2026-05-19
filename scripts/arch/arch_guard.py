@@ -2,6 +2,7 @@
 import pathlib
 import re
 import argparse
+import importlib.util
 import json
 import shlex
 import subprocess
@@ -540,6 +541,25 @@ SPECULATION_GUARD_NAME_CHECKS = [
         "Checker speculation boundary: number of `…Guard` structs in speculation.rs (architecture health metric 6)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "speculation.rs",
         0,
+    ),
+]
+
+DEBUG_PRINT_REPORT_PATH = ROOT / "scripts" / "perf" / "debug-print-report.py"
+DEBUG_PRINT_MACRO_CHECKS = [
+    (
+        "Performance boundary: compiler-internal debug print macros (Track 10)",
+        ROOT,
+        (
+            "crates/tsz-binder/src",
+            "crates/tsz-checker/src",
+            "crates/tsz-common/src",
+            "crates/tsz-core/src",
+            "crates/tsz-emitter/src",
+            "crates/tsz-lowering/src",
+            "crates/tsz-parser/src",
+            "crates/tsz-scanner/src",
+            "crates/tsz-solver/src",
+        ),
     ),
 ]
 
@@ -1496,6 +1516,33 @@ def scan_speculation_guard_struct_count(
         )
         return hits
     return []
+
+
+_DEBUG_PRINT_REPORT_MODULE = None
+
+
+def _load_debug_print_report_module():
+    """Load the debug-print scanner that owns comment/string parsing."""
+    global _DEBUG_PRINT_REPORT_MODULE
+    if _DEBUG_PRINT_REPORT_MODULE is not None:
+        return _DEBUG_PRINT_REPORT_MODULE
+    spec = importlib.util.spec_from_file_location(
+        "debug_print_report", DEBUG_PRINT_REPORT_PATH
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load {DEBUG_PRINT_REPORT_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    _DEBUG_PRINT_REPORT_MODULE = module
+    return module
+
+
+def scan_debug_print_macros(root: pathlib.Path, scan_dirs: tuple[str, ...]) -> list[str]:
+    """Report non-test compiler-internal `println!`, `eprintln!`, and `dbg!`."""
+    report = _load_debug_print_report_module()
+    hits = report.scan(root, scan_dirs)
+    return [f"{hit.path}:{hit.line} {hit.macro}: {hit.text}" for hit in hits]
 
 
 def extract_js_array_strings(text: str, const_name: str) -> Optional[list[str]]:
@@ -2671,6 +2718,12 @@ def main() -> int:
 
     for name, file_path, max_guard_count in SPECULATION_GUARD_NAME_CHECKS:
         hits = scan_speculation_guard_struct_count(file_path, max_guard_count)
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, root, scan_dirs in DEBUG_PRINT_MACRO_CHECKS:
+        hits = scan_debug_print_macros(root, scan_dirs)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
