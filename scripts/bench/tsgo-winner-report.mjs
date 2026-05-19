@@ -12,18 +12,42 @@ function asNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+// Fields that must be present in a compatibility object before a row
+// can be reported as a speed win. Missing any of these means the artifact
+// is incomplete and the row must render as gray/incomplete, not a win.
+const REQUIRED_PHASE_EXIT_FIELDS = [
+  "state",
+  "phase",
+  "last_successful_phase",
+  "exit_class",
+  "diagnostic_status",
+];
+
+function hasCompletePhaseMetadata(compatibility) {
+  return REQUIRED_PHASE_EXIT_FIELDS.every((f) =>
+    Object.prototype.hasOwnProperty.call(compatibility, f),
+  );
+}
+
 function isGreen(row) {
-  if (row.status) {
-    return false;
-  }
+  if (row.status) return false;
+  if (row.artifact_missing === true) return false;
   const compatibility = row.compatibility;
-  if (!compatibility) {
-    return true;
-  }
+  if (!compatibility) return true;
+  if (!hasCompletePhaseMetadata(compatibility)) return false;
   return (
+    compatibility.state === "green" &&
     compatibility.exit_class === "exit success" &&
     compatibility.diagnostic_status === "none"
   );
+}
+
+function isIncompleteCompat(row) {
+  if (row.status) return false;
+  if (row.artifact_missing === true) return true;
+  const compatibility = row.compatibility;
+  if (!compatibility) return false;
+  return !hasCompletePhaseMetadata(compatibility);
 }
 
 function ownerFamily(row) {
@@ -32,6 +56,7 @@ function ownerFamily(row) {
 
 export function createTsgoWinnerReport(input, inputPath) {
   const rows = Array.isArray(input.results) ? input.results : [];
+  const incompleteCompatExcluded = rows.filter((row) => isIncompleteCompat(row)).length;
   const winners = rows
     .filter((row) => row?.winner === "tsgo" && isGreen(row))
     .map((row) => {
@@ -84,6 +109,7 @@ export function createTsgoWinnerReport(input, inputPath) {
       rows: rows.length,
       green_tsgo_winners: winners.length,
       project_green_tsgo_winners: projects.length,
+      incomplete_compat_excluded: incompleteCompatExcluded,
     },
     worst: winners[0] ?? null,
     by_owner_family: [...byOwnerFamily.values()].sort((a, b) => {

@@ -120,6 +120,10 @@ function validateProjectCompatibilityRows(rows) {
   }
 
   for (const row of projectRows) {
+    // Rows explicitly marked artifact-missing are exempt from compatibility validation.
+    // They represent runs where the compatibility artifact was not collected (e.g. timeout
+    // before the artifact step ran). They must never appear as speed wins.
+    if (row.artifact_missing === true) continue;
     if (!row.compatibility || typeof row.compatibility !== "object") {
       failures.push(`${row.name}: missing compatibility object`);
       continue;
