@@ -139,7 +139,12 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn dedupe_and_sort_short_circuit_type_parts(parts: &mut Vec<ShortCircuitTypePart>) {
         let mut deduped: Vec<ShortCircuitTypePart> = Vec::new();
-        for part in parts.drain(..) {
+        for mut part in parts.drain(..) {
+            // Strip redundant outer parens (added by `parenthesize_type_text_in_union_position`)
+            // so types from different code paths compare equal during deduplication.
+            if let Some(stripped) = Self::strip_balanced_outer_parens(&part.text) {
+                part.text = stripped.to_string();
+            }
             if let Some(existing) = deduped
                 .iter_mut()
                 .find(|existing| existing.text == part.text)
