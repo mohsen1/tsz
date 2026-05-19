@@ -216,6 +216,7 @@ pub use caches::db::{QueryDatabase, TypeDatabase};
 pub use canonicalize::Canonicalizer;
 pub use classes::inheritance::InheritanceGraph;
 #[cfg(test)]
+#[allow(unused_imports)]
 pub(crate) use contextual::{
     ContextualTypeContext, apply_contextual_type, rest_argument_element_type,
 };
@@ -235,18 +236,10 @@ pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
 };
 #[cfg(test)]
+#[allow(unused_imports)]
 pub(crate) use evaluation::evaluate::{
     TypeEvaluator, evaluate_conditional, evaluate_index_access, evaluate_index_access_with_options,
     evaluate_keyof, evaluate_mapped, evaluate_type, evaluate_type_with_request,
-};
-pub use instantiation::instantiate::{
-    MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution,
-    instantiate_function_with_type_args, instantiate_generic, instantiate_type,
-    instantiate_type_cached, instantiate_type_params_to_constraints, instantiate_type_preserving,
-    instantiate_type_preserving_cached, instantiate_type_preserving_meta,
-    instantiate_type_preserving_meta_cached, instantiate_type_with_depth_status,
-    instantiate_type_with_infer, instantiate_type_with_infer_cached, substitute_this_type,
-    substitute_this_type_at_return_position, substitute_this_type_cached,
 };
 pub use narrowing::{
     CachedPropertyType, DiscriminantInfo, GuardSense, NarrowingCache, NarrowingContext,
