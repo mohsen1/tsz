@@ -2436,6 +2436,8 @@ impl<'a> DeclarationEmitter<'a> {
         binder: &BinderState,
         current_file_path: &str,
     ) -> Option<String> {
+        let source_path = self.get_symbol_source_path(sym_id, binder);
+
         binder
             .module_exports
             .iter()
@@ -2465,6 +2467,14 @@ impl<'a> DeclarationEmitter<'a> {
                     slash_count == 0
                 };
                 if !is_root_specifier {
+                    return None;
+                }
+                if source_path.as_deref() == Some(module_path.as_str())
+                    && self
+                        .package_specifier_for_package_json_path(current_file_path, module_path)
+                        .as_deref()
+                        != Some(specifier.as_str())
+                {
                     return None;
                 }
 
