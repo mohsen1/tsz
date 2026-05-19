@@ -944,6 +944,29 @@ fn test_collect_type_queries_transitive_and_unique() {
 }
 
 #[test]
+fn test_collect_resolution_refs_transitive_and_unique() {
+    let interner = TypeInterner::new();
+    let d1 = DefId(1);
+    let d2 = DefId(2);
+    let s1 = SymbolRef(11);
+    let s2 = SymbolRef(22);
+
+    let lazy1 = interner.lazy(d1);
+    let lazy2 = interner.lazy(d2);
+    let q1 = interner.type_query(s1);
+    let q2 = interner.type_query(s2);
+    let nested = interner.intersection(vec![lazy1, q1, lazy1, q1]);
+    let root = interner.union(vec![nested, lazy2, q2, lazy2, q2]);
+
+    let mut refs = collect_resolution_refs(&interner, root);
+    refs.lazy_def_ids.sort_by_key(|d| d.0);
+    refs.type_queries.sort_by_key(|s| s.0);
+
+    assert_eq!(refs.lazy_def_ids, vec![d1, d2]);
+    assert_eq!(refs.type_queries, vec![s1, s2]);
+}
+
+#[test]
 fn test_collect_enum_def_ids_transitive_and_unique() {
     let interner = TypeInterner::new();
     let d1 = DefId(31);
