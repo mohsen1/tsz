@@ -567,9 +567,10 @@ impl<'a> CheckerState<'a> {
         // the parameter type becomes `number` (after substituting T=number), and we can
         // correctly check if `"string"` is assignable to `number`.
         let mut callee_type_for_resolution = if explicit_call_type_arguments.is_some() {
-            self.apply_type_arguments_to_callable_type(
+            self.apply_type_arguments_to_callable_type_for_call(
                 callee_type,
                 explicit_call_type_arguments.as_ref(),
+                args,
             )
         } else {
             callee_type
@@ -589,9 +590,10 @@ impl<'a> CheckerState<'a> {
                 self.explicit_identifier_callee_annotation_type(call.expression)
         {
             callee_type_for_resolution = if explicit_call_type_arguments.is_some() {
-                self.apply_type_arguments_to_callable_type(
+                self.apply_type_arguments_to_callable_type_for_call(
                     annotated_callee_type,
                     explicit_call_type_arguments.as_ref(),
+                    args,
                 )
             } else {
                 annotated_callee_type
@@ -607,9 +609,10 @@ impl<'a> CheckerState<'a> {
                 self.direct_function_call_type_for_type_argument_validation(call.expression)
         {
             callee_type_for_resolution = if explicit_call_type_arguments.is_some() {
-                self.apply_type_arguments_to_callable_type(
+                self.apply_type_arguments_to_callable_type_for_call(
                     direct_callee_type,
                     explicit_call_type_arguments.as_ref(),
+                    args,
                 )
             } else {
                 direct_callee_type
@@ -688,6 +691,7 @@ impl<'a> CheckerState<'a> {
 
         if let Some(signatures) = overload_signatures.as_deref()
             && let Some(overload_resolution) = self.resolve_overloaded_call_with_signatures(
+                idx,
                 args,
                 signatures,
                 force_bivariant_callbacks,
@@ -3112,10 +3116,19 @@ impl<'a> CheckerState<'a> {
                         .get_parameter_type_for_call(index, args.len())
                     });
                 if let Some(expected) = expected
-                    && !(expected == TypeId::NEVER
-                        && common::index_access_parts(self.ctx.types, actual).is_some_and(
-                            |(_, index)| common::contains_type_parameters(self.ctx.types, index),
-                        ))
+                    && !self.should_trust_solver_for_dependent_never_generic_arg(
+                        actual,
+                        expected,
+                        generic_instantiated_params
+                            .as_ref()
+                            .and_then(|params| {
+                                params.get(index).or_else(|| {
+                                    let last = params.last()?;
+                                    last.rest.then_some(last)
+                                })
+                            })
+                            .map(|param| param.type_id),
+                    )
                     && self
                         .checker_only_assignability_failure_reason(actual, expected)
                         .is_some()
