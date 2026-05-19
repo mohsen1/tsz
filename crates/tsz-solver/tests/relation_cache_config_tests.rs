@@ -21,6 +21,9 @@
 //!    sound-mode lookup for the same type pair.
 //! 8. Typed `RelationPolicy` query-cache entrypoints insert under the same
 //!    policy-derived cache keys as the legacy packed-flag entrypoints.
+//! 9. The typed no-flags compatibility constructor remains equivalent to the
+//!    legacy `RelationPolicy::from_flags(0)` constructor, without collapsing
+//!    into `RelationPolicy::default()`.
 
 use super::*;
 use crate::caches::db::QueryDatabase;
@@ -58,6 +61,27 @@ fn assert_packed_flag_partitions(name: &str, flag_bits: u16) {
         name,
         RelationPolicy::from_flags(flag_bits),
         RelationPolicy::from_flags(0),
+    );
+}
+
+#[test]
+fn unflagged_compatibility_policy_matches_empty_legacy_flags() {
+    let typed = RelationPolicy::unflagged_compatibility();
+    let legacy = RelationPolicy::from_flags(0);
+
+    assert_eq!(
+        typed, legacy,
+        "typed no-flags compatibility policy must preserve the legacy packed no-flags behavior",
+    );
+    assert_eq!(
+        typed.cache_config(),
+        legacy.cache_config(),
+        "typed no-flags compatibility policy must use the legacy no-flags cache slot",
+    );
+    assert_ne!(
+        typed.cache_config(),
+        RelationPolicy::default().cache_config(),
+        "historical no-flags compatibility remains distinct from the strict-null default policy",
     );
 }
 

@@ -1656,12 +1656,12 @@ impl QueryDatabase for QueryCache<'_> {
 
     /// Convenience wrapper for `is_subtype_of` with default flags.
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
-        self.is_subtype_of_with_policy(source, target, RelationPolicy::from_flags(0))
+        self.is_subtype_of_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
     /// Convenience wrapper for `is_assignable_to` with default flags.
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
-        self.is_assignable_to_with_policy(source, target, RelationPolicy::from_flags(0))
+        self.is_assignable_to_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
     fn lookup_subtype_cache(&self, key: RelationCacheKey) -> Option<bool> {

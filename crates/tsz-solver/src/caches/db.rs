@@ -1087,7 +1087,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
 
     fn is_subtype_of(&self, source: TypeId, target: TypeId) -> bool {
         // Default implementation: use non-strict mode for backward compatibility
-        self.is_subtype_of_with_policy(source, target, RelationPolicy::from_flags(0))
+        self.is_subtype_of_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
     /// Subtype check with a typed relation policy.
@@ -1136,7 +1136,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// Uses separate cache from `is_subtype_of` to prevent cache poisoning.
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
         // Default implementation: use non-strict mode for backward compatibility
-        self.is_assignable_to_with_policy(source, target, RelationPolicy::from_flags(0))
+        self.is_assignable_to_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
     /// Assignability check with a typed relation policy.
@@ -1380,7 +1380,7 @@ impl QueryDatabase for TypeInterner {
 
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
         // Default implementation: use non-strict mode for backward compatibility
-        self.is_assignable_to_with_policy(source, target, RelationPolicy::from_flags(0))
+        self.is_assignable_to_with_policy(source, target, RelationPolicy::unflagged_compatibility())
     }
 
     fn is_assignable_to_with_flags(&self, source: TypeId, target: TypeId, flags: u16) -> bool {
