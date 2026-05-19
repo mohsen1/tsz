@@ -376,6 +376,7 @@ run_lint() {
     node --check "$script" || return $?
   done
   node scripts/ci/test-project-compile-guard-readiness-artifacts.mjs || return $?
+  node scripts/ci/test-pr-ownership-report.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-classifier.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-clean-row.mjs || return $?
   node scripts/ci/test-type-challenges-assertion-clean-subset.mjs || return $?
@@ -390,6 +391,7 @@ run_lint() {
   node scripts/ci/test-type-challenges-test-cases-manifest.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
   python3 scripts/ci/test_ci_resources.py || return $?
+  python3 scripts/conformance/test_query_conformance.py || return $?
   # Use the dedicated ci-lint profile (debug=false, incremental=false,
   # codegen-units=256). Workspace clippy artifacts go to .target/ci-lint/
   # — separate cache key from .target/debug so dev incrementals on a
