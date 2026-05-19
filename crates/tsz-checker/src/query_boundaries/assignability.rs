@@ -1,7 +1,7 @@
 use tsz_common::Atom;
 use tsz_solver::{
     ObjectShape, PropertyInfo, QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId,
-    TypeResolver, TypeSubstitution,
+    TypeResolver, TypeSubstitution, computation::evaluate_type,
 };
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
@@ -108,11 +108,11 @@ pub(crate) fn contextual_function_callable_union_members(
     }
 
     let mut callable_members = Vec::new();
-    let evaluated_target = tsz_solver::evaluate_type(db, target);
+    let evaluated_target = evaluate_type(db, target);
     for candidate in [target, evaluated_target] {
         if let Some(members) = tsz_solver::type_queries::get_union_members(db, candidate) {
             for &member in members.iter() {
-                let evaluated_member = tsz_solver::evaluate_type(db, member);
+                let evaluated_member = evaluate_type(db, member);
                 let callable_member =
                     tsz_solver::type_queries::get_callable_shape_for_type(db, member)
                         .map(|shape| (member, shape))
