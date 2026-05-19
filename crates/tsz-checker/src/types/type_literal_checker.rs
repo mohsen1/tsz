@@ -270,7 +270,11 @@ impl<'a> CheckerState<'a> {
                             {
                                 let type_arg =
                                     self.get_type_from_type_node_in_type_literal(first_arg);
-                                return self.ctx.types.string_intrinsic_by_name(name, type_arg);
+                                return crate::query_boundaries::type_construction::string_intrinsic_by_name(
+                                    self.ctx.types,
+                                    name,
+                                    type_arg,
+                                );
                             }
                             return TypeId::ERROR;
                         }
