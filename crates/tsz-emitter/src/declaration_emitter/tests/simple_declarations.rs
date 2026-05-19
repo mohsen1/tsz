@@ -2298,6 +2298,160 @@ export class Foo {
     );
 }
 
+// --- TypeScript @overload JSDoc tests (TS 4.7+) ---
+// These mirror the JS tests above but use .ts source (emit_dts).
+// @overload is valid in both .js and .ts files.
+
+#[test]
+fn test_ts_function_declaration_emits_separate_jsdoc_overload_signatures() {
+    let output = emit_dts(
+        r#"
+/**
+ * @overload
+ * @param {number} value
+ * @returns {'number'}
+ */
+/**
+ * @overload
+ * @param {string} value
+ * @returns {'string'}
+ */
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function kind(value: unknown): string {
+  return typeof value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function kind(value: number): \"number\";"),
+        "Expected number overload in TS @overload: {output}"
+    );
+    assert!(
+        output.contains("declare function kind(value: string): \"string\";"),
+        "Expected string overload in TS @overload: {output}"
+    );
+    assert!(
+        !output.contains("declare function kind(value: unknown): string;"),
+        "Implementation signature should not be emitted when @overload JSDoc present: {output}"
+    );
+}
+
+#[test]
+fn test_ts_function_declaration_jsdoc_overload_with_different_param_names() {
+    // Prove the fix is not name-dependent: use X/Y instead of value/result.
+    let output = emit_dts(
+        r#"
+/**
+ * @overload
+ * @param {number} x
+ * @returns {number}
+ */
+/**
+ * @overload
+ * @param {string} x
+ * @returns {string}
+ */
+/**
+ * @param {unknown} x
+ * @returns {unknown}
+ */
+function identity(x: unknown): unknown {
+  return x;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function identity(x: number): number;"),
+        "Expected number overload with renamed param: {output}"
+    );
+    assert!(
+        output.contains("declare function identity(x: string): string;"),
+        "Expected string overload with renamed param: {output}"
+    );
+    assert!(
+        !output.contains("unknown"),
+        "Implementation signature with unknown param should be suppressed: {output}"
+    );
+}
+
+#[test]
+fn test_ts_class_method_emits_jsdoc_overload_signatures() {
+    let output = emit_dts(
+        r#"
+class Converter {
+  /**
+   * @overload
+   * @param {number} x
+   * @returns {string}
+   */
+  /**
+   * @overload
+   * @param {string} x
+   * @returns {number}
+   */
+  /**
+   * @param {unknown} x
+   * @returns {unknown}
+   */
+  convert(x: unknown): unknown {
+    return x;
+  }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("convert(x: number): string;"),
+        "Expected number→string method overload in TS class: {output}"
+    );
+    assert!(
+        output.contains("convert(x: string): number;"),
+        "Expected string→number method overload in TS class: {output}"
+    );
+    assert!(
+        !output.contains("convert(x: unknown)"),
+        "Implementation method signature should not be emitted: {output}"
+    );
+}
+
+#[test]
+fn test_ts_class_constructor_emits_jsdoc_overload_signatures() {
+    let output = emit_dts(
+        r#"
+class Wrapper {
+  /**
+   * @overload
+   * @param {string} value
+   */
+  /**
+   * @overload
+   * @param {number} value
+   */
+  /** @param {unknown} value */
+  constructor(value: unknown) {}
+}
+"#,
+    );
+
+    assert!(
+        output.contains("constructor(value: string);"),
+        "Expected string constructor overload in TS: {output}"
+    );
+    assert!(
+        output.contains("constructor(value: number);"),
+        "Expected number constructor overload in TS: {output}"
+    );
+    assert!(
+        !output.contains("constructor(value: unknown)"),
+        "Implementation constructor should be suppressed when @overload present: {output}"
+    );
+}
+
 #[test]
 fn test_js_object_namespace_emits_legacy_jsdoc_overload_member_comments() {
     let output = emit_js_dts(

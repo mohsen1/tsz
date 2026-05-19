@@ -975,16 +975,23 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         stmt_idx: NodeIndex,
     ) -> Option<NodeIndex> {
-        if !self.source_is_js_file {
+        let stmt_node = self.arena.get(stmt_idx)?;
+
+        // TypeScript 4.7+ supports @overload JSDoc tags in both JS and TS files.
+        // A function declaration with a body (implementation) may have @overload
+        // comments that define overload signatures without separate declarations.
+        if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+            let func = self.arena.get_function(stmt_node)?;
+            // Only return for implementations (functions with bodies).
+            // Overload declarations (no body) use standard TS overload syntax.
+            if func.body.is_some() {
+                return Some(stmt_idx);
+            }
             return None;
         }
 
-        let stmt_node = self.arena.get(stmt_idx)?;
-        if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-            return Some(stmt_idx);
-        }
-
-        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+        // Export-wrapped function declarations are a JS CommonJS-specific pattern.
+        if self.source_is_js_file && stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
             let export = self.arena.get_export_decl(stmt_node)?;
             let clause_node = self.arena.get(export.export_clause)?;
             if clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
