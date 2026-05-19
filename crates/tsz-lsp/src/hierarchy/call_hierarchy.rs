@@ -288,6 +288,7 @@ impl<'a> CallHierarchyProvider<'a> {
         }
 
         // Convert grouped callers into CallHierarchyIncomingCall items
+        results.reserve(callers.len() + usize::from(!script_from_ranges.is_empty()));
         for (caller_idx_raw, ranges) in callers {
             let caller_idx = NodeIndex(caller_idx_raw);
             if let Some(item) = self.make_call_hierarchy_item_for_caller(caller_idx) {
@@ -381,6 +382,7 @@ impl<'a> CallHierarchyProvider<'a> {
             }
         }
 
+        results.reserve(callers.len() + usize::from(!script_from_ranges.is_empty()));
         for (caller_idx_raw, ranges) in callers {
             let caller_idx = NodeIndex(caller_idx_raw);
             if let Some(item) = self.make_call_hierarchy_item_for_caller(caller_idx) {
@@ -494,6 +496,7 @@ impl<'a> CallHierarchyProvider<'a> {
             }
         }
 
+        results.reserve(callers.len() + usize::from(!script_from_ranges.is_empty()));
         for (caller_idx_raw, ranges) in callers {
             let caller_idx = NodeIndex(caller_idx_raw);
             if let Some(item) = self.make_call_hierarchy_item_for_caller(caller_idx) {
@@ -651,6 +654,7 @@ impl<'a> CallHierarchyProvider<'a> {
         }
 
         // Convert grouped callees into CallHierarchyOutgoingCall items
+        results.reserve(callees.len());
         for (_decl_idx, (item_opt, ranges, import_resolution)) in callees {
             if let Some(item) = item_opt {
                 results.push(CallHierarchyOutgoingCall {
