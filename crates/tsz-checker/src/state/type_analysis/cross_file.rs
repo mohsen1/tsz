@@ -129,10 +129,10 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // If the import/export resolver has already tied this raw SymbolId to a
-        // specific source file, use that binder (cross-file alias resolution).
-        // The guard above ensures we only reach here when the local lookup
-        // produced nothing or found an alias (whose target lives elsewhere).
+        // Cross-file resolver: if the resolver has tied this SymbolId to a
+        // non-current source file, use that binder. We only reach here when
+        // the local lookup produced nothing or found a non-named alias (whose
+        // target lives elsewhere).
         if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && file_idx != self.ctx.current_file_idx
             && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
@@ -141,26 +141,29 @@ impl<'a> CheckerState<'a> {
             return Some(sym);
         }
 
-        // 1. Return the local symbol if one was found above (a non-named alias
-        //    that fell through the guard but has no cross-file resolution).
+        // Non-named alias with no cross-file resolution: fall back to local.
         if let Some(sym) = local_sym {
             return Some(sym);
         }
-        // 2. Check lib files (lib.d.ts, etc.)
+
+        // Lib files (lib.d.ts, etc.).
         for lib in self.ctx.lib_contexts.iter() {
             if let Some(sym) = lib.binder.get_symbol(sym_id) {
                 return Some(sym);
             }
         }
-        // 3. O(1) fast-path: if this SymbolId was already resolved to a specific
-        //    file via resolve_symbol_file_index, go directly to that binder.
+
+        // Retry the resolver without the non-current-file filter, in case the
+        // resolver mapping points at the current file (e.g. local lookup found
+        // a fell-through alias).
         if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
             && let Some(sym) = binder.get_symbol(sym_id)
         {
             return Some(sym);
         }
-        // 4. Fallback: O(N) scan over all binders
+
+        // Last resort: O(N) scan over all known binders.
         if let Some(binders) = &self.ctx.all_binders {
             for binder in binders.iter() {
                 if let Some(sym) = binder.get_symbol(sym_id) {
