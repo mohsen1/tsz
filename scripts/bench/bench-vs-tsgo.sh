@@ -23,6 +23,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+BENCH_TIMEOUT_RUNNER="$SCRIPT_DIR/run-with-timeout.sh"
 
 # Synthetic fixture generators are shared with the precommit microbench gate.
 # shellcheck source=lib/synthetic-generators.sh
@@ -1115,6 +1116,7 @@ record_project_compatibility() {
     fixture_sources="$(tsz_project_fixture_sources "$name")"
 
     COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
+    COMPAT_OUTPUT_ROOT="$TEMP_DIR" \
     COMPAT_FIXTURE_ROOT="$EXTERNAL_BENCH_DIR" \
     COMPAT_NAME="$name" \
     COMPAT_EXIT_CLASS="$exit_class" \
@@ -1314,7 +1316,7 @@ run_benchmark() {
     echo -e "${GREEN}$name${NC} ($info)"
 
     # Run benchmark and capture JSON output.
-    # Wrap commands with perl alarm to kill runs that hit infinite loops.
+    # Wrap commands with the repo timeout runner to kill runs that hit infinite loops.
     # Normal single-file runs complete in <5s, so 15s is generous.
     # Use --ignore-failure so hyperfine continues even if a rare iteration is killed.
     local run_timeout=15
@@ -1326,8 +1328,8 @@ run_benchmark() {
         --style full \
         --ignore-failure \
         --export-json "$json_file" \
-        -n "tsz" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${TSZ_LIB_DIR:+env TSZ_LIB_DIR=$TSZ_LIB_DIR} $TSZ --noEmit $extra_args $file 2>/dev/null" \
-        -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- $TSGO --noEmit $extra_args $file 2>/dev/null"; then
+        -n "tsz" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${TSZ_LIB_DIR:+env TSZ_LIB_DIR=$TSZ_LIB_DIR} $TSZ --noEmit $extra_args $file 2>/dev/null" \
+        -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- $TSGO --noEmit $extra_args $file 2>/dev/null"; then
         local status="hyperfine error"
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},ERR,ERR,N/A,N/A,error,0,${status}\n"
         rm -f "$json_file"
@@ -1609,7 +1611,7 @@ run_project_benchmark() {
                 --ignore-failure \
                 --export-json "$json_file" \
                 "${hyperfine_prepare_args[@]}" \
-                -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
+                -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
         else
             hyperfine \
                 --warmup "$proj_warmup" \
@@ -1618,7 +1620,7 @@ run_project_benchmark() {
                 --style full \
                 --ignore-failure \
                 --export-json "$json_file" \
-                -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
+                -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_tsz_unavailable_status=$?
         fi
         if [ "$hyperfine_tsz_unavailable_status" -ne 0 ]; then
             record_project_compatibility "$name" "runner error" "timing" "hyperfine failed" "hyperfine failed while timing tsgo-only project row" "$file_count" "$peak_memory_bytes" "$tsc_exit_codes"
@@ -1660,8 +1662,8 @@ run_project_benchmark() {
             --ignore-failure \
             --export-json "$json_file" \
             "${hyperfine_prepare_args[@]}" \
-            -n "tsz" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
-            -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
+            -n "tsz" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
+            -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
     else
         hyperfine \
             --warmup "$proj_warmup" \
@@ -1670,8 +1672,8 @@ run_project_benchmark() {
             --style full \
             --ignore-failure \
             --export-json "$json_file" \
-            -n "tsz" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
-            -n "tsgo" "perl -e 'alarm($run_timeout); exec @ARGV' -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
+            -n "tsz" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsz_cmd_prefix}$TSZ --noEmit -p $tsconfig 2>/dev/null" \
+            -n "tsgo" "bash $BENCH_TIMEOUT_RUNNER $run_timeout -- ${tsgo_cmd_prefix}$TSGO --noEmit -p $tsconfig 2>/dev/null" || hyperfine_status=$?
     fi
     if [ "$hyperfine_status" -ne 0 ]; then
         local status="hyperfine error"
@@ -1846,6 +1848,38 @@ function readSourceRows() {
   }
 }
 
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const normalized = String(value ?? "").trim();
+    if (normalized) return normalized;
+  }
+  return null;
+}
+
+function githubRunUrl(runId) {
+  if (!runId || runId === "local") return null;
+  const serverUrl = firstNonEmpty(process.env.GITHUB_SERVER_URL, "https://github.com");
+  const repository = firstNonEmpty(process.env.GITHUB_REPOSITORY);
+  if (!repository) return null;
+  return `${serverUrl}/${repository}/actions/runs/${runId}`;
+}
+
+function compatibilityArtifactMetadata(recorded = {}, generatedAt = new Date().toISOString()) {
+  const runId = firstNonEmpty(recorded.workflow_run_id, process.env.GITHUB_RUN_ID, "local");
+  return {
+    generated_at: firstNonEmpty(recorded.generated_at, generatedAt),
+    source_commit: firstNonEmpty(recorded.source_commit, process.env.BENCH_TARGET_SHA, process.env.GITHUB_SHA, "local"),
+    workflow_name: firstNonEmpty(recorded.workflow_name, process.env.GITHUB_WORKFLOW, "local"),
+    workflow_run_id: runId,
+    workflow_run_url: firstNonEmpty(recorded.workflow_run_url, githubRunUrl(runId)),
+    workflow_run_attempt: firstNonEmpty(recorded.workflow_run_attempt, process.env.GITHUB_RUN_ATTEMPT),
+    run_status: firstNonEmpty(
+      recorded.run_status,
+      process.env.GITHUB_ACTIONS === "true" ? "completed" : "local",
+    ),
+  };
+}
+
 function fallbackCompatibility(row) {
   if (!projectOwnerFamilies[row.name]) return null;
   const status = String(row.status || "").toLowerCase();
@@ -2012,14 +2046,42 @@ function lastSuccessfulPhaseFrom(recorded) {
   return null;
 }
 
+function rowStateFrom(recorded) {
+  if (recorded.state) return recorded.state;
+  if (recorded.exit_class === "exit success" && recorded.diagnostic_status === "none") return "green";
+  if (recorded.exit_class === "fixture invalid" || recorded.exit_class === "tsz unavailable") return "gray";
+  if (String(recorded.diagnostic_status || "").toLowerCase().includes("diagnostic mismatch")) return "yellow";
+  return "red";
+}
+
+function reproFromRecorded(recorded) {
+  if (recorded.repro && typeof recorded.repro === "object") return recorded.repro;
+  return {
+    tsconfig_path: null,
+    source_root: null,
+    first_failure_path: null,
+    first_failure_line: null,
+    first_failure_column: null,
+    first_failure_code: null,
+    reduced_repro_path: recorded.reduced_repro_path || null,
+    command: null,
+  };
+}
+
 function compatibilityFor(row, compatibilityRows) {
   const recorded = compatibilityRows.get(row.name) || fallbackCompatibility(row);
   if (!recorded) return {};
   const diagnosticDeltas = normalizedDiagnosticDeltas(recorded);
   const diagnosticSubsystems = normalizedDiagnosticSubsystems(recorded, diagnosticDeltas);
+  const knownBlockers = knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticDeltas);
+  const state = rowStateFrom(recorded);
   return {
     compatibility: {
+      ...compatibilityArtifactMetadata(recorded),
+      state,
       exit_class: recorded.exit_class || "unknown",
+      first_failure_class: recorded.first_failure_class ?? (state === "green" ? null : knownBlockers[0] || recorded.exit_class || null),
+      owner_track: recorded.owner_track ?? null,
       phase: recorded.phase || "unknown",
       last_successful_phase: lastSuccessfulPhaseFrom(recorded),
       diagnostic_status: recorded.diagnostic_status || "unknown",
@@ -2030,7 +2092,9 @@ function compatibilityFor(row, compatibilityRows) {
       reduction_candidates: reductionCandidatesFrom(diagnosticDeltas),
       emit_status: recorded.emit_status || "not in scope (noEmit project check)",
       dts_status: recorded.dts_status || "not in scope (noEmit project check)",
-      known_blockers: knownBlockersFrom(recorded, diagnosticSubsystems, diagnosticDeltas),
+      known_blockers: knownBlockers,
+      reduced_repro_path: recorded.reduced_repro_path || null,
+      repro: reproFromRecorded(recorded),
       exit_codes: recorded.exit_codes && typeof recorded.exit_codes === "object"
         ? {
             tsc: Array.isArray(recorded.exit_codes.tsc) ? recorded.exit_codes.tsc : [],
@@ -2041,6 +2105,7 @@ function compatibilityFor(row, compatibilityRows) {
       semantic_owner_family: projectOwnerFamilies[row.name] || "not classified",
       files_reached: recorded.files_reached ?? null,
       peak_memory_bytes: recorded.peak_memory_bytes ?? null,
+      fixture_sources: Array.isArray(recorded.fixture_sources) ? recorded.fixture_sources : [],
     },
   };
 }
@@ -2127,8 +2192,9 @@ function runnerEnvironment() {
   };
 }
 
+const generatedAt = new Date().toISOString();
 const payload = {
-  generated_at: new Date().toISOString(),
+  ...compatibilityArtifactMetadata({}, generatedAt),
   benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
   runner_environment: runnerEnvironment(),
   validation: {

@@ -32,6 +32,41 @@ function fail(message) {
   process.exit(1);
 }
 
+function isInsideOrSame(root, candidate) {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
+
+function validateOutputDestinations(candidateDir, outputDir, subsetManifestPath) {
+  const candidateRoot = path.resolve(candidateDir);
+  const outputRoot = path.resolve(outputDir);
+  const manifestPath = path.resolve(subsetManifestPath);
+  const fixtureRoot = path.dirname(candidateRoot);
+
+  if (outputRoot === fixtureRoot || !isInsideOrSame(fixtureRoot, outputRoot)) {
+    fail(`output directory must stay inside the assertion fixture root: ${outputDir}`);
+  }
+
+  if (isInsideOrSame(candidateRoot, outputRoot) || isInsideOrSame(outputRoot, candidateRoot)) {
+    fail("output directory must not overlap the assertion candidate directory");
+  }
+
+  if (!isInsideOrSame(outputRoot, manifestPath) || manifestPath === outputRoot) {
+    fail(
+      `subset manifest path must stay inside the output directory: ${subsetManifestPath}`,
+    );
+  }
+
+  if (fs.existsSync(outputRoot) && !fs.statSync(outputRoot).isDirectory()) {
+    fail(`output directory exists but is not a directory: ${outputDir}`);
+  }
+
+  if (fs.existsSync(manifestPath) && !fs.statSync(manifestPath).isFile()) {
+    fail(`subset manifest path is not a file: ${subsetManifestPath}`);
+  }
+
+  return { outputRoot, manifestPath };
+}
+
 function normalizeManifestPath(value, label) {
   if (typeof value !== "string" || value.trim() === "") {
     fail(`${label} must be a non-empty relative path`);
@@ -273,6 +308,10 @@ const {
   candidateManifest,
   classification,
 } = validateInputs(readJson(candidateManifestPath), readJson(classificationPath));
+const {
+  outputRoot,
+  manifestPath,
+} = validateOutputDestinations(candidateDir, outputDir, subsetManifestPath);
 const tsc = classification.compilers?.tsc ?? {};
 const tscCandidateDiagnostics = tsc.candidateDiagnostics ?? {};
 const tscAcceptedFileList = Array.isArray(tscCandidateDiagnostics.filesWithoutDiagnostics)
@@ -405,20 +444,20 @@ const selectedEntriesMissingSolutionDeclarationReference = selectedEntries.filte
   (entry) => entry.assertion?.hasReferencedSolutionDeclaration !== true,
 );
 
-fs.rmSync(outputDir, { recursive: true, force: true });
-fs.mkdirSync(path.join(outputDir, "assertions"), { recursive: true });
-fs.mkdirSync(path.join(outputDir, "utils"), { recursive: true });
+fs.rmSync(outputRoot, { recursive: true, force: true });
+fs.mkdirSync(path.join(outputRoot, "assertions"), { recursive: true });
+fs.mkdirSync(path.join(outputRoot, "utils"), { recursive: true });
 
 copyRequiredFile(
   path.join(candidateDir, "utils", "index.d.ts"),
-  path.join(outputDir, "utils", "index.d.ts"),
+  path.join(outputRoot, "utils", "index.d.ts"),
   "Type Challenges assertion utils",
 );
 
 for (const entry of selectedEntries) {
   copyRequiredFile(
     path.join(candidateDir, entry.output),
-    path.join(outputDir, entry.output),
+    path.join(outputRoot, entry.output),
     `Type Challenges accepted assertion ${entry.output}`,
   );
 }
@@ -456,11 +495,11 @@ const manifest = {
   entries: selectedEntries,
 };
 
-fs.mkdirSync(path.dirname(subsetManifestPath), { recursive: true });
-fs.writeFileSync(subsetManifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+fs.mkdirSync(path.dirname(manifestPath), { recursive: true });
+fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
 
 fs.writeFileSync(
-  path.join(outputDir, "tsconfig.tsz-guard.json"),
+  path.join(outputRoot, "tsconfig.tsz-guard.json"),
   `${JSON.stringify(
     {
       compilerOptions: {

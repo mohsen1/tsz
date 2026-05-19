@@ -281,6 +281,36 @@ function validateCandidateManifest(manifest) {
   };
 }
 
+function validateOutputPath(output, protectedInputs) {
+  if (typeof output !== "string" || output.trim() === "") {
+    fail("classification output path must be a non-empty path");
+  }
+
+  const resolvedOutput = path.resolve(output);
+  if (
+    resolvedOutput === candidateRoot ||
+    !resolvedOutput.startsWith(`${candidateRoot}${path.sep}`)
+  ) {
+    fail(`classification output must stay inside the candidate directory: ${output}`);
+  }
+
+  const protectedPaths = new Set(protectedInputs.map((input) => path.resolve(input)));
+  if (protectedPaths.has(resolvedOutput)) {
+    fail(`classification output must not overwrite classifier inputs: ${output}`);
+  }
+
+  if (fs.existsSync(resolvedOutput) && !fs.statSync(resolvedOutput).isFile()) {
+    fail(`classification output path is not a file: ${output}`);
+  }
+
+  const outputParent = path.dirname(resolvedOutput);
+  if (!fs.existsSync(outputParent) || !fs.statSync(outputParent).isDirectory()) {
+    fail(`classification output parent directory does not exist: ${output}`);
+  }
+
+  return resolvedOutput;
+}
+
 function normalizeDiagnosticFile(file) {
   const normalized = normalizePath(file).replace(/^\.\//, "");
   const resolved = path.resolve(candidateRoot, normalized);
@@ -703,6 +733,7 @@ if (!fs.statSync(tsconfig).isFile()) {
   console.error(`error: assertion candidate tsconfig is not a file: ${tsconfig}`);
   process.exit(1);
 }
+const resolvedOutputPath = validateOutputPath(outputPath, [candidateManifestPath, tsconfig]);
 
 const timeoutMs = Number(
   process.env.TYPE_CHALLENGES_ASSERTION_CLASSIFIER_TIMEOUT_MS ?? 30000,
@@ -740,13 +771,13 @@ const report = {
   comparison: compareCompilers(tscResult, tszResult),
 };
 
-fs.writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`);
+fs.writeFileSync(resolvedOutputPath, `${JSON.stringify(report, null, 2)}\n`);
 
 console.log(
   [
     "classified Type Challenges assertion candidates",
     `tsc: ${report.compilers.tsc.status}`,
     `tsz: ${report.compilers.tsz.status}`,
-    `report: ${path.relative(process.cwd(), outputPath).split(path.sep).join("/")}`,
+    `report: ${path.relative(process.cwd(), resolvedOutputPath).split(path.sep).join("/")}`,
   ].join("\n"),
 );

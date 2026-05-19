@@ -781,11 +781,12 @@ impl<'a> CheckerState<'a> {
         // can detect fresh depth exceedance from this particular relation.
         self.ctx.relation_depth_exceeded.set(false);
         let assignable = self.diagnostic_relation_boolean_guard(source, target);
-        // TS2859: if the solver hit its recursion/complexity limit during the check
-        // (including the constituent-count overflow guard in check_subtype_inner),
-        // emit "Excessive complexity comparing types" regardless of whether the
-        // relation technically succeeded or failed.
-        if self.ctx.relation_depth_exceeded.get() {
+        // TS2859: if the solver hit its recursion/complexity limit and could
+        // not establish assignability, emit "Excessive complexity comparing
+        // types". A successful relation may still set the sticky depth flag
+        // while exploring expansive recursive siblings; tsc does not report
+        // TS2859 when an assignable path was found.
+        if !assignable && self.ctx.relation_depth_exceeded.get() {
             let source_name = self.format_type_diagnostic(source);
             let target_name = self.format_type_diagnostic(target);
             self.error_at_node(
@@ -857,6 +858,35 @@ impl<'a> CheckerState<'a> {
         }
         self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
         false
+    }
+
+    fn parameter_type_annotation_anchor_for_identifier_source(
+        &self,
+        source_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let source_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        let source_node = self.ctx.arena.get(source_idx)?;
+        if source_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(source_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decl_idx = symbol.value_declaration;
+        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+            && decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+        {
+            decl_idx = ext.parent;
+        }
+
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::PARAMETER {
+            return None;
+        }
+        let annotation = self.ctx.arena.get_parameter(decl_node)?.type_annotation;
+        annotation.is_some().then_some(annotation)
     }
 
     fn error_type_not_assignable_at_with_raw_display_types(
@@ -1019,6 +1049,23 @@ impl<'a> CheckerState<'a> {
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
             return true;
+        }
+
+        // TS2589: A homomorphic self-referential mapped-type alias applied to a tuple
+        // argument and checked against a tuple target causes infinite instantiation.
+        // tsc detects the depth limit during instantiation and emits TS2589 here
+        // instead of letting the structural check fall through to TS2322.
+        if self.source_is_homomorphic_self_mapped_tuple_arg_vs_tuple_target(source, target) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let anchor_idx = self
+                .parameter_type_annotation_anchor_for_identifier_source(source_idx)
+                .unwrap_or(source_idx);
+            self.error_at_node(
+                anchor_idx,
+                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            );
+            return false;
         }
 
         // Use the canonical assign relation outcome so the weak-union hint is collected alongside

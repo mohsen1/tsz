@@ -134,9 +134,9 @@ LINE_LIMIT_CHECKS = [
 
 FILE_LINE_LIMIT_CHECKS = [
     (
-        "Core boundary: tsz-core lib facade must stay under 500 LOC",
+        "Core boundary: tsz-core lib facade must stay at current 365 LOC baseline",
         ROOT / "crates" / "tsz-core" / "src" / "lib.rs",
-        500,
+        365,
     ),
     (
         "Checker query boundary: common quarantine must not grow (#8225)",
@@ -163,7 +163,7 @@ STRUCT_FIELD_COUNT_CHECKS = [
         "Checker boundary: CheckerContext field count (architecture health metric 1)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
         "CheckerContext",
-        235,
+        236,
     ),
 ]
 
@@ -291,7 +291,7 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        3428,
+        3410,
     ),
 ]
 
@@ -404,6 +404,20 @@ REGEX_LINE_COUNT_CHECKS = [
         ],
         re.compile(r"\bRelationRequest::[A-Za-z_][A-Za-z0-9_]*\s*\("),
         0,
+    ),
+    (
+        "Solver relation boundary: legacy packed relation flag bridges (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src"],
+        re.compile(
+            r'^(?:[^"\n]|"[^"\n]*")*?'
+            r"\b(?:subtype_cache_config_from_legacy_flags\s*\(|"
+            r"assignability_cache_config_from_legacy_flags\s*\(|"
+            r"from_checker_flags_u16\s*\(|from_legacy_u8\s*\(|to_legacy_u8\s*\(|"
+            r"RelationCacheKey::(?:subtype|assignability)\s*\(|"
+            r"RelationFlags::from_bits_truncate\s*\(|"
+            r"CachedAnyMode::from_legacy_u8\s*\()"
+        ),
+        1,
     ),
 ]
 
