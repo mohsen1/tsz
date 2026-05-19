@@ -3,7 +3,10 @@
 //! For-in / for-of loop variable checking is in `for_loop.rs`.
 
 use crate::computation::complex::is_contextually_sensitive;
-use crate::context::{PendingImplicitAnyKind, PendingImplicitAnyVar, TypingRequest};
+use crate::context::{
+    PendingImplicitAnyKind, PendingImplicitAnyVar, TypingRequest,
+    speculation::DiagnosticSpeculationSnapshot,
+};
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
@@ -1175,7 +1178,8 @@ impl<'a> CheckerState<'a> {
                         });
                         checker.ctx.rebuild_emitted_diagnostics_from_current();
                     }
-                    let init_snap = checker.ctx.snapshot_diagnostics();
+                    let init_snap = DiagnosticSpeculationSnapshot::new(&checker.ctx);
+                    let init_diagnostics_len = init_snap.snapshot().diagnostics_len;
                     checker.maybe_clear_checked_initializer_type_cache(var_decl.initializer);
                     let mut init_type =
                         checker.get_type_of_node_with_request(var_decl.initializer, &request);
@@ -1234,7 +1238,7 @@ impl<'a> CheckerState<'a> {
                             .get(var_decl.initializer)
                             .is_some_and(|node| node.kind == syntax_kind_ext::NEW_EXPRESSION);
                     if jsdoc_new_expression_relation {
-                        let raw_init_snap = checker.ctx.snapshot_diagnostics();
+                        let raw_init_snap = DiagnosticSpeculationSnapshot::new(&checker.ctx);
                         // Preserve the contextual cache entry. The raw probe below
                         // runs with TypingRequest::NONE and repopulates node_types
                         // with a non-contextual initializer type.
@@ -1245,7 +1249,7 @@ impl<'a> CheckerState<'a> {
                             var_decl.initializer,
                             &TypingRequest::NONE,
                         );
-                        checker.ctx.rollback_diagnostics(&raw_init_snap);
+                        raw_init_snap.rollback(&mut checker.ctx.diagnostic_state());
                         if let Some(saved) = saved_initializer_node_type {
                             checker.ctx.node_types.insert(var_decl.initializer.0, saved);
                         } else {
@@ -1258,15 +1262,13 @@ impl<'a> CheckerState<'a> {
                         // (e.g. TS2352/TS2873), but drop premature TS2322s produced while
                         // contextually typing the individual branches. The outer variable
                         // declaration check should report the canonical whole-expression error.
-                        checker
-                            .ctx
-                            .rollback_diagnostics_filtered(&init_snap, |diag| {
-                                let in_branch = branch_ranges
-                                    .iter()
-                                    .flatten()
-                                    .any(|(start, end)| diag.start >= *start && diag.start < *end);
-                                !(in_branch && diag.code == 2322)
-                            });
+                        init_snap.rollback_filtered(&mut checker.ctx.diagnostic_state(), |diag| {
+                            let in_branch = branch_ranges
+                                .iter()
+                                .flatten()
+                                .any(|(start, end)| diag.start >= *start && diag.start < *end);
+                            !(in_branch && diag.code == 2322)
+                        });
                     }
                     let function_initializer_body_has_error = checker
                         .ctx
@@ -1289,24 +1291,22 @@ impl<'a> CheckerState<'a> {
                                 // type). When it did, the outer assignment-level
                                 // TS2322 is redundant.
                                 return Some(
-                                    checker.ctx.diagnostics[init_snap.diagnostics_len..]
-                                        .iter()
-                                        .any(|diag| {
+                                    checker.ctx.diagnostics[init_diagnostics_len..].iter().any(
+                                        |diag| {
                                             diag.start >= body_node.pos
                                                 && diag.start < body_node.end
                                                 && matches!(diag.code, 2322 | 2339)
-                                        }),
+                                        },
+                                    ),
                                 );
                             }
-                            Some(
-                                checker.ctx.diagnostics[init_snap.diagnostics_len..]
-                                    .iter()
-                                    .any(|diag| {
-                                        diag.start >= body_node.pos
-                                            && diag.start < body_node.end
-                                            && matches!(diag.code, 2322 | 2339)
-                                    }),
-                            )
+                            Some(checker.ctx.diagnostics[init_diagnostics_len..].iter().any(
+                                |diag| {
+                                    diag.start >= body_node.pos
+                                        && diag.start < body_node.end
+                                        && matches!(diag.code, 2322 | 2339)
+                                },
+                            ))
                         })
                         .unwrap_or(false);
                     // Check assignability (skip for 'any' since anything is assignable to any,
@@ -1792,7 +1792,8 @@ impl<'a> CheckerState<'a> {
             // If it was, any ERROR in the cache is from earlier resolution (e.g., use-before-def),
             // not from circular detection during this declaration's initializer processing.
             let sym_already_cached = self.ctx.symbol_types.contains_key(&sym_id);
-            let var_decl_snap = self.ctx.snapshot_diagnostics();
+            let var_decl_snap =
+                crate::context::speculation::DiagnosticSpeculationSnapshot::new(&self.ctx);
             let mut final_type = compute_final_type(self);
             // Check if get_type_of_symbol cached ERROR specifically DURING compute_final_type.
             // This happens when the initializer (directly or indirectly) references the variable,
@@ -2198,7 +2199,7 @@ impl<'a> CheckerState<'a> {
                 && !is_direct_deferred_initializer
             {
                 self.suppress_circular_initializer_relation_diagnostics(
-                    &var_decl_snap,
+                    var_decl_snap,
                     var_decl.initializer,
                 );
                 final_type = TypeId::ANY;

@@ -1401,8 +1401,9 @@ impl<'a> DeclarationEmitter<'a> {
                 )
                 .is_none()
             // Skip if the source file is a direct-dependency entry point
-            // (accessible via bare specifier). package_root_export_reference_path
-            // filters same-file entries, so we check explicitly here.
+            // (accessible via bare specifier). Root export resolution only
+            // accepts same-file entries when the package root is reachable
+            // from the current file, so we check explicit subpaths here.
             && self
                 .package_specifier_for_node_modules_path(file, &source_path)
                 .is_none_or(|spec| spec.contains('/'))

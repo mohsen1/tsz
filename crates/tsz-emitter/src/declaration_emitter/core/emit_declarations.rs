@@ -19,6 +19,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.reserved_names.clear();
         self.symbol_module_specifier_cache.clear();
         self.import_plan = ImportPlan::default();
+        self.local_namespace_alias_targets.clear();
 
         self.reset_writer();
         self.indent_level = 0;
@@ -760,6 +761,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.jsdoc_overload_function_node_for_statement(stmt_idx);
         let has_jsdoc_overload_signatures = jsdoc_overload_function_node
             .is_some_and(|func_idx| !self.jsdoc_overload_signatures_for_node(func_idx).is_empty());
+        let should_join_single_line_jsdoc_type_comment = self.source_is_js_file
+            && kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && self.emitted_leading_single_line_jsdoc_type_comment_for_pos(stmt_node.pos);
         if has_jsdoc_overload_signatures {
             // JSDoc overload comments are emitted once per structured signature
             // by `emit_function_declaration`.
@@ -774,11 +778,23 @@ impl<'a> DeclarationEmitter<'a> {
             if suppress_jsdoc_type_alias_comments {
                 filtered.retain(|jsdoc| !Self::jsdoc_contains_type_alias_tag(jsdoc));
             }
-            if !self.emit_jsdoc_comment_chain_preserving_source_for_pos(stmt_node.pos, &filtered) {
+            if has_jsdoc_type_function_signature {
+                if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
+                    stmt_node.pos,
+                    &filtered,
+                ) {
+                    self.emit_jsdoc_comment_chain(&filtered);
+                }
+            } else if !self
+                .emit_jsdoc_comment_chain_preserving_source_for_pos(stmt_node.pos, &filtered)
+            {
                 self.emit_jsdoc_comment_chain(&filtered);
             }
         } else {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
+        }
+        if should_join_single_line_jsdoc_type_comment {
+            self.join_last_emitted_jsdoc_comment_to_next_declaration();
         }
         let before_len = self.writer.len();
         self.queue_source_mapping(stmt_node);
@@ -946,12 +962,22 @@ impl<'a> DeclarationEmitter<'a> {
             // JSDoc overload comments are emitted with each overload signature.
         } else if has_jsdoc_type_function_signature {
             let filtered = Self::jsdoc_chain_without_type_tags(&jsdoc_chain);
-            self.emit_jsdoc_comment_chain(&filtered);
+            if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
+                stmt_node.pos,
+                &filtered,
+            ) {
+                self.emit_jsdoc_comment_chain(&filtered);
+            }
         } else if jsdoc_chain.len() == 1
             && Self::jsdoc_has_function_signature_tags(jsdoc_chain[0].as_str())
             && self.hoisted_jsdoc_source_comment_is_multiline(stmt_node.pos)
         {
-            self.emit_multiline_jsdoc_comment(&jsdoc_chain[0]);
+            if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
+                stmt_node.pos,
+                &jsdoc_chain,
+            ) {
+                self.emit_multiline_jsdoc_comment(&jsdoc_chain[0]);
+            }
         } else {
             self.emit_jsdoc_comment_chain(&jsdoc_chain);
         }
@@ -1625,6 +1651,10 @@ impl<'a> DeclarationEmitter<'a> {
             })
         });
         self.method_names_with_overloads = FxHashSet::default();
+        let prev_class_type_params = std::mem::replace(
+            &mut self.current_class_type_params,
+            class.type_parameters.clone(),
+        );
 
         // Suppress method implementations that share a computed name with
         // an accessor (tsc emits only the accessor in .d.ts).
@@ -1669,6 +1699,7 @@ impl<'a> DeclarationEmitter<'a> {
         if shadow_alias.is_none() {
             self.emit_js_namespace_export_aliases_for_name(class.name, is_exported);
         }
+        self.current_class_type_params = prev_class_type_params;
     }
 
     pub(in crate::declaration_emitter) fn emit_class_member(&mut self, member_idx: NodeIndex) {
@@ -1726,6 +1757,17 @@ impl<'a> DeclarationEmitter<'a> {
             return name_node.kind == SyntaxKind::PrivateIdentifier as u16;
         }
         false
+    }
+
+    /// Separator preceding a readonly property's literal value: `" = "` for
+    /// class-declaration emit (`readonly x = 0`), `": "` for object-type-literal
+    /// emit (`readonly x: 0`). Object-type literals do not permit `=` syntax.
+    const fn readonly_literal_value_separator(&self) -> &'static str {
+        if self.in_object_type_class_body {
+            ": "
+        } else {
+            " = "
+        }
     }
 
     pub(in crate::declaration_emitter) fn emit_property_declaration(
@@ -1824,19 +1866,23 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(" | undefined");
             }
         } else if !is_private {
-            // For readonly properties with an enum member access initializer (e.g., `readonly type = E.A`),
-            // emit the initializer expression directly, matching tsc behavior.
-            let use_enum_initializer = is_readonly
+            // For a readonly property whose initializer is a simple enum-member
+            // access (e.g. `readonly kind = E.A`), tsc uses the initializer form
+            // in class declarations and a literal-typed annotation in object-
+            // type-literal bodies. Separator selection is centralised.
+            let enum_initializer_text = if is_readonly
                 && !is_abstract
                 && !prop.question_token
                 && prop.initializer.is_some()
-                && self
-                    .simple_enum_access_member_text(prop.initializer)
-                    .is_some();
+            {
+                self.simple_enum_access_member_text(prop.initializer)
+            } else {
+                None
+            };
 
-            if use_enum_initializer {
-                self.write(" = ");
-                self.emit_expression(prop.initializer);
+            if let Some(enum_member_text) = enum_initializer_text {
+                self.write(self.readonly_literal_value_separator());
+                self.write(&enum_member_text);
             } else if let Some(enum_member_text) = const_asserted_enum_member {
                 self.write(": ");
                 self.write(&enum_member_text);
@@ -1870,15 +1916,14 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
-                // For readonly properties with literal types, use `= value` form
-                // (same as const declarations in tsc)
+                // Readonly literal preservation (matches tsc `const`-like emit).
                 if is_readonly
                     && !is_abstract
                     && !prop.question_token
                     && let Some(interner) = self.type_interner
                     && let Some(lit) = tsz_solver::visitor::literal_value(interner, type_id)
                 {
-                    self.write(" = ");
+                    self.write(self.readonly_literal_value_separator());
                     self.write(&Self::format_literal_initializer(&lit, interner));
                 } else if is_readonly
                     && !is_abstract
@@ -1887,10 +1932,9 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(lit_text) =
                         self.const_literal_initializer_text_deep(prop.initializer)
                 {
-                    // The type system widened the literal (e.g., `false` → `boolean`),
-                    // but for readonly properties tsc preserves the `= value` form
-                    // when the initializer is a simple literal.
-                    self.write(" = ");
+                    // Type system widened the literal (e.g. `false` → `boolean`);
+                    // recover the original from the initializer source text.
+                    self.write(self.readonly_literal_value_separator());
                     self.write(&lit_text);
                 } else if let Some(typeof_text) = self.typeof_prefix_for_value_entity(
                     prop.initializer,
@@ -2006,10 +2050,8 @@ impl<'a> DeclarationEmitter<'a> {
                 && prop.initializer.is_some()
                 && let Some(lit_text) = self.const_literal_initializer_text_deep(prop.initializer)
             {
-                // For readonly properties with simple literal initializers,
-                // emit `= value` form (matching tsc's const-like literal
-                // preservation for `static readonly` and `readonly` properties).
-                self.write(" = ");
+                // Readonly literal preservation via initializer source text.
+                self.write(self.readonly_literal_value_separator());
                 self.write(&lit_text);
             } else if prop.initializer.is_some()
                 && let Some(type_text) = self.allowlisted_initializer_type_text(prop.initializer)

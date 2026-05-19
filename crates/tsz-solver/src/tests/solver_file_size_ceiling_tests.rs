@@ -154,6 +154,62 @@ fn measure_crate(src_dir: &Path) -> (usize, Vec<String>) {
     (max_lines, oversized)
 }
 
+const SOLVER_OVERSIZED_FILE_CEILINGS: &[(&str, &str)] = &[
+    (
+        "solver_file_generic_call_resolve",
+        "operations/generic_call/resolve.rs",
+    ),
+    (
+        "solver_file_eval_conditional",
+        "evaluation/evaluate_rules/conditional.rs",
+    ),
+    ("solver_file_evaluate", "evaluation/evaluate.rs"),
+    ("solver_file_instantiate", "instantiation/instantiate.rs"),
+    ("solver_file_subtype_core", "relations/subtype/core.rs"),
+    ("solver_file_type_queries_flow", "type_queries/flow.rs"),
+    (
+        "solver_file_diag_format_compound",
+        "diagnostics/format/compound.rs",
+    ),
+    (
+        "solver_file_eval_infer_pattern_helpers",
+        "evaluation/evaluate_rules/infer_pattern_helpers.rs",
+    ),
+    ("solver_file_narrowing_core", "narrowing/core.rs"),
+    ("solver_file_relations_compat", "relations/compat.rs"),
+    (
+        "solver_file_constraints_walker",
+        "operations/constraints/walker.rs",
+    ),
+    ("solver_file_diag_format_mod", "diagnostics/format/mod.rs"),
+    (
+        "solver_file_eval_mapped",
+        "evaluation/evaluate_rules/mapped.rs",
+    ),
+    (
+        "solver_file_subtype_generics",
+        "relations/subtype/rules/generics.rs",
+    ),
+    ("solver_file_call_args", "operations/call_args.rs"),
+    (
+        "solver_file_eval_index_access",
+        "evaluation/evaluate_rules/index_access.rs",
+    ),
+    ("solver_file_def_core", "def/core.rs"),
+    (
+        "solver_file_visitor_predicates",
+        "visitors/visitor_predicates.rs",
+    ),
+    ("solver_file_types", "types.rs"),
+];
+
+fn source_line_count(path: &Path) -> usize {
+    fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()))
+        .lines()
+        .count()
+}
+
 /// Ratchet guard: prevent solver source files from growing beyond
 /// maintainability limits. Baseline values live in `file_size_baselines.txt`
 /// and can be updated via `TSZ_FILE_SIZE_RATCHET_UPDATE=1`.
@@ -174,6 +230,27 @@ fn test_solver_file_size_ceiling() {
         "Largest solver source file",
         &oversized,
     );
+}
+
+/// Ratchet guard: every current oversized solver source file has its own
+/// ceiling. The aggregate guard catches new oversized files and the largest
+/// file, while this per-file guard prevents an existing large engine from
+/// growing unnoticed when it is not the largest file.
+#[test]
+fn test_solver_oversized_file_size_ceilings() {
+    let solver_src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut oversized = Vec::new();
+
+    for (key, rel) in SOLVER_OVERSIZED_FILE_CEILINGS {
+        let actual = source_line_count(&solver_src.join(rel));
+        assert_within_ceiling(
+            key,
+            actual,
+            &format!("Solver source file src/{rel}"),
+            &oversized,
+        );
+        oversized.push(format!("  {rel} ({actual} lines)"));
+    }
 }
 
 /// Ratchet guard: prevent the binder crate from growing oversized files.
@@ -227,6 +304,37 @@ fn test_emitter_file_size_ceiling() {
         "emitter_max_loc",
         max_lines,
         "Largest emitter source file",
+        &oversized,
+    );
+}
+
+/// Ratchet guard: prevent the parser crate from growing oversized files.
+///
+/// The parser already ships several files well over 2000 LOC; the goal of
+/// the ratchet is to keep that count and the maximum from drifting upward
+/// while issue #8278 splits them by grammar responsibility.
+#[test]
+fn test_parser_file_size_ceiling() {
+    let parser_src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("tsz-parser/src");
+    if !parser_src.exists() {
+        return;
+    }
+
+    let (max_lines, oversized) = measure_crate(&parser_src);
+
+    assert_within_ceiling(
+        "parser_oversized",
+        oversized.len(),
+        "Number of parser source files over 2000 LOC",
+        &oversized,
+    );
+    assert_within_ceiling(
+        "parser_max_loc",
+        max_lines,
+        "Largest parser source file",
         &oversized,
     );
 }

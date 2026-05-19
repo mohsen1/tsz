@@ -472,20 +472,28 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check 3: Type compatibility for all provided attributes
+        let mut saw_type_mismatch = false;
         for attr in &info.attrs {
             if attr.type_id == TypeId::ANY || attr.type_id == TypeId::ERROR {
                 continue;
             }
-            use crate::query_boundaries::common::PropertyAccessResult;
-            if let PropertyAccessResult::Success { type_id, .. } =
-                self.resolve_property_access_with_env(props_type, &attr.name)
+            if let Some(expected) =
+                self.jsx_expected_attribute_write_type(props_type, &shape, &attr.name)
+                && !self.jsx_attr_assignable_to_expected(attr.type_id, expected)
             {
-                let expected =
-                    crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id);
-                if !self.is_assignable_to(attr.type_id, expected) {
-                    return false;
-                }
+                saw_type_mismatch = true;
+                break;
             }
+        }
+
+        if saw_type_mismatch {
+            // The fast pointwise check above can be too strict for generic
+            // conditional/indexed-access props because it loses relationships
+            // that the full object relation still preserves. After required
+            // and explicit-excess checks have already passed, defer to the
+            // canonical assignability gate before rejecting the overload.
+            let attrs_type = self.build_attrs_object_type_from_info(&info.attrs);
+            return self.is_assignable_to(attrs_type, props_type);
         }
 
         true
@@ -545,16 +553,13 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            use crate::query_boundaries::common::PropertyAccessResult;
-            if let PropertyAccessResult::Success { type_id, .. } =
-                self.resolve_property_access_with_env(props_type, &attr.name)
+            if let Some(expected) =
+                self.jsx_expected_attribute_write_type(props_type, &shape, &attr.name)
             {
                 if attr.type_id == TypeId::ANY || attr.type_id == TypeId::ERROR {
                     continue;
                 }
-                let expected =
-                    crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id);
-                if !self.is_assignable_to(attr.type_id, expected) {
+                if !self.jsx_attr_assignable_to_expected(attr.type_id, expected) {
                     return Some(attr.name.clone());
                 }
                 continue;
@@ -566,6 +571,100 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    /// Check JSX attribute assignability, including source-constraint fallback
+    /// for unresolved generic conditional results.
+    ///
+    /// A JSX attribute can be an alias application such as
+    /// `ExtractValue<T>` where `T` has a useful declared constraint. Direct
+    /// pointwise assignability may not evaluate that conditional result, while
+    /// tsc still uses `T`'s constraint to prove applicability. Rechecking after
+    /// replacing referenced type parameters with their declared constraints
+    /// keeps overload matching aligned with the canonical generic-constraint
+    /// path without naming any particular helper alias.
+    fn jsx_attr_assignable_to_expected(&mut self, attr_type: TypeId, expected: TypeId) -> bool {
+        self.is_assignable_to(attr_type, expected)
+            || self.jsx_attr_assignable_after_referenced_constraints(attr_type, expected)
+    }
+
+    fn jsx_attr_assignable_after_referenced_constraints(
+        &mut self,
+        attr_type: TypeId,
+        expected: TypeId,
+    ) -> bool {
+        let db = self.ctx.types.as_type_database();
+        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        let mut referenced =
+            crate::query_boundaries::common::collect_referenced_types(db, attr_type);
+        referenced.insert(attr_type);
+        for ty in referenced {
+            if crate::query_boundaries::checkers::generic::is_infer_type(db, ty) {
+                continue;
+            }
+            let Some(name) =
+                crate::query_boundaries::checkers::generic::type_parameter_name(db, ty)
+            else {
+                continue;
+            };
+            let constraint =
+                crate::query_boundaries::checkers::generic::get_type_parameter_constraint(db, ty)
+                    .unwrap_or_else(|| {
+                        crate::query_boundaries::checkers::generic::base_constraint_of_type(db, ty)
+                    });
+            if constraint != TypeId::UNKNOWN && constraint != TypeId::ANY && constraint != ty {
+                substitution.insert(name, constraint);
+            }
+        }
+        if substitution.is_empty() {
+            return false;
+        }
+
+        let restricted = crate::query_boundaries::common::instantiate_type(
+            self.ctx.types,
+            attr_type,
+            &substitution,
+        );
+        if restricted == attr_type {
+            return false;
+        }
+        let restricted = self.resolve_lazy_type(restricted);
+        let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
+        self.is_assignable_to(restricted_evaluated, expected)
+            || self.is_assignable_to(restricted, expected)
+    }
+
+    /// Return the target-side write surface for a JSX attribute.
+    ///
+    /// Optional props have a read surface (`T | undefined`) and a write surface
+    /// controlled by `exactOptionalPropertyTypes`. JSX overload applicability is
+    /// checking whether an authored attribute value can be written to the target
+    /// prop, so use `PropertyInfo::write_type` instead of stripping
+    /// `undefined` from the read type.
+    fn jsx_expected_attribute_write_type(
+        &mut self,
+        props_type: TypeId,
+        shape: &tsz_solver::ObjectShape,
+        attr_name: &str,
+    ) -> Option<TypeId> {
+        let attr_atom = self.ctx.types.intern_string(attr_name);
+        if let Some(prop) = shape.properties.iter().find(|prop| prop.name == attr_atom) {
+            return Some(if prop.write_type == TypeId::NONE {
+                prop.type_id
+            } else {
+                prop.write_type
+            });
+        }
+
+        use crate::query_boundaries::common::PropertyAccessResult;
+        match self.resolve_property_access_with_env(props_type, attr_name) {
+            PropertyAccessResult::Success {
+                type_id,
+                write_type,
+                ..
+            } => Some(write_type.unwrap_or(type_id)),
+            _ => None,
+        }
     }
 
     /// Build an object type from collected JSX attribute info.

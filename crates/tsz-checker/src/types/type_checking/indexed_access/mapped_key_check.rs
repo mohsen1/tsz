@@ -118,19 +118,32 @@ impl<'a> CheckerState<'a> {
                         let Some(outer_node) = self.ctx.arena.get(outer_idx) else {
                             break;
                         };
+                        let type_parameters_declares_name =
+                            |checker: &CheckerState<'_>,
+                             type_parameters: &tsz_parser::parser::NodeList,
+                             name: &str| {
+                                type_parameters.nodes.iter().any(|&tp_idx| {
+                                    checker
+                                        .ctx
+                                        .arena
+                                        .get(tp_idx)
+                                        .and_then(|n| checker.ctx.arena.get_type_parameter(n))
+                                        .and_then(|tp| checker.ctx.arena.get(tp.name))
+                                        .and_then(|n| checker.ctx.arena.get_identifier(n))
+                                        .is_some_and(|id| id.escaped_text == name)
+                                })
+                            };
                         // Stop when an intervening binder (function/constructor type) shadows
                         // the constraint name with its own type parameter.
                         if let Some(sig) = self.ctx.arena.get_signature(outer_node)
                             && let Some(ref tps) = sig.type_parameters
-                            && tps.nodes.iter().any(|&tp_idx| {
-                                self.ctx
-                                    .arena
-                                    .get(tp_idx)
-                                    .and_then(|n| self.ctx.arena.get_type_parameter(n))
-                                    .and_then(|tp| self.ctx.arena.get(tp.name))
-                                    .and_then(|n| self.ctx.arena.get_identifier(n))
-                                    .is_some_and(|id| id.escaped_text == constraint_ref_name)
-                            })
+                            && type_parameters_declares_name(self, tps, &constraint_ref_name)
+                        {
+                            break;
+                        }
+                        if let Some(function_type) = self.ctx.arena.get_function_type(outer_node)
+                            && let Some(ref tps) = function_type.type_parameters
+                            && type_parameters_declares_name(self, tps, &constraint_ref_name)
                         {
                             break;
                         }

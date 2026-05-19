@@ -1513,6 +1513,30 @@ impl<'a> Printer<'a> {
             rustc_hash::FxHashMap::default()
         };
 
+        // Re-exports appearing before their enum declaration consult these
+        // entries to suppress the would-be `exports.<alias> = local;` line
+        // that otherwise reads `local` in its TDZ window.
+        if is_top_level_cjs {
+            for (local_name, aliases) in self.transforms.cjs_iife_folded_bindings() {
+                if aliases.is_empty() {
+                    continue;
+                }
+                self.ctx
+                    .module_state
+                    .iife_exported_names
+                    .insert(local_name.clone());
+                let entry = self
+                    .ctx
+                    .module_state
+                    .iife_exported_bindings
+                    .entry(local_name.clone())
+                    .or_default();
+                for alias in aliases {
+                    entry.insert(alias.clone());
+                }
+            }
+        }
+
         let mut last_erased_stmt_end: Option<u32> = None;
         let mut last_erased_was_shorthand_module = false;
         let mut deferred_commonjs_export_equals: Vec<NodeIndex> = Vec::new();
@@ -1772,13 +1796,8 @@ impl<'a> Printer<'a> {
                     self.write_line();
                 }
                 if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                    let scan_end = next_stmt_node.map_or_else(
-                        || {
-                            self.source_text
-                                .map_or(stmt_node.end, |text| text.len() as u32)
-                        },
-                        |n| n.pos,
-                    );
+                    let scan_end = next_stmt_node
+                        .map_or_else(|| self.source_text_end_or(stmt_node.end), |n| n.pos);
                     self.emit_recovered_template_module_declaration(stmt_node, scan_end);
                 }
                 if let Some(recovered_tail) =
@@ -2033,9 +2052,11 @@ impl<'a> Printer<'a> {
                 // Once a real statement produces output, its deferred header
                 // comments are "claimed" and should not be undone.
                 has_deferred_header = false;
-                // Emit trailing comments on the same line as the statement.
-                // Use the next statement's pos as upper bound to avoid scanning
-                // into the next statement's trivia (same pattern as emit_block_body).
+                // Emit trailing comments; use next statement pos as upper bound, or full
+                // source length: token_full_start() lands before trailing trivia so stmt_node.end
+                // would exclude comments sitting at exactly that position (e.g., last statement).
+                let source_end =
+                    next_stmt_pos.unwrap_or_else(|| self.source_text_end_or(stmt_node.end));
                 if self.writer.is_at_line_start() {
                     // The emission already wrote a final newline (e.g., CJS inline
                     // export, transform dispatch). Undo it so trailing comments
@@ -2043,22 +2064,20 @@ impl<'a> Printer<'a> {
                     // newline after.
                     if !self.ctx.options.remove_comments {
                         let saved_idx = self.comment_emit_idx;
-                        let upper_bound = next_stmt_pos.unwrap_or(stmt_node.end);
                         let token_end =
-                            self.find_token_end_before_trivia(stmt_node_pos, upper_bound);
+                            self.find_token_end_before_trivia(stmt_node_pos, source_end);
                         // Peek: check if there are trailing comments to emit.
                         // Only backtrack if there actually are comments to add.
-                        if self.has_trailing_comment_on_same_line(token_end, upper_bound) {
+                        if self.has_trailing_comment_on_same_line(token_end, source_end) {
                             self.comment_emit_idx = saved_idx;
                             self.writer.undo_last_write_line();
-                            self.emit_trailing_comments_before(token_end, upper_bound);
+                            self.emit_trailing_comments_before(token_end, source_end);
                             self.write_line();
                         }
                     }
                 } else {
-                    let upper_bound = next_stmt_pos.unwrap_or(stmt_node.end);
-                    let token_end = self.find_token_end_before_trivia(stmt_node_pos, upper_bound);
-                    self.emit_trailing_comments_before(token_end, upper_bound);
+                    let token_end = self.find_token_end_before_trivia(stmt_node_pos, source_end);
+                    self.emit_trailing_comments_before(token_end, source_end);
                     self.write_line();
                 }
             } else if !is_erased {
@@ -2093,7 +2112,8 @@ impl<'a> Printer<'a> {
                         break;
                     }
                 }
-                let scan_end = next_stmt_pos.unwrap_or(stmt_node.end);
+                let scan_end =
+                    next_stmt_pos.unwrap_or_else(|| self.source_text_end_or(stmt_node.end));
                 let stmt_token_end = self.find_token_end_before_trivia(stmt_node_pos, scan_end);
                 let line_end = if let Some(text) = self.source_text {
                     let bytes = text.as_bytes();

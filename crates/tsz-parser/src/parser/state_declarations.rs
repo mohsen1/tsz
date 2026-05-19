@@ -1264,7 +1264,7 @@ impl ParserState {
                 let _ = self.parse_block();
             }
             self.parse_semicolon();
-            let end_pos = self.token_end();
+            let end_pos = self.token_full_start();
             return self.arena.add_type_alias(
                 syntax_kind_ext::TYPE_ALIAS_DECLARATION,
                 start_pos,
@@ -1307,7 +1307,7 @@ impl ParserState {
 
         self.parse_semicolon();
 
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
         self.arena.add_type_alias(
             syntax_kind_ext::TYPE_ALIAS_DECLARATION,
             start_pos,
@@ -2375,7 +2375,7 @@ impl ParserState {
         if !recover_as_statement_boundary {
             self.parse_semicolon();
         }
-        let end_pos = self.token_end();
+        let end_pos = self.token_full_start();
 
         self.arena.add_import_decl(
             syntax_kind_ext::IMPORT_DECLARATION,

@@ -1,5 +1,6 @@
 //! Direct cross-file query fast paths that avoid constructing child checkers.
 
+use super::source_alias_attribution::record_source_file_type_alias_body_rejection_kind;
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
@@ -90,7 +91,7 @@ pub(crate) fn is_builtin_lib_file_name(file_name: &str) -> bool {
         || (stem.starts_with("es") && stem.as_bytes().get(2).is_some_and(u8::is_ascii_digit))
 }
 
-fn is_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
+pub(crate) fn is_builtin_lib_declaration_arena(arena: &NodeArena) -> bool {
     arena.source_files.first().is_some_and(|source_file| {
         if !source_file.is_declaration_file {
             return false;
@@ -124,10 +125,15 @@ pub(crate) fn is_direct_actual_lib_declaration_arena(arena: &NodeArena) -> bool 
 }
 
 pub(crate) fn is_external_package_declaration_file_name(file_name: &str) -> bool {
-    file_name.starts_with("node_modules/")
-        || file_name.starts_with("node_modules\\")
-        || file_name.contains("/node_modules/")
-        || file_name.contains("\\node_modules\\")
+    let mut components = file_name
+        .split(['/', '\\'])
+        .filter(|component| !component.is_empty());
+    while let Some(component) = components.next() {
+        if component == "node_modules" {
+            return components.next().is_some();
+        }
+    }
+    false
 }
 
 /// Classification of a delegated arena's first source file for the
@@ -172,7 +178,7 @@ fn is_direct_lowering_declaration_arena(arena: &NodeArena) -> bool {
     })
 }
 
-fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
+pub(super) fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
     arena
         .source_files
         .first()
@@ -750,6 +756,7 @@ impl<'a> CheckerState<'a> {
             && !protocol_method_interface
             && !allow_generic_actual_lib_direct_fallback(&name)
             && name == "IteratorObject"
+            && iterator_object_has_global_augmentations(&self.ctx)
         {
             return None;
         }
@@ -996,7 +1003,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_type_node_is_option_bag_lowerable<'b>(
+    pub(super) fn source_file_type_node_is_option_bag_lowerable<'b>(
         arena: &'b NodeArena,
         delegate_binder: &BinderState,
         node_idx: NodeIndex,
@@ -1166,7 +1173,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_local_name_def_id_for_lowering(
+    pub(super) fn source_file_local_name_def_id_for_lowering(
         &self,
         delegate_binder: &BinderState,
         symbol_arena: &NodeArena,
@@ -1675,6 +1682,7 @@ impl<'a> CheckerState<'a> {
             )
         };
         if !body_is_direct_lowerable {
+            record_source_file_type_alias_body_rejection_kind(symbol_arena, type_alias.type_node);
             record(DirectSourceFileTypeAliasLoweringOutcome::BodyNotDirectLowerable);
             return None;
         }

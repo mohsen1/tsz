@@ -23,7 +23,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1277: `const` modifier can only appear on a type parameter of a function, method, or class. Interfaces and type aliases are rejected.
+    /// TS1277: `const` modifier can only appear on function, method, or class type parameters.
     pub(crate) fn check_const_type_parameter_on_non_function(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
@@ -121,9 +121,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS1274: Check that variance modifiers (`in`, `out`) are not used on
-    /// function/method type parameters. They are only valid on class, interface,
-    /// and type alias type parameters.
+    /// TS1274: variance modifiers (`in`, `out`) are invalid on function/method type parameters.
     pub(crate) fn check_variance_on_function_type_parameters(
         &mut self,
         type_params: Option<&tsz_parser::parser::NodeList>,
@@ -700,11 +698,15 @@ impl<'a> CheckerState<'a> {
             };
             let name = ident.escaped_text.clone();
             let atom = self.ctx.types.intern_string(&name);
+            let is_const = self
+                .ctx
+                .arena
+                .has_modifier(&param.modifiers, SyntaxKind::ConstKeyword);
             let type_id = factory.type_param(TypeParamInfo {
                 name: atom,
                 constraint: None,
                 default: None,
-                is_const: false,
+                is_const,
             });
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
             updates.push((name, previous, false));

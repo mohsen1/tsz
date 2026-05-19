@@ -780,6 +780,20 @@ impl<'a> Printer<'a> {
         name
     }
 
+    pub(super) fn make_unique_name_from_base_in_temp_scope(&mut self, base: &str) -> String {
+        for suffix in 1..=1000 {
+            let candidate = format!("{base}_{suffix}");
+            if !self.file_identifiers.contains(&candidate)
+                && !self.generated_temp_names.contains(&candidate)
+            {
+                self.generated_temp_names.insert(candidate.clone());
+                return candidate;
+            }
+        }
+
+        self.make_unique_name_fresh()
+    }
+
     pub(super) fn blocked_disposable_names_for_transform(&self) -> Vec<String> {
         self.file_identifiers
             .iter()
@@ -1748,7 +1762,7 @@ impl<'a> Printer<'a> {
         // Start scanning after the `declare` keyword (7 chars: "declare")
         let declare_end = node.pos as usize + 7;
         let node_end = node.end as usize;
-        if declare_end >= bytes.len() || declare_end >= node_end {
+        if declare_end >= bytes.len() || declare_end > node_end {
             return false;
         }
         // Skip leading trivia (whitespace) to find where `declare` actually starts

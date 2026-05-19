@@ -3645,6 +3645,155 @@ fn compile_single_source_amd_outfile_emits_bundle() {
 }
 
 #[test]
+fn compile_module_none_outfile_skips_dynamic_import_only_dependency() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2020",
+            "module": "none",
+            "outFile": "dist/bundle.js",
+            "allowJs": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(&base.join("main.ts"), "const loaded = import(\"./dep\");\n");
+    write_file(&base.join("dep.js"), "export default 1;\n");
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code == 1323),
+        "{:?}",
+        result.diagnostics
+    );
+    let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
+    assert_eq!(bundle, "\"use strict\";\nconst loaded = import(\"./dep\");");
+    assert!(
+        !bundle.contains("exports.default"),
+        "dynamic-import-only dependency should not be concatenated into module:none outFile bundle:\n{bundle}"
+    );
+}
+
+#[test]
+fn compile_module_none_outfile_keeps_static_and_reference_dependencies() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2020",
+            "module": "none",
+            "outFile": "dist/bundle.js",
+            "allowJs": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["main.ts", "root-script.js"]
+        }"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        "/// <reference path=\"./referenced.js\" />\nconst loaded = import(\"./dynamic\");\n",
+    );
+    write_file(&base.join("root-script.js"), "const rootScriptValue = 1;\n");
+    write_file(&base.join("referenced.js"), "const referencedValue = 2;\n");
+    write_file(&base.join("dynamic.js"), "export const dynamicValue = 3;\n");
+
+    let args = default_args();
+    let result = with_types_versions_env(None, || {
+        compile(&args, base).expect("compile should succeed")
+    });
+
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code == 1323),
+        "{:?}",
+        result.diagnostics
+    );
+    let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
+    assert!(
+        bundle.contains("const referencedValue = 2;"),
+        "triple-slash referenced dependency should remain in bundle:\n{bundle}"
+    );
+    assert!(
+        bundle.contains("const rootScriptValue = 1;"),
+        "explicit script root should remain in bundle:\n{bundle}"
+    );
+    assert!(
+        !bundle.contains("dynamicValue"),
+        "external module reached only through dynamic import should not be concatenated into bundle:\n{bundle}"
+    );
+}
+
+#[test]
+fn compile_module_none_outfile_keeps_cached_reference_dependencies() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2020",
+            "module": "none",
+            "outFile": "dist/bundle.js",
+            "allowJs": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("main.ts"),
+        "/// <reference path=\"./referenced.js\" />\nconst loaded = import(\"./dynamic\");\n",
+    );
+    let referenced_path = base.join("referenced.js");
+    write_file(&referenced_path, "const referencedValue = 2;\n");
+    write_file(&base.join("dynamic.js"), "export const dynamicValue = 3;\n");
+
+    let args = default_args();
+    let mut cache = CompilationCache::default();
+    let result = with_types_versions_env(None, || {
+        compile_with_cache(&args, base, &mut cache).expect("compile should succeed")
+    });
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code == 1323),
+        "{:?}",
+        result.diagnostics
+    );
+
+    write_file(&referenced_path, "const referencedValue = 4;\n");
+    let result = with_types_versions_env(None, || {
+        compile_with_cache_and_changes(&args, base, &mut cache, &[referenced_path.clone()])
+            .expect("compile should succeed")
+    });
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code == 1323),
+        "{:?}",
+        result.diagnostics
+    );
+
+    let bundle = std::fs::read_to_string(base.join("dist/bundle.js")).expect("read bundle");
+    assert!(
+        bundle.contains("const referencedValue = 4;"),
+        "cached triple-slash dependency should remain eligible for module:none outFile bundling:\n{bundle}"
+    );
+    assert!(
+        !bundle.contains("dynamicValue"),
+        "dynamic-import-only dependency should stay out of cached module:none outFile bundle:\n{bundle}"
+    );
+}
+
+#[test]
 fn compile_single_source_amd_declaration_outfile_wraps_module_name() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
@@ -4258,6 +4407,99 @@ fn compile_no_check_no_emit_is_parse_only() {
     );
     assert!(result.emitted_files.is_empty());
     assert_eq!(result.files_read.len(), 1);
+}
+
+#[test]
+fn compile_no_check_no_emit_suppresses_unused_expect_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        "// @ts-expect-error\nconst value = 1;\n",
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.no_check = true;
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("main.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        !codes.contains(&diagnostic_codes::UNUSED_TS_EXPECT_ERROR_DIRECTIVE),
+        "expected --noCheck to skip unused @ts-expect-error diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    assert!(result.emitted_files.is_empty());
+}
+
+#[test]
+fn compile_no_check_no_emit_expect_error_keeps_parse_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.ts"),
+        "// @ts-expect-error\nconst broken = ;\n",
+    );
+
+    let mut args = default_args();
+    args.ignore_config = true;
+    args.no_check = true;
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("main.ts")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
+        "expected --noCheck to keep TS1109 parse diagnostics despite @ts-expect-error, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::UNUSED_TS_EXPECT_ERROR_DIRECTIVE),
+        "expected --noCheck to skip unused @ts-expect-error diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    assert!(result.emitted_files.is_empty());
+}
+
+#[test]
+fn compile_no_check_no_emit_expect_error_keeps_js_grammar_error() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("main.js"),
+        "// @ts-expect-error\nlet x: number;\n",
+    );
+
+    let mut args = default_args();
+    args.allow_js = true;
+    args.check_js = true;
+    args.ignore_config = true;
+    args.no_check = true;
+    args.no_emit = true;
+    args.files = vec![PathBuf::from("main.js")];
+
+    let result = compile(&args, base).expect("compile should succeed");
+    let codes: Vec<u32> = result.diagnostics.iter().map(|d| d.code).collect();
+
+    assert!(
+        codes.contains(&diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES),
+        "expected --noCheck to keep TS8010 JS grammar diagnostics despite @ts-expect-error, got: {:?}",
+        result.diagnostics
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::UNUSED_TS_EXPECT_ERROR_DIRECTIVE),
+        "expected --noCheck to skip unused @ts-expect-error diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    assert!(result.emitted_files.is_empty());
 }
 
 #[test]

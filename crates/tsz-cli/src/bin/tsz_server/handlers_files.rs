@@ -21,15 +21,7 @@ impl Server {
             self.open_files.insert(file_path.to_string(), text);
         }
 
-        TsServerResponse {
-            seq,
-            msg_type: "response".to_string(),
-            command: "open".to_string(),
-            request_seq: request.seq,
-            success: true,
-            message: None,
-            body: None,
-        }
+        self.success_response(seq, request, None)
     }
 
     pub(crate) fn handle_close(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
@@ -38,15 +30,7 @@ impl Server {
             self.open_files.remove(file_path);
         }
 
-        TsServerResponse {
-            seq,
-            msg_type: "response".to_string(),
-            command: "close".to_string(),
-            request_seq: request.seq,
-            success: true,
-            message: None,
-            body: None,
-        }
+        self.success_response(seq, request, None)
     }
 
     pub(crate) fn handle_save_to(
@@ -70,14 +54,10 @@ impl Server {
         })()
         .is_some();
 
-        TsServerResponse {
-            seq,
-            msg_type: "response".to_string(),
-            command: request.command.clone(),
-            request_seq: request.seq,
-            success,
-            message: None,
-            body: None,
+        if success {
+            self.success_response(seq, request, None)
+        } else {
+            self.build_response(seq, request, false, None, None)
         }
     }
 
@@ -118,15 +98,7 @@ impl Server {
             }
         }
 
-        TsServerResponse {
-            seq,
-            msg_type: "response".to_string(),
-            command: "change".to_string(),
-            request_seq: request.seq,
-            success: true,
-            message: None,
-            body: None,
-        }
+        self.success_response(seq, request, None)
     }
 
     /// Apply a text change to file content.
@@ -261,17 +233,7 @@ impl Server {
                 }
             }
         }
-        // Match tsserver's response shape — `body: true` indicates the edits
-        // were applied.
-        TsServerResponse {
-            seq,
-            msg_type: "response".to_string(),
-            command: "applyChangedToOpenFiles".to_string(),
-            request_seq: request.seq,
-            success: true,
-            message: None,
-            body: Some(serde_json::Value::Bool(true)),
-        }
+        self.success_response(seq, request, Some(serde_json::Value::Bool(true)))
     }
 
     /// Apply `{span: {start, length}, newText}` edits to `content` in
@@ -399,7 +361,7 @@ impl Server {
             }
         }
 
-        self.stub_response(seq, request, None)
+        self.success_response(seq, request, None)
     }
 }
 

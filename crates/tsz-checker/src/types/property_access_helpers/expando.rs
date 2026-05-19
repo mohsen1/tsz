@@ -528,9 +528,16 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let obj_lit = self.ctx.arena.get_literal_expr(node)?;
-        let mut parts = Vec::new();
+        let element_count = obj_lit.elements.nodes.len();
+        let mut parts = Vec::with_capacity(element_count);
 
-        for elem_idx in obj_lit.elements.nodes.clone() {
+        for element_pos in 0..element_count {
+            let elem_idx = self
+                .ctx
+                .arena
+                .get(object_idx)
+                .and_then(|node| self.ctx.arena.get_literal_expr(node))
+                .and_then(|obj_lit| obj_lit.elements.nodes.get(element_pos).copied())?;
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
             };

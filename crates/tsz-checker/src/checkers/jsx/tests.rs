@@ -182,6 +182,37 @@ fn jsx_component_type_missing_prop_display_uses_props_type_arg() {
 }
 
 #[test]
+fn jsx_component_type_missing_prop_unwraps_renamed_readonly_mapped_alias() {
+    let diagnostics = check_jsx_strict(
+        r#"declare namespace JSX { interface Element {} interface ElementClass { render(): any; } interface ElementAttributesProperty { props: {}; } } type MyReadonly<T> = { readonly [K in keyof T]: T[K]; }; declare namespace React { interface Component<P> { props: MyReadonly<P>; render(): JSX.Element; } interface ComponentClass<P = {}> { new(props: P, context?: any): Component<P>; } interface FunctionComponent<P = {}> { (props: P, context?: any): JSX.Element | null; } type ComponentType<P = {}> = ComponentClass<P> | FunctionComponent<P>; } declare const Elem: React.ComponentType<{ someKey: string }>; const bad = <Elem />;"#,
+    );
+    let msg = &diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected TS2741 for missing required prop through renamed readonly alias")
+        .message_text;
+    assert!(
+        msg.contains("required in type '{ someKey: string; }'") && !msg.contains("MyReadonly"),
+        "Expected renamed readonly mapped alias to unwrap transparently, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_component_type_does_not_unwrap_readonly_intersection_with_required_prop() {
+    let diagnostics = check_jsx_strict(
+        r#"declare namespace JSX { interface Element {} } type MyReadonly<T> = { readonly [K in keyof T]: T[K]; }; type PropsBox<T> = MyReadonly<T> & { required: string }; declare function Elem(props: PropsBox<{ someKey: string }>): JSX.Element; const bad = <Elem someKey="ok" required={1} />;"#,
+    );
+    assert!(
+        diagnostics.iter().any(|diag| {
+            diag.code == 2322
+                && diag.message_text.contains("number")
+                && diag.message_text.contains("string")
+        }),
+        "Expected PropsBox<T> required intersection member's string type to remain visible in TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsx_key_error_in_parenthesized_callback_body_is_not_dropped() {
     let diagnostics = check_jsx(
         r#"

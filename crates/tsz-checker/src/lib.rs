@@ -25,6 +25,7 @@ pub mod error_reporter;
 pub mod expr;
 pub mod module_resolution;
 mod query_boundaries;
+pub mod recovery;
 pub mod statements;
 pub mod triple_slash_validator;
 
@@ -135,6 +136,9 @@ mod enum_recursion_tests;
 #[path = "../tests/environment_capabilities_tests.rs"]
 mod environment_capabilities_tests;
 #[cfg(test)]
+#[path = "tests/function_type_return_node_tests.rs"]
+mod function_type_return_node_tests;
+#[cfg(test)]
 #[path = "../tests/generator_union_return_type_tests.rs"]
 mod generator_union_return_type_tests;
 #[cfg(test)]
@@ -194,6 +198,9 @@ mod nuia_write_index_signature_emits_ts2322_tests;
 #[cfg(test)]
 #[path = "../tests/optional_param_display_tests.rs"]
 mod optional_param_display_tests;
+#[cfg(test)]
+#[path = "../tests/optional_property_subtype_compatibility_tests.rs"]
+mod optional_property_subtype_compatibility_tests;
 #[cfg(test)]
 #[path = "../tests/optional_property_target_undefined_display_tests.rs"]
 mod optional_property_target_undefined_display_tests;
@@ -689,6 +696,7 @@ pub use flow_analyzer::{
     merge_assignment_states,
 };
 pub use flow_graph_builder::{FlowGraph, FlowGraphBuilder};
+pub use recovery::RecoveryReason;
 pub use state::{CheckerState, MAX_CALL_DEPTH, MAX_INSTANTIATION_DEPTH};
 pub use statements::{StatementCheckCallbacks, StatementChecker};
 pub use tsz_solver::Visibility;

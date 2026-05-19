@@ -65,6 +65,11 @@ Include your stable `AgentName` in every PR body and substantive PR comment.
 Use the draft PR body for scope, invariants, findings, verification, and
 coordination notes.
 
+When adding or re-adding WIP state, leave a PR comment with `AgentName:`, the
+reason WIP state changed, the current blocker or work, and the next owner or
+action. If the advisory WIP-state report flags a missing comment, repair it by
+adding that comment; no code change is required.
+
 ```bash
 # Run a specific test when debugging the root cause
 ./scripts/conformance/conformance.sh run --filter "testName" --verbose
