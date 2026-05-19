@@ -218,9 +218,22 @@ impl<'a> DeclarationEmitter<'a> {
         if parts.len() == 1 {
             return parts[0].text.clone();
         }
-        parts
+        let mut formatted: Vec<(String, String)> = Vec::with_capacity(parts.len());
+        for part in parts {
+            let formatted_text = Self::parenthesize_type_text_in_union_position(&part.text);
+            if !formatted
+                .iter()
+                .any(|(raw, rendered)| raw == &part.text || rendered == &formatted_text)
+            {
+                formatted.push((part.text, formatted_text));
+            }
+        }
+        if formatted.len() == 1 {
+            return Self::strip_single_parenthesized_function_type_text(&formatted.remove(0).0);
+        }
+        formatted
             .into_iter()
-            .map(|part| Self::parenthesize_type_text_in_union_position(&part.text))
+            .map(|(_, rendered)| rendered)
             .collect::<Vec<_>>()
             .join(" | ")
     }
@@ -348,18 +361,45 @@ impl<'a> DeclarationEmitter<'a> {
 
         let parts = Self::split_top_level_union_type_parts(trimmed);
         if parts.len() > 1 {
-            let instantiated_parts: Vec<String> = parts
-                .iter()
-                .map(|part| {
-                    Self::instantiate_generic_function_type_text(part, type_arg)
-                        .unwrap_or_else(|| part.to_string())
-                })
-                .map(|part| Self::parenthesize_type_text_in_union_position(&part))
-                .collect();
-            return Some(instantiated_parts.join(" | "));
+            let mut instantiated_parts: Vec<(String, String)> = Vec::with_capacity(parts.len());
+            for part in parts.iter() {
+                let instantiated = Self::instantiate_generic_function_type_text(part, type_arg)
+                    .unwrap_or_else(|| part.to_string());
+                let formatted = Self::parenthesize_type_text_in_union_position(&instantiated);
+                if !instantiated_parts
+                    .iter()
+                    .any(|(raw, rendered)| raw == &instantiated || rendered == &formatted)
+                {
+                    instantiated_parts.push((instantiated, formatted));
+                }
+            }
+            if instantiated_parts.len() == 1 {
+                return Some(Self::strip_single_parenthesized_function_type_text(
+                    &instantiated_parts.remove(0).0,
+                ));
+            }
+            return Some(
+                instantiated_parts
+                    .into_iter()
+                    .map(|(_, rendered)| rendered)
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+            );
         }
 
         Self::instantiate_generic_function_type_text(trimmed, type_arg)
+    }
+
+    fn strip_single_parenthesized_function_type_text(type_text: &str) -> String {
+        let trimmed = type_text.trim();
+        if trimmed.starts_with('(')
+            && trimmed.ends_with(')')
+            && let Some(inner) = trimmed.get(1..trimmed.len() - 1)
+            && inner.contains("=>")
+        {
+            return inner.trim().to_string();
+        }
+        trimmed.to_string()
     }
 
     fn instantiate_object_type_text_with_single_type_arg(
