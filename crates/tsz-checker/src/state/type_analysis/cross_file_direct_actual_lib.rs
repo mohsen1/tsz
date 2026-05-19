@@ -162,7 +162,7 @@ impl<'a> CheckerState<'a> {
         if self.lib_name_locally_augmented(&name) {
             return None;
         }
-        if symbol.declarations.iter().any(|&decl_idx| {
+        let has_callable_member = symbol.declarations.iter().any(|&decl_idx| {
             let arena = self
                 .ctx
                 .binder
@@ -179,8 +179,25 @@ impl<'a> CheckerState<'a> {
                         })
                     })
                 })
-        }) {
-            return None;
+        });
+        if has_callable_member {
+            let delegate_arena = delegate_arena?;
+            let (mut direct_type, params) = self.direct_cross_file_interface_lowering(
+                sym_id,
+                self.ctx.binder,
+                delegate_arena,
+                true,
+                false,
+            )?;
+            if matches!(direct_type, TypeId::UNKNOWN | TypeId::ERROR) {
+                return None;
+            }
+            direct_type = self.merge_cross_file_heritage(&symbol.declarations, sym_id, direct_type);
+            self.ctx.symbol_types.insert(sym_id, direct_type);
+            self.ctx
+                .lib_delegation_cache
+                .insert_symbol_type(sym_id, (direct_type, params.clone()));
+            return Some((direct_type, params));
         }
 
         let direct_type = self.resolve_lib_type_by_name(&name)?;
