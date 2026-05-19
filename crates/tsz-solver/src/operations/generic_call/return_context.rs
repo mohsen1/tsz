@@ -1038,7 +1038,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 #[cfg(test)]
 mod tests {
     use super::sort_type_params_by_name;
-    use crate::types::{TypeId, TypeParamInfo};
+    use crate::TypeInterner;
+    use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult, GenericCallRequest};
+    use crate::types::{
+        FunctionShape, ParamInfo, TypeId, TypeParamInfo, TypePredicate, TypePredicateTarget,
+    };
     use tsz_common::interner::Atom;
 
     const fn tp(name: u32) -> TypeParamInfo {
@@ -1060,5 +1064,62 @@ mod tests {
             .map(|type_param| type_param.name)
             .collect();
         assert_eq!(names, vec![Atom(1), Atom(3), Atom(7)]);
+    }
+
+    #[derive(Default)]
+    struct BoundaryChecker;
+
+    impl AssignabilityChecker for BoundaryChecker {
+        fn is_assignable_to(&mut self, _source: TypeId, _target: TypeId) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn resolve_with_request_returns_instantiated_side_channel_data() {
+        let interner = TypeInterner::new();
+        let type_param = tp(11);
+        let param_name = Atom(23);
+        let type_param_id = interner.type_param(type_param);
+        let func = FunctionShape {
+            type_params: vec![type_param],
+            params: vec![ParamInfo::required(param_name, type_param_id)],
+            this_type: None,
+            return_type: TypeId::BOOLEAN,
+            type_predicate: Some(TypePredicate {
+                asserts: false,
+                target: TypePredicateTarget::Identifier(param_name),
+                type_id: Some(type_param_id),
+                parameter_index: Some(0),
+            }),
+            is_constructor: false,
+            is_method: false,
+        };
+        let arg_types = [TypeId::STRING];
+        let mut checker = BoundaryChecker;
+        let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+        let mut result = evaluator.resolve_with_request(GenericCallRequest::new(&func, &arg_types));
+
+        assert!(evaluator.last_instantiated_predicate.is_none());
+        assert!(evaluator.last_instantiated_params.is_none());
+
+        let (predicate, predicate_params) = result
+            .take_instantiated_predicate()
+            .expect("generic call should return the instantiated predicate");
+        assert_eq!(predicate.type_id, Some(TypeId::STRING));
+        assert_eq!(predicate_params[0].type_id, TypeId::STRING);
+        assert!(result.take_instantiated_predicate().is_none());
+
+        let params = result
+            .take_instantiated_params()
+            .expect("generic call should return instantiated params");
+        assert_eq!(params[0].type_id, TypeId::STRING);
+        assert!(result.take_instantiated_params().is_none());
+
+        assert!(matches!(
+            result.into_call_result(),
+            CallResult::Success(TypeId::BOOLEAN)
+        ));
     }
 }
