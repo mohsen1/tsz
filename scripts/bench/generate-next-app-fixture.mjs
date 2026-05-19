@@ -1,14 +1,20 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { writeFixtureProvenance } from "./fixture-provenance.mjs";
 
-const outputArg = process.argv[2];
+const args = process.argv.slice(2).filter((a) => a !== "--dry-run");
+const dryRun = process.argv.includes("--dry-run");
+
+const outputArg = args[0];
 if (!outputArg) {
-  console.error("Usage: generate-next-app-fixture.mjs <output-dir>");
+  console.error("Usage: generate-next-app-fixture.mjs [--dry-run] <output-dir>");
   process.exit(1);
 }
 const outputDir = path.resolve(outputArg);
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
 const dependencies = [
   "zod",
@@ -402,6 +408,17 @@ export function serializeSnapshot(input: { draft: IssueDraft; releases: ReleaseM
   return snapshot;
 }
 `);
+
+writeFixtureProvenance({
+  outputDir,
+  generatorScript: SCRIPT_PATH,
+  templateName: "next-app-router",
+  dryRun,
+});
+
+if (dryRun) {
+  process.exit(0);
+}
 
 const install = spawnSync("npm", ["install", "--silent", "--no-audit", "--no-fund"], {
   cwd: outputDir,

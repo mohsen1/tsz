@@ -80,6 +80,18 @@ for (const row of PROJECT_ROW_DEFINITIONS) {
       failures.push(`${row.name}: ${envField} is set but ${message}`);
     }
   }
+
+  if (row.generated_by !== undefined) {
+    if (
+      typeof row.generated_by !== "string" ||
+      !row.generated_by.startsWith("scripts/bench/") ||
+      !row.generated_by.endsWith(".mjs")
+    ) {
+      failures.push(
+        `${row.name}: generated_by must point to a scripts/bench/*.mjs generator script`,
+      );
+    }
+  }
 }
 
 const rowNames = new Set(PROJECT_ROW_DEFINITIONS.map((row) => row.name));
