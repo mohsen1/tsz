@@ -231,7 +231,6 @@ pub use evaluation::evaluate::{
     TypeEvaluator, evaluate_conditional, evaluate_index_access, evaluate_index_access_with_options,
     evaluate_keyof, evaluate_mapped, evaluate_type, evaluate_type_with_request,
 };
-pub use evaluation::session::EvaluationSession;
 pub use instantiation::application::{ApplicationEvaluator, ApplicationResult};
 pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
@@ -242,7 +241,6 @@ pub use instantiation::instantiate::{
     instantiate_type_with_infer, instantiate_type_with_infer_cached, substitute_this_type,
     substitute_this_type_at_return_position, substitute_this_type_cached,
 };
-pub use intern::type_factory::TypeFactory;
 pub use narrowing::{
     CachedPropertyType, DiscriminantInfo, GuardSense, NarrowingCache, NarrowingContext,
     NarrowingResult, NullishFilter, OptionalPropertyChainKey, TypeGuard, TypeofKind,
