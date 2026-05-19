@@ -1,6 +1,7 @@
 //! Definite assignment analysis (TS2454), TDZ analysis, and flow-based type narrowing.
 
 use crate::FlowAnalyzer;
+use crate::query_boundaries::assignability::are_types_overlapping_with_env;
 use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype_with_env, tuple_elements_for_type, union_members_for_type,
 };
@@ -471,23 +472,25 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Keep only members whose discriminant property overlaps with the narrowed binding.
+            // Keep members whose discriminant property overlaps with the narrowed binding type.
+            // Using structural overlap (not mutual subtype) covers:
+            //   - simple case: member_prop "a" overlaps narrowed "a"
+            //   - multi-literal: member_prop "a" overlaps narrowed "a" | "b"
+            //   - exclusion: member_prop "c" does NOT overlap narrowed "a" | "b"
             remaining.retain(|&member| {
                 let member_prop_ty =
                     match find_property_in_object_by_str(self.ctx.types, member, prop_name) {
                         Some(prop) => prop.type_id,
                         None => return true, // Property absent — keep member.
                     };
-                member_prop_ty == binding_narrowed || {
-                    let env = self.ctx.type_env.borrow();
-                    are_types_mutually_subtype_with_env(
-                        self.ctx.types,
-                        &env,
-                        binding_narrowed,
-                        member_prop_ty,
-                        self.ctx.strict_null_checks(),
-                    )
-                }
+                let env = self.ctx.type_env.borrow();
+                are_types_overlapping_with_env(
+                    self.ctx.types,
+                    &env,
+                    member_prop_ty,
+                    binding_narrowed,
+                    self.ctx.strict_null_checks(),
+                )
             });
         }
 

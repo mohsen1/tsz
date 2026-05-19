@@ -115,6 +115,58 @@ function f(s: S) {
     );
 }
 
+// ── Multi-literal narrowing (union discriminant) ─────────────────────────
+
+#[test]
+fn multi_literal_discriminant_narrows_source_to_subset() {
+    // `kind === "a" || kind === "b"` narrows `kind` to `"a" | "b"`,
+    // so `s` should be narrowed to the A | B subset. Accessing `.a` or `.b` is valid.
+    let diags = diags(
+        r#"
+type S =
+  | { kind: "a"; a: number }
+  | { kind: "b"; b: string }
+  | { kind: "c"; c: boolean };
+function f(s: S) {
+  const { kind } = s;
+  if (kind === "a" || kind === "b") {
+    s.kind;
+  }
+}
+"#,
+    );
+    let cs = codes(&diags);
+    assert!(
+        !cs.contains(&2339),
+        "Expected no TS2339 for `s.kind` inside multi-literal branch; got: {diags:?}"
+    );
+}
+
+#[test]
+fn multi_literal_discriminant_excludes_third_variant_property() {
+    // Inside `if (kind === "a" || kind === "b")`, `s` is narrowed to A | B.
+    // Accessing `.c` (only on variant C) should still produce TS2339.
+    let diags = diags(
+        r#"
+type S =
+  | { kind: "a"; a: number }
+  | { kind: "b"; b: string }
+  | { kind: "c"; c: boolean };
+function f(s: S) {
+  const { kind } = s;
+  if (kind === "a" || kind === "b") {
+    s.c;
+  }
+}
+"#,
+    );
+    let cs = codes(&diags);
+    assert!(
+        cs.contains(&2339),
+        "Expected TS2339 for `s.c` inside `kind === 'a' || kind === 'b'`; got: {diags:?}"
+    );
+}
+
 // ── No false positives ─────────────────────────────────────────────────────
 
 #[test]
