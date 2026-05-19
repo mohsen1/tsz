@@ -69,7 +69,7 @@ function loadPulls(fixture) {
 }
 
 function agentNameFrom(body) {
-  const match = /^AgentName:\s*(\S+)/m.exec(body);
+  const match = /^AgentName:[^\S\r\n]*(\S+)?/m.exec(body);
   return match?.[1] ?? null;
 }
 

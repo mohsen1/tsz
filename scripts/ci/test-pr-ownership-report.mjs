@@ -63,6 +63,15 @@ withTempDir((dir) => {
       labels: [],
       body: "",
     },
+    {
+      number: 14,
+      title: "chore(ci): blank agent metadata",
+      isDraft: true,
+      baseRefName: "main",
+      headRefName: "agent/blank-agent",
+      labels: [],
+      body: "AgentName:\n\n## Track\ncoordination\n",
+    },
   ]);
 
   const result = spawnSync(process.execPath, [SCRIPT, "--fixture", fixture, "--json", output], {
@@ -78,15 +87,15 @@ withTempDir((dir) => {
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.deepEqual(report.counts, {
-    open: 4,
-    draft: 3,
+    open: 5,
+    draft: 4,
     ready: 1,
     stacked: 2,
-    missingAgentName: 1,
+    missingAgentName: 2,
   });
   assert.deepEqual(report.byBase, [
     { base: "agent/mapped-a", prs: [12] },
-    { base: "main", prs: [10, 11] },
+    { base: "main", prs: [10, 11, 14] },
     { base: "unknown-base", prs: [13] },
   ]);
   assert.deepEqual(report.stacks, [
@@ -100,4 +109,5 @@ withTempDir((dir) => {
     { issue: 42, prs: [10, 11] },
   ]);
   assert.equal(report.prs.find((pr) => pr.number === 13).agentName, null);
+  assert.equal(report.prs.find((pr) => pr.number === 14).agentName, null);
 });
