@@ -976,7 +976,11 @@ impl Project {
     /// Compute workspace edits for file renames.
     ///
     /// When a file is renamed/moved, this finds all import specifiers across the
-    /// project that referenced the old path and produces text edits to update them.
+    /// project that referenced the old path and produces text edits to update
+    /// them. Both relative specifiers (e.g. `./foo`) and `paths`-aliased
+    /// specifiers configured in the importer's nearest tsconfig (e.g.
+    /// `@app/foo`) are rewritten.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn get_file_rename_edits(
         &self,
         old_path: &str,
@@ -985,21 +989,8 @@ impl Project {
         let mut workspace_edits: FxHashMap<String, Vec<crate::rename::TextEdit>> =
             FxHashMap::default();
 
-        // Normalize paths by stripping common extensions for comparison
-        let strip_ext = |p: &str| -> String {
-            let p = p
-                .strip_suffix(".ts")
-                .or_else(|| p.strip_suffix(".tsx"))
-                .or_else(|| p.strip_suffix(".js"))
-                .or_else(|| p.strip_suffix(".jsx"))
-                .or_else(|| p.strip_suffix(".mts"))
-                .or_else(|| p.strip_suffix(".cts"))
-                .unwrap_or(p);
-            p.to_string()
-        };
-
-        let old_base = strip_ext(old_path);
-        let new_base = strip_ext(new_path);
+        let old_path_obj = std::path::Path::new(old_path);
+        let new_path_obj = std::path::Path::new(new_path);
 
         for (file_name, file) in &self.files {
             let provider = crate::rename::file_rename::FileRenameProvider::new(
@@ -1010,83 +1001,22 @@ impl Project {
             let locations = provider.find_import_specifier_nodes(file.root());
 
             for loc in locations {
-                // Check if this import specifier references the old file
-                // Resolve relative specifier to absolute path
-                let resolved = self.resolve_specifier(file_name, &loc.current_specifier);
-                let resolved_base = strip_ext(&resolved);
-
-                if resolved_base == old_base {
-                    let new_specifier = self.compute_relative_specifier(file_name, &new_base);
-                    workspace_edits
-                        .entry(file_name.clone())
-                        .or_default()
-                        .push(loc.specifier_text_edit(new_specifier));
-                }
+                let Some(new_specifier) = self.compute_renamed_specifier(
+                    file_name,
+                    &loc.current_specifier,
+                    old_path_obj,
+                    new_path_obj,
+                ) else {
+                    continue;
+                };
+                workspace_edits
+                    .entry(file_name.clone())
+                    .or_default()
+                    .push(loc.specifier_text_edit(new_specifier));
             }
         }
 
         workspace_edits
-    }
-
-    /// Resolve a module specifier relative to the importing file.
-    fn resolve_specifier(&self, from_file: &str, specifier: &str) -> String {
-        if !specifier.starts_with('.') {
-            // Bare specifier (e.g., "react") - return as-is
-            return specifier.to_string();
-        }
-        // Resolve relative to the directory of from_file
-        let dir = if let Some(idx) = from_file.rfind('/') {
-            &from_file[..idx]
-        } else {
-            "."
-        };
-
-        let mut parts: Vec<&str> = dir.split('/').collect();
-        for segment in specifier.split('/') {
-            match segment {
-                "." => {}
-                ".." => {
-                    parts.pop();
-                }
-                s => parts.push(s),
-            }
-        }
-        parts.join("/")
-    }
-
-    /// Compute a relative module specifier from one file to another.
-    fn compute_relative_specifier(&self, from_file: &str, to_path: &str) -> String {
-        let from_dir = if let Some(idx) = from_file.rfind('/') {
-            &from_file[..idx]
-        } else {
-            "."
-        };
-
-        // Split into path components
-        let from_parts: Vec<&str> = from_dir.split('/').collect();
-        let to_parts: Vec<&str> = to_path.split('/').collect();
-
-        // Find common prefix length
-        let common = from_parts
-            .iter()
-            .zip(to_parts.iter())
-            .take_while(|(a, b)| a == b)
-            .count();
-
-        let ups = from_parts.len() - common;
-        let mut result = String::new();
-        if ups == 0 {
-            result.push_str("./");
-        } else {
-            for _ in 0..ups {
-                result.push_str("../");
-            }
-        }
-
-        let remaining: Vec<&str> = to_parts[common..].to_vec();
-        result.push_str(&remaining.join("/"));
-
-        result
     }
 
     /// Format a document using the built-in formatter.

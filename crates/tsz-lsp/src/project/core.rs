@@ -2500,6 +2500,9 @@ impl Project {
     /// Process a single file rename (internal helper).
     ///
     /// Updates imports in all dependent files that reference the renamed file.
+    /// Handles both relative specifiers (e.g. `./foo`, `../utils/bar`) and
+    /// `paths`-aliased specifiers configured in the importer's nearest
+    /// `tsconfig.json` (e.g. `@app/foo`).
     #[cfg(not(target_arch = "wasm32"))]
     fn process_file_rename(
         &mut self,
@@ -2508,8 +2511,6 @@ impl Project {
         result: &mut WorkspaceEdit,
     ) {
         use crate::rename::file_rename::FileRenameProvider;
-        use crate::utils::calculate_new_relative_path;
-        use std::path::Path;
 
         // Iterate through all files to find those that import the renamed file
         // We can't use dependency_graph.get_dependents() directly because it stores
@@ -2527,33 +2528,21 @@ impl Project {
 
             // For each import, check if it needs updating
             for import_loc in import_locations {
-                // CRITICAL: Check if this import actually points to the renamed file
-                // Without this check, we would rewrite ALL imports in the file
-                let dependent_path_obj = Path::new(dependent_path);
-                if !self.is_import_pointing_to_file(
-                    dependent_path_obj,
+                let Some(new_specifier) = self.compute_renamed_specifier(
+                    dependent_path,
                     &import_loc.current_specifier,
-                    old_path,
-                ) {
-                    // This import doesn't point to the renamed file, skip it
-                    continue;
-                }
-
-                // Calculate the new import path
-                if let Some(new_specifier) = calculate_new_relative_path(
-                    Path::new(dependent_path),
                     old_path,
                     new_path,
-                    &import_loc.current_specifier,
-                ) {
-                    // `import_loc.range` spans the surrounding quotes; use the
-                    // helper so the rewrite replaces only the inner content
-                    // and the original quote style is preserved.
-                    result.add_edit(
-                        dependent_path.clone(),
-                        import_loc.specifier_text_edit(new_specifier),
-                    );
-                }
+                ) else {
+                    continue;
+                };
+                // `import_loc.range` spans the surrounding quotes; use the
+                // helper so the rewrite replaces only the inner content
+                // and the original quote style is preserved.
+                result.add_edit(
+                    dependent_path.clone(),
+                    import_loc.specifier_text_edit(new_specifier),
+                );
             }
         }
 
@@ -2561,6 +2550,47 @@ impl Project {
         // Note: The dependency graph uses raw import specifiers, not resolved paths
         // So we can't directly update it here. The graph will be rebuilt when
         // files are re-parsed/re-checked in the normal workflow.
+    }
+
+    /// Compute the new module specifier when a file is renamed, preserving the
+    /// importer's specifier style (relative path, `paths` alias, ...).
+    ///
+    /// Returns `None` when the import does not point to `old_path`, or when no
+    /// supported rewrite applies (e.g. a bare npm package import unrelated to
+    /// the renamed file).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn compute_renamed_specifier(
+        &self,
+        dependent_path: &str,
+        current_specifier: &str,
+        old_path: &Path,
+        new_path: &Path,
+    ) -> Option<String> {
+        use crate::utils::calculate_new_relative_path;
+
+        let dependent_path_obj = Path::new(dependent_path);
+
+        if is_relative_specifier(current_specifier) {
+            if !self.is_import_pointing_to_file(dependent_path_obj, current_specifier, old_path) {
+                return None;
+            }
+            return calculate_new_relative_path(
+                dependent_path_obj,
+                old_path,
+                new_path,
+                current_specifier,
+            );
+        }
+
+        // Non-relative specifier: try tsconfig `paths` aliases. Only specifiers
+        // that previously resolved to `old_path` through an alias are rewritten;
+        // bare npm package specifiers are left untouched.
+        self.rename_path_alias_specifier(
+            dependent_path,
+            current_specifier,
+            &path_to_slash_string(old_path),
+            &path_to_slash_string(new_path),
+        )
     }
 
     /// Fetch a file by name.
@@ -2723,6 +2753,11 @@ impl Default for Project {
 fn is_ts_js_file(path: &str) -> bool {
     let extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"];
     extensions.iter().any(|ext| path.ends_with(ext))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn is_relative_specifier(spec: &str) -> bool {
+    spec.starts_with("./") || spec.starts_with("../") || spec == "." || spec == ".."
 }
 
 #[cfg(not(target_arch = "wasm32"))]
