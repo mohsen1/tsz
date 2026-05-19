@@ -20,6 +20,11 @@ use crate::visitor::{
 };
 use crate::visitors::visitor_predicates::is_primitive_type;
 
+fn args_contain_type_parameters(interner: &dyn crate::TypeDatabase, args: &[TypeId]) -> bool {
+    args.iter()
+        .any(|arg| crate::contains_type_parameters(interner, *arg))
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     fn iterator_protocol_mismatch_for_same_application_family(
         &mut self,
@@ -538,11 +543,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             // mapped types like `{ [K in keyof T]: T[K] }`) that make
                             // the structural check succeed even though the variance
                             // check on the raw type parameter fails.
-                            let source_has_type_param = s_app
-                                .args
-                                .iter()
-                                .any(|arg| crate::contains_type_parameters(self.interner, *arg));
-                            if !source_has_type_param {
+                            if !args_contain_type_parameters(self.interner, &s_app.args) {
                                 return SubtypeResult::False;
                             }
                         }
@@ -571,7 +572,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             let s_eval = self.evaluate_type(source_type);
                             let t_eval = self.evaluate_type(target_type);
                             if s_eval != source_type || t_eval != target_type {
-                                return self.check_subtype(s_eval, t_eval);
+                                let eval_result = self.check_subtype(s_eval, t_eval);
+                                // Structural collapse (s_eval == t_eval) erases the distinction
+                                // that REJECTION_UNRELIABLE variance correctly detected. For
+                                // concrete args, trust variance over the collapsed result; for
+                                // type-param args, fall through — expanded forms may introduce
+                                // index signatures that make structural True valid.
+                                if rejection_unreliable
+                                    && s_eval == t_eval
+                                    && eval_result.is_true()
+                                    && !args_contain_type_parameters(self.interner, &s_app.args)
+                                {
+                                    return SubtypeResult::False;
+                                }
+                                return eval_result;
                             }
                         }
                     }
@@ -816,10 +830,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // definitive: incompatible type args means incompatible generic types.
         let rejection_unreliable = variances.iter().any(|v| v.rejection_unreliable());
         if any_checked && !all_ok && !needs_structural_fallback && !rejection_unreliable {
-            let source_has_type_param = s_args
-                .iter()
-                .any(|arg| crate::contains_type_parameters(self.interner, *arg));
-            if !source_has_type_param {
+            if !args_contain_type_parameters(self.interner, &s_args) {
                 return Some(SubtypeResult::False);
             }
         }
