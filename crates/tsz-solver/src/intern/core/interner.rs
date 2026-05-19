@@ -192,6 +192,7 @@ pub(super) const SHARD_COUNT: usize = 1 << SHARD_BITS; // 64 shards
 pub(super) const SHARD_MASK: u32 = (SHARD_COUNT as u32) - 1;
 pub(crate) const PROPERTY_MAP_THRESHOLD: usize = 24;
 pub(super) const TYPE_LIST_INLINE: usize = 8;
+pub(super) const DASHMAP_ENTRY_OVERHEAD_ESTIMATE: usize = 64;
 
 /// Maximum template literal expansion limit.
 /// WASM environments have limited linear memory, so we use a much lower limit
@@ -242,6 +243,40 @@ pub(crate) struct InternedTypeLimitContext {
     pub(crate) current_count: usize,
     pub(crate) max_interned_types: usize,
     pub(crate) fallback_type: TypeId,
+}
+
+/// Entry counts and estimated residency for retained `TypeInterner`
+/// predicate caches.
+///
+/// These caches memoize immutable `TypeId -> bool` facts for a single
+/// interner instance. They have no invalidation hook because their keys are
+/// stable only inside the owning `TypeInterner`.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct TypeInternerCacheStatistics {
+    /// Memoized `is_identity_comparable_type` answers.
+    pub identity_comparable_entries: usize,
+    /// Memoized `contains_this_type` answers.
+    pub contains_this_entries: usize,
+    /// Memoized `contains_infer_types_db` answers.
+    pub contains_infer_entries: usize,
+    /// Memoized `contains_type_query_db` answers.
+    pub contains_type_query_entries: usize,
+}
+
+impl TypeInternerCacheStatistics {
+    /// Estimate the total in-memory size of retained `TypeId -> bool`
+    /// predicate caches in bytes.
+    #[must_use]
+    pub const fn estimated_size_bytes(&self) -> usize {
+        let total_entries = self.identity_comparable_entries
+            + self.contains_this_entries
+            + self.contains_infer_entries
+            + self.contains_type_query_entries;
+        total_entries
+            * (DASHMAP_ENTRY_OVERHEAD_ESTIMATE
+                + std::mem::size_of::<TypeId>()
+                + std::mem::size_of::<bool>())
+    }
 }
 
 /// Cached data for a union member, pre-fetched to avoid redundant DashMap/arena
@@ -703,6 +738,18 @@ impl TypeInterner {
             union_too_complex: AtomicBool::new(false),
             evaluation_fuel: AtomicU32::new(0),
             instance_id: NEXT_INTERNER_INSTANCE_ID.fetch_add(1, Ordering::Relaxed),
+        }
+    }
+
+    /// Snapshot retained predicate-cache entry counts for diagnostics and
+    /// memory-accounting reports.
+    #[must_use]
+    pub fn cache_statistics(&self) -> TypeInternerCacheStatistics {
+        TypeInternerCacheStatistics {
+            identity_comparable_entries: self.identity_comparable_cache.len(),
+            contains_this_entries: self.contains_this_cache.len(),
+            contains_infer_entries: self.contains_infer_cache.len(),
+            contains_type_query_entries: self.contains_type_query_cache.len(),
         }
     }
 
