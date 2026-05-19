@@ -14,7 +14,7 @@
 
 use tsz_checker::test_utils::check_source_codes;
 
-fn no_ts2339(source: &str) {
+fn assert_no_ts2339(source: &str) {
     let codes = check_source_codes(source);
     assert!(
         !codes.contains(&2339),
@@ -22,11 +22,9 @@ fn no_ts2339(source: &str) {
     );
 }
 
-/// Non-abstract mixin: `TBase extends new (...args: any[]) => any`.
-/// Property access on derived instance must not produce TS2339.
 #[test]
 fn non_abstract_ctor_returning_any_no_ts2339_on_dynamic_property() {
-    no_ts2339(
+    assert_no_ts2339(
         r#"
 function Mixin<TBase extends new (...args: any[]) => any>(base: TBase) {
     class Mixed extends base {
@@ -42,10 +40,9 @@ const _ = m.unknownProp;
     );
 }
 
-/// Same rule, renamed type parameter to `TParam`.  Must behave identically.
 #[test]
 fn renamed_type_param_no_ts2339_on_dynamic_property() {
-    no_ts2339(
+    assert_no_ts2339(
         r#"
 function Mixin<TParam extends new (...args: any[]) => any>(base: TParam) {
     class Mixed extends base {
@@ -61,10 +58,9 @@ const _ = m.dynamicKey;
     );
 }
 
-/// Abstract variant: `X extends abstract new (...args: any[]) => any`.
 #[test]
 fn abstract_ctor_returning_any_no_ts2339_on_dynamic_property() {
-    no_ts2339(
+    assert_no_ts2339(
         r#"
 function Mixin<X extends abstract new (...args: any[]) => any>(base: X) {
     abstract class Mixed extends base {
@@ -78,10 +74,9 @@ const M = Mixin(AbstractBase);
     );
 }
 
-/// Class with additional methods still picks up the index signature from base.
 #[test]
 fn class_with_methods_and_any_base_no_ts2339() {
-    no_ts2339(
+    assert_no_ts2339(
         r#"
 function WithMethods<MyBase extends new (...args: any[]) => any>(base: MyBase) {
     class Enhanced extends base {
