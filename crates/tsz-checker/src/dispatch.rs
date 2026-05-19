@@ -1929,14 +1929,32 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // expression walks in real projects. They do not have a value type,
             // but they also should not poison checking with TypeId::ERROR.
             k if k == syntax_kind_ext::BLOCK
+                || k == syntax_kind_ext::IMPORT_DECLARATION
+                || k == syntax_kind_ext::IMPORT_CLAUSE
+                || k == syntax_kind_ext::IMPORT_SPECIFIER
                 || k == syntax_kind_ext::NAMED_IMPORTS
+                || k == syntax_kind_ext::NAMESPACE_IMPORT
                 || k == syntax_kind_ext::NAMED_EXPORTS
-                || k == syntax_kind_ext::METHOD_SIGNATURE =>
+                || k == syntax_kind_ext::EXPORT_DECLARATION
+                || k == SyntaxKind::ImportKeyword as u16
+                || k == SyntaxKind::PrivateIdentifier as u16 =>
             {
                 TypeId::VOID
             }
             k if k == syntax_kind_ext::METHOD_SIGNATURE => {
                 self.checker.get_type_of_interface_member_simple(idx)
+            }
+            k if k == syntax_kind_ext::PARAMETER => {
+                let Some(param) = self.checker.ctx.arena.get_parameter(node) else {
+                    return TypeId::ANY;
+                };
+                if param.type_annotation.is_some() {
+                    return self.checker.get_type_from_type_node(param.type_annotation);
+                }
+                if param.initializer.is_some() {
+                    return self.dispatch_type_computation(param.initializer);
+                }
+                TypeId::ANY
             }
             // Default case - unknown node kind is an error
             _ => {

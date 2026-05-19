@@ -121,6 +121,9 @@ mod control_flow_type_guard_tests;
 #[path = "../tests/definite_assignment_tests.rs"]
 mod definite_assignment_tests;
 #[cfg(test)]
+#[path = "tests/dispatch_non_expression_nodes_tests.rs"]
+mod dispatch_non_expression_nodes_tests;
+#[cfg(test)]
 #[path = "../tests/dynamic_import_defer_tests.rs"]
 mod dynamic_import_defer_tests;
 #[cfg(test)]
