@@ -1599,6 +1599,11 @@ impl ProgramContext {
             self.typescript_dom_replacement_globals.2,
         );
         ctx.set_has_deprecation_diagnostics(self.has_deprecation_diagnostics);
+        // Pre-install global indices before set_all_arenas/set_all_binders so
+        // those methods can skip re-computing indices already provided here.
+        if let Some(ref idx) = self.global_file_name_index {
+            ctx.global_file_name_index = Some(Arc::clone(idx));
+        }
         ctx.set_all_arenas(Arc::clone(&self.all_arenas));
         if let Some(ref dm) = self.skeleton_declared_modules {
             ctx.set_declared_modules_from_skeleton(Arc::clone(dm));
@@ -1606,8 +1611,8 @@ impl ProgramContext {
         if let Some(ref ei) = self.skeleton_expando_index {
             ctx.set_expando_index_from_skeleton(Arc::clone(ei));
         }
-        // Pre-install global indices before set_all_binders so it can skip
-        // re-computing them. This avoids O(N) binder scans per checker.
+        // Pre-install remaining global indices before set_all_binders so it
+        // can skip re-computing them. This avoids O(N) binder scans per checker.
         if let Some(ref idx) = self.global_file_locals_index {
             ctx.global_file_locals_index = Some(Arc::clone(idx));
         }
@@ -1625,9 +1630,6 @@ impl ProgramContext {
         }
         if let Some(ref idx) = self.global_arena_index {
             ctx.global_arena_index = Some(Arc::clone(idx));
-        }
-        if let Some(ref idx) = self.global_file_name_index {
-            ctx.global_file_name_index = Some(Arc::clone(idx));
         }
         if let Some(ref m) = self.program_reexports {
             ctx.program_reexports = Some(Arc::clone(m));
@@ -1961,38 +1963,5 @@ impl ProgramContext {
         // Filename reverse index: one O(N) build replaces the O(N²) fallback rebuild.
         let file_name_idx = crate::module_resolution::build_file_name_index(&self.all_arenas);
         self.global_file_name_index = Some(Arc::new(file_name_idx));
-    }
-
-    /// Build the shared `SymbolId` → file-index map from `symbol_file_targets`.
-    ///
-    /// Call this once after populating `symbol_file_targets`. The resulting
-    /// `Arc<FxHashMap>` is shared (O(1) clone) across all checkers, eliminating
-    /// the per-checker O(N) copy into `cross_file_symbol_targets`.
-    pub fn build_global_symbol_file_index(&mut self) {
-        let mut map: FxHashMap<SymbolId, usize> =
-            FxHashMap::with_capacity_and_hasher(self.symbol_file_targets.len(), Default::default());
-        for &(sym_id, file_idx) in self.symbol_file_targets.iter() {
-            map.insert(sym_id, file_idx);
-        }
-        self.global_symbol_file_index = Some(Arc::new(map));
-    }
-
-    /// Build global indices only when the skeleton fingerprint has changed.
-    ///
-    /// Compares `new_fingerprint` against `self.last_skeleton_fingerprint`.
-    /// If they match, the global indices are already valid and the expensive
-    /// O(N) binder scan is skipped entirely. If they differ (or this is the
-    /// first build), delegates to `build_global_indices` and stores the new
-    /// fingerprint for future comparisons.
-    ///
-    /// Returns `true` if indices were rebuilt, `false` if cached.
-    pub fn build_global_indices_if_changed(&mut self, new_fingerprint: u64) -> bool {
-        if self.last_skeleton_fingerprint == Some(new_fingerprint) {
-            // All global indices (name-based + arena) + skeleton indices are still valid.
-            return false;
-        }
-        self.build_global_indices();
-        self.last_skeleton_fingerprint = Some(new_fingerprint);
-        true
     }
 }

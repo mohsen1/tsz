@@ -266,6 +266,7 @@ pub(crate) struct CompilationCache {
     type_caches: FxHashMap<PathBuf, TypeCache>,
     bind_cache: FxHashMap<PathBuf, BindCacheEntry>,
     dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
+    pub(crate) outfile_bundle_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
     reverse_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
     diagnostics: FxHashMap<PathBuf, Vec<Diagnostic>>,
     export_hashes: FxHashMap<PathBuf, u64>,
@@ -318,6 +319,7 @@ impl CompilationCache {
         for path in affected {
             self.type_caches.remove(&path);
             self.bind_cache.remove(&path);
+            self.outfile_bundle_dependencies.remove(&path);
             self.diagnostics.remove(&path);
             self.export_hashes.remove(&path);
             self.import_symbol_ids.remove(&path);
@@ -335,6 +337,7 @@ impl CompilationCache {
             if changed.contains(&path) {
                 self.type_caches.remove(&path);
                 self.bind_cache.remove(&path);
+                self.outfile_bundle_dependencies.remove(&path);
                 self.diagnostics.remove(&path);
                 self.export_hashes.remove(&path);
                 self.import_symbol_ids.remove(&path);
@@ -386,6 +389,7 @@ impl CompilationCache {
         for path in paths {
             self.type_caches.remove(&path);
             self.bind_cache.remove(&path);
+            self.outfile_bundle_dependencies.remove(&path);
             self.diagnostics.remove(&path);
             self.export_hashes.remove(&path);
             self.import_symbol_ids.remove(&path);
@@ -397,6 +401,7 @@ impl CompilationCache {
         self.type_caches.clear();
         self.bind_cache.clear();
         self.dependencies.clear();
+        self.outfile_bundle_dependencies.clear();
         self.reverse_dependencies.clear();
         self.diagnostics.clear();
         self.export_hashes.clear();
@@ -407,6 +412,7 @@ impl CompilationCache {
     pub(crate) fn update_dependencies(
         &mut self,
         dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
+        outfile_bundle_dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
     ) {
         let mut reverse = FxHashMap::default();
         for (source, deps) in &dependencies {
@@ -418,6 +424,7 @@ impl CompilationCache {
             }
         }
         self.dependencies = dependencies;
+        self.outfile_bundle_dependencies = outfile_bundle_dependencies;
         self.reverse_dependencies = reverse;
     }
 
@@ -1355,6 +1362,8 @@ fn compile_inner(
     let SourceReadResult {
         sources: all_sources,
         dependencies,
+        outfile_bundle_paths,
+        outfile_bundle_dependencies,
         type_reference_errors,
         resolution_mode_errors,
     } = {
@@ -1433,7 +1442,7 @@ fn compile_inner(
 
     // Update dependencies in the cache
     if let Some(ref mut c) = effective_cache {
-        c.update_dependencies(dependencies);
+        c.update_dependencies(dependencies, outfile_bundle_dependencies);
     }
 
     // Separate binary files from regular sources - binary files get TS1490
@@ -1933,6 +1942,7 @@ fn compile_inner(
             out_dir: out_dir.as_deref(),
             declaration_dir: declaration_dir.as_deref(),
             dirty_paths: dirty_paths.as_ref(),
+            outfile_bundle_paths: Some(&outfile_bundle_paths),
             type_caches: type_caches_ref,
         })?;
         diagnostics.extend(emit_diags);

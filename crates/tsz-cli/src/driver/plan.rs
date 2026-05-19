@@ -1219,6 +1219,6 @@ mod tests {
         let b = PathBuf::from("/home/user");
         let common = longest_common_directory(&a, &b);
         // On unix, "/" is the common root
-        assert!(common == PathBuf::from("/") || common.as_os_str().is_empty());
+        assert!(common == Path::new("/") || common.as_os_str().is_empty());
     }
 }
