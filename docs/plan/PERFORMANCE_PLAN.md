@@ -32,6 +32,18 @@ The target shape is:
 Correctness is a performance feature: a faster red row is not a win unless the
 first blocker is explicitly runtime, OOM, timeout, or residency.
 
+The performance endgame is stricter than "usually faster": once a benchmark row
+is correct enough to time, `tsz` should be faster than `tsgo` on that row, and
+every new benchmark family should either start faster or enter the loss ledger
+below with an owner, evidence, and closure plan. The intended steady state is a
+ratchet:
+
+1. red/yellow rows become green,
+2. green-but-slower rows become `tsz` wins,
+3. each closed loss gets a reduced guard or scale-cliff fixture,
+4. no future PR may reintroduce the same complexity class without tripping a
+   guard, counter, or benchmark.
+
 ## Audit Anchors From 2026-05-17
 
 These are audit anchors, not permanent targets. Replace them when a fresher
@@ -72,6 +84,91 @@ audit materially changes the picture.
    `ts-toolbelt-project` was `861.90ms` vs `99.30ms` (`tsgo` 8.68x faster).
    Build/cache hygiene and recursive type-evaluation pressure are both current
    performance priorities.
+
+## Current `tsgo` Loss Ledger
+
+Source: `crates/tsz-website/bench-snapshot.json`, generated
+`2026-05-17T01:23:02.991Z` by `scripts/bench/bench-vs-tsgo.sh`.
+
+This ledger is the near-term performance backlog. Do not replace it with a new
+run unless the replacement artifact is complete enough to list timed losses,
+error rows, and runner metadata. A stale ledger is bad; an optimistic partial
+ledger is worse.
+
+Timed rows: `79`. `tsz` wins: `73`. `tsgo` wins: `6`.
+
+| Priority | Row | Gap | Absolute loss | Strategic read | Closure target |
+| --- | --- | ---: | ---: | --- | --- |
+| P0 | `ts-toolbelt-project` | `7.53x` slower (`753.63ms` vs `100.09ms`) | `653.54ms` | recursive conditional, mapped/indexed access, repeated instantiation and relation cache pressure | make recursive type-evaluation attribution name the top operation, then cut repeat work until timing mode is a `tsz` win |
+| P1 | `vite-vanilla-ts-app` | `2.25x` slower (`109.69ms` vs `48.81ms`) | `60.88ms` | generated app setup, lib/module identity, child-checker/project skeleton residency | remove avoidable child-checker construction and cross-arena delegation before micro-optimizing checks |
+| P1 | `ts-essentials-project` | `1.46x` slower (`74.43ms` vs `50.83ms`) | `23.60ms` | utility-type mapped/conditional/key-space workload with recursive JSON-like shapes | share key-space/property summaries with relation/evaluation paths and prove lower relation counts |
+| P2 | `nextjs-fresh-app` | `1.36x` slower (`73.49ms` vs `54.04ms`) | `19.45ms` | generated app dependency/config setup and module/lib graph pressure | reuse Vite/Next project skeleton fixes and keep the row as an app-startup regression guard |
+| P2 | `BCT candidates=200` | `1.09x` slower (`169.77ms` vs `156.16ms`) | `13.61ms` | best-common-type pairwise subtype reduction | skip or partition pairwise checks when solver-owned structural proof says reduction cannot change the answer |
+| P3 | `200 classes` | `1.06x` slower (`145.09ms` vs `137.01ms`) | `8.08ms` | class/symbol/member table pressure at large declaration counts | measure binder/checker symbol construction and cache member/interface summaries if counts scale superlinearly |
+
+Correctness or runtime rows that block timing claims:
+
+| Row | Current status | First performance implication |
+| --- | --- | --- |
+| `large-ts-repo` | timeout, exit code `142` | treat as residency/runtime P0 after the first timeout phase and peak RSS are captured |
+| `zod-project` | nonzero `tsz` exit while `tsc` succeeds | correctness first; only time after diagnostic parity is green |
+| `kysely-project` | nonzero `tsz` exit while `tsc` succeeds | correctness first; likely contextual generic/indexed-access substrate before speed |
+| `nextjs` | nonzero `tsz` exit | correctness and project graph/module identity before timing |
+
+Loss closure rule: every row above needs a PR, issue, or PR-body section that
+states the dominant operation, the measurement mode, the command, and the
+expected complexity improvement. A PR may close one row, or close one operation
+that moves multiple rows, but it must not claim "faster than `tsgo`" unless the
+row was measured in timing mode with counters and tracing disabled.
+
+## Faster-Than-`tsgo` Strategy
+
+The route to faster-than-`tsgo` everywhere is not one global optimizer. It is a
+set of row-class ratchets that make repeated semantic work impossible to
+reintroduce.
+
+1. **Make red rows correct or classify them as runtime.** A diagnostic mismatch
+   row does not enter timing competition. A timeout/OOM row enters the
+   residency lane only after its phase, files reached, and peak RSS are known.
+2. **Turn every timed loss into an attributed operation.** The first artifact
+   for a loss is timing mode; the second is attribution mode. Trace mode is
+   allowed only after attribution is too coarse.
+3. **Replace repeat work with structural identity.** Prefer stable `TypeId`,
+   operation keys, key-space handles, declaration summaries, and project
+   skeleton facts over local memo tables that only hide work within one caller.
+4. **Guard the fixed complexity class.** A loss is not closed until a reduced
+   fixture, scale-cliff row, counter assertion, or static guard would fail if
+   the same superlinear behavior returned.
+5. **Keep a margin.** A row that is only noise-level faster than `tsgo` is not
+   stable. For required project rows, target at least a `1.20x` `tsz` speedup
+   or document why the row is inherently dominated by runner/setup noise.
+6. **Prefer operation-wide fixes over fixture wins.** The `ts-toolbelt` fix
+   should also help recursive utility shapes; the Vite fix should also help
+   Next/generated apps; the BCT fix should help BCT scale rows, not just
+   `candidates=200`.
+
+## Loss Triage Workflow
+
+Use this loop for each ledger row.
+
+1. **Correctness gate.** Confirm the row is green or explicitly runtime/OOM/
+   timeout. If not, file or use a benchmark-blocker PR instead of a perf PR.
+2. **Timing baseline.** Run timing mode with counters off and traces off:
+   `scripts/bench/bench-vs-tsgo.sh --filter '<row-name>'`.
+3. **Attribution baseline.** Run the same row with
+   `TSZ_PERF_COUNTERS=1 --extendedDiagnostics`. Do not compare this timing to
+   `tsgo`.
+4. **Hot operation statement.** Write one sentence:
+   "When `<structural operation>` repeats over `<N>`, tsz does `<extra work>`;
+   this change makes it `<cache/skip/partition/reuse>` through `<owner>`."
+5. **Reduced guard.** Add or identify one smaller fixture that exercises the
+   operation without depending on the exact project spelling.
+6. **Scale guard.** For superlinear fixes, add a scale-cliff fixture or counter
+   expectation that proves the slope changed.
+7. **Final timing.** Re-run timing mode and update the PR body with before/
+   after wall time, peak RSS if relevant, and the diagnostic status.
+
+If any step is missing, the row remains open in the ledger.
 
 ## Complexity Laws
 
@@ -198,7 +295,8 @@ Owner tracks: 2 and 3.
 Problem shape: recursive conditionals, mapped/indexed access, key remapping,
 template literals, `infer`, and repeated generic instantiation can revisit the
 same semantic question under slightly different syntax wrappers. This is the
-current `ts-toolbelt-project` class of risk.
+current `ts-toolbelt-project` class of risk and the largest known timed loss
+to `tsgo`.
 
 Required direction:
 
@@ -213,6 +311,11 @@ Required direction:
    or syntax file names.
 5. Preserve cheap leaf paths before cache-key construction.
 6. Add scale tests that vary binder names and wrapper shape.
+7. Attribute `ts-toolbelt-project` by operation before changing broad solver
+   caches; otherwise a cache may hide the symptom without fixing the repeated
+   semantic request.
+8. Track instantiation/evaluation recursion by stable operation frames and
+   purpose, then prove that equivalent alias/wrapper shapes hit the same cache.
 
 Big changes that are allowed:
 
@@ -223,14 +326,28 @@ Big changes that are allowed:
    evaluation,
 4. per-operation fuel accounting with structured partial-result reasons.
 
+Closure evidence for `ts-toolbelt-project`:
+
+1. timing mode before/after for the project row,
+2. attribution showing fewer repeated evaluation/instantiation/relation
+   requests,
+3. a reduced recursive utility fixture that varies alias and type parameter
+   names,
+4. no diagnostic drift with cache disabled or bypassed where such a mode
+   exists,
+5. a final timing-mode result faster than `tsgo`, preferably by at least
+   `1.20x`.
+
 ### Cross-File Residency, Lib Identity, And Generated Apps
 
 Owner tracks: 7 and 10.
 
 Problem shape: Vite, Next, RxJS, and large project rows pay for child checkers,
 cross-arena delegation, repeated lib interface lowering, module resolution, and
-overlay copying. The goal is not to make child checkers cheaper forever; it is
-to answer more requests from stable project facts.
+overlay copying. The current timed losses are `vite-vanilla-ts-app` and
+`nextjs-fresh-app`; `large-ts-repo` is a timeout row, so it belongs here after
+the timeout phase is captured. The goal is not to make child checkers cheaper
+forever; it is to answer more requests from stable project facts.
 
 Required direction:
 
@@ -247,6 +364,10 @@ Required direction:
    name-only allowlists.
 6. Module resolution caches must report lookup, file/dir stat, package.json,
    and candidate-path counts.
+7. Generated app rows should share one project-skeleton fix path. Do not solve
+   Vite by adding Vite-specific assumptions that Next cannot reuse.
+8. Child-checker construction, cross-arena delegation, and overlay-copy counts
+   must be visible in attribution artifacts for generated app work.
 
 Big changes that are allowed:
 
@@ -255,13 +376,24 @@ Big changes that are allowed:
 3. immutable lib/interface summaries keyed by lib set and compiler options,
 4. replacing child-checker delegation with typed query handles.
 
+Closure evidence for generated app and residency rows:
+
+1. timing mode before/after for Vite and generated Next when either is touched,
+2. attribution showing lower child-checker construction, cross-arena
+   delegation, overlay-copy, module-resolution, or lib-lowering counts,
+3. peak RSS for `large-ts-repo` or any row that previously timed out/OOMed,
+4. diagnostic status unchanged,
+5. no hardcoded package, framework, or file-name decisions.
+
 ### Pairwise Relations, BCT, Union, And Intersection Reduction
 
 Owner tracks: 2, 3, 4, and 5.
 
 Problem shape: subtype reduction, best common type, union/intersection
 simplification, signature comparison, property comparison, and tuple/rest
-comparison can all become pairwise relation storms.
+comparison can all become pairwise relation storms. The current visible
+timed symptom is `BCT candidates=200`, but the same operation can appear in
+utility projects and contextual generic inference.
 
 Required direction:
 
@@ -276,6 +408,8 @@ Required direction:
    ad hoc `Vec<TypeId>` identity.
 5. If a loop is skipped because it is only an optimization, tests must prove
    diagnostics stay stable with unreduced members.
+6. BCT and union/intersection reductions should expose counters for candidate
+   count, pair count, skipped pairs, cache hits, and bailout count.
 
 Big changes that are allowed:
 
@@ -284,6 +418,14 @@ Big changes that are allowed:
 3. solver-owned key-space summaries reused by relation/property/indexed-access
    paths,
 4. relation result caches keyed by relation mode and structured failure reason.
+
+Closure evidence for BCT/relation rows:
+
+1. timing mode before/after for the BCT scale row that regressed,
+2. a scale result across at least two candidate counts,
+3. counter evidence that pair count or expensive relation calls fell,
+4. diagnostics unchanged when reduction is skipped or bailed out,
+5. adjacent tests where member names and wrapper aliases differ.
 
 ### Flow Graph And Narrowing
 
@@ -317,7 +459,9 @@ Owner track: 5.
 
 Problem shape: repeated property lookup over unions/intersections, template
 literal keys, numeric/string key compatibility, index signatures, and excess
-property checks can multiply relation and string-map work.
+property checks can multiply relation and string-map work. This is a likely
+secondary contributor to `ts-essentials-project`, `type-fest-project`,
+Kysely correctness blockers, and recursive utility rows.
 
 Required direction:
 
@@ -331,6 +475,9 @@ Required direction:
    optional/readonly policy, and compiler flags.
 5. Template literal pattern keys need structural classification and caps on
    expansion.
+6. Key-space summaries should report reuse counts so project rows can prove
+   one summary feeds `keyof`, indexed access, relation, mapped projection, and
+   diagnostics instead of recomputing each view.
 
 Big changes that are allowed:
 
@@ -429,7 +576,11 @@ over time:
 5. report `with_parent_cache` and symbol-file-target copy call-site counts,
 6. report caches without statistics or size accounting,
 7. report `println!`, `eprintln!`, and `dbg!` in compiler internals,
-8. make scale-cliff ratios easy to compare in CI artifacts.
+8. make scale-cliff ratios easy to compare in CI artifacts,
+9. publish the current timed-loss ledger from benchmark artifacts,
+10. flag project rows that move from `tsz` win to `tsgo` win,
+11. flag any required project row whose `tsz` speedup is below the configured
+    noise margin for two consecutive complete benchmark artifacts.
 
 Guardrails should fail only when the invariant is unambiguous. Otherwise they
 should produce an audit report that a PR body can cite.
@@ -481,17 +632,25 @@ runtime/residency.
 
 This plan is working when:
 
-1. no new unbounded O(N^2) semantic path lands without cap, proof, partition,
+1. every required project row is green or has a current correctness/runtime
+   owner and cannot be mistaken for a speed win,
+2. the timed-loss ledger is empty for the latest complete benchmark artifact,
+   or every remaining loss has a named owner, operation, command, and closure
+   PR/issue,
+3. `ts-toolbelt-project`, generated Vite, generated Next,
+   `ts-essentials-project`, BCT scale rows, and class/symbol scale rows have
+   current attribution artifacts naming their dominant subsystem,
+4. closed losses have reduced guards or scale-cliff fixtures that would catch
+   the same complexity class returning,
+5. no new unbounded O(N^2) semantic path lands without cap, proof, partition,
    memoization, or explicit bailout,
-2. scale-cliff ratios stay roughly linear for required large-project fixtures,
-3. `ts-toolbelt-project`, generated Vite, generated Next, and
-   `ts-essentials-project` have current attribution artifacts naming their
-   dominant subsystem,
-4. cache-enabled and cache-disabled targeted tests agree for advanced type
+6. scale-cliff ratios stay roughly linear for required large-project fixtures,
+7. cache-enabled and cache-disabled targeted tests agree for advanced type
    evaluation and relation hot paths,
-5. `with_parent_cache`, overlay-copy, direct checker `TypeData::`, source-text
+8. `with_parent_cache`, overlay-copy, direct checker `TypeData::`, source-text
    decision, and rendered-display decision counts trend down,
-6. docs/shell/website-only PRs do not burn full compiler CI,
-7. green project rows are measured in timing mode and trend faster than `tsgo`,
-8. performance PRs preserve `tsc` diagnostics and state the structural rule
-   being protected.
+9. docs/shell/website-only PRs do not burn full compiler CI,
+10. green project rows are measured in timing mode with counters/tracing off
+    and are faster than `tsgo` by more than noise-level margin,
+11. performance PRs preserve `tsc` diagnostics and state the structural rule
+    being protected.
