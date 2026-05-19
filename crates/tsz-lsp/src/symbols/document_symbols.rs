@@ -26,6 +26,10 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
+const MAX_DOCUMENT_SYMBOL_ENTRIES: usize = 3000;
+const MAX_DOCUMENT_SYMBOL_DEPTH: usize = 64;
+const MORE_DOCUMENT_SYMBOL_NAME: &str = "more...";
+
 /// A symbol kind (matches LSP `SymbolKind` values).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
@@ -180,7 +184,9 @@ define_lsp_provider!(minimal DocumentSymbolProvider, "Document symbol provider."
 impl<'a> DocumentSymbolProvider<'a> {
     /// Get all symbols in the document.
     pub fn get_document_symbols(&self, root: NodeIndex) -> Vec<DocumentSymbol> {
-        self.collect_symbols(root, None)
+        let mut symbols = self.collect_symbols(root, None);
+        cap_document_symbols(&mut symbols);
+        symbols
     }
 
     /// Extract kind modifiers from a modifier node list.
@@ -2845,6 +2851,61 @@ fn merge_same_name_modules(symbols: &mut Vec<DocumentSymbol>) {
         // → merged A has two `I` children). Recurse once more to resolve.
         merge_same_name_modules(&mut symbols[i].children);
         i += 1;
+    }
+}
+
+fn cap_document_symbols(symbols: &mut Vec<DocumentSymbol>) {
+    let mut remaining = MAX_DOCUMENT_SYMBOL_ENTRIES;
+    cap_document_symbols_at_depth(symbols, 0, &mut remaining);
+}
+
+fn cap_document_symbols_at_depth(
+    symbols: &mut Vec<DocumentSymbol>,
+    depth: usize,
+    remaining: &mut usize,
+) {
+    let original = std::mem::take(symbols);
+    let mut capped = Vec::with_capacity(original.len().min(*remaining));
+    let mut iter = original.into_iter().peekable();
+
+    while let Some(mut symbol) = iter.next() {
+        if *remaining == 0 {
+            break;
+        }
+        if *remaining == 1 && iter.peek().is_some() {
+            capped.push(more_document_symbol(symbol.range));
+            *remaining = 0;
+            break;
+        }
+
+        *remaining -= 1;
+        if depth + 1 >= MAX_DOCUMENT_SYMBOL_DEPTH {
+            if !symbol.children.is_empty() {
+                symbol.children.clear();
+                if *remaining > 0 {
+                    *remaining -= 1;
+                    symbol.children.push(more_document_symbol(symbol.range));
+                }
+            }
+        } else {
+            cap_document_symbols_at_depth(&mut symbol.children, depth + 1, remaining);
+        }
+        capped.push(symbol);
+    }
+
+    *symbols = capped;
+}
+
+fn more_document_symbol(range: Range) -> DocumentSymbol {
+    DocumentSymbol {
+        name: MORE_DOCUMENT_SYMBOL_NAME.to_string(),
+        detail: None,
+        kind: SymbolKind::Module,
+        kind_modifiers: String::new(),
+        range,
+        selection_range: range,
+        container_name: None,
+        children: Vec::new(),
     }
 }
 
