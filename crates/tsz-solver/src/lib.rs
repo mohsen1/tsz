@@ -238,6 +238,9 @@ pub use diagnostics::reduce::deep_reduce_for_display;
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
 };
+pub use instantiation::instantiate::{TypeSubstitution, instantiate_type_with_request};
+pub use instantiation::request::{InstantiationOptions, InstantiationRequest};
+pub use instantiation::result::InstantiationResult;
 #[cfg(test)]
 #[allow(unused_imports)]
 pub(crate) use evaluation::evaluate::{
