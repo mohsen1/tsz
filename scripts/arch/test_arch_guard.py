@@ -2069,7 +2069,7 @@ class ArchGuardProjectFixtureSourceTests(unittest.TestCase):
     def test_pinned_project_rows_with_sources_pass(self):
         rows = """
 export const REQUIRED_PROJECT_ROWS = ["utility-types-project", "vite-vanilla-ts-app"];
-export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-assertions-tsc-clean"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-solutions-project"];
 """
         fixtures = """
 tsz_project_fixture_sources() {
@@ -2077,8 +2077,7 @@ tsz_project_fixture_sources() {
     utility-types-project)
       printf 'utility-types|repo|ref\\n'
       ;;
-    type-challenges-assertions-tsc-clean)
-      printf 'type-challenges|repo|ref\\n'
+    type-challenges-solutions-project)
       printf 'type-challenges-solutions|repo|ref\\n'
       ;;
   esac
@@ -2100,7 +2099,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     guard_set: null,
   },
   {
-    name: "type-challenges-project",
+    name: "type-challenges-solutions-project",
     benchmark_set: "canary",
     guard_set: "canary",
   },
@@ -2120,8 +2119,8 @@ tsz_project_fixture_sources() {
     utility-types-project)
       printf 'utility-types|repo|ref\\n'
       ;;
-    type-challenges-project)
-      printf 'type-challenges|repo|ref\\n'
+    type-challenges-solutions-project)
+      printf 'type-challenges-solutions|repo|ref\\n'
       ;;
   esac
 }
@@ -2131,7 +2130,7 @@ tsz_project_fixture_sources() {
     def test_missing_source_metadata_is_reported(self):
         rows = """
 export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
-export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-solutions-project"];
 """
         fixtures = """
 tsz_project_fixture_sources() {
@@ -2144,7 +2143,7 @@ tsz_project_fixture_sources() {
 """
         hits = self._write_and_scan(rows, fixtures)
         self.assertEqual(len(hits), 1)
-        self.assertIn("missing fixture source metadata for type-challenges-project", hits[0])
+        self.assertIn("missing fixture source metadata for type-challenges-solutions-project", hits[0])
 
     def test_stale_source_metadata_is_reported(self):
         rows = """
@@ -2208,7 +2207,7 @@ tsz_project_fixture_sources() {
     def test_malformed_source_metadata_line_is_reported(self):
         rows = """
 export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
-export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-project"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-solutions-project"];
 """
         fixtures = """
 tsz_project_fixture_sources() {
@@ -2216,8 +2215,8 @@ tsz_project_fixture_sources() {
     utility-types-project)
       printf 'utility-types|repo\\n'
       ;;
-    type-challenges-project)
-      printf 'type-challenges|repo|\\n'
+    type-challenges-solutions-project)
+      printf 'type-challenges-solutions|repo|\\n'
       ;;
   esac
 }
@@ -2229,7 +2228,7 @@ tsz_project_fixture_sources() {
             hits,
         )
         self.assertTrue(
-            any("malformed fixture source metadata for type-challenges-project" in hit for hit in hits),
+            any("malformed fixture source metadata for type-challenges-solutions-project" in hit for hit in hits),
             hits,
         )
 
@@ -2270,12 +2269,12 @@ class ArchGuardProjectInclusionPolicyTests(unittest.TestCase):
     def test_matching_compile_and_benchmark_inclusions_pass(self):
         rows = """
 export const REQUIRED_PROJECT_ROWS = ["utility-types-project", "vite-vanilla-ts-app"];
-export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-assertion-candidates"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-solutions-project"];
 """
         compile_guard = """
 if should_check_project "utility-types-project"; then :; fi
 if should_check_project "vite-vanilla-ts-app"; then :; fi
-if should_check_project "type-challenges-assertion-candidates"; then :; fi
+if should_check_project "type-challenges-solutions-project"; then :; fi
 """
         bench = """
 run_isolated "utility-types-project" run_utility_types_project_benchmarks
@@ -2372,9 +2371,9 @@ if should_check_project "type-fest-project"; then :; fi
     def test_compile_guard_only_rows_do_not_require_benchmark_inclusion(self):
         rows = """
 export const REQUIRED_PROJECT_ROWS = [];
-export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-assertions-tsc-clean"];
+export const COMPILE_CANARY_PROJECT_ROWS = ["type-challenges-solutions-project"];
 """
-        compile_guard = 'if should_check_project "type-challenges-assertions-tsc-clean"; then :; fi'
+        compile_guard = 'if should_check_project "type-challenges-solutions-project"; then :; fi'
         bench = ""
         self.assertEqual(self._write_and_scan(rows, compile_guard, bench), [])
 

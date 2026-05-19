@@ -33,9 +33,7 @@ const OWNER_TRACK_BY_SUBSYSTEM = new Map([
 ]);
 
 const TYPE_CHALLENGES_PROJECT_ROWS = new Set([
-  "type-challenges-project",
   "type-challenges-solutions-project",
-  "type-challenges-assertions-tsc-clean",
 ]);
 
 function ownerTrackForSubsystem(subsystem) {
@@ -464,47 +462,6 @@ function resolveWritableFile({ value, label, root, forbidden = [] }) {
   return resolved;
 }
 
-function typeChallengesCleanAssertionMetadata(projectName) {
-  if (projectName !== "type-challenges-assertions-tsc-clean") return null;
-
-  const manifestPath = process.env.COMPAT_TYPE_CHALLENGES_CLEAN_MANIFEST || "";
-  const classificationPath =
-    process.env.COMPAT_TYPE_CHALLENGES_CLEAN_CLASSIFICATION || "";
-  const manifest = readOptionalJson(manifestPath);
-  if (!manifest) return null;
-
-  const classification = readOptionalJson(classificationPath);
-  const counts = manifest.counts || {};
-  const tsc = classification?.compilers?.tsc || {};
-  const tsz = classification?.compilers?.tsz || {};
-
-  return {
-    manifest_path: relativeToFixture(manifestPath),
-    classification_path: classification ? relativeToFixture(classificationPath) : null,
-    source_candidate_manifest: manifest.sourceCandidateManifest || null,
-    source_classification: manifest.sourceClassification || null,
-    total_candidates: counts.totalCandidates ?? null,
-    generated_assertions: counts.tscAcceptedAssertions ?? null,
-    assertions_referencing_solution_declaration:
-      counts.tscAcceptedAssertionsReferencingSolutionDeclaration ?? null,
-    assertions_missing_solution_declaration_reference:
-      counts.tscAcceptedAssertionsMissingSolutionDeclarationReference ?? null,
-    rejected_from_full_corpus: counts.tscRejectedAssertions ?? null,
-    missing_accepted_manifest_entries:
-      counts.missingAcceptedManifestEntries ?? null,
-    tsc_status: tsc.status ?? manifest.sourceClassification?.tscStatus ?? null,
-    tsz_status: tsz.status ?? manifest.sourceClassification?.tszStatus ?? null,
-    comparison_status:
-      classification?.comparison?.status ??
-      manifest.sourceClassification?.comparisonStatus ??
-      null,
-    tsc_diagnostic_free:
-      tsc.candidateDiagnostics?.candidatesWithoutDiagnostics ?? null,
-    tsz_diagnostic_free:
-      tsz.candidateDiagnostics?.candidatesWithoutDiagnostics ?? null,
-  };
-}
-
 function record() {
   const generatedAt = new Date().toISOString();
   const delta = process.env.COMPAT_DIAGNOSTIC_DELTA || "";
@@ -569,11 +526,6 @@ function record() {
     peak_memory_bytes: toNumber(process.env.COMPAT_PEAK_MEMORY_BYTES),
     fixture_sources: fixtureSources,
   };
-  const assertionMetadata = typeChallengesCleanAssertionMetadata(projectName);
-  if (assertionMetadata) {
-    row.assertion_clean_subset = assertionMetadata;
-  }
-
   fs.appendFileSync(outputFile, `${JSON.stringify(row)}\n`, "utf8");
 }
 
