@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
+import { semanticFamiliesForText } from "./type-challenges-semantic-families.mjs";
 
 const [tsvPath, manifestPath] = process.argv.slice(2);
 
@@ -100,7 +101,7 @@ if (header !== "output\tsource\tid\tlevel\ttitle") {
   process.exit(1);
 }
 
-function readDeclarationNames(outputPath) {
+function readOutputMetadata(outputPath) {
   const text = fs.readFileSync(outputPath, "utf8");
   const names = [];
   const seen = new Set();
@@ -115,7 +116,10 @@ function readDeclarationNames(outputPath) {
     }
   }
 
-  return names;
+  return {
+    declarations: names,
+    semanticFamilies: semanticFamiliesForText(text),
+  };
 }
 
 function parseRequiredChallengeId(id, source) {
@@ -205,7 +209,7 @@ const entries = lines
       process.exit(1);
     }
 
-    const declarations = readDeclarationNames(outputPath);
+    const { declarations, semanticFamilies } = readOutputMetadata(outputPath);
     if (declarations.length === 0) {
       console.error(`error: manifest output has no declarations: ${output}`);
       process.exit(1);
@@ -220,6 +224,7 @@ const entries = lines
         title,
       },
       declarations,
+      semanticFamilies,
     };
   });
 

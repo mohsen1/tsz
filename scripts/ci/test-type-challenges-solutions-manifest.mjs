@@ -108,10 +108,23 @@ tsz_write_type_challenges_solutions_config ${shellQuote(sourceDir)} ${shellQuote
       entry.source,
       entry.challenge.id,
       entry.declarations,
+      entry.semanticFamilies,
     ]),
     [
-      ["solutions/alpha.ts", "en/alpha.md", "1", ["Alpha"]],
-      ["solutions/beta.ts", "en/beta.md", "2", ["Beta", "beta"]],
+      [
+        "solutions/alpha.ts",
+        "en/alpha.md",
+        "1",
+        ["Alpha"],
+        ["unclassified"],
+      ],
+      [
+        "solutions/beta.ts",
+        "en/beta.md",
+        "2",
+        ["Beta", "beta"],
+        ["unclassified"],
+      ],
     ],
   );
 
@@ -154,6 +167,37 @@ withTempDir((dir) => {
     result.stderr,
     /missing Type Challenges solutions repository, ref, or expected count/,
   );
+});
+
+withTempDir((dir) => {
+  const compileDir = path.join(dir, "compile");
+  const manifestPath = path.join(compileDir, "type-challenges-solutions-manifest.json");
+  fs.mkdirSync(path.join(compileDir, "solutions"), { recursive: true });
+  fs.writeFileSync(
+    path.join(compileDir, "solutions", "remap.ts"),
+    [
+      "type Remap<T> = {",
+      "  [K in keyof T as K]: T[K];",
+      "};",
+      "",
+    ].join("\n"),
+  );
+
+  const tsvPath = path.join(compileDir, "entries.tsv");
+  fs.writeFileSync(
+    tsvPath,
+    "output\tsource\tid\tlevel\ttitle\nsolutions/remap.ts\ten/remap.md\t1\tmedium\tRemap\n",
+    "utf8",
+  );
+
+  const result = runManifest(tsvPath, manifestPath);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  assert.deepEqual(manifest.entries[0].semanticFamilies, [
+    "mapped/key-remapped types",
+    "indexed access",
+  ]);
 });
 
 withTempDir((dir) => {
