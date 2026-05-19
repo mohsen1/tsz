@@ -1884,3 +1884,260 @@ fn test_enum_narrowing_two_names_same_fix() {
         );
     }
 }
+
+// =============================================================================
+// Symbol.hasInstance instanceof narrowing tests
+//
+// Structural rule: when a constructor type carries a static
+// `[Symbol.hasInstance](value: ...): value is T` predicate, tsc uses `T` as
+// the instance type for `instanceof` narrowing — overriding prototype and
+// construct signature return types. The fix must not depend on the parameter
+// name ("value", "v", "obj", etc.); it is keyed by the property name
+// `[Symbol.hasInstance]` and the predicate kind only.
+// =============================================================================
+
+/// Build a function type for `[Symbol.hasInstance](param: unknown): param is predicate_type`.
+fn make_has_instance_fn(
+    interner: &TypeInterner,
+    param_name: &str,
+    predicate_type: TypeId,
+) -> TypeId {
+    let param_atom = interner.intern_string(param_name);
+    interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(param_atom),
+            type_id: TypeId::UNKNOWN,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(param_atom),
+            type_id: Some(predicate_type),
+            parameter_index: Some(0),
+        }),
+        is_constructor: false,
+        is_method: true,
+    })
+}
+
+/// Build a callable constructor type that has `[Symbol.hasInstance]` whose
+/// predicate narrows to `predicate_type`, plus an optional construct signature
+/// returning `construct_return` (pass `None` to omit construct signatures).
+fn make_constructor_with_has_instance(
+    interner: &TypeInterner,
+    param_name: &str,
+    predicate_type: TypeId,
+    construct_return: Option<TypeId>,
+) -> TypeId {
+    let has_instance_atom = interner.intern_string("[Symbol.hasInstance]");
+    let has_instance_fn = make_has_instance_fn(interner, param_name, predicate_type);
+    let construct_sigs = construct_return
+        .map(|ret| vec![CallSignature::new(vec![], ret)])
+        .unwrap_or_default();
+    interner.callable(CallableShape {
+        call_signatures: vec![],
+        construct_signatures: construct_sigs,
+        properties: vec![PropertyInfo {
+            name: has_instance_atom,
+            type_id: has_instance_fn,
+            write_type: has_instance_fn,
+            optional: false,
+            readonly: false,
+            is_method: true,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: false,
+            is_symbol_named: false,
+            single_quoted_name: false,
+        }],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    })
+}
+
+/// Positive branch: `x instanceof C` where `C` has `[Symbol.hasInstance](v: unknown): v is Foo`.
+/// Source `Foo | string` should narrow to `Foo`.
+#[test]
+fn test_narrow_by_instanceof_has_instance_positive_union() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let foo_name = interner.intern_string("foo");
+    let foo_type = interner.object(vec![PropertyInfo::new(foo_name, TypeId::NUMBER)]);
+    let source = interner.union2(foo_type, TypeId::STRING);
+    let constructor = make_constructor_with_has_instance(&interner, "value", foo_type, None);
+
+    let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+
+    assert_eq!(
+        narrowed, foo_type,
+        "positive instanceof with Symbol.hasInstance predicate should narrow union to Foo"
+    );
+}
+
+/// Negative branch: `!(x instanceof C)` where `C` has predicate `v is Foo`.
+/// Source `Foo | string` should narrow to `string`.
+#[test]
+fn test_narrow_by_instanceof_has_instance_negative_union() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let foo_name = interner.intern_string("bar");
+    let foo_type = interner.object(vec![PropertyInfo::new(foo_name, TypeId::NUMBER)]);
+    let source = interner.union2(foo_type, TypeId::STRING);
+    let constructor = make_constructor_with_has_instance(&interner, "value", foo_type, None);
+
+    let narrowed = ctx.narrow_by_instanceof(source, constructor, false);
+
+    assert_eq!(
+        narrowed,
+        TypeId::STRING,
+        "negative instanceof with Symbol.hasInstance predicate should exclude Foo, leaving string"
+    );
+}
+
+/// Name-variant: parameter name `obj` instead of `value` — the fix is
+/// structural (keyed on `[Symbol.hasInstance]` property), not name-keyed.
+#[test]
+fn test_narrow_by_instanceof_has_instance_any_param_name() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let baz_name = interner.intern_string("baz");
+    let baz_type = interner.object(vec![PropertyInfo::new(baz_name, TypeId::BOOLEAN)]);
+    let source = interner.union2(baz_type, TypeId::NUMBER);
+
+    // Same test, different parameter names: "obj" and "it"
+    for param_name in ["obj", "it", "x", "self_"] {
+        let constructor = make_constructor_with_has_instance(&interner, param_name, baz_type, None);
+        let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+        assert_eq!(
+            narrowed, baz_type,
+            "positive instanceof must narrow correctly regardless of param name '{param_name}'"
+        );
+    }
+}
+
+/// When `[Symbol.hasInstance]` returns `boolean` with no type predicate, it does
+/// NOT produce a predicate type, so `instance_type_from_symbol_has_instance`
+/// returns `None` and narrowing falls through to construct signatures.
+#[test]
+fn test_narrow_by_instanceof_has_instance_no_predicate_falls_through() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    // Build a callable with [Symbol.hasInstance](v: unknown): boolean (no predicate)
+    // AND a construct signature returning `foo_type`. The construct sig should win.
+    let foo_name = interner.intern_string("qux");
+    let foo_type = interner.object(vec![PropertyInfo::new(foo_name, TypeId::STRING)]);
+
+    let has_instance_atom = interner.intern_string("[Symbol.hasInstance]");
+    let param_atom = interner.intern_string("v");
+    let boolean_has_instance = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(param_atom),
+            type_id: TypeId::UNKNOWN,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: None, // no predicate — just returns boolean
+        is_constructor: false,
+        is_method: true,
+    });
+    let constructor = interner.callable(CallableShape {
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature::new(vec![], foo_type)],
+        properties: vec![PropertyInfo {
+            name: has_instance_atom,
+            type_id: boolean_has_instance,
+            write_type: boolean_has_instance,
+            optional: false,
+            readonly: false,
+            is_method: true,
+            is_class_prototype: false,
+            visibility: Visibility::Public,
+            parent_id: None,
+            declaration_order: 0,
+            is_string_named: false,
+            is_symbol_named: false,
+            single_quoted_name: false,
+        }],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    // source = foo_type | string; positive branch should narrow to foo_type via construct sig
+    let source = interner.union2(foo_type, TypeId::STRING);
+    let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+    assert_eq!(
+        narrowed, foo_type,
+        "no-predicate hasInstance should fall through to construct signature narrowing"
+    );
+}
+
+/// Regression guard: a constructor WITHOUT [Symbol.hasInstance] at all still
+/// narrows correctly via its construct signature.
+#[test]
+fn test_narrow_by_instanceof_no_has_instance_uses_construct_sig() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let widget_name = interner.intern_string("widget");
+    let widget_type = interner.object(vec![PropertyInfo::new(widget_name, TypeId::STRING)]);
+
+    let constructor = interner.callable(CallableShape {
+        call_signatures: vec![],
+        construct_signatures: vec![CallSignature::new(vec![], widget_type)],
+        properties: vec![],
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    });
+
+    let source = interner.union2(widget_type, TypeId::NUMBER);
+    let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+    assert_eq!(
+        narrowed, widget_type,
+        "constructor without Symbol.hasInstance must still narrow via construct signature"
+    );
+}
+
+/// [Symbol.hasInstance] predicate type OVERRIDES a conflicting construct signature.
+/// `instance_type_from_symbol_has_instance` returns `T` from the predicate even
+/// when the construct signature would return a different type.
+#[test]
+fn test_narrow_by_instanceof_has_instance_overrides_construct_sig() {
+    let interner = TypeInterner::new();
+    let ctx = NarrowingContext::new(&interner);
+
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+    // A = { a: string }, B = { b: number }
+    let a_type = interner.object(vec![PropertyInfo::new(a_name, TypeId::STRING)]);
+    let b_type = interner.object(vec![PropertyInfo::new(b_name, TypeId::NUMBER)]);
+
+    // Constructor: construct sig returns B, but [Symbol.hasInstance] predicate is `v is A`
+    let constructor = make_constructor_with_has_instance(&interner, "v", a_type, Some(b_type));
+
+    // source = A | string; the predicate should win → narrow to A
+    let source = interner.union2(a_type, TypeId::STRING);
+    let narrowed = ctx.narrow_by_instanceof(source, constructor, true);
+    assert_eq!(
+        narrowed, a_type,
+        "Symbol.hasInstance predicate type must override construct signature return type"
+    );
+}

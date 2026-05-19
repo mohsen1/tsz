@@ -12,7 +12,9 @@
 use super::NarrowingContext;
 use crate::def::DefId;
 use crate::relations::subtype::SubtypeChecker;
-use crate::type_queries::{InstanceTypeKind, classify_for_instance_type};
+use crate::type_queries::{
+    InstanceTypeKind, classify_for_instance_type, instance_type_from_symbol_has_instance,
+};
 use crate::types::TypeId;
 use crate::utils::{TypeIdExt, intersection_or_single, union_or_single};
 use crate::visitor::{application_id, intersection_list_id, lazy_def_id, union_list_id};
@@ -38,16 +40,24 @@ impl<'a> NarrowingContext<'a> {
         )
         .entered();
 
-        // TODO: Check for static [Symbol.hasInstance] method which overrides standard narrowing
-        // TypeScript allows classes to define custom instanceof behavior via:
-        //   static [Symbol.hasInstance](value: any): boolean
-        // This would require evaluating method calls and type predicates, which is
-        // significantly more complex than the standard construct signature approach.
-
-        // CRITICAL: Resolve Lazy types for both source and constructor
-        // This ensures type aliases are resolved to their actual types
-        let resolved_source = self.resolve_type(source_type);
         let resolved_constructor = self.resolve_type(constructor_type);
+
+        // [Symbol.hasInstance] predicate takes priority over construct signatures.
+        if let Some(predicate_type) =
+            instance_type_from_symbol_has_instance(self.db, resolved_constructor)
+        {
+            trace!(
+                predicate_type = predicate_type.0,
+                sense, "[Symbol.hasInstance] predicate"
+            );
+            return if sense {
+                self.narrow_by_instance_type(source_type, predicate_type)
+            } else {
+                self.narrow_by_instanceof_false(source_type, predicate_type)
+            };
+        }
+
+        let resolved_source = self.resolve_type(source_type);
 
         // Extract the instance type from the constructor
         let instance_type = match classify_for_instance_type(self.db, resolved_constructor) {
