@@ -64,6 +64,27 @@ assert.deepEqual(
 
 assert.deepEqual(
   readyStateFailures(readyPr({
+    body: "AgentName: TestAgent\n\nThis PR is blocked on lint while the branch is reviewed.\n",
+  })),
+  ["body WIP declaration"],
+);
+
+assert.deepEqual(
+  readyStateFailures(readyPr({
+    body: "AgentName: TestAgent\n\nThis PR fixes a bug where ready-state checks were blocked by stale WIP labels.\n",
+  })),
+  [],
+);
+
+assert.deepEqual(
+  readyStateFailures(readyPr({
+    body: "AgentName: TestAgent\n\nThis branch removes the blocker from the project-corpus gate.\n",
+  })),
+  [],
+);
+
+assert.deepEqual(
+  readyStateFailures(readyPr({
     draft: true,
     labels: ["WIP"],
     title: "[WIP] fix(checker): sample",

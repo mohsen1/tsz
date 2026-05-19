@@ -19,7 +19,7 @@ const BODY_WIP_PATTERNS = [
   },
   {
     kind: "body WIP declaration",
-    pattern: /\b(?:this pr|this branch|current head|merge state|ready state|readiness)\b[^\n]{0,80}\b(?:wip|work in progress|not ready|do not merge|blocked|blocker)\b/i,
+    pattern: /\b(?:this pr|this branch|current head|merge state|ready state|readiness)\b[^\n]{0,80}\b(?:is|are|remains?|still|currently)\b[^\n]{0,80}\b(?:wip|work in progress|not ready|do not merge|blocked|blocker)\b/i,
   },
 ];
 
