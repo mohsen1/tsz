@@ -71,6 +71,12 @@ pub(crate) fn emit_outputs(
         }
     });
     let mut js_bundle_chunks: Vec<String> = Vec::new();
+    // AMD factory-parameter counters accumulated across files in the same
+    // outFile bundle.  Each file's printer seeds its counter map from here and
+    // returns updated counters so the next file uses unique names (e.g.
+    // `m1_1` in the first file, `m1_2` in the second), matching tsc behavior.
+    let mut bundle_amd_counters: rustc_hash::FxHashMap<String, u32> =
+        rustc_hash::FxHashMap::default();
     let duplicate_global_var_names = if declaration_bundle_path.is_some() {
         build_duplicate_global_var_names(context.program)
     } else {
@@ -305,11 +311,12 @@ pub(crate) fn emit_outputs(
                 printer_options.module = ModuleKind::ESNext;
             }
 
-            if js_bundle_path.is_some()
-                && matches!(printer_options.module, ModuleKind::AMD | ModuleKind::System)
-            {
+            let is_amd_system_bundle = js_bundle_path.is_some()
+                && matches!(printer_options.module, ModuleKind::AMD | ModuleKind::System);
+            if is_amd_system_bundle {
                 printer_options.bundled_module_name =
                     bundled_module_name(context.base_dir, context.root_dir, &input_path);
+                printer_options.bundle_module_counters = bundle_amd_counters.clone();
             }
 
             // tsc's isFileForcedToBeModuleByFormat: .cjs/.cts/.mjs/.mts files are
@@ -368,6 +375,11 @@ pub(crate) fn emit_outputs(
             }
 
             printer.emit(file.source_file);
+            // Capture AMD counters before consuming printer output so the next
+            // file in this bundle starts numbering where this file left off.
+            if is_amd_system_bundle {
+                bundle_amd_counters = printer.bundle_module_counters().clone();
+            }
             let map_json = map_info
                 .as_ref()
                 .and_then(|_| printer.generate_source_map_json());
