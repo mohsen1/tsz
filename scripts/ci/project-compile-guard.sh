@@ -219,6 +219,7 @@ record_project_compatibility() {
   fixture_sources="$(tsz_project_fixture_sources "$name")"
 
   COMPAT_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
+  COMPAT_OUTPUT_ROOT="$FIXTURE_ROOT" \
   COMPAT_NAME="$name" \
   COMPAT_EXIT_CLASS="$exit_class" \
   COMPAT_PHASE="$phase" \
@@ -240,6 +241,7 @@ record_project_compatibility() {
 write_project_compatibility_summary() {
   SUMMARY_JSONL_FILE="$PROJECT_COMPATIBILITY_JSONL" \
   SUMMARY_OUTPUT_FILE="$PROJECT_COMPATIBILITY_SUMMARY" \
+  SUMMARY_OUTPUT_ROOT="$FIXTURE_ROOT" \
   SUMMARY_PROJECT_SET="$PROJECT_SET" \
   SUMMARY_PROJECT_FILTER="$PROJECT_FILTER" \
   SUMMARY_ALLOW_FAILURES="$ALLOW_FAILURES" \
