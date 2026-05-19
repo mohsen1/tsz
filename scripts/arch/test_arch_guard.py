@@ -318,6 +318,40 @@ class ArchGuardCheckerFileSizeBoundaryTests(unittest.TestCase):
             self.assertEqual(hits, [])
 
 
+class ArchGuardCheckerComputationFileSizeBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _computation_file_size_check(self):
+        for entry in self.arch_guard.LINE_LIMIT_CHECKS:
+            name, base, limit = entry[0], entry[1], entry[2]
+            if name == (
+                "Checker computation boundary: type-computation monoliths "
+                "must stay below 3200 LOC (#8226)"
+            ):
+                return base, limit
+        self.fail(
+            "checker type-computation size boundary check is missing from "
+            "LINE_LIMIT_CHECKS"
+        )
+
+    def test_rule_exists_with_expected_limit(self):
+        base, limit = self._computation_file_size_check()
+        self.assertEqual(limit, 3200)
+        self.assertTrue(
+            str(base).endswith("crates/tsz-checker/src/types/computation")
+        )
+
+    def test_real_type_computation_files_pass_at_pinned_limit(self):
+        base, limit = self._computation_file_size_check()
+        hits = self.arch_guard.scan_line_limits(base, limit)
+        self.assertEqual(
+            hits,
+            [],
+            "type-computation monolith cap is too tight for the live files",
+        )
+
+
 class ArchGuardCoreLibFacadeSizeBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.arch_guard = load_arch_guard_module()
@@ -378,6 +412,42 @@ class ArchGuardQueryBoundaryCommonSizeTests(unittest.TestCase):
             hits,
             [],
             "query_boundaries/common.rs cap is too tight for the live file",
+        )
+
+
+class ArchGuardSolverEngineSizeBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _generic_call_resolver_size_check(self):
+        for entry in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
+            name, path, limit = entry
+            if name == (
+                "Solver engine boundary: generic call resolver must stay under "
+                "3400 LOC (#8209)"
+            ):
+                return path, limit
+        self.fail(
+            "generic call resolver size boundary check is missing from "
+            "FILE_LINE_LIMIT_CHECKS"
+        )
+
+    def test_rule_exists_with_current_limit(self):
+        path, limit = self._generic_call_resolver_size_check()
+        self.assertEqual(limit, 3400)
+        self.assertTrue(
+            str(path).endswith(
+                "crates/tsz-solver/src/operations/generic_call/resolve.rs"
+            )
+        )
+
+    def test_real_generic_call_resolver_passes_at_pinned_limit(self):
+        path, limit = self._generic_call_resolver_size_check()
+        hits = self.arch_guard.scan_file_line_limit(path, limit)
+        self.assertEqual(
+            hits,
+            [],
+            "generic call resolver cap is too tight for the live file",
         )
 
 
@@ -761,10 +831,12 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability = "CheckerInputs"',
                 'reason = "borrowed current-file arena"',
                 "",
                 "[request_node_types]",
                 'lifetime = "SpeculationScoped"',
+                'capability = "SpeculationState"',
                 'reason = "snapshot by speculative return-type inference"',
             ]
         )
@@ -781,8 +853,8 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
         )
         manifest_body = "\n".join(
             [
-                'arena = { lifetime = "FileLocalReset", reason = "current arena" }',
-                'binder = { lifetime = "FileLocalReset", reason = "current binder" }',
+                'arena = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "current arena" }',
+                'binder = { lifetime = "FileLocalReset", capability = "CheckerInputs", reason = "current binder" }',
             ]
         )
         self.assertEqual(self._write_and_scan(struct_body, manifest_body), [])
@@ -800,6 +872,7 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability = "CheckerInputs"',
                 'reason = "borrowed current-file arena"',
             ]
         )
@@ -819,10 +892,12 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability = "CheckerInputs"',
                 'reason = "borrowed current-file arena"',
                 "",
                 "[removed_field]",
                 'lifetime = "FileLocalReset"',
+                'capability = "FileTypeCache"',
                 'reason = "old field"',
             ]
         )
@@ -836,6 +911,7 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "Unknown"',
+                'capability = "CheckerInputs"',
                 'reason = "unclassified"',
             ]
         )
@@ -849,6 +925,7 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             [
                 "[arena]",
                 'lifetime = "ForeverCache"',
+                'capability = "CheckerInputs"',
                 'reason = "invalid class"',
             ]
         )
@@ -856,12 +933,54 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
         self.assertEqual(len(hits), 1)
         self.assertIn("invalid lifetime 'ForeverCache'", hits[0])
 
+    def test_missing_capability_is_reported(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+                'reason = "borrowed current-file arena"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("[arena] missing capability", hits[0])
+
+    def test_unknown_capability_is_reported(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+                'capability = "Unknown"',
+                'reason = "borrowed current-file arena"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("[arena] capability must not be Unknown", hits[0])
+
+    def test_invalid_capability_is_reported(self):
+        struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
+        manifest_body = "\n".join(
+            [
+                "[arena]",
+                'lifetime = "FileLocalReset"',
+                'capability = "GlobalBag"',
+                'reason = "borrowed current-file arena"',
+            ]
+        )
+        hits = self._write_and_scan(struct_body, manifest_body)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("invalid capability 'GlobalBag'", hits[0])
+
     def test_missing_reason_is_reported(self):
         struct_body = "pub struct CheckerContext { pub arena: NodeArena, }"
         manifest_body = "\n".join(
             [
                 "[arena]",
                 'lifetime = "FileLocalReset"',
+                'capability = "CheckerInputs"',
             ]
         )
         hits = self._write_and_scan(struct_body, manifest_body)
@@ -2496,6 +2615,24 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("rendered.rs:1", hits[0])
         self.assertIn("rendered.rs:2", hits[1])
 
+    def test_flags_rendered_message_predicates(self):
+        pattern, _max_lines = self._check_by_name("rendered message predicates")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/checkers/jsx/rendered.rs": (
+                    'if display.starts_with("IntrinsicAttributes") {}\n'
+                    'if target_display.ends_with(", Element>") {}\n'
+                    'if diagnostic.message_text.contains("Type") {}\n'
+                    'if source_text.contains("fixture shape") {}\n'
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 4, f"unexpected hits: {hits!r}")
+        self.assertIn("rendered.rs:1", hits[0])
+        self.assertIn("rendered.rs:2", hits[1])
+        self.assertIn("rendered.rs:3", hits[2])
+
     def test_flags_raw_diagnostic_assignability_predicates(self):
         pattern, _max_lines = self._check_by_name(
             "raw diagnostic assignability predicates"
@@ -2641,6 +2778,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertTrue(any("Emitter boundary" in name for name in names))
         self.assertTrue(any("file-name/path" in name for name in names))
         self.assertTrue(any("rendered type strings" in name for name in names))
+        self.assertTrue(any("rendered message predicates" in name for name in names))
         self.assertTrue(any("#8227" in name for name in names))
         self.assertTrue(any("diagnostic-local RelationRequest" in name for name in names))
         self.assertTrue(any("#8207" in name for name in names))
