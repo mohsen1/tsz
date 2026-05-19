@@ -22,6 +22,21 @@ impl<'a> CheckerContext<'a> {
             return None;
         }
 
+        if !self.has_lib_loaded() {
+            return None;
+        }
+
+        if let Some(cached) = self.lib_delegation_cache.actual_lib_def_id(name) {
+            return cached;
+        }
+
+        let result = self.actual_lib_def_id_for_bare_name_uncached(name);
+        self.lib_delegation_cache
+            .insert_actual_lib_def_id(name.to_string(), result);
+        result
+    }
+
+    fn actual_lib_def_id_for_bare_name_uncached(&self, name: &str) -> Option<tsz_solver::DefId> {
         if let Some(sym_id) = self.actual_lib_symbol_id_for_bare_name(name) {
             return Some(self.get_canonical_lib_def_id(name, sym_id));
         }
@@ -66,6 +81,17 @@ impl<'a> CheckerContext<'a> {
     }
 
     pub fn file_local_type_shadow_for_lib_name(&self, name: &str) -> bool {
+        if let Some(cached) = self.lib_delegation_cache.file_local_type_shadow(name) {
+            return cached;
+        }
+
+        let result = self.file_local_type_shadow_for_lib_name_uncached(name);
+        self.lib_delegation_cache
+            .insert_file_local_type_shadow(name.to_string(), result);
+        result
+    }
+
+    fn file_local_type_shadow_for_lib_name_uncached(&self, name: &str) -> bool {
         use tsz_binder::symbol_flags;
 
         if !self.binder.is_external_module() {
