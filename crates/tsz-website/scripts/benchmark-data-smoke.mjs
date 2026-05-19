@@ -16,6 +16,12 @@ type Result = PickValue<Variant>;`;
 
 await fs.writeFile(artifact, `${JSON.stringify({
   generated_at: "2026-05-16T00:00:00.000Z",
+  source_commit: "local",
+  workflow_name: "Bench",
+  workflow_run_id: "1001",
+  workflow_run_url: "https://github.com/mohsen1/tsz/actions/runs/1001",
+  workflow_run_attempt: "1",
+  run_status: "completed",
   benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
   validation: {
     hyperfine_exit_codes_required: true,
@@ -201,6 +207,14 @@ await fs.writeFile(artifact, `${JSON.stringify({
 
 await fs.writeFile(failedOnlyArtifact, `${JSON.stringify({
   generated_at: "2026-05-16T00:00:00.000Z",
+  source_commit: "local",
+  workflow_name: "Bench",
+  workflow_run_id: "1002",
+  workflow_run_url: "https://github.com/mohsen1/tsz/actions/runs/1002",
+  workflow_run_attempt: "2",
+  run_status: "cancelled",
+  latest_completed_benchmark_run_id: "1003",
+  latest_completed_benchmark_generated_at: "2026-05-17T00:00:00.000Z",
   benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
   validation: {
     hyperfine_exit_codes_required: true,
@@ -417,6 +431,9 @@ try {
   assert.match(compatibilityDashboard, /owner track: Tracks 1, 2, 5/);
   assert.match(compatibilityDashboard, /owner: baseline utility mapped\/conditional surface/);
   assert.match(compatibilityDashboard, /type-challenges assertions/);
+  assert.match(compatibilityDashboard, /artifact generated: 2026-05-16T00:00:00Z/);
+  assert.match(compatibilityDashboard, /commit: local/);
+  assert.match(compatibilityDashboard, /run: 1001 attempt 1 \(completed\)/);
   assert.match(compatibilityDashboard, /paired solutions: 78/);
   assert.match(compatibilityDashboard, /assertions generated: 78/);
   assert.match(compatibilityDashboard, /assertions referencing solutions: 76/);
@@ -486,6 +503,10 @@ try {
   assert.match(failedOnlyCompatibility, /owner track: Track 4 relation diagnostics\/compatibility/);
   assert.match(failedOnlyCompatibility, /repro: src\/operators\/map\.ts/);
   assert.match(failedOnlyCompatibility, /source: rxjs @ rxjs-ref/);
+  assert.match(failedOnlyCompatibility, /run: 1002 attempt 2 \(cancelled\)/);
+  assert.match(failedOnlyCompatibility, /freshness warning: older than latest completed bench run 1003/);
+  assert.match(failedOnlyCompatibility, /freshness warning: older than 2026-05-17T00:00:00Z bench artifact/);
+  assert.match(failedOnlyCompatibility, /freshness warning: run status: cancelled/);
   assert.match(failedOnlyCompatibility, /owner track: Tracks 1, 2, 5/);
   assert.match(failedOnlyCompatibility, /compatibility metadata malformed/);
   assert.match(failedOnlyCompatibility, /owner family: mapped\/conditional\/key-space utility surface/);
