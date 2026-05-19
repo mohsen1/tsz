@@ -243,14 +243,16 @@ impl<'a> CheckerState<'a> {
             return self.enum_member_condition_result(assertion.expression, inner_ty);
         }
 
-        let ty = self.evaluate_type_with_env(ty);
-        let sym_id = self
-            .resolve_qualified_symbol(node_idx)
-            .or_else(|| self.ctx.resolve_type_to_symbol_id(ty))?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let sym_id = self.resolve_qualified_symbol(node_idx)?;
+        let symbol = self
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .or_else(|| self.get_cross_file_symbol(sym_id))?;
         if !symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
             return None;
         }
+        let ty = self.evaluate_type_with_env(ty);
 
         let member_ty = self.get_type_of_symbol(sym_id);
         let member_ty = self.evaluate_type_with_env(member_ty);
