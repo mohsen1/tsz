@@ -203,12 +203,14 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Returns true when the spread element at `spread_idx` wraps an object literal.
+    /// Returns true when the spread element at `spread_idx` wraps a simple object literal.
     ///
     /// tsc uses the object literal directly as the `__assign` target (instead of
     /// allocating a fresh `{}`) when the spread expression is an inline object
-    /// literal — safe because the literal is a fresh, unreferenced value.
-    fn spread_idx_is_object_literal(&self, spread_idx: NodeIndex) -> bool {
+    /// literal without nested spreads. If the inner literal has spreads, it
+    /// lowers to its own `__assign` chain and the outer spread must copy it
+    /// through `{}` instead of mutating that intermediate result.
+    fn spread_idx_is_simple_object_literal(&self, spread_idx: NodeIndex) -> bool {
         let Some(spread_node) = self.arena.get(spread_idx) else {
             return false;
         };
@@ -218,7 +220,17 @@ impl<'a> Printer<'a> {
         let Some(expr_node) = self.arena.get(spread.expression) else {
             return false;
         };
-        expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        if expr_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let Some(literal) = self.arena.get_literal_expr(expr_node) else {
+            return false;
+        };
+        !literal.elements.nodes.iter().any(|&idx| {
+            self.arena
+                .get(idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
+        })
     }
 
     pub(in crate::emitter) fn emit_spread_expression_with_read(
@@ -857,7 +869,7 @@ impl<'a> Printer<'a> {
                 // { ...{x} } → __assign({x})  (object literal: use it as target directly)
                 self.write_helper("__assign");
                 self.write("(");
-                if self.spread_idx_is_object_literal(*spread_idx) {
+                if self.spread_idx_is_simple_object_literal(*spread_idx) {
                     self.emit_spread_expr_from_idx(*spread_idx);
                 } else {
                     self.write("{}, ");
@@ -901,7 +913,7 @@ impl<'a> Printer<'a> {
                     .any(|&idx| emit_utils::is_computed_property_member(self.arena, idx));
                 self.write_helper("__assign");
                 self.write("(");
-                if self.spread_idx_is_object_literal(*spread_idx) {
+                if self.spread_idx_is_simple_object_literal(*spread_idx) {
                     self.emit_spread_expr_from_idx(*spread_idx);
                 } else {
                     self.write_helper("__assign");
@@ -947,7 +959,7 @@ impl<'a> Printer<'a> {
 
                 let total_segments = 1 + rest.len();
                 let first_spread_is_obj_lit = match first {
-                    ObjectSegment::Spread(idx) => self.spread_idx_is_object_literal(*idx),
+                    ObjectSegment::Spread(idx) => self.spread_idx_is_simple_object_literal(*idx),
                     _ => false,
                 };
 

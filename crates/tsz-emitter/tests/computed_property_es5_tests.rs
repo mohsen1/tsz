@@ -203,3 +203,30 @@ fn object_literal_spread_uses_literal_as_assign_target() {
         "Variable spread + own props must use nested __assign.\nOutput:\n{output4}"
     );
 }
+
+/// Object-literal spreads are only safe as direct `__assign` targets when the
+/// inner object literal is simple. If the inner literal has its own spread, tsc
+/// lowers that inner literal to a separate assign chain and copies it through
+/// `{}` at the outer spread boundary.
+#[test]
+fn nested_object_literal_spread_keeps_empty_outer_assign_target() {
+    let output = emit_es5("declare const b: any; const a = { ...{ a: 3, ...b } };");
+    assert!(
+        output.contains("__assign({}, __assign({ a: 3 }, b))"),
+        "Nested object-literal spread should copy the inner assign result through {{}}.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__assign(__assign({ a: 3 }, b))"),
+        "Nested object-literal spread should not use the inner assign result as the outer target.\nOutput:\n{output}"
+    );
+
+    let output2 = emit_es5("declare const b: any; const a = { ...{ a: 3, ...b }, c: 1 };");
+    assert!(
+        output2.contains("__assign(__assign({}, __assign({ a: 3 }, b)), { c: 1 })"),
+        "Nested object-literal spread with trailing props should keep the empty outer target.\nOutput:\n{output2}"
+    );
+    assert!(
+        !output2.contains("__assign(__assign({ a: 3 }, b), { c: 1 })"),
+        "Trailing props should not mutate the inner object-spread assign result.\nOutput:\n{output2}"
+    );
+}
