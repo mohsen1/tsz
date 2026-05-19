@@ -2558,8 +2558,8 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         } else {
             // Default constructor
-            let instance_props_contain_new_target =
-                self.instance_props_contain_new_target(&instance_props);
+            let moved_initializers_contain_new_target =
+                self.moved_instance_initializers_contain_new_target(&instance_props);
             if self.has_extends && !self.extends_null {
                 if instance_props.is_empty() && !has_private_fields {
                     // Simple: return _super !== null && _super.apply(this, arguments) || this;
@@ -2596,7 +2596,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             IRNode::this(),
                         )),
                     ));
-                    if instance_props_contain_new_target {
+                    if moved_initializers_contain_new_target {
                         ctor_body.push(Self::class_constructor_new_target_capture_ir());
                     }
 
@@ -2622,7 +2622,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 if self.instance_props_need_this_capture(&instance_props) {
                     ctor_body.push(IRNode::var_decl("_this", Some(IRNode::this())));
                 }
-                if instance_props_contain_new_target {
+                if moved_initializers_contain_new_target {
                     ctor_body.push(Self::class_constructor_new_target_capture_ir());
                 }
 
@@ -3942,7 +3942,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             && contains_new_target_reference(self.arena, param.initializer)
                     })
             })
-            || self.instance_props_contain_new_target(instance_props)
+            || self.moved_instance_initializers_contain_new_target(instance_props)
     }
 
     fn class_constructor_new_target_capture_ir() -> IRNode {
@@ -4010,6 +4010,22 @@ impl<'a> ES5ClassTransformer<'a> {
                         && contains_new_target_reference(self.arena, prop.initializer)
                 })
         })
+    }
+
+    fn moved_instance_initializers_contain_new_target(&self, instance_props: &[NodeIndex]) -> bool {
+        self.instance_props_contain_new_target(instance_props)
+            || self.private_fields.iter().any(|field| {
+                !field.is_static
+                    && field.has_initializer
+                    && field.initializer.is_some()
+                    && contains_new_target_reference(self.arena, field.initializer)
+            })
+            || self.auto_accessors.iter().any(|accessor| {
+                !accessor.is_static
+                    && accessor.initializer.is_some_and(|initializer| {
+                        contains_new_target_reference(self.arena, initializer)
+                    })
+            })
     }
 
     /// Check if instance property initializers contain arrow functions that capture `this`.

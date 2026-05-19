@@ -259,6 +259,129 @@ fn new_target_es5_explicit_constructor_checks_field_initializers() {
 }
 
 #[test]
+fn new_target_es5_private_field_initializers_capture_default_constructor() {
+    let output = emit_es5(
+        "class C {\n\
+             #x = new.target;\n\
+             #y = () => new.target;\n\
+             get x() { return this.#x; }\n\
+         }\n",
+    );
+
+    let capture = output
+        .find("var _newTarget = this.constructor;")
+        .unwrap_or_else(|| {
+            panic!(
+                "Default constructor should capture `new.target` for private field initializers.\nOutput:\n{output}"
+            )
+        });
+    let direct_initializer = output
+        .find("__classPrivateFieldSet(this, _C_x, _newTarget")
+        .unwrap_or_else(|| {
+            panic!("Private field initializer should read the capture.\nOutput:\n{output}")
+        });
+    let arrow_initializer = output
+        .find("__classPrivateFieldSet(this, _C_y, function () { return _newTarget; }")
+        .unwrap_or_else(|| {
+            panic!(
+                "Private arrow field initializer should close over the capture.\nOutput:\n{output}"
+            )
+        });
+
+    assert!(
+        capture < direct_initializer && capture < arrow_initializer,
+        "Class constructor capture should precede moved private field initializers.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("new.target"),
+        "ES5 output must not retain raw `new.target` syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn new_target_es5_derived_private_field_initializers_capture_after_super() {
+    let output = emit_es5(
+        "class B {}\n\
+         class D extends B {\n\
+             #x = new.target;\n\
+             #y = () => new.target;\n\
+             get x() { return this.#x; }\n\
+         }\n",
+    );
+
+    let super_capture = output.find("var _this =").unwrap_or_else(|| {
+        panic!("Derived constructor should materialize the super return value.\nOutput:\n{output}")
+    });
+    let capture = output
+        .find("var _newTarget = this.constructor;")
+        .unwrap_or_else(|| {
+            panic!(
+                "Derived constructor should capture `new.target` for private fields.\nOutput:\n{output}"
+            )
+        });
+    let direct_initializer = output
+        .find("__classPrivateFieldSet(_this, _D_x, _newTarget")
+        .unwrap_or_else(|| {
+            panic!("Derived private field initializer should read the capture.\nOutput:\n{output}")
+        });
+    let arrow_initializer = output
+        .find("__classPrivateFieldSet(_this, _D_y, function () { return _newTarget; }")
+        .unwrap_or_else(|| {
+            panic!(
+                "Derived private arrow field initializer should close over the capture.\nOutput:\n{output}"
+            )
+        });
+
+    assert!(
+        super_capture < capture && capture < direct_initializer && capture < arrow_initializer,
+        "Derived class capture should follow super() and precede moved private field initializers.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("new.target"),
+        "ES5 output must not retain raw `new.target` syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn new_target_es5_auto_accessor_initializers_capture_default_constructor() {
+    let output = emit_es5(
+        "class C {\n\
+             accessor x = new.target;\n\
+             accessor y = () => new.target;\n\
+         }\n",
+    );
+
+    let capture = output
+        .find("var _newTarget = this.constructor;")
+        .unwrap_or_else(|| {
+            panic!(
+                "Default constructor should capture `new.target` for auto-accessor initializers.\nOutput:\n{output}"
+            )
+        });
+    let direct_initializer = output
+        .find("_C_x_accessor_storage.set(this, _newTarget);")
+        .unwrap_or_else(|| {
+            panic!("Auto-accessor initializer should read the capture.\nOutput:\n{output}")
+        });
+    let arrow_initializer = output
+        .find("_C_y_accessor_storage.set(this, function () { return _newTarget; });")
+        .unwrap_or_else(|| {
+            panic!(
+                "Auto-accessor arrow initializer should close over the capture.\nOutput:\n{output}"
+            )
+        });
+
+    assert!(
+        capture < direct_initializer && capture < arrow_initializer,
+        "Class constructor capture should precede moved auto-accessor initializers.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("new.target"),
+        "ES5 output must not retain raw `new.target` syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn new_target_es5_top_level_arrow_reads_recovered_binding_without_capture() {
     let output = emit_es5("var B = () => new.target;\n");
 
