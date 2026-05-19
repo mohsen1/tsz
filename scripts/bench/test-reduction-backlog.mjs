@@ -10,6 +10,8 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const SCRIPT = path.join(ROOT, "scripts", "bench", "reduction-backlog.mjs");
 const CI_SCRIPT = path.join(ROOT, "scripts", "ci", "gcp-full-ci.sh");
+const BENCHMARK_DATA = path.join(ROOT, "crates", "tsz-website", "src", "_data", "benchmark_data.js");
+const SUBSYSTEM_MODULE = path.join(ROOT, "scripts", "ci", "diagnostic-subsystems.mjs");
 
 function withTempDir(fn) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-reduction-backlog-"));
@@ -547,4 +549,51 @@ withTempDir((dir) => {
     /node scripts\/bench\/test-reduction-backlog\.mjs/,
     "gcp-full-ci.sh must run test-reduction-backlog.mjs in run_lint",
   );
+}
+
+// --- benchmark_data.js uses the shared classifier, not a local fork ---
+// Guards against diagnostic-subsystems.mjs and benchmark_data.js silently drifting apart.
+// If benchmark_data.js re-introduces its own DIAGNOSTIC_SUBSYSTEM_RULES constant,
+// or stops importing from the shared module, these assertions catch it.
+
+{
+  const dashboardSrc = fs.readFileSync(BENCHMARK_DATA, "utf8");
+
+  // Must not define its own subsystem table.
+  assert.doesNotMatch(
+    dashboardSrc,
+    /const DIAGNOSTIC_SUBSYSTEM_RULES\s*=/,
+    "benchmark_data.js must not define its own DIAGNOSTIC_SUBSYSTEM_RULES — use the shared module",
+  );
+
+  // Must import from the shared diagnostic-subsystems module.
+  assert.match(
+    dashboardSrc,
+    /from\s+["'][^"']*diagnostic-subsystems\.mjs["']/,
+    "benchmark_data.js must import from scripts/ci/diagnostic-subsystems.mjs",
+  );
+}
+
+// --- shared classifier produces consistent results for known codes ---
+// Ensures subsystemForCode (used by both reduction-backlog and benchmark_data.js)
+// maps representative codes from each subsystem correctly.
+
+{
+  const { subsystemForCode, DIAGNOSTIC_SUBSYSTEM_RULES } = await import(
+    pathToFileURL(SUBSYSTEM_MODULE).href
+  );
+
+  // Each subsystem's first code must round-trip through subsystemForCode.
+  for (const [subsystem, codes] of DIAGNOSTIC_SUBSYSTEM_RULES) {
+    const firstCode = [...codes][0];
+    const classified = subsystemForCode(firstCode);
+    assert.equal(
+      classified,
+      subsystem,
+      `subsystemForCode("${firstCode}") should return "${subsystem}" but got "${classified}"`,
+    );
+  }
+
+  // Unknown codes fall through to "unclassified diagnostic".
+  assert.equal(subsystemForCode("TS9999"), "unclassified diagnostic");
 }
