@@ -1486,7 +1486,6 @@ impl<'a> CheckerState<'a> {
             expanded_target_str
         }
     }
-
     fn widen_numeric_member_literals_in_display_text(display: &str) -> String {
         let bytes = display.as_bytes();
         let mut out = String::with_capacity(display.len());
@@ -1533,36 +1532,38 @@ impl<'a> CheckerState<'a> {
     }
 
     fn ts2820_target_contains_alias_surface(&self, target: TypeId) -> bool {
-        if self.ctx.types.get_display_alias(target).is_some()
-            || self.lookup_type_alias_name_for_display(target).is_some()
-        {
+        self.ts2820_any_in_members(target, &|s, t| {
+            s.ctx.types.get_display_alias(t).is_some()
+                || s.lookup_type_alias_name_for_display(t).is_some()
+        })
+    }
+    fn ts2820_target_contains_application_surface(&self, target: TypeId) -> bool {
+        self.ts2820_any_in_members(target, &|s, t| {
+            s.ts2820_is_named_application_surface(t)
+                || s.ctx
+                    .types
+                    .get_display_alias(t)
+                    .is_some_and(|alias| s.ts2820_is_named_application_surface(alias))
+        })
+    }
+    fn ts2820_any_in_members(
+        &self,
+        target: TypeId,
+        predicate: &dyn Fn(&Self, TypeId) -> bool,
+    ) -> bool {
+        if predicate(self, target) {
             return true;
         }
-
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, target).or_else(|| {
+        crate::query_boundaries::common::union_members(self.ctx.types, target)
+            .or_else(|| {
                 crate::query_boundaries::common::intersection_members(self.ctx.types, target)
             })
-        {
-            return members
-                .iter()
-                .any(|&member| self.ts2820_target_contains_alias_surface(member));
-        }
-
-        false
+            .is_some_and(|members| {
+                members
+                    .iter()
+                    .any(|&member| self.ts2820_any_in_members(member, predicate))
+            })
     }
-
-    fn ts2820_target_contains_application_surface(&self, target: TypeId) -> bool {
-        if self.ts2820_is_named_application_surface(target) {
-            return true;
-        }
-
-        self.ctx
-            .types
-            .get_display_alias(target)
-            .is_some_and(|alias| self.ts2820_is_named_application_surface(alias))
-    }
-
     fn ts2820_is_named_application_surface(&self, target: TypeId) -> bool {
         let Some((base, args)) =
             crate::query_boundaries::common::application_info(self.ctx.types, target)
@@ -1571,7 +1572,6 @@ impl<'a> CheckerState<'a> {
         };
         !args.is_empty() && self.ts2820_application_base_has_named_surface(base)
     }
-
     fn ts2820_application_base_has_named_surface(&self, base: TypeId) -> bool {
         crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
             .or_else(|| self.ctx.definition_store.find_def_for_type(base))
