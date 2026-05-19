@@ -1,4 +1,4 @@
-use super::super::{ModuleKind, Printer};
+use super::super::{ModuleKind, Printer, get_operator_text};
 use super::core::{CjsExportAssignmentValue, CjsExportVariableSchedule};
 use crate::emitter::declarations::class::class_has_self_references;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
@@ -47,7 +47,24 @@ enum EsmObjectRestExportDecl {
     Plain(NodeIndex),
 }
 
+/// Classification of a local name with respect to CJS live exports.
+enum CjsLiveExportKind {
+    /// Not a live CJS export (not exported, shadowed, or not CommonJS).
+    NotExported,
+    /// `export let/const/var x` — all reads rewrite to `exports.x`.
+    /// Carries any additional clause aliases (e.g. `export { x as foo }` alongside
+    /// `export let x`) that also need to be kept in sync on each mutation.
+    Inline(Vec<String>),
+    /// `export { x as foo }` only — local `x` lives alongside `exports.foo`.
+    Clause(Vec<String>),
+}
+
 impl<'a> Printer<'a> {
+    const fn is_commonjs_live_export_context(&self) -> bool {
+        self.ctx.is_commonjs()
+            || matches!(self.ctx.original_module_kind, Some(ModuleKind::CommonJS))
+    }
+
     /// Write `exports.name` or `exports["name"]` depending on whether the name
     /// is a valid JS identifier. Does NOT write ` = `.
     pub(in crate::emitter) fn write_export_property_access(&mut self, export_name: &str) {
@@ -84,35 +101,11 @@ impl<'a> Printer<'a> {
         &mut self,
         local_name: &str,
     ) -> bool {
-        if local_name.is_empty() || !self.ctx.is_commonjs() {
-            return false;
-        }
-
-        let is_shadowed = self
-            .commonjs_exported_var_shadow_stack
-            .iter()
-            .rev()
-            .any(|scope| scope.contains(local_name));
-        let inline_export = !is_shadowed && self.commonjs_exported_var_names.contains(local_name);
-
-        let mut export_names = self
-            .deferred_local_export_bindings_all
-            .as_ref()
-            .and_then(|bindings| bindings.get(local_name))
-            .cloned()
-            .unwrap_or_default();
-        if export_names.is_empty()
-            && let Some(export_name) = self
-                .deferred_local_export_bindings
-                .as_ref()
-                .and_then(|bindings| bindings.get(local_name))
-        {
-            export_names.push(export_name.clone());
-        }
-
-        if !inline_export && export_names.is_empty() {
-            return false;
-        }
+        let (inline_export, export_names) = match self.cjs_live_export_kind(local_name) {
+            CjsLiveExportKind::NotExported => return false,
+            CjsLiveExportKind::Inline(aliases) => (true, aliases),
+            CjsLiveExportKind::Clause(names) => (false, names),
+        };
 
         let mut written_exports: Vec<String> = Vec::new();
         for export_name in export_names.into_iter().rev() {
@@ -139,7 +132,7 @@ impl<'a> Printer<'a> {
         &self,
         local_name: &str,
     ) -> bool {
-        if local_name.is_empty() || !self.ctx.is_commonjs() {
+        if local_name.is_empty() || !self.is_commonjs_live_export_context() {
             return false;
         }
         let is_shadowed = self
@@ -152,12 +145,177 @@ impl<'a> Printer<'a> {
         }
         self.deferred_local_export_bindings_all
             .as_ref()
-            .and_then(|bindings| bindings.get(local_name))
-            .is_some_and(|names| !names.is_empty())
+            .and_then(|b| b.get(local_name))
+            .is_some_and(|n| !n.is_empty())
             || self
                 .deferred_local_export_bindings
                 .as_ref()
-                .is_some_and(|bindings| bindings.contains_key(local_name))
+                .is_some_and(|b| b.contains_key(local_name))
+    }
+
+    fn cjs_live_export_kind(&self, local_name: &str) -> CjsLiveExportKind {
+        if local_name.is_empty() || !self.is_commonjs_live_export_context() {
+            return CjsLiveExportKind::NotExported;
+        }
+        let is_shadowed = self
+            .commonjs_exported_var_shadow_stack
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(local_name));
+        let is_inline = !is_shadowed && self.commonjs_exported_var_names.contains(local_name);
+        // Always collect clause aliases: a name can be both inline-exported
+        // (`export let x`) AND carry additional clause aliases (`export { x as foo }`),
+        // and both forms must be updated on every mutation.
+        let mut names: Vec<String> = self
+            .deferred_local_export_bindings_all
+            .as_ref()
+            .and_then(|b| b.get(local_name))
+            .cloned()
+            .unwrap_or_default();
+        if names.is_empty() {
+            if let Some(name) = self
+                .deferred_local_export_bindings
+                .as_ref()
+                .and_then(|b| b.get(local_name))
+            {
+                names.push(name.clone());
+            }
+        }
+        if is_inline {
+            CjsLiveExportKind::Inline(names)
+        } else if !names.is_empty() {
+            CjsLiveExportKind::Clause(names)
+        } else {
+            CjsLiveExportKind::NotExported
+        }
+    }
+
+    /// Emit `++x` / `--x` on a live CJS export, threading the update through
+    /// `exports.*`. Returns `true` when it handled the output.
+    pub(in crate::emitter) fn emit_cjs_live_export_prefix_unary(
+        &mut self,
+        local_name: &str,
+        operator: u16,
+    ) -> bool {
+        let needs_parens = !self.ctx.flags.in_statement_expression;
+        match self.cjs_live_export_kind(local_name) {
+            CjsLiveExportKind::NotExported => false,
+            CjsLiveExportKind::Inline(aliases) => {
+                if needs_parens {
+                    self.write("(");
+                }
+                self.write_export_property_chain(&aliases);
+                self.write(get_operator_text(operator));
+                self.write_export_property_access(local_name);
+                if needs_parens {
+                    self.write(")");
+                }
+                true
+            }
+            CjsLiveExportKind::Clause(names) => {
+                if needs_parens {
+                    self.write("(");
+                }
+                self.write_export_property_chain(&names);
+                self.write(get_operator_text(operator));
+                self.write_identifier(local_name);
+                if needs_parens {
+                    self.write(")");
+                }
+                true
+            }
+        }
+    }
+
+    /// Emit `x++` / `x--` on a live CJS export, threading the update through
+    /// `exports.*`. `is_statement` is true when the result value is discarded;
+    /// false when the pre-update value must be returned (expression context).
+    /// Returns `true` when it handled the output.
+    pub(in crate::emitter) fn emit_cjs_live_export_postfix_unary(
+        &mut self,
+        local_name: &str,
+        operator: u16,
+        is_statement: bool,
+    ) -> bool {
+        match self.cjs_live_export_kind(local_name) {
+            CjsLiveExportKind::NotExported => false,
+            CjsLiveExportKind::Inline(aliases) => {
+                if is_statement {
+                    if aliases.is_empty() {
+                        self.write_export_property_access(local_name);
+                    } else {
+                        self.write_export_property_chain(&aliases);
+                        self.write("(");
+                        self.write_export_property_access(local_name);
+                        self.write(get_operator_text(operator));
+                        self.write(", ");
+                        self.write_export_property_access(local_name);
+                        self.write(")");
+                    }
+                    return true;
+                }
+                if aliases.is_empty() {
+                    self.write_export_property_access(local_name);
+                    self.write(get_operator_text(operator));
+                    return true;
+                }
+                // Expression context with clause aliases: pre-update value must be returned.
+                let temp = self.make_unique_name_file_hoisted();
+                self.write("(");
+                self.write_export_property_chain(&aliases);
+                self.write("(");
+                self.write(&temp);
+                self.write(" = ");
+                self.write_export_property_access(local_name);
+                self.write(get_operator_text(operator));
+                self.write(", ");
+                self.write_export_property_access(local_name);
+                self.write("), ");
+                self.write(&temp);
+                self.write(")");
+                true
+            }
+            CjsLiveExportKind::Clause(names) => {
+                if is_statement {
+                    // `x++` returns the pre-update value, so `exports.foo = x++` would
+                    // capture the stale value. The comma form `(x++, x)` sequences the
+                    // increment first and reads back the updated local for the export.
+                    self.write_export_property_chain(&names);
+                    self.write("(");
+                    self.write_identifier(local_name);
+                    self.write(get_operator_text(operator));
+                    self.write(", ");
+                    self.write_identifier(local_name);
+                    self.write(")");
+                    return true;
+                }
+                // The pre-update value must survive: wrap in a comma sequence
+                // that captures it in a hoisted temp before the export update.
+                let temp = self.make_unique_name_file_hoisted();
+                self.write("(");
+                self.write_export_property_chain(&names);
+                self.write("(");
+                self.write(&temp);
+                self.write(" = ");
+                self.write_identifier(local_name);
+                self.write(get_operator_text(operator));
+                self.write(", ");
+                self.write_identifier(local_name);
+                self.write("), ");
+                self.write(&temp);
+                self.write(")");
+                true
+            }
+        }
+    }
+
+    /// Write `exports.A = exports.B = ` for each name in `names` (in reverse
+    /// order), so callers can chain the final value assignment through all aliases.
+    fn write_export_property_chain(&mut self, names: &[String]) {
+        for name in names.iter().rev() {
+            self.write_export_property_access(name);
+            self.write(" = ");
+        }
     }
 
     fn emit_destructuring_export_access(&mut self, access: &DestructuringExportAccess) {
