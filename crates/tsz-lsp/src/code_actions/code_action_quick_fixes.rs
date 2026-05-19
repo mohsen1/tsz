@@ -315,6 +315,8 @@ impl<'a> CodeActionProvider<'a> {
             if node.kind == syntax_kind_ext::CONSTRUCTOR
                 || node.kind == syntax_kind_ext::GET_ACCESSOR
                 || node.kind == syntax_kind_ext::SET_ACCESSOR
+                || node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                || node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
             {
                 return false;
             }

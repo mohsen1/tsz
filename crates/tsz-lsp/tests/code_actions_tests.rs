@@ -1222,6 +1222,26 @@ fn test_quickfix_add_missing_await_requires_await_legal_context() {
             "function* f() {\n  const p = fetchN();\n  const run = async () => p.toString();\n}\n",
             true,
         ),
+        (
+            "class static block cannot await",
+            "class C {\n  static {\n    const p = fetchN();\n    p.toString();\n  }\n}\n",
+            false,
+        ),
+        (
+            "class field initializer cannot await",
+            "class C {\n  field = fetchN().toString();\n}\n",
+            false,
+        ),
+        (
+            "nested async arrow inside class field can await",
+            "class C {\n  field = async () => fetchN().toString();\n}\n",
+            true,
+        ),
+        (
+            "nested async function inside static block can await",
+            "class C {\n  static {\n    async function run() {\n      const p = fetchN();\n      p.toString();\n    }\n  }\n}\n",
+            true,
+        ),
     ];
 
     for (label, source, should_offer) in cases {
