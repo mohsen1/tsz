@@ -542,16 +542,18 @@ impl<'a> DeclarationEmitter<'a> {
         let binder = self.binder?;
         let current_path = self.current_file_path.as_deref()?;
 
-        for module_path in
-            self.matching_module_export_paths(binder, current_path, &module_specifier)
+        if let Some(exported) = self
+            .matching_module_export_paths(binder, current_path, &module_specifier)
+            .into_iter()
+            .filter_map(|module_path| {
+                let exports = binder.module_exports.get(module_path)?;
+                let exported = exports.get(first_name.as_str())?;
+                Some((module_path, exported))
+            })
+            .max_by_key(|(module_path, _)| module_path.len())
+            .map(|(_, exported)| self.resolve_portability_symbol(exported, binder))
         {
-            let Some(exports) = binder.module_exports.get(module_path) else {
-                continue;
-            };
-            let Some(exported) = exports.get(first_name.as_str()) else {
-                continue;
-            };
-            return Some(self.resolve_portability_symbol(exported, binder));
+            return Some(exported);
         }
 
         binder
