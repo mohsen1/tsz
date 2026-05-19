@@ -91,6 +91,58 @@ fn has_add_missing_await_action(actions: &[CodeAction]) -> bool {
         .any(|action| action.title == "Add missing 'await'")
 }
 
+fn move_to_file_action(source: &str, file_name: &str, needle: &str) -> CodeAction {
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, file_name.to_string(), source);
+
+    let range = range_for_substring(source, &line_map, needle);
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: Some(vec![CodeActionKind::Refactor]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    actions
+        .into_iter()
+        .find(|action| action.title.starts_with("Move "))
+        .expect("expected move-to-file action")
+}
+
+#[test]
+fn test_move_to_file_preserves_type_only_imports_in_target_file() {
+    let source = concat!(
+        "import type { Foo } from \"./types\";\n",
+        "import { type Bar, makeBar } from \"./values\";\n",
+        "\n",
+        "function use(f: Foo, b: Bar) {\n",
+        "  return makeBar(b);\n",
+        "}\n",
+    );
+
+    let action = move_to_file_action(source, "src/a.ts", "use");
+    let edit = action.edit.as_ref().expect("expected workspace edit");
+    let target_edits = edit
+        .changes
+        .get("src/use.ts")
+        .expect("expected target file edit");
+    let target_text = &target_edits[0].new_text;
+
+    assert!(target_text.contains("import type { Foo } from \"./types\";"));
+    assert!(target_text.contains("import { type Bar, makeBar } from \"./values\";"));
+    assert!(target_text.contains("export function use(f: Foo, b: Bar)"));
+}
+
 #[test]
 fn test_extract_variable_property_access() {
     let source = "const x = foo.bar.baz + 1;";
