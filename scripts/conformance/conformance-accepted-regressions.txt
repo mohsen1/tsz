@@ -28,6 +28,7 @@ TypeScript/tests/cases/compiler/mappedTypeInferenceFromApparentType.ts
 TypeScript/tests/cases/compiler/noExcessiveStackDepthError.ts
 TypeScript/tests/cases/compiler/propTypeValidatorInference.ts
 TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx
+TypeScript/tests/cases/compiler/recursiveMappedTypes.ts
 TypeScript/tests/cases/compiler/recursiveReverseMappedType.ts
 TypeScript/tests/cases/compiler/relationComplexityError.ts
 TypeScript/tests/cases/compiler/reorderProperties.ts
@@ -49,6 +50,7 @@ TypeScript/tests/cases/conformance/externalModules/umd-augmentation-2.ts
 TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsTypedefAndLatebound.ts
 TypeScript/tests/cases/conformance/node/esmModuleExports2.ts
 TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlFileWithinDeclarationFile.ts
+TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlImport.ts
 TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts
 TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts
 TypeScript/tests/cases/conformance/types/literal/templateLiteralTypes6.ts
