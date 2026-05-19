@@ -262,6 +262,12 @@ impl<'a> Printer<'a> {
             self.register_system_import_substitutions(source, &dep_vars, &empty_system_plan);
         }
 
+        if let Some((_, tslib_var)) = value_deps.iter().find(|(dep, _)| dep == "tslib")
+            && !tslib_var.is_empty()
+        {
+            self.commonjs_tslib_import_binding = tslib_var.clone();
+        }
+
         self.emit_module_wrapper_body(source_node, source_idx);
         self.ctx.options.suppress_use_strict = false;
 
@@ -420,8 +426,22 @@ impl<'a> Printer<'a> {
 
         let mut system_plan = self.collect_system_dependency_plan(dependencies, source);
         self.add_system_jsx_runtime_dependency(dependencies, &mut system_plan);
-        let system_dependencies =
+        let mut system_dependencies =
             self.collect_active_system_dependencies(dependencies, source, &system_plan);
+        // Must run after collect_active_system_dependencies so collect_system_dependency_vars
+        // sees the injected "tslib" entry.
+        if self.ctx.options.import_helpers
+            && self.transforms.helpers_populated()
+            && self.transforms.helpers().any_needed()
+            && !system_dependencies.iter().any(|d| d == "tslib")
+        {
+            system_dependencies.insert(0, "tslib".to_string());
+            system_plan
+                .actions
+                .entry("tslib".to_string())
+                .or_default()
+                .push(SystemDependencyAction::Assign("tslib_1".to_string()));
+        }
 
         self.write("System.register(");
         if let Some(name) = self.ctx.options.bundled_module_name.clone() {
@@ -502,6 +522,10 @@ impl<'a> Printer<'a> {
         }
         self.write_line();
         self.increase_indent();
+
+        if let Some(tslib_var) = dep_vars.get("tslib") {
+            self.commonjs_tslib_import_binding = tslib_var.clone();
+        }
 
         self.emit_system_execute_body(source_node, &dep_vars, &hoisted_func_stmts, &system_plan);
 
@@ -1339,6 +1363,22 @@ impl<'a> Printer<'a> {
             if seen_side_effect.insert(resolved.clone()) {
                 side_effect_deps.push(resolved);
             }
+        }
+
+        // Must run after the main loops so the seen_value guard prevents double-insertion
+        // when "tslib" was already present as a source import.
+        if (collect_for_amd || collect_for_umd)
+            && self.ctx.options.import_helpers
+            && self.transforms.helpers_populated()
+            && self.transforms.helpers().any_needed()
+            && !seen_value.contains("tslib")
+        {
+            let tslib_var = if collect_for_amd {
+                self.next_commonjs_module_var("tslib")
+            } else {
+                String::new()
+            };
+            value_deps.insert(0, ("tslib".to_string(), tslib_var));
         }
 
         (value_deps, side_effect_deps, dep_vars)

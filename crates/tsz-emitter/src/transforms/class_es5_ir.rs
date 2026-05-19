@@ -145,6 +145,10 @@ pub struct ES5ClassTransformer<'a> {
     /// Whether static field initializer assignments are emitted by the surrounding expression emitter.
     skip_static_field_initializers: bool,
     use_define_for_class_fields: bool,
+    /// When true, prefix helper names like `__decorate` with the tslib import binding.
+    tslib_prefix: bool,
+    /// The tslib import binding name (e.g. `tslib_1`) used when `tslib_prefix` is true.
+    tslib_import_binding: String,
     commonjs_import_substitutions: FxHashMap<String, String>,
     module_kind: ModuleKind,
     downlevel_iteration: bool,
@@ -182,6 +186,8 @@ impl<'a> ES5ClassTransformer<'a> {
             class_self_reference_alias: None,
             skip_static_field_initializers: false,
             use_define_for_class_fields: false,
+            tslib_prefix: false,
+            tslib_import_binding: "tslib_1".to_string(),
             commonjs_import_substitutions: FxHashMap::default(),
             module_kind: ModuleKind::None,
             downlevel_iteration: false,
@@ -211,6 +217,14 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub fn set_commonjs_import_substitutions(&mut self, subs: FxHashMap<String, String>) {
         self.commonjs_import_substitutions = subs;
+    }
+
+    pub const fn set_tslib_prefix(&mut self, enable: bool) {
+        self.tslib_prefix = enable;
+    }
+
+    pub fn set_tslib_import_binding(&mut self, binding: String) {
+        self.tslib_import_binding = binding;
     }
 
     pub const fn set_module_kind(&mut self, module_kind: ModuleKind) {
@@ -1084,6 +1098,14 @@ impl<'a> ES5ClassTransformer<'a> {
         result
     }
 
+    fn helper_name(&self, name: &str) -> String {
+        if self.tslib_prefix {
+            format!("{}.{name}", self.tslib_import_binding)
+        } else {
+            name.to_string()
+        }
+    }
+
     /// Render a single decorator expression as a string using the IR printer.
     fn render_single_decorator_expression(&self, dec_idx: NodeIndex) -> Option<String> {
         use crate::transforms::ir_printer::IRPrinter;
@@ -1306,8 +1328,14 @@ impl<'a> ES5ClassTransformer<'a> {
     ) -> Vec<String> {
         let Some(target_name) = get_identifier_text(self.arena, name_idx) else {
             return vec![
-                "__metadata(\"design:type\", Object)".to_string(),
-                "__metadata(\"design:paramtypes\", [])".to_string(),
+                format!(
+                    "{}(\"design:type\", Object)",
+                    self.helper_name("__metadata")
+                ),
+                format!(
+                    "{}(\"design:paramtypes\", [])",
+                    self.helper_name("__metadata")
+                ),
             ];
         };
         let mut setter_parameters: Option<NodeList> = None;
@@ -1364,8 +1392,14 @@ impl<'a> ES5ClassTransformer<'a> {
             .unwrap_or_default();
 
         vec![
-            format!("__metadata(\"design:type\", {design_type})"),
-            format!("__metadata(\"design:paramtypes\", [{param_types}])"),
+            format!(
+                "{}(\"design:type\", {design_type})",
+                self.helper_name("__metadata")
+            ),
+            format!(
+                "{}(\"design:paramtypes\", [{param_types}])",
+                self.helper_name("__metadata")
+            ),
         ]
     }
 
@@ -1497,7 +1531,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 for dec_idx in param_decs {
                     let dec_str = self.render_single_decorator_expression(*dec_idx);
                     if let Some(dec_str) = dec_str {
-                        dec_strs.push(format!("__param({param_idx}, {dec_str})"));
+                        dec_strs.push(format!(
+                            "{}({param_idx}, {dec_str})",
+                            self.helper_name("__param")
+                        ));
                     }
                 }
             }
@@ -1513,7 +1550,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 match &meta {
                     MemberMeta::Property { type_annotation } => {
                         let serialized = serialize_type_for_metadata(self.arena, *type_annotation);
-                        vec![format!("__metadata(\"design:type\", {serialized})")]
+                        vec![format!(
+                            "{}(\"design:type\", {serialized})",
+                            self.helper_name("__metadata")
+                        )]
                     }
                     MemberMeta::Method {
                         parameters,
@@ -1529,9 +1569,18 @@ impl<'a> ES5ClassTransformer<'a> {
                             "void 0".to_string()
                         };
                         vec![
-                            "__metadata(\"design:type\", Function)".to_string(),
-                            format!("__metadata(\"design:paramtypes\", [{param_types}])"),
-                            format!("__metadata(\"design:returntype\", {ret_type})"),
+                            format!(
+                                "{}(\"design:type\", Function)",
+                                self.helper_name("__metadata")
+                            ),
+                            format!(
+                                "{}(\"design:paramtypes\", [{param_types}])",
+                                self.helper_name("__metadata")
+                            ),
+                            format!(
+                                "{}(\"design:returntype\", {ret_type})",
+                                self.helper_name("__metadata")
+                            ),
                         ]
                     }
                     MemberMeta::Accessor { name, is_static } => {
@@ -1550,7 +1599,9 @@ impl<'a> ES5ClassTransformer<'a> {
             let inner_indent = "    ".repeat((self.indent_base + 2) as usize);
             let outer_indent = "    ".repeat((self.indent_base + 1) as usize);
             let total_entries = dec_strs.len() + metadata_strs.len();
-            let mut raw = String::from("__decorate([");
+            let mut raw = String::new();
+            raw.push_str(&self.helper_name("__decorate"));
+            raw.push_str("([");
             for (i, dec_str) in dec_strs.iter().enumerate() {
                 raw.push('\n');
                 raw.push_str(&inner_indent);
@@ -1611,7 +1662,10 @@ impl<'a> ES5ClassTransformer<'a> {
                         for dec_idx in decs {
                             if let Some(dec_str) = self.render_single_decorator_expression(*dec_idx)
                             {
-                                param_strs.push(format!("__param({param_idx}, {dec_str})"));
+                                param_strs.push(format!(
+                                    "{}({param_idx}, {dec_str})",
+                                    self.helper_name("__param")
+                                ));
                             }
                         }
                     }
@@ -1620,7 +1674,8 @@ impl<'a> ES5ClassTransformer<'a> {
                     if self.emit_decorator_metadata {
                         let param_types = serialize_param_types(self.arena, &ctor.parameters);
                         metadata_strs.push(format!(
-                            "__metadata(\"design:paramtypes\", [{param_types}])"
+                            "{}(\"design:paramtypes\", [{param_types}])",
+                            self.helper_name("__metadata")
                         ));
                     }
                     break;
@@ -1640,7 +1695,8 @@ impl<'a> ES5ClassTransformer<'a> {
             raw.push_str(alias);
             raw.push_str(" = ");
         }
-        raw.push_str("__decorate([");
+        raw.push_str(&self.helper_name("__decorate"));
+        raw.push_str("([");
         let mut written = 0;
         for dec_str in &dec_strs {
             raw.push('\n');
@@ -1712,7 +1768,10 @@ impl<'a> ES5ClassTransformer<'a> {
         for (param_idx, decs) in &all_param_decs {
             for dec_idx in decs {
                 if let Some(dec_str) = self.render_single_decorator_expression(*dec_idx) {
-                    param_strs.push(format!("__param({param_idx}, {dec_str})"));
+                    param_strs.push(format!(
+                        "{}({param_idx}, {dec_str})",
+                        self.helper_name("__param")
+                    ));
                 }
             }
         }
@@ -1731,7 +1790,8 @@ impl<'a> ES5ClassTransformer<'a> {
                 {
                     let param_types = serialize_param_types(self.arena, &ctor.parameters);
                     meta.push(format!(
-                        "__metadata(\"design:paramtypes\", [{param_types}])"
+                        "{}(\"design:paramtypes\", [{param_types}])",
+                        self.helper_name("__metadata")
                     ));
                     break;
                 }
@@ -1746,7 +1806,9 @@ impl<'a> ES5ClassTransformer<'a> {
         let total_entries = param_strs.len() + metadata_strs.len();
         let mut raw = String::new();
         raw.push_str(&self.class_name);
-        raw.push_str(" = __decorate([");
+        raw.push_str(" = ");
+        raw.push_str(&self.helper_name("__decorate"));
+        raw.push_str("([");
         for (i, param_str) in param_strs.iter().enumerate() {
             raw.push('\n');
             raw.push_str(&inner_indent);

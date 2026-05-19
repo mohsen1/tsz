@@ -73,10 +73,7 @@ impl<'a> Printer<'a> {
         for ident in &self.arena.identifiers {
             self.file_identifiers.insert(ident.escaped_text.clone());
         }
-        if !matches!(
-            self.ctx.original_module_kind,
-            Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
-        ) {
+        if !self.ctx.is_inside_module_wrapper_body() {
             self.commonjs_named_import_substitutions.clear();
         }
         if !matches!(self.ctx.original_module_kind, Some(ModuleKind::AMD)) {
@@ -88,7 +85,11 @@ impl<'a> Printer<'a> {
         self.async_generator_inner_name_counts.clear();
         self.reserved_disposable_env_names.clear();
         self.node_esm_create_require_names = None;
-        self.commonjs_tslib_import_binding = "tslib_1".to_string();
+        // The wrapper sets the correct binding (e.g. "tslib_2" for a second outFile
+        // module) before calling the body; resetting here would clobber that value.
+        if !self.ctx.is_inside_module_wrapper_body() {
+            self.commonjs_tslib_import_binding = "tslib_1".to_string();
+        }
         self.ctx.arguments_capture_counter = 0;
         self.next_dynamic_import_promise_id = 1;
         self.first_for_of_emitted = false;
@@ -1047,7 +1048,8 @@ impl<'a> Printer<'a> {
         let pre_tslib_import_byte_offset = self.writer.len();
         let pre_tslib_import_line = self.writer.current_line();
         if self.ctx.options.import_helpers && !self.ctx.is_commonjs() && helpers.any_needed() {
-            let names = helpers.needed_names();
+            let mut names = helpers.needed_names();
+            names.sort_unstable();
             if !names.is_empty() {
                 // When a helper name collides with a local identifier (e.g.
                 // `declare var __decorate`), tsc renames the import alias to
@@ -1413,18 +1415,21 @@ impl<'a> Printer<'a> {
                 self.write(jsx_import);
             }
 
-            // Emit CJS tslib require after exports preamble
+            // Emit CJS tslib require. Suppressed inside wrappers where tslib is bound
+            // via the wrapper parameter/setter instead of a require() call.
             if self.ctx.options.import_helpers && helpers.any_needed() {
-                self.commonjs_tslib_import_binding = self.next_commonjs_module_var("tslib");
-                if self.ctx.options.target.is_es5() {
-                    self.write("var ");
-                } else {
-                    self.write("const ");
+                if !self.ctx.is_inside_module_wrapper_body() {
+                    self.commonjs_tslib_import_binding = self.next_commonjs_module_var("tslib");
+                    if self.ctx.options.target.is_es5() {
+                        self.write("var ");
+                    } else {
+                        self.write("const ");
+                    }
+                    let binding = self.commonjs_tslib_import_binding.clone();
+                    self.write(&binding);
+                    self.write(" = require(\"tslib\");");
+                    self.write_line();
                 }
-                let binding = self.commonjs_tslib_import_binding.clone();
-                self.write(&binding);
-                self.write(" = require(\"tslib\");");
-                self.write_line();
             }
         }
 
