@@ -2034,11 +2034,10 @@ pub(super) fn collect_diagnostics(
             if !options.no_check
                 && let Some(source) = file.arena.get_source_file_at(file.source_file)
             {
-                apply_ts_directive_suppression_with_unused_reporting(
+                apply_ts_directive_suppression(
                     &file.file_name,
                     source.text.as_ref(),
                     &mut file_diagnostics,
-                    true,
                     options.emit_declarations && options.check_js && is_js,
                 );
             }
@@ -2455,11 +2454,10 @@ fn run_check_on_existing_checker<'a>(
     // checking ran. Under `--noCheck`, parse and JS grammar diagnostics still
     // surface in tsc and directives do not hide them.
     if !no_check && let Some(source) = file.arena.get_source_file_at(file.source_file) {
-        apply_ts_directive_suppression_with_unused_reporting(
+        apply_ts_directive_suppression(
             &file.file_name,
             source.text.as_ref(),
             &mut file_diagnostics,
-            true,
             compiler_options.emit_declarations && check_js && is_js,
         );
     }
