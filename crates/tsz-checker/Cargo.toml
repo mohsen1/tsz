@@ -646,6 +646,10 @@ name = "issue_3768_generic_callback_outer_inference_tests"
 path = "tests/issue_3768_generic_callback_outer_inference_tests.rs"
 
 [[test]]
+name = "issue_7653_parameterless_lambda_inference_tests"
+path = "tests/issue_7653_parameterless_lambda_inference_tests.rs"
+
+[[test]]
 name = "tuple_type_assertion_inference_tests"
 path = "tests/tuple_type_assertion_inference_tests.rs"
 
