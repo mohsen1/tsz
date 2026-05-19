@@ -64,90 +64,17 @@ use tsz_parser::parser::syntax_kind_ext;
 mod bindings;
 #[path = "async_es5_ir_discovery.rs"]
 mod discovery;
+#[path = "async_es5_ir_state.rs"]
+mod state;
 
-/// State for tracking async function transformation
-#[derive(Debug, Default)]
-pub struct AsyncTransformState {
-    /// Current label counter for generator switch/case
-    pub label_counter: u32,
-    /// Whether we're currently inside an async function body
-    pub in_async_body: bool,
-    /// Whether any await expressions were found (determines if we need switch/case)
-    pub has_await: bool,
-    /// Whether the body references `arguments` (needs `var arguments_1 = arguments;`)
-    pub captures_arguments: bool,
-    /// Generated name used for captured `arguments` references.
-    pub arguments_capture_name: String,
-}
+pub use state::AsyncTransformState;
+use state::{
+    ForInAssignmentTarget, ForInSuspendedElementIndex, ForInSuspendedObject,
+    SuspendedAssignmentTarget,
+};
 
-enum SuspendedAssignmentTarget {
-    Property(String),
-    Element(Box<IRNode>),
-}
-
-enum ForInAssignmentTarget {
-    Direct(Box<IRNode>),
-    SuspendedProperty {
-        object_suspension: NodeIndex,
-        property: String,
-    },
-    SuspendedElement {
-        object: ForInSuspendedObject,
-        index: ForInSuspendedElementIndex,
-    },
-}
-
-enum ForInSuspendedObject {
-    Direct(Box<IRNode>),
-    Suspended(NodeIndex),
-}
-
-enum ForInSuspendedElementIndex {
-    Direct(Box<IRNode>),
-    Suspended(NodeIndex),
-}
-
-impl AsyncTransformState {
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Reset for a new async function
-    pub fn reset(&mut self) {
-        self.label_counter = 0;
-        self.in_async_body = false;
-        self.has_await = false;
-        self.captures_arguments = false;
-        self.arguments_capture_name.clear();
-    }
-
-    /// Get the next label number
-    pub const fn next_label(&mut self) -> u32 {
-        let label = self.label_counter;
-        self.label_counter += 1;
-        label
-    }
-}
-
-/// Generator opcodes for the __generator helper
-pub mod opcodes {
-    /// Resume execution
-    pub const NEXT: u32 = 0;
-    /// Throw an error
-    pub const THROW: u32 = 1;
-    /// Return (complete)
-    pub const RETURN: u32 = 2;
-    /// Break to label
-    pub const BREAK: u32 = 3;
-    /// Yield a value (used for await)
-    pub const YIELD: u32 = 4;
-    /// Yield* delegation
-    pub const YIELD_STAR: u32 = 5;
-    /// Catch
-    pub const CATCH: u32 = 6;
-    /// End finally
-    pub const END_FINALLY: u32 = 7;
-}
+#[path = "async_es5_ir_opcodes.rs"]
+pub mod opcodes;
 
 /// Pieces of an ES5 class factory broken out from a transformed
 /// `ES5ClassIIFE` so that callers can splice the body into a generator
