@@ -2238,6 +2238,28 @@ fn test_homomorphic_mapped_per_index_contextual_renamed_source() {
     assert_eq!(elem0, expected0);
 }
 
+/// When the source type parameter and mapped key have the same name, nested
+/// templates cannot prove which `P` should be substituted by name alone. Refuse
+/// the per-index contextual fast path so callers fall back instead of turning
+/// both occurrences in `P[P]` into the numeric key literal.
+#[test]
+fn test_homomorphic_mapped_per_index_contextual_refuses_same_name_nested_collision() {
+    let interner = TypeInterner::new();
+
+    let source_p = build_unbounded_type_param(&interner, "P");
+    let mapped = build_homomorphic_mapped(&interner, "P", source_p, |db, key_p| {
+        let p_index_p = db.index_access(source_p, key_p);
+        build_consumer_fn(db, p_index_p)
+    });
+
+    let ctx = ContextualTypeContext::with_expected(&interner, mapped);
+    assert_eq!(
+        ctx.get_tuple_element_type_with_count(0, 2),
+        None,
+        "same-name source/key collision must fall back instead of substituting both P bindings"
+    );
+}
+
 /// Identity name type (`as K`) is functionally equivalent to no name type and
 /// must still allow per-index substitution.
 #[test]

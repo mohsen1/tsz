@@ -1679,6 +1679,13 @@ fn try_mapped_per_index_template(
     ) {
         return None;
     }
+    if template_has_nested_same_name_source_key_collision(
+        db,
+        mapped.template,
+        mapped.type_param.name,
+    ) {
+        return None;
+    }
 
     let key_literal = db.literal_number(index as f64);
     Some(
@@ -1689,6 +1696,34 @@ fn try_mapped_per_index_template(
             key_literal,
         ),
     )
+}
+
+/// Per-index contextual typing substitutes by the mapped key name. A direct
+/// `T[K]` template has a structural fast path in
+/// `instantiate_mapped_template_for_property`, but nested shapes such as
+/// `(v: P[P]) => void` can otherwise replace an outer source `P` as well as
+/// the mapped key `P`. Refuse those nested collisions so callers fall back to
+/// the existing non-positional contextual path instead of producing a wrong
+/// per-element type.
+fn template_has_nested_same_name_source_key_collision(
+    db: &dyn TypeDatabase,
+    template: TypeId,
+    iter_name: tsz_common::Atom,
+) -> bool {
+    if template.is_intrinsic() {
+        return false;
+    }
+    if matches!(db.lookup(template), Some(TypeData::IndexAccess(_, _))) {
+        return false;
+    }
+
+    crate::contains_type_matching(db, template, |key| match key {
+        TypeData::IndexAccess(object, index) => {
+            crate::contains_type_parameter_named_shallow(db, *object, iter_name)
+                && crate::contains_type_parameter_named_shallow(db, *index, iter_name)
+        }
+        _ => false,
+    })
 }
 
 /// Whether the mapped's iteration domain includes positional numeric keys —
