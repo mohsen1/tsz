@@ -1866,10 +1866,6 @@ impl<'a> CheckerState<'a> {
             .is_some()
     }
 
-    /// TS2808: Check that a getter is at least as accessible as its paired setter.
-    ///
-    /// Accessibility ordering: public(3) > protected(2) > private(1).
-    /// If the getter is less accessible than the setter, emit TS2808.
     fn check_getter_setter_accessibility(
         &mut self,
         getter: &tsz_parser::parser::node::AccessorData,
@@ -1879,7 +1875,6 @@ impl<'a> CheckerState<'a> {
             None => return,
         };
 
-        // Find the paired setter
         let should_error = {
             let Some(ref class_info) = self.ctx.enclosing_class else {
                 return;
@@ -1902,7 +1897,6 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Found paired setter — compare accessibility
                 let getter_level = self.accessibility_level(&getter.modifiers);
                 let setter_level = self.accessibility_level(&setter.modifiers);
                 should_error = getter_level < setter_level;
@@ -1921,8 +1915,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get the accessibility level for comparing getter/setter pairs.
-    /// Returns: 3 for public (default), 2 for protected, 1 for private.
     fn accessibility_level(&self, modifiers: &Option<tsz_parser::parser::NodeList>) -> u8 {
         if self.has_private_modifier(modifiers) {
             1
@@ -1933,9 +1925,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// TS2808 (setter side): Check that the paired getter is at least as accessible.
-    ///
-    /// tsc emits TS2808 on both the getter and setter, so this method emits on the setter.
     fn check_setter_getter_accessibility(
         &mut self,
         setter: &tsz_parser::parser::node::AccessorData,
@@ -1945,7 +1934,6 @@ impl<'a> CheckerState<'a> {
             None => return,
         };
 
-        // Find the paired getter
         let should_error = {
             let Some(ref class_info) = self.ctx.enclosing_class else {
                 return;
@@ -1968,7 +1956,6 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Found paired getter — compare accessibility
                 let getter_level = self.accessibility_level(&getter.modifiers);
                 let setter_level = self.accessibility_level(&setter.modifiers);
                 should_error = getter_level < setter_level;
