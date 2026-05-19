@@ -331,7 +331,7 @@ ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
             "relations",
             "widening",
         ),
-        147,
+        144,
     ),
 ]
 
@@ -356,7 +356,7 @@ SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS = [
         "Checker speculation boundary: snapshot-rollback call sites outside speculation.rs (architecture health metric 5)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/context/speculation.rs",),
-        7,
+        6,
     ),
 ]
 

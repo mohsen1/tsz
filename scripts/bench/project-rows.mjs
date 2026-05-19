@@ -76,7 +76,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     repo: "https://github.com/millsp/ts-toolbelt.git",
     ref: "b8a49285e3ed3a7d8bb8e0b433389eac46a5f140",
     guard_set: "canary",
-    benchmark_set: "canary",
+    benchmark_set: "required",
     category: "external",
   },
   {
@@ -92,7 +92,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     repo: "https://github.com/colinhacks/zod.git",
     ref: "93b0b6892cc0cfee8d0bec4e2e1242c7df771f95",
     guard_set: "canary",
-    benchmark_set: "canary",
+    benchmark_set: "required",
     category: "external",
   },
   {
@@ -108,7 +108,7 @@ export const PROJECT_ROW_DEFINITIONS = [
     repo: "https://github.com/kysely-org/kysely.git",
     ref: "d4911be21cd568d3694dc7f879f72390635226d7",
     guard_set: "canary",
-    benchmark_set: "canary",
+    benchmark_set: "required",
     category: "external",
   },
   {

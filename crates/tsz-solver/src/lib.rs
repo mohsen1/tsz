@@ -178,7 +178,6 @@ pub mod construction {
 pub use intern::TypeInterner;
 pub use intern::clear_thread_local_cache;
 pub use operations::infer_generic_function;
-pub use operations::widening;
 pub use visitors::visitor::{
     apparent_intrinsic_kind, application_id, array_element_type, bound_parameter_index,
     callable_shape_id, collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids,
@@ -257,12 +256,10 @@ pub use objects::{
     apparent_primitive_shape, collect_properties, element_access, index_signatures,
     literal_value_intrinsic_kind,
 };
-pub use operations::compound_assignment;
 pub use operations::compound_assignment::{
     fallback_compound_assignment_result, is_assignment_operator, is_compound_assignment_operator,
     is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
 };
-pub use operations::expression_ops;
 pub use operations::expression_ops::{
     compute_best_common_type, compute_best_common_type_cached, compute_conditional_expression_type,
     compute_template_expression_type, compute_template_expression_type_contextual,
@@ -304,7 +301,7 @@ pub use types::{
     TypeListId, Visibility, is_compiler_managed_type, normalize_display_property_order,
 };
 // unsoundness_audit: accessed via tsz_solver::unsoundness_audit module path
-pub use widening::{
+pub use operations::widening::{
     apply_const_assertion, display_widen_for_redeclaration, get_base_type_for_comparison,
     widen_argument_type_for_display, widen_literal_type, widen_type, widen_type_deep,
     widen_type_for_display, widen_type_for_inference,
