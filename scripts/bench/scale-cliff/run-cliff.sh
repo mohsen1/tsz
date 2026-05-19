@@ -13,6 +13,8 @@
 #   scripts/bench/scale-cliff/run-cliff.sh --skip 003,004   # skip listed
 #   scripts/bench/scale-cliff/run-cliff.sh --tsz /path/tsz  # use specific binary
 #   scripts/bench/scale-cliff/run-cliff.sh --json-file /tmp/cliff.json
+#   scripts/bench/scale-cliff/run-cliff.sh --compare-against /tmp/previous.json
+#   scripts/bench/scale-cliff/run-cliff.sh --compare-threshold 0.05
 #
 # Output:
 #   scripts/bench/scale-cliff/results/cliff-<timestamp>.csv
@@ -29,6 +31,11 @@ SKIP=""
 CSV_FILE=""
 JSON_FILE=""
 JSON_OUTPUT=true
+COMPARE_AGAINST=""
+COMPARE_JSON_FILE=""
+COMPARE_MARKDOWN_FILE=""
+COMPARE_THRESHOLD=""
+COMPARE_FAIL=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -37,6 +44,11 @@ while [[ $# -gt 0 ]]; do
         --csv-file) CSV_FILE="$2"; shift 2 ;;
         --json-file) JSON_FILE="$2"; shift 2 ;;
         --no-json) JSON_OUTPUT=false; shift ;;
+        --compare-against) COMPARE_AGAINST="$2"; shift 2 ;;
+        --compare-json-file) COMPARE_JSON_FILE="$2"; shift 2 ;;
+        --compare-markdown-file) COMPARE_MARKDOWN_FILE="$2"; shift 2 ;;
+        --compare-threshold) COMPARE_THRESHOLD="$2"; shift 2 ;;
+        --compare-fail-on-regression) COMPARE_FAIL=true; shift ;;
         *) echo "unknown arg: $1"; exit 1 ;;
     esac
 done
@@ -210,12 +222,33 @@ done
 
 if [[ "$JSON_OUTPUT" == true ]]; then
     python3 "$SCRIPT_DIR/csv-to-json.py" "$CSV" --json-file "$JSON" --tsz-bin "$TSZ_BIN"
+    if [[ -n "$COMPARE_AGAINST" ]]; then
+        compare_json="${COMPARE_JSON_FILE:-${JSON%.json}.compare.json}"
+        compare_markdown="${COMPARE_MARKDOWN_FILE:-${JSON%.json}.compare.md}"
+        compare_args=(
+            "$COMPARE_AGAINST"
+            "$JSON"
+            --json-file "$compare_json"
+            --markdown-file "$compare_markdown"
+        )
+        if [[ -n "$COMPARE_THRESHOLD" ]]; then
+            compare_args+=(--threshold "$COMPARE_THRESHOLD")
+        fi
+        if [[ "$COMPARE_FAIL" == true ]]; then
+            compare_args+=(--fail-on-regression)
+        fi
+        python3 "$SCRIPT_DIR/compare-json.py" "${compare_args[@]}"
+    fi
 fi
 
 echo
 echo "CSV: $CSV"
 if [[ "$JSON_OUTPUT" == true ]]; then
     echo "JSON: $JSON"
+    if [[ -n "$COMPARE_AGAINST" ]]; then
+        echo "Compare JSON: ${COMPARE_JSON_FILE:-${JSON%.json}.compare.json}"
+        echo "Compare Markdown: ${COMPARE_MARKDOWN_FILE:-${JSON%.json}.compare.md}"
+    fi
 fi
 echo
 column -s, -t "$CSV"
