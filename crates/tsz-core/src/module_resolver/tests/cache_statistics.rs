@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use super::super::*;
+use super::fixtures::TempFixture;
 use crate::module_resolver_helpers::PackageJson;
 
 #[test]
@@ -104,4 +105,31 @@ fn test_resolver_cache_statistics_cover_owned_caches() {
     assert_eq!(cleared.package_type_cache_hits, 0);
     assert_eq!(cleared.package_json_cache_hits, 0);
     assert_eq!(cleared.skip_fallback_cache_hits, 0);
+}
+
+#[test]
+fn test_package_type_cold_lookup_counts_starting_dir_once() {
+    let fixture = TempFixture::new();
+    let dir = fixture.path();
+    fixture.write("package.json", r#"{"type":"module"}"#);
+
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        ..Default::default()
+    };
+    let resolver = ModuleResolver::new(&options);
+
+    assert_eq!(
+        resolver.get_package_type_for_dir(dir),
+        Some(PackageType::Module)
+    );
+
+    let stats = resolver.cache_statistics();
+    assert_eq!(stats.package_type_cache_hits, 0);
+    assert_eq!(
+        stats.package_type_cache_misses, 1,
+        "cold lookup should count the starting directory miss once"
+    );
+    assert_eq!(stats.package_json_cache_misses, 1);
+    assert_eq!(stats.package_type_cache_entries, 1);
 }
