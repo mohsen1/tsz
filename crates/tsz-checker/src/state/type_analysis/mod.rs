@@ -18,4 +18,5 @@ mod cross_file_globals;
 pub(crate) mod cross_file_query_types;
 mod cross_file_residue;
 mod cross_file_shared_cache;
+mod source_alias_attribution;
 mod symbol_type_helpers;
