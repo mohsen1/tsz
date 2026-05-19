@@ -288,7 +288,7 @@ write_type_challenges_config() {
   local source_dir="$FIXTURE_ROOT/type-challenges"
   local compile_dir="$source_dir/.tsz-compile"
   local manifest_json="$compile_dir/type-challenges-template-manifest.json"
-  local test_cases_manifest_json="$compile_dir/type-challenges-test-cases-manifest.json"
+  local test_cases_manifest_json="$compile_dir/test-cases/type-challenges-test-cases-manifest.json"
 
   rm -rf "$compile_dir"
   mkdir -p "$compile_dir/questions" "$compile_dir/test-cases/questions" "$compile_dir/utils"
@@ -363,7 +363,7 @@ write_type_challenges_solutions_config() {
 
 write_type_challenges_pairing_report() {
   local template_manifest="$FIXTURE_ROOT/type-challenges/.tsz-compile/type-challenges-template-manifest.json"
-  local test_cases_manifest="$FIXTURE_ROOT/type-challenges/.tsz-compile/type-challenges-test-cases-manifest.json"
+  local test_cases_manifest="$FIXTURE_ROOT/type-challenges/.tsz-compile/test-cases/type-challenges-test-cases-manifest.json"
   local solutions_manifest="$FIXTURE_ROOT/type-challenges-solutions/.tsz-compile/type-challenges-solutions-manifest.json"
   local output="$FIXTURE_ROOT/type-challenges-readiness-pairing.json"
 
