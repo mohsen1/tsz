@@ -759,6 +759,39 @@ impl<'a> CheckerState<'a> {
                 })
             };
             if let Some((symbol_arena, delegate_binder, _delegate_file_idx)) = direct_target
+                && let Some(direct_type) = self.direct_builtin_lib_variable_annotation_type(
+                    sym_id,
+                    delegate_binder,
+                    symbol_arena,
+                )
+            {
+                self.ctx.symbol_types.insert(sym_id, direct_type);
+                if let Some(file_idx) = symbol_type_cache_file_idx {
+                    if symbol_type_cache_from_symbol_arena {
+                        self.ctx.cache_stable_source_file_symbol_arena_type(
+                            sym_id,
+                            file_idx as u32,
+                            source_cache_scope,
+                            direct_type,
+                            Vec::new(),
+                        );
+                    } else {
+                        self.ctx.cache_cross_file_symbol_type(
+                            sym_id,
+                            file_idx as u32,
+                            direct_type,
+                            Vec::new(),
+                        );
+                    }
+                }
+                if symbol_type_cache_file_idx.is_none() && !needs_cross_file_delegation {
+                    self.ctx
+                        .lib_delegation_cache
+                        .insert_symbol_type(sym_id, (direct_type, Vec::new()));
+                }
+                return Some((direct_type, Vec::new()));
+            }
+            if let Some((symbol_arena, delegate_binder, _delegate_file_idx)) = direct_target
                 && let Some((direct_type, direct_params)) = self
                     .direct_cross_file_interface_lowering(
                         sym_id,
