@@ -2099,9 +2099,9 @@ mod tests {
         let interner = TypeInterner::new();
         let t_name = interner.intern_string("T");
         let u_name = interner.intern_string("U");
-        let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo::simple(t_name)));
-        let u_infer = interner.intern(TypeData::Infer(TypeParamInfo::simple(u_name)));
-        let wrapper = interner.intern(TypeData::ReadonlyType(t_param));
+        let t_param = interner.type_param(TypeParamInfo::simple(t_name));
+        let u_infer = interner.infer(TypeParamInfo::simple(u_name));
+        let wrapper = interner.readonly_type(t_param);
 
         let mut contains_checker = ContainsTypeChecker {
             types: &interner,
