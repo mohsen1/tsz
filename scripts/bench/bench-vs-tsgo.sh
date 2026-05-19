@@ -2585,10 +2585,6 @@ run_utility_types_project_benchmarks() {
 }
 
 run_ts_toolbelt_project_benchmarks() {
-    if ! should_run_compile_canary_project; then
-        return
-    fi
-
     if ! is_benchmark_selected "ts-toolbelt-project"; then
         return
     fi
@@ -2678,10 +2674,6 @@ run_type_fest_project_benchmarks() {
 }
 
 run_zod_project_benchmarks() {
-    if ! should_run_compile_canary_project; then
-        return
-    fi
-
     if ! is_benchmark_selected "zod-project"; then
         return
     fi
@@ -2710,10 +2702,6 @@ run_zod_project_benchmarks() {
 }
 
 run_kysely_project_benchmarks() {
-    if ! should_run_compile_canary_project; then
-        return
-    fi
-
     if ! is_benchmark_selected "kysely-project"; then
         return
     fi

@@ -62,6 +62,11 @@ Derived arrays are exported for runners:
 - `COMPILE_GUARD_CANARY_PROJECT_ROWS`
 - `REQUIRED_COMPATIBILITY_FIELDS`
 
+Rows listed in the roadmap's Phase 1 "Required project rows" table must use
+`benchmark_set: "required"` and must run in the default benchmark flow. Canary
+benchmark rows may be hidden behind the compile-canary opt-in gate, but required
+rows may not.
+
 `scripts/bench/project-fixtures.sh` loads pins from `project-rows.mjs` at
 runtime and uses these lists in both benchmark and compile-guard flows.
 Its `tsz_project_fixture_sources` cases must stay aligned with rows that carry

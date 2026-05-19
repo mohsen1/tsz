@@ -114,8 +114,8 @@ assert.deepEqual(
 );
 assert.deepEqual(
   sortedUnique(mappedRoadmapRequiredRows),
-  sortedUnique(mappedRoadmapRequiredRows.filter((row) => allTrackedRows.includes(row))),
-  "docs/plan/ROADMAP.md required project rows must be tracked in scripts/bench/project-rows.mjs",
+  sortedUnique(mappedRoadmapRequiredRows.filter((row) => requiredRows.includes(row))),
+  "docs/plan/ROADMAP.md required project rows must be benchmark_set: required in scripts/bench/project-rows.mjs",
 );
 assert.deepEqual(
   sortedUnique(compatibilityRows),
@@ -129,10 +129,22 @@ const benchRows = sortedUnique(
     /run_project_benchmark\s+"([^"]+)"/g,
   ),
 );
+const compileCanaryGatedBenchmarkRows = sortedUnique(
+  [...readRepoFile("scripts/bench/bench-vs-tsgo.sh").matchAll(
+    /run_[a-z0-9_]+_project_benchmarks\(\)\s*\{([\s\S]*?)\n\}/g,
+  )]
+    .filter((match) => match[1].includes("should_run_compile_canary_project"))
+    .flatMap((match) => extractAll(match[1], /run_project_benchmark\s+"([^"]+)"/g)),
+);
 assert.deepEqual(
   benchRows,
   sortedUnique(without(allTrackedRows, BENCH_RUNNER_EXCLUDED_ROWS)),
   "bench-vs-tsgo project rows drifted from scripts/bench/project-rows.mjs",
+);
+assert.deepEqual(
+  compileCanaryGatedBenchmarkRows,
+  sortedUnique(compileCanaryGatedBenchmarkRows.filter((row) => compileCanaryRows.includes(row))),
+  "bench-vs-tsgo required project rows must not be hidden behind compile-canary gating",
 );
 
 const projectCompileGuardRows = sortedUnique(
