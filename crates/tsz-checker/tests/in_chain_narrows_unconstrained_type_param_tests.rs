@@ -115,6 +115,52 @@ if ('name' in r) {
 }
 
 #[test]
+fn in_operator_narrows_literal_key_mapped_type_union_member() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+type Bag<Keys extends string> = { [Key in Keys]: number };
+
+function read(x: Bag<"a" | "b"> | { c: string }) {
+  if ("a" in x) {
+    const a: number = x.a;
+    const b: number = x.b;
+  } else {
+    const c: string = x.c;
+  }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected literal-key mapped type union member to narrow via `in`, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn in_operator_narrows_renamed_literal_key_mapped_type_union_member() {
+    let diagnostics = tsz_checker::test_utils::check_source_code_messages(
+        r#"
+type Slots<Names extends string> = { [Slot in Names]: boolean };
+
+function read(x: Slots<"primary" | "secondary"> | { fallback: string }) {
+  if ("primary" in x) {
+    const primary: boolean = x.primary;
+    const secondary: boolean = x.secondary;
+  } else {
+    const fallback: string = x.fallback;
+  }
+}
+"#,
+    );
+
+    assert!(
+        diagnostics.is_empty(),
+        "Expected renamed literal-key mapped type union member to narrow via `in`, got {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn in_operator_does_not_distribute_direct_concrete_keyof_union_mapped_type() {
     let diagnostics = tsz_checker::test_utils::check_source_diagnostics(
         r#"
