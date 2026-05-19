@@ -178,7 +178,7 @@ fn is_direct_lowering_declaration_arena(arena: &NodeArena) -> bool {
     })
 }
 
-fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
+pub(super) fn is_direct_lowering_source_file_arena(arena: &NodeArena) -> bool {
     arena
         .source_files
         .first()
@@ -1000,7 +1000,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_type_node_is_option_bag_lowerable<'b>(
+    pub(super) fn source_file_type_node_is_option_bag_lowerable<'b>(
         arena: &'b NodeArena,
         delegate_binder: &BinderState,
         node_idx: NodeIndex,
@@ -1170,7 +1170,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn source_file_local_name_def_id_for_lowering(
+    pub(super) fn source_file_local_name_def_id_for_lowering(
         &self,
         delegate_binder: &BinderState,
         symbol_arena: &NodeArena,

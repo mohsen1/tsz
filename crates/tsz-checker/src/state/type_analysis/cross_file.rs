@@ -362,7 +362,7 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn cache_symbol_arena_or_cross_file_symbol_type(
+    pub(super) fn cache_symbol_arena_or_cross_file_symbol_type(
         &self,
         sym_id: SymbolId,
         file_idx: usize,
@@ -403,24 +403,10 @@ impl<'a> CheckerState<'a> {
     /// When a symbol's arena differs from the current arena (cross-file symbol),
     /// we create a child checker with the correct arena and delegate the resolution.
     /// This ensures symbols are resolved in their original context.
-    ///
-    /// ## Returns:
-    /// - `Some((type_id, params))`: Delegation occurred, use this result
-    /// - `None`: Symbol is in the local arena, proceed with local computation
-    ///
-    /// ## Critical Behavior:
-    /// - Removes the "in-progress" ERROR marker from cache before delegation
-    /// - Shares the parent's cache via `with_parent_cache` (fixes Cache Isolation Bug)
-    /// - Copies `lib_contexts` for global symbol resolution (Array, Promise, etc.)
-    /// - Copies resolution sets for cross-file cycle detection
     pub(crate) fn delegate_cross_arena_symbol_resolution(
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
-        // Fast path: if this is a known cross-file symbol, skip the namespace guard
-        // (which would check the wrong symbol in the current binder) and go straight
-        // to cross-file delegation.
-        //
         // TYPE_ALIAS + value merge fix: When a user-defined type alias (e.g., `type Proxy<T>`)
         // has the same name as a global value (`declare var Proxy: ProxyConstructor`), the
         // merged symbol has both TYPE_ALIAS and value flags, and symbol_arenas may point to
@@ -828,6 +814,23 @@ impl<'a> CheckerState<'a> {
                         sym_id,
                         file_idx as u32,
                         source_cache_scope,
+                        direct_type,
+                        Vec::new(),
+                    );
+                }
+                return Some((direct_type, Vec::new()));
+            }
+
+            if let Some(direct_type) =
+                self.direct_source_file_function_declaration_result(sym_id, direct_target)
+            {
+                self.ctx.symbol_types.insert(sym_id, direct_type);
+                if let Some(file_idx) = symbol_type_cache_file_idx {
+                    self.cache_symbol_arena_or_cross_file_symbol_type(
+                        sym_id,
+                        file_idx,
+                        source_cache_scope,
+                        symbol_type_cache_from_symbol_arena,
                         direct_type,
                         Vec::new(),
                     );
