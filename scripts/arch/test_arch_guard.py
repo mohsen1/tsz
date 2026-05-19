@@ -141,8 +141,18 @@ class ArchGuardSolverRelationBoundaryTests(unittest.TestCase):
                 return pattern, excludes
         self.fail("solver relation boundary check is missing from CHECKS")
 
+    def _solver_relation_policy_check(self):
+        for name, _base, pattern, excludes in self.arch_guard.CHECKS:
+            if (
+                name
+                == "Checker boundary: direct RelationPolicy/RelationContext usage outside query boundaries/tests"
+            ):
+                return pattern, excludes
+        self.fail("solver relation policy boundary check is missing from CHECKS")
+
     def test_rule_exists(self):
         self._solver_relation_check()
+        self._solver_relation_policy_check()
 
     def test_rule_flags_non_boundary_file(self):
         pattern, excludes = self._solver_relation_check()
@@ -151,6 +161,21 @@ class ArchGuardSolverRelationBoundaryTests(unittest.TestCase):
             text, pattern, "crates/tsz-checker/src/type_computation.rs", excludes
         )
         self.assertEqual(hits, [1])
+
+    def test_rule_flags_relation_policy_and_context_usage(self):
+        pattern, excludes = self._solver_relation_policy_check()
+        text = (
+            "let policy = tsz_solver::RelationPolicy::diagnostic_default();\n"
+            "let ctx = tsz_solver::RelationContext::default();\n"
+            "use tsz_solver::{RelationPolicy, TypeId};\n"
+        )
+        hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/src/error_reporter/diagnostic.rs",
+            excludes,
+        )
+        self.assertEqual(hits, [1, 2, 3])
 
     def test_rule_ignores_query_boundaries_and_tests(self):
         pattern, excludes = self._solver_relation_check()
@@ -163,6 +188,63 @@ class ArchGuardSolverRelationBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(query_boundary_hits, [])
         self.assertEqual(test_hits, [])
+
+        pattern, excludes = self._solver_relation_policy_check()
+        text = "let policy = tsz_solver::RelationPolicy::diagnostic_default();"
+        query_boundary_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/src/query_boundaries/assignability.rs", excludes
+        )
+        test_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/tests/relation_policy.rs", excludes
+        )
+        self.assertEqual(query_boundary_hits, [])
+        self.assertEqual(test_hits, [])
+
+
+class ArchGuardBinaryEvaluatorBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _binary_evaluator_surface_check(self):
+        for name, _base, pattern, excludes in self.arch_guard.CHECKS:
+            if name == "Checker type-computation boundary: no direct BinaryOpEvaluator surface (#8226)":
+                return pattern, excludes
+        self.fail("BinaryOpEvaluator boundary check is missing from CHECKS")
+
+    def test_rule_exists(self):
+        self._binary_evaluator_surface_check()
+
+    def test_rule_flags_imports_and_signatures_outside_boundary(self):
+        pattern, excludes = self._binary_evaluator_surface_check()
+        text = "\n".join(
+            [
+                "use tsz_solver::computation::BinaryOpEvaluator;",
+                "fn helper(evaluator: &BinaryOpEvaluator) {}",
+            ]
+        )
+        hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/src/types/computation/binary.rs", excludes
+        )
+        self.assertEqual(hits, [1, 2])
+
+    def test_rule_ignores_query_boundaries_tests_and_comments(self):
+        pattern, excludes = self._binary_evaluator_surface_check()
+        text = "/// `BinaryOpEvaluator` is documented here\nlet evaluator = BinaryOpEvaluator;"
+        query_boundary_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/src/query_boundaries/common.rs", excludes
+        )
+        test_hits = self.arch_guard.find_matches(
+            text, pattern, "crates/tsz-checker/src/tests/architecture_contract_tests.rs", excludes
+        )
+        comment_hits = self.arch_guard.find_matches(
+            "/// `BinaryOpEvaluator` comment only",
+            pattern,
+            "crates/tsz-checker/src/types/computation/binary.rs",
+            excludes,
+        )
+        self.assertEqual(query_boundary_hits, [])
+        self.assertEqual(test_hits, [])
+        self.assertEqual(comment_hits, [])
 
 
 class ArchGuardCoreWasmBoundaryTests(unittest.TestCase):
@@ -243,13 +325,16 @@ class ArchGuardCoreLibFacadeSizeBoundaryTests(unittest.TestCase):
     def _core_lib_size_check(self):
         for entry in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
             name, path, limit = entry
-            if name == "Core boundary: tsz-core lib facade must stay under 500 LOC":
+            if (
+                name
+                == "Core boundary: tsz-core lib facade must stay at current 365 LOC baseline"
+            ):
                 return path, limit
         self.fail("core lib facade size boundary check is missing from FILE_LINE_LIMIT_CHECKS")
 
     def test_rule_exists_with_expected_limit(self):
         path, limit = self._core_lib_size_check()
-        self.assertEqual(limit, 500)
+        self.assertEqual(limit, 365)
         self.assertTrue(str(path).endswith("crates/tsz-core/src/lib.rs"))
 
     def test_scan_file_line_limit_flags_file_above_limit(self):
@@ -2447,6 +2532,39 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("diagnostic.rs:2", hits[1])
         self.assertIn("total matching lines: 2", hits[2])
 
+    def test_flags_legacy_relation_bridge_call_surface(self):
+        pattern, _max_lines = self._check_by_name("#8207")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/types.rs": (
+                    "fn from_legacy_u8(raw: u8) -> CachedAnyMode { todo!() }\n"
+                    "let key = RelationCacheKey::subtype(source, target, flags);\n"
+                    "let flags = RelationFlags::from_bits_truncate(raw);\n"
+                    "let mode = CachedAnyMode::from_legacy_u8(raw);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 5, f"unexpected hits: {hits!r}")
+        self.assertIn("types.rs:1", hits[0])
+        self.assertIn("types.rs:4", hits[3])
+        self.assertIn("total matching lines: 4", hits[4])
+
+    def test_legacy_relation_bridge_guard_ignores_text_only_mentions(self):
+        pattern, _max_lines = self._check_by_name("#8207")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/types.rs": (
+                    '// RelationCacheKey::subtype(source, target, flags)\n'
+                    'let message = "RelationCacheKey::subtype(source, target, flags)";\n'
+                    'let helper = "from_legacy_u8(raw)";\n'
+                    'let bare_name = "CachedAnyMode::from_legacy_u8";\n'
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(hits, [], f"unexpected hits: {hits!r}")
+
     def test_flags_root_solver_wildcard_compat_reexports(self):
         pattern, _max_lines = self._check_by_name("#8204")
         root = self._make_tree(
@@ -2525,6 +2643,7 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertTrue(any("rendered type strings" in name for name in names))
         self.assertTrue(any("#8227" in name for name in names))
         self.assertTrue(any("diagnostic-local RelationRequest" in name for name in names))
+        self.assertTrue(any("#8207" in name for name in names))
         self.assertTrue(any("#8204" in name for name in names))
 
     def test_real_counts_pass_at_pinned_caps(self):
@@ -2670,7 +2789,7 @@ class ArchGuardPolicyTomlTests(unittest.TestCase):
 
     def test_live_checks_matches_expected_count(self):
         """CHECKS must be loaded from TOML and have the expected entry count."""
-        self.assertEqual(len(self.arch_guard.CHECKS), 31)
+        self.assertEqual(len(self.arch_guard.CHECKS), 33)
 
     def test_live_manifest_checks_matches_expected_count(self):
         """MANIFEST_CHECKS must be loaded from TOML and have the expected entry count."""

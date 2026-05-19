@@ -104,6 +104,7 @@ impl<'a> CheckerContext<'a> {
         self.callback_return_type_errors.clear();
         self.modules_with_ts2307_emitted.clear();
         self.deferred_truthiness_diagnostics.clear();
+        self.recovery_sites.borrow_mut().clear();
         self.deferred_jsx_import_source_error = None;
         self.jsx_import_source_checked = false;
 
@@ -501,8 +502,9 @@ impl<'a> CheckerContext<'a> {
 mod tests {
     use super::*;
     use crate::context::CheckerOptions;
+    use crate::recovery::RecoveryReason;
     use tsz_binder::BinderState;
-    use tsz_parser::parser::NodeArena;
+    use tsz_parser::parser::{NodeArena, NodeIndex};
     use tsz_solver::TypeInterner;
 
     fn fresh_ctx<'a>(
@@ -546,6 +548,21 @@ mod tests {
         assert!(ctx.diagnostics.is_empty());
         assert!(ctx.emitted_diagnostics.is_empty());
         assert_eq!(ctx.instantiation_depth.get(), 0);
+    }
+
+    #[test]
+    fn reset_clears_recovery_sites() {
+        let arena = NodeArena::default();
+        let binder = BinderState::new();
+        let types = TypeInterner::new();
+        let mut ctx = fresh_ctx(&arena, &binder, &types);
+
+        ctx.recover_any(NodeIndex(42), RecoveryReason::YieldOutsideGenerator);
+        assert_eq!(ctx.recovery_sites_snapshot().len(), 1);
+
+        ctx.reset_for_next_file();
+
+        assert!(ctx.recovery_sites_snapshot().is_empty());
     }
 
     #[test]

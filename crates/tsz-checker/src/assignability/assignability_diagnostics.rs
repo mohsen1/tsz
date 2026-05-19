@@ -860,6 +860,35 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn parameter_type_annotation_anchor_for_identifier_source(
+        &self,
+        source_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let source_idx = self.ctx.arena.skip_parenthesized_and_assertions(source_idx);
+        let source_node = self.ctx.arena.get(source_idx)?;
+        if source_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(source_idx)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let mut decl_idx = symbol.value_declaration;
+        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+            && decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && ext.parent.is_some()
+        {
+            decl_idx = ext.parent;
+        }
+
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::PARAMETER {
+            return None;
+        }
+        let annotation = self.ctx.arena.get_parameter(decl_node)?.type_annotation;
+        annotation.is_some().then_some(annotation)
+    }
+
     fn error_type_not_assignable_at_with_raw_display_types(
         &mut self,
         source_for_display: TypeId,
@@ -1020,6 +1049,23 @@ impl<'a> CheckerState<'a> {
         }
         if self.is_nested_same_wrapper_application_assignment(source, target) {
             return true;
+        }
+
+        // TS2589: A homomorphic self-referential mapped-type alias applied to a tuple
+        // argument and checked against a tuple target causes infinite instantiation.
+        // tsc detects the depth limit during instantiation and emits TS2589 here
+        // instead of letting the structural check fall through to TS2322.
+        if self.source_is_homomorphic_self_mapped_tuple_arg_vs_tuple_target(source, target) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let anchor_idx = self
+                .parameter_type_annotation_anchor_for_identifier_source(source_idx)
+                .unwrap_or(source_idx);
+            self.error_at_node(
+                anchor_idx,
+                diagnostic_messages::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+                diagnostic_codes::TYPE_INSTANTIATION_IS_EXCESSIVELY_DEEP_AND_POSSIBLY_INFINITE,
+            );
+            return false;
         }
 
         // Use the canonical assign relation outcome so the weak-union hint is collected alongside

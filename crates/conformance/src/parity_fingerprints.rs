@@ -35,7 +35,9 @@ pub(crate) enum ParityAction {
     ///
     /// Used only when tsz emits the wrong error code for an otherwise
     /// well-understood divergence (e.g. circular instantiation surfacing
-    /// as TS2322 instead of TS2589).
+    /// as TS2322 instead of TS2589). Reserved for future entries; the
+    /// pattern-match arms in `tsz_wrapper` are already wired up.
+    #[allow(dead_code)]
     Remap(ParityRemap),
 }
 
@@ -101,26 +103,6 @@ impl std::fmt::Display for ParityIssue {
 /// `tsz_wrapper.rs` are rejected by the
 /// `tsz_wrapper_has_no_ad_hoc_extra_fingerprint_helpers` architecture test.
 pub(crate) const KNOWN_PARITY_FINGERPRINTS: &[ParityFingerprintRule] = &[
-    // #8422 — built-in Iterator/Iterable inheritance: extra TS2322 on
-    // destructuring a possibly-undefined yield value.
-    ParityFingerprintRule {
-        code: 2322,
-        message: "Type 'number | undefined' is not assignable to type 'number'.",
-        message_match: MessageMatch::Exact,
-        reason: "When a class/interface inherits from built-in Iterator/Iterable and overrides next() or [Symbol.iterator](), tsc collapses the inherited undefined return into the override-compatibility relation; tsz currently lets it surface as a TS2322 in destructuring.",
-        parity_issue: ParityIssue(8422),
-        action: ParityAction::Drop,
-    },
-    // #8422 — built-in Iterator/Iterable inheritance: extra TS2416 on the
-    // override site itself.
-    ParityFingerprintRule {
-        code: 2416,
-        message: "Property '[Symbol.iterator]' in type 'MyMap' is not assignable to the same property in base type 'Map<string, number>'.",
-        message_match: MessageMatch::Exact,
-        reason: "Same root cause as the iterator/iterable destructuring divergence: tsz reports the override as incompatible because the inherited [Symbol.iterator]() return type still carries undefined in the relation.",
-        parity_issue: ParityIssue(8422),
-        action: ParityAction::Drop,
-    },
     // #8423 — recursive alias display: tsz over-expands one level of the
     // recursive alias before printing the TS2322 source type.
     ParityFingerprintRule {
@@ -150,23 +132,6 @@ pub(crate) const KNOWN_PARITY_FINGERPRINTS: &[ParityFingerprintRule] = &[
         reason: "Alternative tsz display form for the same narrowing failure: the intersection is reported un-distributed instead of the per-member union shape.",
         parity_issue: ParityIssue(8424),
         action: ParityAction::Drop,
-    },
-    // #8425 — circular recursive mapped tuple instantiation: tsz reports
-    // the cycle as a structural TS2322 instead of a TS2589 instantiation
-    // depth error. This is a Remap, not a Drop, because tsc *expects* a
-    // diagnostic at this site — just not the same code or message.
-    ParityFingerprintRule {
-        code: 2322,
-        message: "Type 'Circular<tup>' is not assignable to type '[number, number, number, number]'.",
-        message_match: MessageMatch::Contains,
-        reason: "When a recursive mapped/conditional alias forms a cycle through a tuple, tsc detects the cycle at instantiation and emits TS2589; tsz currently falls through to structural assignment and emits TS2322 with a self-referential source display.",
-        parity_issue: ParityIssue(8425),
-        action: ParityAction::Remap(ParityRemap {
-            code: 2589,
-            line: 21,
-            column: 19,
-            message: "Type instantiation is excessively deep and possibly infinite.",
-        }),
     },
 ];
 

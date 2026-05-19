@@ -163,6 +163,86 @@ withTempDir((dir) => {
 });
 
 withTempDir((dir) => {
+  writeTemplate(dir, "questions/00013-warm-hello-world/template.ts");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      MANIFEST_SCRIPT,
+      path.join(dir, "source"),
+      path.join(dir, "compile"),
+      path.join(dir, "escaped-template-manifest.json"),
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        TYPE_CHALLENGES_REPO: "https://example.invalid/type-challenges.git",
+        TYPE_CHALLENGES_REF: "fixture-ref",
+        TYPE_CHALLENGES_EXPECTED_GENERATED: "1",
+      },
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /template manifest path must stay inside compile directory/);
+});
+
+withTempDir((dir) => {
+  writeTemplate(dir, "questions/00013-warm-hello-world/template.ts");
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      MANIFEST_SCRIPT,
+      path.join(dir, "source"),
+      path.join(dir, "compile"),
+      path.join(dir, "compile", "questions", "00013-warm-hello-world", "template.ts"),
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        TYPE_CHALLENGES_REPO: "https://example.invalid/type-challenges.git",
+        TYPE_CHALLENGES_REF: "fixture-ref",
+        TYPE_CHALLENGES_EXPECTED_GENERATED: "1",
+      },
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /template manifest path must not overwrite generated output/);
+});
+
+withTempDir((dir) => {
+  writeTemplate(dir, "questions/00013-warm-hello-world/template.ts");
+  const manifestDir = path.join(dir, "compile", "manifest-dir");
+  fs.mkdirSync(manifestDir, { recursive: true });
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      MANIFEST_SCRIPT,
+      path.join(dir, "source"),
+      path.join(dir, "compile"),
+      manifestDir,
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        TYPE_CHALLENGES_REPO: "https://example.invalid/type-challenges.git",
+        TYPE_CHALLENGES_REF: "fixture-ref",
+        TYPE_CHALLENGES_EXPECTED_GENERATED: "1",
+      },
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /template manifest path is not a file/);
+});
+
+withTempDir((dir) => {
   writeTemplate(dir, "questions/00189-weird-awaited/template.ts");
 
   const result = spawnSync(
