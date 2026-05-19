@@ -94,6 +94,17 @@ fn get_first_function_var_initializer(arena: &NodeArena, root: NodeIndex) -> Nod
     decl.initializer
 }
 
+/// For `<expr>;` at the top level, extract the expression of the first
+/// statement (which must be an expression statement).
+fn get_first_expression_statement_expr(arena: &NodeArena, root: NodeIndex) -> NodeIndex {
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let expr_stmt = arena
+        .get_expression_statement(stmt_node)
+        .expect("expression statement");
+    expr_stmt.expression
+}
+
 fn get_var_type_annotation(arena: &NodeArena, root: NodeIndex) -> NodeIndex {
     let decl_idx = get_first_variable_declaration(arena, root);
     let decl_node = arena.get(decl_idx).expect("var decl node");
@@ -3397,12 +3408,7 @@ fn no_substitution_template_records_raw_token_text() {
     for (source, expected_raw) in cases {
         let (parser, root) = parse_source(source);
         let arena = parser.get_arena();
-        let stmt_idx = get_first_statement(arena, root);
-        let stmt_node = arena.get(stmt_idx).expect("stmt");
-        let expr_stmt = arena
-            .get_expression_statement(stmt_node)
-            .expect("expr stmt");
-        let init = expr_stmt.expression;
+        let init = get_first_expression_statement_expr(arena, root);
         let node = arena.get(init).expect("init");
         assert_eq!(
             node.kind,
@@ -3424,12 +3430,7 @@ fn template_expression_parts_record_raw_token_text() {
     let source = "`\\u${0}mid${1}\\x`;";
     let (parser, root) = parse_source(source);
     let arena = parser.get_arena();
-    let stmt_idx = get_first_statement(arena, root);
-    let stmt_node = arena.get(stmt_idx).expect("stmt");
-    let expr_stmt = arena
-        .get_expression_statement(stmt_node)
-        .expect("expr stmt");
-    let init = expr_stmt.expression;
+    let init = get_first_expression_statement_expr(arena, root);
     let node = arena.get(init).expect("init");
     assert_eq!(
         node.kind,
