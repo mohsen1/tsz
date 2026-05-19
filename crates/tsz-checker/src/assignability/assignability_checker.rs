@@ -4,13 +4,12 @@
 use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, are_types_overlapping_with_env,
     assignability_cache_key, callable_shape_for_type, check_application_variance_assignability,
-    classify_for_assignability_eval, contains_free_infer_types, function_shape_for_type,
-    get_allowed_keys, get_keyof_type, get_string_literal_value, get_union_members,
-    intersection_members, is_assignable_bivariant_with_resolver, is_assignable_with_overrides,
-    is_relation_cacheable, is_type_parameter_like, keyof_object_properties, lazy_def_id,
-    map_compound_members, type_application, type_param_info,
+    classify_for_assignability_eval, collect_resolution_refs, contains_free_infer_types,
+    function_shape_for_type, get_allowed_keys, get_keyof_type, get_string_literal_value,
+    get_union_members, intersection_members, is_assignable_bivariant_with_resolver,
+    is_assignable_with_overrides, is_relation_cacheable, is_type_parameter_like,
+    keyof_object_properties, lazy_def_id, map_compound_members, type_application, type_param_info,
 };
-use crate::query_boundaries::common::{collect_lazy_def_ids, collect_type_queries};
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
 use tracing::trace;
@@ -1385,7 +1384,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            for symbol_ref in collect_type_queries(self.ctx.types, current) {
+            let resolution_refs = collect_resolution_refs(self.ctx.types, current);
+            for symbol_ref in resolution_refs.type_queries {
                 let sym_id = tsz_binder::SymbolId(symbol_ref.0);
                 let _ = self.get_type_of_symbol(sym_id);
                 // Populate type_env with the VALUE type (constructor for classes) so that
@@ -1399,7 +1399,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            for def_id in collect_lazy_def_ids(self.ctx.types, current) {
+            for def_id in resolution_refs.lazy_def_ids {
                 if refs_resolution_fuel_exhausted() {
                     break;
                 }

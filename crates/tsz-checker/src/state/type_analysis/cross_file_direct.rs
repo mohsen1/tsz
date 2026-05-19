@@ -1520,12 +1520,11 @@ impl<'a> CheckerState<'a> {
             return None;
         };
         let has_heritage = Self::interface_declarations_have_heritage(&declarations);
-        let has_computed_names = Self::interface_declarations_have_computed_names(&declarations);
-        let has_unsupported_computed_names =
-            Self::interface_declarations_have_unsupported_computed_names(&declarations);
         let builtin_lib_declaration_arena = is_builtin_lib_declaration_arena(symbol_arena);
         let mut source_type_query_overrides = rustc_hash::FxHashMap::default();
         if direct_source_file_arena {
+            let has_computed_names =
+                Self::interface_declarations_have_computed_names(&declarations);
             if has_computed_names {
                 record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
                 return None;
@@ -1542,6 +1541,8 @@ impl<'a> CheckerState<'a> {
             };
             source_type_query_overrides = overrides;
         } else {
+            let has_unsupported_computed_names =
+                Self::interface_declarations_have_unsupported_computed_names(&declarations);
             let unsupported_shape = !allow_complex_declarations
                 && (has_unsupported_computed_names
                     || (has_heritage

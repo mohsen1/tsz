@@ -646,6 +646,37 @@ pub fn collect_lazy_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId
     out
 }
 
+/// Lazy definition and type-query references reachable from one type graph.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct ResolutionRefs {
+    pub lazy_def_ids: Vec<DefId>,
+    pub type_queries: Vec<SymbolRef>,
+}
+
+/// Collect all unique lazy `DefId`s and type-query symbols reachable from `root`.
+pub fn collect_resolution_refs(types: &dyn TypeDatabase, root: TypeId) -> ResolutionRefs {
+    let mut refs = ResolutionRefs::default();
+    let mut seen_def_ids = FxHashSet::default();
+    let mut seen_type_queries = FxHashSet::default();
+
+    walk_referenced_types(types, root, |type_id| {
+        if type_id.is_intrinsic() {
+            return;
+        }
+        match types.lookup(type_id) {
+            Some(TypeData::Lazy(def_id)) if seen_def_ids.insert(def_id) => {
+                refs.lazy_def_ids.push(def_id);
+            }
+            Some(TypeData::TypeQuery(symbol_ref)) if seen_type_queries.insert(symbol_ref) => {
+                refs.type_queries.push(symbol_ref);
+            }
+            _ => {}
+        }
+    });
+
+    refs
+}
+
 /// Return whether `root` contains `Lazy(target_def_id)`.
 pub fn contains_lazy_def_id(types: &dyn TypeDatabase, root: TypeId, target_def_id: DefId) -> bool {
     let mut found = false;

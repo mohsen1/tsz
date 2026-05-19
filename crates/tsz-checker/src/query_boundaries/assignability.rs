@@ -9,6 +9,13 @@ pub(crate) use super::common::{
     intersection_members, lazy_def_id, object_shape_for_type, type_application, type_param_info,
 };
 
+pub(crate) fn collect_resolution_refs(
+    db: &dyn TypeDatabase,
+    root: TypeId,
+) -> tsz_solver::visitor::ResolutionRefs {
+    tsz_solver::visitor::collect_resolution_refs(db, root)
+}
+
 pub(crate) fn are_types_structurally_identical<R: TypeResolver>(
     db: &dyn TypeDatabase,
     resolver: &R,
