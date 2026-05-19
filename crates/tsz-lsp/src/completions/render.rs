@@ -32,6 +32,17 @@ pub(super) fn compare_case_sensitive_ui(a: &str, b: &str) -> std::cmp::Ordering 
         segments
     }
 
+    fn compare_case_insensitive_segment(a: &str, b: &str) -> std::cmp::Ordering {
+        if a.is_ascii() && b.is_ascii() {
+            return a
+                .bytes()
+                .map(|byte| byte.to_ascii_lowercase())
+                .cmp(b.bytes().map(|byte| byte.to_ascii_lowercase()));
+        }
+
+        a.to_lowercase().cmp(&b.to_lowercase())
+    }
+
     // Primary pass: case-insensitive + numeric
     let a_segments = split_numeric_segments(a);
     let b_segments = split_numeric_segments(b);
@@ -47,7 +58,7 @@ pub(super) fn compare_case_sensitive_ui(a: &str, b: &str) -> std::cmp::Ordering 
             a_num.cmp(&b_num)
         } else {
             // Case-insensitive lexical comparison
-            a_seg.to_lowercase().cmp(&b_seg.to_lowercase())
+            compare_case_insensitive_segment(a_seg, b_seg)
         };
 
         if cmp != std::cmp::Ordering::Equal {
