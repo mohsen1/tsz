@@ -101,6 +101,20 @@ fn test_enum_with_initializer() {
 }
 
 #[test]
+fn computed_enum_member_initializer_continues_with_next_bracketed_line() {
+    let output = emit_enum_legacy_with_source("enum E {\n    [e] = id++\n    [e2] = 1\n}\n");
+
+    assert!(
+        output.contains("E[E[e] = id++] = e"),
+        "Computed enum member should keep its own initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("E[E[e2] = 1] = e2"),
+        "Following computed enum member should still emit after missing-comma recovery.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_enum_with_special_numeric_globals() {
     let output = transform_enum("enum E { A = Infinity, B, C = NaN, D }");
     assert!(

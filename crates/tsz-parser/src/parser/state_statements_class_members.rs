@@ -1052,6 +1052,17 @@ impl ParserState {
                 }
                 members.push(member);
 
+                if self.is_token(SyntaxKind::OpenBraceToken)
+                    && self
+                        .arena
+                        .get(member)
+                        .and_then(|node| self.arena.get_property_decl(node))
+                        .is_some_and(|prop| prop.initializer.is_some())
+                {
+                    self.suppress_next_missing_class_close_brace_error_once = true;
+                    break;
+                }
+
                 // After a successfully parsed member without a trailing semicolon,
                 // if the next token cannot start a new class member, emit TS1068
                 // and skip. This matches tsc's parseList/abortParsingListOrMoveToNextToken
@@ -2299,6 +2310,7 @@ impl ParserState {
         if !self.is_token(SyntaxKind::OpenParenToken) {
             return;
         }
+        self.suppress_next_missing_class_close_brace_error_once = true;
 
         let mut paren_depth = 0u32;
         while !self.is_token(SyntaxKind::EndOfFileToken) {
@@ -2312,32 +2324,6 @@ impl ParserState {
                 }
             }
             self.next_token();
-        }
-
-        if !self.is_token(SyntaxKind::OpenBraceToken) {
-            return;
-        }
-
-        let mut brace_depth = 0u32;
-        while !self.is_token(SyntaxKind::EndOfFileToken) {
-            if self.is_token(SyntaxKind::OpenBraceToken) {
-                brace_depth += 1;
-            } else if self.is_token(SyntaxKind::CloseBraceToken) {
-                brace_depth = brace_depth.saturating_sub(1);
-                self.next_token();
-                if brace_depth == 0 {
-                    break;
-                }
-                continue;
-            }
-            self.next_token();
-        }
-
-        if self.is_token(SyntaxKind::CloseBraceToken) {
-            self.parse_error_at_current_token(
-                "Declaration or statement expected.",
-                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-            );
         }
     }
 
