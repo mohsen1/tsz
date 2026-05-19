@@ -1053,14 +1053,22 @@ impl ParserState {
                 members.push(member);
 
                 if self.is_token(SyntaxKind::OpenBraceToken)
+                    && !self.scanner.has_preceding_line_break()
                     && self
                         .arena
                         .get(member)
                         .and_then(|node| self.arena.get_property_decl(node))
                         .is_some_and(|prop| prop.initializer.is_some())
                 {
+                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
                     self.suppress_next_missing_class_close_brace_error_once = true;
                     break;
+                }
+
+                if self.is_token(SyntaxKind::ColonToken) {
+                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                    self.next_token();
+                    continue;
                 }
 
                 // After a successfully parsed member without a trailing semicolon,
