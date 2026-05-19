@@ -331,7 +331,7 @@ ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
             "relations",
             "widening",
         ),
-        147,
+        144,
     ),
 ]
 
