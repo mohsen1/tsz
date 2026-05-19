@@ -431,9 +431,6 @@ impl<'a> CheckerState<'a> {
         // references whose target lives in another arena.
         if let Some(local_sym) = self.ctx.binder.get_symbol(sym_id) {
             let is_alias = local_sym.flags & symbol_flags::ALIAS != 0;
-            // The two branches are mutually exclusive on `is_alias`:
-            //   - non-alias: must own a declaration in the current arena
-            //   - alias:     must be a named import (has `import_module`)
             let must_stay_local = if is_alias {
                 local_sym.import_module.is_some()
             } else {
