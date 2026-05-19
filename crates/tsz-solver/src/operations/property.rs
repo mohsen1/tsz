@@ -254,7 +254,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             // Walking into Label's stored `extend` method here bakes
             // `this -> Label` into Label's stored bodies, poisoning later
             // intersection wrapping (chained `extend({a}).extend({b})`).
-            crate::substitute_this_type_at_return_position(
+            crate::instantiation::instantiate::substitute_this_type_at_return_position(
                 self.interner(),
                 Some(self.db),
                 type_id,
@@ -993,7 +993,11 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // Resolve the lazy type using the resolver
                 if let Some(resolved) = self.resolver().resolve_lazy(def_id, self.interner()) {
                     let resolved = if crate::contains_this_type(self.interner(), resolved) {
-                        crate::substitute_this_type(self.interner(), resolved, obj_type)
+                        crate::instantiation::instantiate::substitute_this_type(
+                            self.interner(),
+                            resolved,
+                            obj_type,
+                        )
                     } else {
                         resolved
                     };

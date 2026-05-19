@@ -1,7 +1,8 @@
 use tsz_common::Atom;
+use tsz_solver::computation::{TypeSubstitution, evaluate_type};
 use tsz_solver::{
     ObjectShape, PropertyInfo, QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId,
-    TypeResolver, TypeSubstitution, computation::evaluate_type,
+    TypeResolver,
 };
 
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
@@ -60,7 +61,7 @@ pub(crate) fn homomorphic_mapped_projection_target<R: TypeResolver>(
         }
         let body = resolver.resolve_lazy(def_id, type_db)?;
         let substitution = TypeSubstitution::from_args(type_db, &type_params, &app.args);
-        tsz_solver::instantiate_type_cached(type_db, Some(db), body, &substitution)
+        tsz_solver::computation::instantiate_type_cached(type_db, Some(db), body, &substitution)
     };
 
     let mapped = tsz_solver::type_queries::get_mapped_type(type_db, candidate)?;

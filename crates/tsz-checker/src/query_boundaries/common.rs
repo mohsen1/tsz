@@ -1,8 +1,11 @@
+use tsz_solver::computation as c;
 use tsz_solver::{
     CallSignature, CallableShape, ObjectShape, TupleElement, TypeApplication, TypeDatabase, TypeId,
     TypePredicate, operations::widening,
 };
 
+#[allow(unused_imports)]
+pub(crate) use tsz_solver::TypeInterner;
 pub(crate) use tsz_solver::judge::{DefaultJudge, Judge, JudgeConfig};
 pub(crate) use tsz_solver::operations::property::PropertyAccessResult;
 pub(crate) use tsz_solver::operations::{AssignabilityChecker, CallResult};
@@ -14,10 +17,9 @@ pub(crate) use tsz_solver::{
     FunctionShape, IndexKind, IndexSignatureResolver, IntrinsicKind, MappedType, ObjectFlags,
     OptionalPropertyChainKey, ParamInfo, PendingDiagnostic, PendingDiagnosticBuilder,
     QueryDatabase, SourceLocation, SubtypeFailureReason, TypeEnvironment, TypeFormatter,
-    TypeResolver, TypeSubstitution, computation::ContextualTypeContext, instantiate_generic,
+    TypeResolver,
+    computation::{ContextualTypeContext, TypeSubstitution, instantiate_generic},
 };
-#[allow(unused_imports)]
-pub(crate) use tsz_solver::{TypeInstantiator, TypeInterner};
 
 pub(crate) use super::construct_signatures::construct_signatures_for_type;
 pub(crate) use super::type_rewrite::replace_type_queries_and_lazies_with;
@@ -25,9 +27,9 @@ pub(crate) use super::type_rewrite::replace_type_queries_and_lazies_with;
 pub(crate) fn instantiate_type(
     db: &dyn QueryDatabase,
     type_id: TypeId,
-    substitution: &tsz_solver::TypeSubstitution,
+    substitution: &TypeSubstitution,
 ) -> TypeId {
-    tsz_solver::instantiate_type_cached(db.as_type_database(), Some(db), type_id, substitution)
+    c::instantiate_type_cached(db.as_type_database(), Some(db), type_id, substitution)
 }
 
 pub(crate) fn is_compiler_managed_type(name: &str) -> bool {
@@ -653,7 +655,7 @@ pub(crate) fn instantiate_type_with_depth_status(
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> (TypeId, bool) {
-    tsz_solver::instantiate_type_with_depth_status(db, type_id, substitution)
+    c::instantiate_type_with_depth_status(db, type_id, substitution)
 }
 
 pub(crate) fn substitute_this_type(
@@ -661,7 +663,7 @@ pub(crate) fn substitute_this_type(
     type_id: TypeId,
     this_type: TypeId,
 ) -> TypeId {
-    tsz_solver::substitute_this_type_cached(db.as_type_database(), Some(db), type_id, this_type)
+    c::substitute_this_type_cached(db.as_type_database(), Some(db), type_id, this_type)
 }
 
 /// Shallow `this` substitution for call-return-position use.
@@ -674,12 +676,7 @@ pub(crate) fn substitute_this_type_at_return_position(
     type_id: TypeId,
     this_type: TypeId,
 ) -> TypeId {
-    tsz_solver::substitute_this_type_at_return_position(
-        db.as_type_database(),
-        Some(db),
-        type_id,
-        this_type,
-    )
+    c::substitute_this_type_at_return_position(db.as_type_database(), Some(db), type_id, this_type)
 }
 
 /// Get the enum `DefId` for an enum type.
@@ -802,10 +799,10 @@ pub(crate) fn collect_all_types(
 pub(crate) fn instantiate_function_shape(
     db: &dyn QueryDatabase,
     func: &FunctionShape,
-    substitution: &tsz_solver::TypeSubstitution,
+    substitution: &TypeSubstitution,
 ) -> FunctionShape {
     let instantiate = |type_id| {
-        tsz_solver::instantiate_type_cached(db.as_type_database(), Some(db), type_id, substitution)
+        c::instantiate_type_cached(db.as_type_database(), Some(db), type_id, substitution)
     };
     FunctionShape {
         params: func
@@ -846,7 +843,7 @@ pub(crate) fn instantiate_shape_to_defaults(
         return func.clone();
     }
 
-    let mut substitution = tsz_solver::TypeSubstitution::new();
+    let mut substitution = TypeSubstitution::new();
     for tp in &func.type_params {
         let Some(replacement) = tp.default.or(tp.constraint) else {
             continue;
@@ -1845,7 +1842,7 @@ pub(crate) fn instantiate_function_with_type_args(
     function_type: TypeId,
     type_args: &[TypeId],
 ) -> Option<TypeId> {
-    tsz_solver::instantiate_function_with_type_args(db, function_type, type_args)
+    c::instantiate_function_with_type_args(db, function_type, type_args)
 }
 
 pub(crate) fn normalize_object_union_members_for_write_target(
@@ -1874,7 +1871,7 @@ pub(crate) fn instantiate_type_preserving_meta(
     type_id: TypeId,
     substitution: &TypeSubstitution,
 ) -> TypeId {
-    tsz_solver::instantiate_type_preserving_meta_cached(
+    c::instantiate_type_preserving_meta_cached(
         db.as_type_database(),
         Some(db),
         type_id,

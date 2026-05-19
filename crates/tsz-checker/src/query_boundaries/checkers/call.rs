@@ -1,8 +1,7 @@
-use tsz_solver::computation::ContextualTypeContext;
+use tsz_solver::computation::{ContextualTypeContext, TypeSubstitution};
 use tsz_solver::operations::{AssignabilityChecker, CallResult};
 use tsz_solver::{
     FunctionShape, QueryDatabase, TypeDatabase, TypeEnvironment, TypeId, TypeResolver,
-    TypeSubstitution,
 };
 
 pub(crate) use super::super::common::array_element_type as array_element_type_for_type;
@@ -276,7 +275,7 @@ pub(crate) fn expanded_this_type_from_application(
     let def_id = tsz_solver::type_queries::get_lazy_def_id(db, app.base)?;
     let body = env.resolve_lazy(def_id, db)?;
     let type_params = env.get_lazy_type_params(def_id).unwrap_or_default();
-    let expanded = tsz_solver::instantiate_generic(db, body, &type_params, &app.args);
+    let expanded = tsz_solver::computation::instantiate_generic(db, body, &type_params, &app.args);
     let expanded_ctx =
         ContextualTypeContext::with_expected_and_options(db, expanded, no_implicit_any);
     expanded_ctx.get_this_type_from_marker()
