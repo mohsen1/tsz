@@ -132,6 +132,38 @@ fn test_normalize_lib_reference_name_handles_legacy_and_nested_lib_names() {
     );
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_rayon_worker_count_for_work_items_caps_only_small_implicit_workloads() {
+    assert_eq!(rayon_worker_count_for_work_items(4, 16, false), Some(4));
+    assert_eq!(rayon_worker_count_for_work_items(4, 2, false), Some(2));
+    assert_eq!(rayon_worker_count_for_work_items(0, 16, false), None);
+    assert_eq!(rayon_worker_count_for_work_items(33, 16, false), None);
+    assert_eq!(rayon_worker_count_for_work_items(4, 16, true), None);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn test_small_workload_rayon_pool_does_not_cap_global_pool() {
+    if std::env::var_os("RAYON_NUM_THREADS").is_some() {
+        return;
+    }
+    let available = std::thread::available_parallelism()
+        .map(std::num::NonZeroUsize::get)
+        .unwrap_or(1);
+    let small_threads = run_with_rayon_pool_for_work_items(4, rayon::current_num_threads);
+    assert_eq!(small_threads, available.clamp(1, 4));
+
+    ensure_rayon_global_pool();
+    let global_threads = rayon::current_num_threads();
+    if available > 4 {
+        assert!(
+            global_threads > small_threads,
+            "small workload runner must use a scoped pool, not permanently cap the global pool"
+        );
+    }
+}
+
 #[test]
 fn test_resolve_lib_reference_path_prefers_available_candidate_names() {
     let temp_dir = tempfile::tempdir().expect("temp dir");

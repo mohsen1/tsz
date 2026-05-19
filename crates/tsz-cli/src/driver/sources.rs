@@ -608,9 +608,6 @@ pub(super) fn read_source_files(
     cache: Option<&CompilationCache>,
     changed_paths: Option<&FxHashSet<PathBuf>>,
 ) -> Result<SourceReadResult> {
-    #[cfg(not(target_arch = "wasm32"))]
-    tsz::parallel::ensure_rayon_global_pool();
-
     let mut sources: FxHashMap<PathBuf, (Option<String>, bool, bool)> = FxHashMap::default(); // (text, is_binary, suppress_parser_diagnostics)
     let mut dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>> = FxHashMap::default();
     let mut outfile_bundle_paths: FxHashSet<PathBuf> = FxHashSet::default();
@@ -715,14 +712,17 @@ pub(super) fn read_source_files(
         // benefit from saturating the disk queue and CPU cores in parallel.
         use rayon::prelude::*;
         let no_resolve = options.no_resolve;
-        let parsed: Vec<Option<ParsedSource>> = batch
-            .par_iter()
-            .zip(actions.par_iter())
-            .map(|(path, action)| match action {
-                BatchAction::Read => Some(parse_source_for_bfs(path, no_resolve)),
-                BatchAction::Cached | BatchAction::SkipJs => None,
-            })
-            .collect();
+        let parsed: Vec<Option<ParsedSource>> =
+            tsz::parallel::run_with_rayon_pool_for_work_items(batch.len(), || {
+                batch
+                    .par_iter()
+                    .zip(actions.par_iter())
+                    .map(|(path, action)| match action {
+                        BatchAction::Read => Some(parse_source_for_bfs(path, no_resolve)),
+                        BatchAction::Cached | BatchAction::SkipJs => None,
+                    })
+                    .collect()
+            });
 
         // Phase 3 (serial): apply each batch entry's action, queueing newly
         // discovered deps into `pending` for the next BFS level.
