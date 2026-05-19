@@ -2720,7 +2720,7 @@ impl<'a> CheckerState<'a> {
         {
             return members
                 .iter()
-                .any(|&m| self.candidate_rejects_empty_object(m, visited));
+                .all(|&m| self.candidate_rejects_empty_object(m, visited));
         }
 
         if let Some(members) =

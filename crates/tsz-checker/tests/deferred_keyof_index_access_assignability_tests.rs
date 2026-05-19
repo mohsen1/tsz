@@ -193,6 +193,40 @@ class Holder<{tparam} extends keyof Things> {{
     }
 }
 
+/// For a union-valued candidate, `{}` is assignable if any union member accepts
+/// it. The fast path must mirror that rule and reject only when all members
+/// reject the empty object.
+#[test]
+fn union_value_candidate_accepts_empty_object_when_one_member_accepts_two_names() {
+    for tparam in ["K", "Tag"] {
+        let source = format!(
+            r#"
+interface OptionalProps {{ id?: string; }}
+interface RequiredProps {{ id: string; }}
+interface Things {{
+    a: OptionalProps | RequiredProps;
+}}
+class Holder<{tparam} extends keyof Things> {{
+    M() {{
+        let c1: Things[{tparam}] = {{}};
+    }}
+}}
+"#
+        );
+        let diags = check_source_diagnostics(&source);
+        let assignability_errors = count(&diags, 2322) + count(&diags, 2741);
+        assert_eq!(
+            assignability_errors,
+            0,
+            "Things[{tparam}] with a union value accepting {{}} through one member must not emit an assignability error; got: {:?}",
+            diags
+                .iter()
+                .map(|d| (d.code, d.message_text.clone()))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
 /// JSX-like fixture: when `O[K]` values are type-alias applications
 /// (`DetailedHTMLProps<HTMLAttributes<T>, T>` style) whose expanded shapes
 /// have only optional properties, `{}` must remain assignable. The fast
