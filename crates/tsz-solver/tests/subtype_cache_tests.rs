@@ -705,3 +705,87 @@ fn fast_path_error_is_bivariant() {
     assert!(db.is_subtype_of(TypeId::ERROR, TypeId::NUMBER));
     assert!(db.is_subtype_of(TypeId::NUMBER, TypeId::ERROR));
 }
+
+// =============================================================================
+// Compiler-option flips mid-session must yield fresh relation answers.
+//
+// This is the acceptance criterion from the issue: when an LSP/project
+// session changes a compiler option such as `strictNullChecks` or
+// `exactOptionalPropertyTypes`, the relation cache must not serve stale
+// results from the previous flag value. With `RelationCacheKey` keying on
+// the relevant flags, the previous slot becomes unreachable and the new
+// query computes a fresh answer.
+// =============================================================================
+
+#[test]
+fn strict_null_checks_flip_yields_fresh_answer_via_shared_cache() {
+    // `null <: string` is FALSE under strict-null-checks (null is a
+    // distinct bottom-ish type) and TRUE under non-strict (where `null`
+    // and `undefined` are absorbed into every type). A single shared
+    // `QueryCache` must serve each mode's answer independently — flipping
+    // the flag mid-session must produce a fresh answer rather than
+    // returning the cached one from the other mode.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let mut strict_checker = SubtypeChecker::new(&interner).with_query_db(&db);
+    strict_checker.strict_null_checks = true;
+    let strict_result = strict_checker.is_subtype_of(TypeId::NULL, TypeId::STRING);
+
+    let mut loose_checker = SubtypeChecker::new(&interner).with_query_db(&db);
+    loose_checker.strict_null_checks = false;
+    let loose_result = loose_checker.is_subtype_of(TypeId::NULL, TypeId::STRING);
+
+    assert_ne!(
+        strict_result, loose_result,
+        "null <: string must observably differ between strict and non-strict null-checks"
+    );
+
+    // Repeating each query in its own mode must remain stable (no
+    // cross-contamination), proving both cache slots coexist.
+    let mut strict_again = SubtypeChecker::new(&interner).with_query_db(&db);
+    strict_again.strict_null_checks = true;
+    assert_eq!(
+        strict_again.is_subtype_of(TypeId::NULL, TypeId::STRING),
+        strict_result,
+        "strict-null-checks slot must be stable after a non-strict query"
+    );
+
+    let mut loose_again = SubtypeChecker::new(&interner).with_query_db(&db);
+    loose_again.strict_null_checks = false;
+    assert_eq!(
+        loose_again.is_subtype_of(TypeId::NULL, TypeId::STRING),
+        loose_result,
+        "non-strict null-checks slot must be stable after a strict query"
+    );
+}
+
+#[test]
+fn flag_flip_does_not_reuse_stale_cache_entry() {
+    // Pin the cache-keying contract end-to-end: insert a result under one
+    // policy slot, flip a flag, and demonstrate that the query under the
+    // flipped policy does NOT observe the stale entry.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let lit = interner.literal_string("flag-flip");
+
+    let checker_strict = SubtypeChecker::new(&interner).with_query_db(&db);
+    let key_strict = checker_strict.debug_cache_key_for(lit, TypeId::STRING);
+
+    let mut checker_loose = SubtypeChecker::new(&interner).with_query_db(&db);
+    checker_loose.strict_null_checks = false;
+    let key_loose = checker_loose.debug_cache_key_for(lit, TypeId::STRING);
+
+    assert_ne!(
+        key_strict, key_loose,
+        "strict_null_checks must produce distinct cache keys"
+    );
+
+    db.insert_subtype_cache(key_strict, false);
+
+    assert_eq!(
+        db.lookup_subtype_cache(key_loose),
+        None,
+        "flag flip must not serve the previous-mode cache entry"
+    );
+}
