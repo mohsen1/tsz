@@ -574,10 +574,7 @@ GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE = {
 }
 
 COMPILE_GUARD_ONLY_PROJECT_ROWS = {
-    "type-challenges-project",
     "type-challenges-solutions-project",
-    "type-challenges-assertion-candidates",
-    "type-challenges-assertions-tsc-clean",
 }
 
 BENCHMARK_ONLY_PROJECT_ROWS = {
