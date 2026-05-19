@@ -1574,3 +1574,153 @@ fn test_inexact_optional_mapped_intersection_simplifies_for_inferred_emit() {
         "(x: {\n    foo?: string | undefined;\n    baz?: undefined;\n} & {\n    bar: number;\n}) => null"
     );
 }
+
+// Diagnostic test: verify that import-equals alias inside a namespace populates
+// local_namespace_alias_targets with the correct (parent_sym_id, name) key.
+#[test]
+fn test_nested_namespace_import_equals_alias_target_stored() {
+    let source = r#"
+export namespace m1 {
+    export namespace inner {
+        export class c1 {}
+    }
+    import alias = inner;
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    // prepare_import_metadata triggers collect_import_metadata_from_statements,
+    // which must recurse through the EXPORT_DECLARATION wrapper that the TSZ
+    // parser places around `export namespace m1 { ... }`.
+    emitter.prepare_import_metadata(root);
+
+    let stored: Vec<_> = emitter.local_namespace_alias_targets.iter().collect();
+    assert!(
+        !stored.is_empty(),
+        "local_namespace_alias_targets should be non-empty after prepare_import_metadata; \
+         got nothing (EXPORT_DECLARATION wrapper was likely not traversed)"
+    );
+
+    // The alias `import alias = inner` should be listed for (m1_sym.parent, "inner").
+    let m1_id = binder.file_locals.get("m1").expect("Expected 'm1' symbol");
+    let inner_sym_id = binder
+        .symbols
+        .get(m1_id)
+        .and_then(|m1_sym| m1_sym.exports.as_ref())
+        .and_then(|exports| exports.get("inner"))
+        .expect("Expected 'inner' symbol to be an export of m1");
+
+    let inner_sym = binder
+        .symbols
+        .get(inner_sym_id)
+        .expect("Expected 'inner' symbol to exist");
+
+    let key = (inner_sym.parent, "inner".to_string());
+    let alias_names = emitter.local_namespace_alias_targets.get(&key);
+
+    assert!(
+        alias_names.is_some_and(|names| names.contains("alias")),
+        "Expected (inner.parent, 'inner') to include 'alias' in local_namespace_alias_targets. \
+         stored keys: {stored:?}, inner_sym.parent = {:?}",
+        inner_sym.parent
+    );
+}
+
+// Diagnostic test: verify alias lookup works for top-level import-equals (global scope).
+#[test]
+fn test_toplevel_namespace_import_equals_alias_target_stored() {
+    let source = r#"
+export namespace glo_M1_public {
+    export class c1 {}
+}
+import glo_im1_private = glo_M1_public;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    emitter.prepare_import_metadata(root);
+
+    let stored: Vec<_> = emitter.local_namespace_alias_targets.iter().collect();
+    assert!(
+        !stored.is_empty(),
+        "Expected local_namespace_alias_targets to be non-empty. Got nothing. stored: {stored:?}"
+    );
+
+    // glo_M1_public is at top-level; its parent should be SymbolId::NONE
+    let glo_sym_id = binder
+        .file_locals
+        .get("glo_M1_public")
+        .expect("Expected 'glo_M1_public' symbol");
+    let glo_sym = binder
+        .symbols
+        .get(glo_sym_id)
+        .expect("Expected 'glo_M1_public' symbol to exist");
+
+    let key = (glo_sym.parent, "glo_M1_public".to_string());
+    let alias_names = emitter.local_namespace_alias_targets.get(&key);
+
+    assert!(
+        alias_names.is_some_and(|names| names.contains("glo_im1_private")),
+        "Expected (glo_M1_public.parent={:?}, 'glo_M1_public') to include 'glo_im1_private'. \
+         stored: {stored:?}",
+        glo_sym.parent
+    );
+}
+
+#[test]
+fn test_duplicate_namespace_import_equals_alias_targets_are_ambiguous() {
+    let source = r#"
+namespace N {
+    export class C {}
+}
+import A = N;
+import B = N;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    emitter.prepare_import_metadata(root);
+
+    let n_sym_id = binder.file_locals.get("N").expect("Expected 'N' symbol");
+    let n_sym = binder
+        .symbols
+        .get(n_sym_id)
+        .expect("Expected 'N' symbol to exist");
+    let key = (n_sym.parent, "N".to_string());
+    let alias_names = emitter
+        .local_namespace_alias_targets
+        .get(&key)
+        .expect("Expected aliases for namespace N");
+
+    assert!(
+        alias_names.contains("A") && alias_names.contains("B"),
+        "Expected both duplicate aliases to be tracked. aliases: {alias_names:?}"
+    );
+    assert_eq!(
+        emitter.resolve_namespace_import_alias(n_sym_id),
+        None,
+        "Expected duplicate local aliases for the same namespace target to be ambiguous"
+    );
+}

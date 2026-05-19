@@ -4,10 +4,12 @@
 //! This separates state from logic, allowing specialized checkers (expressions, statements)
 //! to borrow the context mutably.
 mod aliases;
+mod cache_statistics;
 mod caches;
 mod compiler_options;
 mod cross_file_delegation_cache;
 mod cross_file_type_params_cache;
+pub use cache_statistics::CheckerContextCacheStatistics;
 pub use caches::{
     NarrowableIdentifierCache, NodeTypeCache, SymbolTypeCache, TypeReferenceValidationCaches,
 };
@@ -75,6 +77,7 @@ use tsz_parser::parser::node::NodeArena;
 /// caller sees the first caller's work.
 pub type CrossFileTypeParamsCache =
     Arc<dashmap::DashMap<(u32, NodeIndex), Vec<tsz_solver::TypeParamInfo>>>;
+
 /// Maximum depth for nested `get_type_of_symbol` calls before giving up.
 ///
 /// Prevents stack overflow when resolving deeply recursive or circular

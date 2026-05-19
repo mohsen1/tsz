@@ -91,7 +91,7 @@ impl ModuleResolverCacheStatistics {
     }
 
     /// Approximate bytes retained by cache buckets and inline entry payloads.
-    pub fn estimated_size_bytes(self) -> usize {
+    pub const fn estimated_size_bytes(self) -> usize {
         self.resolution_cache_entries
             * (HASH_BUCKET_OVERHEAD_BYTES
                 + std::mem::size_of::<ResolutionCacheKey>()

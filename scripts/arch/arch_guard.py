@@ -164,6 +164,20 @@ FILE_LINE_LIMIT_CHECKS = [
         / "resolve.rs",
         3381,
     ),
+    # Pin the async ES5 IR transformer file size while #8277 splits the
+    # monolith into staged lowering modules. The cap should ratchet down
+    # as more phases (helper scheduling, temp/hoist planning, suspended
+    # target lowering, ...) are extracted into sibling submodules.
+    (
+        "Emitter boundary: async ES5 IR engine size ratchet (#8277)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "transforms"
+        / "async_es5_ir.rs",
+        5150,
+    ),
 ]
 
 # Pin field counts on giant coordination structs so workstream-4 (Checker
@@ -356,7 +370,7 @@ SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS = [
         "Checker speculation boundary: snapshot-rollback call sites outside speculation.rs (architecture health metric 5)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/context/speculation.rs",),
-        7,
+        6,
     ),
 ]
 

@@ -128,7 +128,7 @@ impl Server {
             .iter()
             .map(std::string::ToString::to_string)
             .collect();
-        self.stub_response(seq, request, Some(serde_json::json!(codes)))
+        self.success_response(seq, request, Some(serde_json::json!(codes)))
     }
 
     pub(crate) fn handle_apply_code_action_command(
@@ -136,18 +136,11 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        let body = if request
-            .arguments
-            .get("command")
-            .is_some_and(serde_json::Value::is_array)
-        {
-            serde_json::json!([])
-        } else {
-            serde_json::json!({
-                "successMessage": ""
-            })
-        };
-        self.stub_response(seq, request, Some(body))
+        self.unsupported_response(
+            seq,
+            request,
+            "tsz code-fix providers emit text edits, not command payloads",
+        )
     }
 
     pub(crate) fn handle_encoded_semantic_classifications_full(
@@ -213,7 +206,7 @@ impl Server {
                 "endOfLineState": 0,
             }))
         })();
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!({"spans": [], "endOfLineState": 0}))),
@@ -306,7 +299,7 @@ impl Server {
                 "endOfLineState": 0,
             }))
         })();
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!({"spans": [], "endOfLineState": 0}))),
@@ -439,7 +432,7 @@ impl Server {
                 "emitSkipped": false,
             }))
         })();
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!({"outputFiles": [], "emitSkipped": true}))),
@@ -463,7 +456,7 @@ impl Server {
                 "projectUsesOutFile": project.uses_out_file,
             }]))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_compile_on_save_emit_file(
@@ -494,7 +487,7 @@ impl Server {
         } else {
             serde_json::json!(emitted)
         };
-        self.stub_response(seq, request, Some(body))
+        self.success_response(seq, request, Some(body))
     }
 
     fn emit_output_module_kind(&self) -> ModuleKind {
@@ -714,7 +707,7 @@ impl Server {
             Some(serde_json::json!(refactors))
         })();
 
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     /// Parse the request's range fields, falling back to a position
@@ -843,7 +836,7 @@ impl Server {
             None
         })();
 
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!({"edits": []}))),
@@ -930,7 +923,7 @@ impl Server {
             }]))
         })();
 
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_get_edits_for_file_rename(
@@ -1001,7 +994,7 @@ impl Server {
 
             Some(serde_json::json!(file_changes))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     fn normalize_module_path(path: &std::path::Path) -> String {
@@ -1171,7 +1164,7 @@ impl Server {
                 Err(_) => Some(serde_json::json!([])),
             }
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     fn narrow_to_indentation_only_edit_if_possible(
@@ -1321,7 +1314,7 @@ impl Server {
                 Err(_) => Some(serde_json::json!([])),
             }
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(super) fn find_nearest_tsconfig(file: &str) -> Option<String> {
@@ -1374,7 +1367,7 @@ impl Server {
             true
         };
 
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(serde_json::json!({ "reloadFinished": reload_finished })),
@@ -1396,7 +1389,7 @@ impl Server {
             }
         }
 
-        self.stub_response(seq, request, None)
+        self.success_response(seq, request, None)
     }
 
     pub(crate) fn handle_compiler_options_for_inferred(
@@ -1416,7 +1409,7 @@ impl Server {
             })
             .or_else(|| request.arguments.is_object().then_some(&request.arguments));
         self.apply_inferred_project_options(options);
-        self.stub_response(seq, request, Some(serde_json::json!(true)))
+        self.success_response(seq, request, Some(serde_json::json!(true)))
     }
 
     pub(crate) fn handle_external_project(
@@ -1528,7 +1521,7 @@ impl Server {
             "openExternalProject" | "openExternalProjects" => Some(serde_json::json!(true)),
             _ => None,
         };
-        self.stub_response(seq, request, body)
+        self.success_response(seq, request, body)
     }
 
     pub(crate) fn handle_synchronize_project_list(
@@ -1623,7 +1616,7 @@ impl Server {
             ));
         }
 
-        self.stub_response(seq, request, Some(serde_json::json!(body)))
+        self.success_response(seq, request, Some(serde_json::json!(body)))
     }
 
     fn synchronize_project_list_entry(
@@ -1814,7 +1807,7 @@ impl Server {
                 .collect();
             Some(serde_json::json!(body))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_selection_range(
@@ -1895,7 +1888,7 @@ impl Server {
                 .collect();
             Some(serde_json::json!(body))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_linked_editing_range(
@@ -1925,7 +1918,7 @@ impl Server {
                 "wordPattern": linked.word_pattern,
             }))
         })();
-        self.stub_response(seq, request, result)
+        self.success_response(seq, request, result)
     }
 
     pub(crate) fn handle_prepare_call_hierarchy(
@@ -1968,7 +1961,7 @@ impl Server {
             }
             Some(serde_json::json!([body_item]))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     /// Issue #3753: resolve an outgoing-call import-binding to the actual
@@ -2559,7 +2552,7 @@ impl Server {
                 Some(serde_json::json!(body))
             }
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     /// `configurePlugin` — stores plugin configuration for future use.
@@ -2576,7 +2569,7 @@ impl Server {
                 .unwrap_or(serde_json::json!({}));
             self.plugin_configs.insert(plugin_name.to_string(), config);
         }
-        self.stub_response(seq, request, None)
+        self.success_response(seq, request, None)
     }
 
     /// `getMoveToRefactoringFileSuggestions` — suggests files a symbol can be moved to.
@@ -2664,7 +2657,7 @@ impl Server {
             }))
         })();
 
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!({"newFileName": "", "files": []}))),
@@ -2765,7 +2758,7 @@ impl Server {
             Some(false)
         })();
 
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(serde_json::json!(result.unwrap_or(false))),
@@ -2960,7 +2953,7 @@ impl Server {
             }))
         })();
 
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!({"edits": [], "fixId": ""}))),
@@ -3034,7 +3027,7 @@ impl Server {
             }]))
         })();
 
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_outlining_spans(
@@ -3082,7 +3075,7 @@ impl Server {
                 .collect();
             Some(serde_json::json!(body))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_brace(&mut self, seq: u64, request: &TsServerRequest) -> TsServerResponse {
@@ -3147,6 +3140,6 @@ impl Server {
                 Some(serde_json::json!([]))
             }
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 }

@@ -368,6 +368,8 @@ run_lint() {
   scripts/arch/check-workspace-metadata.sh || return $?
   scripts/check-crate-root-files.sh || return $?
   node scripts/bench/test-project-rows.mjs || return $?
+  node scripts/bench/validate-project-metadata.mjs || return $?
+  node scripts/bench/test-validate-project-metadata.mjs || return $?
   node scripts/bench/test-merge-results.mjs || return $?
   node scripts/bench/test-perf-hotspots.mjs || return $?
   node scripts/bench/test-tsgo-winner-report.mjs || return $?

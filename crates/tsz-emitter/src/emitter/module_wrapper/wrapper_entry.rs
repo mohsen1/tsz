@@ -472,6 +472,7 @@ impl<'a> Printer<'a> {
         // function declarations are syntactically hoisted, so they (and their
         // corresponding `exports_1` calls) live outside `execute`.
         let hoisted_func_stmts = self.emit_system_hoisted_functions(source);
+        self.emit_system_export_star_helpers_if_needed(source, &system_plan);
 
         self.write("return {");
         self.write_line();
@@ -916,6 +917,13 @@ impl<'a> Printer<'a> {
                 continue;
             };
             if !dependency_set.contains(module_spec.as_str()) {
+                continue;
+            }
+            if export_decl.export_clause.is_none() {
+                plan.actions
+                    .entry(module_spec)
+                    .or_default()
+                    .push(SystemDependencyAction::ExportStar);
                 continue;
             }
             let Some(clause_node) = self.arena.get(export_decl.export_clause) else {

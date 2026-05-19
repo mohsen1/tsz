@@ -301,21 +301,14 @@ impl<'a> CheckerState<'a> {
             let value = self.format_type_for_property_receiver_message(prop.type_id);
             parts.push(format!("{readonly}{name}{optional}: {value}"));
         }
-        if let Some(index) = &shape.string_index {
+        for index in shape.string_index.iter().chain(shape.number_index.iter()) {
             let key_name = index
                 .param_name
                 .map(|name| self.ctx.types.resolve_atom_ref(name).to_string())
                 .unwrap_or_else(|| "x".to_string());
+            let key_kind = self.format_type(index.key_type);
             let value = self.format_type_for_property_receiver_message(index.value_type);
-            parts.push(format!("[{key_name}: string]: {value}"));
-        }
-        if let Some(index) = &shape.number_index {
-            let key_name = index
-                .param_name
-                .map(|name| self.ctx.types.resolve_atom_ref(name).to_string())
-                .unwrap_or_else(|| "x".to_string());
-            let value = self.format_type_for_property_receiver_message(index.value_type);
-            parts.push(format!("[{key_name}: number]: {value}"));
+            parts.push(format!("[{key_name}: {key_kind}]: {value}"));
         }
 
         Some(format!("{{ {}; }}", parts.join("; ")))

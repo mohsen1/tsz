@@ -594,6 +594,54 @@ fn test_exported_namespace_import_equals_uses_target_for_outer_inferred_type() {
 }
 
 #[test]
+fn test_exported_namespace_import_equals_annotation_preserves_alias() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    export namespace m1 {
+        export namespace inner {
+            export class c1 {}
+        }
+        import alias = inner;
+        export declare const value: alias.c1;
+    }
+    "#,
+    );
+
+    assert!(
+        output.contains("import alias = inner;"),
+        "Expected import-equals alias to be emitted: {output}"
+    );
+    assert!(
+        output.contains("const value: alias.c1;"),
+        "Expected exported annotation to preserve the local alias: {output}"
+    );
+}
+
+#[test]
+fn test_duplicate_namespace_import_equals_annotations_preserve_distinct_aliases() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    namespace N {
+        export class C {}
+    }
+    import A = N;
+    import B = N;
+    export declare const x: A.C;
+    export declare const y: B.C;
+    "#,
+    );
+
+    assert!(
+        output.contains("export declare const x: A.C;"),
+        "Expected x annotation to preserve alias A: {output}"
+    );
+    assert!(
+        output.contains("export declare const y: B.C;"),
+        "Expected y annotation to preserve alias B: {output}"
+    );
+}
+
+#[test]
 fn test_import_type_with_resolution_mode_attributes_is_preserved() {
     let output = emit_dts_with_usage_analysis(
         r#"

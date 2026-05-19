@@ -285,6 +285,15 @@ impl<'a> TypePrinter<'a> {
                     && !parent_sym.escaped_name.starts_with("__")
                     && Self::is_valid_identifier(&parent_sym.escaped_name)
                 {
+                    // When this parent namespace has a local import-equals alias in the
+                    // current DTS scope (e.g. `import alias = LocalNs`), use the alias
+                    // name instead of the original namespace name and stop traversal.
+                    // tsc does the same: members of an aliased namespace use the alias
+                    // as the qualifier rather than the original qualified path.
+                    if let Some(alias) = self.resolve_namespace_import_alias(current_parent) {
+                        qualified_name = alias + "." + &qualified_name;
+                        break;
+                    }
                     // If the current name is not a valid identifier, use indexed access
                     // notation: (typeof Parent)["member"] instead of Parent.member
                     if !Self::is_valid_identifier(&qualified_name) {
