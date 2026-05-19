@@ -84,10 +84,15 @@ function toNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function residencyReason(value, rawReason, vocabulary, fallback) {
+function residencyReason(value, rawReason, vocabulary, fallback, fieldName) {
   if (value !== null) return null;
   const reason = String(rawReason || "").trim();
-  if (reason && vocabulary.has(reason)) return reason;
+  if (!reason) return fallback;
+  if (vocabulary.has(reason)) return reason;
+  console.error(
+    `warning: ${fieldName} reason ${JSON.stringify(reason)} is not in the accepted vocabulary; ` +
+    `falling back to ${JSON.stringify(fallback)}. Accepted: ${[...vocabulary].sort().join(", ")}`,
+  );
   return fallback;
 }
 
@@ -650,12 +655,14 @@ function record() {
     process.env.COMPAT_FILES_REACHED_REASON,
     FILES_REACHED_REASONS,
     "runner did not count",
+    "files_reached",
   );
   const peakMemoryBytesReason = residencyReason(
     peakMemoryBytes,
     process.env.COMPAT_PEAK_MEMORY_BYTES_REASON,
     PEAK_MEMORY_BYTES_REASONS,
     "not measured on platform",
+    "peak_memory_bytes",
   );
 
   const row = {
@@ -932,10 +939,8 @@ function formatPeakMemoryBytes(value) {
     scaled /= 1024;
     unit += 1;
   }
-  const formatted = scaled >= 100 || unit === 0
-    ? Math.round(scaled).toString()
-    : scaled.toFixed(scaled >= 10 ? 1 : 2);
-  return `${formatted} ${units[unit]}`;
+  const digits = scaled >= 100 ? 0 : scaled >= 10 ? 1 : 2;
+  return `${scaled.toFixed(digits)} ${units[unit]}`;
 }
 
 function escapeMarkdownCell(value) {

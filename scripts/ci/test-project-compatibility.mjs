@@ -363,6 +363,10 @@ withTempDir((dir) => {
         filesReachedReason: "runner did not count",
         peakMemoryBytes: null,
         peakMemoryBytesReason: "not measured on platform",
+        stderrMatches: [
+          /files_reached reason "also-not-in-vocab" is not in the accepted vocabulary/,
+          /peak_memory_bytes reason "made-up-reason-not-in-vocab" is not in the accepted vocabulary/,
+        ],
       },
     },
     {
@@ -391,6 +395,9 @@ withTempDir((dir) => {
       ...testCase.env,
     });
     assert.equal(result.status, 0, `${testCase.name}: ${result.stderr}`);
+    for (const pattern of testCase.expected.stderrMatches || []) {
+      assert.match(result.stderr, pattern, `${testCase.name}: expected stderr match ${pattern}`);
+    }
   }
 
   const rows = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);

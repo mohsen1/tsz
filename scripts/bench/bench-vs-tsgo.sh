@@ -1910,48 +1910,42 @@ function compatibilityArtifactMetadata(recorded = {}, generatedAt = new Date().t
   };
 }
 
+const FALLBACK_COMPATIBILITY_DEFAULTS = {
+  diagnostic_deltas: [],
+  exit_codes: { tsc: [], tsz: [], tsgo: [] },
+  files_reached: null,
+  files_reached_reason: "runner did not count",
+  peak_memory_bytes: null,
+  peak_memory_bytes_reason: "not measured on platform",
+};
+
 function fallbackCompatibility(row) {
   if (!projectOwnerFamilies[row.name]) return null;
   const status = String(row.status || "").toLowerCase();
   if (!status) {
     return {
+      ...FALLBACK_COMPATIBILITY_DEFAULTS,
       exit_class: "exit success",
       phase: "check",
       last_successful_phase: "check",
       diagnostic_status: "none",
-      diagnostic_deltas: [],
-      exit_codes: { tsc: [], tsz: [], tsgo: [] },
-      files_reached: null,
-      files_reached_reason: "runner did not count",
-      peak_memory_bytes: null,
-      peak_memory_bytes_reason: "not measured on platform",
     };
   }
   if (status.includes("fixture")) {
     return {
+      ...FALLBACK_COMPATIBILITY_DEFAULTS,
       exit_class: "fixture invalid",
       phase: "fixture setup",
       last_successful_phase: null,
       diagnostic_status: "tsc fixture failed",
-      diagnostic_deltas: [],
-      exit_codes: { tsc: [], tsz: [], tsgo: [] },
-      files_reached: null,
-      files_reached_reason: "runner did not count",
-      peak_memory_bytes: null,
-      peak_memory_bytes_reason: "not measured on platform",
     };
   }
   return {
+    ...FALLBACK_COMPATIBILITY_DEFAULTS,
     exit_class: status.includes("timeout") ? "timeout" : "nonzero exit",
     phase: "check",
     last_successful_phase: null,
     diagnostic_status: status.includes("tsz") ? "diagnostic mismatch or compiler error" : "compiler error",
-    diagnostic_deltas: [],
-    exit_codes: { tsc: [], tsz: [], tsgo: [] },
-    files_reached: null,
-    files_reached_reason: "runner did not count",
-    peak_memory_bytes: null,
-    peak_memory_bytes_reason: "not measured on platform",
   };
 }
 
@@ -2104,11 +2098,9 @@ function reproFromRecorded(recorded) {
   };
 }
 
-// When the recorded compatibility row carries a numeric residency value, the
-// reason field is null (the measurement exists). Otherwise propagate the
-// recorded reason if present, falling back to a runner-default. This keeps
-// `peak_memory_bytes_reason` / `files_reached_reason` consistent with their
-// sibling values for downstream merge validation.
+// Mirror of residencyReason() in scripts/ci/project-compatibility.mjs but
+// post-processor-side: the recorded row already passed the closed-vocabulary
+// gate so unknown strings are propagated rather than rejected here.
 function residencyReasonFor(value, recordedReason, fallback) {
   if (value !== null && value !== undefined && Number.isFinite(Number(value))) {
     return null;
