@@ -19,6 +19,8 @@
 //!    corresponding non-sound slot.
 //! 7. The `QueryCache` must not serve a non-sound cached result to a
 //!    sound-mode lookup for the same type pair.
+//! 8. Typed `RelationPolicy` query-cache entrypoints insert under the same
+//!    policy-derived cache keys as the legacy packed-flag entrypoints.
 
 use super::*;
 use crate::caches::db::QueryDatabase;
@@ -584,5 +586,39 @@ fn query_cache_relation_misses_insert_policy_shaped_keys() {
         )),
         Some(true),
         "assignability miss path must insert under the policy-derived cache key",
+    );
+}
+
+#[test]
+fn query_cache_typed_policy_entrypoints_insert_policy_shaped_keys() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let source = interner.literal_string("typed-policy-key-source");
+    let policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES)
+        .with_strict_any_propagation(true)
+        .with_skip_weak_type_checks(true)
+        .with_erase_generics(false);
+    let config = policy.cache_config();
+
+    assert!(db.is_subtype_of_with_policy(source, TypeId::STRING, policy));
+    assert_eq!(
+        db.lookup_subtype_cache(RelationCacheKey::for_subtype(
+            source,
+            TypeId::STRING,
+            config,
+        )),
+        Some(true),
+        "typed subtype policy path must insert under the policy-derived cache key",
+    );
+
+    assert!(db.is_assignable_to_with_policy(source, TypeId::STRING, policy));
+    assert_eq!(
+        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
+            source,
+            TypeId::STRING,
+            config,
+        )),
+        Some(true),
+        "typed assignability policy path must insert under the policy-derived cache key",
     );
 }
