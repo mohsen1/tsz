@@ -1455,14 +1455,21 @@ impl<'a> Printer<'a> {
                                 .contains(n)
                         });
                         if !merges_with_default_func {
-                            // Fold exports.Name into the IIFE tail:
-                            // (N || (exports.N = N = {})) instead of separate
-                            // `exports.N = N;` after the IIFE.
-                            // Note: fold is used even when has_export_assignment is true —
-                            // `export = X` sets module.exports but named exports like
-                            // `export enum E` still get their own exports.E binding.
-                            self.pending_cjs_namespace_export_fold = true;
-                            self.pending_cjs_namespace_export_name = None;
+                            if self.in_system_execute_body {
+                                if let Some(ns_name) = ns_name.as_deref() {
+                                    self.pending_system_namespace_export_fold =
+                                        Some(vec![ns_name.to_string()]);
+                                }
+                            } else {
+                                // Fold exports.Name into the IIFE tail:
+                                // (N || (exports.N = N = {})) instead of separate
+                                // `exports.N = N;` after the IIFE.
+                                // Note: fold is used even when has_export_assignment is true —
+                                // `export = X` sets module.exports but named exports like
+                                // `export enum E` still get their own exports.E binding.
+                                self.pending_cjs_namespace_export_fold = true;
+                                self.pending_cjs_namespace_export_name = None;
+                            }
                         }
                         self.emit_module_declaration(clause_node, export.export_clause);
                         // If the flag was consumed (instantiated namespace),
@@ -1470,6 +1477,7 @@ impl<'a> Printer<'a> {
                         // was non-instantiated/skipped, clear it.
                         self.pending_cjs_namespace_export_fold = false;
                         self.pending_cjs_namespace_export_name = None;
+                        self.pending_system_namespace_export_fold = None;
                     } else {
                         self.emit_module_declaration(clause_node, export.export_clause);
                     }
