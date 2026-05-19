@@ -3723,6 +3723,28 @@ fn test_completions_suppressed_after_numeric_dot_with_jsdoc_trivia() {
 
 /// Helper that returns the member-completion names for `<source><suffix>`
 /// where the cursor is right after the suffix (at the end of the file).
+fn items_at_end(source: &str) -> Vec<CompletionItem> {
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let interner = TypeInterner::new();
+    let completions = Completions::new_with_types(
+        arena,
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+    let position = line_map.offset_to_position(source.len() as u32, source);
+    let mut cache = None;
+    completions
+        .get_completions_with_cache(root, position, &mut cache)
+        .unwrap_or_default()
+}
+
 fn member_names_at_end(source: &str) -> Vec<String> {
     let (parser, root) = parse_test_source(source);
     let arena = parser.get_arena();
@@ -4692,5 +4714,95 @@ fn test_completions_ecma_private_field_different_names_and_types() {
     assert!(
         this_names.contains(&"#items".to_string()),
         "Expected `#items` in `this.` completions; got: {this_names:?}"
+    );
+}
+
+/// `this.` inside a class method must show colon-notation detail for methods and
+/// the correct type for properties. The `node_type_detail` path uses the semantic
+/// checker, not source-text slicing, so these assertions pin the exact strings
+/// produced by `checker.format_type()` after `arrow_to_colon` conversion.
+#[test]
+fn test_completions_this_method_detail_uses_colon_notation() {
+    // Method detail must be `(msg: string): void`, NOT `(msg: string) => void`.
+    // Property detail must be `string[]`.
+    let items =
+        items_at_end("class Logger {\n  lines: string[] = [];\n  write(msg: string): void { this.");
+    let write_item = items.iter().find(|i| i.label == "write");
+    assert!(
+        write_item.is_some(),
+        "Expected `write` in `this.` completions"
+    );
+    let detail = write_item.unwrap().detail.as_deref().unwrap_or("");
+    assert!(
+        detail.contains(':') && !detail.contains("=>"),
+        "Method detail must use colon notation `(msg: string): void`, got: {detail:?}"
+    );
+    let lines_item = items.iter().find(|i| i.label == "lines");
+    assert!(
+        lines_item.is_some(),
+        "Expected `lines` in `this.` completions"
+    );
+    let lines_detail = lines_item.unwrap().detail.as_deref().unwrap_or("");
+    assert_eq!(
+        lines_detail, "string[]",
+        "Property detail must be the type, got: {lines_detail:?}"
+    );
+}
+
+/// Properties whose types are inferred from initializers must show the inferred
+/// type as the completion detail, not a raw source excerpt.
+#[test]
+fn test_completions_type_literal_inferred_property_detail() {
+    // `x: 42` → inferred type is `number`; `msg: "hi"` → inferred type is `string`.
+    // Both should appear as that primitive type in the completion detail, proving
+    // the semantic path (not source slicing) is used.
+    let items =
+        items_at_end("const obj: { x: number; msg: string } = { x: 42, msg: \"hi\" };\nobj.");
+    let x_item = items.iter().find(|i| i.label == "x");
+    assert!(x_item.is_some(), "Expected `x` in completions");
+    let x_detail = x_item.unwrap().detail.as_deref().unwrap_or("");
+    assert_eq!(
+        x_detail, "number",
+        "Inferred numeric property detail must be `number`, got: {x_detail:?}"
+    );
+
+    let msg_item = items.iter().find(|i| i.label == "msg");
+    assert!(msg_item.is_some(), "Expected `msg` in completions");
+    let msg_detail = msg_item.unwrap().detail.as_deref().unwrap_or("");
+    assert_eq!(
+        msg_detail, "string",
+        "Inferred string property detail must be `string`, got: {msg_detail:?}"
+    );
+}
+
+/// Quoted type-literal properties must be offered as completions with the correct
+/// detail. A different property-name spelling (`"my-prop"` vs `myProp`) must
+/// produce the same structural result, proving the fix is not keyed to a specific
+/// identifier spelling.
+#[test]
+fn test_completions_quoted_type_literal_property_detail() {
+    // `"my-prop"` and `"other-key"` are quoted properties — they require bracket
+    // access and must appear with the correct type detail.
+    let items = items_at_end(
+        "const obj: { \"my-prop\": number; \"other-key\": string } = { \"my-prop\": 1, \"other-key\": \"x\" };\nobj.",
+    );
+    let prop1 = items.iter().find(|i| i.label == "my-prop");
+    assert!(
+        prop1.is_some(),
+        "Expected `my-prop` in completions; got labels: {:?}",
+        items.iter().map(|i| &i.label).collect::<Vec<_>>()
+    );
+    let prop1_detail = prop1.unwrap().detail.as_deref().unwrap_or("");
+    assert_eq!(
+        prop1_detail, "number",
+        "Quoted property detail must be `number`, got: {prop1_detail:?}"
+    );
+
+    let prop2 = items.iter().find(|i| i.label == "other-key");
+    assert!(prop2.is_some(), "Expected `other-key` in completions");
+    let prop2_detail = prop2.unwrap().detail.as_deref().unwrap_or("");
+    assert_eq!(
+        prop2_detail, "string",
+        "Quoted property detail must be `string`, got: {prop2_detail:?}"
     );
 }
