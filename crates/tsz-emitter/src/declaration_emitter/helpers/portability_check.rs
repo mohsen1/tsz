@@ -553,13 +553,21 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(symbol) = binder.symbols.get(sym_id) else {
             return false;
         };
-        let Some(source_arena) = binder.symbol_arenas.get(&sym_id) else {
+        let Some(source_arena) = binder
+            .symbol_arenas
+            .get(&sym_id)
+            .or_else(|| self.global_symbol_arenas.get(&sym_id))
+            .cloned()
+        else {
             return false;
         };
         let Some(source_file) = self.arena_source_file(source_arena.as_ref()) else {
             return false;
         };
         if !source_file.is_declaration_file {
+            return false;
+        }
+        if self.source_path_is_root_file(&source_file.file_name) {
             return false;
         }
 
@@ -707,7 +715,11 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(symbol) = binder.symbols.get(resolved_sym) else {
             return;
         };
-        let Some(source_arena) = binder.symbol_arenas.get(&resolved_sym) else {
+        let Some(source_arena) = binder
+            .symbol_arenas
+            .get(&resolved_sym)
+            .or_else(|| self.global_symbol_arenas.get(&resolved_sym))
+        else {
             return;
         };
         let Some(source_path) = self.get_symbol_source_path(resolved_sym, binder) else {
@@ -997,9 +1009,32 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
+        if let Some(result) = self.non_portable_import_type_text_reference(
+            arena,
+            node_idx,
+            source_path,
+            visited_types,
+            visited_symbols,
+            visited_declaration_symbols,
+            visited_nodes,
+        ) && seen.insert(result.clone())
+        {
+            results.push(result);
+        }
+
         if node.kind == syntax_kind_ext::TYPE_REFERENCE
-            && let Some(printed_type_text) = self.emit_type_node_text(node_idx)
-            && let Some(sym_id) = self.find_symbol_for_import_type_text(&printed_type_text)
+            && self.source_path_is_root_file(source_path)
+            && let Some(printed_type_text) = self.portability_type_node_text(arena, node_idx)
+            && Self::next_import_type_text(&printed_type_text).is_some()
+        {
+            return;
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && !self.source_path_is_root_file(source_path)
+            && let Some(printed_type_text) = self.portability_type_node_text(arena, node_idx)
+            && let Some(sym_id) =
+                self.find_symbol_for_import_type_text_from_path(&printed_type_text, source_path)
         {
             if let Some(binder) = self.binder
                 && let Some(current_file_path) = self.current_file_path.as_deref()
@@ -1105,6 +1140,280 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn non_portable_import_type_text_reference(
+        &self,
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+        source_path: &str,
+        visited_types: &mut rustc_hash::FxHashSet<tsz_solver::types::TypeId>,
+        visited_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
+        visited_declaration_symbols: &mut rustc_hash::FxHashSet<SymbolId>,
+        visited_nodes: &mut rustc_hash::FxHashSet<(usize, u32)>,
+    ) -> Option<(String, String)> {
+        let node = arena.get(node_idx)?;
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+
+        let printed_type_text = self.portability_type_node_text(arena, node_idx)?;
+        let (import_start, module_specifier, _) = Self::next_import_type_text(&printed_type_text)?;
+        let (_, type_name) = self.parse_import_type_text_at(&printed_type_text, import_start)?;
+        if self.source_path_is_root_file(source_path) {
+            return None;
+        }
+        if let Some(sym_id) = self.find_symbol_for_import_type_text_from_path(
+            &printed_type_text[import_start..],
+            source_path,
+        ) && let Some(binder) = self.binder
+            && let Some(current_file_path) = self.current_file_path.as_deref()
+            && let Some(result) = self.check_symbol_portability(
+                sym_id,
+                binder,
+                current_file_path,
+                visited_types,
+                visited_symbols,
+                visited_declaration_symbols,
+                visited_nodes,
+            )
+        {
+            return Some(result);
+        }
+
+        if !module_specifier.starts_with('.') && !module_specifier.starts_with('/') {
+            return self
+                .transitive_dependency_from_import(source_path, &module_specifier)
+                .or_else(|| {
+                    self.local_dependency_reference_from_import(source_path, &module_specifier)
+                })
+                .map(|from_path| (from_path, type_name));
+        }
+
+        None
+    }
+
+    fn local_dependency_reference_from_import(
+        &self,
+        source_path: &str,
+        import_module: &str,
+    ) -> Option<String> {
+        use std::path::{Component, Path};
+
+        let current_file_path = self.current_file_path.as_deref()?;
+        let source_dir = Path::new(source_path).parent()?;
+        let source_components: Vec<_> = source_dir.components().collect();
+        let package_root_end = source_components.iter().rposition(|component| {
+            matches!(component, Component::Normal(part) if part.to_str() == Some("node_modules"))
+        });
+        let package_root = if let Some(nm_idx) = package_root_end {
+            let pkg_start = nm_idx + 1;
+            let pkg_len = if source_components.get(pkg_start).is_some_and(|component| {
+                matches!(component, Component::Normal(part) if part.to_str().is_some_and(|text| text.starts_with('@')))
+            }) {
+                2
+            } else {
+                1
+            };
+            source_components.iter().take(pkg_start + pkg_len).fold(
+                std::path::PathBuf::new(),
+                |mut path, component| {
+                    path.push(component.as_os_str());
+                    path
+                },
+            )
+        } else if let Some(package_root) = source_dir
+            .ancestors()
+            .find(|ancestor| ancestor.join("package.json").is_file())
+        {
+            package_root.to_path_buf()
+        } else {
+            source_dir.to_path_buf()
+        };
+
+        let mut module_paths = self
+            .binder?
+            .module_exports
+            .keys()
+            .filter(|module_path| {
+                self.node_modules_path_matches_import_specifier(module_path, import_module)
+                    || self
+                        .package_specifier_for_node_modules_path(source_path, module_path)
+                        .is_some_and(|specifier| specifier == import_module)
+            })
+            .collect::<Vec<_>>();
+        module_paths.sort_by(|left, right| {
+            self.module_export_path_rank(right, import_module)
+                .cmp(&self.module_export_path_rank(left, import_module))
+                .then_with(|| right.cmp(left))
+        });
+
+        for module_path in module_paths {
+            let module_path = Path::new(module_path);
+            let diagnostic_source = if module_path.starts_with(&package_root) {
+                module_path.to_path_buf()
+            } else {
+                let Some(local_path) = Self::local_node_modules_equivalent_path(
+                    &package_root,
+                    import_module,
+                    module_path,
+                ) else {
+                    continue;
+                };
+                if !local_path.exists() {
+                    continue;
+                }
+                local_path
+            };
+
+            let source = diagnostic_source.to_str()?;
+            let mut from_path =
+                self.strip_ts_extensions(&self.calculate_relative_path(current_file_path, source));
+            if from_path.ends_with("/index") {
+                from_path.truncate(from_path.len() - "/index".len());
+            }
+            return Some(Self::ts2883_relative_node_modules_path(from_path));
+        }
+
+        None
+    }
+
+    fn local_dependency_reference_from_import_type_text(
+        &self,
+        source_path: &str,
+        printed_type_text: &str,
+    ) -> Option<(String, String)> {
+        let (module_specifier, type_name) = self.parse_import_type_text(printed_type_text)?;
+        if module_specifier.starts_with('.') || module_specifier.starts_with('/') {
+            return None;
+        }
+        if let Some(binder) = self.binder
+            && let Some(current_file_path) = self.current_file_path.as_deref()
+            && binder.module_exports.iter().any(|(module_path, exports)| {
+                exports.get(type_name.as_str()).is_some()
+                    && (self
+                        .node_modules_path_matches_import_specifier(module_path, &module_specifier)
+                        || self
+                            .package_specifier_for_node_modules_path(current_file_path, module_path)
+                            .is_some_and(|specifier| specifier == module_specifier))
+            })
+        {
+            return None;
+        }
+        self.local_dependency_reference_from_import(source_path, &module_specifier)
+            .map(|from_path| (from_path, type_name))
+    }
+
+    fn emit_returned_identifier_import_type_provenance_diagnostic(
+        &mut self,
+        returned_identifier: NodeIndex,
+        printed_type_text: &str,
+        decl_name: &str,
+        file: &str,
+        pos: u32,
+        length: u32,
+    ) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(sym_id) = self.value_reference_symbol(returned_identifier) else {
+            return false;
+        };
+        let resolved_sym = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .or_else(|| self.resolve_import_symbol_from_module_exports(sym_id, binder))
+            .unwrap_or_else(|| self.resolve_portability_declaration_symbol(sym_id, binder));
+        let Some(source_path) = self.get_symbol_source_path(resolved_sym, binder) else {
+            return false;
+        };
+        if self.source_path_is_root_file(&source_path) {
+            return false;
+        }
+        let Some((from_path, type_name)) =
+            self.local_dependency_reference_from_import_type_text(&source_path, printed_type_text)
+        else {
+            return false;
+        };
+        self.emit_non_portable_named_reference_diagnostic(
+            decl_name, file, pos, length, &from_path, &type_name,
+        );
+        true
+    }
+
+    pub(in crate::declaration_emitter) fn source_path_is_root_file(
+        &self,
+        source_path: &str,
+    ) -> bool {
+        let normalized_source_path = source_path.replace('\\', "/");
+        if self.root_file_paths.contains(&normalized_source_path) {
+            return true;
+        }
+        let canonical_source_path = std::fs::canonicalize(source_path)
+            .ok()
+            .map(|path| path.to_string_lossy().replace('\\', "/"));
+        canonical_source_path
+            .as_ref()
+            .is_some_and(|path| self.root_file_paths.contains(path))
+    }
+
+    fn local_node_modules_equivalent_path(
+        package_root: &std::path::Path,
+        import_module: &str,
+        module_path: &std::path::Path,
+    ) -> Option<std::path::PathBuf> {
+        use std::path::{Component, PathBuf};
+
+        let package_len = if import_module.starts_with('@') { 2 } else { 1 };
+        let package_parts = import_module
+            .split('/')
+            .take(package_len)
+            .collect::<Vec<_>>();
+        if package_parts.len() != package_len || package_parts.iter().any(|part| part.is_empty()) {
+            return None;
+        }
+
+        let components = module_path.components().collect::<Vec<_>>();
+        for (idx, component) in components.iter().enumerate() {
+            if !matches!(component, Component::Normal(part) if part.to_str() == Some("node_modules"))
+            {
+                continue;
+            }
+
+            let package_start = idx + 1;
+            if components.len() < package_start + package_len {
+                continue;
+            }
+            let matches_package = components[package_start..package_start + package_len]
+                .iter()
+                .filter_map(|component| match component {
+                    Component::Normal(part) => part.to_str(),
+                    _ => None,
+                })
+                .eq(package_parts.iter().copied());
+            if !matches_package {
+                continue;
+            }
+
+            let mut local_path = PathBuf::from(package_root);
+            local_path.push("node_modules");
+            for part in &package_parts {
+                local_path.push(part);
+            }
+            for component in &components[package_start + package_len..] {
+                local_path.push(component.as_os_str());
+            }
+            return Some(local_path);
+        }
+
+        None
+    }
+
+    fn portability_type_node_text(&self, arena: &NodeArena, node_idx: NodeIndex) -> Option<String> {
+        self.source_slice_from_arena(arena, node_idx)
+            .map(|text| text.trim().trim_end_matches(';').trim().to_string())
+            .filter(|text| !text.is_empty())
+            .or_else(|| self.emit_type_node_text_from_arena(arena, node_idx))
+    }
+
     pub(in crate::declaration_emitter) fn first_bound_symbol_in_type_subtree(
         &self,
         arena: &NodeArena,
@@ -1152,7 +1461,11 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(symbol) = binder.symbols.get(resolved_sym) else {
             return false;
         };
-        let Some(source_arena) = binder.symbol_arenas.get(&resolved_sym) else {
+        let Some(source_arena) = binder
+            .symbol_arenas
+            .get(&resolved_sym)
+            .or_else(|| self.global_symbol_arenas.get(&resolved_sym))
+        else {
             return false;
         };
         let Some(source_path) = self.get_symbol_source_path(resolved_sym, binder) else {
@@ -1315,6 +1628,11 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(sym_id) = self.value_reference_symbol(current) else {
             return false;
         };
+        if self
+            .emit_non_portable_symbol_declaration_diagnostic(sym_id, decl_name, file, pos, length)
+        {
+            return true;
+        }
         if self.emit_non_portable_callable_symbol_declared_return_diagnostic(
             sym_id, decl_name, file, pos, length,
         ) {
@@ -1386,6 +1704,12 @@ impl<'a> DeclarationEmitter<'a> {
             }
             return false;
         };
+        if let Some(binder) = self.binder
+            && let Some(source_path) = self.get_symbol_source_path(sym_id, binder)
+            && self.source_path_is_root_file(&source_path)
+        {
+            return false;
+        }
         let mut references = self.collect_non_portable_references_in_symbol_declaration(sym_id);
         if references.is_empty()
             && let Some(binder) = self.binder
@@ -1434,6 +1758,72 @@ impl<'a> DeclarationEmitter<'a> {
             );
         }
         true
+    }
+
+    pub(in crate::declaration_emitter) fn emit_non_portable_function_return_diagnostics(
+        &mut self,
+        printed_type_text: &str,
+        func_body: NodeIndex,
+        func_name: NodeIndex,
+    ) -> bool {
+        let Some(name_text) = self.get_identifier_text(func_name) else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(func_name) else {
+            return false;
+        };
+        let Some(file_path) = self.current_file_path.clone() else {
+            return false;
+        };
+
+        if func_body.is_some() {
+            if let Some(returned_identifier) =
+                self.function_body_unique_return_identifier(func_body)
+                && self.emit_non_portable_initializer_declaration_diagnostics(
+                    returned_identifier,
+                    &name_text,
+                    &file_path,
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                )
+            {
+                return true;
+            }
+
+            if let Some(returned_identifier) =
+                self.function_body_unique_return_identifier(func_body)
+                && self.emit_returned_identifier_import_type_provenance_diagnostic(
+                    returned_identifier,
+                    printed_type_text,
+                    &name_text,
+                    &file_path,
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                )
+            {
+                return true;
+            }
+
+            if let Some(return_expression) = self.function_body_single_return_expression(func_body)
+                && self.emit_non_portable_initializer_declaration_diagnostics(
+                    return_expression,
+                    &name_text,
+                    &file_path,
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                )
+            {
+                return true;
+            }
+        }
+
+        self.emit_non_portable_import_type_text_diagnostics(
+            printed_type_text,
+            &name_text,
+            &file_path,
+            name_node.pos,
+            name_node.end - name_node.pos,
+        )
     }
 
     pub(in crate::declaration_emitter) fn emit_non_serializable_property_diagnostic(

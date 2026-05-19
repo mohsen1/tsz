@@ -551,7 +551,7 @@ impl<'a> Printer<'a> {
             self.ctx.flags.optional_chain_needs_parens = true;
             self.ctx.flags.nullish_coalescing_needs_parens = true;
         }
-        if binary.operator_token == SyntaxKind::EqualsToken as u16
+        if self.is_assignment_operator(binary.operator_token)
             && self.emit_commonjs_live_export_assignment_target(binary.left)
         {
             // The live export chain emitted the left-hand side.
@@ -758,20 +758,24 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if self.in_system_execute_body
-            && (unary.operator == SyntaxKind::PlusPlusToken as u16
-                || unary.operator == SyntaxKind::MinusMinusToken as u16)
+        if (unary.operator == SyntaxKind::PlusPlusToken as u16
+            || unary.operator == SyntaxKind::MinusMinusToken as u16)
             && let Some(operand_node) = self.arena.get(unary.operand)
             && operand_node.kind == SyntaxKind::Identifier as u16
         {
             let local_name = self.get_identifier_text_idx(unary.operand);
-            if let Some(export_name) = self.system_reexported_names.get(&local_name).cloned() {
-                self.write("exports_1(\"");
-                self.write(&export_name);
-                self.write("\", ");
-                self.write(get_operator_text(unary.operator));
-                self.write(&local_name);
-                self.write(")");
+            if self.in_system_execute_body {
+                if let Some(export_name) = self.system_reexported_names.get(&local_name).cloned() {
+                    self.write("exports_1(\"");
+                    self.write(&export_name);
+                    self.write("\", ");
+                    self.write(get_operator_text(unary.operator));
+                    self.write(&local_name);
+                    self.write(")");
+                    return;
+                }
+            }
+            if self.emit_cjs_live_export_prefix_unary(&local_name, unary.operator) {
                 return;
             }
         }
@@ -1051,6 +1055,18 @@ impl<'a> Printer<'a> {
                     self.map_token_after_skipping_whitespace(operand_node.end, node.end);
                 }
                 self.write(get_operator_text(unary.operator));
+                return;
+            }
+        }
+
+        if (unary.operator == SyntaxKind::PlusPlusToken as u16
+            || unary.operator == SyntaxKind::MinusMinusToken as u16)
+            && let Some(operand_node) = self.arena.get(unary.operand)
+            && operand_node.kind == SyntaxKind::Identifier as u16
+        {
+            let local_name = self.get_identifier_text_idx(unary.operand);
+            let is_statement = self.ctx.flags.in_statement_expression;
+            if self.emit_cjs_live_export_postfix_unary(&local_name, unary.operator, is_statement) {
                 return;
             }
         }

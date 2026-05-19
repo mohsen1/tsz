@@ -73,6 +73,8 @@ pub struct DeclarationEmitter<'a> {
     pub(super) arena_to_path: FxHashMap<usize, String>,
     /// Map of file index -> file path (fallback for resolving symbol source via `decl_file_idx`)
     pub(super) file_idx_to_path: FxHashMap<u32, String>,
+    /// Canonicalized root files from the original compilation request.
+    pub(super) root_file_paths: FxHashSet<String>,
     /// Global symbol-to-arena mapping from all program files, enabling cross-file
     /// symbol source path resolution for TS2883 portability checks.
     pub(super) global_symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,

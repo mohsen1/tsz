@@ -37,6 +37,7 @@ pub(crate) struct EmitOutputsContext<'a> {
     pub(crate) program: &'a MergedProgram,
     pub(crate) options: &'a ResolvedCompilerOptions,
     pub(crate) base_dir: &'a Path,
+    pub(crate) root_file_paths: &'a [PathBuf],
     pub(crate) root_dir: Option<&'a Path>,
     pub(crate) out_dir: Option<&'a Path>,
     pub(crate) declaration_dir: Option<&'a Path>,
@@ -104,6 +105,12 @@ pub(crate) fn emit_outputs(
         .iter()
         .enumerate()
         .map(|(idx, file)| (idx as u32, file.file_name.clone()))
+        .collect();
+    let root_file_paths: FxHashSet<String> = context
+        .root_file_paths
+        .iter()
+        .map(|path| std::fs::canonicalize(path).unwrap_or_else(|_| path.clone()))
+        .map(|path| path.to_string_lossy().replace('\\', "/"))
         .collect();
     let file_lookup = build_program_file_lookup(context.program);
 
@@ -464,6 +471,7 @@ pub(crate) fn emit_outputs(
                     // Set arena to path mapping for module resolution
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_file_idx_to_path(file_idx_to_path.clone());
+                    emitter.set_root_file_paths(root_file_paths.clone());
                     emitter.set_global_symbol_arenas(global_symbol_arenas.clone());
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);
@@ -483,6 +491,7 @@ pub(crate) fn emit_outputs(
                     );
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter.set_file_idx_to_path(file_idx_to_path.clone());
+                    emitter.set_root_file_paths(root_file_paths.clone());
                     emitter.set_global_symbol_arenas(global_symbol_arenas.clone());
                     emitter.set_remove_comments(context.options.printer.remove_comments);
                     emitter.set_strip_internal(context.options.strip_internal);

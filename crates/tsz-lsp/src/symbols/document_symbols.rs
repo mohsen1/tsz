@@ -366,6 +366,7 @@ impl<'a> DocumentSymbolProvider<'a> {
             k if k == syntax_kind_ext::SOURCE_FILE => {
                 let mut symbols = Vec::new();
                 if let Some(sf) = self.arena.get_source_file(node) {
+                    symbols.reserve(sf.statements.nodes.len());
                     for &stmt in &sf.statements.nodes {
                         symbols.extend(self.collect_symbols(stmt, container_name));
                     }
@@ -478,7 +479,7 @@ impl<'a> DocumentSymbolProvider<'a> {
 
                     let modifiers = self.get_kind_modifiers_from_list(&class.modifiers);
 
-                    let mut children = Vec::new();
+                    let mut children = Vec::with_capacity(class.members.nodes.len());
                     for &member in &class.members.nodes {
                         children.extend(self.collect_symbols(member, Some(&name)));
                     }
@@ -515,7 +516,7 @@ impl<'a> DocumentSymbolProvider<'a> {
 
                     let modifiers = self.get_kind_modifiers_from_list(&iface.modifiers);
 
-                    let mut children = Vec::new();
+                    let mut children = Vec::with_capacity(iface.members.nodes.len());
                     for &member in &iface.members.nodes {
                         children.extend(self.collect_symbols(member, Some(&name)));
                     }
@@ -672,7 +673,7 @@ impl<'a> DocumentSymbolProvider<'a> {
 
                     let modifiers = self.get_kind_modifiers_from_list(&enum_decl.modifiers);
 
-                    let mut children = Vec::new();
+                    let mut children = Vec::with_capacity(enum_decl.members.nodes.len());
                     for &member in &enum_decl.members.nodes {
                         children.extend(self.collect_symbols(member, Some(&name)));
                     }
@@ -905,6 +906,7 @@ impl<'a> DocumentSymbolProvider<'a> {
             k if k == syntax_kind_ext::CONSTRUCTOR => {
                 let mut out = Vec::new();
                 if let Some(ctor) = self.arena.get_constructor(node) {
+                    out.reserve(1 + ctor.parameters.nodes.len());
                     let children = self.collect_children_from_block(ctor.body, container_name);
                     let modifiers = self.get_kind_modifiers_from_list(&ctor.modifiers);
                     out.push(DocumentSymbol {
@@ -975,6 +977,7 @@ impl<'a> DocumentSymbolProvider<'a> {
             k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
                 let mut symbols = Vec::new();
                 if let Some(block) = self.arena.get_block(node) {
+                    symbols.reserve(block.statements.nodes.len());
                     for &stmt in &block.statements.nodes {
                         symbols.extend(self.collect_symbols(stmt, container_name));
                     }
@@ -1143,6 +1146,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                 if let Some(block) = self.arena.get_module_block(node) {
                     let mut symbols = Vec::new();
                     if let Some(stmts) = &block.statements {
+                        symbols.reserve(stmts.nodes.len());
                         for &stmt in &stmts.nodes {
                             symbols.extend(self.collect_symbols(stmt, container_name));
                         }
@@ -1256,6 +1260,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                                 if let Some(call) = self.arena.get_call_expr(expr_node)
                                     && let Some(args) = call.arguments.as_ref()
                                 {
+                                    children.reserve(args.nodes.len());
                                     for &arg_idx in &args.nodes {
                                         let Some(arg_node) = self.arena.get(arg_idx) else {
                                             continue;

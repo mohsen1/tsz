@@ -38,6 +38,7 @@ impl<'a> DeclarationEmitter<'a> {
             json_module_value_cache: FxHashMap::default(),
             arena_to_path: FxHashMap::default(),
             file_idx_to_path: FxHashMap::default(),
+            root_file_paths: FxHashSet::default(),
             global_symbol_arenas: FxHashMap::default(),
             bundled_duplicate_global_var_types: FxHashMap::default(),
             required_imports: FxHashMap::default(),
@@ -154,6 +155,7 @@ impl<'a> DeclarationEmitter<'a> {
             json_module_value_cache: FxHashMap::default(),
             arena_to_path: FxHashMap::default(),
             file_idx_to_path: FxHashMap::default(),
+            root_file_paths: FxHashSet::default(),
             global_symbol_arenas: FxHashMap::default(),
             bundled_duplicate_global_var_types: FxHashMap::default(),
             required_imports: FxHashMap::default(),
@@ -323,6 +325,10 @@ impl<'a> DeclarationEmitter<'a> {
     /// references created during type checking).
     pub fn set_file_idx_to_path(&mut self, file_idx_to_path: FxHashMap<u32, String>) {
         self.file_idx_to_path = file_idx_to_path;
+    }
+
+    pub fn set_root_file_paths(&mut self, root_file_paths: FxHashSet<String>) {
+        self.root_file_paths = root_file_paths;
     }
 
     /// Set the global symbol-to-arena mapping from all program files.
