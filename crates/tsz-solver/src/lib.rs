@@ -93,13 +93,19 @@ pub mod type_handles {
 /// These functions inspect types but don't modify or create them.
 /// Safe for any consumer to import directly.
 pub mod query {
+    pub use crate::objects::{
+        ApparentMemberKind, ElementAccessEvaluator, ElementAccessResult, IndexKind,
+        IndexSignatureResolver, PropertyCollectionResult, apparent_object_member_kind,
+        apparent_primitive_member_kind, apparent_primitive_members, apparent_primitive_shape,
+        collect_properties, literal_value_intrinsic_kind,
+    };
     pub use crate::visitors::visitor::{
-        application_id, array_element_type, bound_parameter_index, callable_shape_id,
-        collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids,
+        apparent_intrinsic_kind, application_id, array_element_type, bound_parameter_index,
+        callable_shape_id, collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids,
         collect_referenced_types, collect_type_queries, conditional_type_id,
         constraint_references_type_param_in_resolution_path,
         contains_concrete_application_with_def, contains_error_type, contains_free_infer_types,
-        contains_infer_types, contains_this_type, contains_type_matching,
+        contains_infer_types, contains_this_type, contains_type_by_id, contains_type_matching,
         contains_type_parameter_named, contains_type_parameter_named_shallow,
         contains_type_parameters, enum_components, for_each_child, for_each_child_by_id,
         function_shape_id, has_deferred_conditional_member, index_access_parts,
@@ -115,9 +121,9 @@ pub mod query {
         lazy_def_id, literal_number, literal_string, literal_value, mapped_type_id,
         module_namespace_symbol_ref, no_infer_inner_type, object_shape_id,
         object_with_index_shape_id, readonly_inner_type, recursive_index,
-        resolve_default_type_args, string_intrinsic_components, template_literal_id, tuple_list_id,
-        type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
-        walk_referenced_types,
+        references_any_type_param_named, resolve_default_type_args, string_intrinsic_components,
+        template_literal_id, tuple_list_id, type_param_info, type_query_symbol, union_list_id,
+        unique_symbol_ref, unwrap_readonly_or_noinfer, walk_referenced_types,
     };
 }
 
@@ -173,7 +179,8 @@ pub mod construction {
     pub use crate::caches::db::{QueryDatabase, TypeDatabase};
     pub use crate::caches::query_cache::QueryCache;
     pub use crate::intern::TypeInterner;
-    pub use crate::intern::type_factory::*;
+    pub use crate::intern::type_factory::TypeFactory;
+    pub use crate::objects::ObjectLiteralBuilder;
 }
 pub use intern::TypeInterner;
 pub use intern::clear_thread_local_cache;
@@ -191,7 +198,7 @@ pub use visitors::visitor::{
     index_access_parts, intersection_list_id, intrinsic_kind, is_array_type, is_conditional_type,
     is_empty_object_type, is_empty_object_type_through_type_constraints, is_enum_type,
     is_error_type, is_function_type, is_function_type_through_type_constraints,
-    is_generic_application, is_identity_comparable_type, is_index_access_type,
+    is_generic_application, is_identity_comparable_type, is_index_access_type, is_infer_type,
     is_intersection_type, is_lazy_type, is_literal_type, is_literal_type_through_type_constraints,
     is_mapped_type, is_module_namespace_type, is_object_like_type,
     is_object_like_type_through_type_constraints, is_primitive_type, is_structurally_deferred_type,
@@ -209,10 +216,13 @@ pub use caches::db::{QueryDatabase, TypeDatabase};
 pub use caches::query_cache::{
     QueryCache, QueryCacheStatistics, RelationCacheProbe, RelationCacheStats, SharedQueryCache,
 };
-pub use canonicalize::*;
-pub use classes::inheritance::*;
+pub use canonicalize::Canonicalizer;
+pub use classes::inheritance::InheritanceGraph;
 pub use contextual::{ContextualTypeContext, apply_contextual_type, rest_argument_element_type};
-pub use def::*;
+pub use def::{
+    ContentAddressedDefIds, DefId, DefKind, DefinitionInfo, DefinitionStore, EnumMemberValue,
+    FileChange, FileChangeSet, InvalidationSummary, StoreStatistics, diff_fingerprints,
+};
 pub use diagnostics::SubtypeFailureReason;
 pub use diagnostics::builders::{
     DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
@@ -223,9 +233,13 @@ pub use diagnostics::reduce::deep_reduce_for_display;
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
 };
-pub use evaluation::evaluate::*;
+pub use evaluation::evaluate::{
+    TypeEvaluator, TypeEvaluatorCacheStatistics, evaluate_conditional, evaluate_index_access,
+    evaluate_index_access_with_options, evaluate_keyof, evaluate_mapped, evaluate_type,
+    evaluate_type_with_request,
+};
 pub use evaluation::session::EvaluationSession;
-pub use instantiation::application::*;
+pub use instantiation::application::{ApplicationEvaluator, ApplicationResult};
 pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, fill_application_defaults,
     instantiate_function_with_type_args, instantiate_generic, instantiate_type,
@@ -235,16 +249,31 @@ pub use instantiation::instantiate::{
     instantiate_type_with_infer, instantiate_type_with_infer_cached, substitute_this_type,
     substitute_this_type_at_return_position, substitute_this_type_cached,
 };
-pub use intern::type_factory::*;
-pub use narrowing::*;
-pub use objects::*;
+pub use intern::type_factory::TypeFactory;
+pub use narrowing::{
+    CachedPropertyType, DiscriminantInfo, GuardSense, NarrowingCache, NarrowingContext,
+    NarrowingResult, NullishFilter, OptionalPropertyChainKey, TypeGuard, TypeofKind,
+    find_discriminants, is_definitely_nullish, is_nullish_type, narrow_by_discriminant,
+    narrow_by_typeof, remove_nullish, remove_nullish_query, remove_undefined, split_nullish_type,
+    type_contains_undefined,
+};
+pub use objects::{
+    ApparentMemberKind, ElementAccessEvaluator, ElementAccessResult, IndexKind,
+    IndexSignatureResolver, ObjectLiteralBuilder, PropertyCollectionResult,
+    apparent_object_member_kind, apparent_primitive_member_kind, apparent_primitive_members,
+    apparent_primitive_shape, collect_properties, literal_value_intrinsic_kind,
+};
 pub use operations::compound_assignment;
 pub use operations::compound_assignment::{
     fallback_compound_assignment_result, is_assignment_operator, is_compound_assignment_operator,
     is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
 };
 pub use operations::expression_ops;
-pub use operations::expression_ops::*;
+pub use operations::expression_ops::{
+    compute_best_common_type, compute_best_common_type_cached, compute_conditional_expression_type,
+    compute_template_expression_type, compute_template_expression_type_contextual,
+    is_template_literal_contextual_type, normalize_object_union_members_for_write_target,
+};
 pub use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
     MAX_CONSTRAINT_RECURSION_DEPTH, get_contextual_signature_cached_with_compat_checker,
@@ -252,10 +281,17 @@ pub use operations::{
     get_contextual_signature_for_arity_with_compat_checker,
     get_contextual_signature_with_compat_checker,
 };
-pub use relations::compat::*;
-pub use relations::judge::*;
+pub use relations::compat::{AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider};
+pub use relations::judge::{
+    CallableKind, DefaultJudge, IterableKind, Judge, JudgeConfig, PropertyResult, TruthinessKind,
+};
 pub use relations::lawyer::AnyPropagationRules;
-pub use relations::relation_queries::*;
+pub use relations::relation_queries::{
+    AssignabilityFailureAnalysis, RelationContext, RelationKind, RelationPolicy,
+    RelationQueryInputs, RelationResult, analyze_assignability_failure_with_resolver,
+    are_type_params_assignable, check_application_variance, query_relation,
+    query_relation_with_overrides, query_relation_with_resolver,
+};
 pub use relations::subtype::{
     AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
     are_types_structurally_identical, is_subtype_of, reset_subtype_thread_local_state,

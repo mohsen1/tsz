@@ -194,6 +194,84 @@ fn read_solver_source(rel: &str) -> String {
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()))
 }
 
+// =============================================================================
+// Tiered API surface guard (#8204)
+// =============================================================================
+
+/// Guard that the solver crate root has no wildcard re-exports.
+///
+/// All public surface items must be listed explicitly so that the API
+/// surface is auditable and the tiered module structure (`type_handles`,
+/// `query`, `computation`, `construction`) is the preferred access path
+/// for new callers.
+#[test]
+fn solver_root_has_no_wildcard_reexports() {
+    let src = read_solver_source("lib.rs");
+
+    // Wildcards inside `pub mod judge { }` and `pub mod visitor { }` facade
+    // blocks are intentional; only root-scope (depth 0) wildcards are banned.
+    let mut depth: i32 = 0;
+    let wildcards: Vec<(usize, &str)> = src
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| {
+            let open = line.chars().filter(|&c| c == '{').count() as i32;
+            let close = line.chars().filter(|&c| c == '}').count() as i32;
+            let was_root = depth == 0; // snapshot before updating — this line's braces apply next
+            depth += open - close;
+            let trimmed = line.trim_start();
+            was_root
+                && !trimmed.starts_with("//")
+                && !trimmed.starts_with("///")
+                && trimmed.starts_with("pub use ")
+                && trimmed.ends_with("::*;")
+        })
+        .collect();
+
+    assert!(
+        wildcards.is_empty(),
+        "solver lib.rs must not contain wildcard `pub use X::*;` re-exports (#8204). \
+         Use explicit named exports so the API surface is auditable. \
+         Wildcard re-exports found:\n{}",
+        wildcards
+            .iter()
+            .map(|(line, text)| format!("  line {}: {}", line + 1, text.trim()))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+}
+
+/// Guard that `query` tier contains `apparent_intrinsic_kind`, which is a
+/// read-only inspector and belongs at tier 2, not only at the flat root.
+#[test]
+fn query_tier_contains_apparent_intrinsic_kind() {
+    let src = read_solver_source("lib.rs");
+
+    let in_query_block = src
+        .lines()
+        .scan(0i32, |depth, line| {
+            let trimmed = line.trim();
+            if trimmed.starts_with("pub mod query {") {
+                *depth = 1;
+                return Some((true, line));
+            }
+            if *depth > 0 {
+                *depth += line.chars().filter(|&c| c == '{').count() as i32;
+                *depth -= line.chars().filter(|&c| c == '}').count() as i32;
+                return Some((*depth > 0, line));
+            }
+            Some((false, line))
+        })
+        .filter(|(in_block, _)| *in_block)
+        .any(|(_, line)| line.contains("apparent_intrinsic_kind"));
+
+    assert!(
+        in_query_block,
+        "tsz_solver::query tier must re-export `apparent_intrinsic_kind` — \
+         it is a read-only type inspector and belongs at tier 2 (#8204)"
+    );
+}
+
 #[test]
 fn evaluation_engine_keeps_request_stage_boundary() {
     let mod_rs = read_solver_source("evaluation/mod.rs");

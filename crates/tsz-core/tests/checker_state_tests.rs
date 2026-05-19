@@ -13,7 +13,27 @@ use crate::checker::state::CheckerState;
 use crate::parser::ParserState;
 use crate::parser::node::NodeArena;
 use crate::test_fixtures::{TestContext, merge_shared_lib_symbols, setup_lib_contexts};
-use tsz_solver::{TypeId, TypeInterner, Visibility, types::RelationCacheKey, types::TypeData};
+use tsz_solver::{
+    TypeId, TypeInterner, Visibility,
+    types::{CachedAnyMode, RelationCacheConfig, RelationCacheKey, RelationFlags, TypeData},
+};
+
+/// Convert a `pack_relation_flags()` u16 into a pair of `RelationCacheConfig`s:
+/// one with all flags intact (regular) and one with `STRICT_FUNCTION_TYPES` cleared
+/// (bivariant).
+fn make_regular_and_bivariant_configs(packed: u16) -> (RelationCacheConfig, RelationCacheConfig) {
+    let regular = RelationCacheConfig::new(
+        RelationFlags::from_bits(packed as u32)
+            .expect("pack_relation_flags produced bits outside RelationFlags"),
+        CachedAnyMode::All,
+    );
+    let bivariant = RelationCacheConfig::new(
+        RelationFlags::from_bits((packed & !RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES) as u32)
+            .expect("bivariant flags outside RelationFlags"),
+        CachedAnyMode::All,
+    );
+    (regular, bivariant)
+}
 fn parse_test_source(source: &str) -> (crate::parser::ParserState, crate::parser::NodeIndex) {
     let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -1164,12 +1184,12 @@ fn test_checker_assignability_bivariant_cache_key_is_distinct() {
     assert!(!checker.is_assignable_to(TypeId::STRING, TypeId::NUMBER));
     assert!(!checker.is_assignable_to_bivariant(TypeId::STRING, TypeId::NUMBER));
 
-    let regular_flags = checker.ctx.pack_relation_flags();
-    let bivariant_flags = regular_flags & !RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
+    let (regular_config, bivariant_config) =
+        make_regular_and_bivariant_configs(checker.ctx.pack_relation_flags());
     let regular_key =
-        RelationCacheKey::assignability(TypeId::STRING, TypeId::NUMBER, regular_flags, 0);
+        RelationCacheKey::for_assignability(TypeId::STRING, TypeId::NUMBER, regular_config);
     let bivariant_key =
-        RelationCacheKey::assignability(TypeId::STRING, TypeId::NUMBER, bivariant_flags, 0);
+        RelationCacheKey::for_assignability(TypeId::STRING, TypeId::NUMBER, bivariant_config);
     assert_ne!(
         regular_key, bivariant_key,
         "regular and bivariant assignability must use distinct relation cache keys"
@@ -1271,12 +1291,12 @@ fn test_checker_assignability_direct_union_member_fast_path() {
     assert!(checker.is_assignable_to(TypeId::STRING, string_or_number));
     assert!(checker.is_assignable_to_bivariant(TypeId::STRING, string_or_number));
 
-    let regular_flags = checker.ctx.pack_relation_flags();
-    let bivariant_flags = regular_flags & !RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
+    let (regular_config, bivariant_config) =
+        make_regular_and_bivariant_configs(checker.ctx.pack_relation_flags());
     let regular_key =
-        RelationCacheKey::assignability(TypeId::STRING, string_or_number, regular_flags, 0);
+        RelationCacheKey::for_assignability(TypeId::STRING, string_or_number, regular_config);
     let bivariant_key =
-        RelationCacheKey::assignability(TypeId::STRING, string_or_number, bivariant_flags, 0);
+        RelationCacheKey::for_assignability(TypeId::STRING, string_or_number, bivariant_config);
     assert_ne!(
         regular_key, bivariant_key,
         "regular and bivariant union-member assignability must use distinct relation cache keys"

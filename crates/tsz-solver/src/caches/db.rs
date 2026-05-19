@@ -1041,7 +1041,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         literal_index: Option<usize>,
     ) -> TypeId {
         match self.resolve_element_access(object_type, index_type, literal_index) {
-            crate::element_access::ElementAccessResult::Success(type_id) => type_id,
+            crate::objects::element_access::ElementAccessResult::Success(type_id) => type_id,
             _ => TypeId::ERROR,
         }
     }

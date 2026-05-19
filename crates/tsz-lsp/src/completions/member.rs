@@ -509,7 +509,7 @@ impl<'a> Completions<'a> {
             return;
         }
 
-        if let Some(kind) = tsz_solver::apparent_intrinsic_kind(interner, evaluated) {
+        if let Some(kind) = tsz_solver::query::apparent_intrinsic_kind(interner, evaluated) {
             self.collect_intrinsic_members_or_boxed(kind, interner, checker, visited, props);
         }
     }

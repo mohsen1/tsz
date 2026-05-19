@@ -17,10 +17,8 @@ use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{
-    ApparentMemberKind, IntrinsicKind, TypeId, TypeInterner, Visibility,
-    apparent_primitive_members, visitor,
-};
+use tsz_solver::query::{ApparentMemberKind, apparent_primitive_members};
+use tsz_solver::{IntrinsicKind, TypeId, TypeInterner, Visibility, visitor};
 
 /// The kind of completion item, matching tsserver's `ScriptElementKind` values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
