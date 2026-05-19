@@ -1797,7 +1797,7 @@ pub(crate) fn function_shape_id(
 }
 
 pub(crate) fn evaluate_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
-    tsz_solver::evaluate_type(db, type_id)
+    tsz_solver::computation::evaluate_type(db, type_id)
 }
 
 pub(crate) fn widen_type_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {

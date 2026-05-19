@@ -494,7 +494,7 @@ ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
             "relations",
             "widening",
         ),
-        108,
+        101,
     ),
 ]
 
@@ -1016,7 +1016,13 @@ ROOT_SOLVER_COMPUTATION_API_SYMBOLS = (
     "CallResult",
     "CompatChecker",
     "ContextualTypeContext",
+    "evaluate_conditional",
+    "evaluate_index_access",
+    "evaluate_index_access_with_options",
+    "evaluate_keyof",
+    "evaluate_mapped",
     "evaluate_type",
+    "evaluate_type_with_request",
     "get_contextual_signature",
     "get_contextual_signature_cached",
     "get_contextual_signature_cached_with_compat_checker",
