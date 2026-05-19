@@ -1,11 +1,21 @@
 //! Structural attribution helpers for source-file alias direct-lowering misses.
 
-use tsz_common::perf_counters::DirectSourceFileTypeAliasBodyRejectionKind;
+use tsz_common::perf_counters::{
+    DirectSourceFileTypeAliasBodyRejectionKind,
+    record_direct_source_file_type_alias_body_rejection_kind,
+};
 use tsz_parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 
-pub(crate) fn source_file_type_alias_body_rejection_kind(
+pub(crate) fn record_source_file_type_alias_body_rejection_kind(
+    arena: &NodeArena,
+    node_idx: NodeIndex,
+) {
+    record_direct_source_file_type_alias_body_rejection_kind(body_rejection_kind(arena, node_idx));
+}
+
+fn body_rejection_kind(
     arena: &NodeArena,
     node_idx: NodeIndex,
 ) -> DirectSourceFileTypeAliasBodyRejectionKind {

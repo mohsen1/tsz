@@ -1,6 +1,6 @@
 //! Direct cross-file query fast paths that avoid constructing child checkers.
 
-use super::source_alias_attribution::source_file_type_alias_body_rejection_kind;
+use super::source_alias_attribution::record_source_file_type_alias_body_rejection_kind;
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
@@ -9,7 +9,6 @@ use tsz_common::perf_counters::{
     DirectActualLibIntlInterfaceOutcome, DirectCrossFileInterfaceLoweringOutcome,
     DirectSourceFileTypeAliasLoweringOutcome, record_direct_actual_lib_alias_body_outcome,
     record_direct_actual_lib_intl_interface_outcome,
-    record_direct_source_file_type_alias_body_rejection_kind,
     record_direct_source_file_type_alias_lowering_outcome,
 };
 use tsz_lowering::TypeLowering;
@@ -1675,9 +1674,7 @@ impl<'a> CheckerState<'a> {
             )
         };
         if !body_is_direct_lowerable {
-            record_direct_source_file_type_alias_body_rejection_kind(
-                source_file_type_alias_body_rejection_kind(symbol_arena, type_alias.type_node),
-            );
+            record_source_file_type_alias_body_rejection_kind(symbol_arena, type_alias.type_node);
             record(DirectSourceFileTypeAliasLoweringOutcome::BodyNotDirectLowerable);
             return None;
         }
