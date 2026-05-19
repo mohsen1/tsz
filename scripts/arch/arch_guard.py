@@ -208,7 +208,7 @@ TRAIT_METHOD_COUNT_CHECKS = [
         "Solver boundary: TypeDatabase method count (#8205)",
         ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
         "TypeDatabase",
-        97,
+        96,
     ),
 ]
 
@@ -345,7 +345,7 @@ ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS = [
             "relations",
             "widening",
         ),
-        137,
+        132,
     ),
 ]
 

@@ -1083,7 +1083,13 @@ impl<'a> Printer<'a> {
         if node.is_identifier()
             && let Some(ident) = self.arena.get_identifier(node)
         {
-            return self.arena.resolve_identifier_text(ident).to_string();
+            let cooked = self.arena.resolve_identifier_text(ident);
+            if !needs_quoting(cooked)
+                && let Some(original) = ident.original_text.as_deref()
+            {
+                return original.to_string();
+            }
+            return cooked.to_string();
         }
 
         if node.kind == syntax_kind_ext::JSX_NAMESPACED_NAME

@@ -93,6 +93,7 @@ pub mod type_handles {
 /// These functions inspect types but don't modify or create them.
 /// Safe for any consumer to import directly.
 pub mod query {
+    pub use crate::caches::db::TypeStore;
     pub use crate::visitors::visitor::{
         application_id, array_element_type, bound_parameter_index, callable_shape_id,
         collect_enum_def_ids, collect_infer_bindings, collect_lazy_def_ids,
@@ -256,8 +257,9 @@ pub use objects::{
     apparent_primitive_shape, collect_properties, element_access, index_signatures,
     literal_value_intrinsic_kind,
 };
-pub use operations::compound_assignment::{
-    fallback_compound_assignment_result, is_assignment_operator, is_compound_assignment_operator,
+#[cfg(test)]
+pub(crate) use operations::compound_assignment::{
+    fallback_compound_assignment_result, is_compound_assignment_operator,
     is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
 };
 pub use operations::{

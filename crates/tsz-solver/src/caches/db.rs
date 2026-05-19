@@ -23,6 +23,25 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
+/// Read-only access to interned type storage.
+///
+/// This is the narrow capability for helpers that only inspect existing
+/// type data and do not need construction, provenance, cache, or policy hooks.
+pub trait TypeStore {
+    fn lookup(&self, id: TypeId) -> Option<TypeData>;
+    fn type_list(&self, id: TypeListId) -> Arc<[TypeId]>;
+}
+
+impl<T: TypeDatabase + ?Sized> TypeStore for T {
+    fn lookup(&self, id: TypeId) -> Option<TypeData> {
+        TypeDatabase::lookup(self, id)
+    }
+
+    fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
+        TypeDatabase::type_list(self, id)
+    }
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
@@ -130,18 +149,6 @@ pub trait TypeDatabase {
     fn unique_symbol(&self, symbol: SymbolRef) -> TypeId;
     fn infer(&self, info: TypeParamInfo) -> TypeId;
     fn string_intrinsic(&self, kind: StringIntrinsicKind, type_arg: TypeId) -> TypeId;
-
-    /// Create a string intrinsic type by name ("Uppercase", "Lowercase", "Capitalize", "Uncapitalize").
-    /// Returns `TypeId::ERROR` for unrecognized names.
-    fn string_intrinsic_by_name(&self, name: &str, type_arg: TypeId) -> TypeId {
-        match name {
-            "Uppercase" => self.string_intrinsic(StringIntrinsicKind::Uppercase, type_arg),
-            "Lowercase" => self.string_intrinsic(StringIntrinsicKind::Lowercase, type_arg),
-            "Capitalize" => self.string_intrinsic(StringIntrinsicKind::Capitalize, type_arg),
-            "Uncapitalize" => self.string_intrinsic(StringIntrinsicKind::Uncapitalize, type_arg),
-            _ => TypeId::ERROR,
-        }
-    }
 
     /// Store display-only properties for a fresh object literal.
     ///
