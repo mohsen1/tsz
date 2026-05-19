@@ -2,6 +2,11 @@
 
 use tsz_solver::{DefinitionStore, TypeDatabase, TypeId};
 
+pub(crate) struct SingleArgTypeApplication {
+    pub(crate) base: TypeId,
+    pub(crate) arg: TypeId,
+}
+
 pub(crate) fn contains_index_access_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::contains_index_access_type(db, type_id)
 }
@@ -20,6 +25,17 @@ pub(crate) fn index_access_type_arg_alias_hint(
     type_id: TypeId,
 ) -> Option<TypeId> {
     tsz_solver::type_queries::index_access_type_arg_alias_hint(db, def_store, type_id)
+}
+
+pub(crate) fn single_arg_type_application(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<SingleArgTypeApplication> {
+    let app = crate::query_boundaries::common::type_application(db, type_id)?;
+    (app.args.len() == 1).then_some(SingleArgTypeApplication {
+        base: app.base,
+        arg: app.args[0],
+    })
 }
 
 pub(crate) fn contains_anonymous_object_surface(

@@ -386,19 +386,19 @@ impl<'a> CheckerState<'a> {
     }
 
     fn jsx_single_arg_props_wrapper_inner(&mut self, type_id: TypeId) -> Option<TypeId> {
-        let app = crate::query_boundaries::common::type_application(self.ctx.types, type_id)?;
-        if app.args.len() != 1 {
-            return None;
-        }
+        let app = crate::query_boundaries::checkers::jsx::single_arg_type_application(
+            self.ctx.types,
+            type_id,
+        )?;
         let is_readonly_mapped =
-            crate::query_boundaries::common::is_mapped_type_with_readonly_modifier(
+            crate::query_boundaries::checkers::jsx::contains_mapped_type_with_readonly_modifier(
                 self.ctx.types,
                 type_id,
-            ) || crate::query_boundaries::common::is_mapped_type_with_readonly_modifier(
+            ) || crate::query_boundaries::checkers::jsx::contains_mapped_type_with_readonly_modifier(
                 self.ctx.types,
                 app.base,
             );
-        (is_readonly_mapped || self.jsx_type_base_is_jsx_element(app.base)).then_some(app.args[0])
+        (is_readonly_mapped || self.jsx_type_base_is_jsx_element(app.base)).then_some(app.arg)
     }
 
     fn jsx_type_base_is_jsx_element(&mut self, type_id: TypeId) -> bool {
