@@ -878,6 +878,92 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    fn source_file_type_node_has_unguarded_self_reference(
+        arena: &NodeArena,
+        root: NodeIndex,
+        name: &str,
+        guarded: bool,
+    ) -> bool {
+        if root.is_none() {
+            return false;
+        }
+        let Some(node) = arena.get(root) else {
+            return false;
+        };
+        if arena
+            .get_identifier(node)
+            .is_some_and(|ident| ident.escaped_text == name)
+        {
+            return !guarded;
+        }
+
+        match node.kind {
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let Some(type_ref) = arena.get_type_ref(node) else {
+                    return false;
+                };
+                if Self::entity_name_text_in_direct_arena(arena, type_ref.type_name)
+                    .is_some_and(|type_name| type_name == name)
+                {
+                    return !guarded;
+                }
+                let reference_name =
+                    Self::entity_name_text_in_direct_arena(arena, type_ref.type_name);
+                let args_are_guarded = reference_name
+                    .as_deref()
+                    .is_some_and(|type_name| matches!(type_name, "Array" | "ReadonlyArray"))
+                    || guarded;
+                type_ref.type_arguments.as_ref().is_some_and(|args| {
+                    args.nodes.iter().copied().any(|arg| {
+                        Self::source_file_type_node_has_unguarded_self_reference(
+                            arena,
+                            arg,
+                            name,
+                            args_are_guarded,
+                        )
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::ARRAY_TYPE => {
+                arena.get_array_type(node).is_some_and(|array| {
+                    Self::source_file_type_node_has_unguarded_self_reference(
+                        arena,
+                        array.element_type,
+                        name,
+                        true,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::TUPLE_TYPE => {
+                arena.get_tuple_type(node).is_some_and(|tuple| {
+                    tuple.elements.nodes.iter().copied().any(|element| {
+                        Self::source_file_type_node_has_unguarded_self_reference(
+                            arena, element, name, true,
+                        )
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE
+                || k == syntax_kind_ext::OPTIONAL_TYPE
+                || k == syntax_kind_ext::REST_TYPE =>
+            {
+                arena.get_wrapped_type(node).is_some_and(|wrapped| {
+                    Self::source_file_type_node_has_unguarded_self_reference(
+                        arena,
+                        wrapped.type_node,
+                        name,
+                        guarded,
+                    )
+                })
+            }
+            _ => arena.get_children(root).into_iter().any(|child| {
+                Self::source_file_type_node_has_unguarded_self_reference(
+                    arena, child, name, guarded,
+                )
+            }),
+        }
+    }
+
     fn source_file_interface_declarations_are_direct_lowerable_with_seen<'b>(
         declarations: &[(NodeIndex, &'b NodeArena)],
         delegate_binder: &BinderState,
@@ -1341,10 +1427,11 @@ impl<'a> CheckerState<'a> {
             symbol_arena,
             type_alias.type_node,
             syntax_kind_ext::TYPE_QUERY,
-        ) || Self::source_file_type_node_contains_identifier_name(
+        ) || Self::source_file_type_node_has_unguarded_self_reference(
             symbol_arena,
             type_alias.type_node,
             &name,
+            false,
         ) {
             return None;
         }
@@ -1457,7 +1544,9 @@ impl<'a> CheckerState<'a> {
         } else {
             let unsupported_shape = !allow_complex_declarations
                 && (has_unsupported_computed_names
-                    || (has_heritage && !builtin_lib_declaration_arena));
+                    || (has_heritage
+                        && !builtin_lib_declaration_arena
+                        && !direct_declaration_arena));
             let unsafe_builtin_heritage = builtin_lib_declaration_arena
                 && has_heritage
                 && self.interface_declarations_have_unsafe_builtin_heritage_base(
@@ -1528,6 +1617,18 @@ impl<'a> CheckerState<'a> {
                 delegate_binder,
                 symbol_arena,
             )?;
+        }
+        if direct_declaration_arena && !builtin_lib_declaration_arena && has_heritage {
+            let Some(merged) = self.merge_direct_declaration_file_interface_heritage(
+                interface_type,
+                &declarations,
+                delegate_binder,
+                symbol_arena,
+            ) else {
+                record(DirectCrossFileInterfaceLoweringOutcome::ComplexDeclaration);
+                return None;
+            };
+            interface_type = merged;
         }
         if builtin_lib_declaration_arena && !self.lib_name_locally_augmented(&symbol.escaped_name) {
             self.ctx
@@ -1718,6 +1819,10 @@ impl<'a> CheckerState<'a> {
 #[cfg(test)]
 #[path = "cross_file_direct_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "cross_file_direct_regression_tests.rs"]
+mod regression_tests;
 
 #[cfg(test)]
 #[path = "cross_file_direct_cached_base_tests.rs"]

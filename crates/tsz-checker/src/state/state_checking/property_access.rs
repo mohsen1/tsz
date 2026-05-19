@@ -1018,6 +1018,18 @@ impl<'a> CheckerState<'a> {
         // can't be resolved there. Resolve them here using the checker's environment.
         let object_type = self.resolve_type_query_type(object_type);
         let original_object_type = object_type;
+        // Non-generic lazy interfaces can answer declared-member reads without
+        // forcing the solver boundary to materialize the full interface body.
+        // Generic and unresolved cases still fall through to the normal path.
+        if let Some(member_type) =
+            self.recover_non_generic_lazy_interface_member_type(original_object_type, prop_name)
+        {
+            return tsz_solver::operations::property::PropertyAccessResult::Success {
+                type_id: member_type.type_id,
+                write_type: member_type.write_type,
+                from_index_signature: false,
+            };
+        }
 
         // Ensure preconditions are ready in the environment for non-trivial
         // property-access inputs. Already-resolved/function-like inputs don't

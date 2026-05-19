@@ -188,6 +188,24 @@ fn parallel_file_session_reuse_requested() -> bool {
     )
 }
 
+const fn needs_separate_boxed_prime_checker(
+    no_emit: bool,
+    emit_declarations: bool,
+    reuse_requested: bool,
+    file_count: usize,
+    has_libs: bool,
+) -> bool {
+    if file_count == 0 || !has_libs {
+        return false;
+    }
+
+    let reused_checker_covers_prime = no_emit
+        && !emit_declarations
+        && reuse_requested
+        && file_count <= FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES;
+    !reused_checker_covers_prime
+}
+
 const FILE_SESSION_REUSE_PARALLEL_CHUNK_SIZE: usize = 8;
 
 fn should_apply_duplicate_package_redirect(importing_file: &Path) -> bool {
@@ -1555,11 +1573,17 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     let shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>> =
         Arc::new(dashmap::DashMap::new());
 
-    // Prime Array<T> base type with global augmentations before any file checks.
-    // The tiny reused-checker path still consults the shared lib cache while
-    // checking the first file, so it needs the same boxed/lib seed as fresh
-    // checkers before property lookup asks for Array members.
-    if !program.files.is_empty() && !checker_libs.contexts.is_empty() {
+    // Prime Array<T> base type with global augmentations before fresh-checker
+    // file checks. Tiny no-emit batches use the sequential reused-checker
+    // path; that real checker primes itself before checking the first file, so
+    // a separate prime checker would duplicate the same setup.
+    if needs_separate_boxed_prime_checker(
+        options.no_emit,
+        options.emit_declarations,
+        file_session_reuse_requested(program.files.len()),
+        program.files.len(),
+        !checker_libs.contexts.is_empty(),
+    ) {
         let prime_idx = 0;
         let file = &program.files[prime_idx];
         let binder = parallel::create_binder_from_bound_file(file, program, prime_idx);
@@ -2872,6 +2896,9 @@ where
             // resolved-module maps, file-is-ESM map, etc. Running it
             // once vs. N-times is the headline win for this path.
             program_context.apply_to(&mut state.ctx);
+            if state.ctx.has_lib_loaded() {
+                state.prime_boxed_types();
+            }
             checker = Some(state);
         } else if let Some(ref mut state) = checker {
             state.ctx.switch_to_file(
@@ -4275,6 +4302,36 @@ mod tests {
         assert!(
             !file_session_reuse_from_workload(true, true, 10),
             "TSZ_DISABLE_FILE_SESSION_REUSE=1 must override tiny-project auto reuse"
+        );
+    }
+
+    #[test]
+    fn tiny_no_emit_reuse_path_covers_boxed_prime_checker() {
+        assert!(
+            !needs_separate_boxed_prime_checker(true, false, true, 10, true),
+            "tiny no-emit reuse should prime on the reused checker, not a duplicate checker"
+        );
+        assert!(
+            needs_separate_boxed_prime_checker(true, false, false, 10, true),
+            "fresh-checker tiny runs still need the separate prime checker"
+        );
+        assert!(
+            needs_separate_boxed_prime_checker(
+                true,
+                false,
+                true,
+                FILE_SESSION_REUSE_SMALL_PROJECT_MAX_FILES + 1,
+                true,
+            ),
+            "large projects do not use the tiny reused-checker coverage rule"
+        );
+        assert!(
+            needs_separate_boxed_prime_checker(true, true, true, 10, true),
+            "declaration emit consumes per-file state and cannot use tiny no-emit coverage"
+        );
+        assert!(
+            !needs_separate_boxed_prime_checker(true, false, true, 10, false),
+            "projects without libs have nothing to prime"
         );
     }
 

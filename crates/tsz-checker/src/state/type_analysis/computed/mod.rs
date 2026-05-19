@@ -1564,6 +1564,15 @@ impl<'a> CheckerState<'a> {
                 let Some(interface) = self.ctx.arena.get_interface(node) else {
                     continue;
                 };
+                if self
+                    .ctx
+                    .arena
+                    .get(interface.name)
+                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                    .is_none_or(|ident| ident.escaped_text != escaped_name)
+                {
+                    continue;
+                }
                 has_local_interface_decl = true;
                 if namespace_prefix.is_none() {
                     namespace_prefix = self.declaration_namespace_prefix(self.ctx.arena, decl_idx);
