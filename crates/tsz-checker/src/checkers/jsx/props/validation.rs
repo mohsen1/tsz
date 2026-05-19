@@ -390,15 +390,36 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             type_id,
         )?;
-        let is_readonly_mapped =
-            crate::query_boundaries::checkers::jsx::contains_mapped_type_with_readonly_modifier(
+        (self.jsx_type_base_is_jsx_element(app.base)
+            || self.jsx_single_arg_application_is_transparent_readonly_mapped(app.base, app.arg))
+        .then_some(app.arg)
+    }
+
+    fn jsx_single_arg_application_is_transparent_readonly_mapped(
+        &mut self,
+        base: TypeId,
+        arg: TypeId,
+    ) -> bool {
+        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
+            return false;
+        };
+        let (base_body, base_params) = self.type_reference_symbol_type_with_params(sym_id);
+        let Some(instantiated) =
+            crate::query_boundaries::checkers::jsx::instantiate_single_arg_type_alias_body(
                 self.ctx.types,
-                type_id,
-            ) || crate::query_boundaries::checkers::jsx::contains_mapped_type_with_readonly_modifier(
-                self.ctx.types,
-                app.base,
-            );
-        (is_readonly_mapped || self.jsx_type_base_is_jsx_element(app.base)).then_some(app.arg)
+                base_body,
+                &base_params,
+                arg,
+            )
+        else {
+            return false;
+        };
+        let instantiated = self.evaluate_type_with_env(instantiated);
+        let instantiated = self.resolve_lazy_type(instantiated);
+        crate::query_boundaries::checkers::jsx::is_exact_readonly_mapped_type(
+            self.ctx.types,
+            instantiated,
+        )
     }
 
     fn jsx_type_base_is_jsx_element(&mut self, type_id: TypeId) -> bool {
