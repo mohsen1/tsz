@@ -2779,6 +2779,40 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("query_cache.rs:2", hits[1])
         self.assertIn("total matching lines: 2", hits[2])
 
+    def test_flags_checker_migration_with_parent_cache_callsite(self):
+        pattern, _max_lines = self._check_by_name("with_parent_cache_attributed")
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/migration.rs": (
+                    "let checker = CheckerState::with_parent_cache_attributed(parent, reason);\n"
+                    "pub fn with_parent_cache_attributed(parent: Parent) -> Self { todo!() }\n"
+                    "// CheckerState::with_parent_cache_attributed(parent, reason);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("migration.rs:1", hits[0])
+        self.assertIn("total matching lines: 1", hits[1])
+
+    def test_flags_checker_migration_overlay_copy_callsite(self):
+        pattern, _max_lines = self._check_by_name(
+            "copy_symbol_file_targets_to_attributed"
+        )
+        root = self._make_tree(
+            {
+                "crates/tsz-checker/src/migration.rs": (
+                    "self.ctx.copy_symbol_file_targets_to_attributed(&mut child, reason);\n"
+                    "pub fn copy_symbol_file_targets_to_attributed(&self) {}\n"
+                    "// self.ctx.copy_symbol_file_targets_to_attributed(&mut child, reason);\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("migration.rs:1", hits[0])
+        self.assertIn("total matching lines: 1", hits[1])
+
     def test_flags_root_solver_wildcard_compat_reexports(self):
         pattern, _max_lines = self._check_by_name("#8204")
         root = self._make_tree(
@@ -2860,6 +2894,10 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertTrue(any("diagnostic-local RelationRequest" in name for name in names))
         self.assertTrue(any("#8207" in name for name in names))
         self.assertTrue(any("#8204" in name for name in names))
+        self.assertTrue(any("with_parent_cache_attributed" in name for name in names))
+        self.assertTrue(
+            any("copy_symbol_file_targets_to_attributed" in name for name in names)
+        )
 
     def test_real_counts_pass_at_pinned_caps(self):
         """The pinned caps must match the live count (no off-by-one)."""
