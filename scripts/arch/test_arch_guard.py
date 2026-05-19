@@ -2188,6 +2188,24 @@ tsz_project_fixture_sources() {
 """
         self.assertEqual(self._write_and_scan(rows, fixtures), [])
 
+    def test_generated_project_source_cases_are_allowed_without_static_pins(self):
+        rows = """
+export const REQUIRED_PROJECT_ROWS = ["utility-types-project", "vite-vanilla-ts-app"];
+export const COMPILE_CANARY_PROJECT_ROWS = [];
+"""
+        fixtures = """
+tsz_project_fixture_sources() {
+  case "$1" in
+    utility-types-project)
+      printf 'utility-types|repo|ref\\n'
+      ;;
+    vite-vanilla-ts-app)
+      ;;
+  esac
+}
+"""
+        self.assertEqual(self._write_and_scan(rows, fixtures), [])
+
     def test_missing_source_metadata_is_reported(self):
         rows = """
 export const REQUIRED_PROJECT_ROWS = ["utility-types-project"];
