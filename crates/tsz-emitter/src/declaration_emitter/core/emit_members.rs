@@ -93,7 +93,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        if is_implementation && !is_private {
+        if self.source_is_js_file && !is_private {
             let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(method_idx);
             if self.emit_jsdoc_overload_method_signatures(method_idx, &jsdoc_overload_signatures) {
                 if let Some(ref name) = method_name {
@@ -734,7 +734,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        if is_implementation {
+        if self.source_is_js_file {
             let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(ctor_idx);
             if self.emit_jsdoc_overload_constructor_signatures(ctor_idx, &jsdoc_overload_signatures)
             {

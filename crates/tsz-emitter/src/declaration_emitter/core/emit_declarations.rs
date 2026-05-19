@@ -1061,9 +1061,9 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        if is_implementation {
+        if self.source_is_js_file {
             let jsdoc_overload_signatures = self.jsdoc_overload_signatures_for_node(func_idx);
-            if self.source_is_js_file && !jsdoc_overload_signatures.is_empty() {
+            if !jsdoc_overload_signatures.is_empty() {
                 self.emit_pending_js_export_equals_for_name(func.name);
             }
             if self.emit_jsdoc_overload_function_signatures(
@@ -1072,26 +1072,24 @@ impl<'a> DeclarationEmitter<'a> {
                 is_exported,
                 &jsdoc_overload_signatures,
             ) {
-                if self.source_is_js_file {
-                    if should_emit_late_bound_namespace {
-                        self.emit_ts_late_bound_function_namespace_from_members(
-                            func.name,
-                            is_exported,
-                            &late_bound_members,
-                        );
-                    }
-                    if !self.emit_js_function_like_class_if_needed(
+                if should_emit_late_bound_namespace {
+                    self.emit_ts_late_bound_function_namespace_from_members(
                         func.name,
-                        &func.parameters,
-                        func.body,
                         is_exported,
-                        func_idx,
-                    ) {
-                        self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
-                    }
-                    self.emit_js_class_static_members_namespace(func.name, is_exported);
-                    self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
+                        &late_bound_members,
+                    );
                 }
+                if !self.emit_js_function_like_class_if_needed(
+                    func.name,
+                    &func.parameters,
+                    func.body,
+                    is_exported,
+                    func_idx,
+                ) {
+                    self.emit_js_synthetic_prototype_class_if_needed(func.name, is_exported);
+                }
+                self.emit_js_class_static_members_namespace(func.name, is_exported);
+                self.emit_js_namespace_export_aliases_for_name(func.name, is_exported);
                 return;
             }
         }

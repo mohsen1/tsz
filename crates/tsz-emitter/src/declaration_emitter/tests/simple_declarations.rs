@@ -2299,7 +2299,7 @@ export class Foo {
 }
 
 #[test]
-fn test_ts_function_declaration_emits_separate_jsdoc_overload_signatures() {
+fn test_ts_function_declaration_preserves_jsdoc_overload_comments() {
     let output = emit_dts(
         r#"
 /**
@@ -2323,21 +2323,22 @@ function kind(value: unknown): string {
     );
 
     assert!(
-        output.contains("declare function kind(value: number): \"number\";"),
-        "Expected number overload in TS @overload: {output}"
+        output.contains("@overload"),
+        "Expected TS @overload JSDoc comments to be preserved: {output}"
     );
     assert!(
-        output.contains("declare function kind(value: string): \"string\";"),
-        "Expected string overload in TS @overload: {output}"
+        output.contains("declare function kind(value: unknown): string;"),
+        "Expected TS implementation signature instead of JSDoc overload expansion: {output}"
     );
     assert!(
-        !output.contains("declare function kind(value: unknown): string;"),
-        "Implementation signature should not be emitted when @overload JSDoc present: {output}"
+        !output.contains("declare function kind(value: number): \"number\";")
+            && !output.contains("declare function kind(value: string): \"string\";"),
+        "TS @overload JSDoc should not emit overload signatures: {output}"
     );
 }
 
 #[test]
-fn test_ts_function_declaration_jsdoc_overload_with_different_param_names() {
+fn test_ts_function_declaration_jsdoc_overload_keeps_implementation_param_names() {
     let output = emit_dts(
         r#"
 /**
@@ -2361,21 +2362,21 @@ function identity(x: unknown): unknown {
     );
 
     assert!(
-        output.contains("declare function identity(x: number): number;"),
-        "Expected number overload with renamed param: {output}"
+        output.contains("@overload"),
+        "Expected TS @overload JSDoc comments to be preserved: {output}"
     );
     assert!(
-        output.contains("declare function identity(x: string): string;"),
-        "Expected string overload with renamed param: {output}"
+        output.contains("declare function identity(x: unknown): unknown;"),
+        "Expected TS implementation signature to be emitted: {output}"
     );
     assert!(
-        !output.contains("identity(x: unknown)"),
-        "Implementation signature should be suppressed when @overload present: {output}"
+        !output.contains("identity(x: number)") && !output.contains("identity(x: string)"),
+        "TS @overload JSDoc should not emit overload signatures: {output}"
     );
 }
 
 #[test]
-fn test_ts_class_method_emits_jsdoc_overload_signatures() {
+fn test_ts_class_method_preserves_jsdoc_overload_comments() {
     let output = emit_dts(
         r#"
 class Converter {
@@ -2401,21 +2402,22 @@ class Converter {
     );
 
     assert!(
-        output.contains("convert(x: number): string;"),
-        "Expected number-to-string method overload in TS class: {output}"
+        output.contains("@overload"),
+        "Expected TS method @overload JSDoc comments to be preserved: {output}"
     );
     assert!(
-        output.contains("convert(x: string): number;"),
-        "Expected string-to-number method overload in TS class: {output}"
+        output.contains("convert(x: unknown): unknown;"),
+        "Expected TS implementation method signature to be emitted: {output}"
     );
     assert!(
-        !output.contains("convert(x: unknown)"),
-        "Implementation method signature should not be emitted: {output}"
+        !output.contains("convert(x: number): string;")
+            && !output.contains("convert(x: string): number;"),
+        "TS method @overload JSDoc should not emit overload signatures: {output}"
     );
 }
 
 #[test]
-fn test_ts_class_constructor_emits_jsdoc_overload_signatures() {
+fn test_ts_class_constructor_preserves_jsdoc_overload_comments() {
     let output = emit_dts(
         r#"
 class Wrapper {
@@ -2434,16 +2436,17 @@ class Wrapper {
     );
 
     assert!(
-        output.contains("constructor(value: string);"),
-        "Expected string constructor overload in TS: {output}"
+        output.contains("@overload"),
+        "Expected TS constructor @overload JSDoc comments to be preserved: {output}"
     );
     assert!(
-        output.contains("constructor(value: number);"),
-        "Expected number constructor overload in TS: {output}"
+        output.contains("constructor(value: unknown);"),
+        "Expected TS implementation constructor signature to be emitted: {output}"
     );
     assert!(
-        !output.contains("constructor(value: unknown)"),
-        "Implementation constructor should be suppressed when @overload present: {output}"
+        !output.contains("constructor(value: string);")
+            && !output.contains("constructor(value: number);"),
+        "TS constructor @overload JSDoc should not emit overload signatures: {output}"
     );
 }
 
