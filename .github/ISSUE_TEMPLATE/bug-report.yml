@@ -1,0 +1,105 @@
+name: Compiler Bug Or Parity Miss
+description: File a focused compiler behavior, diagnostic, inference, compatibility, emit, or harness issue.
+title: "<area>: <intent>"
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Treat the reported repro as one witness for a broader rule. Fixes should target the owning semantic operation, not a filename, rendered message fragment, or user-chosen identifier spelling.
+
+        These fields improve issue intake only. They do not replace the `Project Corpus Impact` section required in every PR body.
+
+        Read the anti-hardcoding rules in `AGENTS.md` before filing. The issue should state the structural rule, not a single-test symptom patch.
+  - type: input
+    id: agent
+    attributes:
+      label: AgentName
+      description: Sign the issue with your stable AgentName.
+      placeholder: M1PD1
+    validations:
+      required: true
+  - type: dropdown
+    id: owner-track
+    attributes:
+      label: Owner Track
+      description: Pick the closest owning compiler or harness track.
+      options:
+        - solver
+        - checker
+        - parser
+        - binder
+        - scanner
+        - emitter
+        - transforms
+        - LSP/WASM
+        - conformance harness
+        - project corpus
+        - n/a
+    validations:
+      required: true
+  - type: input
+    id: project-row
+    attributes:
+      label: Project Corpus Row
+      description: Name the affected project corpus row, or write n/a when this is not project-corpus related.
+      placeholder: vite-project, type-challenges-solutions-project, or n/a
+    validations:
+      required: true
+  - type: input
+    id: bug-family
+    attributes:
+      label: Bug Family
+      description: Name the behavior family this issue belongs to.
+      placeholder: TS2322 assignability, contextual typing, mapped types, emit DTS parity
+    validations:
+      required: true
+  - type: textarea
+    id: structural-rule
+    attributes:
+      label: Structural Rule
+      description: State the general tsc parity rule before implementation.
+      placeholder: "When <structural condition over syntax, symbols, and/or TypeId>, tsc <does X>; this change makes tsz <do X> too."
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence Artifact Or Command
+      description: Link the artifact or name the focused command that proves the miss.
+      placeholder: "./scripts/conformance/conformance.sh run --filter \"<name>\" --verbose"
+    validations:
+      required: true
+  - type: textarea
+    id: adjacent-cases
+    attributes:
+      label: Adjacent Cases
+      description: List at least three equivalent cases that should share this behavior.
+      placeholder: |
+        - renamed type parameters
+        - alias vs inline
+        - nested wrapper vs direct use
+    validations:
+      required: true
+  - type: textarea
+    id: non-goals
+    attributes:
+      label: Non-Goals
+      description: Name boundaries that should stay out of scope.
+      placeholder: |
+        - Do not match a single conformance filename.
+        - Do not drive semantic decisions from rendered type strings.
+    validations:
+      required: true
+  - type: checkboxes
+    id: guardrails
+    attributes:
+      label: Guardrails
+      options:
+        - label: I checked open draft PRs, open PRs, recent merged PRs, and relevant issues for overlapping work.
+          required: true
+        - label: I read the anti-hardcoding rules in `AGENTS.md` and this issue is not asking for a single-test symptom patch.
+          required: true
+        - label: I understand that PRs still need their own `Project Corpus Impact` section even when this issue has project-row fields.
+          required: true
