@@ -3,6 +3,17 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_scanner::SyntaxKind;
 
+/// Delimiter pair for a template part. The opening delimiter is `` ` `` for
+/// templates that begin the literal (head, no-substitution) and `}` for parts
+/// that resume after a substitution (middle, tail). The terminating delimiter
+/// is `` ` `` for parts that close the literal (no-substitution, tail) and
+/// `${` for parts that lead into another substitution (head, middle).
+#[derive(Clone, Copy)]
+struct TemplateDelimiters {
+    open: &'static str,
+    terminated_close: &'static str,
+}
+
 impl<'a> Printer<'a> {
     // =========================================================================
     // Template Literals
@@ -63,25 +74,25 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Emit the template head (opening backtick and initial text)
+        // Emit the template head — its raw_text already carries the opening `
+        // and trailing `${` so we don't synthesize delimiters here.
         self.emit(tpl.head);
 
-        // Emit each template span (expression + middle/tail)
+        // Emit each template span (expression + middle/tail). The middle/tail
+        // literal raw_text includes its own `}` and trailing `${` or closing `.
         for &span_idx in &tpl.template_spans.nodes {
             self.emit(span_idx);
         }
     }
 
     pub(in crate::emitter) fn emit_no_substitution_template(&mut self, node: &Node) {
-        let text = self
-            .get_raw_template_part_text(node)
-            .or_else(|| self.arena.get_literal(node).map(|lit| lit.text.clone()))
-            .unwrap_or_default();
-        self.write("`");
-        self.write(&text);
-        if self.no_substitution_template_has_closing_backtick(node) {
-            self.write("`");
-        }
+        self.emit_template_part_raw(
+            node,
+            TemplateDelimiters {
+                open: "`",
+                terminated_close: "`",
+            },
+        );
     }
 
     pub(in crate::emitter) fn emit_template_span(&mut self, node: &Node) {
@@ -89,47 +100,89 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Emit ${expression}
-        self.write("${");
         self.emit_template_span_leading_comments(span);
         self.emit(span.expression);
         self.emit_template_span_trailing_comments(span);
-        if self.template_span_has_closing_brace(span) {
-            self.write("}");
-        }
-        // Emit the literal part (middle or tail)
+        // Emit the literal part (middle or tail). Its raw_text supplies the
+        // `}` that closes the substitution and either `${` (middle) or the
+        // closing ` (tail).
         self.emit(span.literal);
     }
 
     pub(in crate::emitter) fn emit_template_head(&mut self, node: &Node) {
-        let text = self
-            .get_raw_template_part_text(node)
-            .or_else(|| self.arena.get_literal(node).map(|lit| lit.text.clone()))
-            .unwrap_or_default();
-        // Template head starts with ` and ends with ${
-        self.write("`");
-        self.write(&text);
+        self.emit_template_part_raw(
+            node,
+            TemplateDelimiters {
+                open: "`",
+                terminated_close: "${",
+            },
+        );
     }
 
     pub(in crate::emitter) fn emit_template_middle(&mut self, node: &Node) {
-        let text = self
-            .get_raw_template_part_text(node)
-            .or_else(|| self.arena.get_literal(node).map(|lit| lit.text.clone()))
-            .unwrap_or_default();
-        // Template middle is between } and ${
-        self.write(&text);
+        self.emit_template_part_raw(
+            node,
+            TemplateDelimiters {
+                open: "}",
+                terminated_close: "${",
+            },
+        );
     }
 
     pub(in crate::emitter) fn emit_template_tail(&mut self, node: &Node) {
-        let text = self
-            .get_raw_template_part_text(node)
-            .or_else(|| self.arena.get_literal(node).map(|lit| lit.text.clone()))
-            .unwrap_or_default();
-        // Template tail ends with `
-        self.write(&text);
-        if self.template_tail_has_backtick(node) {
-            self.write("`");
+        self.emit_template_part_raw(
+            node,
+            TemplateDelimiters {
+                open: "}",
+                terminated_close: "`",
+            },
+        );
+    }
+
+    /// Emit a template part using the parser-supplied `raw_text` recovery
+    /// fact when available. The scanner stores the full token text — opening
+    /// delimiter, inner content, and closing delimiter (when terminated) —
+    /// in `raw_text`, so the emitter never re-scans source bytes to discover
+    /// escape sequences or recover delimiter shape. When the literal is a
+    /// parser-synthesized recovery sentinel (`raw_text == None`) we
+    /// reconstruct the part from cooked `text` plus the expected delimiters.
+    fn emit_template_part_raw(&mut self, node: &Node, delims: TemplateDelimiters) {
+        if let Some(raw) = self
+            .arena
+            .get_literal(node)
+            .and_then(|lit| lit.raw_text.as_deref())
+        {
+            self.write(raw);
+            return;
         }
+
+        let cooked = self
+            .arena
+            .get_literal(node)
+            .map(|lit| lit.text.clone())
+            .unwrap_or_default();
+        self.write(delims.open);
+        self.write(&cooked);
+        if self.template_part_has_terminated_close(node, delims) {
+            self.write(delims.terminated_close);
+        }
+    }
+
+    /// Fallback delimiter detection when the parser did not record a raw
+    /// token slice (synthetic recovery literals). We look at the node range
+    /// to determine whether the source contained the expected closing
+    /// delimiter.
+    fn template_part_has_terminated_close(&self, node: &Node, delims: TemplateDelimiters) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let close = delims.terminated_close;
+        let end = node.end as usize;
+        let bytes = text.as_bytes();
+        if end == 0 || end > bytes.len() {
+            return false;
+        }
+        text[..end].ends_with(close)
     }
 
     fn emit_template_span_leading_comments(
@@ -230,159 +283,41 @@ impl<'a> Printer<'a> {
         true
     }
 
+    /// Inner raw text of a template part — the bytes between the opening and
+    /// closing delimiters as they appeared in source. Reads the
+    /// parser-supplied `raw_text` recovery fact and strips the delimiters that
+    /// the scanner included in the token slice. Falls back to the cooked text
+    /// when the parser did not record a raw slice (synthetic recovery).
     pub(in crate::emitter) fn get_raw_template_part_text(&self, node: &Node) -> Option<String> {
-        let text = self.source_text?;
-        let cooked_fallback = self
-            .arena
-            .get_literal(node)
-            .map(|lit| lit.text.clone())
-            .unwrap_or_default();
-
-        let (skip_leading, allow_dollar_brace, allow_backtick) = match node.kind {
-            k if k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
-                (1_usize, false, true)
-            }
-            k if k == tsz_scanner::SyntaxKind::TemplateHead as u16 => (1_usize, true, true),
-            k if k == tsz_scanner::SyntaxKind::TemplateMiddle as u16 => (1_usize, true, true),
-            k if k == tsz_scanner::SyntaxKind::TemplateTail as u16 => (1_usize, false, true),
-            _ => return Some(cooked_fallback),
-        };
-
-        let start = node.pos as usize;
-        if start >= text.len() || start + skip_leading >= text.len() {
-            return Some(cooked_fallback);
+        let lit = self.arena.get_literal(node)?;
+        if let Some(raw) = lit.raw_text.as_deref() {
+            return Some(strip_template_delimiters(node.kind, raw).to_string());
         }
-
-        let bytes = text.as_bytes();
-        let mut i = start + skip_leading;
-        while i < bytes.len() {
-            let ch = bytes[i];
-            if ch == b'\\' {
-                i += 1;
-                if i < bytes.len() {
-                    i += 1;
-                }
-                continue;
-            }
-
-            if allow_backtick && ch == b'`' {
-                return Some(text[start + skip_leading..i].to_string());
-            }
-
-            if allow_dollar_brace && ch == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
-                return Some(text[start + skip_leading..i].to_string());
-            }
-
-            i += 1;
-        }
-
-        // No closing delimiter found — unterminated template literal.
-        // Use the raw source text from after the opening backtick to the end
-        // of the node range, preserving escape sequences verbatim.
-        let end = std::cmp::min(node.end as usize, text.len());
-        let content_start = start + skip_leading;
-        if content_start <= end {
-            Some(text[content_start..end].to_string())
-        } else {
-            Some(cooked_fallback)
-        }
+        Some(lit.text.clone())
     }
+}
 
-    /// Check whether the source text has a closing `}` for this template span.
-    ///
-    /// The literal node (TemplateMiddle/TemplateTail) starts at the `}` character
-    /// in the source. We check `lit_node.pos` directly, then scan the range
-    /// between `expr_node.end` and `lit_node.pos` (inclusive) as a fallback.
-    fn template_span_has_closing_brace(
-        &self,
-        span: &tsz_parser::parser::node::TemplateSpanData,
-    ) -> bool {
-        let Some(text) = self.source_text else {
-            return true;
-        };
-        let Some(lit_node) = self.arena.get(span.literal) else {
-            return false;
-        };
-
-        // The literal node's pos should be at the `}` character.
-        let pos = lit_node.pos as usize;
-        if pos < text.len() && text.as_bytes()[pos] == b'}' {
-            return true;
-        }
-
-        // Fallback: scan backwards from the literal position past whitespace.
-        if pos > 0 {
-            let bytes = text.as_bytes();
-            let mut i = pos;
-            while i > 0 && bytes[i - 1].is_ascii_whitespace() {
-                i -= 1;
-            }
-            if i > 0 && bytes[i - 1] == b'}' {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Check whether the source text has a closing backtick for a
-    /// `NoSubstitutionTemplateLiteral`. When the template is unterminated
-    /// (error recovery), the source text does not contain a closing backtick
-    /// and the emitter should omit it to match tsc behavior.
-    fn no_substitution_template_has_closing_backtick(&self, node: &Node) -> bool {
-        let Some(text) = self.source_text else {
-            return true;
-        };
-        let end = node.end as usize;
-        let start = node.pos as usize;
-        let bytes = text.as_bytes();
-
-        // The closing backtick should be at end - 1.
-        if end == 0 || end > bytes.len() || bytes[end - 1] != b'`' {
-            return false;
-        }
-
-        // Make sure it's not the OPENING backtick (single-char unterminated `).
-        if end - 1 == start {
-            return false;
-        }
-
-        // Count consecutive backslashes immediately before the backtick.
-        // An odd number means the backtick is escaped (\`), not a closing delimiter.
-        let mut backslash_count = 0usize;
-        let mut p = end - 2;
-        while p > start && bytes[p] == b'\\' {
-            backslash_count += 1;
-            p -= 1;
-        }
-
-        backslash_count.is_multiple_of(2)
-    }
-
-    /// Check whether the source text has a closing backtick for a `TemplateTail`.
-    ///
-    /// The `TemplateTail` node spans from `}` through the closing `` ` ``. The
-    /// backtick should be the last character at `node.end - 1`.
-    fn template_tail_has_backtick(&self, node: &Node) -> bool {
-        let Some(text) = self.source_text else {
-            return true;
-        };
-        let end = node.end as usize;
-
-        // The backtick should be at end - 1 (the last character of the tail token).
-        if end > 0 && end <= text.len() && text.as_bytes()[end - 1] == b'`' {
-            return true;
-        }
-
-        // Fallback: check within the node's range.
-        let start = std::cmp::min(node.pos as usize, text.len());
-        let end_clamped = std::cmp::min(end, text.len());
-        if start < end_clamped && text[start..end_clamped].contains('`') {
-            return true;
-        }
-
-        false
-    }
+/// Strip the opening and (when present) closing delimiters from a template
+/// part's raw source slice. The scanner stores the full token text, so a
+/// terminated `NoSubstitutionTemplateLiteral` is `` `xxx` ``, a terminated
+/// `TemplateHead` is `` `xxx${ ``, a terminated `TemplateMiddle` is `}xxx${`,
+/// and a terminated `TemplateTail` is `}xxx``. Unterminated parts are missing
+/// their trailing delimiter, which `strip_suffix` reports by returning `None`
+/// — we preserve the rest of the slice verbatim in that case.
+fn strip_template_delimiters(kind: u16, raw: &str) -> &str {
+    let (open, close): (&str, &str) = if kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
+        ("`", "`")
+    } else if kind == SyntaxKind::TemplateHead as u16 {
+        ("`", "${")
+    } else if kind == SyntaxKind::TemplateMiddle as u16 {
+        ("}", "${")
+    } else if kind == SyntaxKind::TemplateTail as u16 {
+        ("}", "`")
+    } else {
+        return raw;
+    };
+    let inner = raw.strip_prefix(open).unwrap_or(raw);
+    inner.strip_suffix(close).unwrap_or(inner)
 }
 
 #[cfg(test)]
