@@ -262,12 +262,9 @@ pub(crate) use operations::compound_assignment::{
     fallback_compound_assignment_result, is_compound_assignment_operator,
     is_logical_compound_assignment_operator, map_compound_assignment_to_binary,
 };
-pub use operations::{
+#[cfg(test)]
+pub(crate) use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
-    MAX_CONSTRAINT_RECURSION_DEPTH, get_contextual_signature_cached_with_compat_checker,
-    get_contextual_signature_for_arity_cached_with_compat_checker,
-    get_contextual_signature_for_arity_with_compat_checker,
-    get_contextual_signature_with_compat_checker,
 };
 pub use relations::compat::{AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider};
 pub use relations::judge::{

@@ -110,7 +110,7 @@ fn test_type_lowering_operation_limit() {
 #[test]
 fn test_constraint_recursion_depth_limit() {
     // Validates that constraint collection has recursion limits
-    use tsz_solver::MAX_CONSTRAINT_RECURSION_DEPTH;
+    use tsz_solver::operations::MAX_CONSTRAINT_RECURSION_DEPTH;
 
     assert_in_range(
         "Constraint recursion depth",
