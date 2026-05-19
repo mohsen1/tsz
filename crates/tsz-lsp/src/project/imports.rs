@@ -689,6 +689,49 @@ impl Project {
         module_specifier.split('/').next()
     }
 
+    /// Returns `true` when `position` falls inside a `NamedImports` node —
+    /// i.e., the cursor is in the `{ … }` binding list of an `import` statement.
+    ///
+    /// TypeScript calls this the "import statement completion" context and uses
+    /// `SortText.LocationPriority` ("11") instead of `SortText.AutoImportSuggestions`
+    /// ("16") for candidates offered there.
+    pub(crate) fn is_in_named_import_bindings(file: &ProjectFile, position: Position) -> bool {
+        let arena = file.arena();
+        let source_text = file.source_text();
+        let Some(offset) = file.line_map().position_to_offset(position, source_text) else {
+            return false;
+        };
+
+        let mut node_idx = find_node_at_offset(arena, offset);
+        if node_idx.is_none() && offset > 0 {
+            node_idx = find_node_at_offset(arena, offset - 1);
+        }
+
+        // Walk up the parent chain until we hit a NAMED_IMPORTS node (found) or
+        // pass the statement boundary (IMPORT_DECLARATION / SOURCE_FILE).
+        // Bounded to avoid pathological cycles; import nesting is always shallow.
+        let mut current = node_idx;
+        for _ in 0..8 {
+            let Some(node) = arena.get(current) else {
+                break;
+            };
+            if node.kind == syntax_kind_ext::NAMED_IMPORTS {
+                return true;
+            }
+            if node.kind == syntax_kind_ext::IMPORT_DECLARATION
+                || node.kind == syntax_kind_ext::SOURCE_FILE
+            {
+                break;
+            }
+            let Some(parent) = arena.parent_of(current) else {
+                break;
+            };
+            current = parent;
+        }
+
+        false
+    }
+
     fn imported_package_names(file: &ProjectFile) -> FxHashSet<String> {
         let arena = file.arena();
         let Some(source_file) = arena.get_source_file_at(file.root()) else {
@@ -940,6 +983,7 @@ impl Project {
         &self,
         candidate: &ImportCandidate,
         from_file: &str,
+        import_statement_completion: bool,
     ) -> CompletionItem {
         let detail = self.auto_import_detail(candidate);
         let documentation = self.auto_import_documentation(candidate);
@@ -947,7 +991,13 @@ impl Project {
 
         let mut item = CompletionItem::new(candidate.local_name.clone(), completion_kind)
             .with_detail(detail)
-            .with_sort_text(sort_priority::AUTO_IMPORT)
+            .with_sort_text(if import_statement_completion {
+                // Inside `import { | }`: TypeScript uses LocationPriority ("11") so
+                // these rank above regular-code auto-import suggestions ("16").
+                sort_priority::LOCATION_PRIORITY
+            } else {
+                sort_priority::AUTO_IMPORT
+            })
             .with_has_action()
             .with_source(candidate.module_specifier.clone())
             .with_source_display(candidate.module_specifier.clone())

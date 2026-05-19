@@ -179,6 +179,8 @@ impl Project {
             let mut seen = FxHashSet::default();
             let prefix = missing_name.unwrap_or_default();
 
+            let import_statement_completion = Project::is_in_named_import_bindings(file, position);
+
             // Use prefix matching for better completion UX
             // If the missing_name is not in existing completions, try to find symbols
             // that start with this prefix (e.g., "use" → "useEffect", "useState")
@@ -239,8 +241,11 @@ impl Project {
                     &candidate,
                     position,
                 ) {
-                    let mut item =
-                        self.completion_from_import_candidate(&candidate, file.file_name());
+                    let mut item = self.completion_from_import_candidate(
+                        &candidate,
+                        file.file_name(),
+                        import_statement_completion,
+                    );
                     item = item.with_additional_edits(edits);
                     completions.push(item);
                 }
