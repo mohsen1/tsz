@@ -1762,7 +1762,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// Separator preceding a readonly property's literal value: `" = "` for
     /// class-declaration emit (`readonly x = 0`), `": "` for object-type-literal
     /// emit (`readonly x: 0`). Object-type literals do not permit `=` syntax.
-    fn readonly_literal_value_separator(&self) -> &'static str {
+    const fn readonly_literal_value_separator(&self) -> &'static str {
         if self.in_object_type_class_body {
             ": "
         } else {
