@@ -1678,7 +1678,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// Useful in checker locations that need type comparability/equivalence-like checks.
     pub(crate) fn are_mutually_assignable(&mut self, left: TypeId, right: TypeId) -> bool {
-        self.is_assignable_to(left, right) && self.is_assignable_to(right, left)
+        self.diagnostic_relation_boolean_guard(left, right)
+            && self.diagnostic_relation_boolean_guard(right, left)
     }
 
     /// Check if two object types with call/construct signatures are comparable
