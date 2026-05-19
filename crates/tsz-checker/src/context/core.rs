@@ -10,7 +10,8 @@ use std::sync::Arc;
 use crate::control_flow::FlowGraph;
 use crate::diagnostics::{Diagnostic, diagnostic_codes};
 use crate::module_resolution::{
-    build_file_name_index, module_specifier_candidates, resolve_specifier_via_file_index,
+    build_file_name_index, module_specifier_candidates, probe_file_name_index,
+    resolve_specifier_via_file_index,
 };
 use tsz_binder::symbols::StableLocation;
 use tsz_binder::{BinderState, SymbolId};
@@ -1206,14 +1207,18 @@ impl<'a> CheckerContext<'a> {
                 {
                     return Some(result);
                 }
-                // Single-segment bare names can match root-level files that the
-                // relative joiner in resolve_specifier_via_file_index misses when
-                // source is in a subdirectory.
-                if !specifier.contains('/')
-                    && !specifier.contains('\\')
-                    && let Some(&target_idx) = idx.get(specifier)
+                // Bare names (single-segment like `types` or multi-segment like
+                // `packages/foo/src/bar`) that resolve_specifier_via_file_index
+                // rejects as potential package subpaths are probed directly
+                // against the index. External npm packages won't be in the index;
+                // project-relative bare paths will match by file name or stem.
+                if !specifier.starts_with("./")
+                    && !specifier.starts_with("../")
+                    && !specifier.starts_with('/')
                 {
-                    return Some(target_idx);
+                    if let Some(result) = probe_file_name_index(specifier, idx) {
+                        return Some(result);
+                    }
                 }
             }
         }

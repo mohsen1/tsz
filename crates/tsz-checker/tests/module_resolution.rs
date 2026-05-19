@@ -1358,3 +1358,70 @@ fn test_build_file_name_index_directory_index_resolution() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// probe_file_name_index — direct lookup without path joining
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_probe_single_segment_bare_name() {
+    // `types` → `types.ts` even when source is in a subdirectory (the case
+    // resolve_specifier_via_file_index would miss for root-level files).
+    let files = ["types.ts", "utils.ts", "main.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(probe_file_name_index("types", &idx), Some(0));
+    assert_eq!(probe_file_name_index("utils", &idx), Some(1));
+    assert_eq!(probe_file_name_index("main", &idx), Some(2));
+}
+
+#[test]
+fn test_probe_multi_segment_project_relative_path() {
+    // `packages/foo/src/bar` is a project-relative bare path, not an npm
+    // subpath. probe_file_name_index must find it via extension fan-out.
+    // The name choice (`bar` vs `X` vs `module`) must not affect the result.
+    let files = [
+        "packages/foo/src/bar.ts",
+        "packages/foo/src/X.ts",
+        "packages/baz/lib/module.ts",
+    ];
+    let idx = file_index_from(&files);
+
+    assert_eq!(probe_file_name_index("packages/foo/src/bar", &idx), Some(0),);
+    assert_eq!(probe_file_name_index("packages/foo/src/X", &idx), Some(1),);
+    assert_eq!(
+        probe_file_name_index("packages/baz/lib/module", &idx),
+        Some(2),
+    );
+}
+
+#[test]
+fn test_probe_with_explicit_ts_extension() {
+    // Specifier already carries `.ts`; direct hit must work.
+    let files = ["packages/foo/src/bar.ts", "lib/util.d.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        probe_file_name_index("packages/foo/src/bar.ts", &idx),
+        Some(0),
+    );
+    assert_eq!(probe_file_name_index("lib/util.d.ts", &idx), Some(1));
+}
+
+#[test]
+fn test_probe_directory_index_fallback() {
+    // `packages/foo/src` → `packages/foo/src/index.ts`.
+    let files = ["packages/foo/src/index.ts", "packages/bar/src/index.tsx"];
+    let idx = file_index_from(&files);
+    assert_eq!(probe_file_name_index("packages/foo/src", &idx), Some(0),);
+    assert_eq!(probe_file_name_index("packages/bar/src", &idx), Some(1),);
+}
+
+#[test]
+fn test_probe_misses_npm_packages_not_in_index() {
+    // External npm packages are not in the project file index, so they
+    // must not match even when a nested-bare path is probed.
+    let files = ["src/app.ts", "src/utils.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(probe_file_name_index("react", &idx), None);
+    assert_eq!(probe_file_name_index("react/jsx-runtime", &idx), None);
+    assert_eq!(probe_file_name_index("lodash/merge", &idx), None);
+}

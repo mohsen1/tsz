@@ -931,6 +931,52 @@ pub fn resolve_specifier_via_file_index(
     None
 }
 
+/// Probe the filename index directly with a specifier, without joining against
+/// a source directory.
+///
+/// Unlike [`resolve_specifier_via_file_index`], this function does not compute
+/// a source-relative path. It handles direct spellings and extension fan-out
+/// only, so it is appropriate for project-relative bare paths such as
+/// `packages/foo/src/bar` that have no `./` prefix. The index contains only
+/// actual project files, so external package subpaths like `react/jsx-runtime`
+/// will naturally miss.
+pub fn probe_file_name_index(specifier: &str, filename_idx: &FileNameIndex) -> Option<usize> {
+    let spec_norm = if specifier.contains('\\') {
+        specifier.replace('\\', "/")
+    } else {
+        specifier.to_string()
+    };
+
+    if let Some(&idx) = filename_idx.get(&spec_norm) {
+        return Some(idx);
+    }
+
+    let stem = strip_ts_extension(&spec_norm);
+    let mut buf = String::with_capacity(stem.len() + 8);
+    for ext in TS_EXTENSIONS {
+        buf.clear();
+        buf.push_str(stem);
+        buf.push_str(ext);
+        if let Some(&idx) = filename_idx.get(&buf) {
+            return Some(idx);
+        }
+    }
+
+    if !stem.is_empty() {
+        for ext in TS_EXTENSIONS {
+            buf.clear();
+            buf.push_str(stem);
+            buf.push_str("/index");
+            buf.push_str(ext);
+            if let Some(&idx) = filename_idx.get(&buf) {
+                return Some(idx);
+            }
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 #[path = "../tests/module_resolution.rs"]
 mod tests;
