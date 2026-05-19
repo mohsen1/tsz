@@ -28,8 +28,7 @@ Status taxonomy
 
 ``stale-accepted``
     The test is in the accepted-regression list but no longer appears in
-    ``conformance-detail.json`` failures. The accepted entry can be
-    retired.
+    ``conformance-detail.json`` failures. The accepted entry can be retired.
 
 ``passing``
     The test passes in the baseline and is not accepted as a regression.
@@ -68,14 +67,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-DEFAULT_CONFORMANCE_DIR = REPO_ROOT / "scripts" / "conformance"
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from lib.conformance_query import basename
+from lib.query_snapshot import load_snapshot
+
+DEFAULT_CONFORMANCE_DIR = Path(__file__).resolve().parent
 
 DETAIL_FILENAME = "conformance-detail.json"
 SNAPSHOT_FILENAME = "conformance-snapshot.json"
@@ -83,54 +86,51 @@ BASELINE_FILENAME = "conformance-baseline.txt"
 ACCEPTED_FILENAME = "conformance-accepted-regressions.txt"
 
 DASHBOARD_HINT = "python3 scripts/conformance/query-conformance.py --dashboard"
+SNAPSHOT_REGEN_HINT = "./scripts/conformance/conformance.sh snapshot"
 
-STATUS_LABELS = {
-    "failing": "failing in current snapshot",
-    "accepted-regression": "accepted regression (failing but tracked)",
-    "stale-accepted": "stale: accepted-regression entry no longer fails",
-    "passing": "stale: passing in current snapshot",
-    "unknown": "unknown: not found in baseline or accepted list",
-    "aggregate": "aggregate: no single snapshot row",
-}
-
-CLOSURE_GUIDANCE = {
-    "passing": (
-        "Close the issue with `not planned (stale)` and link to this comment "
-        "for the snapshot evidence."
-    ),
+# Each status entry holds the label rendered in the markdown table and the
+# closure-pattern guidance line. Keys are returned by `_classify_path` and
+# `resolve_inputs`. Order is the order the closure pattern lists them — start
+# with the actions an inspector is most likely to take.
+STATUSES: dict[str, tuple[str, str]] = {
     "stale-accepted": (
+        "stale: accepted-regression entry no longer fails",
         "Remove the entry from `conformance-accepted-regressions.txt`, then "
-        "close the regression issue with `not planned (stale)`."
+        "close the regression issue with `not planned (stale)`.",
+    ),
+    "passing": (
+        "stale: passing in current snapshot",
+        "Close the issue with `not planned (stale)` and link to this comment "
+        "for the snapshot evidence.",
     ),
     "failing": (
+        "failing in current snapshot",
         "Keep the issue open and link to this comment so the next inspector "
-        "can find the latest snapshot status."
+        "can find the latest snapshot status.",
     ),
     "accepted-regression": (
+        "accepted regression (failing but tracked)",
         "Keep the issue open. Add the `accepted-regression` label so triage "
-        "is one search away."
-    ),
-    "unknown": (
-        "Rename or re-scope the issue; no checked-in artifact references the "
-        "name. The issue may have predated a rename of the upstream test."
+        "is one search away.",
     ),
     "aggregate": (
+        "aggregate: no single snapshot row",
         "Reply with the dashboard categories below. Close only when the "
-        "matching category counter reaches zero."
+        "matching category counter reaches zero.",
+    ),
+    "unknown": (
+        "unknown: not found in baseline or accepted list",
+        "Rename or re-scope the issue; no checked-in artifact references the "
+        "name. The issue may have predated a rename of the upstream test.",
     ),
 }
 
-# Split issue titles / free-form input on whitespace and common punctuation.
-# Identifiers, dotted paths, and quoted test names survive the split intact.
 _TOKEN_SPLIT = re.compile(r"[\s,;:()\[\]{}\"'`]+")
-
 TEST_EXTENSIONS = (".tsx", ".ts", ".jsx", ".js")
 
 
 @dataclass(frozen=True)
 class ResolvedTest:
-    """A test name resolved against the snapshot artifacts."""
-
     name: str
     path: str
     status: str
@@ -138,8 +138,6 @@ class ResolvedTest:
 
 @dataclass
 class InputResult:
-    """Per-input report row."""
-
     raw: str
     resolved: list[ResolvedTest] = field(default_factory=list)
 
@@ -150,20 +148,13 @@ class InputResult:
 
 @dataclass(frozen=True)
 class SnapshotIndex:
-    """Indexed view of the conformance artifacts the helper needs."""
-
     timestamp: str
     git_sha: str
     summary: dict
     failures: set[str]
     accepted: set[str]
     baseline_pass: set[str]
-    baseline_fail: set[str]
     basename_to_path: dict[str, str]
-
-
-def _basename(path: str) -> str:
-    return path.rsplit("/", 1)[-1] if "/" in path else path
 
 
 def _strip_test_ext(name: str) -> str:
@@ -173,60 +164,42 @@ def _strip_test_ext(name: str) -> str:
     return name
 
 
-def _read_json(path: Path) -> dict:
-    if not path.exists():
-        raise SystemExit(f"required artifact not found: {path}")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _read_lines(path: Path) -> list[str]:
-    if not path.exists():
-        raise SystemExit(f"required artifact not found: {path}")
-    return path.read_text(encoding="utf-8").splitlines()
-
-
 def load_snapshot_index(conformance_dir: Path) -> SnapshotIndex:
-    snapshot = _read_json(conformance_dir / SNAPSHOT_FILENAME)
-    detail = _read_json(conformance_dir / DETAIL_FILENAME)
-    baseline_lines = _read_lines(conformance_dir / BASELINE_FILENAME)
-    accepted_lines = _read_lines(conformance_dir / ACCEPTED_FILENAME)
+    snapshot = load_snapshot(conformance_dir / SNAPSHOT_FILENAME, SNAPSHOT_REGEN_HINT)
+    detail = load_snapshot(conformance_dir / DETAIL_FILENAME, SNAPSHOT_REGEN_HINT)
+    baseline_path = conformance_dir / BASELINE_FILENAME
+    accepted_path = conformance_dir / ACCEPTED_FILENAME
+    if not baseline_path.exists():
+        raise SystemExit(f"required artifact not found: {baseline_path}")
+    if not accepted_path.exists():
+        raise SystemExit(f"required artifact not found: {accepted_path}")
 
-    failures = set(detail.get("failures", {}).keys())
     accepted = {
         stripped
-        for line in accepted_lines
+        for line in accepted_path.read_text(encoding="utf-8").splitlines()
         if (stripped := line.strip()) and not stripped.startswith("#")
     }
 
     baseline_pass: set[str] = set()
-    baseline_fail: set[str] = set()
     basename_to_path: dict[str, str] = {}
-    for line in baseline_lines:
+    for line in baseline_path.read_text(encoding="utf-8").splitlines():
         head, _, rest = line.partition(" ")
         path = rest.split(" |", 1)[0].strip()
-        if not path:
+        if not path or head not in ("PASS", "FAIL"):
             continue
         if head == "PASS":
             baseline_pass.add(path)
-        elif head == "FAIL":
-            baseline_fail.add(path)
-        else:
-            continue
-        # Index by basename-without-extension for free-form input matching.
-        # First occurrence wins so the lookup is deterministic; basename
-        # collisions across directories are rare and a deterministic policy
-        # is enough for this helper's reporting purpose.
-        basename_to_path.setdefault(_strip_test_ext(_basename(path)), path)
+        # First occurrence wins; basename collisions across directories are
+        # rare and a deterministic policy is enough for reporting.
+        basename_to_path.setdefault(_strip_test_ext(basename(path)), path)
 
-    summary = snapshot.get("summary", {})
     return SnapshotIndex(
         timestamp=str(snapshot.get("timestamp", "")),
         git_sha=str(snapshot.get("git_sha", "")),
-        summary=summary,
-        failures=failures,
+        summary=snapshot.get("summary", {}),
+        failures=set(detail.get("failures", {}).keys()),
         accepted=accepted,
         baseline_pass=baseline_pass,
-        baseline_fail=baseline_fail,
         basename_to_path=basename_to_path,
     )
 
@@ -238,8 +211,6 @@ def _classify_path(path: str, index: SnapshotIndex) -> str:
         return "stale-accepted"
     if path in index.baseline_pass:
         return "passing"
-    if path in index.baseline_fail:
-        return "failing"
     return "unknown"
 
 
@@ -248,13 +219,9 @@ def _candidate_tokens(raw: str) -> list[str]:
 
 
 def _looks_like_test_token(token: str) -> bool:
-    """True when ``token`` is shaped like a TypeScript test name reference.
-
-    Required to gate basename lookups against common English words: many
-    upstream tests are named with bare lowercase basenames like ``emit``,
-    ``index``, or ``test`` that would otherwise match every issue title
-    that happens to contain those words.
-    """
+    # Gate basename lookups against common English words: many upstream tests
+    # have bare lowercase basenames like `emit`, `index`, `test` that would
+    # otherwise match every issue title containing those words.
     if any(token.endswith(ext) for ext in TEST_EXTENSIONS):
         return True
     if "TypeScript/tests/cases" in token:
@@ -270,11 +237,10 @@ def _lookup_token(token: str, index: SnapshotIndex) -> str | None:
     if not _looks_like_test_token(token):
         return None
     if "TypeScript/tests/cases" in token:
-        # Strip leading punctuation that survived tokenization (e.g. `<path>`).
         candidate = token.lstrip("<").rstrip(">")
-        if candidate in index.baseline_pass or candidate in index.baseline_fail:
+        if candidate in index.baseline_pass:
             return candidate
-    return index.basename_to_path.get(_strip_test_ext(_basename(token)))
+    return index.basename_to_path.get(_strip_test_ext(basename(token)))
 
 
 def resolve_inputs(inputs: Iterable[str], index: SnapshotIndex) -> list[InputResult]:
@@ -289,7 +255,7 @@ def resolve_inputs(inputs: Iterable[str], index: SnapshotIndex) -> list[InputRes
             seen.add(path)
             result.resolved.append(
                 ResolvedTest(
-                    name=_basename(path),
+                    name=basename(path),
                     path=path,
                     status=_classify_path(path, index),
                 )
@@ -320,13 +286,13 @@ def render_markdown(results: list[InputResult], index: SnapshotIndex) -> str:
         if result.is_aggregate:
             lines.append(
                 f"| `{raw}` | _aggregate / no specific test_ | "
-                f"{STATUS_LABELS['aggregate']} |"
+                f"{STATUSES['aggregate'][0]} |"
             )
             continue
         for resolved in result.resolved:
             lines.append(
                 f"| `{raw}` | `{resolved.name}` (`{resolved.path}`) | "
-                f"{STATUS_LABELS[resolved.status]} |"
+                f"{STATUSES[resolved.status][0]} |"
             )
     lines.append("")
     if any(result.is_aggregate for result in results):
@@ -341,8 +307,8 @@ def render_markdown(results: list[InputResult], index: SnapshotIndex) -> str:
         )
     lines.append("### Closure pattern for stale regression issues")
     lines.append("")
-    for status, label in STATUS_LABELS.items():
-        lines.append(f"- **{label}** — {CLOSURE_GUIDANCE[status]}")
+    for label, guidance in STATUSES.values():
+        lines.append(f"- **{label}** — {guidance}")
     return "\n".join(lines) + "\n"
 
 
