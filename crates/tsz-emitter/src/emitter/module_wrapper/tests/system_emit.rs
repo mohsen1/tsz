@@ -9,6 +9,21 @@ fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::pars
     (parser, root)
 }
 
+fn emit_system_es2015(source: &str) -> String {
+    let (parser, root) = parse_test_source(source);
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
 #[test]
 fn system_es5_default_class_export_uses_hoisted_assignment_iife() {
     let source = "export default class A { method() { return 42; } }\n";
@@ -1617,5 +1632,166 @@ render() {
     assert!(
         !output.contains("_jsxFileName = \"stale.tsx\";"),
         "System jsxdev emit should not reuse stale _jsxFileName values.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_export_star_emits_local_export_star_helper() {
+    let output = emit_system_es2015(r#"export * from "a";"#);
+
+    assert!(
+        output.contains("System.register([\"a\"], function (exports_1, context_1) {"),
+        "System export-star modules should register the re-export dependency.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function exportStar_1(m) {"),
+        "System export-star modules should emit the local export-star helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (n !== \"default\") exports[n] = m[n];"),
+        "Pure export-star modules should only skip default without an exclusion map.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exportStar_1(a_1_1);"),
+        "The dependency setter should forward namespace members through exportStar_1.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exportedNames_1"),
+        "Pure export-star modules should not emit an exclusion map.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_export_star_excludes_local_named_exports() {
+    let output = emit_system_es2015(
+        r#"export * from "a";
+export const x = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("var x;"),
+        "The local export should still be hoisted.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var exportedNames_1 = {\n        \"x\": true\n    };"),
+        "Local named exports should be listed in the export-star exclusion map.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "if (n !== \"default\" && !exportedNames_1.hasOwnProperty(n)) exports[n] = m[n];"
+        ),
+        "Export-star helper should consult the exclusion map when explicit names exist.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"x\", x = 1);"),
+        "The local named export should still be published from execute().\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_export_star_default_function_uses_empty_exclusion_map() {
+    let output = emit_system_es2015(
+        r#"export * from "a";
+export default function f() {}
+"#,
+    );
+
+    assert!(
+        output.contains("exports_1(\"default\", f);"),
+        "The default function should still be hoisted and exported before the setter block.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var exportedNames_1 = {};"),
+        "Hoisted default function exports should use tsc's empty export-star exclusion map.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "if (n !== \"default\" && !exportedNames_1.hasOwnProperty(n)) exports[n] = m[n];"
+        ),
+        "The export-star helper should use the empty map shape for hoisted default functions.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_export_star_excludes_named_reexports_and_namespace_reexports() {
+    let output = emit_system_es2015(
+        r#"export * from "a";
+export { y as renamed } from "b";
+export * as ns from "c";
+"#,
+    );
+
+    assert!(
+        output.contains("System.register([\"a\", \"b\", \"c\"], function (exports_1, context_1) {"),
+        "System should preserve re-export dependencies in source order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "var exportedNames_1 = {\n        \"renamed\": true,\n        \"ns\": true\n    };"
+        ),
+        "Named and namespace re-exports should be excluded from export-star forwarding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exportStar_1(a_1_1);"),
+        "The star re-export dependency should call exportStar_1.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("\"renamed\": b_2_1[\"y\"]"),
+        "The named re-export should still be published from its setter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"ns\", c_3_1);"),
+        "The namespace re-export should still be published from its setter.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_export_star_matches_mixed_import_reexport_fixture_shape() {
+    let output = emit_system_es2015(
+        r#"import * as x from "foo";
+import * as y from "bar";
+export * from "foo";
+export * from "bar";
+export {x};
+export {y};
+import {a1, b1, c1 as d1} from "foo";
+export {a2, b2, c2 as d2} from "bar";
+
+x,y,a1,b1,d1;
+"#,
+    );
+
+    assert!(
+        output.contains("var x, y, foo_1;"),
+        "The mixed import/re-export fixture should hoist namespace imports and named-import module temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "var exportedNames_1 = {\n        \"x\": true,\n        \"y\": true,\n        \"a2\": true,\n        \"b2\": true,\n        \"d2\": true\n    };"
+        ),
+        "The exclusion map should include local exports and named re-exports, but not star exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = x_1;") && output.contains("exportStar_1(x_1);"),
+        "The foo setter should assign the namespace import and forward star exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("y = y_1;") && output.contains("exportStar_1(y_1);"),
+        "The bar setter should assign the namespace import and forward star exports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "exports_1({\n                    \"a2\": y_1[\"a2\"],\n                    \"b2\": y_1[\"b2\"],\n                    \"d2\": y_1[\"c2\"]\n                });"
+        ),
+        "Named re-exports from bar should remain grouped in the setter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"x\", x);") && output.contains("exports_1(\"y\", y);"),
+        "Local namespace re-exports should be published from execute().\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x, y, foo_1.a1, foo_1.b1, foo_1.c1;"),
+        "Named import references should still substitute through the module temp.\nOutput:\n{output}"
     );
 }

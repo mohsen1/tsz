@@ -172,6 +172,44 @@ pub(crate) fn union_context_prefers_tuple_array_literal(
     saw_tuple
 }
 
+pub(crate) fn widen_mutable_object_literal_property_types(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    let Some(shape) = crate::query_boundaries::common::object_shape_for_type(db, type_id) else {
+        return type_id;
+    };
+
+    let mut widened_shape = shape.as_ref().clone();
+    let mut changed = false;
+    for prop in &mut widened_shape.properties {
+        let widened_read = crate::query_boundaries::common::widen_literal_type(db, prop.type_id);
+        let widened_write =
+            crate::query_boundaries::common::widen_literal_type(db, prop.write_type);
+        if widened_read != prop.type_id || widened_write != prop.write_type {
+            changed = true;
+        }
+        prop.type_id = widened_read;
+        prop.write_type = widened_write;
+    }
+
+    if changed {
+        db.object_with_index(widened_shape)
+    } else {
+        type_id
+    }
+}
+
+/// Whether a contextual type is literal-permissive for object-literal property
+/// widening.
+///
+/// `unknown`, `any`, and `never` do not constrain literal property types in
+/// tsc's contextual literal check, so they should not suppress the normal
+/// widening of property literals in non-fresh object contexts.
+pub(crate) fn is_literal_permissive_object_context(type_id: TypeId) -> bool {
+    matches!(type_id, TypeId::UNKNOWN | TypeId::ANY | TypeId::NEVER)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,6 +296,20 @@ mod tests {
             &db,
             tuple(&db, TypeId::STRING)
         ));
+    }
+
+    #[test]
+    fn literal_permissive_object_context_accepts_top_like_contexts() {
+        assert!(is_literal_permissive_object_context(TypeId::UNKNOWN));
+        assert!(is_literal_permissive_object_context(TypeId::ANY));
+        assert!(is_literal_permissive_object_context(TypeId::NEVER));
+    }
+
+    #[test]
+    fn literal_permissive_object_context_rejects_constraining_contexts() {
+        assert!(!is_literal_permissive_object_context(TypeId::STRING));
+        assert!(!is_literal_permissive_object_context(TypeId::NUMBER));
+        assert!(!is_literal_permissive_object_context(TypeId::BOOLEAN));
     }
 
     #[test]

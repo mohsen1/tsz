@@ -55,18 +55,6 @@ fn remove_synthetic_missing_union_spread_props(member_props: &mut [Vec<PropertyI
     }
 }
 
-/// Whether a contextual type is "literal-permissive" — i.e., does not
-/// constrain literal property types and therefore should not suppress
-/// the object-literal property widening that tsc performs for non-fresh
-/// literal contexts.
-///
-/// `unknown`, `any`, and `never` fall into this bucket: tsc's
-/// `isLiteralOfContextualType` returns `false` for them, so a property
-/// like `a: 1` in `{ a: 1 } satisfies unknown` widens to `number`.
-fn is_literal_permissive_context(ctx: TypeId) -> bool {
-    ctx == TypeId::UNKNOWN || ctx == TypeId::ANY || ctx == TypeId::NEVER
-}
-
 impl<'a> CheckerState<'a> {
     fn object_literal_property_is_typed_variable_initializer(
         &self,
@@ -130,8 +118,11 @@ impl<'a> CheckerState<'a> {
         if self.ctx.preserve_literal_types {
             return false;
         }
-        let property_context_preserves_literal =
-            property_context_type.is_some_and(|ct| !is_literal_permissive_context(ct));
+        let property_context_preserves_literal = property_context_type.is_some_and(|ct| {
+            !crate::query_boundaries::type_computation::core::is_literal_permissive_object_context(
+                ct,
+            )
+        });
         !property_context_preserves_literal && !had_object_context
     }
 
@@ -866,8 +857,11 @@ impl<'a> CheckerState<'a> {
                     // false for these types, so property literals widen normally
                     // (e.g., `{ a: 1 } satisfies unknown` produces `{ a: number }`,
                     // not `{ a: 1 }`).
-                    let had_object_context =
-                        contextual_type.is_some_and(|ct| !is_literal_permissive_context(ct));
+                    let had_object_context = contextual_type.is_some_and(|ct| {
+                        !crate::query_boundaries::type_computation::core::is_literal_permissive_object_context(
+                            ct,
+                        )
+                    });
                     // When the outer contextual type is a union with a non-nullish
                     // non-object member (e.g. `string | FullRule`), tsc does not
                     // provide a contextual type for function-like property initializers.
@@ -1493,10 +1487,11 @@ impl<'a> CheckerState<'a> {
                     let jsdoc_declared_type = self.jsdoc_type_annotation_for_node_direct(elem_idx);
 
                     // Set contextual type for shorthand property value.
-                    // See note above on `is_literal_permissive_context` — treat
-                    // `unknown`/`any`/`never` as "no real context" for widening.
-                    let had_object_context =
-                        contextual_type.is_some_and(|ct| !is_literal_permissive_context(ct));
+                    let had_object_context = contextual_type.is_some_and(|ct| {
+                        !crate::query_boundaries::type_computation::core::is_literal_permissive_object_context(
+                            ct,
+                        )
+                    });
                     if let Some(diag_target) = jsdoc_declared_type.or(property_context_type) {
                         self.ctx
                             .object_literal_tracking

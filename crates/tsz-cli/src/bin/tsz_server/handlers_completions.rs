@@ -2883,7 +2883,7 @@ impl Server {
                 "entries": []
             })
         };
-        self.stub_response(seq, request, Some(result.unwrap_or(fallback)))
+        self.success_response(seq, request, Some(result.unwrap_or(fallback)))
     }
 
     pub(crate) fn handle_completion_details(
@@ -3366,7 +3366,7 @@ impl Server {
                 .collect();
             Some(serde_json::json!(details))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     // Display parts rendering, signature help handler, and tokenization utilities

@@ -19,6 +19,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.reserved_names.clear();
         self.symbol_module_specifier_cache.clear();
         self.import_plan = ImportPlan::default();
+        self.local_namespace_alias_targets.clear();
 
         self.reset_writer();
         self.indent_level = 0;
@@ -1650,6 +1651,10 @@ impl<'a> DeclarationEmitter<'a> {
             })
         });
         self.method_names_with_overloads = FxHashSet::default();
+        let prev_class_type_params = std::mem::replace(
+            &mut self.current_class_type_params,
+            class.type_parameters.clone(),
+        );
 
         // Suppress method implementations that share a computed name with
         // an accessor (tsc emits only the accessor in .d.ts).
@@ -1694,6 +1699,7 @@ impl<'a> DeclarationEmitter<'a> {
         if shadow_alias.is_none() {
             self.emit_js_namespace_export_aliases_for_name(class.name, is_exported);
         }
+        self.current_class_type_params = prev_class_type_params;
     }
 
     pub(in crate::declaration_emitter) fn emit_class_member(&mut self, member_idx: NodeIndex) {

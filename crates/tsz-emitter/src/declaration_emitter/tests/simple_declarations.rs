@@ -2299,6 +2299,158 @@ export class Foo {
 }
 
 #[test]
+fn test_ts_function_declaration_preserves_jsdoc_overload_comments() {
+    let output = emit_dts(
+        r#"
+/**
+ * @overload
+ * @param {number} value
+ * @returns {'number'}
+ */
+/**
+ * @overload
+ * @param {string} value
+ * @returns {'string'}
+ */
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+function kind(value: unknown): string {
+  return typeof value;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("@overload"),
+        "Expected TS @overload JSDoc comments to be preserved: {output}"
+    );
+    assert!(
+        output.contains("declare function kind(value: unknown): string;"),
+        "Expected TS implementation signature instead of JSDoc overload expansion: {output}"
+    );
+    assert!(
+        !output.contains("declare function kind(value: number): \"number\";")
+            && !output.contains("declare function kind(value: string): \"string\";"),
+        "TS @overload JSDoc should not emit overload signatures: {output}"
+    );
+}
+
+#[test]
+fn test_ts_function_declaration_jsdoc_overload_keeps_implementation_param_names() {
+    let output = emit_dts(
+        r#"
+/**
+ * @overload
+ * @param {number} x
+ * @returns {number}
+ */
+/**
+ * @overload
+ * @param {string} x
+ * @returns {string}
+ */
+/**
+ * @param {unknown} x
+ * @returns {unknown}
+ */
+function identity(x: unknown): unknown {
+  return x;
+}
+"#,
+    );
+
+    assert!(
+        output.contains("@overload"),
+        "Expected TS @overload JSDoc comments to be preserved: {output}"
+    );
+    assert!(
+        output.contains("declare function identity(x: unknown): unknown;"),
+        "Expected TS implementation signature to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("identity(x: number)") && !output.contains("identity(x: string)"),
+        "TS @overload JSDoc should not emit overload signatures: {output}"
+    );
+}
+
+#[test]
+fn test_ts_class_method_preserves_jsdoc_overload_comments() {
+    let output = emit_dts(
+        r#"
+class Converter {
+  /**
+   * @overload
+   * @param {number} x
+   * @returns {string}
+   */
+  /**
+   * @overload
+   * @param {string} x
+   * @returns {number}
+   */
+  /**
+   * @param {unknown} x
+   * @returns {unknown}
+   */
+  convert(x: unknown): unknown {
+    return x;
+  }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("@overload"),
+        "Expected TS method @overload JSDoc comments to be preserved: {output}"
+    );
+    assert!(
+        output.contains("convert(x: unknown): unknown;"),
+        "Expected TS implementation method signature to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("convert(x: number): string;")
+            && !output.contains("convert(x: string): number;"),
+        "TS method @overload JSDoc should not emit overload signatures: {output}"
+    );
+}
+
+#[test]
+fn test_ts_class_constructor_preserves_jsdoc_overload_comments() {
+    let output = emit_dts(
+        r#"
+class Wrapper {
+  /**
+   * @overload
+   * @param {string} value
+   */
+  /**
+   * @overload
+   * @param {number} value
+   */
+  /** @param {unknown} value */
+  constructor(value: unknown) {}
+}
+"#,
+    );
+
+    assert!(
+        output.contains("@overload"),
+        "Expected TS constructor @overload JSDoc comments to be preserved: {output}"
+    );
+    assert!(
+        output.contains("constructor(value: unknown);"),
+        "Expected TS implementation constructor signature to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("constructor(value: string);")
+            && !output.contains("constructor(value: number);"),
+        "TS constructor @overload JSDoc should not emit overload signatures: {output}"
+    );
+}
+
+#[test]
 fn test_js_object_namespace_emits_legacy_jsdoc_overload_member_comments() {
     let output = emit_js_dts(
         r#"
@@ -6655,6 +6807,27 @@ function g<T>(x: T) {
     assert!(
         output.contains("declare function g<T>(x: T): T extends (infer T_1)[] ? T_1 : T;"),
         "Expected returned local annotation to substitute parameter type queries and rename shadowed infer type parameter: {output}"
+    );
+}
+
+#[test]
+fn test_generic_class_unrelated_methods_preserve_literal_return_unions() {
+    let output = emit_dts_with_binding(
+        r#"
+export class C<T> {
+    m(x: boolean) { return x ? 1 : 2; }
+    s(x: boolean) { return x ? "a" : "b"; }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("m(x: boolean): 1 | 2;"),
+        "Expected generic class method numeric literal union to use source-backed return text: {output}"
+    );
+    assert!(
+        output.contains(r#"s(x: boolean): "a" | "b";"#),
+        "Expected generic class method string literal union to use source-backed return text: {output}"
     );
 }
 

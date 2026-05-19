@@ -1187,17 +1187,11 @@ impl<'a> CheckerState<'a> {
                 let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
                     continue;
                 };
-                // Set checking_computed_property_name so that TS2467 (type parameter
-                // reference in computed property name) is properly emitted.
                 let prev = self.ctx.checking_computed_property_name;
                 self.ctx.checking_computed_property_name = Some(name_idx);
-                // Preserve literal types so that string literal expressions like
-                // ["computed"] resolve to the literal type "computed" rather than
-                // widening to `string`. Without this, get_literal_property_name
-                // cannot extract the property name from the widened type.
+                // Preserve literal property names before computed-name lowering.
                 let prev_preserve = self.ctx.preserve_literal_types;
                 self.ctx.preserve_literal_types = true;
-                // Evaluate the expression type and get the property name
                 let expr_type = self.get_type_of_node(computed.expression);
                 self.ctx.preserve_literal_types = prev_preserve;
                 self.ctx.checking_computed_property_name = prev;
@@ -1208,6 +1202,10 @@ impl<'a> CheckerState<'a> {
                     )
                 {
                     map.insert(computed.expression, name);
+                } else if let Some(name) =
+                    self.symbol_valued_binding_property_name(computed.expression, expr_type)
+                {
+                    map.insert(computed.expression, self.ctx.types.intern_string(&name));
                 } else if let Some(sym_ref) =
                     crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
                 {
@@ -1264,6 +1262,9 @@ impl<'a> CheckerState<'a> {
                 self.ctx.checking_computed_property_name = prev;
                 if crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
                     .is_some()
+                    || self
+                        .symbol_valued_binding_property_name(computed.expression, expr_type)
+                        .is_some()
                 {
                     set.insert(computed.expression);
                 }

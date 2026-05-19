@@ -56,7 +56,7 @@ impl Server {
             Some(Self::text_span_body(content_start, content_end))
         })();
 
-        self.stub_response(seq, request, result)
+        self.success_response(seq, request, result)
     }
 
     pub(crate) fn handle_jsx_closing_tag(
@@ -178,7 +178,7 @@ impl Server {
             None
         })();
 
-        self.stub_response(seq, request, result)
+        self.success_response(seq, request, result)
     }
 
     pub(crate) fn handle_brace_completion(
@@ -333,8 +333,8 @@ impl Server {
                 message: Some("No content available.".to_string()),
                 body: None,
             },
-            Some(Ok(body)) => self.stub_response(seq, request, Some(body)),
-            None => self.stub_response(seq, request, Some(serde_json::json!(true))),
+            Some(Ok(body)) => self.success_response(seq, request, Some(body)),
+            None => self.success_response(seq, request, Some(serde_json::json!(true))),
         }
     }
 
@@ -415,7 +415,7 @@ impl Server {
             None
         })();
 
-        self.stub_response(seq, request, result)
+        self.success_response(seq, request, result)
     }
 
     fn text_span_body(start: usize, end: usize) -> serde_json::Value {
@@ -473,7 +473,7 @@ impl Server {
             Some(serde_json::json!(results))
         })();
 
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     /// Scan `source_text` from `start_pos` for TODO comments. Skips string and
@@ -975,7 +975,7 @@ impl Server {
         // Always return a body so processResponse(request) works.
         // When no template, return {newText: "", caretOffset: 0} which
         // is truthy for processResponse but signals "no template" to adapter.
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!({
@@ -1691,7 +1691,7 @@ impl Server {
                 "indentation": indentation
             }))
         })();
-        self.stub_response(
+        self.success_response(
             seq,
             request,
             Some(result.unwrap_or(serde_json::json!({"position": 1, "indentation": 0}))),
@@ -1792,7 +1792,7 @@ impl Server {
                 edits,
             ))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_toggle_multiline_comment(
@@ -1966,7 +1966,7 @@ impl Server {
                 edits,
             ))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     fn comment_edits_for_protocol(
@@ -2154,7 +2154,7 @@ impl Server {
                 edits,
             ))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_uncomment_selection(
@@ -2237,7 +2237,7 @@ impl Server {
                 edits,
             ))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 
     pub(crate) fn handle_compiler_options_diagnostics(
@@ -2266,7 +2266,7 @@ impl Server {
 
             Some(serde_json::json!(diagnostics))
         })();
-        self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+        self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
 }
 
