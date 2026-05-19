@@ -127,7 +127,7 @@ impl<'a> DiagnosticBuilder<'a> {
     }
 
     fn normalize_excess_display_type(&self, ty: TypeId) -> TypeId {
-        let ty = crate::evaluate_type(self.interner, ty);
+        let ty = crate::computation::evaluate_type(self.interner, ty);
         match self.interner.lookup(ty) {
             Some(crate::types::TypeData::Application(app_id)) => {
                 let app = self.interner.type_application(app_id);
@@ -192,7 +192,7 @@ impl<'a> DiagnosticBuilder<'a> {
     }
 
     fn split_optional_object_for_excess_display(&self, ty: TypeId) -> TypeId {
-        let ty = crate::evaluate_type(self.interner, ty);
+        let ty = crate::computation::evaluate_type(self.interner, ty);
         if let Some(crate::types::TypeData::Union(list_id)) = self.interner.lookup(ty) {
             let members = self.interner.type_list(list_id);
             let non_undefined: Vec<_> = members
