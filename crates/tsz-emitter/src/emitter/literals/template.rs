@@ -298,10 +298,8 @@ impl<'a> Printer<'a> {
 }
 
 /// Strip the opening and (when present) closing delimiters from a template
-/// part's raw source slice. The scanner stores the full token text, so a
-/// terminated `NoSubstitutionTemplateLiteral` is `` `xxx` ``, a terminated
-/// `TemplateHead` is `` `xxx${ ``, a terminated `TemplateMiddle` is `}xxx${`,
-/// and a terminated `TemplateTail` is `}xxx``. Unterminated parts are missing
+/// part's raw source slice. The scanner stores the full token text including
+/// delimiters in `LiteralData::raw_text`. Unterminated parts are missing
 /// their trailing delimiter, which `strip_suffix` reports by returning `None`
 /// — we preserve the rest of the slice verbatim in that case.
 fn strip_template_delimiters(kind: u16, raw: &str) -> &str {

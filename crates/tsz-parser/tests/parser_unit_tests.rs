@@ -3378,6 +3378,90 @@ fn template_empty_span_at_eof_anchors_expression_before_missing_brace() {
     );
 }
 
+/// Parser-supplied `LiteralData::raw_text` must carry the full template
+/// token slice — including delimiters — so the emitter never re-scans the
+/// source bytes to recover escape sequences. The contract holds for both
+/// terminated and unterminated literals and for invalid escape sequences.
+#[test]
+fn no_substitution_template_records_raw_token_text() {
+    let cases = [
+        // Terminated, ordinary contents.
+        ("`hello`;", "`hello`"),
+        // Terminated, invalid `\u` escape — raw bytes preserved verbatim.
+        ("`\\u`;", "`\\u`"),
+        // Unterminated — raw text has no trailing backtick.
+        ("`abc", "`abc"),
+        // Unterminated with escaped backtick (`\``) — the backtick is content.
+        ("`\\`", "`\\`"),
+    ];
+    for (source, expected_raw) in cases {
+        let (parser, root) = parse_source(source);
+        let arena = parser.get_arena();
+        let stmt_idx = get_first_statement(arena, root);
+        let stmt_node = arena.get(stmt_idx).expect("stmt");
+        let expr_stmt = arena
+            .get_expression_statement(stmt_node)
+            .expect("expr stmt");
+        let init = expr_stmt.expression;
+        let node = arena.get(init).expect("init");
+        assert_eq!(
+            node.kind,
+            SyntaxKind::NoSubstitutionTemplateLiteral as u16,
+            "source `{source}` should parse as a no-sub template",
+        );
+        let lit = arena.get_literal(node).expect("literal data");
+        assert_eq!(
+            lit.raw_text.as_deref(),
+            Some(expected_raw),
+            "raw_text for `{source}` should match the scanner token slice",
+        );
+    }
+}
+
+#[test]
+fn template_expression_parts_record_raw_token_text() {
+    // Two-span template with invalid `\u` in head and invalid `\x` in tail.
+    let source = "`\\u${0}mid${1}\\x`;";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let stmt_idx = get_first_statement(arena, root);
+    let stmt_node = arena.get(stmt_idx).expect("stmt");
+    let expr_stmt = arena
+        .get_expression_statement(stmt_node)
+        .expect("expr stmt");
+    let init = expr_stmt.expression;
+    let node = arena.get(init).expect("init");
+    assert_eq!(
+        node.kind,
+        syntax_kind_ext::TEMPLATE_EXPRESSION,
+        "should parse as template expression",
+    );
+    let tpl = arena.get_template_expr(node).expect("template expr");
+
+    let head = arena.get(tpl.head).expect("head node");
+    let head_lit = arena.get_literal(head).expect("head literal");
+    assert_eq!(head_lit.raw_text.as_deref(), Some("`\\u${"));
+
+    let span_nodes = &tpl.template_spans.nodes;
+    assert_eq!(span_nodes.len(), 2, "two substitution spans expected");
+
+    let middle_span = arena
+        .get_template_span(arena.get(span_nodes[0]).expect("span0"))
+        .expect("span0 data");
+    let middle = arena.get(middle_span.literal).expect("middle node");
+    let middle_lit = arena.get_literal(middle).expect("middle literal");
+    assert_eq!(middle.kind, SyntaxKind::TemplateMiddle as u16);
+    assert_eq!(middle_lit.raw_text.as_deref(), Some("}mid${"));
+
+    let tail_span = arena
+        .get_template_span(arena.get(span_nodes[1]).expect("span1"))
+        .expect("span1 data");
+    let tail = arena.get(tail_span.literal).expect("tail node");
+    let tail_lit = arena.get_literal(tail).expect("tail literal");
+    assert_eq!(tail.kind, SyntaxKind::TemplateTail as u16);
+    assert_eq!(tail_lit.raw_text.as_deref(), Some("}\\x`"));
+}
+
 // =============================================================================
 // 12. Using / Await Using Declarations
 // =============================================================================
