@@ -4983,10 +4983,10 @@ fn flat_weak_type_in_intersection_target_emits_ts2559() {
 }
 
 #[test]
-fn direct_object_literal_no_common_props_weak_intersection_emits_ts2559_not_ts2353() {
-    // When an object literal with no properties in common with a weak intersection
-    // target is assigned directly, tsc emits TS2559 (no properties in common),
-    // NOT TS2353 (excess property check). EPC should be skipped in favor of TS2559.
+fn direct_object_literal_excess_prop_against_weak_intersection_emits_ts2353() {
+    // tsc emits TS2353 (excess property check) — NOT TS2559 — when a fresh object
+    // literal with an unrecognized property is assigned to a weak intersection target.
+    // EPC runs first for fresh literals; TS2559 applies to non-fresh sources only.
     let source = r#"
         interface A { x?: number }
         interface B { y?: string }
@@ -4994,15 +4994,15 @@ fn direct_object_literal_no_common_props_weak_intersection_emits_ts2559_not_ts23
     "#;
 
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     let has_ts2353 = has_diagnostic_code(&diagnostics, 2353);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     assert!(
-        has_ts2559,
-        "Expected TS2559 for object literal with no common properties assigned to weak intersection. Got: {diagnostics:?}"
+        has_ts2353,
+        "Expected TS2353 (excess property) for fresh literal with unrecognized property against weak intersection. Got: {diagnostics:?}"
     );
     assert!(
-        !has_ts2353,
-        "Expected no TS2353 when TS2559 applies (EPC should be skipped). Got: {diagnostics:?}"
+        !has_ts2559,
+        "Expected no TS2559 for a fresh object literal (EPC fires first). Got: {diagnostics:?}"
     );
 }
 
@@ -5026,23 +5026,24 @@ fn direct_object_literal_prop_matching_second_weak_intersection_member_no_ts2559
 }
 
 #[test]
-fn direct_object_literal_no_common_props_single_weak_type_emits_ts2559_not_ts2353() {
-    // A direct object literal with no properties in common with a plain (non-intersection)
-    // weak type should emit TS2559, not TS2353. EPC must not short-circuit before TS2559.
+fn direct_object_literal_excess_prop_against_single_weak_type_emits_ts2353() {
+    // tsc emits TS2353 (excess property check) when a fresh object literal with an
+    // unrecognized property is assigned to a single weak type. EPC fires first for
+    // fresh literals; TS2559 applies only to non-fresh sources.
     let source = r#"
         interface Opts { timeout?: number; retries?: number }
         const v: Opts = { url: "x" };
     "#;
     let diagnostics = get_all_diagnostics(source);
-    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     let has_ts2353 = has_diagnostic_code(&diagnostics, 2353);
+    let has_ts2559 = has_diagnostic_code(&diagnostics, 2559);
     assert!(
-        has_ts2559,
-        "Expected TS2559 for direct object literal with no common props against single weak type. Got: {diagnostics:?}"
+        has_ts2353,
+        "Expected TS2353 (excess property) for fresh literal with unrecognized property against single weak type. Got: {diagnostics:?}"
     );
     assert!(
-        !has_ts2353,
-        "Expected no TS2353 when TS2559 applies for single weak type. Got: {diagnostics:?}"
+        !has_ts2559,
+        "Expected no TS2559 for a fresh object literal (EPC fires first). Got: {diagnostics:?}"
     );
 }
 

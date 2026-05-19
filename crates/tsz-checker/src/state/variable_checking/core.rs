@@ -1445,35 +1445,12 @@ impl<'a> CheckerState<'a> {
                                     // nested TS2322 for a mismatching returned literal/expression.
                                 } else {
                                     // TS2353 (excess property) takes priority over TS2741/TS2322.
-                                    // Exception: TS2559 (no common properties with weak target)
-                                    // takes priority over TS2353 — skip EPC when that applies.
-                                    // TS2559 is only relevant for fresh/literal sources, so gate
-                                    // the solver round-trip on freshness to keep the hot path lean.
-                                    let is_fresh_or_literal = checker
-                                        .ctx
-                                        .arena
-                                        .get(var_decl.initializer)
-                                        .is_some_and(|n| {
-                                            n.kind
-                                                == tsz_parser::parser::syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                        })
-                                        || crate::query_boundaries::common::is_fresh_object_type(
-                                            checker.ctx.types,
-                                            checked_init_type,
-                                        );
-                                    let skip_epc_for_weak = is_fresh_or_literal
-                                        && checker.is_weak_union_violation(
-                                            checked_init_type,
-                                            excess_property_target,
-                                        );
                                     let diags_before = checker.ctx.diagnostics.len();
-                                    if !skip_epc_for_weak {
-                                        checker.check_object_literal_excess_properties(
-                                            checked_init_type,
-                                            excess_property_target,
-                                            var_decl.initializer,
-                                        );
-                                    }
+                                    checker.check_object_literal_excess_properties(
+                                        checked_init_type,
+                                        excess_property_target,
+                                        var_decl.initializer,
+                                    );
                                     if checker.ctx.diagnostics.len() == diags_before {
                                         // to an index-signature type) instead of on the outer assignment.
                                         // Only attempt elaboration when overall assignment fails AND
@@ -1483,13 +1460,10 @@ impl<'a> CheckerState<'a> {
                                         // on unrelated initializers (`null as any`, identifiers, ...)
                                         // has cache side-effects that perturb downstream JSX and
                                         // contextual-typing decisions (`callsOnComplexSignatures`).
-                                        // Also skip elaboration: it calls EPC internally and
-                                        // would emit TS2353 before TS2559 can fire.
-                                        if !skip_epc_for_weak
-                                            && checker
-                                                .initializer_reaches_object_literal_through_wrappers(
-                                                    var_decl.initializer,
-                                                )
+                                        if checker
+                                            .initializer_reaches_object_literal_through_wrappers(
+                                                var_decl.initializer,
+                                            )
                                             && !checker
                                                 .is_assignable_to(checked_init_type, declared_type)
                                             && checker.try_elaborate_object_literal_properties_for_var_init(
