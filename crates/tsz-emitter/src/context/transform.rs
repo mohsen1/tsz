@@ -406,7 +406,7 @@ impl TransformContext {
     }
 
     /// Lookup future fold aliases for `local_name`.
-    pub fn cjs_iife_folded_bindings(&self) -> &FxHashMap<String, Vec<String>> {
+    pub const fn cjs_iife_folded_bindings(&self) -> &FxHashMap<String, Vec<String>> {
         &self.cjs_iife_folded_bindings
     }
 
