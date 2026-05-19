@@ -90,6 +90,19 @@ impl SymbolFileTargetsOverlay {
         self.delta.insert(sym_id, file_idx);
     }
 
+    pub(super) fn register(
+        &mut self,
+        sym_id: SymbolId,
+        file_idx: usize,
+        global_file_idx: Option<usize>,
+    ) {
+        if global_file_idx == Some(file_idx) {
+            self.delta.remove(&sym_id);
+        } else if self.get(sym_id) != Some(file_idx) {
+            self.insert(sym_id, file_idx);
+        }
+    }
+
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.delta.is_empty() && self.parent.is_none()
