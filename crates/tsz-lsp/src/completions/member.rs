@@ -409,7 +409,8 @@ impl<'a> Completions<'a> {
             // — not all string methods or all number methods.
             let members = interner.type_list(members_id);
             if members.len() > 1 {
-                let mut per_member_props: Vec<FxHashMap<String, PropertyCompletion>> = Vec::new();
+                let mut per_member_props: Vec<FxHashMap<String, PropertyCompletion>> =
+                    Vec::with_capacity(members.len());
                 for &member in members.iter() {
                     let mut member_props = FxHashMap::default();
                     let mut member_visited = visited.clone();
@@ -428,7 +429,8 @@ impl<'a> Completions<'a> {
                 if let Some(first) = per_member_props.first() {
                     for (name, info) in first {
                         if per_member_props[1..].iter().all(|m| m.contains_key(name)) {
-                            let mut member_types = vec![info.type_id];
+                            let mut member_types = Vec::with_capacity(per_member_props.len());
+                            member_types.push(info.type_id);
                             for member_props in &per_member_props[1..] {
                                 if let Some(mi) = member_props.get(name) {
                                     member_types.push(mi.type_id);
