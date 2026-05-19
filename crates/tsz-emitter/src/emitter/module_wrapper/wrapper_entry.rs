@@ -1082,6 +1082,51 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// In AMD bundled output (`--outFile`), relative specifiers like `"./m1"`
+    /// must be resolved to their AMD module ID (e.g. `"m1"`), because the
+    /// `define()` dep array uses module IDs, not file-relative paths.
+    /// When not in bundled mode the raw specifier is returned unchanged.
+    fn resolve_amd_bundled_spec<'s>(&self, raw: &'s str) -> std::borrow::Cow<'s, str> {
+        let Some(module_name) = &self.ctx.options.bundled_module_name else {
+            return std::borrow::Cow::Borrowed(raw);
+        };
+        if !raw.starts_with('.') {
+            return std::borrow::Cow::Borrowed(raw);
+        }
+        let base_dir = module_name
+            .rsplit_once('/')
+            .map(|(dir, _)| dir)
+            .unwrap_or("");
+        let mut parts: Vec<&str> = if base_dir.is_empty() {
+            Vec::new()
+        } else {
+            base_dir.split('/').collect()
+        };
+        for part in raw.split('/') {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    if parts.pop().is_none() {
+                        return std::borrow::Cow::Borrowed(raw);
+                    }
+                }
+                p => parts.push(p),
+            }
+        }
+        if let Some(last) = parts.last_mut() {
+            *last = last
+                .strip_suffix(".ts")
+                .or_else(|| last.strip_suffix(".tsx"))
+                .or_else(|| last.strip_suffix(".js"))
+                .or_else(|| last.strip_suffix(".jsx"))
+                .unwrap_or(last);
+        }
+        if parts.is_empty() {
+            return std::borrow::Cow::Borrowed(raw);
+        }
+        std::borrow::Cow::Owned(parts.join("/"))
+    }
+
     fn collect_amd_dependency_groups(
         &mut self,
         dependencies: &[String],
@@ -1129,15 +1174,16 @@ impl<'a> Printer<'a> {
                     if let Some(spec) =
                         self.system_module_specifier_text(import_decl.module_specifier)
                     {
-                        rejected_deps.insert(spec);
+                        rejected_deps.insert(self.resolve_amd_bundled_spec(&spec).into_owned());
                     }
                     continue;
                 }
-                let Some(module_spec) =
+                let Some(raw_spec) =
                     self.system_module_specifier_text(import_decl.module_specifier)
                 else {
                     continue;
                 };
+                let module_spec = self.resolve_amd_bundled_spec(&raw_spec).into_owned();
                 let local_name = self.get_identifier_text_idx(import_decl.import_clause);
                 if local_name.is_empty() {
                     continue;
@@ -1162,9 +1208,10 @@ impl<'a> Printer<'a> {
                 if !self.export_decl_has_runtime_value(export_decl) {
                     continue;
                 }
-                if let Some(module_spec) =
+                if let Some(raw_spec) =
                     self.system_module_specifier_text(export_decl.module_specifier)
                 {
+                    let module_spec = self.resolve_amd_bundled_spec(&raw_spec).into_owned();
                     seen_value.insert(module_spec.clone());
                     if collect_for_amd {
                         let dep_var = self.next_commonjs_module_var(&module_spec);
@@ -1187,10 +1234,11 @@ impl<'a> Printer<'a> {
             if !self.import_decl_has_runtime_value(import_decl) {
                 continue;
             }
-            let Some(module_spec) = self.system_module_specifier_text(import_decl.module_specifier)
+            let Some(raw_spec) = self.system_module_specifier_text(import_decl.module_specifier)
             else {
                 continue;
             };
+            let module_spec = self.resolve_amd_bundled_spec(&raw_spec).into_owned();
             let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
                 if seen_side_effect.insert(module_spec.clone()) {
                     side_effect_deps.push(module_spec);
@@ -1272,14 +1320,16 @@ impl<'a> Printer<'a> {
         }
 
         for dep in dependencies {
-            if seen_value.contains(dep)
-                || seen_side_effect.contains(dep)
-                || rejected_deps.contains(dep)
+            let resolved = self.resolve_amd_bundled_spec(dep);
+            let resolved: &str = &resolved;
+            if seen_value.contains(resolved)
+                || seen_side_effect.contains(resolved)
+                || rejected_deps.contains(resolved)
             {
                 continue;
             }
-            if seen_side_effect.insert(dep.clone()) {
-                side_effect_deps.push(dep.clone());
+            if seen_side_effect.insert(resolved.to_owned()) {
+                side_effect_deps.push(resolved.to_owned());
             }
         }
 

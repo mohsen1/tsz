@@ -294,6 +294,7 @@ impl EmitContext {
     /// Create a new `EmitContext` with the given options
     pub fn with_options(options: PrinterOptions) -> Self {
         let target_facts = EmitTargetFacts::from_target(options.target);
+        let initial_counters = options.bundle_module_counters.clone();
         let mut ctx = Self {
             options,
             flags: EmitFlags::default(),
@@ -308,7 +309,13 @@ impl EmitContext {
             needs_async_lowering: false,
             arrow_state: ArrowTransformState::default(),
             destructuring_state: DestructuringState::default(),
-            module_state: ModuleTransformState::default(),
+            module_state: {
+                let mut state = ModuleTransformState::default();
+                if !initial_counters.is_empty() {
+                    state.module_temp_counters = initial_counters;
+                }
+                state
+            },
             block_scope_state: BlockScopeState::default(),
             private_field_state: PrivateFieldState::default(),
             emit_await_as_yield: false,
