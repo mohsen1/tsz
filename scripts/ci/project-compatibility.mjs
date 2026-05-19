@@ -77,6 +77,14 @@ const PEAK_MEMORY_BYTES_REASONS = new Set([
   "process exited before sampling",
   "not in scope",
 ]);
+const DEFAULT_FILES_REACHED_REASON = "runner did not count";
+const DEFAULT_PEAK_MEMORY_BYTES_REASON = "not measured on platform";
+if (!FILES_REACHED_REASONS.has(DEFAULT_FILES_REACHED_REASON)) {
+  throw new Error("DEFAULT_FILES_REACHED_REASON must be in FILES_REACHED_REASONS");
+}
+if (!PEAK_MEMORY_BYTES_REASONS.has(DEFAULT_PEAK_MEMORY_BYTES_REASON)) {
+  throw new Error("DEFAULT_PEAK_MEMORY_BYTES_REASON must be in PEAK_MEMORY_BYTES_REASONS");
+}
 
 function toNumber(value) {
   if (value === undefined || value === null || value === "") return null;
@@ -654,14 +662,14 @@ function record() {
     filesReached,
     process.env.COMPAT_FILES_REACHED_REASON,
     FILES_REACHED_REASONS,
-    "runner did not count",
+    DEFAULT_FILES_REACHED_REASON,
     "files_reached",
   );
   const peakMemoryBytesReason = residencyReason(
     peakMemoryBytes,
     process.env.COMPAT_PEAK_MEMORY_BYTES_REASON,
     PEAK_MEMORY_BYTES_REASONS,
-    "not measured on platform",
+    DEFAULT_PEAK_MEMORY_BYTES_REASON,
     "peak_memory_bytes",
   );
 

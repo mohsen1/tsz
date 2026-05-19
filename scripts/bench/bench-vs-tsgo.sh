@@ -1910,21 +1910,25 @@ function compatibilityArtifactMetadata(recorded = {}, generatedAt = new Date().t
   };
 }
 
-const FALLBACK_COMPATIBILITY_DEFAULTS = {
-  diagnostic_deltas: [],
-  exit_codes: { tsc: [], tsz: [], tsgo: [] },
-  files_reached: null,
-  files_reached_reason: "runner did not count",
-  peak_memory_bytes: null,
-  peak_memory_bytes_reason: "not measured on platform",
-};
+// Factory (not constant) so each fallback row owns its own nested arrays/
+// objects — downstream consumers must be free to mutate without aliasing.
+function fallbackCompatibilityDefaults() {
+  return {
+    diagnostic_deltas: [],
+    exit_codes: { tsc: [], tsz: [], tsgo: [] },
+    files_reached: null,
+    files_reached_reason: "runner did not count",
+    peak_memory_bytes: null,
+    peak_memory_bytes_reason: "not measured on platform",
+  };
+}
 
 function fallbackCompatibility(row) {
   if (!projectOwnerFamilies[row.name]) return null;
   const status = String(row.status || "").toLowerCase();
   if (!status) {
     return {
-      ...FALLBACK_COMPATIBILITY_DEFAULTS,
+      ...fallbackCompatibilityDefaults(),
       exit_class: "exit success",
       phase: "check",
       last_successful_phase: "check",
@@ -1933,7 +1937,7 @@ function fallbackCompatibility(row) {
   }
   if (status.includes("fixture")) {
     return {
-      ...FALLBACK_COMPATIBILITY_DEFAULTS,
+      ...fallbackCompatibilityDefaults(),
       exit_class: "fixture invalid",
       phase: "fixture setup",
       last_successful_phase: null,
@@ -1941,7 +1945,7 @@ function fallbackCompatibility(row) {
     };
   }
   return {
-    ...FALLBACK_COMPATIBILITY_DEFAULTS,
+    ...fallbackCompatibilityDefaults(),
     exit_class: status.includes("timeout") ? "timeout" : "nonzero exit",
     phase: "check",
     last_successful_phase: null,

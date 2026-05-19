@@ -2070,9 +2070,13 @@ export function getProjectCompatibilityDashboard() {
     const parts = [];
     if (row.filesReached !== null && row.filesReached !== undefined && Number.isFinite(Number(row.filesReached))) {
       parts.push(`${fmt(row.filesReached)} files`);
+    } else if (row.filesReachedReason) {
+      parts.push(`files reached: n/a (${row.filesReachedReason})`);
     }
     if (Number.isFinite(Number(row.peakMemoryBytes)) && Number(row.peakMemoryBytes) > 0) {
       parts.push(`${(Number(row.peakMemoryBytes) / (1024 * 1024)).toLocaleString("en-US", { maximumFractionDigits: 0 })} MiB peak`);
+    } else if (row.peakMemoryBytesReason) {
+      parts.push(`peak RSS: n/a (${row.peakMemoryBytesReason})`);
     }
     return parts;
   };

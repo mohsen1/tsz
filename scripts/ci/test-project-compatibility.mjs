@@ -958,17 +958,24 @@ withTempDir((dir) => {
   });
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(fs.readFileSync(summary, "utf8"));
-  assert.equal(payload.residency_by_row.length, 2);
-  assert.equal(payload.residency_by_row[0].project, "gamma");
-  assert.equal(payload.residency_by_row[0].state, "red");
-  assert.equal(payload.residency_by_row[0].files_reached, null);
-  assert.equal(payload.residency_by_row[0].files_reached_reason, "runner did not count");
-  assert.equal(payload.residency_by_row[0].peak_memory_bytes, null);
-  assert.equal(payload.residency_by_row[0].peak_memory_bytes_reason, "process exited before sampling");
-  assert.equal(payload.residency_by_row[1].project, "beta");
-  assert.equal(payload.residency_by_row[1].state, "yellow");
-  assert.equal(payload.residency_by_row[1].files_reached, 200);
-  assert.equal(payload.residency_by_row[1].peak_memory_bytes_reason, "not measured on platform");
+  assert.deepEqual(payload.residency_by_row, [
+    {
+      project: "gamma",
+      state: "red",
+      files_reached: null,
+      files_reached_reason: "runner did not count",
+      peak_memory_bytes: null,
+      peak_memory_bytes_reason: "process exited before sampling",
+    },
+    {
+      project: "beta",
+      state: "yellow",
+      files_reached: 200,
+      files_reached_reason: null,
+      peak_memory_bytes: null,
+      peak_memory_bytes_reason: "not measured on platform",
+    },
+  ]);
 });
 
 // format-step-summary residency table: both numeric measurements and
