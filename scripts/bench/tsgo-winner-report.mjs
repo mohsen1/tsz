@@ -15,29 +15,25 @@ function asNumber(value) {
 
 // Null factors sort last (treated as the lowest possible value) so that rows
 // with a real factor always appear before rows with an unknown factor.
-function factorOrLowest(value) {
+function factorForSort(value) {
   return value ?? -Infinity;
 }
 
 function compareWinnersByFactorDesc(a, b) {
-  const factorDelta = factorOrLowest(b.factor) - factorOrLowest(a.factor);
+  const factorDelta = factorForSort(b.factor) - factorForSort(a.factor);
   if (factorDelta !== 0) return factorDelta;
   return String(a.name).localeCompare(String(b.name));
 }
 
 function compareFamiliesByWorstFactorDesc(a, b) {
-  const factorDelta = factorOrLowest(b.worst_factor) - factorOrLowest(a.worst_factor);
+  const factorDelta = factorForSort(b.worst_factor) - factorForSort(a.worst_factor);
   if (factorDelta !== 0) return factorDelta;
   return a.family.localeCompare(b.family);
 }
 
 export function createTsgoWinnerReport(input, inputPath) {
   const rows = Array.isArray(input.results) ? input.results : [];
-
-  let incompleteCompatExcluded = 0;
-  for (const row of rows) {
-    if (isIncompleteCompat(row)) incompleteCompatExcluded += 1;
-  }
+  const incompleteCompatExcluded = rows.filter(isIncompleteCompat).length;
 
   const winners = rows
     .filter((row) => row?.winner === "tsgo" && isGreen(row))
@@ -63,7 +59,7 @@ export function createTsgoWinnerReport(input, inputPath) {
       byOwnerFamily.set(family, bucket);
     }
     bucket.rows += 1;
-    if (factorOrLowest(row.factor) > factorOrLowest(bucket.worst_factor)) {
+    if (factorForSort(row.factor) > factorForSort(bucket.worst_factor)) {
       bucket.worst_factor = row.factor;
       bucket.worst_row = row.name;
     }

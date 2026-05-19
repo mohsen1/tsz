@@ -65,29 +65,17 @@ function withTempDir(fn) {
   }
 }
 
-function writePayload(file, results, extraPayload = {}) {
-  fs.writeFileSync(
-    file,
-    `${JSON.stringify({
-      quick_mode: false,
-      validation: { hyperfine_exit_codes_required: true },
-      totals: { benchmarks_run: results.length },
-      results,
-      ...extraPayload,
-    })}\n`,
-    "utf8",
-  );
-}
-
 function writeInput(dir, name, results, extraPayload = {}) {
   const input = path.join(dir, name);
-  writePayload(input, results, extraPayload);
+  const payload = {
+    quick_mode: false,
+    validation: { hyperfine_exit_codes_required: true },
+    totals: { benchmarks_run: results.length },
+    results,
+    ...extraPayload,
+  };
+  fs.writeFileSync(input, `${JSON.stringify(payload)}\n`, "utf8");
   return input;
-}
-
-function runMerge(dir, results, extraPayload = {}) {
-  const input = writeInput(dir, "input.json", results, extraPayload);
-  return runMergeInputs(dir, [input]);
 }
 
 function runMergeInputs(dir, inputs) {
@@ -108,6 +96,11 @@ function runMergeInputs(dir, inputs) {
     encoding: "utf8",
   });
   return { ...result, output };
+}
+
+function runMerge(dir, results, extraPayload = {}) {
+  const input = writeInput(dir, "input.json", results, extraPayload);
+  return runMergeInputs(dir, [input]);
 }
 
 function projectRow(name, compatibility = SAMPLE_COMPATIBILITY) {
@@ -328,7 +321,8 @@ withTempDir((dir) => {
   assert.match(result.stderr, new RegExp(`${canaryRow}: missing compatibility\\.peak_memory_bytes`));
 });
 
-// artifact_missing row does not count as a green win even if winner is set
+// artifact_missing row mixed with required green rows: the artifact_missing
+// row must not count as a green win even though its winner is set.
 withTempDir((dir) => {
   const missingRow = REQUIRED_PROJECT_ROWS[0];
   const rows = REQUIRED_PROJECT_ROWS.map((name) =>
@@ -357,7 +351,8 @@ withTempDir((dir) => {
   assert.equal(merged.totals.green_tsgo_wins, 0);
 });
 
-// artifact_missing row does not get counted as a green win even if winner is set
+// artifact_missing row paired with a green tsgo row: only the green row
+// contributes to green win totals.
 withTempDir((dir) => {
   const artifactMissingRow = { name: "missing", winner: "tsz", tsz_ms: 1, tsgo_ms: 2, artifact_missing: true };
   const greenRow = { name: "green", winner: "tsgo", tsz_ms: 2, tsgo_ms: 1, compatibility: GREEN_COMPAT };
