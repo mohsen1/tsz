@@ -99,6 +99,215 @@ withTempDir((dir) => {
   ]);
   assert.equal(row.diagnostic_subsystems[0].subsystem, "evaluation-inference-instantiation");
   assert.equal(row.diagnostic_subsystems[1].subsystem, "uncoded diagnostic");
+  assert.equal(row.oracle_classification, "tsz-fails-only");
+  assert.deepEqual(row.diagnostic_counts, { tsc: 0, tsz: 1, tsgo: 1 });
+  assert.deepEqual(row.tsc_diagnostic_codes, []);
+  assert.deepEqual(row.tsz_diagnostic_codes, ["TS2344"]);
+  assert.deepEqual(row.tsgo_diagnostic_codes, []);
+});
+
+// Oracle classification matrix: each row pins the per-side exit codes and
+// the per-side diagnostic lines the classification is derived from. The
+// unified delta is synthesized from the per-side arrays so the test cannot
+// drift between the `tsc:`/`tsz:` label prefix and the explicit envs.
+function makeOracleCase({ name, exitClass, phase = "check", diagnosticStatus, tscExit, tszExit, tscLines = [], tszLines = [], expected }) {
+  const env = {
+    COMPAT_EXIT_CLASS: exitClass,
+    COMPAT_PHASE: phase,
+    COMPAT_DIAGNOSTIC_STATUS: diagnosticStatus,
+  };
+  if (tscExit !== undefined) env.COMPAT_TSC_EXIT_CODES = tscExit;
+  if (tszExit !== undefined) env.COMPAT_TSZ_EXIT_CODES = tszExit;
+  if (tscLines.length) env.COMPAT_TSC_DIAGNOSTIC_DELTA = tscLines.join("\n");
+  if (tszLines.length) env.COMPAT_TSZ_DIAGNOSTIC_DELTA = tszLines.join("\n");
+  const unified = [
+    ...tscLines.map((line) => `tsc: ${line}`),
+    ...tszLines.map((line) => `tsz: ${line}`),
+  ];
+  if (unified.length) env.COMPAT_DIAGNOSTIC_DELTA = unified.join("\n");
+  return { name, env, expected };
+}
+
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const cases = [
+    makeOracleCase({
+      name: "both-pass",
+      exitClass: "exit success",
+      diagnosticStatus: "none",
+      tscExit: "0",
+      tszExit: "0",
+      expected: { oracle: "both-pass", state: "green", counts: { tsc: 0, tsz: 0, tsgo: 0 }, tscCodes: [], tszCodes: [] },
+    }),
+    makeOracleCase({
+      name: "tsc-fails-only",
+      exitClass: "fixture invalid",
+      phase: "fixture setup",
+      diagnosticStatus: "tsc fixture failed",
+      tscExit: "1",
+      tszExit: "0",
+      tscLines: [
+        "src/a.ts(1,1): error TS2304: Cannot find name 'foo'.",
+        "src/b.ts(2,2): error TS2304: Cannot find name 'bar'.",
+      ],
+      expected: { oracle: "tsc-fails-only", state: "gray", counts: { tsc: 2, tsz: 0, tsgo: 0 }, tscCodes: ["TS2304"], tszCodes: [] },
+    }),
+    makeOracleCase({
+      name: "tsz-fails-only",
+      exitClass: "nonzero exit",
+      diagnosticStatus: "diagnostic mismatch or compiler error",
+      tscExit: "0",
+      tszExit: "1",
+      tszLines: ["src/c.ts(3,3): error TS2322: assignability failed."],
+      expected: { oracle: "tsz-fails-only", state: "yellow", counts: { tsc: 0, tsz: 1, tsgo: 0 }, tscCodes: [], tszCodes: ["TS2322"] },
+    }),
+    makeOracleCase({
+      name: "both-fail-same",
+      exitClass: "nonzero exit",
+      diagnosticStatus: "diagnostic mismatch or compiler error",
+      tscExit: "1",
+      tszExit: "1",
+      tscLines: ["src/d.ts(4,4): error TS2322: assignability failed."],
+      tszLines: ["src/d.ts(4,4): error TS2322: assignability failed."],
+      expected: { oracle: "both-fail-same", state: "yellow", counts: { tsc: 1, tsz: 1, tsgo: 0 }, tscCodes: ["TS2322"], tszCodes: ["TS2322"] },
+    }),
+    makeOracleCase({
+      name: "both-fail-same-no-codes",
+      exitClass: "crash",
+      diagnosticStatus: "compiler crashed",
+      tscExit: "139",
+      tszExit: "139",
+      expected: { oracle: "both-fail-same", state: "red", counts: { tsc: 0, tsz: 0, tsgo: 0 }, tscCodes: [], tszCodes: [] },
+    }),
+    makeOracleCase({
+      name: "both-fail-different",
+      exitClass: "nonzero exit",
+      diagnosticStatus: "diagnostic mismatch or compiler error",
+      tscExit: "1",
+      tszExit: "1",
+      tscLines: ["src/e.ts(5,5): error TS2304: Cannot find name 'baz'."],
+      tszLines: [
+        "src/e.ts(5,5): error TS2322: assignability failed.",
+        "src/e.ts(6,6): error TS2345: argument mismatch.",
+      ],
+      expected: { oracle: "both-fail-different", state: "yellow", counts: { tsc: 1, tsz: 2, tsgo: 0 }, tscCodes: ["TS2304"], tszCodes: ["TS2322", "TS2345"] },
+    }),
+  ];
+
+  for (const testCase of cases) {
+    const result = runProjectCompatibility(["record"], {
+      COMPAT_JSONL_FILE: jsonl,
+      COMPAT_NAME: testCase.name,
+      COMPAT_PHASE: "check",
+      ...testCase.env,
+    });
+    assert.equal(result.status, 0, `${testCase.name}: ${result.stderr}`);
+  }
+
+  const rows = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  assert.equal(rows.length, cases.length);
+  for (const [index, testCase] of cases.entries()) {
+    const row = rows[index];
+    assert.equal(row.oracle_classification, testCase.expected.oracle, `${testCase.name}: oracle_classification`);
+    assert.equal(row.state, testCase.expected.state, `${testCase.name}: state`);
+    assert.deepEqual(row.diagnostic_counts, testCase.expected.counts, `${testCase.name}: diagnostic_counts`);
+    assert.deepEqual(row.tsc_diagnostic_codes, testCase.expected.tscCodes, `${testCase.name}: tsc_diagnostic_codes`);
+    assert.deepEqual(row.tsz_diagnostic_codes, testCase.expected.tszCodes, `${testCase.name}: tsz_diagnostic_codes`);
+  }
+});
+
+// Single-sided failures classify as *-fails-only; single-sided passes
+// classify as unknown so missing oracle data is not read as parity.
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const cases = [
+    {
+      name: "tsc-failed-tsz-not-run",
+      env: {
+        COMPAT_EXIT_CLASS: "fixture invalid",
+        COMPAT_PHASE: "fixture setup",
+        COMPAT_DIAGNOSTIC_STATUS: "tsc fixture failed",
+        COMPAT_TSC_EXIT_CODES: "1",
+        COMPAT_DIAGNOSTIC_DELTA: "tsc: src/g.ts(1,1): error TS2304: Cannot find name 'baz'.",
+      },
+      expected: "tsc-fails-only",
+    },
+    {
+      name: "tsz-skipped-after-tsc-pass",
+      env: {
+        COMPAT_EXIT_CLASS: "tsz unavailable",
+        COMPAT_PHASE: "check",
+        COMPAT_DIAGNOSTIC_STATUS: "tsz skipped by runner",
+        COMPAT_TSC_EXIT_CODES: "0",
+      },
+      expected: "unknown",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = runProjectCompatibility(["record"], {
+      COMPAT_JSONL_FILE: jsonl,
+      COMPAT_NAME: testCase.name,
+      ...testCase.env,
+    });
+    assert.equal(result.status, 0, `${testCase.name}: ${result.stderr}`);
+  }
+
+  const rows = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  for (const [index, testCase] of cases.entries()) {
+    assert.equal(
+      rows[index].oracle_classification,
+      testCase.expected,
+      `${testCase.name}: oracle_classification`,
+    );
+  }
+});
+
+// No tsc oracle signal at all → unknown.
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const result = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: jsonl,
+    COMPAT_NAME: "no-oracle-signal",
+    COMPAT_EXIT_CLASS: "exit success",
+    COMPAT_PHASE: "check",
+    COMPAT_DIAGNOSTIC_STATUS: "none",
+    COMPAT_TSZ_EXIT_CODES: "0",
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const [row] = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  assert.equal(row.oracle_classification, "unknown");
+  assert.deepEqual(row.exit_codes.tsc, []);
+  assert.deepEqual(row.exit_codes.tsz, [0]);
+  assert.deepEqual(row.diagnostic_counts, { tsc: 0, tsz: 0, tsgo: 0 });
+});
+
+// Legacy path: a unified COMPAT_DIAGNOSTIC_DELTA without per-side envs is
+// attributed by `tsc:`/`tsz:` label prefix.
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const result = runProjectCompatibility(["record"], {
+    COMPAT_JSONL_FILE: jsonl,
+    COMPAT_NAME: "legacy-mixed",
+    COMPAT_EXIT_CLASS: "nonzero exit",
+    COMPAT_PHASE: "check",
+    COMPAT_DIAGNOSTIC_STATUS: "diagnostic mismatch or compiler error",
+    COMPAT_TSC_EXIT_CODES: "1",
+    COMPAT_TSZ_EXIT_CODES: "1",
+    COMPAT_DIAGNOSTIC_DELTA: [
+      "tsc: src/f.ts(7,7): error TS2304: Cannot find name 'qux'.",
+      "tsz: src/f.ts(7,7): error TS2322: assignability failed.",
+      "tsz: src/f.ts(8,8): error TS2345: argument mismatch.",
+    ].join("\n"),
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const [row] = fs.readFileSync(jsonl, "utf8").trim().split(/\r?\n/).map(JSON.parse);
+  assert.equal(row.oracle_classification, "both-fail-different");
+  assert.deepEqual(row.diagnostic_counts, { tsc: 1, tsz: 2, tsgo: 0 });
+  assert.deepEqual(row.tsc_diagnostic_codes, ["TS2304"]);
+  assert.deepEqual(row.tsz_diagnostic_codes, ["TS2322", "TS2345"]);
 });
 
 withTempDir((dir) => {
@@ -435,6 +644,171 @@ withTempDir((dir) => {
   assert.equal(payload.malformed_jsonl_lines, 1);
   assert.equal(payload.by_state.green, 1);
   assert.equal(payload.by_state.red, 1);
+});
+
+// Summary surfaces oracle classification counts and the first three deltas
+// (with subsystem) ordered by row severity (red → yellow → gray → green).
+withTempDir((dir) => {
+  const jsonl = path.join(dir, "compat.jsonl");
+  const summary = path.join(dir, "summary.json");
+  const rows = [
+    {
+      name: "alpha",
+      state: "green",
+      oracle_classification: "both-pass",
+      diagnostic_deltas: [],
+      diagnostic_subsystems: [],
+    },
+    {
+      name: "beta",
+      state: "yellow",
+      oracle_classification: "tsz-fails-only",
+      diagnostic_deltas: [
+        "src/index.ts(1,1): error TS2322: mismatch one",
+        "src/index.ts(2,2): error TS2322: mismatch two",
+      ],
+      diagnostic_subsystems: [
+        {
+          subsystem: "relations-assignability",
+          codes: ["TS2322"],
+          count: 2,
+          examples: [
+            "src/index.ts(1,1): error TS2322: mismatch one",
+            "src/index.ts(2,2): error TS2322: mismatch two",
+          ],
+        },
+      ],
+    },
+    {
+      name: "gamma",
+      state: "red",
+      oracle_classification: "tsc-fails-only",
+      diagnostic_deltas: [
+        "tsc: src/a.ts(1,1): error TS2304: Cannot find name 'foo'.",
+      ],
+      diagnostic_subsystems: [
+        {
+          subsystem: "module-symbol-resolution",
+          codes: ["TS2304"],
+          count: 1,
+          examples: ["tsc: src/a.ts(1,1): error TS2304: Cannot find name 'foo'."],
+        },
+      ],
+    },
+  ];
+  fs.writeFileSync(jsonl, `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
+
+  const result = runProjectCompatibility(["summary"], {
+    SUMMARY_JSONL_FILE: jsonl,
+    SUMMARY_OUTPUT_FILE: summary,
+    SUMMARY_PROJECT_SET: "required",
+  });
+  assert.equal(result.status, 0, result.stderr);
+
+  const payload = JSON.parse(fs.readFileSync(summary, "utf8"));
+  assert.deepEqual(payload.by_oracle_classification, {
+    "both-pass": 1,
+    "tsc-fails-only": 1,
+    "tsz-fails-only": 1,
+  });
+  assert.equal(payload.first_diagnostic_deltas.length, 3);
+  assert.equal(payload.first_diagnostic_deltas[0].project, "gamma");
+  assert.equal(payload.first_diagnostic_deltas[0].oracle_classification, "tsc-fails-only");
+  assert.equal(payload.first_diagnostic_deltas[0].subsystem, "module-symbol-resolution");
+  assert.equal(payload.first_diagnostic_deltas[0].code, "TS2304");
+  assert.equal(payload.first_diagnostic_deltas[1].project, "beta");
+  assert.equal(payload.first_diagnostic_deltas[1].subsystem, "relations-assignability");
+  assert.equal(payload.first_diagnostic_deltas[1].code, "TS2322");
+  assert.equal(payload.first_diagnostic_deltas[2].project, "beta");
+});
+
+// format-step-summary renders a self-contained Markdown block (artifact
+// link, classification counts, delta table).
+withTempDir((dir) => {
+  const summary = path.join(dir, "summary.json");
+  fs.writeFileSync(
+    summary,
+    `${JSON.stringify({
+      by_state: { green: 1, yellow: 1, red: 1 },
+      by_oracle_classification: {
+        "both-pass": 1,
+        "tsz-fails-only": 1,
+        "tsc-fails-only": 1,
+      },
+      first_diagnostic_deltas: [
+        {
+          project: "gamma",
+          oracle_classification: "tsc-fails-only",
+          state: "red",
+          code: "TS2304",
+          path: "src/a.ts",
+          subsystem: "module-symbol-resolution",
+          delta: "tsc: src/a.ts(1,1): error TS2304: Cannot find name 'foo'.",
+        },
+      ],
+    }, null, 2)}\n`,
+    "utf8",
+  );
+
+  const result = runProjectCompatibility(["format-step-summary"], {
+    SUMMARY_INPUT_FILE: summary,
+    SUMMARY_TITLE: "Project compatibility artifact",
+    SUMMARY_ARTIFACT_NAME: "project-compile-compatibility",
+    SUMMARY_ARTIFACT_URL: "https://example.invalid/artifact",
+    SUMMARY_JSONL_PATH: ".target/project-compile-guard/project-compatibility.jsonl",
+    SUMMARY_SUMMARY_PATH: ".target/project-compile-guard/project-compatibility-summary.json",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /### Project compatibility artifact/);
+  assert.match(result.stdout, /\[project-compile-compatibility\]\(https:\/\/example\.invalid\/artifact\)/);
+  assert.match(result.stdout, /Rows by state: green=1, yellow=1, red=1/);
+  assert.match(result.stdout, /Oracle classification: both-pass=1, tsc-fails-only=1, tsz-fails-only=1/);
+  assert.match(result.stdout, /\| Project \| Oracle \| Subsystem \| Code \| Delta \|/);
+  assert.match(result.stdout, /\| gamma \| tsc-fails-only \| module-symbol-resolution \| TS2304 \|/);
+  assert.match(result.stdout, /See artifact for the remaining diagnostic deltas\./);
+});
+
+// Header-only block when no diagnostic deltas were captured.
+withTempDir((dir) => {
+  const summary = path.join(dir, "summary.json");
+  fs.writeFileSync(
+    summary,
+    `${JSON.stringify({
+      by_state: { green: 7 },
+      by_oracle_classification: { "both-pass": 7 },
+      first_diagnostic_deltas: [],
+    }, null, 2)}\n`,
+    "utf8",
+  );
+
+  const result = runProjectCompatibility(["format-step-summary"], {
+    SUMMARY_INPUT_FILE: summary,
+    SUMMARY_TITLE: "Project compatibility artifact",
+    SUMMARY_ARTIFACT_NAME: "project-compile-compatibility",
+    SUMMARY_JSONL_PATH: ".target/project-compile-guard/project-compatibility.jsonl",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /### Project compatibility artifact/);
+  assert.match(result.stdout, /Rows by state: green=7/);
+  assert.doesNotMatch(result.stdout, /\| Project \|/);
+});
+
+// Missing summary file → header-only block annotated "(not produced)" so the
+// CI step never errors out and always links the artifact.
+withTempDir((dir) => {
+  const missing = path.join(dir, "does-not-exist.json");
+  const result = runProjectCompatibility(["format-step-summary"], {
+    SUMMARY_INPUT_FILE: missing,
+    SUMMARY_TITLE: "Project compatibility artifact",
+    SUMMARY_ARTIFACT_NAME: "project-compile-compatibility",
+    SUMMARY_ARTIFACT_URL: "https://example.invalid/artifact",
+    SUMMARY_JSONL_PATH: ".target/project-compile-guard/project-compatibility.jsonl",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /### Project compatibility artifact/);
+  assert.match(result.stdout, /\(not produced\)/);
+  assert.doesNotMatch(result.stdout, /Rows by state/);
+  assert.doesNotMatch(result.stdout, /\| Project \|/);
 });
 
 withTempDir((dir) => {

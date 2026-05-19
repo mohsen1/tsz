@@ -56,6 +56,12 @@ impl<'a> Printer<'a> {
                         self.write("_1;");
                         self.write_line();
                     }
+                    SystemDependencyAction::ExportStar => {
+                        self.write("exportStar_1(");
+                        self.write(dep_var);
+                        self.write("_1);");
+                        self.write_line();
+                    }
                     SystemDependencyAction::NamedExports(exports) => {
                         self.write("exports_1({");
                         self.write_line();
@@ -97,6 +103,114 @@ impl<'a> Printer<'a> {
         }
         self.decrease_indent();
         self.write("],");
+    }
+
+    pub(super) fn emit_system_export_star_helpers_if_needed(
+        &mut self,
+        source: &tsz_parser::parser::node::SourceFileData,
+        system_plan: &SystemDependencyPlan,
+    ) {
+        let has_export_star = system_plan.actions.values().any(|actions| {
+            actions
+                .iter()
+                .any(|action| matches!(action, SystemDependencyAction::ExportStar))
+        });
+        if !has_export_star {
+            return;
+        }
+
+        let (excluded_names, emit_exclusion_map) =
+            self.collect_system_export_star_excluded_names(source);
+        if emit_exclusion_map {
+            if excluded_names.is_empty() {
+                self.write("var exportedNames_1 = {};");
+                self.write_line();
+            } else {
+                self.write("var exportedNames_1 = {");
+                self.write_line();
+                self.increase_indent();
+                for (idx, export_name) in excluded_names.iter().enumerate() {
+                    self.write("\"");
+                    self.emit_escaped_string(export_name, '"');
+                    self.write("\": true");
+                    if idx + 1 != excluded_names.len() {
+                        self.write(",");
+                    }
+                    self.write_line();
+                }
+                self.decrease_indent();
+                self.write("};");
+                self.write_line();
+            }
+        }
+
+        self.write("function exportStar_1(m) {");
+        self.write_line();
+        self.increase_indent();
+        self.write("var exports = {};");
+        self.write_line();
+        self.write("for (var n in m) {");
+        self.write_line();
+        self.increase_indent();
+        if emit_exclusion_map {
+            self.write(
+                "if (n !== \"default\" && !exportedNames_1.hasOwnProperty(n)) exports[n] = m[n];",
+            );
+        } else {
+            self.write("if (n !== \"default\") exports[n] = m[n];");
+        }
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+        self.write("exports_1(exports);");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+    }
+
+    fn collect_system_export_star_excluded_names(
+        &self,
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> (Vec<String>, bool) {
+        let type_only_nodes = rustc_hash::FxHashSet::default();
+        let mut names = crate::transforms::module_commonjs::collect_export_names_with_options(
+            self.arena,
+            &source.statements.nodes,
+            self.ctx.options.preserve_const_enums,
+            &type_only_nodes,
+        );
+        let has_explicit_export_name = !names.is_empty();
+        names.retain(|name| name != "default");
+        let needs_empty_map = has_explicit_export_name
+            || self.source_has_system_hoisted_default_function_export(source);
+        (names, needs_empty_map)
+    }
+
+    fn source_has_system_hoisted_default_function_export(
+        &self,
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        source.statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                return false;
+            }
+            let Some(export_decl) = self.arena.get_export_decl(stmt_node) else {
+                return false;
+            };
+            if !export_decl.is_default_export {
+                return false;
+            }
+            self.arena
+                .get(export_decl.export_clause)
+                .is_some_and(|clause_node| {
+                    clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                })
+        })
     }
 
     pub(super) fn register_system_import_substitutions(

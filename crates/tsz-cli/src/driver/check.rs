@@ -2028,10 +2028,12 @@ pub(super) fn collect_diagnostics(
                 file_diagnostics.retain(|d| !is_checker_grammar_code_suppressed_in_js(d.code));
             }
 
-            // Apply @ts-expect-error / @ts-ignore directive suppression.
-            // tsc suppresses all diagnostics on the line following such directives
-            // and emits TS2578 for unused @ts-expect-error directives.
-            if let Some(source) = file.arena.get_source_file_at(file.source_file) {
+            // Apply @ts-expect-error / @ts-ignore directive suppression only
+            // when type checking ran. Under `--noCheck`, parse and JS grammar
+            // diagnostics still surface in tsc and directives do not hide them.
+            if !options.no_check
+                && let Some(source) = file.arena.get_source_file_at(file.source_file)
+            {
                 apply_ts_directive_suppression(
                     &file.file_name,
                     source.text.as_ref(),
@@ -2448,8 +2450,10 @@ fn run_check_on_existing_checker<'a>(
         file_diagnostics.retain(|d| !is_checker_grammar_code_suppressed_in_js(d.code));
     }
 
-    // Apply @ts-expect-error / @ts-ignore directive suppression.
-    if let Some(source) = file.arena.get_source_file_at(file.source_file) {
+    // Apply @ts-expect-error / @ts-ignore directive suppression only when type
+    // checking ran. Under `--noCheck`, parse and JS grammar diagnostics still
+    // surface in tsc and directives do not hide them.
+    if !no_check && let Some(source) = file.arena.get_source_file_at(file.source_file) {
         apply_ts_directive_suppression(
             &file.file_name,
             source.text.as_ref(),

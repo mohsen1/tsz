@@ -695,13 +695,13 @@ jobs:
           if-no-files-found: warn
       - name: Summarize project compatibility artifact
         if: always()
-        run: |
-          {
-            echo "### Project compatibility artifact"
-            echo "- Artifact: [project-compile-compatibility](${{ steps.project_compile_compatibility_artifact.outputs.artifact-url }})"
-            echo "- JSONL: \`.target/project-compile-guard/project-compatibility.jsonl\`"
-            echo "- Summary: \`.target/project-compile-guard/project-compatibility-summary.json\`"
-          } >> "${GITHUB_STEP_SUMMARY}"
+        env:
+          SUMMARY_INPUT_FILE: .target/project-compile-guard/project-compatibility-summary.json
+          SUMMARY_TITLE: Project compatibility artifact
+          SUMMARY_ARTIFACT_NAME: project-compile-compatibility
+          SUMMARY_ARTIFACT_URL: ${{ steps.project_compile_compatibility_artifact.outputs.artifact-url }}
+          SUMMARY_JSONL_PATH: .target/project-compile-guard/project-compatibility.jsonl
+        run: node scripts/ci/project-compatibility.mjs format-step-summary >> "${GITHUB_STEP_SUMMARY}"
 
   project-compile-canary:
     name: project-compile-canary
@@ -751,13 +751,13 @@ jobs:
           compression-level: 1
       - name: Summarize compile canary compatibility artifact
         if: always()
-        run: |
-          {
-            echo "### Compile canary compatibility artifact"
-            echo "- Artifact: [project-compile-canary-logs](${{ steps.project_compile_canary_artifact.outputs.artifact-url }})"
-            echo "- JSONL: \`.target/project-compile-guard/project-compatibility.jsonl\`"
-            echo "- Summary: \`.target/project-compile-guard/project-compatibility-summary.json\`"
-          } >> "${GITHUB_STEP_SUMMARY}"
+        env:
+          SUMMARY_INPUT_FILE: .target/project-compile-guard/project-compatibility-summary.json
+          SUMMARY_TITLE: Compile canary compatibility artifact
+          SUMMARY_ARTIFACT_NAME: project-compile-canary-logs
+          SUMMARY_ARTIFACT_URL: ${{ steps.project_compile_canary_artifact.outputs.artifact-url }}
+          SUMMARY_JSONL_PATH: .target/project-compile-guard/project-compatibility.jsonl
+        run: node scripts/ci/project-compatibility.mjs format-step-summary >> "${GITHUB_STEP_SUMMARY}"
 
   wasm:
     name: wasm

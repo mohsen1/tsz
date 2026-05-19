@@ -262,3 +262,165 @@ fn test_enum_auto_increment() {
         "Expected C = 12 (auto-increment): {output}"
     );
 }
+
+// =============================================================================
+// Generic method return types with indexed access (issue #8520)
+// =============================================================================
+
+/// Build a minimal type cache for a generic class method where the checker has stored
+/// an `IndexAccess` type as the method's node type (as opposed to a function type).
+fn emit_dts_with_index_access_return(source: &str, method_name_str: &str) -> String {
+    use tsz_parser::parser::syntax_kind_ext;
+
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+
+    // Find the method declaration node.
+    let method_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                return None;
+            }
+            let nidx = NodeIndex(idx as u32);
+            let decl = parser.arena.get_method_decl(parser.arena.get(nidx)?)?;
+            if parser.arena.get_identifier_text(decl.name)? == method_name_str {
+                Some(nidx)
+            } else {
+                None
+            }
+        })
+        .expect("method not found");
+
+    // Find the class node to get its type params.
+    let class_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CLASS_DECLARATION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("class not found");
+
+    // Collect all in-scope type parameter node indices (class + method).
+    let class_type_param_nodes: Vec<NodeIndex> = parser
+        .arena
+        .get(class_idx)
+        .and_then(|n| parser.arena.get_class(n))
+        .and_then(|c| c.type_parameters.as_ref())
+        .map(|list| list.nodes.clone())
+        .unwrap_or_default();
+
+    let method_decl = parser
+        .arena
+        .get(method_idx)
+        .and_then(|n| parser.arena.get_method_decl(n))
+        .expect("method decl not found");
+
+    let method_type_param_nodes: Vec<NodeIndex> = method_decl
+        .type_parameters
+        .as_ref()
+        .map(|list| list.nodes.clone())
+        .unwrap_or_default();
+
+    // Build TypeId for each type parameter by reading its name from the AST.
+    let mut param_type_ids: Vec<(String, TypeId)> = Vec::new();
+    for &idx in class_type_param_nodes
+        .iter()
+        .chain(method_type_param_nodes.iter())
+    {
+        let name = parser
+            .arena
+            .get(idx)
+            .and_then(|n| parser.arena.get_type_parameter(n))
+            .and_then(|p| parser.arena.get_identifier_text(p.name))
+            .expect("type param name");
+        let atom = interner.intern_string(&name);
+        let type_id = interner.type_param(tsz_solver::TypeParamInfo::simple(atom));
+        param_type_ids.push((name.to_string(), type_id));
+    }
+
+    // Build the IndexAccess type: <first_class_param>[<first_method_param>].
+    // For `getProperty<K>(key: K): PropType[K]` that is PropType[K].
+    let obj_type = param_type_ids.first().expect("class type param").1;
+    let idx_type = param_type_ids.last().expect("method type param").1;
+    let return_type_id = interner.index_access(obj_type, idx_type);
+
+    let mut node_types = FxHashMap::default();
+    node_types.insert(method_idx.0, return_type_id);
+
+    let type_cache = crate::type_cache_view::TypeCacheView {
+        node_types,
+        ..Default::default()
+    };
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.emit(root)
+}
+
+#[test]
+fn test_generic_class_method_indexed_access_return_class_param() {
+    // Method returns PropType[K] where PropType is the class type param and K is the method's.
+    let output = emit_dts_with_index_access_return(
+        r#"
+export class Component<PropType> {
+    props: PropType;
+    constructor(props: PropType) { this.props = props; }
+    getProperty<K extends keyof PropType>(key: K): PropType[K] {
+        return this.props[key];
+    }
+}
+"#,
+        "getProperty",
+    );
+    assert!(
+        output.contains("getProperty<K extends keyof PropType>(key: K): PropType[K]"),
+        "Expected indexed-access return type with class type param: {output}"
+    );
+}
+
+#[test]
+fn test_generic_class_method_indexed_access_return_different_names() {
+    // Same semantic rule, different type-parameter names — guards against hardcoded-name fixes.
+    let output = emit_dts_with_index_access_return(
+        r#"
+export class Store<TState> {
+    state: TState;
+    constructor(s: TState) { this.state = s; }
+    select<TKey extends keyof TState>(k: TKey): TState[TKey] {
+        return this.state[k];
+    }
+}
+"#,
+        "select",
+    );
+    assert!(
+        output.contains("select<TKey extends keyof TState>(k: TKey): TState[TKey]"),
+        "Expected indexed-access return type with renamed type params: {output}"
+    );
+}
+
+#[test]
+fn test_generic_class_method_indexed_access_non_generic_class_unaffected() {
+    // Non-generic class: the fix must not change output for plain methods.
+    let output = emit_dts(
+        r#"
+export class Plain {
+    get(key: string): string { return ""; }
+}
+"#,
+    );
+    assert!(
+        output.contains("get(key: string): string"),
+        "Non-generic class method should still emit correctly: {output}"
+    );
+}

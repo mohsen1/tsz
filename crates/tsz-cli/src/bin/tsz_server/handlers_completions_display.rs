@@ -1058,7 +1058,7 @@ impl Server {
                 "argumentCount": sig_help.argument_count,
             }))
         })();
-        self.stub_response(seq, request, result)
+        self.success_response(seq, request, result)
     }
 
     /// Determine the display part kind for a type string.

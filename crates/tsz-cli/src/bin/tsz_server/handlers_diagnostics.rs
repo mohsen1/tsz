@@ -115,16 +115,7 @@ impl Server {
             self.new_line_character = Some(new_line.to_string());
         }
 
-        // Accept configuration; selected completion preferences are wired.
-        TsServerResponse {
-            seq,
-            msg_type: "response".to_string(),
-            command: "configure".to_string(),
-            request_seq: request.seq,
-            success: true,
-            message: None,
-            body: None,
-        }
+        self.success_response(seq, request, None)
     }
 
     pub(crate) fn handle_semantic_diagnostics_sync(
@@ -198,15 +189,7 @@ impl Server {
             vec![]
         };
 
-        TsServerResponse {
-            seq,
-            msg_type: "response".to_string(),
-            command: "semanticDiagnosticsSync".to_string(),
-            request_seq: request.seq,
-            success: true,
-            message: None,
-            body: Some(serde_json::json!(diagnostics)),
-        }
+        self.success_response(seq, request, Some(serde_json::json!(diagnostics)))
     }
 
     pub(crate) fn handle_syntactic_diagnostics_sync(
@@ -260,15 +243,7 @@ impl Server {
             vec![]
         };
 
-        TsServerResponse {
-            seq,
-            msg_type: "response".to_string(),
-            command: "syntacticDiagnosticsSync".to_string(),
-            request_seq: request.seq,
-            success: true,
-            message: None,
-            body: Some(serde_json::json!(diagnostics)),
-        }
+        self.success_response(seq, request, Some(serde_json::json!(diagnostics)))
     }
 
     /// Format a diagnostic for the tsserver protocol.
@@ -466,15 +441,7 @@ impl Server {
             vec![]
         };
 
-        TsServerResponse {
-            seq,
-            msg_type: "response".to_string(),
-            command: "suggestionDiagnosticsSync".to_string(),
-            request_seq: request.seq,
-            success: true,
-            message: None,
-            body: Some(serde_json::json!(diagnostics)),
-        }
+        self.success_response(seq, request, Some(serde_json::json!(diagnostics)))
     }
 
     pub(crate) fn handle_geterr(
@@ -506,7 +473,7 @@ impl Server {
             serde_json::json!({"request_seq": request.seq}),
         );
 
-        self.stub_response(seq, request, None)
+        self.acknowledge_response(seq, request)
     }
 
     pub(crate) fn handle_geterr_for_project(
@@ -525,7 +492,7 @@ impl Server {
             "requestCompleted",
             serde_json::json!({"request_seq": request.seq}),
         );
-        self.stub_response(seq, request, None)
+        self.acknowledge_response(seq, request)
     }
 
     /// Compute and emit `syntaxDiag`, `semanticDiag`, `suggestionDiag`
