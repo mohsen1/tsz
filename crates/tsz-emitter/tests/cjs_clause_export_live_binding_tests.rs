@@ -291,6 +291,26 @@ fn postfix_increment_expr_returns_previous_value_and_updates_inline_export_alias
     );
 }
 
+/// Exported function bodies are printed with CommonJS temporarily suppressed,
+/// but clause-exported locals still need live-binding mutation rewrites there.
+#[test]
+fn exported_function_body_updates_later_clause_export() {
+    let source = "let x = 1;\nexport function foo(y: number) {\n    if (y <= x++) return y <= x++;\n    ++x;\n    x--;\n}\nexport { x };\n";
+    let output = parse_lower_emit(source, cjs_es2015());
+    assert!(
+        output.contains("if (y <= (exports.x = (_a = x++, x), _a))"),
+        "Postfix expression inside exported function must update clause export and return previous value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.x = ++x;"),
+        "Prefix statement inside exported function must update clause export.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.x = (x--, x);"),
+        "Postfix statement inside exported function must update clause export from updated local.\nOutput:\n{output}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Full mix: the original bug repro
 // ---------------------------------------------------------------------------

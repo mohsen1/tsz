@@ -60,6 +60,11 @@ enum CjsLiveExportKind {
 }
 
 impl<'a> Printer<'a> {
+    fn is_commonjs_live_export_context(&self) -> bool {
+        self.ctx.is_commonjs()
+            || matches!(self.ctx.original_module_kind, Some(ModuleKind::CommonJS))
+    }
+
     /// Write `exports.name` or `exports["name"]` depending on whether the name
     /// is a valid JS identifier. Does NOT write ` = `.
     pub(in crate::emitter) fn write_export_property_access(&mut self, export_name: &str) {
@@ -127,7 +132,7 @@ impl<'a> Printer<'a> {
         &self,
         local_name: &str,
     ) -> bool {
-        if local_name.is_empty() || !self.ctx.is_commonjs() {
+        if local_name.is_empty() || !self.is_commonjs_live_export_context() {
             return false;
         }
         let is_shadowed = self
@@ -149,7 +154,7 @@ impl<'a> Printer<'a> {
     }
 
     fn cjs_live_export_kind(&self, local_name: &str) -> CjsLiveExportKind {
-        if local_name.is_empty() || !self.ctx.is_commonjs() {
+        if local_name.is_empty() || !self.is_commonjs_live_export_context() {
             return CjsLiveExportKind::NotExported;
         }
         let is_shadowed = self
@@ -192,18 +197,31 @@ impl<'a> Printer<'a> {
         local_name: &str,
         operator: u16,
     ) -> bool {
+        let needs_parens = !self.ctx.flags.in_statement_expression;
         match self.cjs_live_export_kind(local_name) {
             CjsLiveExportKind::NotExported => false,
             CjsLiveExportKind::Inline(aliases) => {
+                if needs_parens {
+                    self.write("(");
+                }
                 self.write_export_property_chain(&aliases);
                 self.write(get_operator_text(operator));
                 self.write_export_property_access(local_name);
+                if needs_parens {
+                    self.write(")");
+                }
                 true
             }
             CjsLiveExportKind::Clause(names) => {
+                if needs_parens {
+                    self.write("(");
+                }
                 self.write_export_property_chain(&names);
                 self.write(get_operator_text(operator));
                 self.write_identifier(local_name);
+                if needs_parens {
+                    self.write(")");
+                }
                 true
             }
         }
@@ -242,7 +260,7 @@ impl<'a> Printer<'a> {
                     return true;
                 }
                 // Expression context with clause aliases: pre-update value must be returned.
-                let temp = self.make_unique_name_hoisted();
+                let temp = self.make_unique_name_file_hoisted();
                 self.write("(");
                 self.write_export_property_chain(&aliases);
                 self.write("(");
@@ -273,7 +291,7 @@ impl<'a> Printer<'a> {
                 }
                 // The pre-update value must survive: wrap in a comma sequence
                 // that captures it in a hoisted temp before the export update.
-                let temp = self.make_unique_name_hoisted();
+                let temp = self.make_unique_name_file_hoisted();
                 self.write("(");
                 self.write_export_property_chain(&names);
                 self.write("(");

@@ -1948,7 +1948,9 @@ impl<'a> Printer<'a> {
                 let use_deferred_nested_cjs_exports = is_top_level_cjs
                     && !cjs_deferred_export_names.is_empty()
                     && stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION;
-                let prev_deferred_local_export_bindings = if use_deferred_nested_cjs_exports {
+                let use_deferred_single_cjs_exports = use_deferred_nested_cjs_exports
+                    && stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT;
+                let prev_deferred_local_export_bindings = if use_deferred_single_cjs_exports {
                     self.deferred_local_export_bindings
                         .replace(cjs_deferred_export_bindings.clone())
                 } else {
@@ -1964,7 +1966,9 @@ impl<'a> Printer<'a> {
                 self.emit(stmt_idx);
 
                 if use_deferred_nested_cjs_exports {
-                    self.deferred_local_export_bindings = prev_deferred_local_export_bindings;
+                    if use_deferred_single_cjs_exports {
+                        self.deferred_local_export_bindings = prev_deferred_local_export_bindings;
+                    }
                     self.deferred_local_export_bindings_all =
                         prev_deferred_local_export_bindings_all;
                 }

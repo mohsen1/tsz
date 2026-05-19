@@ -1067,6 +1067,19 @@ impl<'a> Printer<'a> {
         name
     }
 
+    /// Like `make_unique_name_hoisted`, but records the declaration in the
+    /// outer file scope even when currently emitting a function body.
+    pub(super) fn make_unique_name_file_hoisted(&mut self) -> String {
+        let name = self.make_unique_name();
+        if let Some(outer_scope) = self.temp_scope_stack.last_mut() {
+            outer_scope.generated_temp_names.insert(name.clone());
+            outer_scope.hoisted_assignment_temps.push(name.clone());
+        } else {
+            self.hoisted_assignment_temps.push(name.clone());
+        }
+        name
+    }
+
     /// Like `make_unique_name` but records the temp for CJS destructuring export hoisting.
     /// These temps are emitted as `var _a;` BEFORE the `__esModule` marker.
     pub(super) fn make_unique_name_cjs_destructuring(&mut self) -> String {
