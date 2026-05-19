@@ -215,6 +215,7 @@ fn local_function_implementation_after_value_import_is_callable_with_renamed_nam
     let consumer = r#"
 import { greeting } from "./other";
 function makeGreeting(): string { return "ok"; }
+const imported: number = greeting;
 const result: string = makeGreeting();
 "#;
 
@@ -233,6 +234,8 @@ fn multiple_local_functions_after_value_import_each_keep_callable_type() {
 import { greeting, farewell } from "./other";
 declare function first(): number;
 declare function second(): number;
+const importedGreeting: number = greeting;
+const importedFarewell: number = farewell;
 const a: number = first();
 const b: number = second();
 "#;
