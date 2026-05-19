@@ -21,6 +21,71 @@ function readManifest(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+function commonDirectory(paths) {
+  if (paths.length === 0) return "";
+
+  const splitPaths = paths.map((entry) => {
+    const resolved = path.resolve(entry);
+    return resolved.split(path.sep).filter(Boolean);
+  });
+  const root = path.parse(path.resolve(paths[0])).root;
+  const first = splitPaths[0];
+  const common = [];
+  for (const [index, segment] of first.entries()) {
+    if (splitPaths.every((parts) => parts[index] === segment)) {
+      common.push(segment);
+    } else {
+      break;
+    }
+  }
+
+  return path.join(root, ...common);
+}
+
+function isInsideOrSame(root, candidate) {
+  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+}
+
+function validateOutputPath(outputPath, inputManifestPaths) {
+  const resolvedInputs = inputManifestPaths.map((file) => path.resolve(file));
+  const fixtureRoot = commonDirectory(resolvedInputs.map((file) => path.dirname(file)));
+  const resolvedOutput = path.resolve(outputPath);
+
+  if (
+    resolvedOutput === fixtureRoot ||
+    !isInsideOrSame(fixtureRoot, resolvedOutput)
+  ) {
+    console.error(
+      `error: Type Challenges pairing report output must stay inside the fixture root: ${outputPath}`,
+    );
+    process.exit(1);
+  }
+
+  if (resolvedInputs.includes(resolvedOutput)) {
+    console.error(
+      `error: Type Challenges pairing report output must not overwrite an input manifest: ${outputPath}`,
+    );
+    process.exit(1);
+  }
+
+  const outputDir = path.dirname(resolvedOutput);
+  if (!fs.existsSync(outputDir) || !fs.statSync(outputDir).isDirectory()) {
+    console.error(
+      `error: Type Challenges pairing report output parent directory does not exist: ${outputDir}`,
+    );
+    process.exit(1);
+  }
+
+  if (fs.existsSync(resolvedOutput) && !fs.statSync(resolvedOutput).isFile()) {
+    console.error(
+      `error: Type Challenges pairing report output is not a file: ${outputPath}`,
+    );
+    process.exit(1);
+  }
+
+  return resolvedOutput;
+}
+
 function challengeId(entry) {
   const id = entry?.challenge?.id;
   return id == null ? null : String(id);
@@ -306,6 +371,12 @@ function ensureSourcesAreCompatible(templateManifest, testCasesManifest, solutio
   process.exit(1);
 }
 
+const resolvedOutputPath = validateOutputPath(outputPath, [
+  templateManifestPath,
+  testCasesManifestPath,
+  solutionsManifestPath,
+]);
+
 const templateManifest = readManifest(templateManifestPath);
 const testCasesManifest = readManifest(testCasesManifestPath);
 const solutionsManifest = readManifest(solutionsManifestPath);
@@ -380,4 +451,4 @@ const report = {
   },
 };
 
-fs.writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`);
+fs.writeFileSync(resolvedOutputPath, `${JSON.stringify(report, null, 2)}\n`);
