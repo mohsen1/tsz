@@ -23,6 +23,25 @@ use std::sync::Arc;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
+/// Read-only access to interned type storage.
+///
+/// This is the narrow capability for helpers that only inspect existing
+/// type data and do not need construction, provenance, cache, or policy hooks.
+pub trait TypeStore {
+    fn lookup(&self, id: TypeId) -> Option<TypeData>;
+    fn type_list(&self, id: TypeListId) -> Arc<[TypeId]>;
+}
+
+impl<T: TypeDatabase + ?Sized> TypeStore for T {
+    fn lookup(&self, id: TypeId) -> Option<TypeData> {
+        TypeDatabase::lookup(self, id)
+    }
+
+    fn type_list(&self, id: TypeListId) -> Arc<[TypeId]> {
+        TypeDatabase::type_list(self, id)
+    }
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
