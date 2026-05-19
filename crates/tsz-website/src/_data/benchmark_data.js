@@ -276,6 +276,13 @@ function normalizedLastSuccessfulPhase(compatibility) {
 }
 
 const COMPATIBILITY_METADATA_FIELDS = [
+  ["generated_at", "artifact generated at"],
+  ["source_commit", "source commit"],
+  ["workflow_name", "workflow name"],
+  ["workflow_run_id", "workflow run id"],
+  ["workflow_run_url", "workflow run URL"],
+  ["workflow_run_attempt", "workflow run attempt"],
+  ["run_status", "run status"],
   ["state", "state"],
   ["exit_class", "exit class"],
   ["first_failure_class", "first failure class"],
@@ -296,11 +303,28 @@ const COMPATIBILITY_METADATA_FIELDS = [
   ["dts_status", "dts status"],
 ];
 
-function missingCompatibilityMetadata(row) {
+const COMPATIBILITY_FRESHNESS_FIELDS = new Set([
+  "generated_at",
+  "source_commit",
+  "workflow_name",
+  "workflow_run_id",
+  "workflow_run_url",
+  "workflow_run_attempt",
+  "run_status",
+]);
+
+function hasArtifactField(artifact, field) {
+  return Object.prototype.hasOwnProperty.call(artifact || {}, field);
+}
+
+function missingCompatibilityMetadata(row, artifact) {
   const compatibility = row?.compatibility;
   if (!compatibility || typeof compatibility !== "object") return ["compatibility artifact"];
   const missing = COMPATIBILITY_METADATA_FIELDS
-    .filter(([field]) => !Object.prototype.hasOwnProperty.call(compatibility, field))
+    .filter(([field]) => (
+      !Object.prototype.hasOwnProperty.call(compatibility, field) &&
+      !(COMPATIBILITY_FRESHNESS_FIELDS.has(field) && hasArtifactField(artifact, field))
+    ))
     .map(([, label]) => label);
   if (
     Object.prototype.hasOwnProperty.call(compatibility, "fixture_sources") &&
@@ -320,6 +344,94 @@ function hasCompleteFixtureSources(compatibility) {
     String(source?.repository || "").trim() &&
     String(source?.ref || "").trim()
   ));
+}
+
+let currentCheckoutCommitCache;
+
+function currentCheckoutCommit() {
+  if (currentCheckoutCommitCache !== undefined) return currentCheckoutCommitCache;
+  try {
+    currentCheckoutCommitCache = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim() || null;
+  } catch {
+    currentCheckoutCommitCache = null;
+  }
+  return currentCheckoutCommitCache;
+}
+
+function normalizedCommit(value) {
+  const commit = String(value || "").trim().toLowerCase();
+  return /^[0-9a-f]{7,40}$/.test(commit) ? commit : null;
+}
+
+function commitsMatch(left, right) {
+  const a = normalizedCommit(left);
+  const b = normalizedCommit(right);
+  if (!a || !b) return true;
+  return a.startsWith(b) || b.startsWith(a);
+}
+
+function shortCommit(value) {
+  const commit = String(value || "").trim();
+  return commit && commit !== "local" ? commit.slice(0, 12) : commit;
+}
+
+function artifactMetadataFor(row, artifact) {
+  const compatibility = row?.compatibility || {};
+  const get = (field) => {
+    if (Object.prototype.hasOwnProperty.call(compatibility, field)) return compatibility[field];
+    if (Object.prototype.hasOwnProperty.call(artifact || {}, field)) return artifact[field];
+    return null;
+  };
+  return {
+    generatedAt: formatUtcTimestamp(get("generated_at")),
+    sourceCommit: get("source_commit"),
+    workflowName: get("workflow_name"),
+    workflowRunId: get("workflow_run_id"),
+    workflowRunUrl: get("workflow_run_url"),
+    workflowRunAttempt: get("workflow_run_attempt"),
+    runStatus: get("run_status"),
+    latestCompletedBenchmarkRunId: get("latest_completed_benchmark_run_id"),
+    latestCompletedBenchmarkGeneratedAt: formatUtcTimestamp(get("latest_completed_benchmark_generated_at")),
+  };
+}
+
+function artifactFreshnessWarnings(metadata) {
+  const warnings = [];
+  const currentCommit = currentCheckoutCommit();
+  if (
+    metadata.sourceCommit &&
+    metadata.sourceCommit !== "local" &&
+    currentCommit &&
+    !commitsMatch(metadata.sourceCommit, currentCommit)
+  ) {
+    warnings.push(`source older than checkout ${shortCommit(currentCommit)}`);
+  }
+
+  if (
+    metadata.latestCompletedBenchmarkRunId &&
+    metadata.workflowRunId &&
+    String(metadata.latestCompletedBenchmarkRunId) !== String(metadata.workflowRunId)
+  ) {
+    warnings.push(`older than latest completed bench run ${metadata.latestCompletedBenchmarkRunId}`);
+  }
+
+  if (
+    metadata.latestCompletedBenchmarkGeneratedAt &&
+    metadata.generatedAt &&
+    new Date(metadata.latestCompletedBenchmarkGeneratedAt).getTime() > new Date(metadata.generatedAt).getTime()
+  ) {
+    warnings.push(`older than ${metadata.latestCompletedBenchmarkGeneratedAt} bench artifact`);
+  }
+
+  const runStatus = String(metadata.runStatus || "").toLowerCase();
+  if (runStatus && !["completed", "manually merged", "local"].includes(runStatus)) {
+    warnings.push(`run status: ${metadata.runStatus}`);
+  }
+  return warnings;
 }
 
 function normalizedFixtureSources(compatibility) {
@@ -439,12 +551,13 @@ function compatibilityState(row) {
   };
 }
 
-function compatibilityRowFor(definition, allResults) {
+function compatibilityRowFor(definition, allResults, artifact) {
   const row = allResults.find((candidate) => candidate?.name === definition.name);
   const artifactFamily = firstPresent(row?.compatibility?.semantic_owner_family, row?.compatibility?.owner_family);
   const compatibility = row?.compatibility || {};
   const diagnosticSubsystems = normalizedDiagnosticSubsystems(compatibility);
-  const missingMetadata = missingCompatibilityMetadata(row);
+  const missingMetadata = missingCompatibilityMetadata(row, artifact);
+  const artifactMetadata = artifactMetadataFor(row, artifact);
   return {
     ...definition,
     family: artifactFamily || definition.family,
@@ -480,6 +593,8 @@ function compatibilityRowFor(definition, allResults) {
     reductionCandidates: Array.isArray(compatibility.reduction_candidates)
       ? compatibility.reduction_candidates.slice(0, 5)
       : [],
+    artifactMetadata,
+    freshnessWarnings: artifactFreshnessWarnings(artifactMetadata),
     missingMetadata,
     status: row?.status || "not recorded in latest benchmark artifact",
     url: benchmarkUrl({ name: definition.name }),
@@ -1914,7 +2029,7 @@ export function getBenchmarkEnvironmentSummary() {
 export function getProjectCompatibilityDashboard() {
   const data = loadBenchmarks();
   const allResults = withExpectedProjectRows(data?.results);
-  const rows = COMPATIBILITY_CORPUS_ROWS.map((definition) => compatibilityRowFor(definition, allResults));
+  const rows = COMPATIBILITY_CORPUS_ROWS.map((definition) => compatibilityRowFor(definition, allResults, data));
 
   const counts = rows.reduce((acc, row) => {
     acc[row.className] = (acc[row.className] || 0) + 1;
@@ -2054,6 +2169,26 @@ export function getProjectCompatibilityDashboard() {
     });
   };
 
+  const artifactFreshnessParts = (row) => {
+    const metadata = row.artifactMetadata || {};
+    const parts = [];
+    if (metadata.generatedAt) parts.push(`artifact generated: ${metadata.generatedAt}`);
+    if (metadata.sourceCommit) parts.push(`commit: ${shortCommit(metadata.sourceCommit)}`);
+    if (metadata.workflowRunId) {
+      const runLabel = metadata.workflowRunAttempt
+        ? `${metadata.workflowRunId} attempt ${metadata.workflowRunAttempt}`
+        : metadata.workflowRunId;
+      parts.push(`run: ${runLabel}${metadata.runStatus ? ` (${metadata.runStatus})` : ""}`);
+    } else if (metadata.runStatus) {
+      parts.push(`run: ${metadata.runStatus}`);
+    }
+    const warnings = Array.isArray(row.freshnessWarnings) ? row.freshnessWarnings : [];
+    for (const warning of warnings.slice(0, 3)) {
+      parts.push(`freshness warning: ${warning}`);
+    }
+    return parts;
+  };
+
   const renderRowDetails = (row) => {
     const deltas = diagnosticDeltas(row);
     const diagnosticCodes = Array.isArray(row.diagnosticCodes) ? row.diagnosticCodes.filter(Boolean).slice(0, 8) : [];
@@ -2077,6 +2212,7 @@ export function getProjectCompatibilityDashboard() {
             row.missingMetadata.slice(0, 4).join(", ")
           }${row.missingMetadata.length > 4 ? "..." : ""}`
         : "artifact: complete",
+      ...artifactFreshnessParts(row),
       row.firstFailureClass ? `failure: ${row.firstFailureClass}` : "",
       row.ownerTrack ? `owner track: ${row.ownerTrack}` : "",
       row.reducedReproPath ? `repro: ${row.reducedReproPath}` : "",

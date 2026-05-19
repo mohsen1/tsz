@@ -51,6 +51,13 @@ withTempDir((dir) => {
     COMPAT_TSCONFIG_PATH: tsconfig,
     COMPAT_SOURCE_ROOT: sourceRoot,
     COMPAT_FIXTURE_ROOT: path.join(dir, "fixture"),
+    COMPAT_GENERATED_AT: "2026-05-19T01:02:03.000Z",
+    COMPAT_SOURCE_COMMIT: "abcdef1234567890",
+    COMPAT_WORKFLOW_NAME: "CI",
+    COMPAT_WORKFLOW_RUN_ID: "12345",
+    COMPAT_WORKFLOW_RUN_URL: "https://github.com/mohsen1/tsz/actions/runs/12345",
+    COMPAT_WORKFLOW_RUN_ATTEMPT: "2",
+    COMPAT_RUN_STATUS: "completed",
     COMPAT_FIXTURE_SOURCES: [
       "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
       "type-fest|https://github.com/sindresorhus/type-fest.git|4005f60",
@@ -63,6 +70,13 @@ withTempDir((dir) => {
   const [row] = rows;
 
   assert.equal(row.name, "type-fest-project");
+  assert.equal(row.generated_at, "2026-05-19T01:02:03.000Z");
+  assert.equal(row.source_commit, "abcdef1234567890");
+  assert.equal(row.workflow_name, "CI");
+  assert.equal(row.workflow_run_id, "12345");
+  assert.equal(row.workflow_run_url, "https://github.com/mohsen1/tsz/actions/runs/12345");
+  assert.equal(row.workflow_run_attempt, "2");
+  assert.equal(row.run_status, "completed");
   assert.equal(row.state, "yellow");
   assert.equal(row.first_failure_class, "evaluation-inference-instantiation");
   assert.equal(row.owner_track, "Track 2/3 conditional, mapped, inference, instantiation");
@@ -386,10 +400,24 @@ withTempDir((dir) => {
     SUMMARY_PROJECT_FILTER: "type",
     SUMMARY_ALLOW_FAILURES: "1",
     SUMMARY_FAILURES: "1",
+    SUMMARY_GENERATED_AT: "2026-05-19T02:03:04.000Z",
+    SUMMARY_SOURCE_COMMIT: "123456abcdef",
+    SUMMARY_WORKFLOW_NAME: "Project compile guard",
+    SUMMARY_WORKFLOW_RUN_ID: "67890",
+    SUMMARY_WORKFLOW_RUN_URL: "https://github.com/mohsen1/tsz/actions/runs/67890",
+    SUMMARY_WORKFLOW_RUN_ATTEMPT: "1",
+    SUMMARY_RUN_STATUS: "completed",
   });
 
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(fs.readFileSync(summary, "utf8"));
+  assert.equal(payload.generated_at, "2026-05-19T02:03:04.000Z");
+  assert.equal(payload.source_commit, "123456abcdef");
+  assert.equal(payload.workflow_name, "Project compile guard");
+  assert.equal(payload.workflow_run_id, "67890");
+  assert.equal(payload.workflow_run_url, "https://github.com/mohsen1/tsz/actions/runs/67890");
+  assert.equal(payload.workflow_run_attempt, "1");
+  assert.equal(payload.run_status, "completed");
   assert.equal(payload.project_set, "canary");
   assert.equal(payload.project_filter, "type");
   assert.equal(payload.allow_failures, true);
